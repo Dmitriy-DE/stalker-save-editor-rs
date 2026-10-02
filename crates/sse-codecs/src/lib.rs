@@ -18,3 +18,8 @@ pub mod p256;
 pub mod font;
 /// Windows minidump reader for crash diagnostics.
 pub mod minidump;
+/// Zlib/DEFLATE decoder used by PNG and package tooling.
+pub mod inflate;
+
+/// PNG decoder to RGBA8.
+pub mod png;
