@@ -867,9 +867,11 @@ fn kern_lookup(data: &[u8], table: Table, left: u16, right: u16) -> Result<Optio
                         .unwrap_or_default(),
                 )?;
                 let pair = checked_add(pairs_start, checked_mul(middle, 6)?)?;
+                let pair_right = checked_add(pair, 2)?;
+                let right = u32::from(be_u16_at(data, pair_right)?);
                 let key = u32::from(be_u16_at(data, pair)?)
                     .checked_shl(16)
-                    .and_then(|value| value.checked_add(u32::from(be_u16_at(data, checked_add(pair, 2)?)?)))
+                    .and_then(|value| value.checked_add(right))
                     .ok_or_else(|| Error::damaged("kern pair key overflow"))?;
                 if key < wanted {
                     low = checked_add(middle, 1)?;
