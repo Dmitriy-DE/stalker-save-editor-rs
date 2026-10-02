@@ -434,7 +434,7 @@ impl<'a> Minidump<'a> {
         }
     }
 
-    fn memory_list_at(&self, address: u64, maximum: usize) -> Result<Option<&'a [u8]>> {
+    fn memory_list_at(&self, address: u64, maximum: usize) -> Result<Option<&[u8]>> {
         let Some(stream) = self.find_stream(MEMORY_LIST_STREAM)? else {
             return Ok(None);
         };
@@ -644,8 +644,8 @@ fn frame_for_address(modules: &[Module], address: u64) -> Option<Frame> {
     None
 }
 
-fn memory_subslice<'a>(
-    data: &'a [u8],
+fn memory_subslice(
+    data: &[u8],
     address: u64,
     start: u64,
     size: u64,
