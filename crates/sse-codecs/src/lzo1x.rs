@@ -311,6 +311,333 @@ pub fn compress(payload: &[u8]) -> Vec<u8> {
     output
 }
 
+const FAST_HASH_SIZE: usize = 16_384;
+const FAST_MAX_DISTANCE: usize = 0xBFFF;
+const FAST_MIN_MATCH: usize = 3;
+
+/// Compresses payload with a one-pass LZO1X-1-class matcher.
+///
+/// The stream uses literal runs plus M2/M3/M4 matches accepted by the decoder and standard
+/// LZO1X decoders. A 2^14-entry last-position hash table is the only auxiliary allocation.
+/// If the greedy stream would exceed the conventional LZO worst-case bound, this falls back
+/// to the literal-only compressor.
+#[must_use]
+pub fn compress_fast(payload: &[u8]) -> Vec<u8> {
+    if payload.len() < FAST_MIN_MATCH {
+        return compress(payload);
+    }
+
+    let bound = match payload
+        .len()
+        .checked_div(16)
+        .and_then(|extra| payload.len().checked_add(extra))
+        .and_then(|value| value.checked_add(67))
+    {
+        Some(value) => value,
+        None => return compress(payload),
+    };
+
+    let mut table = vec![usize::MAX; FAST_HASH_SIZE];
+    let mut output = Vec::with_capacity(payload.len().min(bound));
+    let mut position = 0_usize;
+    let mut anchor = 0_usize;
+    let mut previous_match_patch: Option<MatchPatch> = None;
+
+    while has_bytes(payload, position, 4) {
+        let hash = match hash4(payload, position) {
+            Some(value) => value,
+            None => break,
+        };
+        let candidate = table.get(hash).copied().unwrap_or(usize::MAX);
+        if let Some(slot) = table.get_mut(hash) {
+            *slot = position;
+        } else {
+            return compress(payload);
+        }
+
+        let literal_length = match position.checked_sub(anchor) {
+            Some(value) => value,
+            None => return compress(payload),
+        };
+        let distance = if candidate != usize::MAX && candidate < position {
+            match position.checked_sub(candidate) {
+                Some(value) => value,
+                None => return compress(payload),
+            }
+        } else {
+            usize::MAX
+        };
+        let candidate_is_usable = candidate != usize::MAX
+            && candidate < position
+            && distance <= FAST_MAX_DISTANCE
+            && (anchor == 0 || literal_length == 0 || literal_length >= 4);
+
+        let match_length = if candidate_is_usable {
+            common_length(payload, candidate, position)
+        } else {
+            0
+        };
+
+        if match_length < FAST_MIN_MATCH {
+            position = match position.checked_add(1) {
+                Some(value) => value,
+                None => break,
+            };
+            continue;
+        }
+
+        if literal_length != 0 && !emit_literals(&mut output, payload, anchor, literal_length, anchor == 0) {
+            return compress(payload);
+        }
+
+        let patch = match emit_match(&mut output, distance, match_length) {
+            Some(value) => value,
+            None => return compress(payload),
+        };
+        previous_match_patch = Some(patch);
+
+        let match_end = match position.checked_add(match_length) {
+            Some(value) => value,
+            None => return compress(payload),
+        };
+
+        let mut seed = match position.checked_add(1) {
+            Some(value) => value,
+            None => match_end,
+        };
+        while seed < match_end && has_bytes(payload, seed, 4) {
+            if let Some(seed_hash) = hash4(payload, seed) {
+                if let Some(slot) = table.get_mut(seed_hash) {
+                    *slot = seed;
+                }
+            }
+            seed = match seed.checked_add(1) {
+                Some(value) => value,
+                None => break,
+            };
+        }
+
+        position = match_end;
+        anchor = match_end;
+    }
+
+    let tail = match payload.len().checked_sub(anchor) {
+        Some(value) => value,
+        None => return compress(payload),
+    };
+    if tail != 0 {
+        if tail <= 3 {
+            if let Some(patch) = previous_match_patch {
+                if !patch_trailing_literals(&mut output, patch, tail) {
+                    return compress(payload);
+                }
+                if !append_payload(&mut output, payload, anchor, tail) {
+                    return compress(payload);
+                }
+            } else if !emit_literals(&mut output, payload, anchor, tail, anchor == 0) {
+                return compress(payload);
+            }
+        } else if !emit_literals(&mut output, payload, anchor, tail, anchor == 0) {
+            return compress(payload);
+        }
+    }
+
+    output.extend_from_slice(&[0x11, 0, 0]);
+    if output.len() > bound {
+        return compress(payload);
+    }
+    output
+}
+
+#[derive(Clone, Copy)]
+enum MatchPatch {
+    Command(usize),
+    EncodedLow(usize),
+}
+
+fn has_bytes(input: &[u8], start: usize, count: usize) -> bool {
+    start.checked_add(count).is_some_and(|end| end <= input.len())
+}
+
+fn hash4(input: &[u8], position: usize) -> Option<usize> {
+    let a = u32::from(*input.get(position)?);
+    let p1 = position.checked_add(1)?;
+    let p2 = position.checked_add(2)?;
+    let p3 = position.checked_add(3)?;
+    let b = u32::from(*input.get(p1)?);
+    let c = u32::from(*input.get(p2)?);
+    let d = u32::from(*input.get(p3)?);
+    let word = a
+        | b.checked_shl(8).unwrap_or_default()
+        | c.checked_shl(16).unwrap_or_default()
+        | d.checked_shl(24).unwrap_or_default();
+    let mixed = word.wrapping_mul(0x9E37_79B1);
+    usize::try_from(mixed.checked_shr(18).unwrap_or_default()).ok()
+}
+
+fn common_length(input: &[u8], left: usize, right: usize) -> usize {
+    let maximum = match input.len().checked_sub(right) {
+        Some(value) => value,
+        None => return 0,
+    };
+    let mut length = 0_usize;
+    while length < maximum {
+        let Some(left_position) = left.checked_add(length) else {
+            break;
+        };
+        let Some(right_position) = right.checked_add(length) else {
+            break;
+        };
+        if input.get(left_position) != input.get(right_position) {
+            break;
+        }
+        length = match length.checked_add(1) {
+            Some(value) => value,
+            None => break,
+        };
+    }
+    length
+}
+
+fn emit_literals(output: &mut Vec<u8>, input: &[u8], start: usize, length: usize, first: bool) -> bool {
+    if length == 0 {
+        return true;
+    }
+
+    if first && length <= 238 {
+        let Some(prefix) = length.checked_add(17) else {
+            return false;
+        };
+        let Ok(byte) = u8::try_from(prefix) else {
+            return false;
+        };
+        output.push(byte);
+        return append_payload(output, input, start, length);
+    }
+
+    if length < 4 {
+        return false;
+    }
+    if length <= 18 {
+        let Some(value) = length.checked_sub(3) else {
+            return false;
+        };
+        let Ok(byte) = u8::try_from(value) else {
+            return false;
+        };
+        output.push(byte);
+    } else {
+        output.push(0);
+        let Some(extension) = length.checked_sub(18) else {
+            return false;
+        };
+        if !emit_extension(output, extension) {
+            return false;
+        }
+    }
+    append_payload(output, input, start, length)
+}
+
+fn append_payload(output: &mut Vec<u8>, input: &[u8], start: usize, length: usize) -> bool {
+    let Some(end) = start.checked_add(length) else {
+        return false;
+    };
+    let Some(bytes) = input.get(start..end) else {
+        return false;
+    };
+    output.extend_from_slice(bytes);
+    true
+}
+
+fn emit_extension(output: &mut Vec<u8>, mut value: usize) -> bool {
+    if value == 0 {
+        return false;
+    }
+    while value > usize::from(u8::MAX) {
+        output.push(0);
+        value = match value.checked_sub(usize::from(u8::MAX)) {
+            Some(next) => next,
+            None => return false,
+        };
+    }
+    let Ok(last) = u8::try_from(value) else {
+        return false;
+    };
+    output.push(last);
+    true
+}
+
+fn emit_match(output: &mut Vec<u8>, distance: usize, length: usize) -> Option<MatchPatch> {
+    if distance == 0 || distance > FAST_MAX_DISTANCE || length < FAST_MIN_MATCH {
+        return None;
+    }
+
+    if distance <= 0x800 && length <= 8 {
+        let encoded_distance = distance.checked_sub(1)?;
+        let distance_low = u8::try_from(encoded_distance & 7).ok()?;
+        let distance_high = u8::try_from(encoded_distance.checked_shr(3)?).ok()?;
+        let length_bits = u8::try_from(length.checked_sub(1)?).ok()?.checked_shl(5)?;
+        let distance_bits = distance_low.checked_shl(2)?;
+        let command = length_bits.checked_add(distance_bits)?;
+        let patch = output.len();
+        output.push(command);
+        output.push(distance_high);
+        Some(MatchPatch::Command(patch))
+    } else if distance <= 0x4000 {
+        if length <= 33 {
+            let encoded_length = length.checked_sub(2)?;
+            let encoded_length_u8 = u8::try_from(encoded_length).ok()?;
+            output.push(32_u8.checked_add(encoded_length_u8)?);
+        } else {
+            output.push(32);
+            emit_extension(output, length.checked_sub(33)?).then_some(())?;
+        }
+        let encoded_distance = distance.checked_sub(1)?.checked_shl(2)?;
+        let encoded = u16::try_from(encoded_distance).ok()?;
+        let patch = output.len();
+        output.extend_from_slice(&encoded.to_le_bytes());
+        Some(MatchPatch::EncodedLow(patch))
+    } else {
+        let (base, high_bit) = if distance < 0x8000 {
+            (0x4000_usize, 0_u8)
+        } else {
+            (0x8000_usize, 8_u8)
+        };
+        let length_bits = if length <= 9 {
+            u8::try_from(length.checked_sub(2)?).ok()?
+        } else {
+            0
+        };
+        let command = 16_u8.checked_add(high_bit)?.checked_add(length_bits)?;
+        output.push(command);
+        if length > 9 {
+            emit_extension(output, length.checked_sub(9)?).then_some(())?;
+        }
+        let encoded_distance = distance.checked_sub(base)?.checked_shl(2)?;
+        let encoded = u16::try_from(encoded_distance).ok()?;
+        let patch = output.len();
+        output.extend_from_slice(&encoded.to_le_bytes());
+        Some(MatchPatch::EncodedLow(patch))
+    }
+}
+
+fn patch_trailing_literals(output: &mut [u8], patch: MatchPatch, count: usize) -> bool {
+    if count == 0 || count > 3 {
+        return false;
+    }
+    let Ok(bits) = u8::try_from(count) else {
+        return false;
+    };
+    let position = match patch {
+        MatchPatch::Command(position) | MatchPatch::EncodedLow(position) => position,
+    };
+    let Some(byte) = output.get_mut(position) else {
+        return false;
+    };
+    *byte |= bits;
+    true
+}
+
 fn peek_u8(stream: &[u8], position: usize) -> Result<u8> {
     stream
         .get(position)
@@ -436,7 +763,7 @@ fn ensure_output_capacity(current_length: usize, expected_size: usize, additiona
 
 #[cfg(test)]
 mod tests {
-    use super::{compress, decompress};
+    use super::{compress, compress_fast, decompress};
     use sse_core::Error;
 
     #[test]
@@ -502,6 +829,52 @@ mod tests {
     #[test]
     fn rejects_output_size_over_csharp_limit_before_allocating() {
         assert!(matches!(decompress(&[0x11, 0, 0], 536_870_913), Err(Error::Damaged(_))));
+    }
+
+    #[test]
+    fn fast_compressor_round_trips_two_thousand_fixed_seed_buffers() {
+        let mut rng = TestRng::new(0xA11C_E5E1_5EED_900D);
+        for case in 0_usize..2_000_usize {
+            let size = rng.below(300_001);
+            let mode = case.checked_rem(5).unwrap_or_default();
+            let payload = make_fast_payload(&mut rng, size, mode);
+            let encoded = compress_fast(&payload);
+            let bound = payload
+                .len()
+                .checked_add(payload.len().checked_div(16).unwrap_or_default())
+                .and_then(|value| value.checked_add(67))
+                .unwrap_or(usize::MAX);
+            assert!(encoded.len() <= bound);
+            assert_eq!(decompress(&encoded, payload.len()), Ok(payload));
+        }
+    }
+
+    #[test]
+    fn fast_compressor_produces_all_distance_classes() {
+        let near = distance_fixture(0x0600, 0x11);
+        let medium = distance_fixture(0x3000, 0x22);
+        let far = distance_fixture(0xA000, 0x33);
+
+        let near_distances = parsed_match_distances(&compress_fast(&near));
+        let medium_distances = parsed_match_distances(&compress_fast(&medium));
+        let far_distances = parsed_match_distances(&compress_fast(&far));
+
+        assert!(near_distances.iter().any(|distance| *distance <= 0x800));
+        assert!(medium_distances
+            .iter()
+            .any(|distance| *distance > 0x800 && *distance <= 0x4000));
+        assert!(far_distances
+            .iter()
+            .any(|distance| *distance > 0x4000 && *distance <= 0xBFFF));
+    }
+
+    #[test]
+    fn attached_repetitive_fixture_ratio_is_not_worse_than_reference() {
+        let raw = extended_m4_raw();
+        let reference = extended_m4_encoded();
+        let encoded = compress_fast(&raw);
+        assert!(encoded.len() <= reference.len());
+        assert_eq!(decompress(&encoded, raw.len()), Ok(raw));
     }
 
     fn literal_fixtures() -> Vec<(Vec<u8>, Vec<u8>)> {
@@ -593,6 +966,157 @@ mod tests {
             }
         }
         payload
+    }
+
+    fn make_fast_payload(rng: &mut TestRng, size: usize, mode: usize) -> Vec<u8> {
+        match mode {
+            0 => vec![0_u8; size],
+            1 => make_payload(rng, size, 1),
+            2 => make_payload(rng, size, 3),
+            3 => {
+                let mut value = make_payload(rng, size, 3);
+                let mut position = 0_usize;
+                while position < size {
+                    let remaining = size.saturating_sub(position);
+                    let run = 256_usize.min(remaining);
+                    let end = position.checked_add(run).unwrap_or(size);
+                    if let Some(part) = value.get_mut(position..end) {
+                        part.fill(0);
+                    }
+                    position = match position.checked_add(4_096) {
+                        Some(next) => next,
+                        None => break,
+                    };
+                }
+                value
+            }
+            _ => make_payload(rng, size, 2),
+        }
+    }
+
+    fn distance_fixture(distance: usize, salt: u8) -> Vec<u8> {
+        let marker = [0xFA, salt, 0xCE, 0xD0, 0x0D, 0xBA, 0xBE, salt];
+        let capacity = distance.checked_add(marker.len()).unwrap_or(distance);
+        let mut data = Vec::with_capacity(capacity);
+        data.extend_from_slice(&marker);
+        let filler = distance.saturating_sub(marker.len());
+        data.extend(core::iter::repeat_n(0_u8, filler));
+        data.extend_from_slice(&marker);
+        data
+    }
+
+    fn parsed_match_distances(stream: &[u8]) -> Vec<usize> {
+        let mut distances = Vec::new();
+        let mut position = 0_usize;
+        let mut state = 0_usize;
+
+        if stream.first().copied().unwrap_or_default() > 17 {
+            let length = usize::from(stream.first().copied().unwrap_or_default()).saturating_sub(17);
+            position = 1_usize.checked_add(length).unwrap_or(stream.len());
+            state = length.min(4);
+        }
+
+        while position < stream.len() {
+            let command = stream.get(position).copied().unwrap_or_default();
+            position = position.checked_add(1).unwrap_or(stream.len());
+
+            if command < 16 {
+                if state == 0 {
+                    let mut length = usize::from(command);
+                    if length == 0 {
+                        let (value, next) = parse_extension(stream, position, 15);
+                        length = value;
+                        position = next;
+                    }
+                    length = length.checked_add(3).unwrap_or(stream.len());
+                    position = position.checked_add(length).unwrap_or(stream.len());
+                    state = 4;
+                    continue;
+                }
+
+                let high = stream.get(position).copied().unwrap_or_default();
+                position = position.checked_add(1).unwrap_or(stream.len());
+                let base: usize = if state == 4 { 2_049 } else { 1 };
+                let distance = base
+                    .checked_add(usize::from(command.checked_shr(2).unwrap_or_default()))
+                    .and_then(|value| value.checked_add(usize::from(high).checked_mul(4)?))
+                    .unwrap_or_default();
+                distances.push(distance);
+                let trailing = usize::from(command & 3);
+                position = position.checked_add(trailing).unwrap_or(stream.len());
+                state = trailing;
+                continue;
+            }
+
+            if command >= 64 {
+                let high = stream.get(position).copied().unwrap_or_default();
+                position = position.checked_add(1).unwrap_or(stream.len());
+                let distance = 1_usize
+                    .checked_add(usize::from(command.checked_shr(2).unwrap_or_default() & 7))
+                    .and_then(|value| value.checked_add(usize::from(high).checked_mul(8)?))
+                    .unwrap_or_default();
+                distances.push(distance);
+                let trailing = usize::from(command & 3);
+                position = position.checked_add(trailing).unwrap_or(stream.len());
+                state = trailing;
+                continue;
+            }
+
+            if command >= 32 {
+                if command & 31 == 0 {
+                    let (_, next) = parse_extension(stream, position, 31);
+                    position = next;
+                }
+                let low = stream.get(position).copied().unwrap_or_default();
+                let high_pos = position.checked_add(1).unwrap_or(stream.len());
+                let high = stream.get(high_pos).copied().unwrap_or_default();
+                position = position.checked_add(2).unwrap_or(stream.len());
+                let encoded = u16::from_le_bytes([low, high]);
+                distances.push(
+                    1_usize
+                        .checked_add(usize::from(encoded.checked_shr(2).unwrap_or_default()))
+                        .unwrap_or_default(),
+                );
+                let trailing = usize::from(encoded & 3);
+                position = position.checked_add(trailing).unwrap_or(stream.len());
+                state = trailing;
+                continue;
+            }
+
+            if command & 7 == 0 {
+                let (_, next) = parse_extension(stream, position, 7);
+                position = next;
+            }
+            let low = stream.get(position).copied().unwrap_or_default();
+            let high_pos = position.checked_add(1).unwrap_or(stream.len());
+            let high = stream.get(high_pos).copied().unwrap_or_default();
+            position = position.checked_add(2).unwrap_or(stream.len());
+            let encoded = u16::from_le_bytes([low, high]);
+            let encoded_distance = encoded.checked_shr(2).unwrap_or_default();
+            if command & 8 == 0 && encoded_distance == 0 {
+                break;
+            }
+            let base: usize = if command & 8 == 0 { 16_384 } else { 32_768 };
+            distances.push(base.checked_add(usize::from(encoded_distance)).unwrap_or_default());
+            let trailing = usize::from(encoded & 3);
+            position = position.checked_add(trailing).unwrap_or(stream.len());
+            state = trailing;
+        }
+
+        distances
+    }
+
+    fn parse_extension(stream: &[u8], mut position: usize, base: usize) -> (usize, usize) {
+        let mut value = base;
+        loop {
+            let byte = stream.get(position).copied().unwrap_or(1);
+            position = position.checked_add(1).unwrap_or(stream.len());
+            if byte != 0 {
+                value = value.saturating_add(usize::from(byte));
+                return (value, position);
+            }
+            value = value.saturating_add(255);
+        }
     }
 
     struct TestRng {
