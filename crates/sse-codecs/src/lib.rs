@@ -8,3 +8,5 @@ pub mod lzhuf;
 
 /// IEEE CRC-32 used by archive and container formats.
 pub mod crc32;
+/// Valve text KeyValues reader used for Steam library discovery.
+pub mod vdf;
