@@ -2,3 +2,6 @@
 
 /// LZO1X as the X-Ray engine uses it for saves.
 pub mod lzo1x;
+
+/// Windows minidump reader for crash diagnostics.
+pub mod minidump;
