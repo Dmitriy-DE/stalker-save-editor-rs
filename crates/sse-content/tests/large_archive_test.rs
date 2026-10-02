@@ -11,7 +11,7 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
 
-use sse_content::crc32;
+use sse_codecs::crc32::crc32;
 use sse_content::XRayArchive;
 
 struct TempFile {

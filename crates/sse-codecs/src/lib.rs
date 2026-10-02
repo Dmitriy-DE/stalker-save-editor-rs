@@ -23,3 +23,5 @@ pub mod vdf;
 
 /// PNG decoder to RGBA8.
 pub mod png;
+/// SHA-256 (FIPS 180-4).
+pub mod sha256;

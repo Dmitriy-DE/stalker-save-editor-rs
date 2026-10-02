@@ -12,7 +12,7 @@ use std::time::UNIX_EPOCH;
 use sse_core::{Error, Result};
 
 use crate::archive::{EntryDecoder, HeaderDecoder, XRayArchive, XRayArchiveEntry};
-use crate::sha256::sha256_hex;
+use sse_codecs::sha256::sha256_hex;
 
 /// Supported X-Ray game trilogy titles.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

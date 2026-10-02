@@ -11,7 +11,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use sse_content::crc32;
+use sse_codecs::crc32::crc32;
 use sse_content::encoding::decode_windows_1251;
 use sse_content::XRayArchive;
 use sse_core::Error;
@@ -186,7 +186,7 @@ fn reads_the_synthetic_archive_fixture_verified_by_the_python_oracle() {
         assert_eq!(actual_bytes.len(), entry.size);
         assert_eq!(actual_bytes, expected_bytes);
 
-        let actual_sha = sse_content::sha256::sha256_hex(&actual_bytes);
+        let actual_sha = sse_codecs::sha256::sha256_hex(&actual_bytes);
         assert_eq!(actual_sha, entry.sha256);
     }
 }

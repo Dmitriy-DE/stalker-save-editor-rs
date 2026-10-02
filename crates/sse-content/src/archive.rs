@@ -10,8 +10,8 @@ use std::sync::Arc;
 
 use sse_core::{Error, Result};
 
-use crate::crc32::crc32;
 use crate::encoding::decode_archive_name;
+use sse_codecs::crc32::crc32;
 
 /// Largest allowed size of an archive header (64 MiB).
 pub const MAXIMUM_HEADER_SIZE: usize = 64 * 1024 * 1024;

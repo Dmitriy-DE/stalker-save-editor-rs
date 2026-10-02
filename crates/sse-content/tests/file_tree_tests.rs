@@ -10,7 +10,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use sse_content::crc32;
+use sse_codecs::crc32::crc32;
 use sse_content::file_tree::{CompanionGame, GameFileTree};
 
 struct TempDir {

@@ -20,6 +20,7 @@ dependencies = [
 name = "sse-content"
 version = "2.0.0-dev"
 dependencies = [
+ "sse-codecs",
  "sse-core",
 ]
 
