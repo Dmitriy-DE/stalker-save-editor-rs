@@ -1,4 +1,4 @@
-//! Codecs written in this repository: LZO1X (X1); to come: LZHUF, CRC32, SHA-256, Kraken, JSON, VDF, P-256, inflate.
+//! Codecs and parsers written in this repository. No third-party code.
 
 /// LZO1X as the X-Ray engine uses it for saves.
 pub mod lzo1x;
@@ -8,18 +8,18 @@ pub mod lzhuf;
 
 /// IEEE CRC-32 used by archive and container formats.
 pub mod crc32;
-/// Valve text KeyValues reader used for Steam library discovery.
-pub mod vdf;
-/// Strict streaming RFC 8259 JSON reader and writer.
-pub mod json;
-/// ECDSA P-256 update-signature verification.
-pub mod p256;
 /// Safe OpenType/TrueType parsing and glyph coverage rasterisation.
 pub mod font;
-/// Windows minidump reader for crash diagnostics.
-pub mod minidump;
 /// Zlib/DEFLATE decoder used by PNG and package tooling.
 pub mod inflate;
+/// Strict streaming RFC 8259 JSON reader and writer.
+pub mod json;
+/// Windows minidump reader for crash diagnostics.
+pub mod minidump;
+/// ECDSA P-256 update-signature verification.
+pub mod p256;
+/// Valve text KeyValues reader used for Steam library discovery.
+pub mod vdf;
 
 /// PNG decoder to RGBA8.
 pub mod png;
