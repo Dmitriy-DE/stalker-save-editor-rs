@@ -2,3 +2,9 @@
 
 /// LZO1X as the X-Ray engine uses it for saves.
 pub mod lzo1x;
+
+/// X-Ray archive LZHUF decoding and header descrambling.
+pub mod lzhuf;
+
+/// IEEE CRC-32 used by archive and container formats.
+pub mod crc32;
