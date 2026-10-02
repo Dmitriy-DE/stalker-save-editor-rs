@@ -861,8 +861,7 @@ fn kern_lookup(data: &[u8], table: Table, left: u16, right: u16) -> Result<Optio
             while low < high {
                 let middle = checked_add(
                     low,
-                    high.checked_sub(low)
-                        .unwrap_or_default()
+                    high.saturating_sub(low)
                         .checked_div(2)
                         .unwrap_or_default(),
                 )?;
