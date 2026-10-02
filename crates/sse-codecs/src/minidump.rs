@@ -479,7 +479,7 @@ impl<'a> Minidump<'a> {
         Ok(None)
     }
 
-    fn memory64_list_at(&self, address: u64, maximum: usize) -> Result<Option<&'a [u8]>> {
+    fn memory64_list_at(&self, address: u64, maximum: usize) -> Result<Option<&[u8]>> {
         let Some(stream) = self.find_stream(MEMORY64_LIST_STREAM)? else {
             return Ok(None);
         };
