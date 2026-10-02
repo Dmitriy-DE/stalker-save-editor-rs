@@ -14,3 +14,5 @@ pub mod vdf;
 pub mod json;
 /// ECDSA P-256 update-signature verification.
 pub mod p256;
+/// Safe OpenType/TrueType parsing and glyph coverage rasterisation.
+pub mod font;
