@@ -228,7 +228,7 @@ impl U256 {
     fn cmp(&self, other: &Self) -> Ordering {
         let mut index = 4_usize;
         while index != 0 {
-            index = index.checked_sub(1).unwrap_or_default();
+            index = index.saturating_sub(1);
             match self.limb(index).cmp(&other.limb(index)) {
                 Ordering::Equal => {}
                 value => return value,
@@ -330,7 +330,7 @@ fn pow_mod(base: U256, exponent: U256, modulus: U256) -> U256 {
     let mut result = U256::ONE;
     let mut bit = 256_usize;
     while bit != 0 {
-        bit = bit.checked_sub(1).unwrap_or_default();
+        bit = bit.saturating_sub(1);
         result = mul_mod(result, result, modulus);
         if exponent.bit(bit) {
             result = mul_mod(result, base, modulus);
@@ -469,7 +469,7 @@ fn scalar_mul(base: Affine, scalar: U256) -> Jacobian {
     let addend = Jacobian::from_affine(base);
     let mut bit = 256_usize;
     while bit != 0 {
-        bit = bit.checked_sub(1).unwrap_or_default();
+        bit = bit.saturating_sub(1);
         result = jacobian_double(result);
         if scalar.bit(bit) {
             result = jacobian_add(result, addend);
@@ -839,7 +839,7 @@ DuEkmd6oGnQq6qsZmILc2fYC0wfqEMk/NB88BSFAC1N6fmziJf11RVtlLQ==\n\
         while limb_index < 4 {
             let source = value.limb(limb_index).to_be_bytes();
             let from_end = limb_index.checked_add(1).and_then(|v| v.checked_mul(8)).unwrap_or(32);
-            let start = 32_usize.checked_sub(from_end).unwrap_or_default();
+            let start = 32_usize.saturating_sub(from_end);
             let end = start.checked_add(8).unwrap_or(32);
             if let Some(target) = out.get_mut(start..end) {
                 target.copy_from_slice(&source);
