@@ -454,6 +454,154 @@ reference checks and later possibly by our own interpreter. Tests: the attached 
 programs with their expected AST printed in a compact S-expression form; every truncation of one script is an
 error, never a panic; nesting depth limited (200) against stack exhaustion. State parse speed in MiB/s.
 
+## X16 — Kraken decoder, independent implementation (ChatGPT)
+
+Attachments: `kraken.cpp`, `bits_rev_table.h` (the open `ooz` decoder — a description of the format, not code to
+translate), `synthetic-s2.sav` + `synthetic-s2.raw`, `cursor.rs`, `error.rs`, `lints.toml`.
+
+Codex writes the same decoder in the repository; yours is the second, independent one: the two are run against each
+other on every save and on mutated streams, and any disagreement is a bug in one of them. `kraken.rs`:
+`pub fn decompress_into(source: &[u8], output: &mut [u8]) -> Result<()>` — safe Rust, slices and checked cursors
+instead of pointers, every table size, offset and length checked, no scratch allocation larger than 2× one 256 KiB
+chunk. Cover what Kraken streams of game saves use: block header, quantum header, memcpy/memset quanta, the entropy
+array types (raw, Huffman 2- and 4-way with the new and old code-length coding, RLE, tANS, recursive/multi-array),
+LZ runs with the two modes, offset coding with the extended-offset scheme. Mermaid/Selkie/Leviathan/LZNA/Bitknit:
+`Error::Refused`. A damaged stream is `Error::Damaged` — never a panic, an out-of-bounds copy or a loop that does
+not advance. Say how the container in `synthetic-s2.sav` is framed if you can tell; otherwise test the pieces with
+streams you build by hand (memcpy and memset quanta, a raw-entropy LZ block).
+
+## X17 — Window on Windows (ChatGPT)
+
+Attachments: `error.rs`. This file is for `sse-sys`, the one crate where `unsafe` is allowed: declarations of
+`user32`/`gdi32`/`dwmapi`/`shcore`/`kernel32` functions **written by hand** (`extern "system"`, no `windows` or
+`winapi` crate), every `unsafe` block with a `// SAFETY:` line.
+
+`window_win32.rs`: a window that shows a BGRA frame buffer — `RegisterClassExW`, `CreateWindowExW`, per-monitor-v2
+DPI awareness and `WM_DPICHANGED`, message loop that sleeps when idle (`MsgWaitForMultipleObjects` with a wake
+event for worker threads), `WM_PAINT` with `SetDIBitsToDevice` of only the damaged rectangles, resize without
+flicker (`WM_ERASEBKGND` handled), minimum size, dark title bar (`DwmSetWindowAttribute` 20), window icon from RGBA,
+keyboard (`WM_KEYDOWN`, `WM_CHAR` with UTF-16 surrogates), mouse with wheel and capture, cursor shapes, clipboard
+text both ways, `RegisterHotKey`, file-open and folder dialogs through `IFileOpenDialog` (COM by hand), high-contrast
+and reduced-motion queries. API as a trait `Window { fn present(&mut self, frame, damage); fn next_event(&mut self,
+timeout) -> Event; … }` you define. It will be compiled by CI on Windows, not by you: write conservatively and list
+every function with its documented signature in a table at the top.
+
+## X18 — Window on macOS (ChatGPT)
+
+Same contract as X17 for `window_macos.rs`: Objective-C runtime by hand (`objc_msgSend`, `sel_registerName`,
+`objc_getClass`, a class allocated with `objc_allocateClassPair` for the view and the delegate), `NSApplication`
+without a nib, `NSWindow` with a layer-backed view whose layer contents is a `CGImage` made from our BGRA buffer
+(or `IOSurface`, justify), backing scale factor changes, events through `nextEventMatchingMask` with a timeout,
+key text via `interpretKeyEvents`/`insertText:`, pasteboard text, `NSOpenPanel`, menu bar with Quit/Copy/Paste so
+the standard shortcuts work, dark appearance. arm64 and x86_64 calling conventions for `objc_msgSend` noted.
+
+## X19 — Sound output (ChatGPT)
+
+Attachments: `cursor.rs`, `error.rs`, `lints.toml`.
+
+Three small backends behind `trait Output { fn play(&mut self, pcm: &[i16], channels, rate, volume) }`, short UI
+sounds only, never blocking the caller: (1) Linux — the **PulseAudio native protocol** over its Unix socket
+(PipeWire speaks it too): cookie auth, tagstruct marshalling, `CREATE_PLAYBACK_STREAM`, writes, drain; pure safe
+code over a transport trait, with tests on hand-built packets. (2) Windows — `waveOutOpen`/`waveOutWrite`
+declarations by hand (for `sse-sys`, `unsafe` with SAFETY lines). (3) macOS — `AudioQueue` by hand. If no server
+answers, sound is silently off.
+
+## X20 — HTTPS through the operating system (ChatGPT)
+
+For `sse-sys`. `trait Fetch { fn get(&mut self, url, range_from: u64, sink: &mut dyn FnMut(&[u8]) -> bool) ->
+Result<Response> }` with status, content length and redirects followed only to `https`. Windows: WinHTTP by hand
+(`WinHttpOpen`, `Connect`, `OpenRequest`, `SendRequest`, `ReceiveResponse`, `QueryHeaders`, `ReadData`), system
+proxy settings respected. Linux and macOS: the system's `libcurl` loaded at run time (`dlopen` of `libcurl.so.4` /
+`libcurl.4.dylib`, `curl_easy_*` declared by hand, write callback), with a clear error when it is absent. Timeouts,
+a size limit, cancellation from the sink. No TLS code of our own, certificate checks never disabled. Also a
+`file://` and an in-memory implementation for tests.
+
+## X21 — ZIP and deflate (ChatGPT)
+
+Attachments: your `inflate.rs` if X8 is done (else write inflate here), `cursor.rs`, `error.rs`, `lints.toml`.
+
+`deflate.rs`: compressor with lazy matching, hash chains, dynamic Huffman blocks (length-limited codes by package-
+merge or a correct heuristic), levels fast/default; output valid for any inflater and within 5% of zlib level 6 on
+text (state what you measured or estimated). `zip.rs`: reader (central directory, ZIP64, stored + deflate, CRC
+checked, names in UTF-8 and CP437, **path traversal refused**: absolute paths, `..`, drive letters, symlinks) and a
+streaming writer with stable output (fixed timestamps) for reproducible packages. Tests: round trips, hand-made
+archives, a zip bomb stopped by the limit, traversal names.
+
+## X22 — Difference of bytes and of lines (ChatGPT)
+
+`diff.rs`: (1) Myers O(ND) line diff with a linear-space variant and a cut-off heuristic, producing unified hunks —
+for showing what a game fix changes in a script (Windows-1251 bytes, CRLF/LF preserved exactly); (2) patch
+application with context matching that refuses when the context is not unique; (3) byte-range diff of two save
+images of equal or different length (changed ranges merged when closer than N bytes) for the Compare screen and for
+proving a writer touched nothing else; (4) three-way merge of line edits for scripts patched by two fixes, conflicts
+reported, never guessed. Tests: 60 cases incl. empty files, no trailing newline, 1 MiB inputs with a time bound.
+
+## X23 — Numbers, dates, plurals in 15 languages (ChatGPT)
+
+Attachments: `i18n-sample.json`.
+
+`locale.rs` for: ru, uk, en, de, fr, es, it, pl, cs, tr, pt-BR, ja, ko, zh-CN, zh-TW. CLDR plural categories
+(cardinal) as functions; number formatting (grouping and decimal separators, non-breaking spaces where the locale
+uses them), sizes (КБ/МБ vs KB/MB vs 千字节 as each locale writes them), money with the in-game `RU` suffix, dates
+and relative times ("3 минуты назад", "昨天"), list joining ("a, b и c"). Tables typed in by you from CLDR; a test
+table of at least 10 cases per language. No allocation for numbers (write into a `&mut String`).
+
+## X24 — Atlas packing (ChatGPT)
+
+`atlas.rs`: pack N rectangles (icons from 16×16 to 512×256) into pages of a maximum size with MaxRects (best short
+side fit) and a skyline fallback, optional 1-pixel padding, deterministic output for the same input, duplicates
+merged by a caller-supplied pixel hash, incremental add for the glyph cache with eviction of least-recently-used
+shelves. Report the fill ratio on a generated set that mimics 600 icons; tests for no overlap and bounds.
+
+## X25 — Vector icons (ChatGPT)
+
+`path.rs` for `sse-ui`: parser of SVG path data (`M L H V C S Q T A Z`, relative forms, implicit repeats, arcs
+converted to cubics), stroke to fill (width, butt/round/square caps, miter/round/bevel joins), transforms, flatten
+with a tolerance, output as line segments for the coverage rasteriser of X6 (`Segment { from, to }`), even-odd and
+non-zero. Plus **28 interface icons as path strings you draw yourself** on a 24×24 grid, one visual style, 2 px
+strokes: saves, inventory, stash, map/transitions, factions, backup, compare, timeline, doctor, games, fixes,
+wrench, companion, trophy, cloud, book, shield/capabilities, update, settings, search, add, delete, undo, redo,
+save, folder, warning, info. Tests for the parser and the arc conversion.
+
+## X26 — Layout engine (ChatGPT)
+
+`layout.rs` for `sse-ui`, pure arithmetic over a tree in an arena: row, column, wrap, grid with fixed/auto/fraction
+tracks, stack; per node min/preferred/max size, margin, padding, gap, alignment, grow/shrink factors, aspect ratio,
+text nodes measured through a callback (width → height); two passes (measure, arrange), results cached by
+constraint so an unchanged subtree costs nothing; pixel snapping at a fractional scale factor without gaps or
+overlaps; scroll containers report content size. Tests: 80 layouts with expected rectangles, incl. the three window
+widths 940/1260/1920 at scales 1, 1.25, 1.5, 2.
+
+## X27 — Text field model (ChatGPT)
+
+`edit.rs`: the logic of a single-line and a multi-line text field without drawing: buffer (gap buffer or rope —
+justify), caret and selection by grapheme cluster, word and line movement, Home/End, selection by mouse (double
+click word, triple line), insert/delete/backspace with Ctrl variants, clipboard cut/copy/paste through a trait,
+undo/redo with coalescing of typing, maximum length, input filters (digits only with range, for money and counts),
+IME composition range as an optional overlay, horizontal scroll to keep the caret visible. Tests as scripts of key
+presses with expected text and selection, Cyrillic and CJK included.
+
+## X28 — Virtual list and table model (ChatGPT)
+
+`list.rs`: model for lists of up to a million rows: fixed and variable row heights (prefix sums in a Fenwick tree,
+estimated then corrected heights without scroll jumps — scroll anchoring), visible range for a viewport with
+overscan, selection (single, Ctrl, Shift ranges, select all) kept stable under sort and filter, sort by several
+columns with stable order over an index permutation (the data is never moved), incremental filter, column widths
+(fixed, auto by sampled content, fraction, user resize, minimum), keyboard navigation with type-ahead, grouping
+with collapsible headers (inventory piles). No allocation while scrolling. Tests as scripts with expected ranges.
+
+## X29 — Regular expressions, linear time (ChatGPT)
+
+Attachments: `CrashSignatureCatalog.cs` (the patterns we must run), `cursor.rs`, `error.rs`, `lints.toml`.
+
+`regex.rs`: the subset the attached patterns use and a little more — literals, classes, `\d \s \w \b`, `.`,
+alternation, groups (capturing and not), `* + ? {m,n}` greedy and lazy, anchors, case-insensitive flag (ASCII and
+Cyrillic). Compiled to a Thompson NFA and run by a Pike VM or a lazily built DFA: **time linear in the input, no
+backtracking**, bounded memory. A `Set` that compiles all catalogue patterns together, extracts their required
+literals into one Aho-Corasick automaton as a prefilter, and scans a log stream chunk by chunk (matches across
+chunk borders handled). Tests: every attached pattern against a positive and a negative line; classic pathological
+patterns (`(a+)+b`) finish in linear time; 50 MiB/s or better stated for the prefiltered scan.
+
 ---
 
 ## C4 — Checks and crash analysis (Codex)
