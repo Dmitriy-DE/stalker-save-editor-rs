@@ -12,3 +12,5 @@ pub mod crc32;
 pub mod vdf;
 /// Strict streaming RFC 8259 JSON reader and writer.
 pub mod json;
+/// ECDSA P-256 update-signature verification.
+pub mod p256;
