@@ -2,3 +2,6 @@
 
 /// LZO1X as the X-Ray engine uses it for saves.
 pub mod lzo1x;
+
+/// ECDSA P-256 update-signature verification.
+pub mod p256;
