@@ -1,0 +1,440 @@
+{
+  "oracleRevision": "6f3839cb870161290ae1d404c40e291485c29e37",
+  "vectors": [
+    {
+      "name": "xray-soc",
+      "codec": "lzo1x",
+      "container": "xray-soc.sav",
+      "raw": "xray-soc.raw",
+      "streamOffset": 12,
+      "streamLength": 386,
+      "unpackedSize": 380,
+      "containerSummary": {
+        "magic": 4294967295,
+        "version": 3,
+        "unpackedSize": 380,
+        "rawSha256": "cca772d1185590f1b64fe234f71a7540195294137cdc79c27ef70d80198da20d",
+        "chunkTypes": [
+          0,
+          5,
+          1,
+          2,
+          9
+        ],
+        "chunks": [
+          {
+            "type": 0,
+            "offset": 0,
+            "size": 4,
+            "dataSha256": "9d9f290527a6be626a8f5985b26e19b237b44872b03631811df4416fc1713178"
+          },
+          {
+            "type": 5,
+            "offset": 12,
+            "size": 16,
+            "dataSha256": "e962f9931a10b27da307b52e24157cc676531c74d9930c93f7756b7a61f5b48c"
+          },
+          {
+            "type": 1,
+            "offset": 36,
+            "size": 8,
+            "dataSha256": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc"
+          },
+          {
+            "type": 2,
+            "offset": 52,
+            "size": 300,
+            "dataSha256": "ebef998fc3f2144bc0ebb9da0ea0be63337d4264fcafe50fcf1b577d797c1fe4"
+          },
+          {
+            "type": 9,
+            "offset": 360,
+            "size": 12,
+            "dataSha256": "5f83e90b2746916b447afb8821eed534760805cedda234db6b8bb13610d545b1"
+          }
+        ]
+      }
+    },
+    {
+      "name": "xray-clear-sky",
+      "codec": "lzo1x",
+      "container": "xray-clear-sky.sav",
+      "raw": "xray-clear-sky.raw",
+      "streamOffset": 12,
+      "streamLength": 400,
+      "unpackedSize": 394,
+      "containerSummary": {
+        "magic": 4294967295,
+        "version": 5,
+        "unpackedSize": 394,
+        "rawSha256": "fc150ce5ec45c15370b34277e8a3baad9e5af8c7dcf8a03ec963b386f092a5e0",
+        "chunkTypes": [
+          0,
+          5,
+          1,
+          2,
+          9
+        ],
+        "chunks": [
+          {
+            "type": 0,
+            "offset": 0,
+            "size": 4,
+            "dataSha256": "2594b6a92ebfb1c3312deb7d01c015fb95e9fbe9bd7bc6b527af07813ec7b910"
+          },
+          {
+            "type": 5,
+            "offset": 12,
+            "size": 16,
+            "dataSha256": "e962f9931a10b27da307b52e24157cc676531c74d9930c93f7756b7a61f5b48c"
+          },
+          {
+            "type": 1,
+            "offset": 36,
+            "size": 8,
+            "dataSha256": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc"
+          },
+          {
+            "type": 2,
+            "offset": 52,
+            "size": 308,
+            "dataSha256": "9f79dc4675ac952671dbb636e756f7937811e8f7d61822c9b831e7e7e1386d65"
+          },
+          {
+            "type": 9,
+            "offset": 368,
+            "size": 18,
+            "dataSha256": "c96fcd3c4605b0e5a843cf156bbb85e282a8ba7e0c3da1628ebfa89f831be00b"
+          }
+        ]
+      }
+    },
+    {
+      "name": "xray-call-of-pripyat",
+      "codec": "lzo1x",
+      "container": "xray-call-of-pripyat.sav",
+      "raw": "xray-call-of-pripyat.raw",
+      "streamOffset": 12,
+      "streamLength": 408,
+      "unpackedSize": 402,
+      "containerSummary": {
+        "magic": 4294967295,
+        "version": 6,
+        "unpackedSize": 402,
+        "rawSha256": "74584b94e65472d73956561f9a880da954c8aa237c508408cf5bfb84294f87c2",
+        "chunkTypes": [
+          0,
+          5,
+          1,
+          2,
+          9
+        ],
+        "chunks": [
+          {
+            "type": 0,
+            "offset": 0,
+            "size": 4,
+            "dataSha256": "7aa8ca4a02506da9133d8f889678b76f716ce45d02e22fdb7b70a15e56a0eff8"
+          },
+          {
+            "type": 5,
+            "offset": 12,
+            "size": 16,
+            "dataSha256": "e962f9931a10b27da307b52e24157cc676531c74d9930c93f7756b7a61f5b48c"
+          },
+          {
+            "type": 1,
+            "offset": 36,
+            "size": 8,
+            "dataSha256": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc"
+          },
+          {
+            "type": 2,
+            "offset": 52,
+            "size": 310,
+            "dataSha256": "d4e3174e4a2c073a99e11d00f6c981ff1a473ca664da1bdea9227bcc31c7ba1e"
+          },
+          {
+            "type": 9,
+            "offset": 370,
+            "size": 24,
+            "dataSha256": "c1781fad693ccfb414a761c00552972c206d43294ce3b250ceac9acf5a66c330"
+          }
+        ]
+      }
+    },
+    {
+      "name": "xray-call-of-pripyat-base-item",
+      "codec": "lzo1x",
+      "container": "xray-call-of-pripyat-base-item.sav",
+      "raw": "xray-call-of-pripyat-base-item.raw",
+      "streamOffset": 12,
+      "streamLength": 390,
+      "unpackedSize": 384,
+      "containerSummary": {
+        "magic": 4294967295,
+        "version": 6,
+        "unpackedSize": 384,
+        "rawSha256": "9c35bb124b94aef46f0043eb66fd42a49e6bfe82ade518e8d7673cbb4afd1852",
+        "chunkTypes": [
+          0,
+          5,
+          1,
+          2,
+          9
+        ],
+        "chunks": [
+          {
+            "type": 0,
+            "offset": 0,
+            "size": 4,
+            "dataSha256": "7aa8ca4a02506da9133d8f889678b76f716ce45d02e22fdb7b70a15e56a0eff8"
+          },
+          {
+            "type": 5,
+            "offset": 12,
+            "size": 16,
+            "dataSha256": "e962f9931a10b27da307b52e24157cc676531c74d9930c93f7756b7a61f5b48c"
+          },
+          {
+            "type": 1,
+            "offset": 36,
+            "size": 8,
+            "dataSha256": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc"
+          },
+          {
+            "type": 2,
+            "offset": 52,
+            "size": 308,
+            "dataSha256": "df8f8558349cecb453dc7b48aeaf76a39ad394381642045ad8eb54066bd01acf"
+          },
+          {
+            "type": 9,
+            "offset": 368,
+            "size": 8,
+            "dataSha256": "872491a30d60d598962de6e7b834ab76b2aa65fbab102c6ebaaae6acdc238822"
+          }
+        ]
+      }
+    },
+    {
+      "name": "xray-soc-ee",
+      "codec": "lzo1x",
+      "container": "xray-soc-ee.sav",
+      "raw": "xray-soc-ee.raw",
+      "streamOffset": 12,
+      "streamLength": 389,
+      "unpackedSize": 383,
+      "containerSummary": {
+        "magic": 4294967295,
+        "version": 3,
+        "unpackedSize": 383,
+        "rawSha256": "f26f8b1464010e706b4b2ec20c75f6a94bf3bda5c51820168165c5a11ca19789",
+        "chunkTypes": [
+          0,
+          5,
+          1,
+          2,
+          9
+        ],
+        "chunks": [
+          {
+            "type": 0,
+            "offset": 0,
+            "size": 4,
+            "dataSha256": "40d95a7c7f1655a0070ddf3ce81eb83c0e88ab92766b85e6a0bb98503896e036"
+          },
+          {
+            "type": 5,
+            "offset": 12,
+            "size": 16,
+            "dataSha256": "e962f9931a10b27da307b52e24157cc676531c74d9930c93f7756b7a61f5b48c"
+          },
+          {
+            "type": 1,
+            "offset": 36,
+            "size": 8,
+            "dataSha256": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc"
+          },
+          {
+            "type": 2,
+            "offset": 52,
+            "size": 300,
+            "dataSha256": "ebef998fc3f2144bc0ebb9da0ea0be63337d4264fcafe50fcf1b577d797c1fe4"
+          },
+          {
+            "type": 9,
+            "offset": 360,
+            "size": 15,
+            "dataSha256": "e3d0304f8f08eb1d748ca10a973551704359f98807707a876b9a1153d33a69e8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "xray-clear-sky-ee",
+      "codec": "lzo1x",
+      "container": "xray-clear-sky-ee.sav",
+      "raw": "xray-clear-sky-ee.raw",
+      "streamOffset": 12,
+      "streamLength": 406,
+      "unpackedSize": 400,
+      "containerSummary": {
+        "magic": 4294967295,
+        "version": 6,
+        "unpackedSize": 400,
+        "rawSha256": "73dacda8fa3b55d6e009248b0c8d4b3d2ce1186a2a0398a283e21dc0acaa19ec",
+        "chunkTypes": [
+          0,
+          5,
+          1,
+          2,
+          9
+        ],
+        "chunks": [
+          {
+            "type": 0,
+            "offset": 0,
+            "size": 4,
+            "dataSha256": "6855b5c2b40b54d75fd440a0a03aa931fbdecc3cad86beef3eb94653289cd3a5"
+          },
+          {
+            "type": 5,
+            "offset": 12,
+            "size": 16,
+            "dataSha256": "e962f9931a10b27da307b52e24157cc676531c74d9930c93f7756b7a61f5b48c"
+          },
+          {
+            "type": 1,
+            "offset": 36,
+            "size": 8,
+            "dataSha256": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc"
+          },
+          {
+            "type": 2,
+            "offset": 52,
+            "size": 311,
+            "dataSha256": "7a858e1343858713edffed40e5cbd675e982d74e7dc6e0a30223a229d139de9b"
+          },
+          {
+            "type": 9,
+            "offset": 371,
+            "size": 21,
+            "dataSha256": "fe3d2d2b937c3e7ab11a87201d7ba6fca19e6bf08f08cfa3982b861b89ef7914"
+          }
+        ]
+      }
+    },
+    {
+      "name": "xray-call-of-pripyat-ee",
+      "codec": "lzo1x",
+      "container": "xray-call-of-pripyat-ee.sav",
+      "raw": "xray-call-of-pripyat-ee.raw",
+      "streamOffset": 12,
+      "streamLength": 412,
+      "unpackedSize": 406,
+      "containerSummary": {
+        "magic": 4294967295,
+        "version": 6,
+        "unpackedSize": 406,
+        "rawSha256": "4ad6d59d6c2d4369080f2bd6deff1d521d725a36a35328e91a040dd9ab462c46",
+        "chunkTypes": [
+          0,
+          5,
+          1,
+          2,
+          9
+        ],
+        "chunks": [
+          {
+            "type": 0,
+            "offset": 0,
+            "size": 4,
+            "dataSha256": "6855b5c2b40b54d75fd440a0a03aa931fbdecc3cad86beef3eb94653289cd3a5"
+          },
+          {
+            "type": 5,
+            "offset": 12,
+            "size": 16,
+            "dataSha256": "e962f9931a10b27da307b52e24157cc676531c74d9930c93f7756b7a61f5b48c"
+          },
+          {
+            "type": 1,
+            "offset": 36,
+            "size": 8,
+            "dataSha256": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc"
+          },
+          {
+            "type": 2,
+            "offset": 52,
+            "size": 311,
+            "dataSha256": "4145fe3a28d00a9d14fe1b63df88f5823d56945a7cd9dee749c67d4c6be5044f"
+          },
+          {
+            "type": 9,
+            "offset": 371,
+            "size": 27,
+            "dataSha256": "47852870cf158a14ede608aedefc63ce6931848e001e56e44ce707ba4f5e9151"
+          }
+        ]
+      }
+    },
+    {
+      "name": "lzo1x-literal-empty",
+      "codec": "lzo1x-literal",
+      "stream": "lzo1x-literal-empty.lzo",
+      "raw": "lzo1x-literal-empty.raw",
+      "streamLength": 3,
+      "unpackedSize": 0
+    },
+    {
+      "name": "lzo1x-literal-one-byte",
+      "codec": "lzo1x-literal",
+      "stream": "lzo1x-literal-one-byte.lzo",
+      "raw": "lzo1x-literal-one-byte.raw",
+      "streamLength": 5,
+      "unpackedSize": 1
+    },
+    {
+      "name": "lzo1x-literal-short-boundary",
+      "codec": "lzo1x-literal",
+      "stream": "lzo1x-literal-short-boundary.lzo",
+      "raw": "lzo1x-literal-short-boundary.raw",
+      "streamLength": 242,
+      "unpackedSize": 238
+    },
+    {
+      "name": "lzo1x-literal-long-boundary",
+      "codec": "lzo1x-literal",
+      "stream": "lzo1x-literal-long-boundary.lzo",
+      "raw": "lzo1x-literal-long-boundary.raw",
+      "streamLength": 724,
+      "unpackedSize": 717
+    },
+    {
+      "name": "lzo1x-literal-repeated",
+      "codec": "lzo1x-literal",
+      "stream": "lzo1x-literal-repeated.lzo",
+      "raw": "lzo1x-literal-repeated.raw",
+      "streamLength": 3016,
+      "unpackedSize": 3000
+    },
+    {
+      "name": "lzo1x-extended-m4",
+      "codec": "lzo1x-match",
+      "stream": "lzo1x-extended-m4.lzo",
+      "raw": "lzo1x-extended-m4.raw",
+      "streamLength": 11012,
+      "unpackedSize": 16397
+    },
+    {
+      "name": "synthetic-s2",
+      "codec": "kraken",
+      "container": "synthetic-s2.sav",
+      "raw": "synthetic-s2.raw",
+      "streamOffset": 4,
+      "streamLength": 352,
+      "unpackedSize": 350
+    }
+  ]
+}

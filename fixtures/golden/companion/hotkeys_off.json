@@ -1,0 +1,4 @@
+{
+  "command": "v1 c5 hotkeys off",
+  "reply": "v1 c5 ok hotkeys=off"
+}

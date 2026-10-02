@@ -1,0 +1,4 @@
+{
+  "command": "v2 b3 ping",
+  "reply": "v1 b3 error expected: v1 <id> <command> [args]"
+}

@@ -1,0 +1,137 @@
+{
+  "negativeCases": {
+    "enhancedWrites": "unsupported",
+    "truncatedRelationRegistry": true,
+    "unknownFactionKey": "foreign-faction-key"
+  },
+  "oracleRevision": "6f3839cb870161290ae1d404c40e291485c29e37",
+  "vectors": [
+    {
+      "actorRelations": [
+        [
+          0,
+          100
+        ],
+        [
+          1,
+          -100
+        ]
+      ],
+      "expected": "soc-expected.sav",
+      "expectedPlayerFaction": "soc-player-faction.sav",
+      "expectedPlayerFactionSha256": "eb584deff6de87658e1a5558cbd8701edf905600c0a0def5a23a6305ece630bf",
+      "expectedRelations": "soc-relations.sav",
+      "expectedRelationsSha256": "ba0edde0517475add0387636ccd41f9ba0faadc754acb306a9c7ead3bf69f5cb",
+      "expectedSha256": "f31e0d73ba7b4606251263d6c214e4e6325cd7425cb0f44b71e409f7f77b36e2",
+      "playerFactionIndex": 0,
+      "pythonCapabilities": {
+        "edit_player_faction": "experimental",
+        "edit_relations": "experimental"
+      },
+      "releaseId": "stalker-soc",
+      "source": "soc-source.sav",
+      "sourceSha256": "745e269b2cae2b516fe053c8655c09b942aa5e377d5fbcac7083267ac65e3722",
+      "targetFaction": "bandit",
+      "targetFactionIndex": 12,
+      "targetGoodwill": 375
+    },
+    {
+      "actorRelations": [
+        [
+          0,
+          100
+        ],
+        [
+          1,
+          -100
+        ]
+      ],
+      "expected": "cs-expected.sav",
+      "expectedPlayerFaction": "cs-player-faction.sav",
+      "expectedPlayerFactionSha256": "012e52d7f7721a61e46726ad9a98f34fdb185559f69df2460e1c4e61869faa51",
+      "expectedRelations": "cs-relations.sav",
+      "expectedRelationsSha256": "0ecd1cc83fa353ccc80efa58fe2bd33a0f042a45cfa3fb52a47b268bd6786b20",
+      "expectedSha256": "16a449765b1f795d41bec437acbc0531bac1a732de5d48a4d1b23da5a659b245",
+      "playerFactionIndex": 0,
+      "pythonCapabilities": {
+        "edit_player_faction": "experimental",
+        "edit_relations": "experimental"
+      },
+      "releaseId": "stalker-cs",
+      "source": "cs-source.sav",
+      "sourceSha256": "52f6d25cfc86303a7afb2eca4f2b9948b055f36a9c3bb4ae6ae572f051c904e0",
+      "targetFaction": "bandit",
+      "targetFactionIndex": 6,
+      "targetGoodwill": 375
+    },
+    {
+      "actorRelations": [
+        [
+          0,
+          100
+        ],
+        [
+          1,
+          -100
+        ]
+      ],
+      "expected": "cop-expected.sav",
+      "expectedPlayerFaction": "cop-player-faction.sav",
+      "expectedPlayerFactionSha256": "6acab7155133e63b04b65b904a3d6986ce8c9c111d1364ecacb67d1041165dba",
+      "expectedRelations": "cop-relations.sav",
+      "expectedRelationsSha256": "ade4b6f67b594130c8a93cde71a5159700c17d46d5a3de19ee1c3c4c7c8a87e0",
+      "expectedSha256": "7125ea17ffcbb4fce21a192ba004c38ac2ffbe3cf50fbf6efdc6f756336c001e",
+      "playerFactionIndex": 0,
+      "pythonCapabilities": {
+        "edit_player_faction": "experimental",
+        "edit_relations": "experimental"
+      },
+      "releaseId": "stalker-cop",
+      "source": "cop-source.sav",
+      "sourceSha256": "71c0a3d763c66552355dc51e60370242f92dc71d1d4cd4ee70d58db6381e98c3",
+      "targetFaction": "bandit",
+      "targetFactionIndex": 1,
+      "targetGoodwill": 375
+    },
+    {
+      "actorRelations": [
+        [
+          0,
+          100
+        ],
+        [
+          1,
+          -100
+        ]
+      ],
+      "playerFactionIndex": 0,
+      "pythonCapabilities": {
+        "edit_player_faction": "unsupported",
+        "edit_relations": "unsupported"
+      },
+      "releaseId": "stalker-cs-ee",
+      "source": "cs-ee-source.sav",
+      "sourceSha256": "4cfa4e6e6ceef1db74d9d625acb0ac8fa554ce3f453d99994dea2e5e317f1082"
+    },
+    {
+      "actorRelations": [
+        [
+          0,
+          100
+        ],
+        [
+          1,
+          -100
+        ]
+      ],
+      "playerFactionIndex": 0,
+      "pythonCapabilities": {
+        "edit_player_faction": "unsupported",
+        "edit_relations": "unsupported"
+      },
+      "releaseId": "stalker-cop-ee",
+      "source": "cop-ee-source.sav",
+      "sourceSha256": "1791fd790161ebf460d39628aca0645525256abd2428aa603d95e16cb5560254"
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "expectedObjectFlags": 145,
+  "expectedRaw": "s2-stash-expected.raw",
+  "expectedRawSha256": "815a8363962980bcc72c70d0045918ef66abe8c40cfaf1ef51376601a586da88",
+  "expectedRecordOffset": 395,
+  "expectedStashFlag": 0,
+  "handle": 805306384,
+  "negativeFixtures": {
+    "ambiguous": "s2-stash-ambiguous.sav",
+    "flagBitMissing": "s2-stash-missing-flag-bit.sav",
+    "missing": "s2-stash-no-stash.sav",
+    "truncated": "s2-stash-truncated.sav",
+    "unflagged": "s2-stash-unflagged.sav"
+  },
+  "oracleRevision": "6f3839cb870161290ae1d404c40e291485c29e37",
+  "source": "s2-stash-source.sav",
+  "sourceObjectFlags": 153,
+  "sourceRaw": "s2-stash-source.raw",
+  "sourceRawSha256": "3e45163897100bff23ac876c74162678d9fde78a42a90e6a9760cf59c3534f97",
+  "sourceRecordOffset": 391,
+  "sourceSha256": "d42a0b2a3d3ef806d6c30287bf1aaf50c6bd428d2b552353172a57a6a795280f",
+  "sourceStashFlag": 1
+}

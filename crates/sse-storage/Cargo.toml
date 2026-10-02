@@ -1,0 +1,12 @@
+[package]
+name = "sse-storage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+sse-core = { path = "../sse-core" }
+
+[lints]
+workspace = true

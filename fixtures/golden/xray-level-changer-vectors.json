@@ -1,0 +1,107 @@
+{
+  "oracleRevision": "6f3839cb870161290ae1d404c40e291485c29e37",
+  "vectors": [
+    {
+      "case": "soc",
+      "releaseId": "stalker-soc",
+      "source": "synthetic-level-changer-soc.bin",
+      "objectVersion": 118,
+      "destGameVertexId": 4660,
+      "destLevelVertexId": 591751049,
+      "destPosition": [
+        1.25,
+        -2.5,
+        3.75
+      ],
+      "destDirection": [
+        0.10000000149011612,
+        0.20000000298023224,
+        0.30000001192092896
+      ],
+      "destLevelName": "garbage",
+      "destLevelPointName": "garbage_from_swamp",
+      "silent": true,
+      "consumedBytes": 58
+    },
+    {
+      "case": "cs",
+      "releaseId": "stalker-cs",
+      "source": "synthetic-level-changer-cs.bin",
+      "objectVersion": 53,
+      "destGameVertexId": 9,
+      "destLevelVertexId": 17,
+      "destPosition": [
+        4.0,
+        5.0,
+        6.0
+      ],
+      "destDirection": [
+        0.0,
+        1.5,
+        0.0
+      ],
+      "destLevelName": "level",
+      "destLevelPointName": "point",
+      "silent": null,
+      "consumedBytes": 34
+    },
+    {
+      "case": "cop",
+      "releaseId": "stalker-cop",
+      "source": "synthetic-level-changer-cop.bin",
+      "objectVersion": 118,
+      "destGameVertexId": 9029,
+      "destLevelVertexId": 305419896,
+      "destPosition": [
+        -1.0,
+        2.0,
+        3.0
+      ],
+      "destDirection": [
+        0.4000000059604645,
+        0.5,
+        0.6000000238418579
+      ],
+      "destLevelName": "zaton",
+      "destLevelPointName": "zaton_from_skadovsk",
+      "silent": false,
+      "consumedBytes": 57
+    },
+    {
+      "case": "legacy",
+      "releaseId": null,
+      "source": "synthetic-level-changer-legacy.bin",
+      "objectVersion": 33,
+      "destGameVertexId": null,
+      "destLevelVertexId": null,
+      "destPosition": null,
+      "destDirection": null,
+      "destLevelName": "level",
+      "destLevelPointName": "point",
+      "silent": null,
+      "consumedBytes": 20
+    },
+    {
+      "case": "cp1251",
+      "releaseId": null,
+      "source": "synthetic-level-changer-cp1251.bin",
+      "objectVersion": 118,
+      "destGameVertexId": 1,
+      "destLevelVertexId": 2,
+      "destPosition": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "destDirection": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "destLevelName": "болото",
+      "destLevelPointName": "точка",
+      "silent": true,
+      "consumedBytes": 44
+    }
+  ]
+}

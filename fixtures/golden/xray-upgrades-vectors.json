@@ -1,0 +1,231 @@
+{
+  "negativeCases": {
+    "unknownItemHandle": {
+      "expectedError": "unknown item",
+      "invalidHandle": 39321
+    },
+    "unregisteredUpgradeKey": {
+      "expectedError": "upgrade not in catalog",
+      "handle": 13398,
+      "invalidUpgrades": [
+        "up_unknown_key"
+      ]
+    },
+    "unsupportedReleaseSoc": {
+      "expectedError": "upgrades not supported",
+      "fixture": "xray-upgrades-soc-unsupported-source.sav",
+      "releaseId": "stalker-soc"
+    }
+  },
+  "oracleRevision": "592248677dc4844685290a013cb6778f2d17588d",
+  "vectors": [
+    {
+      "capabilities": {
+        "add_items": "verified",
+        "edit_money": "verified",
+        "edit_stacks": "verified",
+        "edit_upgrades": "experimental",
+        "remove_items": "verified"
+      },
+      "changedRawOffsets": [
+        357,
+        358,
+        359,
+        361,
+        362,
+        363,
+        364,
+        365,
+        366,
+        367,
+        368,
+        369,
+        370,
+        371,
+        372,
+        373,
+        374,
+        376,
+        377,
+        378,
+        380,
+        381,
+        382,
+        383,
+        384
+      ],
+      "expected": "xray-upgrades-cs-expected.sav",
+      "expectedRaw": "xray-upgrades-cs-expected.raw",
+      "expectedRawSha256": "eb76ca963713c53a73fb223c453c9ab86cb3670f82842c1d551cecbd415767cd",
+      "expectedSha256": "497b67740da9e51bb8c9ecd64f2159e7a94f6cff8e4e364ee463857f04b3af16",
+      "handle": 13398,
+      "releaseId": "stalker-cs",
+      "source": "xray-upgrades-cs-source.sav",
+      "sourceSha256": "e94a23c9d9ba463bbb41c80d37e02aae7151360d1eb3470922e312a5a1e83717",
+      "sourceUpgrades": [
+        "up_a_wpn_test",
+        "legacy_unknown"
+      ],
+      "targetUpgrades": [
+        "legacy_unknown",
+        "up_c_wpn_test"
+      ]
+    },
+    {
+      "capabilities": {
+        "add_items": "verified",
+        "edit_money": "verified",
+        "edit_stacks": "verified",
+        "edit_upgrades": "experimental",
+        "remove_items": "verified"
+      },
+      "changedRawOffsets": [
+        359,
+        360,
+        361,
+        363,
+        364,
+        365,
+        366,
+        367,
+        368,
+        369,
+        370,
+        371,
+        372,
+        373,
+        374,
+        375,
+        376,
+        378,
+        379,
+        380,
+        382,
+        383,
+        384,
+        385,
+        386
+      ],
+      "expected": "xray-upgrades-cop-expected.sav",
+      "expectedRaw": "xray-upgrades-cop-expected.raw",
+      "expectedRawSha256": "2f8db935b7d8da1f5e69e25fc22e63b01fbc67d05f0e507e9099e6bb2d1b8128",
+      "expectedSha256": "b3a2ea6f73bf7c95ef9c3ea662e0c0c0e34ca7c9304761a13ce501d853ade7ba",
+      "handle": 13398,
+      "releaseId": "stalker-cop",
+      "source": "xray-upgrades-cop-source.sav",
+      "sourceSha256": "be376db4c26686e887fae1218a9aa7331614c5800689f0c7dd38044897d188eb",
+      "sourceUpgrades": [
+        "up_a_wpn_test",
+        "legacy_unknown"
+      ],
+      "targetUpgrades": [
+        "legacy_unknown",
+        "up_c_wpn_test"
+      ]
+    },
+    {
+      "capabilities": {
+        "add_items": "experimental",
+        "edit_money": "experimental",
+        "edit_stacks": "experimental",
+        "edit_upgrades": "unsupported",
+        "remove_items": "experimental"
+      },
+      "changedRawOffsets": [
+        359,
+        360,
+        361,
+        363,
+        364,
+        365,
+        366,
+        367,
+        368,
+        369,
+        370,
+        371,
+        372,
+        373,
+        374,
+        375,
+        376,
+        378,
+        379,
+        380,
+        382,
+        383,
+        384,
+        385,
+        386
+      ],
+      "expected": "xray-upgrades-cs-ee-expected.sav",
+      "expectedRaw": "xray-upgrades-cs-ee-expected.raw",
+      "expectedRawSha256": "6514ee3e76b0f86537877e5a936a950be9de384d00e40d96ab6ac16ddf9d245a",
+      "expectedSha256": "6b39ebd24ed0314dae9ad8c70a2cf380d309dac8196ff3fec91c1fde7c2e2d2d",
+      "handle": 13398,
+      "releaseId": "stalker-cs-ee",
+      "source": "xray-upgrades-cs-ee-source.sav",
+      "sourceSha256": "7446598e89f2c25a8bb5128527d596ab6943329250e1f0cda5c11e16ee46524c",
+      "sourceUpgrades": [
+        "up_a_wpn_test",
+        "legacy_unknown"
+      ],
+      "targetUpgrades": [
+        "legacy_unknown",
+        "up_c_wpn_test"
+      ]
+    },
+    {
+      "capabilities": {
+        "add_items": "experimental",
+        "edit_money": "experimental",
+        "edit_stacks": "experimental",
+        "edit_upgrades": "unsupported",
+        "remove_items": "experimental"
+      },
+      "changedRawOffsets": [
+        359,
+        360,
+        361,
+        363,
+        364,
+        365,
+        366,
+        367,
+        368,
+        369,
+        370,
+        371,
+        372,
+        373,
+        374,
+        375,
+        376,
+        378,
+        379,
+        380,
+        382,
+        383,
+        384,
+        385,
+        386
+      ],
+      "expected": "xray-upgrades-cop-ee-expected.sav",
+      "expectedRaw": "xray-upgrades-cop-ee-expected.raw",
+      "expectedRawSha256": "42d4738c8b6528cb473b1a20762d3af3e4f7c2058c70a7bc997e8d6353dc75b2",
+      "expectedSha256": "24086142c3204283bd7c2bf7bbfee8c13803e3d6eb4a7274fb482f84300f1ad7",
+      "handle": 13398,
+      "releaseId": "stalker-cop-ee",
+      "source": "xray-upgrades-cop-ee-source.sav",
+      "sourceSha256": "5a774e0a1c0ed9181955bcf6e27ba19ce1bf993cc2b8fef300afdceb00369d5c",
+      "sourceUpgrades": [
+        "up_a_wpn_test",
+        "legacy_unknown"
+      ],
+      "targetUpgrades": [
+        "legacy_unknown",
+        "up_c_wpn_test"
+      ]
+    }
+  ]
+}

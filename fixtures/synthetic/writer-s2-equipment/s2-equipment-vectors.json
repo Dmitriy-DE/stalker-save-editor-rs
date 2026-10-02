@@ -1,0 +1,90 @@
+{
+  "oracleRevision": "6f3839cb870161290ae1d404c40e291485c29e37",
+  "vectors": [
+    {
+      "capability": "experimental",
+      "case": "armor",
+      "changedRawOffsets": [
+        393,
+        394,
+        395
+      ],
+      "conditionOffset": 393,
+      "displayName": "Exoskeleton_Monolith_Armor",
+      "expected": "s2-equipment-armor-expected.sav",
+      "expectedRaw": "s2-equipment-armor-expected.raw",
+      "expectedRawSha256": "f3aeaa5f06dceac3be80a34af44e94a9fa7958ac486a380c569073e3d057de47",
+      "expectedSha256": "828e7c3d02693864bda184fed4fed04ad0ab92e8e097597df50044efdee2f4ca",
+      "handle": 805308859,
+      "kindCode": 1,
+      "modules": null,
+      "money": null,
+      "moneyOffset": null,
+      "recordOffset": 354,
+      "source": "s2-equipment-armor-source.sav",
+      "sourceCondition": 0.75,
+      "sourceSha256": "c9ef70addfa9b4c5d6c8fd60cfa1af32c96607c8f1f9117d0b14ca822174a82d",
+      "targetCondition": 0.9,
+      "upgrades": null
+    },
+    {
+      "capability": "experimental",
+      "case": "weapon",
+      "changedRawOffsets": [
+        490,
+        491,
+        492
+      ],
+      "conditionOffset": 490,
+      "displayName": "GunKharod_ST",
+      "expected": "s2-equipment-weapon-expected.sav",
+      "expectedRaw": "s2-equipment-weapon-expected.raw",
+      "expectedRawSha256": "e544effa8367cea74f7e0fd8ffdbc85822eb128bc245bc126d3bf3eaa4bbadaa",
+      "expectedSha256": "3894cbb74683dcc36b9fbabd8bb665a646954cdacff00d7571627436e47103c5",
+      "handle": 805309098,
+      "kindCode": 0,
+      "modules": [
+        "GunKharod_MagDefault",
+        "HP_Laser_1"
+      ],
+      "money": null,
+      "moneyOffset": null,
+      "recordOffset": 362,
+      "source": "s2-equipment-weapon-source.sav",
+      "sourceCondition": 0.75,
+      "sourceSha256": "73d994242420ad3d01bf3164c23af324b92d95b6b5c2984b1998a1050612e42e",
+      "targetCondition": 0.9,
+      "upgrades": [
+        "GunKharod_Upgrade_Stock_1",
+        "GunKharod_Upgrade_Barrel_1"
+      ]
+    },
+    {
+      "capability": "experimental",
+      "case": "armor-money",
+      "changedRawOffsets": [
+        50,
+        51,
+        52,
+        395
+      ],
+      "conditionOffset": 393,
+      "displayName": "Exoskeleton_Monolith_Armor",
+      "expected": "s2-equipment-armor-money-expected.sav",
+      "expectedRaw": "s2-equipment-armor-money-expected.raw",
+      "expectedRawSha256": "e116a80f143ff6ce85c5244d4a60a73cfe0627fab07a82af8a9338954e8666fa",
+      "expectedSha256": "c96d34725883c65aee581bff1eae665abc4c700a35165de71f4142738c9c0976",
+      "handle": 805308859,
+      "kindCode": 1,
+      "modules": null,
+      "money": 900000,
+      "moneyOffset": 50,
+      "recordOffset": 354,
+      "source": "s2-equipment-armor-money-source.sav",
+      "sourceCondition": 0.75,
+      "sourceSha256": "c9ef70addfa9b4c5d6c8fd60cfa1af32c96607c8f1f9117d0b14ca822174a82d",
+      "targetCondition": 1.0,
+      "upgrades": null
+    }
+  ]
+}

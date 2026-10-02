@@ -1,0 +1,10 @@
+-- synthetic soc menu fixture: меню
+function main_menu:OnKeyboard(dik, keyboard_action)
+	if keyboard_action == ui_events.WINDOW_KEY_PRESSED then
+		if dik == DIK_keys.DIK_Q then
+			self:Close()
+		end
+	 	
+	end
+	return true
+end

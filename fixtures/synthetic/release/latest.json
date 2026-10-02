@@ -1,0 +1,56 @@
+{
+  "artifacts": {
+    "linux-deb-amd64": {
+      "architecture": "x86_64",
+      "file": "stalker-save-editor_amd64.deb",
+      "kind": "package",
+      "sha256": "3af0c013e25578790e248231534cf92f6c1b5dc335f6c7d7eed6ae711e69677a",
+      "size": 700,
+      "target": "linux-deb-amd64",
+      "url": "https://save-editor-downloads.save-editor.workers.dev/stalker-save-editor_amd64.deb"
+    },
+    "linux-x86_64": {
+      "architecture": "x86_64",
+      "file": "SaveEditor-linux-x86_64.tar.gz",
+      "kind": "portable",
+      "sha256": "77d8df475da6b32a1993410066df04c4971900e426d28e40b89da65e0a8013b0",
+      "size": 800,
+      "target": "linux-x86_64",
+      "url": "https://save-editor-downloads.save-editor.workers.dev/SaveEditor-linux-x86_64.tar.gz"
+    },
+    "windows-x86_64": {
+      "architecture": "x86_64",
+      "file": "SaveEditor-windows-x86_64.zip",
+      "kind": "portable",
+      "sha256": "178fa67a7e5f8fa77090ac9c5185b5886da9697b2e673e91694803e27beee7a7",
+      "size": 1000,
+      "target": "windows-x86_64",
+      "url": "https://save-editor-downloads.save-editor.workers.dev/SaveEditor-windows-x86_64.zip"
+    }
+  },
+  "channel": "stable",
+  "optional_artifacts": {
+    "macos-arm64": {
+      "architecture": "arm64",
+      "file": "SaveEditor-macos-arm64.dmg",
+      "kind": "disk-image",
+      "sha256": "bfa79c6e4c580582f738ad90b3f89aba4e812df0495c5d15cdc5ca367045517c",
+      "size": 600,
+      "target": "macos-arm64",
+      "url": "https://save-editor-downloads.save-editor.workers.dev/SaveEditor-macos-arm64.dmg"
+    },
+    "windows-installer-x86_64": {
+      "architecture": "x86_64",
+      "file": "SaveEditor-windows-x86_64-setup.exe",
+      "kind": "installer",
+      "sha256": "40073b370ae4b576d2eb7340e5eb0f481217bd44c57112a17e8114012fff8bcb",
+      "size": 900,
+      "target": "windows-installer-x86_64",
+      "url": "https://save-editor-downloads.save-editor.workers.dev/SaveEditor-windows-x86_64-setup.exe"
+    }
+  },
+  "published_at": "2026-09-28T03:14:06.293095Z",
+  "schema": 1,
+  "source_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "version": "1.0.0"
+}

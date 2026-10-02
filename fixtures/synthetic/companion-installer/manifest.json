@@ -1,0 +1,81 @@
+{
+  "synthetic": true,
+  "games": {
+    "soc": {
+      "archive": "soc.db",
+      "entries": [
+        {
+          "name": "gamedata/scripts/bind_stalker.script",
+          "size": 234,
+          "sha256": "a799f818b8d33715cbf9268a8042cef79d02336e8231504569ae2bc3bd0daa23"
+        },
+        {
+          "name": "gamedata/scripts/ui_main_menu.script",
+          "size": 235,
+          "sha256": "18441f41717529a4c2f2a3e6e74d9cfe467f173a7d47457369817346293f8d91"
+        },
+        {
+          "name": "gamedata/config/misc/quest_items.ltx",
+          "size": 73,
+          "sha256": "cfdcdc3242feb0f14c1ceb287d5e50ddc3621c2d87ded41acf5a16e2d6eefc1e"
+        }
+      ]
+    },
+    "cs": {
+      "archive": "cs.db",
+      "entries": [
+        {
+          "name": "gamedata/scripts/bind_stalker.script",
+          "size": 233,
+          "sha256": "119d1e21935c1988b99eaf6c3f68647bf94d22a9f2fb1b808c52b30f9581a1a2"
+        },
+        {
+          "name": "gamedata/scripts/ui_main_menu.script",
+          "size": 234,
+          "sha256": "b1681921fd4e0089d9328f9a8b3f4d1a78478eee77359710b980e660c4bb982b"
+        },
+        {
+          "name": "gamedata/configs/misc/quest_items.ltx",
+          "size": 72,
+          "sha256": "7d7012e819f42b11b9c73bfc2ee5f6fd36eb9589d8a4e02e8ca9b61232036801"
+        }
+      ]
+    },
+    "cop": {
+      "archive": "cop.db",
+      "entries": [
+        {
+          "name": "gamedata/scripts/bind_stalker.script",
+          "size": 205,
+          "sha256": "2e7a79c6867e96f928e778d7a1a247ac4ed8833bb43fefdd8eef618dfad33c79"
+        },
+        {
+          "name": "gamedata/scripts/ui_main_menu.script",
+          "size": 235,
+          "sha256": "45d45354c4afa169ac2c911e832d514217cbb92ee1fad58ec6413ac6c43a1976"
+        },
+        {
+          "name": "gamedata/configs/misc/quest_items.ltx",
+          "size": 73,
+          "sha256": "d538374969b73ba5965ac6c5faf5f453268aaa858d0e6ad1813b2280e78668c8"
+        }
+      ],
+      "patchArchive01": "cop-patch-01.db",
+      "patchEntries01": [
+        {
+          "name": "gamedata/scripts/ui_main_menu.script",
+          "size": 268,
+          "sha256": "3391caacb12b07d564ab39697bd4c17a827e03f83c6ad89b97e704ff9333a09c"
+        }
+      ],
+      "patchArchive02": "cop-patch-02.db",
+      "patchEntries02": [
+        {
+          "name": "gamedata/scripts/ui_main_menu.script",
+          "size": 268,
+          "sha256": "831f2d5c3afb8637f50c803561b24690cb85c038679f6238cdd7c019d68d073d"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,65 @@
+{
+  "languages": {
+    "cs": {
+      "file": "cs.json",
+      "key_count": 1327
+    },
+    "de": {
+      "file": "de.json",
+      "key_count": 1327
+    },
+    "en": {
+      "file": "en.json",
+      "key_count": 1327
+    },
+    "es": {
+      "file": "es.json",
+      "key_count": 1327
+    },
+    "fr": {
+      "file": "fr.json",
+      "key_count": 1327
+    },
+    "it": {
+      "file": "it.json",
+      "key_count": 1327
+    },
+    "ja": {
+      "file": "ja.json",
+      "key_count": 1327
+    },
+    "ko": {
+      "file": "ko.json",
+      "key_count": 1327
+    },
+    "pl": {
+      "file": "pl.json",
+      "key_count": 1327
+    },
+    "pt_BR": {
+      "file": "pt_BR.json",
+      "key_count": 1327
+    },
+    "tr": {
+      "file": "tr.json",
+      "key_count": 1327
+    },
+    "uk": {
+      "file": "uk.json",
+      "key_count": 1327
+    },
+    "zh_CN": {
+      "file": "zh_CN.json",
+      "key_count": 1327
+    },
+    "zh_TW": {
+      "file": "zh_TW.json",
+      "key_count": 1327
+    },
+    "ru": {
+      "file": "ru.json",
+      "key_count": 1327
+    }
+  },
+  "total_unique_keys": 1327
+}

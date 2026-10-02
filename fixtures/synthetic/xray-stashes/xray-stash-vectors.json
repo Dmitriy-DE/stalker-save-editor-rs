@@ -1,0 +1,115 @@
+{
+  "oracleRevision": "94351dc46eeec316ba16d230d37f5553ec5d6cd0",
+  "vectors": [
+    {
+      "releaseId": "stalker-soc",
+      "source": "xray-stash-soc-source.sav",
+      "expectedTake": "xray-stash-soc-take.sav",
+      "expectedTakeRaw": "xray-stash-soc-take.raw",
+      "sourceSha256": "c1401d934cf6cc6550d41c2cd2b579b19fa58f6856ee856dc4aa451c062370a9",
+      "expectedTakeSha256": "202f5940a39af6df8cfc85c3c2c47c25b3cdfc1269a398ee1cb3d5ea31c554f6",
+      "expectedTakeRawSha256": "4e3df8e0859e49b153e7ab207523d03b53124ff00d4faeef217f13cb562e7374",
+      "actorId": 0,
+      "boxId": 16,
+      "boxName": "esc_actor_stash",
+      "level": "Кордон",
+      "stashItemName": "bandage_stash",
+      "stashItemUpgrades": [],
+      "stashItemId": 9029,
+      "backpackItemId": 13398
+    },
+    {
+      "releaseId": "stalker-cs",
+      "source": "xray-stash-cs-source.sav",
+      "expectedTake": "xray-stash-cs-take.sav",
+      "expectedTakeRaw": "xray-stash-cs-take.raw",
+      "sourceSha256": "ce9b2a647d3cd00a6238890415f7c87d49b43ef1768ae3e16e57d4f148ebb7a6",
+      "expectedTakeSha256": "3767a91dbd1ddcfee16bb7455171fb8428e4b8c12adcac4fa9990aaee90ff9a0",
+      "expectedTakeRawSha256": "ac2c021d2ff7ba48c4b2aaa04d604c3490e7b302ee8a873fdafeabe7c6840994",
+      "actorId": 0,
+      "boxId": 16,
+      "boxName": "mar_actor_stash",
+      "level": "Болота",
+      "stashItemName": "bandage_stash",
+      "stashItemUpgrades": [
+        "upg_stash_test"
+      ],
+      "stashItemId": 9029,
+      "backpackItemId": 13398
+    },
+    {
+      "releaseId": "stalker-cop",
+      "source": "xray-stash-cop-source.sav",
+      "expectedTake": "xray-stash-cop-take.sav",
+      "expectedTakeRaw": "xray-stash-cop-take.raw",
+      "sourceSha256": "286c17127db7d371dee3b5f7ac5571f2ac5b8bd31247e64bf8937cf5de7c7701",
+      "expectedTakeSha256": "7545c06135e49c8411337b54330c48c3498da75bafad5cadaa322fe56b5ba09a",
+      "expectedTakeRawSha256": "9524f3e72d1b0f70592cd5d827d30558f30aaaf6f585f5f1edd0d05303003e8e",
+      "actorId": 0,
+      "boxId": 16,
+      "boxName": "zat_actor_stash",
+      "level": "Затон",
+      "stashItemName": "bandage_stash",
+      "stashItemUpgrades": [
+        "upg_stash_test"
+      ],
+      "stashItemId": 9029,
+      "backpackItemId": 13398
+    },
+    {
+      "releaseId": "stalker-soc-ee",
+      "source": "xray-stash-soc-ee-source.sav",
+      "expectedTake": "xray-stash-soc-ee-take.sav",
+      "expectedTakeRaw": "xray-stash-soc-ee-take.raw",
+      "sourceSha256": "b6c05003c9d987c631bb3ac4984c71fda4f0c1e936eb29b3e53f18801af1bc05",
+      "expectedTakeSha256": "2d1d9ee8339b723551c12a3bceb17892c5fd3b9a4ce9fed6ae54b0e257a80fec",
+      "expectedTakeRawSha256": "8dc7700aebfe86938857aedc246fbdd4ac2a1e65e4722af4c50a0025c50a3d0a",
+      "actorId": 0,
+      "boxId": 16,
+      "boxName": "esc_actor_stash",
+      "level": "Кордон",
+      "stashItemName": "bandage_stash",
+      "stashItemUpgrades": [],
+      "stashItemId": 9029,
+      "backpackItemId": 13398
+    },
+    {
+      "releaseId": "stalker-cs-ee",
+      "source": "xray-stash-cs-ee-source.sav",
+      "expectedTake": "xray-stash-cs-ee-take.sav",
+      "expectedTakeRaw": "xray-stash-cs-ee-take.raw",
+      "sourceSha256": "91c75d45f711258a2118e85d50ac069291758cee6010aa5a5a86bbc8e66353d0",
+      "expectedTakeSha256": "05f77d57ebe4fdcb4837d5e95b0ee30b5031506fa58e9fcc34eb6ba2fe2e9862",
+      "expectedTakeRawSha256": "4a840cccf0982d09b98f1f9d89ffdc76add43824773ca35d5746a4e961896296",
+      "actorId": 0,
+      "boxId": 16,
+      "boxName": "mar_actor_stash",
+      "level": "Болота",
+      "stashItemName": "bandage_marsh",
+      "stashItemUpgrades": [
+        "upg_stash_test"
+      ],
+      "stashItemId": 9029,
+      "backpackItemId": 13398
+    },
+    {
+      "releaseId": "stalker-cop-ee",
+      "source": "xray-stash-cop-ee-source.sav",
+      "expectedTake": "xray-stash-cop-ee-take.sav",
+      "expectedTakeRaw": "xray-stash-cop-ee-take.raw",
+      "sourceSha256": "1d7da3f13f553a82555784725d1997501a6ed9bdbedd8e3197234a4118d5f645",
+      "expectedTakeSha256": "2c50b6b34613ffad6937aa3e2b960016ba7e5d7e4721b97baaf2170ce3837d1d",
+      "expectedTakeRawSha256": "38e732911ffaaec0cc57a0039903aa4c47927b5f710062368eaa766255df5271",
+      "actorId": 0,
+      "boxId": 16,
+      "boxName": "zat_actor_stash",
+      "level": "Затон",
+      "stashItemName": "bandage_zaton",
+      "stashItemUpgrades": [
+        "upg_stash_test"
+      ],
+      "stashItemId": 9029,
+      "backpackItemId": 13398
+    }
+  ]
+}

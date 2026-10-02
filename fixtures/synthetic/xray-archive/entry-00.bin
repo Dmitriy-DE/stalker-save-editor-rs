@@ -1,0 +1,3 @@
+[ammo_test]
+class = AMMO
+inv_name = st_ammo_test

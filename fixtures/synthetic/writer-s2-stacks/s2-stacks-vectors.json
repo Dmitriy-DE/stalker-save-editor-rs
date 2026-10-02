@@ -1,0 +1,13 @@
+{
+  "capability": "experimental",
+  "count": 7,
+  "expected": "s2-stacks-expected.sav",
+  "expectedRaw": "s2-stacks-expected.raw",
+  "expectedRawSha256": "54e86865361f3f2029609b2995e712a0f3a17c04c563837094d37c2baf58ca25",
+  "expectedSha256": "6b8b86ef7036cb89b708d62f5d6c986f20d96e3ac0d01a39a426f15e2ddcf78d",
+  "handle": 805306369,
+  "oracleRevision": "6f3839cb870161290ae1d404c40e291485c29e37",
+  "source": "s2-stacks-source.sav",
+  "sourceSha256": "2fe435d0909e812c362c7577e5adaaef1390e22ea06a46571510530caae92408",
+  "unknownKindHandle": 805306372
+}

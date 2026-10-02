@@ -1,0 +1,4 @@
+{
+  "command": "v1 c3 quicksave",
+  "reply": "v1 c3 ok se_quick"
+}

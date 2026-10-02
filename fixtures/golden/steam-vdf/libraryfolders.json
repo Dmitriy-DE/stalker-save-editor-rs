@@ -1,0 +1,19 @@
+{
+  "library_paths": [
+    "C:\\Steam",
+    "D:\\Games\\SteamLibrary"
+  ],
+  "malformed_error": "unterminated quoted VDF string",
+  "oracle_revision": "94351dc46eeec316ba16d230d37f5553ec5d6cd0",
+  "parsed": {
+    "libraryfolders": {
+      "0": "C:\\Steam",
+      "1": {
+        "apps": {
+          "41700": "1"
+        },
+        "path": "D:\\Games\\SteamLibrary"
+      }
+    }
+  }
+}

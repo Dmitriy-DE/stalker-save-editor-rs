@@ -1,0 +1,4 @@
+{
+  "command": "v1 a2 info",
+  "reply": "v1 a2 ok level=zaton x=12.500 y=-3.000 z=240.125 money=15000"
+}

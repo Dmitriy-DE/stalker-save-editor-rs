@@ -1,0 +1,755 @@
+{
+  "formats": [
+    {
+      "capabilities": {
+        "add_items": false,
+        "catalog": true,
+        "edit_durability": true,
+        "edit_money": true,
+        "edit_placement": false,
+        "edit_player_faction": false,
+        "edit_relations": false,
+        "edit_stacks": true,
+        "edit_upgrades": false,
+        "equipment": {
+          "add": {
+            "maturity": "unsupported",
+            "reason": "S2 add/clone constructor is not confirmed."
+          },
+          "categories": [
+            "weapon",
+            "armor",
+            "helmet",
+            "module",
+            "device",
+            "consumable",
+            "ammo",
+            "artifact",
+            "quest",
+            "other"
+          ],
+          "device_subtypes": [
+            "nvg",
+            "binocular",
+            "detector",
+            "other",
+            "unknown"
+          ],
+          "durability": {
+            "maturity": "experimental",
+            "reason": "S2 weapon/armor condition anchor is source-backed; game load/re-save is not accepted yet."
+          },
+          "icon_source": "official loose CFG/localization; selected Zone Kit/Workshop is presentation-only",
+          "placement": {
+            "maturity": "unsupported",
+            "reason": "S2 placement serialization is not confirmed."
+          },
+          "remove": {
+            "maturity": "unsupported",
+            "reason": "S2 safe remove/reference graph is not confirmed."
+          },
+          "upgrades": {
+            "maturity": "research",
+            "reason": "S2 module/upgrade vectors are observed but installed/current state is not proven."
+          }
+        },
+        "experimental_fields": [
+          "edit_durability",
+          "edit_money",
+          "edit_stacks"
+        ],
+        "move_items": false,
+        "mutation_support": {
+          "add_items": {
+            "maturity": "unsupported",
+            "reason": null
+          },
+          "edit_durability": {
+            "maturity": "experimental",
+            "reason": "S2 weapon/armor condition anchor is source-backed; game load/re-save is not accepted yet."
+          },
+          "edit_money": {
+            "maturity": "experimental",
+            "reason": null
+          },
+          "edit_placement": {
+            "maturity": "unsupported",
+            "reason": null
+          },
+          "edit_player_faction": {
+            "maturity": "unsupported",
+            "reason": null
+          },
+          "edit_relations": {
+            "maturity": "unsupported",
+            "reason": null
+          },
+          "edit_stacks": {
+            "maturity": "experimental",
+            "reason": null
+          },
+          "edit_upgrades": {
+            "maturity": "unsupported",
+            "reason": null
+          },
+          "move_items": {
+            "maturity": "unsupported",
+            "reason": null
+          },
+          "remove_items": {
+            "maturity": "unsupported",
+            "reason": null
+          }
+        },
+        "read_inventory": true,
+        "remove_items": false
+      },
+      "edition": "s2",
+      "id": "stalker2",
+      "release_id": "stalker2"
+    },
+    {
+      "capabilities": {
+        "add_items": true,
+        "catalog": true,
+        "edit_durability": true,
+        "edit_money": true,
+        "edit_placement": true,
+        "edit_player_faction": true,
+        "edit_relations": true,
+        "edit_stacks": true,
+        "edit_upgrades": false,
+        "equipment": {
+          "add": {
+            "maturity": "experimental",
+            "reason": "X-Ray structural add writer requires game load/re-save evidence."
+          },
+          "categories": [
+            "weapon",
+            "armor",
+            "module",
+            "device",
+            "consumable",
+            "ammo",
+            "artifact",
+            "quest",
+            "other"
+          ],
+          "device_subtypes": [
+            "detector",
+            "other",
+            "unknown"
+          ],
+          "durability": {
+            "maturity": "experimental",
+            "reason": "X-Ray condition writer requires game load/re-save evidence."
+          },
+          "icon_source": "official X-Ray game resources",
+          "placement": {
+            "maturity": "experimental",
+            "reason": "X-Ray placement anchor requires game load/re-save evidence."
+          },
+          "remove": {
+            "maturity": "experimental",
+            "reason": "X-Ray structural remove writer requires game load/re-save evidence."
+          },
+          "upgrades": {
+            "maturity": "unsupported",
+            "reason": "SoC upgrade writer is not confirmed."
+          }
+        },
+        "experimental_fields": [
+          "edit_durability",
+          "edit_placement",
+          "edit_player_faction",
+          "edit_relations",
+          "move_items"
+        ],
+        "move_items": true,
+        "mutation_support": {
+          "add_items": {
+            "maturity": "verified",
+            "reason": null
+          },
+          "edit_durability": {
+            "maturity": "experimental",
+            "reason": "X-Ray condition writer requires game load/re-save evidence."
+          },
+          "edit_money": {
+            "maturity": "verified",
+            "reason": null
+          },
+          "edit_placement": {
+            "maturity": "experimental",
+            "reason": "X-Ray placement anchor requires game load/re-save evidence."
+          },
+          "edit_player_faction": {
+            "maturity": "experimental",
+            "reason": null
+          },
+          "edit_relations": {
+            "maturity": "experimental",
+            "reason": null
+          },
+          "edit_stacks": {
+            "maturity": "verified",
+            "reason": null
+          },
+          "edit_upgrades": {
+            "maturity": "unsupported",
+            "reason": null
+          },
+          "move_items": {
+            "maturity": "experimental",
+            "reason": "X-Ray stash take/put is read-back verified; game load/re-save is not accepted yet."
+          },
+          "remove_items": {
+            "maturity": "verified",
+            "reason": null
+          }
+        },
+        "read_inventory": true,
+        "remove_items": true
+      },
+      "edition": "original",
+      "id": "stalker-soc",
+      "release_id": "stalker-soc"
+    },
+    {
+      "capabilities": {
+        "add_items": true,
+        "catalog": true,
+        "edit_durability": true,
+        "edit_money": true,
+        "edit_placement": true,
+        "edit_player_faction": true,
+        "edit_relations": true,
+        "edit_stacks": true,
+        "edit_upgrades": true,
+        "equipment": {
+          "add": {
+            "maturity": "experimental",
+            "reason": "X-Ray structural add writer requires game load/re-save evidence."
+          },
+          "categories": [
+            "weapon",
+            "armor",
+            "module",
+            "device",
+            "consumable",
+            "ammo",
+            "artifact",
+            "quest",
+            "other"
+          ],
+          "device_subtypes": [
+            "detector",
+            "other",
+            "unknown"
+          ],
+          "durability": {
+            "maturity": "experimental",
+            "reason": "X-Ray condition writer requires game load/re-save evidence."
+          },
+          "icon_source": "official X-Ray game resources",
+          "placement": {
+            "maturity": "experimental",
+            "reason": "X-Ray placement anchor requires game load/re-save evidence."
+          },
+          "remove": {
+            "maturity": "experimental",
+            "reason": "X-Ray structural remove writer requires game load/re-save evidence."
+          },
+          "upgrades": {
+            "maturity": "experimental",
+            "reason": "m_upgrades vector requires game load/re-save evidence."
+          }
+        },
+        "experimental_fields": [
+          "edit_durability",
+          "edit_placement",
+          "edit_player_faction",
+          "edit_relations",
+          "edit_upgrades",
+          "move_items"
+        ],
+        "move_items": true,
+        "mutation_support": {
+          "add_items": {
+            "maturity": "verified",
+            "reason": null
+          },
+          "edit_durability": {
+            "maturity": "experimental",
+            "reason": "X-Ray condition writer requires game load/re-save evidence."
+          },
+          "edit_money": {
+            "maturity": "verified",
+            "reason": null
+          },
+          "edit_placement": {
+            "maturity": "experimental",
+            "reason": "X-Ray placement anchor requires game load/re-save evidence."
+          },
+          "edit_player_faction": {
+            "maturity": "experimental",
+            "reason": null
+          },
+          "edit_relations": {
+            "maturity": "experimental",
+            "reason": null
+          },
+          "edit_stacks": {
+            "maturity": "verified",
+            "reason": null
+          },
+          "edit_upgrades": {
+            "maturity": "experimental",
+            "reason": "m_upgrades vector requires game load/re-save evidence."
+          },
+          "move_items": {
+            "maturity": "experimental",
+            "reason": "X-Ray stash take/put is read-back verified; game load/re-save is not accepted yet."
+          },
+          "remove_items": {
+            "maturity": "verified",
+            "reason": null
+          }
+        },
+        "read_inventory": true,
+        "remove_items": true
+      },
+      "edition": "original",
+      "id": "stalker-cs",
+      "release_id": "stalker-cs"
+    },
+    {
+      "capabilities": {
+        "add_items": true,
+        "catalog": true,
+        "edit_durability": true,
+        "edit_money": true,
+        "edit_placement": true,
+        "edit_player_faction": true,
+        "edit_relations": true,
+        "edit_stacks": true,
+        "edit_upgrades": true,
+        "equipment": {
+          "add": {
+            "maturity": "experimental",
+            "reason": "X-Ray structural add writer requires game load/re-save evidence."
+          },
+          "categories": [
+            "weapon",
+            "armor",
+            "module",
+            "device",
+            "consumable",
+            "ammo",
+            "artifact",
+            "quest",
+            "helmet",
+            "other"
+          ],
+          "device_subtypes": [
+            "detector",
+            "other",
+            "unknown"
+          ],
+          "durability": {
+            "maturity": "experimental",
+            "reason": "X-Ray condition writer requires game load/re-save evidence."
+          },
+          "icon_source": "official X-Ray game resources",
+          "placement": {
+            "maturity": "experimental",
+            "reason": "X-Ray placement anchor requires game load/re-save evidence."
+          },
+          "remove": {
+            "maturity": "experimental",
+            "reason": "X-Ray structural remove writer requires game load/re-save evidence."
+          },
+          "upgrades": {
+            "maturity": "experimental",
+            "reason": "m_upgrades vector requires game load/re-save evidence."
+          }
+        },
+        "experimental_fields": [
+          "edit_durability",
+          "edit_placement",
+          "edit_player_faction",
+          "edit_relations",
+          "edit_upgrades",
+          "move_items"
+        ],
+        "move_items": true,
+        "mutation_support": {
+          "add_items": {
+            "maturity": "verified",
+            "reason": null
+          },
+          "edit_durability": {
+            "maturity": "experimental",
+            "reason": "X-Ray condition writer requires game load/re-save evidence."
+          },
+          "edit_money": {
+            "maturity": "verified",
+            "reason": null
+          },
+          "edit_placement": {
+            "maturity": "experimental",
+            "reason": "X-Ray placement anchor requires game load/re-save evidence."
+          },
+          "edit_player_faction": {
+            "maturity": "experimental",
+            "reason": null
+          },
+          "edit_relations": {
+            "maturity": "experimental",
+            "reason": null
+          },
+          "edit_stacks": {
+            "maturity": "verified",
+            "reason": null
+          },
+          "edit_upgrades": {
+            "maturity": "experimental",
+            "reason": "m_upgrades vector requires game load/re-save evidence."
+          },
+          "move_items": {
+            "maturity": "experimental",
+            "reason": "X-Ray stash take/put is read-back verified; game load/re-save is not accepted yet."
+          },
+          "remove_items": {
+            "maturity": "verified",
+            "reason": null
+          }
+        },
+        "read_inventory": true,
+        "remove_items": true
+      },
+      "edition": "original",
+      "id": "stalker-cop",
+      "release_id": "stalker-cop"
+    },
+    {
+      "capabilities": {
+        "add_items": true,
+        "catalog": true,
+        "edit_durability": false,
+        "edit_money": true,
+        "edit_placement": false,
+        "edit_player_faction": false,
+        "edit_relations": false,
+        "edit_stacks": true,
+        "edit_upgrades": false,
+        "equipment": {
+          "add": {
+            "maturity": "unsupported",
+            "reason": "Enhanced Edition parser/equipment sample is not accepted."
+          },
+          "categories": [
+            "weapon",
+            "armor",
+            "module",
+            "device",
+            "consumable",
+            "ammo",
+            "artifact",
+            "quest",
+            "other"
+          ],
+          "device_subtypes": [
+            "detector",
+            "other",
+            "unknown"
+          ],
+          "durability": {
+            "maturity": "unsupported",
+            "reason": "Enhanced Edition parser/equipment sample is not accepted."
+          },
+          "icon_source": "unavailable until an Enhanced Edition resource sample is accepted",
+          "placement": {
+            "maturity": "unsupported",
+            "reason": "Enhanced Edition parser/equipment sample is not accepted."
+          },
+          "remove": {
+            "maturity": "unsupported",
+            "reason": "Enhanced Edition parser/equipment sample is not accepted."
+          },
+          "upgrades": {
+            "maturity": "unsupported",
+            "reason": "Enhanced Edition parser/equipment sample is not accepted."
+          }
+        },
+        "experimental_fields": [
+          "add_items",
+          "edit_money",
+          "edit_stacks",
+          "remove_items"
+        ],
+        "move_items": false,
+        "mutation_support": {
+          "add_items": {
+            "maturity": "experimental",
+            "reason": null
+          },
+          "edit_durability": {
+            "maturity": "unsupported",
+            "reason": null
+          },
+          "edit_money": {
+            "maturity": "experimental",
+            "reason": null
+          },
+          "edit_placement": {
+            "maturity": "unsupported",
+            "reason": null
+          },
+          "edit_player_faction": {
+            "maturity": "unsupported",
+            "reason": null
+          },
+          "edit_relations": {
+            "maturity": "unsupported",
+            "reason": null
+          },
+          "edit_stacks": {
+            "maturity": "experimental",
+            "reason": null
+          },
+          "edit_upgrades": {
+            "maturity": "unsupported",
+            "reason": null
+          },
+          "move_items": {
+            "maturity": "unsupported",
+            "reason": null
+          },
+          "remove_items": {
+            "maturity": "experimental",
+            "reason": null
+          }
+        },
+        "read_inventory": true,
+        "remove_items": true
+      },
+      "edition": "enhanced",
+      "id": "stalker-soc-ee",
+      "release_id": "stalker-soc-ee"
+    },
+    {
+      "capabilities": {
+        "add_items": true,
+        "catalog": true,
+        "edit_durability": false,
+        "edit_money": true,
+        "edit_placement": false,
+        "edit_player_faction": false,
+        "edit_relations": false,
+        "edit_stacks": true,
+        "edit_upgrades": false,
+        "equipment": {
+          "add": {
+            "maturity": "unsupported",
+            "reason": "Enhanced Edition parser/equipment sample is not accepted."
+          },
+          "categories": [
+            "weapon",
+            "armor",
+            "module",
+            "device",
+            "consumable",
+            "ammo",
+            "artifact",
+            "quest",
+            "other"
+          ],
+          "device_subtypes": [
+            "detector",
+            "other",
+            "unknown"
+          ],
+          "durability": {
+            "maturity": "unsupported",
+            "reason": "Enhanced Edition parser/equipment sample is not accepted."
+          },
+          "icon_source": "unavailable until an Enhanced Edition resource sample is accepted",
+          "placement": {
+            "maturity": "unsupported",
+            "reason": "Enhanced Edition parser/equipment sample is not accepted."
+          },
+          "remove": {
+            "maturity": "unsupported",
+            "reason": "Enhanced Edition parser/equipment sample is not accepted."
+          },
+          "upgrades": {
+            "maturity": "unsupported",
+            "reason": "Enhanced Edition parser/equipment sample is not accepted."
+          }
+        },
+        "experimental_fields": [
+          "add_items",
+          "edit_money",
+          "edit_stacks",
+          "remove_items"
+        ],
+        "move_items": false,
+        "mutation_support": {
+          "add_items": {
+            "maturity": "experimental",
+            "reason": null
+          },
+          "edit_durability": {
+            "maturity": "unsupported",
+            "reason": null
+          },
+          "edit_money": {
+            "maturity": "experimental",
+            "reason": null
+          },
+          "edit_placement": {
+            "maturity": "unsupported",
+            "reason": null
+          },
+          "edit_player_faction": {
+            "maturity": "unsupported",
+            "reason": null
+          },
+          "edit_relations": {
+            "maturity": "unsupported",
+            "reason": null
+          },
+          "edit_stacks": {
+            "maturity": "experimental",
+            "reason": null
+          },
+          "edit_upgrades": {
+            "maturity": "unsupported",
+            "reason": null
+          },
+          "move_items": {
+            "maturity": "unsupported",
+            "reason": null
+          },
+          "remove_items": {
+            "maturity": "experimental",
+            "reason": null
+          }
+        },
+        "read_inventory": true,
+        "remove_items": true
+      },
+      "edition": "enhanced",
+      "id": "stalker-cs-ee",
+      "release_id": "stalker-cs-ee"
+    },
+    {
+      "capabilities": {
+        "add_items": true,
+        "catalog": true,
+        "edit_durability": false,
+        "edit_money": true,
+        "edit_placement": false,
+        "edit_player_faction": false,
+        "edit_relations": false,
+        "edit_stacks": true,
+        "edit_upgrades": false,
+        "equipment": {
+          "add": {
+            "maturity": "unsupported",
+            "reason": "Enhanced Edition parser/equipment sample is not accepted."
+          },
+          "categories": [
+            "weapon",
+            "armor",
+            "module",
+            "device",
+            "consumable",
+            "ammo",
+            "artifact",
+            "quest",
+            "other"
+          ],
+          "device_subtypes": [
+            "detector",
+            "other",
+            "unknown"
+          ],
+          "durability": {
+            "maturity": "unsupported",
+            "reason": "Enhanced Edition parser/equipment sample is not accepted."
+          },
+          "icon_source": "unavailable until an Enhanced Edition resource sample is accepted",
+          "placement": {
+            "maturity": "unsupported",
+            "reason": "Enhanced Edition parser/equipment sample is not accepted."
+          },
+          "remove": {
+            "maturity": "unsupported",
+            "reason": "Enhanced Edition parser/equipment sample is not accepted."
+          },
+          "upgrades": {
+            "maturity": "unsupported",
+            "reason": "Enhanced Edition parser/equipment sample is not accepted."
+          }
+        },
+        "experimental_fields": [
+          "add_items",
+          "edit_money",
+          "edit_stacks",
+          "remove_items"
+        ],
+        "move_items": false,
+        "mutation_support": {
+          "add_items": {
+            "maturity": "experimental",
+            "reason": null
+          },
+          "edit_durability": {
+            "maturity": "unsupported",
+            "reason": null
+          },
+          "edit_money": {
+            "maturity": "experimental",
+            "reason": null
+          },
+          "edit_placement": {
+            "maturity": "unsupported",
+            "reason": null
+          },
+          "edit_player_faction": {
+            "maturity": "unsupported",
+            "reason": null
+          },
+          "edit_relations": {
+            "maturity": "unsupported",
+            "reason": null
+          },
+          "edit_stacks": {
+            "maturity": "experimental",
+            "reason": null
+          },
+          "edit_upgrades": {
+            "maturity": "unsupported",
+            "reason": null
+          },
+          "move_items": {
+            "maturity": "unsupported",
+            "reason": null
+          },
+          "remove_items": {
+            "maturity": "experimental",
+            "reason": null
+          }
+        },
+        "read_inventory": true,
+        "remove_items": true
+      },
+      "edition": "enhanced",
+      "id": "stalker-cop-ee",
+      "release_id": "stalker-cop-ee"
+    }
+  ],
+  "oracle_revision": "94351dc46eeec316ba16d230d37f5553ec5d6cd0"
+}

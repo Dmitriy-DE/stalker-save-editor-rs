@@ -1,0 +1,109 @@
+{
+  "capabilities": {
+    "stalker2": {
+      "add_items": "unsupported",
+      "edit_money": "experimental",
+      "edit_stacks": "experimental",
+      "remove_items": "unsupported"
+    }
+  },
+  "oracleRevision": "96db47712c0bc211dcbf272c39f2f2b3babc076a",
+  "vectors": [
+    {
+      "capabilities": {
+        "add_items": "verified",
+        "edit_money": "verified",
+        "edit_stacks": "verified",
+        "remove_items": "verified"
+      },
+      "expected": "xray-money-soc-expected.sav",
+      "expectedRaw": "xray-money-soc-expected.raw",
+      "expectedRawSha256": "fc2511fd3782e88697d68cd370525381aa183ec65d1a5dec7790037c20590ed0",
+      "expectedSha256": "357ba6e0cba14a45bc5604dca174a03033c9dae0c1e863f1841491d0aa30e13b",
+      "money": 876543,
+      "releaseId": "stalker-soc",
+      "source": "xray-money-soc-source.sav",
+      "sourceSha256": "eee81ef905f46abd8a7c4d16e4c564ebdb1e046b008c8ce7fe48999d2c51f30f"
+    },
+    {
+      "capabilities": {
+        "add_items": "verified",
+        "edit_money": "verified",
+        "edit_stacks": "verified",
+        "remove_items": "verified"
+      },
+      "expected": "xray-money-cs-expected.sav",
+      "expectedRaw": "xray-money-cs-expected.raw",
+      "expectedRawSha256": "7caebd8c8c4acfc275fc69a0534f95db7ddebede5c0cff2620f3c94da58c35fe",
+      "expectedSha256": "1c575021753f6c2af1b7b896f553988e377d91041db0c0fa0392f91648aef222",
+      "money": 876543,
+      "releaseId": "stalker-cs",
+      "source": "xray-money-cs-source.sav",
+      "sourceSha256": "0a09125a93d16550c41da8c4ce657a3b82a89ccc40091faf9f34c895915fb660"
+    },
+    {
+      "capabilities": {
+        "add_items": "verified",
+        "edit_money": "verified",
+        "edit_stacks": "verified",
+        "remove_items": "verified"
+      },
+      "expected": "xray-money-cop-expected.sav",
+      "expectedRaw": "xray-money-cop-expected.raw",
+      "expectedRawSha256": "6f9005334c4b087ae34076153a6504ee694dafc28b254749248aac1bf52bb8a3",
+      "expectedSha256": "b14223fbb77a90932093c077800158697eacf4a637cb9e73d0f7b46b4f112ac9",
+      "money": 876543,
+      "releaseId": "stalker-cop",
+      "source": "xray-money-cop-source.sav",
+      "sourceSha256": "f10df65014f77914b5ac4a3f67b815a62a0ea9cacd86326e31a00ee0bf3ec8e4"
+    },
+    {
+      "capabilities": {
+        "add_items": "experimental",
+        "edit_money": "experimental",
+        "edit_stacks": "experimental",
+        "remove_items": "experimental"
+      },
+      "expected": "xray-money-soc-ee-expected.sav",
+      "expectedRaw": "xray-money-soc-ee-expected.raw",
+      "expectedRawSha256": "c51bbe56b6fdca3b5a14d8667c988e8ff56a81ffb8923d2eec72482207cb0686",
+      "expectedSha256": "1b3d3be750cc47a4ab62317aa3d0e6d5c896e05131fd3f19bb84f0a04c4fba88",
+      "money": 876543,
+      "releaseId": "stalker-soc-ee",
+      "source": "xray-money-soc-ee-source.sav",
+      "sourceSha256": "2ec57cfabda753dac99b6fcdca492fd0145482e976495ae301b7d048b0742b13"
+    },
+    {
+      "capabilities": {
+        "add_items": "experimental",
+        "edit_money": "experimental",
+        "edit_stacks": "experimental",
+        "remove_items": "experimental"
+      },
+      "expected": "xray-money-cs-ee-expected.sav",
+      "expectedRaw": "xray-money-cs-ee-expected.raw",
+      "expectedRawSha256": "07caaeb618d983675978f8612f65f5538bde6903abaac0f50a8dd96e6a5b14bc",
+      "expectedSha256": "c28e326043a0426ca15714bb0f8a17973826bb84c9e713a3e3eb215b80e02d16",
+      "money": 876543,
+      "releaseId": "stalker-cs-ee",
+      "source": "xray-money-cs-ee-source.sav",
+      "sourceSha256": "a28ffb0e75675001c47b0233500dc2db665a645d5a91f6eb9f78f6a043ea02d0"
+    },
+    {
+      "capabilities": {
+        "add_items": "experimental",
+        "edit_money": "experimental",
+        "edit_stacks": "experimental",
+        "remove_items": "experimental"
+      },
+      "expected": "xray-money-cop-ee-expected.sav",
+      "expectedRaw": "xray-money-cop-ee-expected.raw",
+      "expectedRawSha256": "a928705582ef5b5ab5143e686bc8346e2ed50a6e3a028bb78d9a01bd8751ae8f",
+      "expectedSha256": "a7343f4c1955413c40cfa2332c371c0cc24ce2183a21ccf4d14d6c4793201be4",
+      "money": 876543,
+      "releaseId": "stalker-cop-ee",
+      "source": "xray-money-cop-ee-source.sav",
+      "sourceSha256": "696ef409ad44a36e2d80ebd1c3cb5a6da3b03e0f62657436daf26a2329b0e32c"
+    }
+  ]
+}

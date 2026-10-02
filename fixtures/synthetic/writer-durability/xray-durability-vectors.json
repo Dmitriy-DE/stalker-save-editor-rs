@@ -1,0 +1,199 @@
+{
+  "negativeCases": {
+    "outOfRangeCondition": {
+      "allowedRange": [
+        0.0,
+        1.0
+      ],
+      "handle": 13398,
+      "invalidCondition": 1.5
+    },
+    "staleSourceSha": {
+      "mismatchedSha": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "unknownItemHandle": {
+      "expectedError": "unknown item",
+      "invalidHandle": 39321
+    }
+  },
+  "oracleRevision": "6f3839cb870161290ae1d404c40e291485c29e37",
+  "vectors": [
+    {
+      "capabilities": {
+        "add_items": "verified",
+        "edit_durability": "experimental",
+        "edit_money": "verified",
+        "edit_stacks": "verified",
+        "remove_items": "verified"
+      },
+      "changedRawOffsets": [
+        347,
+        348,
+        354
+      ],
+      "expected": "xray-durability-soc-expected.sav",
+      "expectedRaw": "xray-durability-soc-expected.raw",
+      "expectedRawSha256": "e360db29a50f36bf4df35c1b85c828d07b8bd0b3f2058af120ea6f8a4e14424e",
+      "expectedSha256": "b785fb240c1c4d450c3ae4d4bb618f334425c402e8077eb17d6a5c2cb83c91a9",
+      "handle": 13398,
+      "releaseId": "stalker-soc",
+      "source": "xray-durability-soc-source.sav",
+      "sourceCondition": 0.25,
+      "sourceSha256": "d9033a68cc3547b46918734db4f577847129ad74a8489df2d2af38ff74c65c22",
+      "targetCondition": 0.75
+    },
+    {
+      "capabilities": {
+        "add_items": "verified",
+        "edit_durability": "experimental",
+        "edit_money": "verified",
+        "edit_stacks": "verified",
+        "remove_items": "verified"
+      },
+      "changedRawOffsets": [
+        351,
+        352,
+        362
+      ],
+      "expected": "xray-durability-cs-expected.sav",
+      "expectedRaw": "xray-durability-cs-expected.raw",
+      "expectedRawSha256": "cfa7f8875030d55b30ab927d9f7a323ce7862991274f5c252fd2667e5db8a7cd",
+      "expectedSha256": "743886dc50f5610303d7b45d6be3058ba07b12ba3c5a647ec9eab6f2f53b5fb1",
+      "handle": 13398,
+      "releaseId": "stalker-cs",
+      "source": "xray-durability-cs-source.sav",
+      "sourceCondition": 0.25,
+      "sourceSha256": "2edaaac7fb4f62d56980efd41a1c322d6e1748042777480e248de789b4e8219a",
+      "targetCondition": 0.75
+    },
+    {
+      "capabilities": {
+        "add_items": "verified",
+        "edit_durability": "experimental",
+        "edit_money": "verified",
+        "edit_stacks": "verified",
+        "remove_items": "verified"
+      },
+      "changedRawOffsets": [
+        305,
+        306,
+        361,
+        362,
+        373
+      ],
+      "expected": "xray-durability-cop-expected.sav",
+      "expectedRaw": "xray-durability-cop-expected.raw",
+      "expectedRawSha256": "74823c10522613eab6b6640021df7176ae209559a34f3e5737f14fda13ac60a4",
+      "expectedSha256": "822355df9ca0d921228f9674e75e954bb346fd5caf12da9c6d2de9e28c223ef9",
+      "handle": 13398,
+      "releaseId": "stalker-cop",
+      "source": "xray-durability-cop-source.sav",
+      "sourceCondition": 0.25,
+      "sourceSha256": "636df95b0114e7c2f4ae101f684f9116c8786c313112fe63589a633529d4e7cc",
+      "targetCondition": 0.75
+    },
+    {
+      "capabilities": {
+        "add_items": "research",
+        "edit_durability": "unsupported",
+        "edit_money": "research",
+        "edit_stacks": "research",
+        "remove_items": "research"
+      },
+      "changedRawOffsets": [
+        347,
+        348,
+        354
+      ],
+      "expected": "xray-durability-soc-ee-expected.sav",
+      "expectedRaw": "xray-durability-soc-ee-expected.raw",
+      "expectedRawSha256": "ac578943b08477e0aec9c43646d5d5271640fd470c23bedf854f81056ef7834c",
+      "expectedSha256": "480802109cca48d07be692a4b49f83e96e3513f8f8d9f1bbd466d47c0f69f17c",
+      "handle": 13398,
+      "releaseId": "stalker-soc-ee",
+      "source": "xray-durability-soc-ee-source.sav",
+      "sourceCondition": 0.25,
+      "sourceSha256": "46601cb5a9a5dfed23dd09b540bb4e4fa840bc863faf827e072c57f3740334f2",
+      "targetCondition": 0.75
+    },
+    {
+      "capabilities": {
+        "add_items": "research",
+        "edit_durability": "unsupported",
+        "edit_money": "research",
+        "edit_stacks": "research",
+        "remove_items": "research"
+      },
+      "changedRawOffsets": [
+        353,
+        354,
+        365
+      ],
+      "expected": "xray-durability-cs-ee-expected.sav",
+      "expectedRaw": "xray-durability-cs-ee-expected.raw",
+      "expectedRawSha256": "6570bc818ad052c8e0be3d41d40324842ac809ddab18d54f250da416377ef221",
+      "expectedSha256": "c64ad59fdc6757e8a112115e953f8b04738a148955a3a946f476119bc6e8ddec",
+      "handle": 13398,
+      "releaseId": "stalker-cs-ee",
+      "source": "xray-durability-cs-ee-source.sav",
+      "sourceCondition": 0.25,
+      "sourceSha256": "3bfd0b60ec6a746a84b51fdf161d3cd557719080fb4ae2b532d116ca7c75e477",
+      "targetCondition": 0.75
+    },
+    {
+      "capabilities": {
+        "add_items": "research",
+        "edit_durability": "unsupported",
+        "edit_money": "research",
+        "edit_stacks": "research",
+        "remove_items": "research"
+      },
+      "changedRawOffsets": [
+        353,
+        354,
+        365
+      ],
+      "expected": "xray-durability-cop-ee-expected.sav",
+      "expectedRaw": "xray-durability-cop-ee-expected.raw",
+      "expectedRawSha256": "1d7a1b45c2338333d23ea39d0b8973c41eafe24ca5bfe6347f745776a25cf4a1",
+      "expectedSha256": "22a7b273dc5ecf5f8c1b822c9912b0ce52fc6bb3cf5dabfdb3e0979705a38879",
+      "handle": 13398,
+      "releaseId": "stalker-cop-ee",
+      "source": "xray-durability-cop-ee-source.sav",
+      "sourceCondition": 0.25,
+      "sourceSha256": "209e4102272da9d73bf91bd695d2b2b08df7fe1c7388dcb14592b5b0cfe40ae5",
+      "targetCondition": 0.75
+    },
+    {
+      "capabilities": {
+        "add_items": "verified",
+        "edit_durability": "experimental",
+        "edit_money": "verified",
+        "edit_stacks": "verified",
+        "remove_items": "verified"
+      },
+      "changedRawOffsets": [
+        303,
+        304,
+        305,
+        306,
+        359,
+        360,
+        361,
+        362,
+        373
+      ],
+      "expected": "xray-durability-cop-q8-rounding-expected.sav",
+      "expectedRaw": "xray-durability-cop-q8-rounding-expected.raw",
+      "expectedRawSha256": "3f7ceda414fd08fecd4791116c5bf0e4a6892b8a5df7a443a8599d87b83613c7",
+      "expectedSha256": "356f92c7ec39c0e9429921c5be06620430cf5707e501e197ac65957b82d7199e",
+      "handle": 13398,
+      "releaseId": "stalker-cop",
+      "source": "xray-durability-cop-source.sav",
+      "sourceCondition": 0.25,
+      "sourceSha256": "636df95b0114e7c2f4ae101f684f9116c8786c313112fe63589a633529d4e7cc",
+      "targetCondition": 0.0019607843137254897,
+      "variant": "q8-rounding"
+    }
+  ]
+}

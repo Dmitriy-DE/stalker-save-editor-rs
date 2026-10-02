@@ -1,0 +1,4 @@
+{
+  "command": "v1 a3 give medkit 3",
+  "reply": "v1 a3 ok gave 3 medkit"
+}

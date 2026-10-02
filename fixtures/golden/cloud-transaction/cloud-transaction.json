@@ -1,0 +1,44 @@
+{
+  "cases": {
+    "stale_source": {
+      "artifacts": 0,
+      "error_contains": true,
+      "writes": 0
+    },
+    "uncertain_write": {
+      "reason_contains": true,
+      "recovery_sha256": "65579344c3d33f75bd5b0da25ac7b941ff6a53cb72eb6883a5b6b1083c698751",
+      "status": "uncertain",
+      "syncs": 0,
+      "writes": 1
+    },
+    "verified": {
+      "backup_sha256": "2fe435d0909e812c362c7577e5adaaef1390e22ea06a46571510530caae92408",
+      "reads": [
+        "Stalker2/Saved/STEAM/SaveGames/Data/slot.sav",
+        "Stalker2/Saved/STEAM/SaveGames/Data/slot.sav"
+      ],
+      "recovery_sha256": "65579344c3d33f75bd5b0da25ac7b941ff6a53cb72eb6883a5b6b1083c698751",
+      "status": "verified",
+      "syncs": 1,
+      "waits": [
+        [
+          "Stalker2/Saved/STEAM/SaveGames/Data/slot.sav",
+          185,
+          7
+        ]
+      ],
+      "writes": 1
+    }
+  },
+  "expected_file": "cloud-slot-expected.sav",
+  "expected_raw_file": "cloud-slot-expected.raw",
+  "expected_raw_sha256": "4bb629ea6e6ae781bb3cb9957edd422cf2ce949f064f6d795557b5541243f415",
+  "expected_sha256": "65579344c3d33f75bd5b0da25ac7b941ff6a53cb72eb6883a5b6b1083c698751",
+  "money": 900000,
+  "oracle_revision": "94351dc46eeec316ba16d230d37f5553ec5d6cd0",
+  "persisted_timeout": 7,
+  "remote_path": "Stalker2/Saved/STEAM/SaveGames/Data/slot.sav",
+  "source_file": "cloud-slot-source.sav",
+  "source_sha256": "2fe435d0909e812c362c7577e5adaaef1390e22ea06a46571510530caae92408"
+}

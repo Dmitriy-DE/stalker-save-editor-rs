@@ -1,0 +1,4 @@
+{
+  "command": "v1 a6 money 5000",
+  "reply": "v1 a6 ok money=20000"
+}

@@ -1,0 +1,4 @@
+{
+  "command": "v1 a1 ping",
+  "reply": "v1 a1 ok pong"
+}

@@ -1,0 +1,291 @@
+{
+  "oracleRevision": "94351dc46eeec316ba16d230d37f5553ec5d6cd0",
+  "vectors": [
+    {
+      "addedId": 9030,
+      "capabilities": {
+        "add_items": "verified",
+        "edit_money": "verified",
+        "edit_stacks": "verified",
+        "remove_items": "verified"
+      },
+      "expected": "xray-add-soc-expected.sav",
+      "expectedPlace": 3,
+      "expectedRaw": "xray-add-soc-expected.raw",
+      "expectedRawSha256": "c778a2eaa1fda74bba0f2a030facd728dbced611b0c972e8d70e139c8d6e4166",
+      "expectedSha256": "a1b3c413eb526aaa93f872bc8a53fd61e0461a3a432cb67e5c7ad2c17ebab60a",
+      "itemKey": "exo_outfit",
+      "placeEncoding": "u8",
+      "quantity": 1,
+      "releaseId": "stalker-soc",
+      "source": "xray-add-soc-source.sav",
+      "sourcePlace": 1,
+      "sourceSha256": "6626932c52ffd2f3216122c5e012d952edc478054824673c66ae40aa92368fed",
+      "templateId": 9029,
+      "templateUpgrades": []
+    },
+    {
+      "addedId": 9030,
+      "capabilities": {
+        "add_items": "verified",
+        "edit_money": "verified",
+        "edit_stacks": "verified",
+        "remove_items": "verified"
+      },
+      "expected": "xray-add-cs-expected.sav",
+      "expectedPlace": 3,
+      "expectedRaw": "xray-add-cs-expected.raw",
+      "expectedRawSha256": "095b73f924b22b81174ee7cf898340806faa05b306bed199e19954a6269eb27a",
+      "expectedSha256": "7fba4bef7a99a891cfc20f12879f728378bc6b91a3cbf4400f4681dc78278f8b",
+      "itemKey": "exo_outfit",
+      "placeEncoding": "u8",
+      "quantity": 1,
+      "releaseId": "stalker-cs",
+      "source": "xray-add-cs-source.sav",
+      "sourcePlace": 1,
+      "sourceSha256": "3894d913d729d9ab4a0172edaf08a73cd24f983cda28c27e232f1a973338c94e",
+      "templateId": 9029,
+      "templateUpgrades": [
+        "upg_exo_a",
+        "upg_exo_b"
+      ]
+    },
+    {
+      "addedId": 9030,
+      "capabilities": {
+        "add_items": "verified",
+        "edit_money": "verified",
+        "edit_stacks": "verified",
+        "remove_items": "verified"
+      },
+      "expected": "xray-add-cop-expected.sav",
+      "expectedPlace": 1043,
+      "expectedRaw": "xray-add-cop-expected.raw",
+      "expectedRawSha256": "4001cd8b56b106d30604f244046e391bf5346d688fc50190c3e3ef4a6a3f25ca",
+      "expectedSha256": "f6646d807990da9369f87cf523e936a818226766576cc29acef0eef0fc6c9013",
+      "itemKey": "exo_outfit",
+      "placeEncoding": "u16",
+      "quantity": 1,
+      "releaseId": "stalker-cop",
+      "source": "xray-add-cop-source.sav",
+      "sourcePlace": 1041,
+      "sourceSha256": "37599cd84a8b501c35a491a39304af1ce4146e0588a22080ab279ce084993f10",
+      "templateId": 9029,
+      "templateUpgrades": [
+        "upg_exo_a",
+        "upg_exo_b"
+      ]
+    },
+    {
+      "addedId": 9030,
+      "capabilities": {
+        "add_items": "experimental",
+        "edit_money": "experimental",
+        "edit_stacks": "experimental",
+        "remove_items": "experimental"
+      },
+      "expected": "xray-add-soc-ee-expected.sav",
+      "expectedPlace": 3,
+      "expectedRaw": "xray-add-soc-ee-expected.raw",
+      "expectedRawSha256": "ec6431fee31bdcc2641152510135eff909596f747422e68f58f87e34a95818fa",
+      "expectedSha256": "44cb5b35bd4ba8c739749a572b8aeff266f295dc383a02be07cf93543d71f3ae",
+      "itemKey": "exo_outfit",
+      "placeEncoding": "u8",
+      "quantity": 1,
+      "releaseId": "stalker-soc-ee",
+      "source": "xray-add-soc-ee-source.sav",
+      "sourcePlace": 1,
+      "sourceSha256": "b9fea927ad0d4461ac80d2e4756eb8372bf926c8d39c4a0ef1a9bc5ebcc209dd",
+      "templateId": 9029,
+      "templateUpgrades": []
+    },
+    {
+      "addedId": 9030,
+      "capabilities": {
+        "add_items": "experimental",
+        "edit_money": "experimental",
+        "edit_stacks": "experimental",
+        "remove_items": "experimental"
+      },
+      "expected": "xray-add-cs-ee-expected.sav",
+      "expectedPlace": 3,
+      "expectedRaw": "xray-add-cs-ee-expected.raw",
+      "expectedRawSha256": "71287cb4dd432468c15c586d08bcd5144c5eb80cfaa2424e8ee147ca788feb8e",
+      "expectedSha256": "73947f16b8e49d5acc1b30b62cb38798cc760abdadadff9c1b20d36d0fe31278",
+      "itemKey": "exo_outfit",
+      "placeEncoding": "u8",
+      "quantity": 1,
+      "releaseId": "stalker-cs-ee",
+      "source": "xray-add-cs-ee-source.sav",
+      "sourcePlace": 1,
+      "sourceSha256": "94b59c1c11fbd1094e9b962223f75893aa72dbe53b8eaa7f17aa4e8015b1ec75",
+      "templateId": 9029,
+      "templateUpgrades": [
+        "upg_exo_a"
+      ]
+    },
+    {
+      "addedId": 9030,
+      "capabilities": {
+        "add_items": "experimental",
+        "edit_money": "experimental",
+        "edit_stacks": "experimental",
+        "remove_items": "experimental"
+      },
+      "expected": "xray-add-cop-ee-expected.sav",
+      "expectedPlace": 1043,
+      "expectedRaw": "xray-add-cop-ee-expected.raw",
+      "expectedRawSha256": "b1c42ce279809c774c548c805be9518aefd64e6bfeea4bb03b8aa29260698783",
+      "expectedSha256": "eb60b0ecdf75b32294cc15ff848a3012592ba9d6b8283fa5f7b3fd027c5f102f",
+      "itemKey": "exo_outfit",
+      "placeEncoding": "u16",
+      "quantity": 1,
+      "releaseId": "stalker-cop-ee",
+      "source": "xray-add-cop-ee-source.sav",
+      "sourcePlace": 1041,
+      "sourceSha256": "7869e07e4ccf10749167bd5f59455d1402db434df888d708f07e58902e39cb3f",
+      "templateId": 9029,
+      "templateUpgrades": [
+        "upg_exo_a"
+      ]
+    },
+    {
+      "addedId": 4661,
+      "capabilities": {
+        "add_items": "verified",
+        "edit_money": "verified",
+        "edit_stacks": "verified",
+        "remove_items": "verified"
+      },
+      "expected": "xray-add-soc-ammo-expected.sav",
+      "expectedPlace": 0,
+      "expectedRaw": "xray-add-soc-ammo-expected.raw",
+      "expectedRawSha256": "8109bfedea48da0bb71fd2c6a4e876b9cb9208830854c36cf2e0588899c8cb19",
+      "expectedSha256": "d76e86566c2d0efa2b8eddec608bc11b3febf8f5e72243ba560a851399f11774",
+      "itemKey": "ammo_9x39_pab9",
+      "placeEncoding": "none",
+      "quantity": 17,
+      "releaseId": "stalker-soc",
+      "source": "xray-add-soc-ammo-source.sav",
+      "sourcePlace": 0,
+      "sourceSha256": "b324b556aef58e7699b9bd154ccb927dc8e95893b11022a99dfc70c4435fd2e5",
+      "templateId": 4660,
+      "templateUpgrades": []
+    },
+    {
+      "addedId": 4661,
+      "capabilities": {
+        "add_items": "verified",
+        "edit_money": "verified",
+        "edit_stacks": "verified",
+        "remove_items": "verified"
+      },
+      "expected": "xray-add-cs-ammo-expected.sav",
+      "expectedPlace": 0,
+      "expectedRaw": "xray-add-cs-ammo-expected.raw",
+      "expectedRawSha256": "57fe1f0454d70eb5a6e574a755b05d7f21c965fc09c2aff448114432723bbb33",
+      "expectedSha256": "4b3e9b2395d6171eec72e011a69b23c9a45e372474d52044a143429b3585a511",
+      "itemKey": "ammo_9x39_pab9",
+      "placeEncoding": "none",
+      "quantity": 17,
+      "releaseId": "stalker-cs",
+      "source": "xray-add-cs-ammo-source.sav",
+      "sourcePlace": 0,
+      "sourceSha256": "a790b773b93a0f823db1f2bb9dd03a8ad3c3c8f8719e9ba70c8da8e32e7a82da",
+      "templateId": 4660,
+      "templateUpgrades": []
+    },
+    {
+      "addedId": 4661,
+      "capabilities": {
+        "add_items": "verified",
+        "edit_money": "verified",
+        "edit_stacks": "verified",
+        "remove_items": "verified"
+      },
+      "expected": "xray-add-cop-ammo-expected.sav",
+      "expectedPlace": 0,
+      "expectedRaw": "xray-add-cop-ammo-expected.raw",
+      "expectedRawSha256": "7586a01401a2071aa58ff0f8771f330f13d45669b69160745346581142bb8fba",
+      "expectedSha256": "34f8cee4b62d801fdcc30f8d9c113d857ff133c0210cb6c04748b4f540e61c7a",
+      "itemKey": "ammo_9x39_pab9",
+      "placeEncoding": "none",
+      "quantity": 17,
+      "releaseId": "stalker-cop",
+      "source": "xray-add-cop-ammo-source.sav",
+      "sourcePlace": 0,
+      "sourceSha256": "e3f2e1e838d7edad6909f0e40c6b1db977a283749c9990012e5d982601a117e1",
+      "templateId": 4660,
+      "templateUpgrades": []
+    },
+    {
+      "addedId": 13399,
+      "capabilities": {
+        "add_items": "experimental",
+        "edit_money": "experimental",
+        "edit_stacks": "experimental",
+        "remove_items": "experimental"
+      },
+      "expected": "xray-add-soc-ee-ammo-expected.sav",
+      "expectedPlace": 0,
+      "expectedRaw": "xray-add-soc-ee-ammo-expected.raw",
+      "expectedRawSha256": "88f98b1242c51f949388c52aa12b7cda5d5591105eff2a683377fff13be77af3",
+      "expectedSha256": "e8ac326b79d4d00e78a775a5183b9897db885287ce3e020ab789ba993a17ecb7",
+      "itemKey": "ammo_9x39_pab9",
+      "placeEncoding": "none",
+      "quantity": 17,
+      "releaseId": "stalker-soc-ee",
+      "source": "xray-add-soc-ee-ammo-source.sav",
+      "sourcePlace": 0,
+      "sourceSha256": "c8933ac5dac475babf89175967958f647ef4ada380fbea659cb487fc326c7144",
+      "templateId": 13398,
+      "templateUpgrades": []
+    },
+    {
+      "addedId": 13399,
+      "capabilities": {
+        "add_items": "experimental",
+        "edit_money": "experimental",
+        "edit_stacks": "experimental",
+        "remove_items": "experimental"
+      },
+      "expected": "xray-add-cs-ee-ammo-expected.sav",
+      "expectedPlace": 0,
+      "expectedRaw": "xray-add-cs-ee-ammo-expected.raw",
+      "expectedRawSha256": "ecb04cb5a68f16d847963de2d8d759d40654088fd9c5b54978c784ba1b4f86e7",
+      "expectedSha256": "c5ada9359daeca0da29f51e8f94f8c203fe55830d73e6c80039fa1ae7af5fdd9",
+      "itemKey": "ammo_9x39_pab9",
+      "placeEncoding": "none",
+      "quantity": 17,
+      "releaseId": "stalker-cs-ee",
+      "source": "xray-add-cs-ee-ammo-source.sav",
+      "sourcePlace": 0,
+      "sourceSha256": "aa74e2da9ae3fde14c54304f7a5b6e813c58b279b65f7bf242ddd204a326d6b3",
+      "templateId": 13398,
+      "templateUpgrades": []
+    },
+    {
+      "addedId": 13399,
+      "capabilities": {
+        "add_items": "experimental",
+        "edit_money": "experimental",
+        "edit_stacks": "experimental",
+        "remove_items": "experimental"
+      },
+      "expected": "xray-add-cop-ee-ammo-expected.sav",
+      "expectedPlace": 0,
+      "expectedRaw": "xray-add-cop-ee-ammo-expected.raw",
+      "expectedRawSha256": "f1279bf9c94bcae3d71a642151de53d674d147943320232e023f34c7804ab68e",
+      "expectedSha256": "94d4c6d3a2e7f2b3ad097a8c2f8cb8b3c8d17979941a759adf19e6edb4a6f220",
+      "itemKey": "ammo_9x39_pab9",
+      "placeEncoding": "none",
+      "quantity": 17,
+      "releaseId": "stalker-cop-ee",
+      "source": "xray-add-cop-ee-ammo-source.sav",
+      "sourcePlace": 0,
+      "sourceSha256": "e39b6a50cda375a8f7438ab2547480d70a181ce27333a3018607f42357c6f49a",
+      "templateId": 13398,
+      "templateUpgrades": []
+    }
+  ]
+}

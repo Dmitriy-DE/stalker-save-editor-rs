@@ -1,0 +1,12 @@
+{
+  "capability": "experimental",
+  "expected": "s2-money-expected.sav",
+  "expectedRaw": "s2-money-expected.raw",
+  "expectedRawSha256": "f9f440b666ce0430479e72b06a5c8df5ea43759431d98cb4c95eb87a78837914",
+  "expectedSha256": "50286c316036b140acc4277985748a6c7f235776558f726f954e9f7b8d1995bd",
+  "money": 876543,
+  "moneyOffset": 50,
+  "oracleRevision": "6f3839cb870161290ae1d404c40e291485c29e37",
+  "source": "s2-money-source.sav",
+  "sourceSha256": "2fe435d0909e812c362c7577e5adaaef1390e22ea06a46571510530caae92408"
+}

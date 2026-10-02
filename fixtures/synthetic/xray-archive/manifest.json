@@ -1,0 +1,25 @@
+{
+  "archive": "synthetic.db",
+  "archiveSha256": "d78f5c227e2f95e74439b31326f56c91625f7e6b8ee2a63da1c33eacbd360920",
+  "entries": [
+    {
+      "data": "entry-00.bin",
+      "name": "gamedata/config/items.ltx",
+      "sha256": "ae007498a1a3a1035531118a527d1584dd9c42103fb6906094ca9fc641bc6215",
+      "size": 49
+    },
+    {
+      "data": "entry-01.bin",
+      "name": "gamedata/configs/text/eng/items.xml",
+      "sha256": "e5f94786d47ce22ddbcbda107a0b441107993a97ded68ac178101e5dbd9db7c5",
+      "size": 111
+    },
+    {
+      "data": "entry-02.bin",
+      "name": "gamedata/textures/ui/icon.dds",
+      "sha256": "4f28c4c3499347208a670e56a9bb127ec3ffbd2d543313f4d99bb456ad093224",
+      "size": 21
+    }
+  ],
+  "pythonOracleRevision": "6f3839cb870161290ae1d404c40e291485c29e37"
+}

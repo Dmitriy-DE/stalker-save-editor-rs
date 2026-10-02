@@ -1,0 +1,4 @@
+{
+  "command": "v1 a7 money -999999",
+  "reply": "v1 a7 error balance would go below zero"
+}
