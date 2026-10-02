@@ -1,17 +1,15 @@
 [package]
-name = "sse-cli"
+name = "sse-fixes"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
-[[bin]]
-name = "stalker-save"
-path = "src/main.rs"
-
 [dependencies]
 sse-core = { path = "../sse-core" }
-sse-fixes = { path = "../sse-fixes" }
+sse-content = { path = "../sse-content" }
+sse-catalog = { path = "../sse-catalog" }
+sse-codecs = { path = "../sse-codecs" }
 
 [lints]
 workspace = true

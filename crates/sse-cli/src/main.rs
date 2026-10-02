@@ -3,7 +3,9 @@
 
 use std::process::ExitCode;
 
-const USAGE: &str = "Usage: stalker-save <version|info|inventory|edit> ...\n\
+mod fixes;
+
+const USAGE: &str = "Usage: stalker-save <version|fixes|info|inventory|edit> ...\n\
 Exit codes: 0 done, 2 wrong arguments, 3 refused (unsupported or unsafe), 4 unreadable or damaged input, 5 file or system error.";
 
 fn main() -> ExitCode {
@@ -12,6 +14,11 @@ fn main() -> ExitCode {
         Some("version") => {
             println!("{}", env!("CARGO_PKG_VERSION"));
             ExitCode::from(sse_core::ExitCode::Done as u8)
+        }
+        Some("fixes") => {
+            let rest = arguments.get(1..).unwrap_or_default();
+            let code = fixes::run_fixes(rest);
+            ExitCode::from(code as u8)
         }
         _ => {
             eprintln!("{USAGE}");
