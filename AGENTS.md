@@ -9,8 +9,14 @@ in `TASKS.md`.
 - Work only inside the crate(s) your package names. Need something in `sse-core` or in another owner's crate?
   Describe it in the pull request; do not edit it.
 - One package = one branch `wp/<id>-<slug>` = one pull request into `main`. Small follow-ups are new pull requests.
-- New dependency: name it in the pull request with its size and why the standard library is not enough. No
-  dependency for what 50 lines do. No `async` runtime in format, codec, content or storage crates.
+- **No third-party code.** No crates, no C or C++: only `std`. What we need we write (codecs, parsers, hashes,
+  signature check, image and font code). Calls into the operating system or into Steam's own library live in
+  `sse-sys` (Claude's crate, the only one where `unsafe` is allowed): ask for the call you need in the pull request.
+  No `async` runtime anywhere.
+- **Better, not a copy.** The C# editor is the floor: what is read from a save and what bytes are written must
+  match it, because the game is the judge. Structure, speed, memory and checks are designed anew. Each package names
+  what must be better and how it is measured; a line-by-line port is rejected. Where the C# code is wrong, do not
+  copy the mistake: show the proof in the pull request and Claude records the difference in `PLAN.md`.
 - No new documents. What a reader must know goes into rustdoc; state goes into the pull request text.
 
 ## Correctness (each rule is a bug the C# editor shipped)

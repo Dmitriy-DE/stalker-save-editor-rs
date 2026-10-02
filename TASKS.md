@@ -136,17 +136,25 @@ allocator.
 
 ## C3 — S.T.A.L.K.E.R. 2 saves and Kraken (Codex, after C2)
 
-Crate `sse-s2` (yours alone) and `sse-codecs/src/kraken.rs` + its `build.rs`. Reference: `Formats/Stalker2/*.cs`,
+Crate `sse-s2` (yours alone) and `sse-codecs/src/kraken/`. Reference: `Formats/Stalker2/*.cs`,
 `Codecs/KrakenCodec.cs`, `tools/ooz_native.cpp` and `tools/build_ooz_native.py`, `Catalogs/Stalker2*.cs`,
 `docs/knowledge/S2_FORMAT.md`, `docs/evidence` section on the legacy layout; tests under `tests/.../Formats/Stalker2`
 and `Codecs`.
 
 Deliver:
 
-1. Kraken: the vendored C++ compiled by `cc` and linked statically; one safe wrapper each way
-   (`decompress_into(source, &mut [u8])`, `compress(payload) -> Vec<u8>`). This is the only `unsafe` in the workspace:
-   one module with `#![allow(unsafe_code)]`, every call checked for sizes before and after. The decoder writes
-   straight into the buffer that becomes the save image — no work buffer copied afterwards.
+1. Kraken in safe Rust, `sse-codecs/src/kraken/` — no C++, no `unsafe`, no build script. Reference for the format:
+   the `ooz` sources in `third_party/pyooz/pyooz-0.0.8.tar.gz` of the C# repository (`kraken.cpp` for decoding,
+   `compr_kraken.cpp`, `compr_entropy.cpp`, `compr_match_finder.cpp` for encoding). Write it as Rust, not as
+   translated C: slices and checked cursors instead of pointer arithmetic, every table size and offset checked.
+   - Decoder `decompress_into(source, &mut [u8])`: writes straight into the buffer that becomes the save image.
+     Proof: fixture vectors, then every S2 save of the owner decodes to the same bytes as the C# editor (Claude runs
+     this part), plus mutation tests — a damaged stream is `Error::Damaged`, never a panic or an endless loop.
+   - Encoder `compress(payload) -> Vec<u8>`: any valid stream our decoder and the reference decoder both accept; it
+     need not equal the C++ output byte for byte, but it must stay within 5% of its size on the fixtures (the game
+     reads the declared sizes). Start with the simplest level that meets this; say in the pull request which entropy
+     modes are produced. Until the encoder is accepted, S2 writers are compiled but refused by capabilities.
+   - Split it: decoder first as its own pull request (`wp/c3a-kraken-decode`), then the reader, then the encoder.
 2. Container: header, CRC32 (`sse_codecs::crc32`, or a local one marked for replacement until X2 lands), sizes
    checked before allocating.
 3. Reader as image + index: wallet, inventory records with names (name tables, both layouts), item state, stashes,
@@ -171,7 +179,9 @@ tests under `tests/StalkerSaveEditor.Core.Tests/Content` and `.../Formats/XRay` 
 Deliver:
 
 1. Archive reader for `.db*` / `.xdb*`: header table, entries by path, one entry's bytes on demand. The archive is
-   memory-mapped (`memmap2` is the one dependency allowed here); nothing is read until asked for. Header decoding
+   never loaded whole and not memory-mapped: one entry is read with positional reads (`FileExt::read_at` on Unix,
+   `seek_read` on Windows — both `std`, no dependency, no `unsafe`) behind a small `trait ReadAt`, so the same code
+   reads from a byte slice in tests and on the web. Remove `memmap2`. Header decoding
    (LZHUF, descrambling) arrives with X2: until then take it as a function parameter and test with the decoded table
    of the `xray-archive` fixture.
 2. File tree of a game: loose `gamedata` files over archives, later archives over earlier ones, as the C# tree does.
@@ -196,9 +206,9 @@ globs `crates/*`). Reference: `Core/Catalogs/*.cs` and `Catalogs/Data/*.json`, `
 Deliver:
 
 1. The shipped catalogues as data files copied from the C# repository unchanged (`catalog_names.json`,
-   `catalogs.json`, `s2_items.json`, `s2_upgrades.json`), embedded compressed and parsed on first use into compact
-   tables (interned strings, no per-entry maps of 13 languages: one table per language loaded on demand). `serde` +
-   `serde_json` are allowed here.
+   `catalogs.json`, `s2_items.json`, `s2_upgrades.json`), baked at build time into binary tables of our own layout (a `build.rs` that uses `sse_codecs::json`
+   from X4; sorted keys + offsets, one string blob per language) and embedded: at run time nothing is parsed, a
+   lookup is a binary search in `&'static [u8]`, and only the active language's blob is touched. No `serde`.
 2. Name resolution with the C# order: the games' own name in the interface language → the installed game's
    catalogue → the section key. Kinds: items, upgrades, factions, levels, stashes. `PlaceNames` rules reproduced
    (personal boxes, numbered boxes, camp boxes, level by object prefix, level aliases).
@@ -233,9 +243,270 @@ games).
 
 ---
 
+# Second wave
+
+Common to every package below: no third-party code (`AGENTS.md`), and the pull request has a section **"Better than
+the reference"** with numbers (time, memory, allocations, size) measured against the C# class it replaces.
+
+## X4 — JSON reader and writer (ChatGPT)
+
+Attachments: `cursor.rs`, `error.rs`, `lints.toml`, sample files (`game-fixes.json` excerpt, `latest.json`,
+`backup-journal.json`, `i18n-sample.json`).
+
+One file `json.rs` for `sse-codecs`, no dependencies:
+
+```rust
+pub enum Event<'a> { ObjectStart, ObjectEnd, ArrayStart, ArrayEnd, Key(Text<'a>), String(Text<'a>),
+                     Number(&'a str), Bool(bool), Null }
+pub struct Reader<'a> { /* over &'a [u8] */ }
+impl<'a> Reader<'a> { pub fn new(input: &'a [u8]) -> Self; pub fn next(&mut self) -> sse_core::Result<Option<Event<'a>>>;
+                      pub fn skip_value(&mut self) -> sse_core::Result<()>; }
+pub struct Writer { /* appends to a Vec<u8> */ }
+```
+
+- Pull reader, no tree: `Text` borrows from the input when the string has no escapes and decodes into an owned
+  buffer only when it has (`\uXXXX` with surrogate pairs, the standard escapes). No allocation per token otherwise.
+- Strict RFC 8259: UTF-8 validated, no trailing commas, no comments, a BOM is skipped, nesting limited to 128,
+  duplicate keys are passed through. Numbers stay text with helpers `as_i64`, `as_u64`, `as_f64` (correctly rounded
+  for up to 17 significant digits; write the conversion yourself).
+- `Writer`: objects, arrays, strings with minimal escaping, integers, compact and two-space indented output that is
+  stable (the C# editor's files must stay readable by it and ours by the C# editor).
+- Tests: the attached files read and rewritten compact → same events; every truncation of one file is an error;
+  depth bomb; lone surrogates; a 10 MiB string without allocation when it has no escapes; the classic accept/reject
+  cases of the JSON test suite written out by hand (at least 60).
+
+## X5 — ECDSA P-256 signature check (ChatGPT)
+
+Attachments: `UpdateSignature.cs`, the public key (`update-public-key.pem`), `latest.json` + `latest.json.sig` of
+release 1.3.1, `sha256.rs`, `cursor.rs`, `error.rs`, `lints.toml`.
+
+One file `p256.rs` for `sse-codecs`: verification only, no secrets, so constant time is not required — correctness
+is.
+
+```rust
+pub struct PublicKey { /* affine point */ }
+impl PublicKey { pub fn from_pem(text: &str) -> sse_core::Result<Self>;      // SubjectPublicKeyInfo, uncompressed point
+                 pub fn verify(&self, message_sha256: &[u8; 32], signature: &[u8]) -> bool; }
+```
+
+- The signature encoding is whatever `UpdateSignature.cs` checks (state which: DER `SEQUENCE{r,s}` or raw `r‖s`;
+  accept exactly that). Reject `r` or `s` equal to zero or ≥ n, a point not on the curve, the point at infinity,
+  non-canonical DER.
+- Field and scalar arithmetic on `[u64; 4]` written by hand (Montgomery or Solinas reduction, Jacobian points,
+  Shamir's trick for `u1·G + u2·Q`). No `unsafe`, no indexing with `[]` outside fixed-size arrays with constant
+  indexes, checked arithmetic or explicit `wrapping_*`/`carrying` helpers.
+- Tests: the attached real manifest verifies and any flipped bit of manifest or signature does not; the NIST
+  CAVP `SigVer` P-256/SHA-256 vectors (at least 15, typed into the test); the Wycheproof edge cases for
+  `ecdsa_secp256r1_sha256` you can reproduce from memory, each named.
+
+## X6 — Fonts: TrueType and CFF outlines to coverage (ChatGPT)
+
+Attachments: `LiberationSansNarrow-Regular.ttf`, `Oswald[wght].ttf`, `cursor.rs`, `error.rs`, `lints.toml`.
+
+One module `font.rs` (+ `raster.rs` if you prefer two files) for the interface crate. No dependencies.
+
+```rust
+pub struct Font<'a> { /* borrows the file */ }
+impl<'a> Font<'a> {
+    pub fn parse(data: &'a [u8], index_in_collection: u32) -> sse_core::Result<Self>;   // .ttf, .otf, .ttc
+    pub fn glyph(&self, character: char) -> Option<GlyphId>;                           // cmap formats 4 and 12
+    pub fn advance(&self, glyph: GlyphId) -> f32;  pub fn kerning(&self, a: GlyphId, b: GlyphId) -> f32;  // kern table
+    pub fn metrics(&self) -> Metrics;                                                   // ascent, descent, line gap, units per em
+    pub fn outline(&self, glyph: GlyphId, sink: &mut impl OutlineSink) -> sse_core::Result<()>;
+}
+pub fn rasterize(outline: &[Segment], width: u32, height: u32, out: &mut [u8]);        // 8-bit coverage, non-zero rule
+```
+
+- Outlines: `glyf` (simple and composite glyphs, quadratic) and `CFF ` (Type 2 charstrings with subroutines, cubic) —
+  system CJK fonts are CFF inside `.ttc`. Variable fonts: read the default instance and, for `Oswald[wght]`, apply
+  `fvar`/`gvar` deltas for one requested weight (if `gvar` is too much for one sitting, say so and deliver without).
+- Rasteriser: signed-area accumulation (one pass over edges, one prefix sum), exact coverage, no supersampling.
+  Sub-pixel horizontal positioning in quarters of a pixel.
+- Every table offset and length is checked; a damaged font is an error, never a panic or an endless loop
+  (composite depth ≤ 8, charstring stack and call depth as the specification limits).
+- Tests: glyph ids and advances of 20 named characters of the attached fonts (Latin, Cyrillic, punctuation) typed in
+  as constants you computed and say how; coverage of a rasterised square and circle within 1/255 of the exact area;
+  truncation of the font at 200 evenly spaced lengths never panics.
+
+## X7 — Windows minidump reader (ChatGPT)
+
+Attachments: `CrashDumpReader.cs`, two synthetic dumps from the C# tests, `cursor.rs`, `error.rs`, `lints.toml`.
+
+One file `minidump.rs`: header and stream directory, streams `SystemInfo`, `Exception` (code, address, thread),
+`ModuleList` (name, base, size, timestamp, version), `ThreadList` with the faulting thread's context for x86 and
+x64, `MemoryList`/`Memory64List` enough to read the stack. A function that walks the faulting stack for return
+addresses inside known modules and returns `module+offset` frames exactly as `CrashDumpReader` does. Everything is a
+view over the input slice — no copies of streams. Limits on every count; hostile directory entries (overlapping,
+beyond the file) are errors. Tests: the two attached dumps against the values the C# tests assert, truncation at
+every 64th byte, a dump claiming 2³² modules.
+
+## X8 — Inflate and PNG decoder (ChatGPT)
+
+Attachments: six icons from the C# editor's asset pack, `cursor.rs`, `error.rs`, `lints.toml`.
+
+Two files: `inflate.rs` (`pub fn inflate_zlib(input: &[u8], maximum: usize) -> Result<Vec<u8>>`: stored, fixed and
+dynamic blocks, Adler-32 checked, table-driven Huffman decoding with a two-level table, output limit enforced before
+growth) and `png.rs` (`pub fn decode(input) -> Result<Image>` to RGBA8: colour types 0, 2, 3, 4, 6, bit depths 1–16
+reduced to 8, `tRNS`, the five filters, Adam7; CRC of every chunk checked; dimensions limited to 16 384). Used by
+the build step that bakes the icon atlas and by the previews of S2 saves, so decoding speed matters: say how many
+MiB/s you measured or estimate. Tests: the attached icons decode to stated dimensions and to a stated FNV-1a hash of
+the pixels (compute it and say how); hand-made streams for each block type; truncation everywhere; a zip bomb stops
+at the limit.
+
+---
+
+## C4 — Checks and crash analysis (Codex)
+
+New crate `sse-doctor` (yours alone). Reference: `Core/Diagnostics/SaveDoctor.cs`, `QuestDoctor.cs`,
+`CrashLogAnalyzer.cs`, `CrashLogDiscovery.cs`, `CrashSignatureCatalog.cs` + its data, `CrashDumpReader.cs` (the
+reader itself arrives as `sse_codecs::minidump` from X7; until then a trait), `GameDoctor.cs`,
+`GameBuildFingerprint.cs`, `EnvironmentDoctor.cs`, `Cli/Program.Diagnostics.cs`; tests under `tests/.../Diagnostics`;
+`docs/DIAGNOSTICS.md`.
+
+Deliver:
+
+1. **One rule engine.** A rule is data + one function over the save index: id, severity, what it looked at, what it
+   found, and — when a repair is proven — the `ChangeSet` that repairs it. Save Doctor, the command line and the
+   pre-write check of the transaction run the same rules; the C# editor had three separate implementations.
+   Rules run over the index without building objects, and independent rules run on a scoped thread pool.
+2. Save Doctor and Quest Doctor rules of the C# editor, each with its fixture; Quest Doctor repairs through info
+   portions exactly where the C# code allows them.
+3. Crash logs: discovery in the game folders, the signature catalogue read as is (including `any.*` signatures and
+   the repair-installation advice), a matcher that compiles the catalogue once into one automaton instead of
+   testing signatures one by one, stack frames from minidumps as `module+offset`.
+4. Game Doctor: build fingerprints of the six games, environment checks.
+5. `sse-cli`: `doctor save|quests|crash|game` with the C# arguments, output and exit codes.
+
+Better than the reference: all rules on a 5 MiB save in ≤ 30 ms; a 50 MiB crash log matched in one pass with
+bounded memory (streamed, not loaded); one implementation instead of three.
+
+## C5 — Steam: cloud and achievements (Codex)
+
+New crate `sse-steam` (yours alone). Reference: everything in `src/StalkerSaveEditor.Steam/`,
+`Host/CloudServiceAdapter.cs`, `Host/SteamAchievementsAdapter.cs`, `Core/Storage/SteamLibraryFolderLocator.cs`; tests
+under `tests/StalkerSaveEditor.Steam.Tests`; fixtures `cloud-transaction/`.
+
+Deliver:
+
+1. Locating Steam, its libraries and the Auto-Cloud roots (VDF through `sse_codecs::vdf` from X3).
+2. The native part behind a trait `SteamApi` with two implementations: the real one calls Steam's own library
+   through `sse-sys` (describe in the pull request the exact functions and signatures you need there — Claude adds
+   them; you write none of the `unsafe`), and a scripted fake for tests.
+3. The worker process: the same executable started with a worker argument, parsed **before** anything else in
+   `main`; an unknown worker argument is a usage error; the worker never opens a window, plays a sound or reads
+   settings. The protocol between editor and worker is length-prefixed binary frames of our own, not JSON lines.
+4. Cloud: list, download, the write transaction of `SteamCloudWriteTransaction` (fresh hash, backup, write,
+   read-back, and **no automatic retry of an uncertain write**), Auto-Cloud writer.
+5. Achievements: read, set, clear with the confirmations the C# adapter requires.
+
+Better than the reference: the worker is the editor's own binary in a mode that maps no interface code (measure its
+memory: ≤ 8 MiB); a hung Steam call cannot hang the editor (timeout + kill, state reported as uncertain).
+
+## C6 — Companion mod: install, protocol, hot keys (Codex)
+
+New crate `sse-companion` (yours alone). Reference: `Core/Companion/*.cs`, `Core/Hotkeys/*.cs`,
+`Desktop/Services/CompanionServiceAdapter.cs`, `mods/companion/` (the Lua mod itself is copied unchanged into
+`assets/companion/` — do not edit the Lua), `tools/pack_companion_ee.py`, `tools/check_companion.sh`,
+`docs/COMPANION.md`; tests under `tests/.../Companion`, `Hotkeys`.
+
+Deliver:
+
+1. Installer for SoC, CS, CoP, the three Enhanced Editions (archive packing as `pack_companion_ee.py` does — in
+   Rust) and S.T.A.L.K.E.R. 2 (UE4SS mod folder): journal, exact restore on removal, the previous copy kept until
+   the new one is in place, state files readable by the C# editor and vice versa. Installation happens only on an
+   explicit call — nothing installs by itself.
+2. Hook patcher with the exact-source rule of `CompanionHookPatcher`.
+3. Protocol client: commands and replies through the files the mod watches, timeouts, a stale reply is never taken
+   for a fresh one.
+4. Hot keys: layouts, game-window matching, the Windows backend and the X11 backend. The X11 helper is the same
+   executable in a helper mode (same rule as the Steam worker). OS calls go through `sse-sys` (ask Claude for them).
+
+Better than the reference: nothing here ever runs on the interface thread (the C# adapter froze the start for
+3–5 s); the helper speaks the X11 wire protocol over the socket itself — no Xlib.
+
+---
+
+## G4 — Finding saves, previews, icon atlas (Gemini)
+
+In `sse-storage` (module `discovery`, agreed with Codex: you own that module only) and `sse-content` (previews,
+icons). Reference: `Core/Storage/SaveDirectoryLocator.cs`, `SaveSlotDiscovery.cs`, `Core/Inspection/SavePreviewReader.cs`,
+`Desktop/Services/ItemIconService.cs`, `Desktop/Assets/Icons` + `icon-aliases.json` + `PROVENANCE.json`,
+`tools/import_catalog_assets.py`.
+
+Deliver:
+
+1. Save discovery for all games and stores (Steam, GOG, Game Pass paths for S2), with the C# rules and fixtures.
+2. **Library index**: a file of our own binary layout (path, size, time, hash of the header, format, the few facts
+   the list shows) so the list of several hundred saves is on screen without opening one save; entries are
+   revalidated by size + time and re-read in the background by a bounded pool. Corrupt index → rebuilt, never fatal.
+3. Previews: X-Ray preview images (DDS next to the save) and S2 thumbnails to RGBA at the list's size, bounded cache
+   with a stated memory limit.
+4. Icon atlas: a build step (`build.rs` or `xtask`-style binary inside the crate) that reads the PNG icons
+   (`sse_codecs::png` from X8), removes duplicates by pixel hash, packs them into atlas pages of our own format
+   (pixels compressed with our LZO), and a run-time reader that maps a name (with aliases) to a rectangle and
+   decodes only the page asked for. Game atlases (`ui_icon_equipment.dds`) cut through G1's DDS.
+
+Better than the reference: icon pack ≤ 3.5 MiB (was 7); idle memory of the icon service ≤ 4 MiB; 333 saves listed
+in ≤ 100 ms with a warm index.
+
+## G5 — Updates (Gemini)
+
+New crate `sse-update` (yours alone). Reference: `src/StalkerSaveEditor.Updater/*.cs`, `Host/UpdateServiceAdapter.cs`,
+`tools/release/publish_release.py`, `docs/PACKAGING.md`; tests under `tests/.../Updater`.
+
+Deliver:
+
+1. Manifest `latest.json` read with `sse_codecs::json`; signature checked with `sse_codecs::p256` (X5) against the
+   embedded public key. **The format and the key do not change**: editor 1.3.x must update into 2.0 through this
+   channel and 2.0 must read what `publish_release.py` writes today.
+2. Detection of how this copy was installed (deb, AppImage, portable, Windows installer, macOS bundle) as
+   `UpdateInstallationDetector`.
+3. Download through a trait `Fetch` (the real implementation is the operating system's HTTP stack in `sse-sys`;
+   describe what you need, Claude writes it): resumable, size and SHA-256 checked while streaming, never held in
+   memory whole.
+4. Install per platform with the result shown, as release 1.3.1 does (Linux: no silent quit).
+5. `sse-cli`: `update check|download`.
+
+Better than the reference: a package is verified while it downloads (one pass, constant memory); a manifest with a
+valid signature but an older version is refused (downgrade protection — check what C# does and report).
+
+## G6 — Game environment and packages (Gemini)
+
+Module `toolkit` in `sse-fixes` and the folder `packaging/`. Reference: `Core/Diagnostics/ToolkitInstallAudit.cs`,
+`Desktop/ViewModels/ToolkitEnvironmentViewModel.cs` (logic only), `Stalker2ModToggle.cs`, `docs/PACKAGING.md`,
+`.github/workflows/release-packages.yml`, `packaging/` of the C# repository.
+
+Deliver:
+
+1. Environment of an installation: snapshots, profiles, the managed `user.ltx`, the install audit, S2 mod toggle.
+   Every function takes the installation explicitly — no "current installation" state (the C# screen wrote the
+   `user.ltx` of the previously selected game).
+2. Packages built by scripts in the repository with nothing downloaded at build time: `.deb`, AppImage, Windows
+   installer + portable zip, macOS `.dmg`. Sounds are a separate optional package.
+3. Size gates in CI: the job fails when a package exceeds the budget of `PLAN.md`.
+
+Better than the reference: package sizes; build of all packages from a clean checkout in ≤ 5 minutes.
+
+## G7 — Checks of game scripts (Gemini)
+
+New crate `sse-lint` (yours alone). Reference: `tools/check_condlists.py`, `check_condfuncs.py`, `check_dialogs.py`,
+`check_infos.py`, `check_logic_refs.py`, `check_module_calls.py`, `check_trade_items.py`, `lua_globals.py`,
+`spawn_diff.py`, `ee_diff.py`, `tools/fix_regress.py`, `fix_realcheck.sh`.
+
+Deliver the checkers as a library over `sse-content`'s file tree (so they see a game exactly as it runs: loose
+files over archives) with a small Lua **lexer** of our own for the reference checks (not an interpreter), and
+`sse-cli lint <game folder>`. The same library answers in the editor: "what do the installed mods break". The
+fix regression (`fix_regress`) becomes a test that builds original and patched trees with `sse-fixes` and runs the
+checkers on both.
+
+Better than the reference: a whole game checked in ≤ 2 s (the Python tools take minutes); usable by players, not
+only by us.
+
+---
+
 ## U0 — Interface toolkit decision (Claude)
 
-Two throwaway prototypes of one screen (save list with thumbnails, inventory table of 2 000 rows with icons, detail
-panel, the current dark theme, Russian + Chinese text, scale 100–200%): Slint and egui. Measure idle memory, cold
+Three throwaway prototypes of one screen (save list with thumbnails, inventory table of 2 000 rows with icons, detail
+panel, the current dark theme, Russian + Chinese text, scale 100–200%): Slint, egui and our own (system window, own rasteriser and font code). Measure idle memory, cold
 start, binary size, scroll smoothness; compare screenshots with the C# editor. The choice and the numbers go into
 `PLAN.md`; the prototypes are deleted.
