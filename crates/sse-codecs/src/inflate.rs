@@ -576,7 +576,6 @@ fn decode_compressed(
     }
 }
 
-
 fn ensure_growth(current: usize, additional: usize, maximum: usize) -> Result<()> {
     let wanted = current
         .checked_add(additional)
