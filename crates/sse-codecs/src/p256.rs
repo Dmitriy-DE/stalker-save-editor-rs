@@ -131,11 +131,7 @@ impl PublicKey {
         let Some((r, s)) = parse_signature(signature) else {
             return false;
         };
-        if r.is_zero()
-            || s.is_zero()
-            || r.cmp(&N) != Ordering::Less
-            || s.cmp(&N) != Ordering::Less
-        {
+        if r.is_zero() || s.is_zero() || r.cmp(&N) != Ordering::Less || s.cmp(&N) != Ordering::Less {
             return false;
         }
 
@@ -158,10 +154,7 @@ impl PublicKey {
         let u2 = mul_mod(r, w, N);
 
         let g = Affine { x: GX, y: GY };
-        let q = Affine {
-            x: self.x,
-            y: self.y,
-        };
+        let q = Affine { x: self.x, y: self.y };
         let p1 = scalar_mul(g, u1);
         let p2 = scalar_mul(q, u2);
         let sum = jacobian_add(p1, p2);
@@ -202,26 +195,10 @@ impl U256 {
             .ok_or_else(|| Error::damaged("integer padding range"))?;
         target.copy_from_slice(bytes);
 
-        let l0 = read_be_u64(
-            padded
-                .get(24..32)
-                .ok_or_else(|| Error::damaged("integer limb 0"))?,
-        )?;
-        let l1 = read_be_u64(
-            padded
-                .get(16..24)
-                .ok_or_else(|| Error::damaged("integer limb 1"))?,
-        )?;
-        let l2 = read_be_u64(
-            padded
-                .get(8..16)
-                .ok_or_else(|| Error::damaged("integer limb 2"))?,
-        )?;
-        let l3 = read_be_u64(
-            padded
-                .get(0..8)
-                .ok_or_else(|| Error::damaged("integer limb 3"))?,
-        )?;
+        let l0 = read_be_u64(padded.get(24..32).ok_or_else(|| Error::damaged("integer limb 0"))?)?;
+        let l1 = read_be_u64(padded.get(16..24).ok_or_else(|| Error::damaged("integer limb 1"))?)?;
+        let l2 = read_be_u64(padded.get(8..16).ok_or_else(|| Error::damaged("integer limb 2"))?)?;
+        let l3 = read_be_u64(padded.get(0..8).ok_or_else(|| Error::damaged("integer limb 3"))?)?;
         Ok(Self([l0, l1, l2, l3]))
     }
 
@@ -295,13 +272,8 @@ fn read_be_u64(bytes: &[u8]) -> Result<u64> {
 }
 
 fn modulus_complement(modulus: U256) -> U256 {
-    let (inverted_plus_one, _) = U256([
-        !modulus.limb(0),
-        !modulus.limb(1),
-        !modulus.limb(2),
-        !modulus.limb(3),
-    ])
-    .add_raw(U256::ONE);
+    let (inverted_plus_one, _) =
+        U256([!modulus.limb(0), !modulus.limb(1), !modulus.limb(2), !modulus.limb(3)]).add_raw(U256::ONE);
     inverted_plus_one
 }
 
@@ -450,22 +422,10 @@ fn jacobian_double(point: Jacobian) -> Jacobian {
     let x_plus_delta = add_mod(point.x, delta, P);
     let alpha = field_triple(field_mul(x_minus_delta, x_plus_delta));
     let x3 = sub_mod(field_square(alpha), field_oct(beta), P);
-    let z3 = sub_mod(
-        sub_mod(field_square(add_mod(point.y, point.z, P)), gamma, P),
-        delta,
-        P,
-    );
+    let z3 = sub_mod(sub_mod(field_square(add_mod(point.y, point.z, P)), gamma, P), delta, P);
     let four_beta_minus_x3 = sub_mod(field_quad(beta), x3, P);
-    let y3 = sub_mod(
-        field_mul(alpha, four_beta_minus_x3),
-        field_oct(field_square(gamma)),
-        P,
-    );
-    Jacobian {
-        x: x3,
-        y: y3,
-        z: z3,
-    }
+    let y3 = sub_mod(field_mul(alpha, four_beta_minus_x3), field_oct(field_square(gamma)), P);
+    Jacobian { x: x3, y: y3, z: z3 }
 }
 
 fn jacobian_add(left: Jacobian, right: Jacobian) -> Jacobian {
@@ -496,24 +456,12 @@ fn jacobian_add(left: Jacobian, right: Jacobian) -> Jacobian {
     let r = field_double(sub_mod(s2, s1, P));
     let v = field_mul(u1, i);
     let x3 = sub_mod(sub_mod(field_square(r), j, P), field_double(v), P);
-    let y3 = sub_mod(
-        field_mul(r, sub_mod(v, x3, P)),
-        field_double(field_mul(s1, j)),
-        P,
-    );
+    let y3 = sub_mod(field_mul(r, sub_mod(v, x3, P)), field_double(field_mul(s1, j)), P);
     let z3 = field_mul(
-        sub_mod(
-            sub_mod(field_square(add_mod(left.z, right.z, P)), z1z1, P),
-            z2z2,
-            P,
-        ),
+        sub_mod(sub_mod(field_square(add_mod(left.z, right.z, P)), z1z1, P), z2z2, P),
         h,
     );
-    Jacobian {
-        x: x3,
-        y: y3,
-        z: z3,
-    }
+    Jacobian { x: x3, y: y3, z: z3 }
 }
 
 fn scalar_mul(base: Affine, scalar: U256) -> Jacobian {
@@ -609,9 +557,7 @@ impl<'a> DerReader<'a> {
             if second & 0x80 == 0 {
                 return Err(Error::damaged("non-canonical DER INTEGER leading zero"));
             }
-            let stripped = bytes
-                .get(1..)
-                .ok_or_else(|| Error::damaged("DER INTEGER range"))?;
+            let stripped = bytes.get(1..).ok_or_else(|| Error::damaged("DER INTEGER range"))?;
             if stripped.len() > 32 {
                 return Err(Error::damaged("DER INTEGER exceeds 256 bits"));
             }
@@ -796,7 +742,7 @@ fn base64_value(byte: u8) -> Result<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_signature, PublicKey, U256, N};
+    use super::{parse_signature, PublicKey, N, U256};
     use core::cmp::Ordering;
 
     const PUBLIC_KEY: &str = "-----BEGIN PUBLIC KEY-----\n\
@@ -805,20 +751,15 @@ DuEkmd6oGnQq6qsZmILc2fYC0wfqEMk/NB88BSFAC1N6fmziJf11RVtlLQ==\n\
 -----END PUBLIC KEY-----\n";
 
     const RELEASE_DIGEST: [u8; 32] = [
-        0xFC, 0x25, 0x8D, 0xD2, 0x76, 0x1A, 0x9E, 0x9F,
-        0x9A, 0xD6, 0x70, 0xF5, 0x4E, 0xCC, 0x24, 0x56,
-        0x0E, 0xDB, 0x12, 0x1D, 0x12, 0x27, 0x18, 0x05,
-        0x1A, 0xA7, 0x03, 0x8E, 0xFC, 0x07, 0x28, 0xEA,
+        0xFC, 0x25, 0x8D, 0xD2, 0x76, 0x1A, 0x9E, 0x9F, 0x9A, 0xD6, 0x70, 0xF5, 0x4E, 0xCC, 0x24, 0x56, 0x0E, 0xDB,
+        0x12, 0x1D, 0x12, 0x27, 0x18, 0x05, 0x1A, 0xA7, 0x03, 0x8E, 0xFC, 0x07, 0x28, 0xEA,
     ];
 
     const RELEASE_SIGNATURE_DER: [u8; 70] = [
-        0x30, 0x44, 0x02, 0x20, 0x26, 0x1E, 0xB1, 0x50, 0xEA, 0x3B,
-        0x0C, 0xA4, 0xD3, 0x4A, 0x7D, 0x6C, 0x5F, 0x7E, 0x6A, 0x35,
-        0x26, 0xAE, 0xF8, 0xD5, 0xC4, 0xD5, 0xB5, 0xD9, 0xE9, 0xB2,
-        0x6D, 0xAC, 0x4B, 0x5B, 0xF7, 0x67, 0x02, 0x20, 0x56, 0xEB,
-        0x1E, 0x2D, 0xC0, 0x7F, 0xF8, 0xA8, 0x4D, 0x4A, 0xFB, 0x83,
-        0xE9, 0x35, 0xDF, 0x96, 0xE6, 0x8E, 0x4D, 0x68, 0x86, 0x79,
-        0x51, 0xF2, 0xBF, 0x2B, 0x62, 0x8D, 0x8B, 0x73, 0xA1, 0x6A,
+        0x30, 0x44, 0x02, 0x20, 0x26, 0x1E, 0xB1, 0x50, 0xEA, 0x3B, 0x0C, 0xA4, 0xD3, 0x4A, 0x7D, 0x6C, 0x5F, 0x7E,
+        0x6A, 0x35, 0x26, 0xAE, 0xF8, 0xD5, 0xC4, 0xD5, 0xB5, 0xD9, 0xE9, 0xB2, 0x6D, 0xAC, 0x4B, 0x5B, 0xF7, 0x67,
+        0x02, 0x20, 0x56, 0xEB, 0x1E, 0x2D, 0xC0, 0x7F, 0xF8, 0xA8, 0x4D, 0x4A, 0xFB, 0x83, 0xE9, 0x35, 0xDF, 0x96,
+        0xE6, 0x8E, 0x4D, 0x68, 0x86, 0x79, 0x51, 0xF2, 0xBF, 0x2B, 0x62, 0x8D, 0x8B, 0x73, 0xA1, 0x6A,
     ];
 
     #[test]
