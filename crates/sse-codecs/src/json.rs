@@ -977,9 +977,7 @@ fn write_escaped_string(output: &mut Vec<u8>, value: &str) -> Result<()> {
 fn hex_digit(value: u8) -> u8 {
     match value {
         0..=9 => b'0'.checked_add(value).unwrap_or(b'0'),
-        10..=15 => b'A'
-            .checked_add(value.saturating_sub(10))
-            .unwrap_or(b'A'),
+        10..=15 => b'A'.checked_add(value.saturating_sub(10)).unwrap_or(b'A'),
         _ => b'0',
     }
 }
