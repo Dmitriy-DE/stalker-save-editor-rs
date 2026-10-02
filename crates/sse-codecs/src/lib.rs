@@ -2,3 +2,9 @@
 
 /// LZO1X as the X-Ray engine uses it for saves.
 pub mod lzo1x;
+
+/// Zlib/DEFLATE decoder used by PNG and package tooling.
+pub mod inflate;
+
+/// PNG decoder to RGBA8.
+pub mod png;
