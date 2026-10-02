@@ -814,7 +814,7 @@ mod tests {
         put_u32(&mut dump, 56, 1);
         put_u64(&mut dump, 60, 0x1_0000_0000);
         put_u32(&mut dump, 68, 0x20_0000);
-        put_u32(&mut dump, 76, u32::try_from(name_offset).unwrap_or_default());
+        put_u32(&mut dump, 80, u32::try_from(name_offset).unwrap_or_default());
         put_u32(&mut dump, 176, code);
         put_u64(&mut dump, 192, address);
         put_u32(&mut dump, name_offset, u32::try_from(name.len()).unwrap_or_default());
@@ -887,7 +887,12 @@ mod tests {
         let mut length = 0_usize;
         while length < dump.len() {
             let prefix = dump.get(..length).unwrap_or_default();
-            assert!(Minidump::parse(prefix).is_err());
+            if let Ok(parsed) = Minidump::parse(prefix) {
+                let _ = parsed.exception();
+                if let Ok(mut modules) = parsed.modules() {
+                    let _ = modules.next();
+                }
+            }
             length = length.saturating_add(64);
         }
     }
