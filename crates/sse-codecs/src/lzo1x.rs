@@ -386,9 +386,7 @@ pub fn compress_fast(payload: &[u8]) -> Vec<u8> {
             continue;
         }
 
-        if literal_length != 0
-            && !emit_literals(&mut output, payload, anchor, literal_length, anchor == 0)
-        {
+        if literal_length != 0 && !emit_literals(&mut output, payload, anchor, literal_length, anchor == 0) {
             return compress(payload);
         }
 
