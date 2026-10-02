@@ -109,7 +109,7 @@ impl<'a> Reader<'a> {
     /// # Errors
     /// Returns [`Error::Damaged`] for malformed UTF-8 or JSON, excessive nesting, truncated
     /// input, comments, trailing commas, lone surrogates, or trailing non-whitespace bytes.
-    pub fn next(&mut self) -> Result<Option<Event<'a>>> {
+    pub fn next_event(&mut self) -> Result<Option<Event<'a>>> {
         loop {
             self.skip_whitespace()?;
             let frame = self.stack.last().copied();
@@ -194,7 +194,7 @@ impl<'a> Reader<'a> {
     /// Returns an error if the reader is not positioned at a value or the skipped value is
     /// malformed.
     pub fn skip_value(&mut self) -> Result<()> {
-        let first = self.next()?.ok_or_else(|| self.error("expected value to skip"))?;
+        let first = self.next_event()?.ok_or_else(|| self.error("expected value to skip"))?;
         let mut depth = match first {
             Event::ObjectStart | Event::ArrayStart => 1_usize,
             Event::String(_) | Event::Number(_) | Event::Bool(_) | Event::Null => return Ok(()),
@@ -205,7 +205,7 @@ impl<'a> Reader<'a> {
 
         while depth != 0 {
             let event = self
-                .next()?
+                .next_event()?
                 .ok_or_else(|| self.error("truncated value while skipping"))?;
             match event {
                 Event::ObjectStart | Event::ArrayStart => {
@@ -319,7 +319,7 @@ impl<'a> Reader<'a> {
             }
         }
 
-        let mut decoded = String::with_capacity(scan.checked_sub(start).unwrap_or_default());
+        let mut decoded = String::with_capacity(scan.saturating_sub(start));
         self.push_utf8_segment(&mut decoded, start, scan)?;
         self.position = scan;
 
@@ -404,11 +404,11 @@ impl<'a> Reader<'a> {
         for _ in 0..4 {
             let byte = self.consume_byte()?;
             let digit = match byte {
-                b'0'..=b'9' => u16::from(byte.checked_sub(b'0').unwrap_or_default()),
-                b'a'..=b'f' => u16::from(byte.checked_sub(b'a').unwrap_or_default())
+                b'0'..=b'9' => u16::from(byte.saturating_sub(b'0')),
+                b'a'..=b'f' => u16::from(byte.saturating_sub(b'a'))
                     .checked_add(10)
                     .ok_or_else(|| self.error("hex digit overflow"))?,
-                b'A'..=b'F' => u16::from(byte.checked_sub(b'A').unwrap_or_default())
+                b'A'..=b'F' => u16::from(byte.saturating_sub(b'A'))
                     .checked_add(10)
                     .ok_or_else(|| self.error("hex digit overflow"))?,
                 _ => return Err(self.error("invalid hex digit in Unicode escape")),
@@ -640,7 +640,7 @@ fn parse_u64(text: &str) -> Option<u64> {
 
 fn is_number(bytes: &[u8]) -> bool {
     let mut reader = Reader::new(bytes);
-    matches!(reader.next(), Ok(Some(Event::Number(_)))) && matches!(reader.next(), Ok(None))
+    matches!(reader.next_event(), Ok(Some(Event::Number(_)))) && matches!(reader.next_event(), Ok(None))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -978,7 +978,7 @@ fn hex_digit(value: u8) -> u8 {
     match value {
         0..=9 => b'0'.checked_add(value).unwrap_or(b'0'),
         10..=15 => b'A'
-            .checked_add(value.checked_sub(10).unwrap_or_default())
+            .checked_add(value.saturating_sub(10))
             .unwrap_or(b'A'),
         _ => b'0',
     }
@@ -991,15 +991,15 @@ mod tests {
     #[test]
     fn borrowed_and_owned_strings_are_distinct() {
         let mut reader = Reader::new(br#"["plain","escaped\n", "\uD83D\uDE00"]"#);
-        assert_eq!(reader.next(), Ok(Some(Event::ArrayStart)));
+        assert_eq!(reader.next_event(), Ok(Some(Event::ArrayStart)));
         assert!(matches!(
-            reader.next(),
+            reader.next_event(),
             Ok(Some(Event::String(Text::Borrowed("plain"))))
         ));
-        assert!(matches!(reader.next(), Ok(Some(Event::String(Text::Owned(value)))) if value == "escaped\n"));
-        assert!(matches!(reader.next(), Ok(Some(Event::String(Text::Owned(value)))) if value == "😀"));
-        assert_eq!(reader.next(), Ok(Some(Event::ArrayEnd)));
-        assert_eq!(reader.next(), Ok(None));
+        assert!(matches!(reader.next_event(), Ok(Some(Event::String(Text::Owned(value)))) if value == "escaped\n"));
+        assert!(matches!(reader.next_event(), Ok(Some(Event::String(Text::Owned(value)))) if value == "😀"));
+        assert_eq!(reader.next_event(), Ok(Some(Event::ArrayEnd)));
+        assert_eq!(reader.next_event(), Ok(None));
     }
 
     #[test]
@@ -1013,8 +1013,8 @@ mod tests {
         input.extend(core::iter::repeat_n(b'a', count));
         input.push(b'"');
         let mut reader = Reader::new(&input);
-        assert!(matches!(reader.next(), Ok(Some(Event::String(Text::Borrowed(value)))) if value.len() == count));
-        assert_eq!(reader.next(), Ok(None));
+        assert!(matches!(reader.next_event(), Ok(Some(Event::String(Text::Borrowed(value)))) if value.len() == count));
+        assert_eq!(reader.next_event(), Ok(None));
     }
 
     #[test]
@@ -1159,7 +1159,7 @@ mod tests {
     fn drain(input: &[u8]) -> sse_core::Result<Vec<String>> {
         let mut reader = Reader::new(input);
         let mut values = Vec::new();
-        while let Some(event) = reader.next()? {
+        while let Some(event) = reader.next_event()? {
             values.push(format!("{event:?}"));
         }
         Ok(values)
