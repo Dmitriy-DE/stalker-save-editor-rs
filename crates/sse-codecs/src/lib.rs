@@ -2,3 +2,6 @@
 
 /// LZO1X as the X-Ray engine uses it for saves.
 pub mod lzo1x;
+
+/// Strict streaming RFC 8259 JSON reader and writer.
+pub mod json;
