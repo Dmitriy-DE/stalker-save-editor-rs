@@ -158,12 +158,21 @@ impl CffIndex {
         if a == 0 || b < a {
             return Err(Error::damaged("CFF INDEX offsets are invalid"));
         }
-        let start = checked_add(self.data, a - 1)?;
-        let end = checked_add(self.data, b - 1)?;
+        let a_offset = a
+            .checked_sub(1)
+            .ok_or_else(|| Error::damaged("CFF INDEX start offset underflow"))?;
+        let b_offset = b
+            .checked_sub(1)
+            .ok_or_else(|| Error::damaged("CFF INDEX end offset underflow"))?;
+        let start = checked_add(self.data, a_offset)?;
+        let end = checked_add(self.data, b_offset)?;
         if start > end || end > self.end {
             return Err(Error::damaged("CFF INDEX object exceeds table"));
         }
-        checked_range(data, start, end - start)
+        let length = end
+            .checked_sub(start)
+            .ok_or_else(|| Error::damaged("CFF INDEX object length underflow"))?;
+        checked_range(data, start, length)
     }
 }
 
@@ -1027,7 +1036,10 @@ fn parse_cff_index(data: &[u8], offset: usize, limit: usize) -> Result<(CffIndex
     if first != 1 || last == 0 {
         return Err(Error::damaged("CFF INDEX offsets are invalid"));
     }
-    let end = checked_add(data_start, last - 1)?;
+    let last_offset = last
+        .checked_sub(1)
+        .ok_or_else(|| Error::damaged("CFF INDEX final offset underflow"))?;
+    let end = checked_add(data_start, last_offset)?;
     if end > limit {
         return Err(Error::damaged("CFF INDEX data exceeds table"));
     }
@@ -1135,7 +1147,9 @@ fn cff_dict_number(bytes: &[u8], position: usize) -> Result<(i32, usize)> {
             }
             0
         }
-        32..=246 => i32::from(b0) - 139,
+        32..=246 => i32::from(b0)
+            .checked_sub(139)
+            .ok_or_else(|| Error::damaged("CFF DICT integer underflow"))?,
         247..=250 => {
             let b1 = i32::from(
                 *bytes
@@ -1143,7 +1157,12 @@ fn cff_dict_number(bytes: &[u8], position: usize) -> Result<(i32, usize)> {
                     .ok_or_else(|| Error::damaged("CFF DICT positive number truncated"))?,
             );
             next = checked_add(next, 1)?;
-            (i32::from(b0) - 247) * 256 + b1 + 108
+            i32::from(b0)
+                .checked_sub(247)
+                .and_then(|value| value.checked_mul(256))
+                .and_then(|value| value.checked_add(b1))
+                .and_then(|value| value.checked_add(108))
+                .ok_or_else(|| Error::damaged("CFF DICT positive integer overflow"))?
         }
         251..=254 => {
             let b1 = i32::from(
@@ -1152,7 +1171,13 @@ fn cff_dict_number(bytes: &[u8], position: usize) -> Result<(i32, usize)> {
                     .ok_or_else(|| Error::damaged("CFF DICT negative number truncated"))?,
             );
             next = checked_add(next, 1)?;
-            -((i32::from(b0) - 251) * 256) - b1 - 108
+            i32::from(b0)
+                .checked_sub(251)
+                .and_then(|value| value.checked_mul(256))
+                .and_then(i32::checked_neg)
+                .and_then(|value| value.checked_sub(b1))
+                .and_then(|value| value.checked_sub(108))
+                .ok_or_else(|| Error::damaged("CFF DICT negative integer overflow"))?
         }
         _ => return Err(Error::damaged("invalid CFF DICT number")),
     };
@@ -1242,6 +1267,9 @@ fn cff_fd_for_glyph(data: &[u8], cff: &CffState, glyph: usize) -> Result<Option<
     let Some(offset) = cff.fd_select_offset else {
         return Ok(None);
     };
+    if offset >= cff.fd_select_end {
+        return Err(Error::damaged("CFF FDSelect offset exceeds table"));
+    }
     let format = *data
         .get(offset)
         .ok_or_else(|| Error::damaged("CFF FDSelect format missing"))?;
@@ -1261,7 +1289,8 @@ fn cff_fd_for_glyph(data: &[u8], cff: &CffState, glyph: usize) -> Result<Option<
                         .get(checked_add(position, 2)?)
                         .ok_or_else(|| Error::damaged("CFF FDSelect range truncated"))?,
                 );
-                let next = if range + 1 < ranges {
+                let next_range = checked_add(range, 1)?;
+                let next = if next_range < ranges {
                     usize::from(be_u16_at(data, checked_add(position, 3)?)?)
                 } else {
                     usize::from(be_u16_at(
@@ -1455,6 +1484,7 @@ impl<S: OutlineSink> Type2Interpreter<'_, '_, S> {
         Ok(core::mem::take(&mut self.stack))
     }
 
+    #[allow(clippy::cast_possible_truncation)]
     fn pop_int(&mut self) -> Result<i32> {
         let value = self
             .stack
@@ -1509,7 +1539,7 @@ impl<S: OutlineSink> Type2Interpreter<'_, '_, S> {
             return Err(Error::damaged("CFF rlineto operands invalid"));
         }
         for pair in args.chunks_exact(2) {
-            self.line_by(pair[0], pair[1])?;
+            self.line_by(cff_arg(pair, 0)?, cff_arg(pair, 1)?)?;
         }
         Ok(())
     }
@@ -1535,7 +1565,11 @@ impl<S: OutlineSink> Type2Interpreter<'_, '_, S> {
             return Err(Error::damaged("CFF rrcurveto operands invalid"));
         }
         for c in args.chunks_exact(6) {
-            self.curve_by((c[0], c[1]), (c[2], c[3]), (c[4], c[5]))?;
+            self.curve_by(
+                (cff_arg(c, 0)?, cff_arg(c, 1)?),
+                (cff_arg(c, 2)?, cff_arg(c, 3)?),
+                (cff_arg(c, 4)?, cff_arg(c, 5)?),
+            )?;
         }
         Ok(())
     }
@@ -2239,7 +2273,9 @@ fn iup_fill(values: &mut [Option<f32>], base: &[(f32, f32)], ends: &[u16], x_axi
                 let a = *touched
                     .get(pair)
                     .ok_or_else(|| Error::damaged("IUP first touched point missing"))?;
-                let next_pair = checked_add(pair, 1)? % touched.len();
+                let next_pair = checked_add(pair, 1)?
+                    .checked_rem(touched.len())
+                    .ok_or_else(|| Error::damaged("IUP touched-point modulo by zero"))?;
                 let b = *touched
                     .get(next_pair)
                     .ok_or_else(|| Error::damaged("IUP second touched point missing"))?;
@@ -2548,8 +2584,7 @@ fn kern_lookup(data: &[u8], table: Table, left: u16, right: u16) -> Result<Optio
             while low < high {
                 let middle = checked_add(
                     low,
-                    high.checked_sub(low)
-                        .unwrap_or_default()
+                    high.saturating_sub(low)
                         .checked_div(2)
                         .unwrap_or_default(),
                 )?;
@@ -2730,7 +2765,10 @@ pub fn rasterize(outline: &[Segment], width: u32, height: u32, out: &mut [u8]) {
             };
             winding += cell.cover;
             let coverage = (winding + cell.area).abs().clamp(0.0, 1.0);
-            let Some(slot) = out.get_mut(out_row + x) else {
+            let Some(out_index) = out_row.checked_add(x) else {
+                return;
+            };
+            let Some(slot) = out.get_mut(out_index) else {
                 return;
             };
             *slot = coverage_to_u8(coverage);
@@ -2744,6 +2782,7 @@ struct CellAcc {
     cover: f32,
 }
 
+#[allow(clippy::cast_possible_truncation)]
 fn coverage_to_u8(coverage: f32) -> u8 {
     if coverage <= 0.0 {
         0
@@ -2757,6 +2796,7 @@ fn coverage_to_u8(coverage: f32) -> u8 {
 const FLATNESS: f32 = 1.0 / 32.0;
 const MAX_FLATTEN_DEPTH: usize = 10;
 
+#[allow(clippy::too_many_arguments)]
 fn flatten_quad(
     p0: (f32, f32),
     p1: (f32, f32),
@@ -2774,10 +2814,14 @@ fn flatten_quad(
     let a = mid2(p0, p1);
     let b = mid2(p1, p2);
     let m = mid2(a, b);
-    flatten_quad(p0, a, m, depth + 1, w, h, stride, cells);
-    flatten_quad(m, b, p2, depth + 1, w, h, stride, cells);
+    let Some(next_depth) = depth.checked_add(1) else {
+        return;
+    };
+    flatten_quad(p0, a, m, next_depth, w, h, stride, cells);
+    flatten_quad(m, b, p2, next_depth, w, h, stride, cells);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn flatten_cubic(
     p0: (f32, f32),
     p1: (f32, f32),
@@ -2800,8 +2844,11 @@ fn flatten_cubic(
     let d = mid2(a, b);
     let e = mid2(b, c);
     let m = mid2(d, e);
-    flatten_cubic(p0, a, d, m, depth + 1, w, h, stride, cells);
-    flatten_cubic(m, e, c, p3, depth + 1, w, h, stride, cells);
+    let Some(next_depth) = depth.checked_add(1) else {
+        return;
+    };
+    flatten_cubic(p0, a, d, m, next_depth, w, h, stride, cells);
+    flatten_cubic(m, e, c, p3, next_depth, w, h, stride, cells);
 }
 fn mid2(a: (f32, f32), b: (f32, f32)) -> (f32, f32) {
     ((a.0 + b.0) * 0.5, (a.1 + b.1) * 0.5)
@@ -2817,6 +2864,28 @@ fn point_line_distance_sq(p: (f32, f32), a: (f32, f32), b: (f32, f32)) -> f32 {
     (cross * cross) / len
 }
 
+#[allow(clippy::cast_possible_truncation)]
+fn bounded_floor_to_usize(value: f32, limit: usize) -> usize {
+    if !value.is_finite() || value <= 0.0 {
+        return 0;
+    }
+    if value >= limit as f32 {
+        return limit;
+    }
+    value.floor() as usize
+}
+
+#[allow(clippy::cast_possible_truncation)]
+fn bounded_ceil_to_usize(value: f32, limit: usize) -> usize {
+    if !value.is_finite() || value <= 0.0 {
+        return 0;
+    }
+    if value >= limit as f32 {
+        return limit;
+    }
+    value.ceil() as usize
+}
+
 fn accumulate_edge(a: (f32, f32), b: (f32, f32), w: usize, h: usize, stride: usize, cells: &mut [CellAcc]) {
     if !a.0.is_finite() || !a.1.is_finite() || !b.0.is_finite() || !b.1.is_finite() || a.1 == b.1 {
         return;
@@ -2826,8 +2895,8 @@ fn accumulate_edge(a: (f32, f32), b: (f32, f32), w: usize, h: usize, stride: usi
     if min_y >= max_y {
         return;
     }
-    let mut row = min_y.floor().max(0.0) as usize;
-    let last = ((max_y.ceil() as usize).min(h)).saturating_sub(1);
+    let mut row = bounded_floor_to_usize(min_y, h);
+    let last = bounded_ceil_to_usize(max_y, h).saturating_sub(1);
     while row <= last {
         let low = min_y.max(row as f32);
         let high = max_y.min(row as f32 + 1.0);
@@ -2845,7 +2914,10 @@ fn accumulate_edge(a: (f32, f32), b: (f32, f32), w: usize, h: usize, stride: usi
         if row == last {
             break;
         }
-        row += 1;
+        let Some(next_row) = row.checked_add(1) else {
+            return;
+        };
+        row = next_row;
     }
 }
 
@@ -2888,14 +2960,24 @@ fn add_cell_piece(a: (f32, f32), b: (f32, f32), row: usize, w: usize, stride: us
         }
         return;
     }
-    let cell = cell as usize;
+    let cell = bounded_floor_to_usize(cell, w);
     if cell >= w {
         return;
     }
-    if let Some(slot) = cells.get_mut(row_start + cell) {
-        slot.area += dy * ((cell + 1) as f32 - avg_x);
+    let Some(cell_index) = row_start.checked_add(cell) else {
+        return;
+    };
+    let Some(next_cell) = cell.checked_add(1) else {
+        return;
+    };
+    let next_boundary = next_cell as f32;
+    if let Some(slot) = cells.get_mut(cell_index) {
+        slot.area += dy * (next_boundary - avg_x);
     }
-    if let Some(slot) = cells.get_mut(row_start + cell + 1) {
+    let Some(next_index) = row_start.checked_add(next_cell) else {
+        return;
+    };
+    if let Some(slot) = cells.get_mut(next_index) {
         slot.cover += dy;
     }
 }
