@@ -194,9 +194,7 @@ impl<'a> Reader<'a> {
     /// Returns an error if the reader is not positioned at a value or the skipped value is
     /// malformed.
     pub fn skip_value(&mut self) -> Result<()> {
-        let first = self
-            .next()?
-            .ok_or_else(|| self.error("expected value to skip"))?;
+        let first = self.next()?.ok_or_else(|| self.error("expected value to skip"))?;
         let mut depth = match first {
             Event::ObjectStart | Event::ArrayStart => 1_usize,
             Event::String(_) | Event::Number(_) | Event::Bool(_) | Event::Null => return Ok(()),
@@ -304,8 +302,8 @@ impl<'a> Reader<'a> {
                         .input
                         .get(start..scan)
                         .ok_or_else(|| self.error_at(scan, "invalid string range"))?;
-                    let value = core::str::from_utf8(raw)
-                        .map_err(|_| self.error_at(start, "string is not valid UTF-8"))?;
+                    let value =
+                        core::str::from_utf8(raw).map_err(|_| self.error_at(start, "string is not valid UTF-8"))?;
                     self.position = scan
                         .checked_add(1)
                         .ok_or_else(|| self.error_at(scan, "string position overflow"))?;
@@ -385,10 +383,7 @@ impl<'a> Reader<'a> {
                         .checked_sub(0xDC00)
                         .ok_or_else(|| self.error("invalid low surrogate"))?;
                     0x1_0000_u32
-                        .checked_add(
-                            high.checked_shl(10)
-                                .ok_or_else(|| self.error("surrogate overflow"))?,
-                        )
+                        .checked_add(high.checked_shl(10).ok_or_else(|| self.error("surrogate overflow"))?)
                         .and_then(|value| value.checked_add(low))
                         .ok_or_else(|| self.error("surrogate overflow"))?
                 } else if (0xDC00..=0xDFFF).contains(&first) {
@@ -396,8 +391,7 @@ impl<'a> Reader<'a> {
                 } else {
                     u32::from(first)
                 };
-                let character = char::from_u32(scalar)
-                    .ok_or_else(|| self.error("invalid Unicode scalar value"))?;
+                let character = char::from_u32(scalar).ok_or_else(|| self.error("invalid Unicode scalar value"))?;
                 decoded.push(character);
             }
             _ => return Err(self.error("invalid JSON escape")),
@@ -432,8 +426,7 @@ impl<'a> Reader<'a> {
             .input
             .get(start..end)
             .ok_or_else(|| self.error_at(start, "invalid UTF-8 segment range"))?;
-        let text = core::str::from_utf8(bytes)
-            .map_err(|_| self.error_at(start, "string is not valid UTF-8"))?;
+        let text = core::str::from_utf8(bytes).map_err(|_| self.error_at(start, "string is not valid UTF-8"))?;
         target.push_str(text);
         Ok(())
     }
@@ -532,9 +525,7 @@ impl<'a> Reader<'a> {
                 self.root = RootState::Done;
                 Ok(())
             }
-            Some(Frame::Object(ObjectState::Value)) => {
-                self.set_top(Frame::Object(ObjectState::CommaOrEnd))
-            }
+            Some(Frame::Object(ObjectState::Value)) => self.set_top(Frame::Object(ObjectState::CommaOrEnd)),
             Some(Frame::Array(ArrayState::ValueOrEnd | ArrayState::ValueRequired)) => {
                 self.set_top(Frame::Array(ArrayState::CommaOrEnd))
             }
@@ -1001,7 +992,10 @@ mod tests {
     fn borrowed_and_owned_strings_are_distinct() {
         let mut reader = Reader::new(br#"["plain","escaped\n", "\uD83D\uDE00"]"#);
         assert_eq!(reader.next(), Ok(Some(Event::ArrayStart)));
-        assert!(matches!(reader.next(), Ok(Some(Event::String(Text::Borrowed("plain"))))));
+        assert!(matches!(
+            reader.next(),
+            Ok(Some(Event::String(Text::Borrowed("plain"))))
+        ));
         assert!(matches!(reader.next(), Ok(Some(Event::String(Text::Owned(value)))) if value == "escaped\n"));
         assert!(matches!(reader.next(), Ok(Some(Event::String(Text::Owned(value)))) if value == "😀"));
         assert_eq!(reader.next(), Ok(Some(Event::ArrayEnd)));
@@ -1010,7 +1004,10 @@ mod tests {
 
     #[test]
     fn ten_mib_unescaped_string_is_borrowed() {
-        let count = 10_usize.checked_mul(1024).and_then(|v| v.checked_mul(1024)).unwrap_or_default();
+        let count = 10_usize
+            .checked_mul(1024)
+            .and_then(|v| v.checked_mul(1024))
+            .unwrap_or_default();
         let mut input = Vec::with_capacity(count.checked_add(2).unwrap_or(count));
         input.push(b'"');
         input.extend(core::iter::repeat_n(b'a', count));
@@ -1026,7 +1023,11 @@ mod tests {
         deep.extend(core::iter::repeat_n(b'[', 129));
         deep.extend(core::iter::repeat_n(b']', 129));
         assert!(drain(&deep).is_err());
-        for text in [br#""\uD800""#.as_slice(), br#""\uDC00""#.as_slice(), br#""\uD800\u0041""#.as_slice()] {
+        for text in [
+            br#""\uD800""#.as_slice(),
+            br#""\uDC00""#.as_slice(),
+            br#""\uD800\u0041""#.as_slice(),
+        ] {
             assert!(drain(text).is_err());
         }
     }
@@ -1067,23 +1068,76 @@ mod tests {
     #[test]
     fn classic_accept_reject_cases() {
         let valid: [&[u8]; 32] = [
-            b"null", b"true", b"false", b"0", b"-0", b"1", b"-1", b"1.0",
-            b"1e0", b"1E+2", b"1e-2", b"[]", b"{}", b"[1]", b"[1,2,3]", b"{\"a\":1}",
-            b"{\"a\":[],\"b\":{}}", br#"""#, br#""abc""#, br#""\\\/\b\f\n\r\t""#,
-            br#""\u0000""#, br#""\u20AC""#, br#""\uD83D\uDE00""#, b" \r\n\t null ",
-            b"[true,false,null]", b"{\"a\":1,\"a\":2}", b"[{}]", b"{\"x\":[[[]]]}",
-            b"0.0", b"10e10", b"-12.34E-5", b"\xEF\xBB\xBF{}",
+            b"null",
+            b"true",
+            b"false",
+            b"0",
+            b"-0",
+            b"1",
+            b"-1",
+            b"1.0",
+            b"1e0",
+            b"1E+2",
+            b"1e-2",
+            b"[]",
+            b"{}",
+            b"[1]",
+            b"[1,2,3]",
+            b"{\"a\":1}",
+            b"{\"a\":[],\"b\":{}}",
+            br#"""#,
+            br#""abc""#,
+            br#""\\\/\b\f\n\r\t""#,
+            br#""\u0000""#,
+            br#""\u20AC""#,
+            br#""\uD83D\uDE00""#,
+            b" \r\n\t null ",
+            b"[true,false,null]",
+            b"{\"a\":1,\"a\":2}",
+            b"[{}]",
+            b"{\"x\":[[[]]]}",
+            b"0.0",
+            b"10e10",
+            b"-12.34E-5",
+            b"\xEF\xBB\xBF{}",
         ];
         for value in valid {
             assert!(drain(value).is_ok(), "valid case rejected: {:?}", value);
         }
 
         let invalid: [&[u8]; 32] = [
-            b"", b" ", b"nul", b"True", b"FALSE", b"01", b"-", b"-.1", b"1.", b"1e",
-            b"1e+", b"[", b"{", b"[1,]", b"{\"a\":1,}", b"{a:1}", b"{\"a\" 1}",
-            b"[1 2]", br#""\x""#, br#""\u12""#, br#""\uD800""#, br#""\uDC00""#,
-            b"//comment\n1", b"/*x*/1", b"1 2", b"[]x", b"[,,]", b"{,}", b"+1", b".1",
-            b"NaN", b"Infinity",
+            b"",
+            b" ",
+            b"nul",
+            b"True",
+            b"FALSE",
+            b"01",
+            b"-",
+            b"-.1",
+            b"1.",
+            b"1e",
+            b"1e+",
+            b"[",
+            b"{",
+            b"[1,]",
+            b"{\"a\":1,}",
+            b"{a:1}",
+            b"{\"a\" 1}",
+            b"[1 2]",
+            br#""\x""#,
+            br#""\u12""#,
+            br#""\uD800""#,
+            br#""\uDC00""#,
+            b"//comment\n1",
+            b"/*x*/1",
+            b"1 2",
+            b"[]x",
+            b"[,,]",
+            b"{,}",
+            b"+1",
+            b".1",
+            b"NaN",
+            b"Infinity",
         ];
         for value in invalid {
             assert!(drain(value).is_err(), "invalid case accepted: {:?}", value);
