@@ -386,10 +386,10 @@ pub fn compress_fast(payload: &[u8]) -> Vec<u8> {
             continue;
         }
 
-        if literal_length != 0 {
-            if !emit_literals(&mut output, payload, anchor, literal_length, anchor == 0) {
-                return compress(payload);
-            }
+        if literal_length != 0
+            && !emit_literals(&mut output, payload, anchor, literal_length, anchor == 0)
+        {
+            return compress(payload);
         }
 
         let patch = match emit_match(&mut output, distance, match_length) {
@@ -979,7 +979,7 @@ mod tests {
                 let mut value = make_payload(rng, size, 3);
                 let mut position = 0_usize;
                 while position < size {
-                    let remaining = size.checked_sub(position).unwrap_or_default();
+                    let remaining = size.saturating_sub(position);
                     let run = 256_usize.min(remaining);
                     let end = position.checked_add(run).unwrap_or(size);
                     if let Some(part) = value.get_mut(position..end) {
@@ -1001,7 +1001,7 @@ mod tests {
         let capacity = distance.checked_add(marker.len()).unwrap_or(distance);
         let mut data = Vec::with_capacity(capacity);
         data.extend_from_slice(&marker);
-        let filler = distance.checked_sub(marker.len()).unwrap_or_default();
+        let filler = distance.saturating_sub(marker.len());
         let mut state = u64::from(salt).wrapping_add(0x1234_5678_9ABC_DEF0);
         for _ in 0..filler {
             state ^= state.checked_shl(13).unwrap_or_default();
@@ -1020,9 +1020,7 @@ mod tests {
         let mut state = 0_usize;
 
         if stream.first().copied().unwrap_or_default() > 17 {
-            let length = usize::from(stream.first().copied().unwrap_or_default())
-                .checked_sub(17)
-                .unwrap_or_default();
+            let length = usize::from(stream.first().copied().unwrap_or_default()).saturating_sub(17);
             position = 1_usize.checked_add(length).unwrap_or(stream.len());
             state = length.min(4);
         }
@@ -1123,10 +1121,10 @@ mod tests {
             let byte = stream.get(position).copied().unwrap_or(1);
             position = position.checked_add(1).unwrap_or(stream.len());
             if byte != 0 {
-                value = value.checked_add(usize::from(byte)).unwrap_or(usize::MAX);
+                value = value.saturating_add(usize::from(byte));
                 return (value, position);
             }
-            value = value.checked_add(255).unwrap_or(usize::MAX);
+            value = value.saturating_add(255);
         }
     }
 
