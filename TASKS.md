@@ -251,7 +251,7 @@ the reference"** with numbers (time, memory, allocations, size) measured against
 ## X4 — JSON reader and writer (ChatGPT)
 
 Attachments: `cursor.rs`, `error.rs`, `lints.toml`, sample files (`game-fixes.json` excerpt, `latest.json`,
-`backup-journal.json`, `i18n-sample.json`).
+`i18n-sample.json`).
 
 One file `json.rs` for `sse-codecs`, no dependencies:
 
@@ -330,19 +330,19 @@ pub fn rasterize(outline: &[Segment], width: u32, height: u32, out: &mut [u8]); 
 
 ## X7 — Windows minidump reader (ChatGPT)
 
-Attachments: `CrashDumpReader.cs`, two synthetic dumps from the C# tests, `cursor.rs`, `error.rs`, `lints.toml`.
+Attachments: `CrashDumpReader.cs`, `CrashDumpReaderTests.cs` (its `BuildDump` makes the synthetic dumps: port it into your tests), `cursor.rs`, `error.rs`, `lints.toml`.
 
 One file `minidump.rs`: header and stream directory, streams `SystemInfo`, `Exception` (code, address, thread),
 `ModuleList` (name, base, size, timestamp, version), `ThreadList` with the faulting thread's context for x86 and
 x64, `MemoryList`/`Memory64List` enough to read the stack. A function that walks the faulting stack for return
 addresses inside known modules and returns `module+offset` frames exactly as `CrashDumpReader` does. Everything is a
 view over the input slice — no copies of streams. Limits on every count; hostile directory entries (overlapping,
-beyond the file) are errors. Tests: the two attached dumps against the values the C# tests assert, truncation at
+beyond the file) are errors. Tests: dumps built as the C# tests build them, against the values the C# tests assert, truncation at
 every 64th byte, a dump claiming 2³² modules.
 
 ## X8 — Inflate and PNG decoder (ChatGPT)
 
-Attachments: six icons from the C# editor's asset pack, `cursor.rs`, `error.rs`, `lints.toml`.
+Attachments: two icons from the C# editor's asset pack, `cursor.rs`, `error.rs`, `lints.toml`.
 
 Two files: `inflate.rs` (`pub fn inflate_zlib(input: &[u8], maximum: usize) -> Result<Vec<u8>>`: stored, fixed and
 dynamic blocks, Adler-32 checked, table-driven Huffman decoding with a two-level table, output limit enforced before
