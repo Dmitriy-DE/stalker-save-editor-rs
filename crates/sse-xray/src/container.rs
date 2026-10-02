@@ -4,6 +4,7 @@ use sse_core::{Cursor, Error, Result, SaveBuffer};
 
 const SIGNATURE: u32 = u32::MAX;
 const MAXIMUM_UNPACKED_SIZE: usize = 512 * 1024 * 1024;
+const MAXIMUM_CHUNKS: usize = 65_536;
 
 /// The decompressed X-Ray image and its chunk offsets.
 #[derive(Debug)]
@@ -87,6 +88,9 @@ fn parse_chunks(raw: &[u8]) -> Result<Vec<Chunk>> {
     let mut reader = Cursor::new(raw);
     let mut chunks = Vec::new();
     while reader.remaining() > 0 {
+        if chunks.len() >= MAXIMUM_CHUNKS {
+            return Err(Error::damaged(format!("X-Ray chunk count exceeds {MAXIMUM_CHUNKS}")));
+        }
         if reader.remaining() < 8 {
             return Err(Error::damaged(format!(
                 "truncated X-Ray chunk header at {}",
@@ -112,7 +116,7 @@ fn parse_chunks(raw: &[u8]) -> Result<Vec<Chunk>> {
 
 #[cfg(test)]
 mod tests {
-    use super::Container;
+    use super::{Container, MAXIMUM_CHUNKS};
     use sse_core::Error;
 
     #[test]
@@ -123,6 +127,17 @@ mod tests {
             panic!("first chunk header expected")
         };
         size.copy_from_slice(&u32::MAX.to_le_bytes());
+        let packed = wrap(3, &raw);
+        assert!(matches!(Container::read(&packed), Err(Error::Damaged(_))));
+    }
+
+    #[test]
+    fn rejects_an_unbounded_table_of_empty_chunks() {
+        let mut raw = Vec::with_capacity((MAXIMUM_CHUNKS + 1) * 8);
+        for _ in 0..=MAXIMUM_CHUNKS {
+            raw.extend_from_slice(&0_u32.to_le_bytes());
+            raw.extend_from_slice(&0_u32.to_le_bytes());
+        }
         let packed = wrap(3, &raw);
         assert!(matches!(Container::read(&packed), Err(Error::Damaged(_))));
     }
