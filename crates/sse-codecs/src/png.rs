@@ -56,8 +56,7 @@ pub fn decode(input: &[u8]) -> Result<Image> {
 
     while position < input.len() {
         let length_u32 = read_be_u32(input, position)?;
-        let length = usize::try_from(length_u32)
-            .map_err(|_| Error::damaged("PNG chunk length does not fit usize"))?;
+        let length = usize::try_from(length_u32).map_err(|_| Error::damaged("PNG chunk length does not fit usize"))?;
         if length > MAX_CHUNK {
             return Err(Error::damaged("PNG chunk exceeds size limit"));
         }
@@ -127,10 +126,7 @@ pub fn decode(input: &[u8]) -> Result<Image> {
                 if saw_idat {
                     ended_idat = true;
                 }
-                let critical = chunk_type
-                    .first()
-                    .copied()
-                    .is_some_and(|byte| byte & 0x20 == 0);
+                let critical = chunk_type.first().copied().is_some_and(|byte| byte & 0x20 == 0);
                 if critical {
                     return Err(Error::damaged("unknown critical PNG chunk"));
                 }
@@ -184,13 +180,48 @@ pub fn decode(input: &[u8]) -> Result<Image> {
         )?;
     } else {
         const PASSES: [Pass; 7] = [
-            Pass { x_start: 0, y_start: 0, x_step: 8, y_step: 8 },
-            Pass { x_start: 4, y_start: 0, x_step: 8, y_step: 8 },
-            Pass { x_start: 0, y_start: 4, x_step: 4, y_step: 8 },
-            Pass { x_start: 2, y_start: 0, x_step: 4, y_step: 4 },
-            Pass { x_start: 0, y_start: 2, x_step: 2, y_step: 4 },
-            Pass { x_start: 1, y_start: 0, x_step: 2, y_step: 2 },
-            Pass { x_start: 0, y_start: 1, x_step: 1, y_step: 2 },
+            Pass {
+                x_start: 0,
+                y_start: 0,
+                x_step: 8,
+                y_step: 8,
+            },
+            Pass {
+                x_start: 4,
+                y_start: 0,
+                x_step: 8,
+                y_step: 8,
+            },
+            Pass {
+                x_start: 0,
+                y_start: 4,
+                x_step: 4,
+                y_step: 8,
+            },
+            Pass {
+                x_start: 2,
+                y_start: 0,
+                x_step: 4,
+                y_step: 4,
+            },
+            Pass {
+                x_start: 0,
+                y_start: 2,
+                x_step: 2,
+                y_step: 4,
+            },
+            Pass {
+                x_start: 1,
+                y_start: 0,
+                x_step: 2,
+                y_step: 2,
+            },
+            Pass {
+                x_start: 0,
+                y_start: 1,
+                x_step: 1,
+                y_step: 2,
+            },
         ];
         let mut offset = 0_usize;
         for pass in PASSES.iter().copied() {
@@ -223,21 +254,15 @@ pub fn decode(input: &[u8]) -> Result<Image> {
 fn parse_header(data: &[u8]) -> Result<Header> {
     let width = read_be_u32(data, 0)?;
     let height = read_be_u32(data, 4)?;
-    let bit_depth = *data
-        .get(8)
-        .ok_or_else(|| Error::damaged("short PNG IHDR bit depth"))?;
+    let bit_depth = *data.get(8).ok_or_else(|| Error::damaged("short PNG IHDR bit depth"))?;
     let color_type = *data
         .get(9)
         .ok_or_else(|| Error::damaged("short PNG IHDR colour type"))?;
     let compression = *data
         .get(10)
         .ok_or_else(|| Error::damaged("short PNG IHDR compression"))?;
-    let filter = *data
-        .get(11)
-        .ok_or_else(|| Error::damaged("short PNG IHDR filter"))?;
-    let interlace = *data
-        .get(12)
-        .ok_or_else(|| Error::damaged("short PNG IHDR interlace"))?;
+    let filter = *data.get(11).ok_or_else(|| Error::damaged("short PNG IHDR filter"))?;
+    let interlace = *data.get(12).ok_or_else(|| Error::damaged("short PNG IHDR interlace"))?;
     if width == 0 || height == 0 || width > MAX_DIMENSION || height > MAX_DIMENSION {
         return Err(Error::damaged("PNG dimensions are outside limits"));
     }
@@ -297,13 +322,48 @@ fn filtered_size(header: Header) -> Result<usize> {
         return pass_size(header, header.width, header.height);
     }
     const PASSES: [Pass; 7] = [
-        Pass { x_start: 0, y_start: 0, x_step: 8, y_step: 8 },
-        Pass { x_start: 4, y_start: 0, x_step: 8, y_step: 8 },
-        Pass { x_start: 0, y_start: 4, x_step: 4, y_step: 8 },
-        Pass { x_start: 2, y_start: 0, x_step: 4, y_step: 4 },
-        Pass { x_start: 0, y_start: 2, x_step: 2, y_step: 4 },
-        Pass { x_start: 1, y_start: 0, x_step: 2, y_step: 2 },
-        Pass { x_start: 0, y_start: 1, x_step: 1, y_step: 2 },
+        Pass {
+            x_start: 0,
+            y_start: 0,
+            x_step: 8,
+            y_step: 8,
+        },
+        Pass {
+            x_start: 4,
+            y_start: 0,
+            x_step: 8,
+            y_step: 8,
+        },
+        Pass {
+            x_start: 0,
+            y_start: 4,
+            x_step: 4,
+            y_step: 8,
+        },
+        Pass {
+            x_start: 2,
+            y_start: 0,
+            x_step: 4,
+            y_step: 4,
+        },
+        Pass {
+            x_start: 0,
+            y_start: 2,
+            x_step: 2,
+            y_step: 4,
+        },
+        Pass {
+            x_start: 1,
+            y_start: 0,
+            x_step: 2,
+            y_step: 2,
+        },
+        Pass {
+            x_start: 0,
+            y_start: 1,
+            x_step: 1,
+            y_step: 2,
+        },
     ];
     let mut total = 0_usize;
     for pass in PASSES.iter().copied() {
@@ -392,8 +452,7 @@ fn filter_bpp(header: Header) -> Result<usize> {
         .checked_add(7)
         .and_then(|value| value.checked_div(8))
         .ok_or_else(|| Error::damaged("PNG filter bytes-per-pixel overflow"))?;
-    usize::try_from(bytes.max(1))
-        .map_err(|_| Error::damaged("PNG filter bpp does not fit usize"))
+    usize::try_from(bytes.max(1)).map_err(|_| Error::damaged("PNG filter bpp does not fit usize"))
 }
 
 fn pass_size(header: Header, width: u32, height: u32) -> Result<usize> {
@@ -402,10 +461,7 @@ fn pass_size(header: Header, width: u32, height: u32) -> Result<usize> {
         .checked_add(1)
         .ok_or_else(|| Error::damaged("PNG filtered row size overflow"))?;
     with_filter
-        .checked_mul(
-            usize::try_from(height)
-                .map_err(|_| Error::damaged("PNG pass height does not fit usize"))?,
-        )
+        .checked_mul(usize::try_from(height).map_err(|_| Error::damaged("PNG pass height does not fit usize"))?)
         .ok_or_else(|| Error::damaged("PNG pass size overflow"))
 }
 
@@ -450,16 +506,7 @@ fn decode_pass(
             .ok_or_else(|| Error::damaged("truncated PNG row"))?;
         current.copy_from_slice(encoded);
         unfilter(filter, &mut current, &previous, bpp)?;
-        write_pixels(
-            &current,
-            width,
-            row,
-            header,
-            palette,
-            transparency,
-            pass,
-            output,
-        )?;
+        write_pixels(&current, width, row, header, palette, transparency, pass, output)?;
         core::mem::swap(&mut previous, &mut current);
         source = end;
         row = row
@@ -475,9 +522,7 @@ fn unfilter(filter: u8, row: &mut [u8], previous: &[u8], bpp: usize) -> Result<(
     }
     let mut index = 0_usize;
     while index < row.len() {
-        let raw = *row
-            .get(index)
-            .ok_or_else(|| Error::damaged("PNG filter row index"))?;
+        let raw = *row.get(index).ok_or_else(|| Error::damaged("PNG filter row index"))?;
         let left = index
             .checked_sub(bpp)
             .and_then(|position| row.get(position).copied())
@@ -501,11 +546,7 @@ fn unfilter(filter: u8, row: &mut [u8], previous: &[u8], bpp: usize) -> Result<(
             4 => paeth(left, up, up_left)?,
             _ => return Err(Error::damaged("unknown PNG scanline filter")),
         };
-        let value = if filter == 0 {
-            raw
-        } else {
-            raw.wrapping_add(predictor)
-        };
+        let value = if filter == 0 { raw } else { raw.wrapping_add(predictor) };
         let slot = row
             .get_mut(index)
             .ok_or_else(|| Error::damaged("PNG filter output index"))?;
@@ -554,13 +595,7 @@ fn write_pixels(
             .ok()
             .and_then(|value| value.checked_mul(channel_count))
             .ok_or_else(|| Error::damaged("PNG sample index overflow"))?;
-        let rgba = pixel_rgba(
-            row_bytes,
-            sample_base,
-            header,
-            palette,
-            transparency,
-        )?;
+        let rgba = pixel_rgba(row_bytes, sample_base, header, palette, transparency)?;
         let destination_x = pass
             .x_start
             .checked_add(
@@ -597,7 +632,11 @@ fn pixel_rgba(
             let gray = scale_sample(gray_raw, header.bit_depth)?;
             let alpha = if let Some(value) = transparency {
                 let transparent = read_be_u16(value.data, 0)?;
-                if gray_raw == transparent { 0 } else { 255 }
+                if gray_raw == transparent {
+                    0
+                } else {
+                    255
+                }
             } else {
                 255
             };
@@ -620,7 +659,11 @@ fn pixel_rgba(
                 let tr = read_be_u16(value.data, 0)?;
                 let tg = read_be_u16(value.data, 2)?;
                 let tb = read_be_u16(value.data, 4)?;
-                if r_raw == tr && g_raw == tg && b_raw == tb { 0 } else { 255 }
+                if r_raw == tr && g_raw == tg && b_raw == tb {
+                    0
+                } else {
+                    255
+                }
             } else {
                 255
             };
@@ -659,9 +702,18 @@ fn pixel_rgba(
         }
         6 => {
             let r = scale_sample(sample(row, sample_base, header.bit_depth)?, header.bit_depth)?;
-            let g = scale_sample(sample(row, checked_add(sample_base, 1)?, header.bit_depth)?, header.bit_depth)?;
-            let b = scale_sample(sample(row, checked_add(sample_base, 2)?, header.bit_depth)?, header.bit_depth)?;
-            let a = scale_sample(sample(row, checked_add(sample_base, 3)?, header.bit_depth)?, header.bit_depth)?;
+            let g = scale_sample(
+                sample(row, checked_add(sample_base, 1)?, header.bit_depth)?,
+                header.bit_depth,
+            )?;
+            let b = scale_sample(
+                sample(row, checked_add(sample_base, 2)?, header.bit_depth)?,
+                header.bit_depth,
+            )?;
+            let a = scale_sample(
+                sample(row, checked_add(sample_base, 3)?, header.bit_depth)?,
+                header.bit_depth,
+            )?;
             Ok([r, g, b, a])
         }
         _ => Err(Error::damaged("invalid PNG colour type")),
@@ -732,13 +784,7 @@ fn scale_sample(value: u16, depth: u8) -> Result<u8> {
     }
 }
 
-fn write_rgba(
-    output: &mut [u8],
-    width: u32,
-    x: u32,
-    y: u32,
-    rgba: [u8; 4],
-) -> Result<()> {
+fn write_rgba(output: &mut [u8], width: u32, x: u32, y: u32, rgba: [u8; 4]) -> Result<()> {
     if x >= width {
         return Err(Error::damaged("PNG destination x outside image"));
     }
@@ -770,8 +816,7 @@ fn read_be_u32(data: &[u8], offset: usize) -> Result<u32> {
 }
 
 fn checked_add(a: usize, b: usize) -> Result<usize> {
-    a.checked_add(b)
-        .ok_or_else(|| Error::damaged("PNG offset overflow"))
+    a.checked_add(b).ok_or_else(|| Error::damaged("PNG offset overflow"))
 }
 
 fn checked_range(data: &[u8], offset: usize, length: usize) -> Result<&[u8]> {
@@ -801,14 +846,10 @@ mod tests {
 
     // 1x1 RGBA pixel (12, 34, 56, 78), emitted with Python stdlib zlib and hand-built PNG chunks.
     const TINY_RGBA: &[u8] = &[
-        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
-        0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
-        0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
-        0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89,
-        0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54,
-        0x78, 0x9C, 0xE3, 0x91, 0xB2, 0xF0, 0x03, 0x00, 0x01, 0x63, 0x00, 0xB5,
-        0x8D, 0xC9, 0x62, 0x07,
-        0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00,
+        0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00,
+        0x0D, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0xE3, 0x91, 0xB2, 0xF0, 0x03, 0x00, 0x01, 0x63, 0x00, 0xB5, 0x8D,
+        0xC9, 0x62, 0x07, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
     ];
 
     #[test]
