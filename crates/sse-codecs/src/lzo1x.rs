@@ -390,7 +390,6 @@ pub fn compress_fast(payload: &[u8]) -> Vec<u8> {
             if !emit_literals(&mut output, payload, anchor, literal_length, anchor == 0) {
                 return compress(payload);
             }
-            previous_match_patch = None;
         }
 
         let patch = match emit_match(&mut output, distance, match_length) {
@@ -1048,7 +1047,7 @@ mod tests {
 
                 let high = stream.get(position).copied().unwrap_or_default();
                 position = position.checked_add(1).unwrap_or(stream.len());
-                let base = if state == 4 { 2_049 } else { 1 };
+                let base: usize = if state == 4 { 2_049 } else { 1 };
                 let distance = base
                     .checked_add(usize::from(command.checked_shr(2).unwrap_or_default()))
                     .and_then(|value| value.checked_add(usize::from(high).checked_mul(4)?))
@@ -1108,7 +1107,7 @@ mod tests {
             if command & 8 == 0 && encoded_distance == 0 {
                 break;
             }
-            let base = if command & 8 == 0 { 16_384 } else { 32_768 };
+            let base: usize = if command & 8 == 0 { 16_384 } else { 32_768 };
             distances.push(base.checked_add(usize::from(encoded_distance)).unwrap_or_default());
             let trailing = usize::from(encoded & 3);
             position = position.checked_add(trailing).unwrap_or(stream.len());
