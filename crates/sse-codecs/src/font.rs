@@ -1166,9 +1166,15 @@ fn parse_private_from_dict(data: &[u8], dict: &[u8], cff_base: usize, table_end:
     if values.len() < 2 {
         return Err(Error::damaged("CFF Private operator needs size and offset"));
     }
-    let size = usize::try_from(*values.first().ok_or_else(|| Error::damaged("CFF Private size missing"))?)
-        .map_err(|_| Error::damaged("negative CFF Private size"))?;
-    let private_offset = *values.get(1).ok_or_else(|| Error::damaged("CFF Private offset missing"))?;
+    let size = usize::try_from(
+        *values
+            .first()
+            .ok_or_else(|| Error::damaged("CFF Private size missing"))?,
+    )
+    .map_err(|_| Error::damaged("negative CFF Private size"))?;
+    let private_offset = *values
+        .get(1)
+        .ok_or_else(|| Error::damaged("CFF Private offset missing"))?;
     let offset = cff_rel_offset(cff_base, private_offset, table_end)?;
     let end = checked_add(offset, size)?;
     if end > table_end {
@@ -1538,8 +1544,13 @@ impl<S: OutlineSink> Type2Interpreter<'_, '_, S> {
         if args.len() < 8 || args.len().saturating_sub(2) % 6 != 0 {
             return Err(Error::damaged("CFF rcurveline operands invalid"));
         }
-        let split = args.len().checked_sub(2).ok_or_else(|| Error::damaged("CFF rcurveline split underflow"))?;
-        let curves = args.get(..split).ok_or_else(|| Error::damaged("CFF rcurveline range invalid"))?;
+        let split = args
+            .len()
+            .checked_sub(2)
+            .ok_or_else(|| Error::damaged("CFF rcurveline split underflow"))?;
+        let curves = args
+            .get(..split)
+            .ok_or_else(|| Error::damaged("CFF rcurveline range invalid"))?;
         for c in curves.chunks_exact(6) {
             self.curve_by(
                 (cff_arg(c, 0)?, cff_arg(c, 1)?),
@@ -1555,12 +1566,19 @@ impl<S: OutlineSink> Type2Interpreter<'_, '_, S> {
         if args.len() < 8 || args.len().saturating_sub(6) % 2 != 0 {
             return Err(Error::damaged("CFF rlinecurve operands invalid"));
         }
-        let split = args.len().checked_sub(6).ok_or_else(|| Error::damaged("CFF rlinecurve split underflow"))?;
-        let lines = args.get(..split).ok_or_else(|| Error::damaged("CFF rlinecurve line range invalid"))?;
+        let split = args
+            .len()
+            .checked_sub(6)
+            .ok_or_else(|| Error::damaged("CFF rlinecurve split underflow"))?;
+        let lines = args
+            .get(..split)
+            .ok_or_else(|| Error::damaged("CFF rlinecurve line range invalid"))?;
         for l in lines.chunks_exact(2) {
             self.line_by(cff_arg(l, 0)?, cff_arg(l, 1)?)?;
         }
-        let c = args.get(split..).ok_or_else(|| Error::damaged("CFF rlinecurve curve range invalid"))?;
+        let c = args
+            .get(split..)
+            .ok_or_else(|| Error::damaged("CFF rlinecurve curve range invalid"))?;
         self.curve_by(
             (cff_arg(c, 0)?, cff_arg(c, 1)?),
             (cff_arg(c, 2)?, cff_arg(c, 3)?),
@@ -1570,68 +1588,105 @@ impl<S: OutlineSink> Type2Interpreter<'_, '_, S> {
 
     fn hhcurveto(&mut self) -> Result<()> {
         let args = self.take_args()?;
-        if args.len() < 4 { return Err(Error::damaged("CFF hhcurveto operands missing")); }
+        if args.len() < 4 {
+            return Err(Error::damaged("CFF hhcurveto operands missing"));
+        }
         let mut index = 0_usize;
         let mut dy1 = 0.0;
-        if args.len() % 4 == 1 { dy1 = cff_arg(&args, 0)?; index = 1; }
+        if args.len() % 4 == 1 {
+            dy1 = cff_arg(&args, 0)?;
+            index = 1;
+        }
         while checked_add(index, 3)? < args.len() {
             self.curve_by(
                 (cff_arg(&args, index)?, dy1),
-                (cff_arg(&args, checked_add(index, 1)?)?, cff_arg(&args, checked_add(index, 2)?)?),
+                (
+                    cff_arg(&args, checked_add(index, 1)?)?,
+                    cff_arg(&args, checked_add(index, 2)?)?,
+                ),
                 (cff_arg(&args, checked_add(index, 3)?)?, 0.0),
             )?;
             dy1 = 0.0;
             index = checked_add(index, 4)?;
         }
-        if index != args.len() { return Err(Error::damaged("CFF hhcurveto operands invalid")); }
+        if index != args.len() {
+            return Err(Error::damaged("CFF hhcurveto operands invalid"));
+        }
         Ok(())
     }
 
     fn vvcurveto(&mut self) -> Result<()> {
         let args = self.take_args()?;
-        if args.len() < 4 { return Err(Error::damaged("CFF vvcurveto operands missing")); }
+        if args.len() < 4 {
+            return Err(Error::damaged("CFF vvcurveto operands missing"));
+        }
         let mut index = 0_usize;
         let mut dx1 = 0.0;
-        if args.len() % 4 == 1 { dx1 = cff_arg(&args, 0)?; index = 1; }
+        if args.len() % 4 == 1 {
+            dx1 = cff_arg(&args, 0)?;
+            index = 1;
+        }
         while checked_add(index, 3)? < args.len() {
             self.curve_by(
                 (dx1, cff_arg(&args, index)?),
-                (cff_arg(&args, checked_add(index, 1)?)?, cff_arg(&args, checked_add(index, 2)?)?),
+                (
+                    cff_arg(&args, checked_add(index, 1)?)?,
+                    cff_arg(&args, checked_add(index, 2)?)?,
+                ),
                 (0.0, cff_arg(&args, checked_add(index, 3)?)?),
             )?;
             dx1 = 0.0;
             index = checked_add(index, 4)?;
         }
-        if index != args.len() { return Err(Error::damaged("CFF vvcurveto operands invalid")); }
+        if index != args.len() {
+            return Err(Error::damaged("CFF vvcurveto operands invalid"));
+        }
         Ok(())
     }
 
     fn hvcurveto(&mut self, starts_horizontal: bool) -> Result<()> {
         let args = self.take_args()?;
-        if args.len() < 4 { return Err(Error::damaged("CFF hv/vhcurveto operands missing")); }
+        if args.len() < 4 {
+            return Err(Error::damaged("CFF hv/vhcurveto operands missing"));
+        }
         let mut index = 0_usize;
         let mut horizontal = starts_horizontal;
         while checked_add(index, 3)? < args.len() {
-            let remaining = args.len().checked_sub(index).ok_or_else(|| Error::damaged("CFF curve index overflow"))?;
+            let remaining = args
+                .len()
+                .checked_sub(index)
+                .ok_or_else(|| Error::damaged("CFF curve index overflow"))?;
             let extra = remaining == 5;
-            let extra_delta = if extra { cff_arg(&args, checked_add(index, 4)?)? } else { 0.0 };
+            let extra_delta = if extra {
+                cff_arg(&args, checked_add(index, 4)?)?
+            } else {
+                0.0
+            };
             if horizontal {
                 self.curve_by(
                     (cff_arg(&args, index)?, 0.0),
-                    (cff_arg(&args, checked_add(index, 1)?)?, cff_arg(&args, checked_add(index, 2)?)?),
+                    (
+                        cff_arg(&args, checked_add(index, 1)?)?,
+                        cff_arg(&args, checked_add(index, 2)?)?,
+                    ),
                     (extra_delta, cff_arg(&args, checked_add(index, 3)?)?),
                 )?;
             } else {
                 self.curve_by(
                     (0.0, cff_arg(&args, index)?),
-                    (cff_arg(&args, checked_add(index, 1)?)?, cff_arg(&args, checked_add(index, 2)?)?),
+                    (
+                        cff_arg(&args, checked_add(index, 1)?)?,
+                        cff_arg(&args, checked_add(index, 2)?)?,
+                    ),
                     (cff_arg(&args, checked_add(index, 3)?)?, extra_delta),
                 )?;
             }
             index = checked_add(index, if extra { 5 } else { 4 })?;
             horizontal = !horizontal;
         }
-        if index != args.len() { return Err(Error::damaged("CFF hv/vhcurveto operands invalid")); }
+        if index != args.len() {
+            return Err(Error::damaged("CFF hv/vhcurveto operands invalid"));
+        }
         Ok(())
     }
 
@@ -1639,38 +1694,91 @@ impl<S: OutlineSink> Type2Interpreter<'_, '_, S> {
         let args = self.take_args()?;
         match op {
             34 => {
-                if args.len() != 7 { return Err(Error::damaged("CFF hflex operands invalid")); }
+                if args.len() != 7 {
+                    return Err(Error::damaged("CFF hflex operands invalid"));
+                }
                 let dy2 = cff_arg(&args, 2)?;
-                self.curve_by((cff_arg(&args,0)?,0.0),(cff_arg(&args,1)?,dy2),(cff_arg(&args,3)?,0.0))?;
-                self.curve_by((cff_arg(&args,4)?,0.0),(cff_arg(&args,5)?,-dy2),(cff_arg(&args,6)?,0.0))
+                self.curve_by(
+                    (cff_arg(&args, 0)?, 0.0),
+                    (cff_arg(&args, 1)?, dy2),
+                    (cff_arg(&args, 3)?, 0.0),
+                )?;
+                self.curve_by(
+                    (cff_arg(&args, 4)?, 0.0),
+                    (cff_arg(&args, 5)?, -dy2),
+                    (cff_arg(&args, 6)?, 0.0),
+                )
             }
             35 => {
-                if args.len() != 13 { return Err(Error::damaged("CFF flex operands invalid")); }
-                self.curve_by((cff_arg(&args,0)?,cff_arg(&args,1)?),(cff_arg(&args,2)?,cff_arg(&args,3)?),(cff_arg(&args,4)?,cff_arg(&args,5)?))?;
-                self.curve_by((cff_arg(&args,6)?,cff_arg(&args,7)?),(cff_arg(&args,8)?,cff_arg(&args,9)?),(cff_arg(&args,10)?,cff_arg(&args,11)?))
+                if args.len() != 13 {
+                    return Err(Error::damaged("CFF flex operands invalid"));
+                }
+                self.curve_by(
+                    (cff_arg(&args, 0)?, cff_arg(&args, 1)?),
+                    (cff_arg(&args, 2)?, cff_arg(&args, 3)?),
+                    (cff_arg(&args, 4)?, cff_arg(&args, 5)?),
+                )?;
+                self.curve_by(
+                    (cff_arg(&args, 6)?, cff_arg(&args, 7)?),
+                    (cff_arg(&args, 8)?, cff_arg(&args, 9)?),
+                    (cff_arg(&args, 10)?, cff_arg(&args, 11)?),
+                )
             }
             36 => {
-                if args.len() != 9 { return Err(Error::damaged("CFF hflex1 operands invalid")); }
-                let dy6 = -(cff_arg(&args,1)? + cff_arg(&args,3)? + cff_arg(&args,7)?);
-                self.curve_by((cff_arg(&args,0)?,cff_arg(&args,1)?),(cff_arg(&args,2)?,cff_arg(&args,3)?),(cff_arg(&args,4)?,0.0))?;
-                self.curve_by((cff_arg(&args,5)?,0.0),(cff_arg(&args,6)?,cff_arg(&args,7)?),(cff_arg(&args,8)?,dy6))
+                if args.len() != 9 {
+                    return Err(Error::damaged("CFF hflex1 operands invalid"));
+                }
+                let dy6 = -(cff_arg(&args, 1)? + cff_arg(&args, 3)? + cff_arg(&args, 7)?);
+                self.curve_by(
+                    (cff_arg(&args, 0)?, cff_arg(&args, 1)?),
+                    (cff_arg(&args, 2)?, cff_arg(&args, 3)?),
+                    (cff_arg(&args, 4)?, 0.0),
+                )?;
+                self.curve_by(
+                    (cff_arg(&args, 5)?, 0.0),
+                    (cff_arg(&args, 6)?, cff_arg(&args, 7)?),
+                    (cff_arg(&args, 8)?, dy6),
+                )
             }
             37 => {
-                if args.len() != 11 { return Err(Error::damaged("CFF flex1 operands invalid")); }
-                let dx = cff_arg(&args,0)? + cff_arg(&args,2)? + cff_arg(&args,4)? + cff_arg(&args,6)? + cff_arg(&args,8)?;
-                let dy = cff_arg(&args,1)? + cff_arg(&args,3)? + cff_arg(&args,5)? + cff_arg(&args,7)? + cff_arg(&args,9)?;
-                let last = if dx.abs() > dy.abs() { (cff_arg(&args,10)?,-dy) } else { (-dx,cff_arg(&args,10)?) };
-                self.curve_by((cff_arg(&args,0)?,cff_arg(&args,1)?),(cff_arg(&args,2)?,cff_arg(&args,3)?),(cff_arg(&args,4)?,cff_arg(&args,5)?))?;
-                self.curve_by((cff_arg(&args,6)?,cff_arg(&args,7)?),(cff_arg(&args,8)?,cff_arg(&args,9)?),last)
+                if args.len() != 11 {
+                    return Err(Error::damaged("CFF flex1 operands invalid"));
+                }
+                let dx = cff_arg(&args, 0)?
+                    + cff_arg(&args, 2)?
+                    + cff_arg(&args, 4)?
+                    + cff_arg(&args, 6)?
+                    + cff_arg(&args, 8)?;
+                let dy = cff_arg(&args, 1)?
+                    + cff_arg(&args, 3)?
+                    + cff_arg(&args, 5)?
+                    + cff_arg(&args, 7)?
+                    + cff_arg(&args, 9)?;
+                let last = if dx.abs() > dy.abs() {
+                    (cff_arg(&args, 10)?, -dy)
+                } else {
+                    (-dx, cff_arg(&args, 10)?)
+                };
+                self.curve_by(
+                    (cff_arg(&args, 0)?, cff_arg(&args, 1)?),
+                    (cff_arg(&args, 2)?, cff_arg(&args, 3)?),
+                    (cff_arg(&args, 4)?, cff_arg(&args, 5)?),
+                )?;
+                self.curve_by(
+                    (cff_arg(&args, 6)?, cff_arg(&args, 7)?),
+                    (cff_arg(&args, 8)?, cff_arg(&args, 9)?),
+                    last,
+                )
             }
             _ => Err(Error::Refused(format!("unsupported CFF Type 2 escaped operator {op}"))),
         }
     }
-
 }
 
 fn cff_arg(args: &[f32], index: usize) -> Result<f32> {
-    args.get(index).copied().ok_or_else(|| Error::damaged("CFF operand missing"))
+    args.get(index)
+        .copied()
+        .ok_or_else(|| Error::damaged("CFF operand missing"))
 }
 
 fn biased_subr_index(raw: i32, count: usize) -> Result<usize> {
@@ -2104,36 +2212,67 @@ fn decode_packed_deltas(data: &[u8], position: usize, count: usize, limit: usize
 }
 
 fn iup_fill(values: &mut [Option<f32>], base: &[(f32, f32)], ends: &[u16], x_axis: bool) -> Result<()> {
-    if values.len() < base.len() { return Err(Error::damaged("IUP delta array is shorter than points")); }
+    if values.len() < base.len() {
+        return Err(Error::damaged("IUP delta array is shorter than points"));
+    }
     let mut first = 0_usize;
     for end in ends.iter().copied() {
         let last = usize::from(end);
-        if last >= base.len() || first > last { return Err(Error::damaged("IUP contour endpoint outside points")); }
-        let touched: Vec<usize> = (first..=last).filter(|index| values.get(*index).and_then(|value| *value).is_some()).collect();
+        if last >= base.len() || first > last {
+            return Err(Error::damaged("IUP contour endpoint outside points"));
+        }
+        let touched: Vec<usize> = (first..=last)
+            .filter(|index| values.get(*index).and_then(|value| *value).is_some())
+            .collect();
         if touched.len() == 1 {
-            let touched_index = *touched.first().ok_or_else(|| Error::damaged("IUP touched point missing"))?;
+            let touched_index = *touched
+                .first()
+                .ok_or_else(|| Error::damaged("IUP touched point missing"))?;
             let delta = values.get(touched_index).and_then(|value| *value).unwrap_or(0.0);
-            for index in first..=last { if let Some(slot)=values.get_mut(index){*slot=Some(delta);} }
+            for index in first..=last {
+                if let Some(slot) = values.get_mut(index) {
+                    *slot = Some(delta);
+                }
+            }
         } else if touched.len() >= 2 {
             for pair in 0..touched.len() {
-                let a = *touched.get(pair).ok_or_else(|| Error::damaged("IUP first touched point missing"))?;
-                let next_pair = checked_add(pair,1)? % touched.len();
-                let b = *touched.get(next_pair).ok_or_else(|| Error::damaged("IUP second touched point missing"))?;
-                let da=values.get(a).and_then(|value|*value).unwrap_or(0.0); let db=values.get(b).and_then(|value|*value).unwrap_or(0.0);
-                let pa=*base.get(a).ok_or_else(|| Error::damaged("IUP base point missing"))?;
-                let pb=*base.get(b).ok_or_else(|| Error::damaged("IUP base point missing"))?;
-                let ca=if x_axis{pa.0}else{pa.1}; let cb=if x_axis{pb.0}else{pb.1};
-                let mut index=if a==last{first}else{checked_add(a,1)?};
-                while index!=b {
-                    let p=*base.get(index).ok_or_else(|| Error::damaged("IUP base point missing"))?;
-                    let c=if x_axis{p.0}else{p.1}; let delta=iup_interpolate(c,ca,da,cb,db);
-                    if let Some(slot)=values.get_mut(index){if slot.is_none(){*slot=Some(delta);}}
-                    index=if index==last{first}else{checked_add(index,1)?};
+                let a = *touched
+                    .get(pair)
+                    .ok_or_else(|| Error::damaged("IUP first touched point missing"))?;
+                let next_pair = checked_add(pair, 1)? % touched.len();
+                let b = *touched
+                    .get(next_pair)
+                    .ok_or_else(|| Error::damaged("IUP second touched point missing"))?;
+                let da = values.get(a).and_then(|value| *value).unwrap_or(0.0);
+                let db = values.get(b).and_then(|value| *value).unwrap_or(0.0);
+                let pa = *base.get(a).ok_or_else(|| Error::damaged("IUP base point missing"))?;
+                let pb = *base.get(b).ok_or_else(|| Error::damaged("IUP base point missing"))?;
+                let ca = if x_axis { pa.0 } else { pa.1 };
+                let cb = if x_axis { pb.0 } else { pb.1 };
+                let mut index = if a == last { first } else { checked_add(a, 1)? };
+                while index != b {
+                    let p = *base
+                        .get(index)
+                        .ok_or_else(|| Error::damaged("IUP base point missing"))?;
+                    let c = if x_axis { p.0 } else { p.1 };
+                    let delta = iup_interpolate(c, ca, da, cb, db);
+                    if let Some(slot) = values.get_mut(index) {
+                        if slot.is_none() {
+                            *slot = Some(delta);
+                        }
+                    }
+                    index = if index == last { first } else { checked_add(index, 1)? };
                 }
             }
         }
-        for index in first..=last {if let Some(slot)=values.get_mut(index){if slot.is_none(){*slot=Some(0.0);}}}
-        first=checked_add(last,1)?;
+        for index in first..=last {
+            if let Some(slot) = values.get_mut(index) {
+                if slot.is_none() {
+                    *slot = Some(0.0);
+                }
+            }
+        }
+        first = checked_add(last, 1)?;
     }
     Ok(())
 }
@@ -2415,9 +2554,10 @@ fn kern_lookup(data: &[u8], table: Table, left: u16, right: u16) -> Result<Optio
                         .unwrap_or_default(),
                 )?;
                 let pair = checked_add(pairs_start, checked_mul(middle, 6)?)?;
+                let right = u32::from(be_u16_at(data, checked_add(pair, 2)?)?);
                 let key = u32::from(be_u16_at(data, pair)?)
                     .checked_shl(16)
-                    .and_then(|value| value.checked_add(u32::from(be_u16_at(data, checked_add(pair, 2)?)?)))
+                    .and_then(|value| value.checked_add(right))
                     .ok_or_else(|| Error::damaged("kern pair key overflow"))?;
                 if key < wanted {
                     low = checked_add(middle, 1)?;
@@ -2858,72 +2998,3 @@ mod tests {
         fn cubic_to(&mut self, c1x: f32, c1y: f32, c2x: f32, c2y: f32, x: f32, y: f32) {
             self.0.push(Segment::CubicTo(c1x, c1y, c2x, c2y, x, y));
         }
-        fn close(&mut self) {
-            self.0.push(Segment::Close);
-        }
-    }
-
-    #[test]
-    fn oswald_weight_changes_outline() {
-        let bytes = include_bytes!("../../../fixtures/fonts/Oswald[wght].ttf");
-        let default = parsed(bytes);
-        let heavy = match Font::parse_with_weight(bytes, 0, 700.0) {
-            Ok(font) => font,
-            Err(error) => panic!("variable font parse failed: {error:?}"),
-        };
-        let glyph = default.glyph('A').unwrap_or(GlyphId(0));
-        let mut a = Path(Vec::new());
-        let mut b = Path(Vec::new());
-        if let Err(error) = default.outline(glyph, &mut a) {
-            panic!("default outline failed: {error:?}");
-        }
-        if let Err(error) = heavy.outline(glyph, &mut b) {
-            panic!("varied outline failed: {error:?}");
-        }
-        assert_ne!(a.0, b.0);
-    }
-
-    #[test]
-    fn rasterises_exact_axis_aligned_square() {
-        let path = [
-            Segment::MoveTo(0.25, 0.25),
-            Segment::LineTo(1.75, 0.25),
-            Segment::LineTo(1.75, 1.75),
-            Segment::LineTo(0.25, 1.75),
-            Segment::Close,
-        ];
-        let mut out = [0_u8; 4];
-        rasterize(&path, 2, 2, &mut out);
-        for value in out {
-            assert!((i16::from(value) - 143).abs() <= 1);
-        }
-    }
-
-    #[test]
-    fn wrong_output_size_is_untouched() {
-        let path = [Segment::MoveTo(0.0, 0.0), Segment::Close];
-        let mut out = [17_u8; 3];
-        rasterize(&path, 2, 2, &mut out);
-        assert_eq!(out, [17, 17, 17]);
-    }
-
-    #[test]
-    #[ignore = "microbenchmark; run with cargo test --release rasterizer_16px_benchmark -- --ignored --nocapture"]
-    fn rasterizer_16px_benchmark() {
-        let path = [
-            Segment::MoveTo(2.0, 1.0),
-            Segment::CubicTo(14.0, 1.0, 14.0, 15.0, 2.0, 15.0),
-            Segment::CubicTo(8.0, 12.0, 8.0, 4.0, 2.0, 1.0),
-            Segment::Close,
-        ];
-        let mut out = [0_u8; 16 * 16];
-        let iterations = 50_000_u32;
-        let start = Instant::now();
-        for _ in 0..iterations {
-            rasterize(&path, 16, 16, &mut out);
-            std::hint::black_box(&out);
-        }
-        let nanos = start.elapsed().as_nanos() / u128::from(iterations);
-        eprintln!("X6b rasterizer 16px: {nanos} ns/glyph");
-    }
-}
