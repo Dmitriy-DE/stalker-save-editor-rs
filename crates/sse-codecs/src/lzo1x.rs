@@ -311,7 +311,6 @@ pub fn compress(payload: &[u8]) -> Vec<u8> {
     output
 }
 
-
 const FAST_HASH_SIZE: usize = 16_384;
 const FAST_MAX_DISTANCE: usize = 0xBFFF;
 const FAST_MIN_MATCH: usize = 3;
@@ -460,9 +459,7 @@ enum MatchPatch {
 }
 
 fn has_bytes(input: &[u8], start: usize, count: usize) -> bool {
-    start
-        .checked_add(count)
-        .is_some_and(|end| end <= input.len())
+    start.checked_add(count).is_some_and(|end| end <= input.len())
 }
 
 fn hash4(input: &[u8], position: usize) -> Option<usize> {
@@ -837,7 +834,6 @@ mod tests {
         assert!(matches!(decompress(&[0x11, 0, 0], 536_870_913), Err(Error::Damaged(_))));
     }
 
-
     #[test]
     fn fast_compressor_round_trips_two_thousand_fixed_seed_buffers() {
         let mut rng = TestRng::new(0xA11C_E5E1_5EED_900D);
@@ -974,7 +970,6 @@ mod tests {
         }
         payload
     }
-
 
     fn make_fast_payload(rng: &mut TestRng, size: usize, mode: usize) -> Vec<u8> {
         match mode {
@@ -1114,10 +1109,7 @@ mod tests {
                 break;
             }
             let base = if command & 8 == 0 { 16_384 } else { 32_768 };
-            distances.push(
-                base.checked_add(usize::from(encoded_distance))
-                    .unwrap_or_default(),
-            );
+            distances.push(base.checked_add(usize::from(encoded_distance)).unwrap_or_default());
             let trailing = usize::from(encoded & 3);
             position = position.checked_add(trailing).unwrap_or(stream.len());
             state = trailing;
