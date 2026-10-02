@@ -1,4 +1,1004 @@
-The requested file reference is not currently visible. Use files.search or files.list to rediscover the file, then retry with a returned ref_id or file_id.                offsets: end,
+//! Safe OpenType/TrueType/CFF font parsing, variation, and analytic coverage rasterisation.
+//!
+//! The parser borrows the source bytes and validates every table range before use. TrueType
+//! `glyf` and CFF Type 2 outlines, cmap formats 4/12, horizontal metrics, legacy `kern`,
+//! and one selected `wght` variation instance through `fvar`/`avar`/`gvar` are supported.
+//! All offsets and hostile lengths are checked before use; malformed input never becomes guessed geometry.
+
+use sse_core::{Error, Result};
+
+const MAX_TABLES: usize = 4_096;
+const MAX_GLYPHS: usize = 1_000_000;
+const MAX_CONTOURS: usize = 16_384;
+const MAX_POINTS: usize = 1_000_000;
+const MAX_COMPOSITE_DEPTH: usize = 8;
+const MAX_CFF_STACK: usize = 48;
+const MAX_CFF_SUBR_DEPTH: usize = 10;
+const MAX_CFF_FDS: usize = 512;
+const MAX_GVAR_TUPLES: usize = 4_095;
+const MAX_VARIATION_AXES: usize = 32;
+
+/// Identifier of a glyph in the font.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct GlyphId(pub u16);
+
+/// Global font metrics, in font units.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Metrics {
+    /// Ascender from the `hhea` table.
+    pub ascent: f32,
+    /// Descender from the `hhea` table.
+    pub descent: f32,
+    /// Recommended line gap from the `hhea` table.
+    pub line_gap: f32,
+    /// Units per em from the `head` table.
+    pub units_per_em: f32,
+}
+
+/// A path sink used by [`Font::outline`].
+pub trait OutlineSink {
+    /// Starts a contour.
+    fn move_to(&mut self, x: f32, y: f32);
+    /// Adds a line segment.
+    fn line_to(&mut self, x: f32, y: f32);
+    /// Adds a quadratic Bézier.
+    fn quad_to(&mut self, control_x: f32, control_y: f32, x: f32, y: f32);
+    /// Adds a cubic Bézier.
+    fn cubic_to(&mut self, control1_x: f32, control1_y: f32, control2_x: f32, control2_y: f32, x: f32, y: f32);
+    /// Closes the current contour.
+    fn close(&mut self);
+}
+
+/// A retained path segment accepted by [`rasterize`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Segment {
+    /// Starts a contour.
+    MoveTo(f32, f32),
+    /// Adds a line.
+    LineTo(f32, f32),
+    /// Adds a quadratic Bézier.
+    QuadTo(f32, f32, f32, f32),
+    /// Adds a cubic Bézier.
+    CubicTo(f32, f32, f32, f32, f32, f32),
+    /// Closes the contour.
+    Close,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Table {
+    tag: [u8; 4],
+    offset: usize,
+    length: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Transform {
+    xx: f32,
+    xy: f32,
+    yx: f32,
+    yy: f32,
+    dx: f32,
+    dy: f32,
+}
+
+impl Transform {
+    fn identity() -> Self {
+        Self {
+            xx: 1.0,
+            xy: 0.0,
+            yx: 0.0,
+            yy: 1.0,
+            dx: 0.0,
+            dy: 0.0,
+        }
+    }
+
+    fn point(self, x: f32, y: f32) -> (f32, f32) {
+        (
+            self.xx.mul_add(x, self.xy.mul_add(y, self.dx)),
+            self.yx.mul_add(x, self.yy.mul_add(y, self.dy)),
+        )
+    }
+
+    fn combine(self, child: Self) -> Self {
+        Self {
+            xx: self.xx.mul_add(child.xx, self.xy * child.yx),
+            xy: self.xx.mul_add(child.xy, self.xy * child.yy),
+            yx: self.yx.mul_add(child.xx, self.yy * child.yx),
+            yy: self.yx.mul_add(child.xy, self.yy * child.yy),
+            dx: self.xx.mul_add(child.dx, self.xy.mul_add(child.dy, self.dx)),
+            dy: self.yx.mul_add(child.dx, self.yy.mul_add(child.dy, self.dy)),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Point {
+    x: f32,
+    y: f32,
+    on_curve: bool,
+}
+
+#[derive(Clone, Debug)]
+struct VariationState {
+    gvar: Table,
+    axis_count: usize,
+    coords: Vec<f32>,
+    shared_tuple_count: usize,
+    shared_tuples_offset: usize,
+    glyph_count: usize,
+    data_offset: usize,
+    long_offsets: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct CffIndex {
+    count: usize,
+    offsets: usize,
+    data: usize,
+    end: usize,
+    off_size: usize,
+}
+
+impl CffIndex {
+    fn object<'a>(&self, data: &'a [u8], index: usize) -> Result<&'a [u8]> {
+        if index >= self.count {
+            return Err(Error::damaged("CFF INDEX object is outside range"));
+        }
+        let a = cff_read_offset(
+            data,
+            checked_add(self.offsets, checked_mul(index, self.off_size)?)?,
+            self.off_size,
+        )?;
+        let b = cff_read_offset(
+            data,
+            checked_add(self.offsets, checked_mul(checked_add(index, 1)?, self.off_size)?)?,
+            self.off_size,
+        )?;
+        if a == 0 || b < a {
+            return Err(Error::damaged("CFF INDEX offsets are invalid"));
+        }
+        let start = checked_add(self.data, a - 1)?;
+        let end = checked_add(self.data, b - 1)?;
+        if start > end || end > self.end {
+            return Err(Error::damaged("CFF INDEX object exceeds table"));
+        }
+        checked_range(data, start, end - start)
+    }
+}
+
+#[derive(Clone, Debug)]
+struct CffPrivate {
+    local_subrs: Option<CffIndex>,
+}
+
+#[derive(Clone, Debug)]
+struct CffState {
+    char_strings: CffIndex,
+    global_subrs: CffIndex,
+    private: Option<CffPrivate>,
+    fd_array: Vec<CffPrivate>,
+    fd_select_offset: Option<usize>,
+    fd_select_end: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Component {
+    glyph: u16,
+    transform: Transform,
+}
+
+/// A borrowed OpenType/TrueType font.
+pub struct Font<'a> {
+    data: &'a [u8],
+    glyph_count: u32,
+    units_per_em: u16,
+    ascent: i16,
+    descent: i16,
+    line_gap: i16,
+    number_of_h_metrics: u16,
+    loca_long: bool,
+    cmap_offset: usize,
+    cmap_length: usize,
+    glyf: Option<Table>,
+    loca: Option<Table>,
+    hmtx: Table,
+    kern: Option<Table>,
+    cff: Option<CffState>,
+    variation: Option<VariationState>,
+}
+
+impl<'a> Font<'a> {
+    /// Parses a `.ttf`, `.otf`, or a selected face of a `.ttc`.
+    ///
+    /// # Errors
+    /// Returns [`Error::Damaged`] for malformed offsets/counts/ranges, and
+    /// [`Error::Refused`] for an unsupported outline flavour.
+    pub fn parse(data: &'a [u8], index_in_collection: u32) -> Result<Self> {
+        Self::parse_impl(data, index_in_collection, None)
+    }
+
+    /// Parses a font and selects one `wght` instance from an `fvar`/`gvar` font.
+    ///
+    /// The requested value is clamped to the axis range. If the font is not variable or has no
+    /// `wght` axis, an error is returned instead of silently using the default outline.
+    pub fn parse_with_weight(data: &'a [u8], index_in_collection: u32, weight: f32) -> Result<Self> {
+        Self::parse_impl(data, index_in_collection, Some(weight))
+    }
+
+    fn parse_impl(data: &'a [u8], index_in_collection: u32, weight: Option<f32>) -> Result<Self> {
+        let sfnt_offset = collection_face_offset(data, index_in_collection)?;
+        let num_tables = usize::from(be_u16_at(data, checked_add(sfnt_offset, 4)?)?);
+        if num_tables == 0 || num_tables > MAX_TABLES {
+            return Err(Error::damaged("font table count is outside the allowed range"));
+        }
+
+        let records_start = checked_add(sfnt_offset, 12)?;
+        let records_bytes = checked_mul(num_tables, 16)?;
+        checked_range(data, records_start, records_bytes)?;
+
+        let mut tables = Vec::with_capacity(num_tables);
+        let mut index = 0_usize;
+        while index < num_tables {
+            let record = checked_add(records_start, checked_mul(index, 16)?)?;
+            let tag_slice = checked_range(data, record, 4)?;
+            let tag = <[u8; 4]>::try_from(tag_slice).map_err(|_| Error::damaged("invalid font table tag"))?;
+            let offset = usize::try_from(be_u32_at(data, checked_add(record, 8)?)?)
+                .map_err(|_| Error::damaged("font table offset does not fit usize"))?;
+            let length = usize::try_from(be_u32_at(data, checked_add(record, 12)?)?)
+                .map_err(|_| Error::damaged("font table length does not fit usize"))?;
+            checked_range(data, offset, length)?;
+            tables.push(Table { tag, offset, length });
+            index = checked_add(index, 1)?;
+        }
+
+        let head = required_table(&tables, *b"head")?;
+        if head.length < 54 {
+            return Err(Error::damaged("short head table"));
+        }
+        let units_per_em = be_u16_at(data, checked_add(head.offset, 18)?)?;
+        if units_per_em == 0 {
+            return Err(Error::damaged("font units-per-em is zero"));
+        }
+        let loca_format = be_i16_at(data, checked_add(head.offset, 50)?)?;
+        let loca_long = match loca_format {
+            0 => false,
+            1 => true,
+            _ => return Err(Error::damaged("unsupported loca format")),
+        };
+
+        let maxp = required_table(&tables, *b"maxp")?;
+        if maxp.length < 6 {
+            return Err(Error::damaged("short maxp table"));
+        }
+        let glyph_count = u32::from(be_u16_at(data, checked_add(maxp.offset, 4)?)?);
+        if usize::try_from(glyph_count).unwrap_or(usize::MAX) > MAX_GLYPHS {
+            return Err(Error::damaged("font glyph count exceeds limit"));
+        }
+
+        let hhea = required_table(&tables, *b"hhea")?;
+        if hhea.length < 36 {
+            return Err(Error::damaged("short hhea table"));
+        }
+        let ascent = be_i16_at(data, checked_add(hhea.offset, 4)?)?;
+        let descent = be_i16_at(data, checked_add(hhea.offset, 6)?)?;
+        let line_gap = be_i16_at(data, checked_add(hhea.offset, 8)?)?;
+        let number_of_h_metrics = be_u16_at(data, checked_add(hhea.offset, 34)?)?;
+        if number_of_h_metrics == 0 || u32::from(number_of_h_metrics) > glyph_count {
+            return Err(Error::damaged("invalid numberOfHMetrics"));
+        }
+        let hmtx = required_table(&tables, *b"hmtx")?;
+        let required_hmtx = checked_mul(usize::from(number_of_h_metrics), 4)?;
+        if hmtx.length < required_hmtx {
+            return Err(Error::damaged("short hmtx table"));
+        }
+
+        let cmap = required_table(&tables, *b"cmap")?;
+        let (cmap_offset, cmap_length) = select_cmap(data, cmap)?;
+
+        let glyf = find_table(&tables, *b"glyf");
+        let loca = find_table(&tables, *b"loca");
+        let cff_table = find_table(&tables, *b"CFF ");
+        if glyf.is_some() != loca.is_some() {
+            return Err(Error::damaged("glyf and loca must appear together"));
+        }
+        if glyf.is_none() && cff_table.is_none() {
+            return Err(Error::Refused("font has no supported outline table".to_owned()));
+        }
+
+        if let Some(loca_table) = loca {
+            let entries = usize::try_from(glyph_count)
+                .ok()
+                .and_then(|value| value.checked_add(1))
+                .ok_or_else(|| Error::damaged("loca entry count overflow"))?;
+            let width = if loca_long { 4 } else { 2 };
+            let needed = checked_mul(entries, width)?;
+            if loca_table.length < needed {
+                return Err(Error::damaged("short loca table"));
+            }
+        }
+
+        let cff = cff_table
+            .map(|table| {
+                parse_cff(
+                    data,
+                    table,
+                    usize::try_from(glyph_count).map_err(|_| Error::damaged("glyph count overflow"))?,
+                )
+            })
+            .transpose()?;
+        let variation = parse_variation(
+            data,
+            &tables,
+            usize::try_from(glyph_count).map_err(|_| Error::damaged("glyph count overflow"))?,
+            weight,
+        )?;
+
+        Ok(Self {
+            data,
+            glyph_count,
+            units_per_em,
+            ascent,
+            descent,
+            line_gap,
+            number_of_h_metrics,
+            loca_long,
+            cmap_offset,
+            cmap_length,
+            glyf,
+            loca,
+            hmtx,
+            kern: find_table(&tables, *b"kern"),
+            cff,
+            variation,
+        })
+    }
+
+    /// Looks up a Unicode scalar through cmap format 12 or 4.
+    #[must_use]
+    pub fn glyph(&self, character: char) -> Option<GlyphId> {
+        let code = u32::from(character);
+        match be_u16_at(self.data, self.cmap_offset).ok()? {
+            4 => cmap4_lookup(self.data, self.cmap_offset, self.cmap_length, code),
+            12 => cmap12_lookup(self.data, self.cmap_offset, self.cmap_length, code),
+            _ => None,
+        }
+        .and_then(|value| u16::try_from(value).ok())
+        .map(GlyphId)
+    }
+
+    /// Returns the horizontal advance in font units.
+    #[must_use]
+    pub fn advance(&self, glyph: GlyphId) -> f32 {
+        let gid = u32::from(glyph.0);
+        if gid >= self.glyph_count {
+            return 0.0;
+        }
+        let metrics = u32::from(self.number_of_h_metrics);
+        let index = gid.min(metrics.saturating_sub(1));
+        let Some(index) = usize::try_from(index).ok() else {
+            return 0.0;
+        };
+        let Some(relative) = index.checked_mul(4) else {
+            return 0.0;
+        };
+        let Some(offset) = self.hmtx.offset.checked_add(relative) else {
+            return 0.0;
+        };
+        be_u16_at(self.data, offset).map_or(0.0, f32::from)
+    }
+
+    /// Returns legacy `kern` format-0 horizontal kerning in font units.
+    #[must_use]
+    pub fn kerning(&self, a: GlyphId, b: GlyphId) -> f32 {
+        self.kern
+            .and_then(|table| kern_lookup(self.data, table, a.0, b.0).ok().flatten())
+            .map_or(0.0, f32::from)
+    }
+
+    /// Returns global metrics in font units.
+    #[must_use]
+    pub fn metrics(&self) -> Metrics {
+        Metrics {
+            ascent: f32::from(self.ascent),
+            descent: f32::from(self.descent),
+            line_gap: f32::from(self.line_gap),
+            units_per_em: f32::from(self.units_per_em),
+        }
+    }
+
+    /// Sends the requested outline to `sink`.
+    ///
+    /// # Errors
+    /// Returns an error for an invalid glyph id, malformed outline or unsupported CFF outline.
+    pub fn outline(&self, glyph: GlyphId, sink: &mut impl OutlineSink) -> Result<()> {
+        if u32::from(glyph.0) >= self.glyph_count {
+            return Err(Error::damaged("glyph id is outside the font"));
+        }
+        if self.glyf.is_some() {
+            return self.outline_glyf(glyph.0, sink, Transform::identity(), 0);
+        }
+        if let Some(cff) = &self.cff {
+            return outline_cff(self.data, cff, glyph.0, sink);
+        }
+        Err(Error::damaged("font has no outline table"))
+    }
+
+    fn outline_glyf(&self, glyph: u16, sink: &mut impl OutlineSink, transform: Transform, depth: usize) -> Result<()> {
+        if depth > MAX_COMPOSITE_DEPTH {
+            return Err(Error::damaged("composite glyph depth exceeds limit"));
+        }
+        let glyf = self.glyf.ok_or_else(|| Error::damaged("missing glyf table"))?;
+        let (start, end) = self.glyph_range(glyph)?;
+        if start == end {
+            return Ok(());
+        }
+        let absolute = checked_add(glyf.offset, start)?;
+        let length = end
+            .checked_sub(start)
+            .ok_or_else(|| Error::damaged("glyph range underflow"))?;
+        let bytes = checked_range(self.data, absolute, length)?;
+        if bytes.len() < 10 {
+            return Err(Error::damaged("short glyph header"));
+        }
+        let contours = be_i16_at(bytes, 0)?;
+        if contours >= 0 {
+            self.outline_simple(
+                glyph,
+                bytes,
+                usize::try_from(contours).map_err(|_| Error::damaged("contour count"))?,
+                sink,
+                transform,
+            )
+        } else {
+            self.outline_composite(glyph, bytes, sink, transform, depth)
+        }
+    }
+
+    fn glyph_range(&self, glyph: u16) -> Result<(usize, usize)> {
+        let loca = self.loca.ok_or_else(|| Error::damaged("missing loca table"))?;
+        let index = usize::from(glyph);
+        let next = checked_add(index, 1)?;
+        let start = if self.loca_long {
+            let at = checked_add(loca.offset, checked_mul(index, 4)?)?;
+            usize::try_from(be_u32_at(self.data, at)?).map_err(|_| Error::damaged("loca offset does not fit usize"))?
+        } else {
+            let at = checked_add(loca.offset, checked_mul(index, 2)?)?;
+            checked_mul(usize::from(be_u16_at(self.data, at)?), 2)?
+        };
+        let end = if self.loca_long {
+            let at = checked_add(loca.offset, checked_mul(next, 4)?)?;
+            usize::try_from(be_u32_at(self.data, at)?).map_err(|_| Error::damaged("loca offset does not fit usize"))?
+        } else {
+            let at = checked_add(loca.offset, checked_mul(next, 2)?)?;
+            checked_mul(usize::from(be_u16_at(self.data, at)?), 2)?
+        };
+        let glyf = self.glyf.ok_or_else(|| Error::damaged("missing glyf table"))?;
+        if start > end || end > glyf.length {
+            return Err(Error::damaged("loca points outside glyf table"));
+        }
+        Ok((start, end))
+    }
+
+    fn outline_simple(
+        &self,
+        glyph: u16,
+        bytes: &[u8],
+        contour_count: usize,
+        sink: &mut impl OutlineSink,
+        transform: Transform,
+    ) -> Result<()> {
+        if contour_count > MAX_CONTOURS {
+            return Err(Error::damaged("glyph contour count exceeds limit"));
+        }
+        if contour_count == 0 {
+            return Ok(());
+        }
+        let mut position = 10_usize;
+        let mut ends = Vec::with_capacity(contour_count);
+        let mut previous = None;
+        let mut index = 0_usize;
+        while index < contour_count {
+            let end = be_u16_at(bytes, position)?;
+            position = checked_add(position, 2)?;
+            if previous.is_some_and(|value| end <= value) {
+                return Err(Error::damaged("glyph contour endpoints are not increasing"));
+            }
+            previous = Some(end);
+            ends.push(end);
+            index = checked_add(index, 1)?;
+        }
+        let point_count = previous
+            .map(usize::from)
+            .and_then(|value| value.checked_add(1))
+            .ok_or_else(|| Error::damaged("simple glyph has no points"))?;
+        if point_count > MAX_POINTS {
+            return Err(Error::damaged("glyph point count exceeds limit"));
+        }
+        let instruction_length = usize::from(be_u16_at(bytes, position)?);
+        position = checked_add(position, 2)?;
+        position = checked_add(position, instruction_length)?;
+        checked_range(bytes, position, 0)?;
+
+        let mut flags = Vec::with_capacity(point_count);
+        while flags.len() < point_count {
+            let flag = *bytes
+                .get(position)
+                .ok_or_else(|| Error::damaged("truncated glyph flags"))?;
+            position = checked_add(position, 1)?;
+            flags.push(flag);
+            if flag & 0x08 != 0 {
+                let repeat = usize::from(
+                    *bytes
+                        .get(position)
+                        .ok_or_else(|| Error::damaged("truncated glyph flag repeat"))?,
+                );
+                position = checked_add(position, 1)?;
+                let total = checked_add(flags.len(), repeat)?;
+                if total > point_count {
+                    return Err(Error::damaged("glyph flag repeat exceeds point count"));
+                }
+                let mut repeated = 0_usize;
+                while repeated < repeat {
+                    flags.push(flag);
+                    repeated = checked_add(repeated, 1)?;
+                }
+            }
+        }
+
+        let mut xs = Vec::with_capacity(point_count);
+        let mut x = 0_i32;
+        for flag in flags.iter().copied() {
+            let delta = if flag & 0x02 != 0 {
+                let byte = i32::from(
+                    *bytes
+                        .get(position)
+                        .ok_or_else(|| Error::damaged("truncated glyph x coordinate"))?,
+                );
+                position = checked_add(position, 1)?;
+                if flag & 0x10 != 0 {
+                    byte
+                } else {
+                    byte.checked_neg().ok_or_else(|| Error::damaged("x delta overflow"))?
+                }
+            } else if flag & 0x10 != 0 {
+                0
+            } else {
+                let value = i32::from(be_i16_at(bytes, position)?);
+                position = checked_add(position, 2)?;
+                value
+            };
+            x = x
+                .checked_add(delta)
+                .ok_or_else(|| Error::damaged("glyph x coordinate overflow"))?;
+            xs.push(x);
+        }
+
+        let mut ys = Vec::with_capacity(point_count);
+        let mut y = 0_i32;
+        for flag in flags.iter().copied() {
+            let delta = if flag & 0x04 != 0 {
+                let byte = i32::from(
+                    *bytes
+                        .get(position)
+                        .ok_or_else(|| Error::damaged("truncated glyph y coordinate"))?,
+                );
+                position = checked_add(position, 1)?;
+                if flag & 0x20 != 0 {
+                    byte
+                } else {
+                    byte.checked_neg().ok_or_else(|| Error::damaged("y delta overflow"))?
+                }
+            } else if flag & 0x20 != 0 {
+                0
+            } else {
+                let value = i32::from(be_i16_at(bytes, position)?);
+                position = checked_add(position, 2)?;
+                value
+            };
+            y = y
+                .checked_add(delta)
+                .ok_or_else(|| Error::damaged("glyph y coordinate overflow"))?;
+            ys.push(y);
+        }
+
+        let mut points = Vec::with_capacity(point_count);
+        let mut point_index = 0_usize;
+        while point_index < point_count {
+            let px = *xs
+                .get(point_index)
+                .ok_or_else(|| Error::damaged("missing glyph x point"))?;
+            let py = *ys
+                .get(point_index)
+                .ok_or_else(|| Error::damaged("missing glyph y point"))?;
+            let flag = *flags
+                .get(point_index)
+                .ok_or_else(|| Error::damaged("missing glyph flag"))?;
+            points.push(Point {
+                x: i32_to_f32(px)?,
+                y: i32_to_f32(py)?,
+                on_curve: flag & 1 != 0,
+            });
+            point_index = checked_add(point_index, 1)?;
+        }
+
+        self.apply_gvar_simple(glyph, &mut points, &ends)?;
+
+        let mut first = 0_usize;
+        for end in ends {
+            let last = usize::from(end);
+            let after = checked_add(last, 1)?;
+            let contour = points
+                .get(first..after)
+                .ok_or_else(|| Error::damaged("glyph contour range is invalid"))?;
+            emit_quadratic_contour(contour, sink, transform)?;
+            first = after;
+        }
+        Ok(())
+    }
+
+    fn outline_composite(
+        &self,
+        parent_glyph: u16,
+        bytes: &[u8],
+        sink: &mut impl OutlineSink,
+        transform: Transform,
+        depth: usize,
+    ) -> Result<()> {
+        let mut position = 10_usize;
+        let next_depth = checked_add(depth, 1)?;
+        let mut components = Vec::new();
+        let final_flags = loop {
+            if components.len() >= MAX_POINTS {
+                return Err(Error::damaged("composite component count exceeds limit"));
+            }
+            let flags = be_u16_at(bytes, position)?;
+            let glyph = be_u16_at(bytes, checked_add(position, 2)?)?;
+            position = checked_add(position, 4)?;
+
+            let words = flags & 0x0001 != 0;
+            let xy_values = flags & 0x0002 != 0;
+            let (arg1, arg2) = if words {
+                let a = be_i16_at(bytes, position)?;
+                let b = be_i16_at(bytes, checked_add(position, 2)?)?;
+                position = checked_add(position, 4)?;
+                (a, b)
+            } else {
+                let a = i16::from(i8::from_be_bytes([*bytes
+                    .get(position)
+                    .ok_or_else(|| Error::damaged("short composite args"))?]));
+                let b_pos = checked_add(position, 1)?;
+                let b = i16::from(i8::from_be_bytes([*bytes
+                    .get(b_pos)
+                    .ok_or_else(|| Error::damaged("short composite args"))?]));
+                position = checked_add(position, 2)?;
+                (a, b)
+            };
+            if !xy_values {
+                return Err(Error::Refused(
+                    "point-matched composite glyph placement is not implemented".to_owned(),
+                ));
+            }
+
+            let mut child = Transform::identity();
+            child.dx = f32::from(arg1);
+            child.dy = f32::from(arg2);
+            if flags & 0x0008 != 0 {
+                let scale = f2dot14(be_i16_at(bytes, position)?);
+                position = checked_add(position, 2)?;
+                child.xx = scale;
+                child.yy = scale;
+            } else if flags & 0x0040 != 0 {
+                child.xx = f2dot14(be_i16_at(bytes, position)?);
+                child.yy = f2dot14(be_i16_at(bytes, checked_add(position, 2)?)?);
+                position = checked_add(position, 4)?;
+            } else if flags & 0x0080 != 0 {
+                child.xx = f2dot14(be_i16_at(bytes, position)?);
+                child.yx = f2dot14(be_i16_at(bytes, checked_add(position, 2)?)?);
+                child.xy = f2dot14(be_i16_at(bytes, checked_add(position, 4)?)?);
+                child.yy = f2dot14(be_i16_at(bytes, checked_add(position, 6)?)?);
+                position = checked_add(position, 8)?;
+            }
+            components.push(Component {
+                glyph,
+                transform: child,
+            });
+            if flags & 0x0020 == 0 {
+                break flags;
+            }
+        };
+
+        if final_flags & 0x0100 != 0 {
+            let instruction_length = usize::from(be_u16_at(bytes, position)?);
+            position = checked_add(position, 2)?;
+            checked_range(bytes, position, instruction_length)?;
+        }
+
+        self.apply_gvar_composite(parent_glyph, &mut components)?;
+        for component in components {
+            self.outline_glyf(
+                component.glyph,
+                sink,
+                transform.combine(component.transform),
+                next_depth,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn apply_gvar_simple(&self, glyph: u16, points: &mut [Point], ends: &[u16]) -> Result<()> {
+        if self.variation.is_none() || points.is_empty() {
+            return Ok(());
+        }
+        let base: Vec<(f32, f32)> = points.iter().map(|point| (point.x, point.y)).collect();
+        let Some(deltas) = self.gvar_deltas(glyph, &base, Some(ends))? else {
+            return Ok(());
+        };
+        for (point, delta) in points.iter_mut().zip(deltas) {
+            point.x += delta.0;
+            point.y += delta.1;
+        }
+        Ok(())
+    }
+
+    fn apply_gvar_composite(&self, glyph: u16, components: &mut [Component]) -> Result<()> {
+        if self.variation.is_none() || components.is_empty() {
+            return Ok(());
+        }
+        let base: Vec<(f32, f32)> = components
+            .iter()
+            .map(|component| (component.transform.dx, component.transform.dy))
+            .collect();
+        let Some(deltas) = self.gvar_deltas(glyph, &base, None)? else {
+            return Ok(());
+        };
+        for (component, delta) in components.iter_mut().zip(deltas) {
+            component.transform.dx += delta.0;
+            component.transform.dy += delta.1;
+        }
+        Ok(())
+    }
+
+    fn gvar_deltas(
+        &self,
+        glyph: u16,
+        base_points: &[(f32, f32)],
+        contour_ends: Option<&[u16]>,
+    ) -> Result<Option<Vec<(f32, f32)>>> {
+        let Some(variation) = &self.variation else {
+            return Ok(None);
+        };
+        if variation.coords.iter().all(|coord| coord.abs() <= f32::EPSILON) {
+            return Ok(None);
+        }
+        let glyph_index = usize::from(glyph);
+        if glyph_index >= variation.glyph_count {
+            return Err(Error::damaged("gvar glyph is outside variation table"));
+        }
+        let start_rel = gvar_glyph_offset(self.data, variation, glyph_index)?;
+        let end_rel = gvar_glyph_offset(self.data, variation, checked_add(glyph_index, 1)?)?;
+        if end_rel < start_rel {
+            return Err(Error::damaged("gvar glyph offsets are decreasing"));
+        }
+        if start_rel == end_rel {
+            return Ok(None);
+        }
+        let start = checked_add(variation.data_offset, start_rel)?;
+        let end = checked_add(variation.data_offset, end_rel)?;
+        let table_end = checked_add(variation.gvar.offset, variation.gvar.length)?;
+        if start < variation.gvar.offset || end > table_end {
+            return Err(Error::damaged("gvar glyph data exceeds table"));
+        }
+        let tuple_word = be_u16_at(self.data, start)?;
+        let tuple_count = usize::from(tuple_word & 0x0fff);
+        if tuple_count > MAX_GVAR_TUPLES {
+            return Err(Error::damaged("gvar tuple count exceeds limit"));
+        }
+        let data_rel = usize::from(be_u16_at(self.data, checked_add(start, 2)?)?);
+        let serialized_start = checked_add(start, data_rel)?;
+        if serialized_start > end {
+            return Err(Error::damaged("gvar serialized data starts outside glyph data"));
+        }
+
+        #[derive(Clone)]
+        struct TupleHeader {
+            data_size: usize,
+            peak: Vec<f32>,
+            start: Option<Vec<f32>>,
+            end: Option<Vec<f32>>,
+            private_points: bool,
+        }
+
+        let mut headers = Vec::with_capacity(tuple_count);
+        let mut header_pos = checked_add(start, 4)?;
+        for _ in 0..tuple_count {
+            let data_size = usize::from(be_u16_at(self.data, header_pos)?);
+            let tuple_index = be_u16_at(self.data, checked_add(header_pos, 2)?)?;
+            header_pos = checked_add(header_pos, 4)?;
+            let peak = if tuple_index & 0x8000 != 0 {
+                let (tuple, next) = read_tuple_coords(self.data, header_pos, variation.axis_count, end)?;
+                header_pos = next;
+                tuple
+            } else {
+                let shared = usize::from(tuple_index & 0x0fff);
+                read_shared_tuple(self.data, variation, shared)?
+            };
+            let (intermediate_start, intermediate_end) = if tuple_index & 0x4000 != 0 {
+                let (a, next) = read_tuple_coords(self.data, header_pos, variation.axis_count, end)?;
+                let (b, next2) = read_tuple_coords(self.data, next, variation.axis_count, end)?;
+                header_pos = next2;
+                (Some(a), Some(b))
+            } else {
+                (None, None)
+            };
+            headers.push(TupleHeader {
+                data_size,
+                peak,
+                start: intermediate_start,
+                end: intermediate_end,
+                private_points: tuple_index & 0x2000 != 0,
+            });
+        }
+        if header_pos > serialized_start {
+            return Err(Error::damaged("gvar tuple headers overlap serialized data"));
+        }
+
+        let total_points = checked_add(base_points.len(), 4)?;
+        let (shared_points, mut tuple_data) = if tuple_word & 0x8000 != 0 {
+            decode_packed_points(self.data, serialized_start, total_points, end)?
+        } else {
+            (None, serialized_start)
+        };
+        let mut accumulated = vec![(0.0_f32, 0.0_f32); total_points];
+        for header in headers {
+            let tuple_end = checked_add(tuple_data, header.data_size)?;
+            if tuple_end > end {
+                return Err(Error::damaged("gvar tuple data exceeds glyph data"));
+            }
+            let scalar = tuple_scalar(
+                &variation.coords,
+                &header.peak,
+                header.start.as_deref(),
+                header.end.as_deref(),
+            )?;
+            let (points, deltas_start) = if header.private_points {
+                decode_packed_points(self.data, tuple_data, total_points, tuple_end)?
+            } else {
+                (shared_points.clone(), tuple_data)
+            };
+            let selected_count = points.as_ref().map_or(total_points, Vec::len);
+            let (xs, after_x) = decode_packed_deltas(self.data, deltas_start, selected_count, tuple_end)?;
+            let (ys, after_y) = decode_packed_deltas(self.data, after_x, selected_count, tuple_end)?;
+            if after_y > tuple_end {
+                return Err(Error::damaged("gvar packed deltas exceed tuple"));
+            }
+            if scalar != 0.0 {
+                let mut dx = vec![None; total_points];
+                let mut dy = vec![None; total_points];
+                if let Some(indices) = &points {
+                    for (slot, point_index) in indices.iter().copied().enumerate() {
+                        let x = *xs.get(slot).ok_or_else(|| Error::damaged("gvar x delta missing"))?;
+                        let y = *ys.get(slot).ok_or_else(|| Error::damaged("gvar y delta missing"))?;
+                        *dx.get_mut(point_index)
+                            .ok_or_else(|| Error::damaged("gvar point index outside glyph"))? = Some(x);
+                        *dy.get_mut(point_index)
+                            .ok_or_else(|| Error::damaged("gvar point index outside glyph"))? = Some(y);
+                    }
+                } else {
+                    for index in 0..total_points {
+                        *dx.get_mut(index).ok_or_else(|| Error::damaged("gvar x slot missing"))? =
+                            xs.get(index).copied();
+                        *dy.get_mut(index).ok_or_else(|| Error::damaged("gvar y slot missing"))? =
+                            ys.get(index).copied();
+                    }
+                }
+                if let Some(ends) = contour_ends {
+                    iup_fill(&mut dx, base_points, ends, true)?;
+                    iup_fill(&mut dy, base_points, ends, false)?;
+                }
+                for index in 0..total_points {
+                    let x = dx.get(index).and_then(|value| *value).unwrap_or(0.0) * scalar;
+                    let y = dy.get(index).and_then(|value| *value).unwrap_or(0.0) * scalar;
+                    let slot = accumulated
+                        .get_mut(index)
+                        .ok_or_else(|| Error::damaged("gvar accumulator missing"))?;
+                    slot.0 += x;
+                    slot.1 += y;
+                }
+            }
+            tuple_data = tuple_end;
+        }
+        accumulated.truncate(base_points.len());
+        Ok(Some(accumulated))
+    }
+}
+
+fn parse_cff(data: &[u8], table: Table, glyph_count: usize) -> Result<CffState> {
+    let table_end = checked_add(table.offset, table.length)?;
+    if table.length < 4 {
+        return Err(Error::damaged("short CFF header"));
+    }
+    let major = *data
+        .get(table.offset)
+        .ok_or_else(|| Error::damaged("CFF major missing"))?;
+    let header_size = usize::from(
+        *data
+            .get(checked_add(table.offset, 2)?)
+            .ok_or_else(|| Error::damaged("CFF header size missing"))?,
+    );
+    if major != 1 || header_size < 4 || checked_add(table.offset, header_size)? > table_end {
+        return Err(Error::damaged("unsupported CFF header"));
+    }
+    let mut position = checked_add(table.offset, header_size)?;
+    let (_, next) = parse_cff_index(data, position, table_end)?;
+    position = next;
+    let (top_index, next) = parse_cff_index(data, position, table_end)?;
+    position = next;
+    if top_index.count != 1 {
+        return Err(Error::damaged("CFF must contain exactly one Top DICT"));
+    }
+    let (_, next) = parse_cff_index(data, position, table_end)?;
+    position = next;
+    let (global_subrs, _) = parse_cff_index(data, position, table_end)?;
+    let top = top_index.object(data, 0)?;
+    let charstrings_rel = dict_ints(top, 17, None)?
+        .and_then(|values| values.first().copied())
+        .ok_or_else(|| Error::damaged("CFF Top DICT has no CharStrings"))?;
+    let charstrings_at = cff_rel_offset(table.offset, charstrings_rel, table_end)?;
+    let (char_strings, _) = parse_cff_index(data, charstrings_at, table_end)?;
+    if char_strings.count != glyph_count {
+        return Err(Error::damaged("CFF CharStrings count disagrees with maxp"));
+    }
+
+    let private = parse_private_from_dict(data, top, table.offset, table_end)?;
+    let fd_array_rel = dict_ints(top, 12, Some(36))?.and_then(|values| values.first().copied());
+    let fd_select_rel = dict_ints(top, 12, Some(37))?.and_then(|values| values.first().copied());
+    let mut fd_array = Vec::new();
+    if let Some(rel) = fd_array_rel {
+        let at = cff_rel_offset(table.offset, rel, table_end)?;
+        let (index, _) = parse_cff_index(data, at, table_end)?;
+        if index.count > MAX_CFF_FDS {
+            return Err(Error::damaged("CFF FDArray exceeds limit"));
+        }
+        fd_array.reserve(index.count);
+        for fd in 0..index.count {
+            let dict = index.object(data, fd)?;
+            fd_array.push(
+                parse_private_from_dict(data, dict, table.offset, table_end)?
+                    .unwrap_or(CffPrivate { local_subrs: None }),
+            );
+        }
+    }
+    let fd_select_offset = fd_select_rel
+        .map(|rel| cff_rel_offset(table.offset, rel, table_end))
+        .transpose()?;
+    if fd_select_offset.is_some() != !fd_array.is_empty() {
+        return Err(Error::damaged("CFF CID font needs both FDArray and FDSelect"));
+    }
+    if let Some(offset) = fd_select_offset {
+        validate_fd_select(data, offset, table_end, glyph_count, fd_array.len())?;
+    }
+    Ok(CffState {
+        char_strings,
+        global_subrs,
+        private,
+        fd_array,
+        fd_select_offset,
+        fd_select_end: table_end,
+    })
+}
+
+fn parse_cff_index(data: &[u8], offset: usize, limit: usize) -> Result<(CffIndex, usize)> {
+    if checked_add(offset, 2)? > limit {
+        return Err(Error::damaged("CFF INDEX count is truncated"));
+    }
+    let count = usize::from(be_u16_at(data, offset)?);
+    if count == 0 {
+        let end = checked_add(offset, 2)?;
+        return Ok((
+            CffIndex {
+                count: 0,
+                offsets: end,
                 data: end,
                 end,
                 off_size: 1,
