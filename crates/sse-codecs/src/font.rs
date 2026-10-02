@@ -40,15 +40,7 @@ pub trait OutlineSink {
     /// Adds a quadratic Bézier.
     fn quad_to(&mut self, control_x: f32, control_y: f32, x: f32, y: f32);
     /// Adds a cubic Bézier.
-    fn cubic_to(
-        &mut self,
-        control1_x: f32,
-        control1_y: f32,
-        control2_x: f32,
-        control2_y: f32,
-        x: f32,
-        y: f32,
-    );
+    fn cubic_to(&mut self, control1_x: f32, control1_y: f32, control2_x: f32, control2_y: f32, x: f32, y: f32);
     /// Closes the current contour.
     fn close(&mut self);
 }
@@ -164,18 +156,13 @@ impl<'a> Font<'a> {
         while index < num_tables {
             let record = checked_add(records_start, checked_mul(index, 16)?)?;
             let tag_slice = checked_range(data, record, 4)?;
-            let tag = <[u8; 4]>::try_from(tag_slice)
-                .map_err(|_| Error::damaged("invalid font table tag"))?;
+            let tag = <[u8; 4]>::try_from(tag_slice).map_err(|_| Error::damaged("invalid font table tag"))?;
             let offset = usize::try_from(be_u32_at(data, checked_add(record, 8)?)?)
                 .map_err(|_| Error::damaged("font table offset does not fit usize"))?;
             let length = usize::try_from(be_u32_at(data, checked_add(record, 12)?)?)
                 .map_err(|_| Error::damaged("font table length does not fit usize"))?;
             checked_range(data, offset, length)?;
-            tables.push(Table {
-                tag,
-                offset,
-                length,
-            });
+            tables.push(Table { tag, offset, length });
             index = checked_add(index, 1)?;
         }
 
@@ -336,19 +323,11 @@ impl<'a> Font<'a> {
         Err(Error::damaged("font has no outline table"))
     }
 
-    fn outline_glyf(
-        &self,
-        glyph: u16,
-        sink: &mut impl OutlineSink,
-        transform: Transform,
-        depth: usize,
-    ) -> Result<()> {
+    fn outline_glyf(&self, glyph: u16, sink: &mut impl OutlineSink, transform: Transform, depth: usize) -> Result<()> {
         if depth > MAX_COMPOSITE_DEPTH {
             return Err(Error::damaged("composite glyph depth exceeds limit"));
         }
-        let glyf = self
-            .glyf
-            .ok_or_else(|| Error::damaged("missing glyf table"))?;
+        let glyf = self.glyf.ok_or_else(|| Error::damaged("missing glyf table"))?;
         let (start, end) = self.glyph_range(glyph)?;
         if start == end {
             return Ok(());
@@ -363,37 +342,36 @@ impl<'a> Font<'a> {
         }
         let contours = be_i16_at(bytes, 0)?;
         if contours >= 0 {
-            self.outline_simple(bytes, usize::try_from(contours).map_err(|_| Error::damaged("contour count"))?, sink, transform)
+            self.outline_simple(
+                bytes,
+                usize::try_from(contours).map_err(|_| Error::damaged("contour count"))?,
+                sink,
+                transform,
+            )
         } else {
             self.outline_composite(bytes, sink, transform, depth)
         }
     }
 
     fn glyph_range(&self, glyph: u16) -> Result<(usize, usize)> {
-        let loca = self
-            .loca
-            .ok_or_else(|| Error::damaged("missing loca table"))?;
+        let loca = self.loca.ok_or_else(|| Error::damaged("missing loca table"))?;
         let index = usize::from(glyph);
         let next = checked_add(index, 1)?;
         let start = if self.loca_long {
             let at = checked_add(loca.offset, checked_mul(index, 4)?)?;
-            usize::try_from(be_u32_at(self.data, at)?)
-                .map_err(|_| Error::damaged("loca offset does not fit usize"))?
+            usize::try_from(be_u32_at(self.data, at)?).map_err(|_| Error::damaged("loca offset does not fit usize"))?
         } else {
             let at = checked_add(loca.offset, checked_mul(index, 2)?)?;
             checked_mul(usize::from(be_u16_at(self.data, at)?), 2)?
         };
         let end = if self.loca_long {
             let at = checked_add(loca.offset, checked_mul(next, 4)?)?;
-            usize::try_from(be_u32_at(self.data, at)?)
-                .map_err(|_| Error::damaged("loca offset does not fit usize"))?
+            usize::try_from(be_u32_at(self.data, at)?).map_err(|_| Error::damaged("loca offset does not fit usize"))?
         } else {
             let at = checked_add(loca.offset, checked_mul(next, 2)?)?;
             checked_mul(usize::from(be_u16_at(self.data, at)?), 2)?
         };
-        let glyf = self
-            .glyf
-            .ok_or_else(|| Error::damaged("missing glyf table"))?;
+        let glyf = self.glyf.ok_or_else(|| Error::damaged("missing glyf table"))?;
         if start > end || end > glyf.length {
             return Err(Error::damaged("loca points outside glyf table"));
         }
@@ -475,7 +453,11 @@ impl<'a> Font<'a> {
                         .ok_or_else(|| Error::damaged("truncated glyph x coordinate"))?,
                 );
                 position = checked_add(position, 1)?;
-                if flag & 0x10 != 0 { byte } else { byte.checked_neg().ok_or_else(|| Error::damaged("x delta overflow"))? }
+                if flag & 0x10 != 0 {
+                    byte
+                } else {
+                    byte.checked_neg().ok_or_else(|| Error::damaged("x delta overflow"))?
+                }
             } else if flag & 0x10 != 0 {
                 0
             } else {
@@ -499,7 +481,11 @@ impl<'a> Font<'a> {
                         .ok_or_else(|| Error::damaged("truncated glyph y coordinate"))?,
                 );
                 position = checked_add(position, 1)?;
-                if flag & 0x20 != 0 { byte } else { byte.checked_neg().ok_or_else(|| Error::damaged("y delta overflow"))? }
+                if flag & 0x20 != 0 {
+                    byte
+                } else {
+                    byte.checked_neg().ok_or_else(|| Error::damaged("y delta overflow"))?
+                }
             } else if flag & 0x20 != 0 {
                 0
             } else {
@@ -568,13 +554,13 @@ impl<'a> Font<'a> {
                 position = checked_add(position, 4)?;
                 (a, b)
             } else {
-                let a = i16::from(i8::from_be_bytes([
-                    *bytes.get(position).ok_or_else(|| Error::damaged("short composite args"))?,
-                ]));
+                let a = i16::from(i8::from_be_bytes([*bytes
+                    .get(position)
+                    .ok_or_else(|| Error::damaged("short composite args"))?]));
                 let b_pos = checked_add(position, 1)?;
-                let b = i16::from(i8::from_be_bytes([
-                    *bytes.get(b_pos).ok_or_else(|| Error::damaged("short composite args"))?,
-                ]));
+                let b = i16::from(i8::from_be_bytes([*bytes
+                    .get(b_pos)
+                    .ok_or_else(|| Error::damaged("short composite args"))?]));
                 position = checked_add(position, 2)?;
                 (a, b)
             };
@@ -735,9 +721,7 @@ fn cmap4_lookup(data: &[u8], offset: usize, length: usize, code: u32) -> Option<
         return None;
     }
     let end_codes = offset.checked_add(14)?;
-    let start_codes = end_codes
-        .checked_add(seg_count.checked_mul(2)?)?
-        .checked_add(2)?;
+    let start_codes = end_codes.checked_add(seg_count.checked_mul(2)?)?.checked_add(2)?;
     let deltas = start_codes.checked_add(seg_count.checked_mul(2)?)?;
     let range_offsets = deltas.checked_add(seg_count.checked_mul(2)?)?;
     if range_offsets
@@ -782,20 +766,12 @@ fn cmap4_lookup(data: &[u8], offset: usize, length: usize, code: u32) -> Option<
     None
 }
 
-fn emit_quadratic_contour(
-    points: &[Point],
-    sink: &mut impl OutlineSink,
-    transform: Transform,
-) -> Result<()> {
+fn emit_quadratic_contour(points: &[Point], sink: &mut impl OutlineSink, transform: Transform) -> Result<()> {
     if points.is_empty() {
         return Ok(());
     }
-    let first = *points
-        .first()
-        .ok_or_else(|| Error::damaged("empty contour"))?;
-    let last = *points
-        .last()
-        .ok_or_else(|| Error::damaged("empty contour"))?;
+    let first = *points.first().ok_or_else(|| Error::damaged("empty contour"))?;
+    let last = *points.last().ok_or_else(|| Error::damaged("empty contour"))?;
     let start = if first.on_curve {
         first
     } else if last.on_curve {
@@ -820,11 +796,7 @@ fn emit_quadratic_contour(
 
         let next_index = checked_add(index, 1)?;
         let next = points.get(next_index).copied().unwrap_or(start);
-        let end = if next.on_curve {
-            next
-        } else {
-            midpoint(current, next)
-        };
+        let end = if next.on_curve { next } else { midpoint(current, next) };
         let (cx, cy) = transform.point(current.x, current.y);
         let (ex, ey) = transform.point(end.x, end.y);
         sink.quad_to(cx, cy, ex, ey);
@@ -887,7 +859,13 @@ fn kern_lookup(data: &[u8], table: Table, left: u16, right: u16) -> Result<Optio
             let mut low = 0_usize;
             let mut high = pairs;
             while low < high {
-                let middle = checked_add(low, high.checked_sub(low).unwrap_or_default().checked_div(2).unwrap_or_default())?;
+                let middle = checked_add(
+                    low,
+                    high.checked_sub(low)
+                        .unwrap_or_default()
+                        .checked_div(2)
+                        .unwrap_or_default(),
+                )?;
                 let pair = checked_add(pairs_start, checked_mul(middle, 6)?)?;
                 let key = u32::from(be_u16_at(data, pair)?)
                     .checked_shl(16)
@@ -928,13 +906,11 @@ fn checked_range(data: &[u8], offset: usize, length: usize) -> Result<&[u8]> {
 }
 
 fn checked_add(a: usize, b: usize) -> Result<usize> {
-    a.checked_add(b)
-        .ok_or_else(|| Error::damaged("font offset overflow"))
+    a.checked_add(b).ok_or_else(|| Error::damaged("font offset overflow"))
 }
 
 fn checked_mul(a: usize, b: usize) -> Result<usize> {
-    a.checked_mul(b)
-        .ok_or_else(|| Error::damaged("font size overflow"))
+    a.checked_mul(b).ok_or_else(|| Error::damaged("font size overflow"))
 }
 
 fn be_u16_at(data: &[u8], offset: usize) -> Result<u16> {
@@ -956,8 +932,7 @@ fn be_u32_at(data: &[u8], offset: usize) -> Result<u32> {
 }
 
 fn i32_to_f32(value: i32) -> Result<f32> {
-    let narrowed = i16::try_from(value)
-        .map_err(|_| Error::damaged("glyph coordinate outside i16 range"))?;
+    let narrowed = i16::try_from(value).map_err(|_| Error::damaged("glyph coordinate outside i16 range"))?;
     Ok(f32::from(narrowed))
 }
 
@@ -1026,7 +1001,6 @@ pub fn rasterize(outline: &[Segment], width: u32, height: u32, out: &mut [u8]) {
         };
     }
 }
-
 
 fn coverage_to_u8(coverage: f64) -> u8 {
     if coverage <= 0.0 {
