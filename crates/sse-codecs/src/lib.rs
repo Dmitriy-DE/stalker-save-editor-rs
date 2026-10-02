@@ -16,3 +16,5 @@ pub mod json;
 pub mod p256;
 /// Safe OpenType/TrueType parsing and glyph coverage rasterisation.
 pub mod font;
+/// Windows minidump reader for crash diagnostics.
+pub mod minidump;
