@@ -103,8 +103,7 @@ impl Huffman {
             entries.push(HuffmanEntry {
                 reversed_code: reverse_low_bits(canonical, length),
                 length,
-                symbol: u16::try_from(symbol)
-                    .map_err(|_| Error::damaged("Huffman symbol does not fit u16"))?,
+                symbol: u16::try_from(symbol).map_err(|_| Error::damaged("Huffman symbol does not fit u16"))?,
             });
             maximum_length = maximum_length.max(length);
         }
@@ -174,10 +173,7 @@ impl<'a> BitReader<'a> {
             .get(self.byte_position)
             .copied()
             .ok_or_else(|| Error::damaged("truncated DEFLATE bitstream"))?;
-        let value = byte
-            .checked_shr(u32::from(self.bit_position))
-            .unwrap_or_default()
-            & 1;
+        let value = byte.checked_shr(u32::from(self.bit_position)).unwrap_or_default() & 1;
         self.bit_position = self
             .bit_position
             .checked_add(1)
@@ -246,20 +242,17 @@ impl<'a> BitReader<'a> {
 }
 
 const LENGTH_BASE: [u16; 29] = [
-    3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83,
-    99, 115, 131, 163, 195, 227, 258,
+    3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258,
 ];
 const LENGTH_EXTRA: [u8; 29] = [
-    0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5,
-    5, 5, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0,
 ];
 const DISTANCE_BASE: [u32; 30] = [
-    1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769,
-    1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577,
+    1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145,
+    8193, 12289, 16385, 24577,
 ];
 const DISTANCE_EXTRA: [u8; 30] = [
-    0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11,
-    11, 12, 12, 13, 13,
+    0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13,
 ];
 
 /// Inflates a zlib stream with an enforced decompressed-size ceiling.
@@ -272,12 +265,8 @@ pub fn inflate_zlib(input: &[u8], maximum: usize) -> Result<Vec<u8>> {
     if input.len() < 6 {
         return Err(Error::damaged("zlib stream is too short"));
     }
-    let cmf = *input
-        .first()
-        .ok_or_else(|| Error::damaged("missing zlib CMF"))?;
-    let flg = *input
-        .get(1)
-        .ok_or_else(|| Error::damaged("missing zlib FLG"))?;
+    let cmf = *input.first().ok_or_else(|| Error::damaged("missing zlib CMF"))?;
+    let flg = *input.get(1).ok_or_else(|| Error::damaged("missing zlib FLG"))?;
     if cmf & 0x0F != 8 || cmf.checked_shr(4).unwrap_or_default() > 7 {
         return Err(Error::damaged("unsupported zlib compression method/window"));
     }
@@ -302,9 +291,8 @@ pub fn inflate_zlib(input: &[u8], maximum: usize) -> Result<Vec<u8>> {
     let trailer = input
         .get(trailer_start..)
         .ok_or_else(|| Error::damaged("missing zlib Adler-32"))?;
-    let expected_adler = u32::from_be_bytes(
-        <[u8; 4]>::try_from(trailer).map_err(|_| Error::damaged("short zlib Adler-32"))?,
-    );
+    let expected_adler =
+        u32::from_be_bytes(<[u8; 4]>::try_from(trailer).map_err(|_| Error::damaged("short zlib Adler-32"))?);
 
     let mut reader = BitReader::new(deflate);
     let mut output = Vec::new();
@@ -340,20 +328,12 @@ fn decode_stored(reader: &mut BitReader<'_>, output: &mut Vec<u8>, maximum: usiz
     reader.align_byte()?;
     let header = reader.take_bytes(4)?;
     let len = u16::from_le_bytes(
-        <[u8; 2]>::try_from(
-            header
-                .get(0..2)
-                .ok_or_else(|| Error::damaged("short stored LEN"))?,
-        )
-        .map_err(|_| Error::damaged("short stored LEN"))?,
+        <[u8; 2]>::try_from(header.get(0..2).ok_or_else(|| Error::damaged("short stored LEN"))?)
+            .map_err(|_| Error::damaged("short stored LEN"))?,
     );
     let nlen = u16::from_le_bytes(
-        <[u8; 2]>::try_from(
-            header
-                .get(2..4)
-                .ok_or_else(|| Error::damaged("short stored NLEN"))?,
-        )
-        .map_err(|_| Error::damaged("short stored NLEN"))?,
+        <[u8; 2]>::try_from(header.get(2..4).ok_or_else(|| Error::damaged("short stored NLEN"))?)
+            .map_err(|_| Error::damaged("short stored NLEN"))?,
     );
     if len != !nlen {
         return Err(Error::damaged("DEFLATE stored LEN/NLEN mismatch"));
@@ -370,19 +350,27 @@ fn fixed_trees() -> Result<(Huffman, Huffman)> {
     let mut symbol = 0_usize;
     while symbol <= 143 {
         set_length(&mut literal_lengths, symbol, 8)?;
-        symbol = symbol.checked_add(1).ok_or_else(|| Error::damaged("fixed symbol overflow"))?;
+        symbol = symbol
+            .checked_add(1)
+            .ok_or_else(|| Error::damaged("fixed symbol overflow"))?;
     }
     while symbol <= 255 {
         set_length(&mut literal_lengths, symbol, 9)?;
-        symbol = symbol.checked_add(1).ok_or_else(|| Error::damaged("fixed symbol overflow"))?;
+        symbol = symbol
+            .checked_add(1)
+            .ok_or_else(|| Error::damaged("fixed symbol overflow"))?;
     }
     while symbol <= 279 {
         set_length(&mut literal_lengths, symbol, 7)?;
-        symbol = symbol.checked_add(1).ok_or_else(|| Error::damaged("fixed symbol overflow"))?;
+        symbol = symbol
+            .checked_add(1)
+            .ok_or_else(|| Error::damaged("fixed symbol overflow"))?;
     }
     while symbol <= 287 {
         set_length(&mut literal_lengths, symbol, 8)?;
-        symbol = symbol.checked_add(1).ok_or_else(|| Error::damaged("fixed symbol overflow"))?;
+        symbol = symbol
+            .checked_add(1)
+            .ok_or_else(|| Error::damaged("fixed symbol overflow"))?;
     }
     let distance_lengths = vec![5_u8; 32];
     Ok((
@@ -398,7 +386,6 @@ fn set_length(lengths: &mut [u8], index: usize, value: u8) -> Result<()> {
     *slot = value;
     Ok(())
 }
-
 
 fn dynamic_trees(reader: &mut BitReader<'_>) -> Result<(Huffman, Huffman)> {
     let hlit = usize::try_from(reader.read_bits(5)?)
@@ -417,17 +404,14 @@ fn dynamic_trees(reader: &mut BitReader<'_>) -> Result<(Huffman, Huffman)> {
         return Err(Error::damaged("dynamic DEFLATE alphabet is too large"));
     }
 
-    const ORDER: [usize; 19] = [
-        16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15,
-    ];
+    const ORDER: [usize; 19] = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];
     let mut code_lengths = [0_u8; 19];
     let mut index = 0_usize;
     while index < hclen {
         let target = *ORDER
             .get(index)
             .ok_or_else(|| Error::damaged("code-length order index"))?;
-        let value = u8::try_from(reader.read_bits(3)?)
-            .map_err(|_| Error::damaged("code-length value overflow"))?;
+        let value = u8::try_from(reader.read_bits(3)?).map_err(|_| Error::damaged("code-length value overflow"))?;
         let slot = code_lengths
             .get_mut(target)
             .ok_or_else(|| Error::damaged("code-length slot"))?;
@@ -445,10 +429,7 @@ fn dynamic_trees(reader: &mut BitReader<'_>) -> Result<(Huffman, Huffman)> {
         let symbol = code_tree.decode(reader)?;
         match symbol {
             0..=15 => {
-                lengths.push(
-                    u8::try_from(symbol)
-                        .map_err(|_| Error::damaged("code length does not fit u8"))?,
-                );
+                lengths.push(u8::try_from(symbol).map_err(|_| Error::damaged("code length does not fit u8"))?);
             }
             16 => {
                 let previous = lengths
@@ -500,12 +481,7 @@ fn dynamic_trees(reader: &mut BitReader<'_>) -> Result<(Huffman, Huffman)> {
     Ok((literal, distance))
 }
 
-fn repeat_length(
-    lengths: &mut Vec<u8>,
-    total: usize,
-    value: u8,
-    repeat: usize,
-) -> Result<()> {
+fn repeat_length(lengths: &mut Vec<u8>, total: usize, value: u8, repeat: usize) -> Result<()> {
     let wanted = lengths
         .len()
         .checked_add(repeat)
@@ -535,10 +511,7 @@ fn decode_compressed(
         match symbol {
             0..=255 => {
                 ensure_growth(output.len(), 1, maximum)?;
-                output.push(
-                    u8::try_from(symbol)
-                        .map_err(|_| Error::damaged("literal symbol does not fit byte"))?,
-                );
+                output.push(u8::try_from(symbol).map_err(|_| Error::damaged("literal symbol does not fit byte"))?);
             }
             256 => return Ok(()),
             257..=285 => {
@@ -603,6 +576,7 @@ fn decode_compressed(
     }
 }
 
+
 fn ensure_growth(current: usize, additional: usize, maximum: usize) -> Result<()> {
     let wanted = current
         .checked_add(additional)
@@ -639,35 +613,32 @@ mod tests {
 
     // zlib streams generated once with Python's stdlib zlib at level 0 / Z_FIXED / default.
     const STORED: &[u8] = &[
-        0x78, 0x01, 0x01, 0x0B, 0x00, 0xF4, 0xFF, 0x73, 0x74, 0x6F, 0x72, 0x65, 0x64, 0x2D, 0x64, 0x61,
-        0x74, 0x61, 0x1A, 0xF3, 0x04, 0x59,
+        0x78, 0x01, 0x01, 0x0B, 0x00, 0xF4, 0xFF, 0x73, 0x74, 0x6F, 0x72, 0x65, 0x64, 0x2D, 0x64, 0x61, 0x74, 0x61,
+        0x1A, 0xF3, 0x04, 0x59,
     ];
 
     const FIXED: &[u8] = &[
-        0x78, 0x01, 0x73, 0x74, 0x0A, 0x72, 0x74, 0x76, 0x74, 0x71, 0x04, 0x52, 0xBA, 0x8E, 0x23, 0x80,
-        0xCD, 0xC0, 0xC8, 0xC4, 0xCC, 0xC2, 0xCA, 0xC6, 0xCE, 0xC1, 0xC9, 0xC5, 0xCD, 0xC3, 0xCB, 0xC7,
-        0x2F, 0x20, 0x28, 0x24, 0x2C, 0x22, 0x2A, 0x26, 0x2E, 0x21, 0x29, 0x25, 0x2D, 0x23, 0x2B, 0x27,
-        0x0F, 0x00, 0x68, 0x93, 0x40, 0x85,
+        0x78, 0x01, 0x73, 0x74, 0x0A, 0x72, 0x74, 0x76, 0x74, 0x71, 0x04, 0x52, 0xBA, 0x8E, 0x23, 0x80, 0xCD, 0xC0,
+        0xC8, 0xC4, 0xCC, 0xC2, 0xCA, 0xC6, 0xCE, 0xC1, 0xC9, 0xC5, 0xCD, 0xC3, 0xCB, 0xC7, 0x2F, 0x20, 0x28, 0x24,
+        0x2C, 0x22, 0x2A, 0x26, 0x2E, 0x21, 0x29, 0x25, 0x2D, 0x23, 0x2B, 0x27, 0x0F, 0x00, 0x68, 0x93, 0x40, 0x85,
     ];
 
     const DYNAMIC: &[u8] = &[
-        0x78, 0x9C, 0xED, 0xCA, 0x49, 0x16, 0xC1, 0x50, 0x10, 0x86, 0xD1, 0xAD, 0xD4, 0x12, 0x04, 0xD1,
-        0x0C, 0x2D, 0x05, 0x09, 0x89, 0xEE, 0x11, 0x89, 0x6E, 0xF5, 0x1C, 0x7B, 0x78, 0xB3, 0xFB, 0x8F,
-        0xBE, 0x3A, 0x75, 0xFB, 0xA6, 0x8E, 0xDB, 0xD0, 0x6E, 0x8F, 0xB1, 0xE9, 0xD2, 0xF3, 0x12, 0xBB,
-        0xF4, 0x8A, 0xC3, 0x70, 0xBE, 0xDE, 0x23, 0x3D, 0xEA, 0x2E, 0xFA, 0xDF, 0xFB, 0xB4, 0xFE, 0xBC,
-        0xA3, 0x4A, 0xFB, 0xFF, 0xC1, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C,
-        0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB,
-        0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2,
-        0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C,
-        0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB,
-        0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2,
-        0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C,
-        0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB,
-        0xB2, 0x2C, 0xCB, 0xB2, 0x39, 0xED, 0xCA, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC,
-        0xB2, 0x6F, 0x54, 0x8C, 0x27, 0xD3, 0x72, 0x36, 0x5F, 0x2C, 0x95, 0x52, 0x4A, 0x29, 0xA5, 0x94,
-        0x52, 0x4A, 0x29, 0xA5, 0x94, 0x52, 0xB9, 0xEA, 0x0B, 0x7F, 0x50, 0xDC, 0xBE,
+        0x78, 0x9C, 0xED, 0xCA, 0x49, 0x16, 0xC1, 0x50, 0x10, 0x86, 0xD1, 0xAD, 0xD4, 0x12, 0x04, 0xD1, 0x0C, 0x2D,
+        0x05, 0x09, 0x89, 0xEE, 0x11, 0x89, 0x6E, 0xF5, 0x1C, 0x7B, 0x78, 0xB3, 0xFB, 0x8F, 0xBE, 0x3A, 0x75, 0xFB,
+        0xA6, 0x8E, 0xDB, 0xD0, 0x6E, 0x8F, 0xB1, 0xE9, 0xD2, 0xF3, 0x12, 0xBB, 0xF4, 0x8A, 0xC3, 0x70, 0xBE, 0xDE,
+        0x23, 0x3D, 0xEA, 0x2E, 0xFA, 0xDF, 0xFB, 0xB4, 0xFE, 0xBC, 0xA3, 0x4A, 0xFB, 0xFF, 0xC1, 0xB2, 0x2C, 0xCB,
+        0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB,
+        0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB,
+        0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB,
+        0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB,
+        0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB,
+        0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB,
+        0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x2C, 0xCB, 0xB2, 0x39, 0xED,
+        0xCA, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xB2, 0x6F, 0x54, 0x8C, 0x27, 0xD3, 0x72, 0x36,
+        0x5F, 0x2C, 0x95, 0x52, 0x4A, 0x29, 0xA5, 0x94, 0x52, 0x4A, 0x29, 0xA5, 0x94, 0x52, 0xB9, 0xEA, 0x0B, 0x7F,
+        0x50, 0xDC, 0xBE,
     ];
-
 
     #[test]
     fn stored_block_decodes() {
