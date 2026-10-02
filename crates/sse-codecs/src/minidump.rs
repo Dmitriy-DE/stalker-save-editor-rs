@@ -301,10 +301,7 @@ impl<'a> Minidump<'a> {
             return Ok(frames);
         };
         let mut position = 0_usize;
-        while position
-            .checked_add(pointer_size)
-            .is_some_and(|end| end <= stack.len())
-            && frames.len() < maximum_frames
+        while position.checked_add(pointer_size).is_some_and(|end| end <= stack.len()) && frames.len() < maximum_frames
         {
             let candidate = if pointer_size == 4 {
                 u64::from(read_u32(stack, position)?)
@@ -389,12 +386,7 @@ impl<'a> Minidump<'a> {
 
     fn decode_context(&self, rva: u32, size: u32, architecture: Architecture) -> Result<ThreadContext> {
         self.validate_location(rva, size, "thread context")?;
-        let bytes = checked_range(
-            self.data,
-            usize_from_u32(rva)?,
-            usize_from_u32(size)?,
-            "thread context",
-        )?;
+        let bytes = checked_range(self.data, usize_from_u32(rva)?, usize_from_u32(size)?, "thread context")?;
         match architecture {
             Architecture::X64 => {
                 if bytes.len() < 256 {
@@ -452,7 +444,8 @@ impl<'a> Minidump<'a> {
                 .ok_or_else(|| Error::damaged("MemoryList descriptor overflow"))?;
             let size = read_u32(bytes, size_position)?;
             let rva = read_u32(bytes, rva_position)?;
-            if let Some(result) = memory_subslice(self.data, address, start, u64::from(size), u64::from(rva), maximum)? {
+            if let Some(result) = memory_subslice(self.data, address, start, u64::from(size), u64::from(rva), maximum)?
+            {
                 return Ok(Some(result));
             }
             index = index
@@ -474,7 +467,8 @@ impl<'a> Minidump<'a> {
         if count > MAXIMUM_MEMORY_RANGES {
             return Err(Error::damaged("Memory64List count exceeds limit"));
         }
-        let count_usize = usize::try_from(count).map_err(|_| Error::damaged("Memory64List count does not fit usize"))?;
+        let count_usize =
+            usize::try_from(count).map_err(|_| Error::damaged("Memory64List count does not fit usize"))?;
         let required = count_usize
             .checked_mul(16)
             .and_then(|value| value.checked_add(16))
@@ -595,8 +589,10 @@ impl ThreadIter<'_, '_> {
             context_size: read_u32(record, 40)?,
             context_rva: read_u32(record, 44)?,
         };
-        self.dump.validate_location(thread.stack_rva, thread.stack_size, "thread stack")?;
-        self.dump.validate_location(thread.context_rva, thread.context_size, "thread context")?;
+        self.dump
+            .validate_location(thread.stack_rva, thread.stack_size, "thread stack")?;
+        self.dump
+            .validate_location(thread.context_rva, thread.context_size, "thread context")?;
         Ok(thread)
     }
 }
@@ -649,9 +645,15 @@ fn memory_subslice<'a>(
     let file_start = file_rva
         .checked_add(delta)
         .ok_or_else(|| Error::damaged("memory file offset overflow"))?;
-    let file_start_usize = usize::try_from(file_start).map_err(|_| Error::damaged("memory file offset does not fit usize"))?;
+    let file_start_usize =
+        usize::try_from(file_start).map_err(|_| Error::damaged("memory file offset does not fit usize"))?;
     let wanted_usize = usize::try_from(wanted).map_err(|_| Error::damaged("memory read size does not fit usize"))?;
-    Ok(Some(checked_range(data, file_start_usize, wanted_usize, "memory bytes")?))
+    Ok(Some(checked_range(
+        data,
+        file_start_usize,
+        wanted_usize,
+        "memory bytes",
+    )?))
 }
 
 fn read_utf16_string(data: &[u8], rva: u32, maximum_bytes: usize) -> Result<String> {
@@ -673,11 +675,7 @@ fn read_utf16_string(data: &[u8], rva: u32, maximum_bytes: usize) -> Result<Stri
             .ok_or_else(|| Error::damaged("UTF-16 string offset overflow"))?;
     }
     let path = String::from_utf16(&words).map_err(|_| Error::damaged("invalid UTF-16 module name"))?;
-    let name = path
-        .rsplit(['\\', '/'])
-        .next()
-        .unwrap_or(path.as_str())
-        .to_owned();
+    let name = path.rsplit(['\\', '/']).next().unwrap_or(path.as_str()).to_owned();
     Ok(name)
 }
 
@@ -796,7 +794,9 @@ mod tests {
         put_u32(&mut dump, 176, code);
         put_u64(&mut dump, 192, address);
         put_u32(&mut dump, name_offset, u32::try_from(name.len()).unwrap_or_default());
-        if let Some(target) = dump.get_mut(name_offset.saturating_add(4)..name_offset.saturating_add(4).saturating_add(name.len())) {
+        if let Some(target) =
+            dump.get_mut(name_offset.saturating_add(4)..name_offset.saturating_add(4).saturating_add(name.len()))
+        {
             target.copy_from_slice(&name);
         }
         if let Some(target) = dump.get_mut(text_offset..text_offset.saturating_add(text.len())) {
@@ -875,7 +875,9 @@ mod tests {
         let module_entry = dump.get(directory..directory.saturating_add(12));
         assert!(module_entry.is_some());
         let stream_rva = match module_entry {
-            Some(entry) => u32::from_le_bytes(<[u8; 4]>::try_from(entry.get(8..12).unwrap_or_default()).unwrap_or_default()),
+            Some(entry) => {
+                u32::from_le_bytes(<[u8; 4]>::try_from(entry.get(8..12).unwrap_or_default()).unwrap_or_default())
+            }
             None => 0,
         };
         put_u32(&mut dump, usize::try_from(stream_rva).unwrap_or_default(), u32::MAX);
@@ -888,7 +890,14 @@ mod tests {
 
     #[test]
     fn system_info_x64_context_offsets_are_decoded() {
-        let mut dump = vec![0_u8; 32_usize.saturating_add(24).saturating_add(56).saturating_add(168).saturating_add(256)];
+        let mut dump = vec![
+            0_u8;
+            32_usize
+                .saturating_add(24)
+                .saturating_add(56)
+                .saturating_add(168)
+                .saturating_add(256)
+        ];
         put_u32(&mut dump, 0, SIGNATURE);
         put_u32(&mut dump, 8, 2);
         put_u32(&mut dump, 12, 32);
