@@ -613,13 +613,7 @@ fn write_pixels(
             .ok()
             .and_then(|value| value.checked_mul(channel_count))
             .ok_or_else(|| Error::damaged("PNG sample index overflow"))?;
-        let rgba = pixel_rgba(
-            row_bytes,
-            sample_base,
-            header,
-            context.palette,
-            context.transparency,
-        )?;
+        let rgba = pixel_rgba(row_bytes, sample_base, header, context.palette, context.transparency)?;
         let destination_x = pass
             .x_start
             .checked_add(
