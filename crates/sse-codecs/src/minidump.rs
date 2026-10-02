@@ -30,23 +30,23 @@ pub enum Architecture {
 /// Selected fields from MINIDUMP_SYSTEM_INFO.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SystemInfo {
-    pub architecture: Architecture,
-    pub processor_level: u16,
-    pub processor_revision: u16,
-    pub processor_count: u8,
-    pub major_version: u32,
-    pub minor_version: u32,
-    pub build_number: u32,
-    pub platform_id: u32,
+    /// Processor architecture.\n    pub architecture: Architecture,
+    /// Processor level reported by Windows.\n    pub processor_level: u16,
+    /// Processor revision reported by Windows.\n    pub processor_revision: u16,
+    /// Number of logical processors.\n    pub processor_count: u8,
+    /// Operating-system major version.\n    pub major_version: u32,
+    /// Operating-system minor version.\n    pub minor_version: u32,
+    /// Operating-system build number.\n    pub build_number: u32,
+    /// Windows platform identifier.\n    pub platform_id: u32,
 }
 
 /// The exception which caused the dump.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Exception {
-    pub thread_id: u32,
-    pub code: u32,
-    pub flags: u32,
-    pub address: u64,
+    /// Identifier of the faulting thread.\n    pub thread_id: u32,
+    /// Windows exception code.\n    pub code: u32,
+    /// Exception flags.\n    pub flags: u32,
+    /// Faulting or frame address.\n    pub address: u64,
     context_size: u32,
     context_rva: u32,
 }
@@ -54,25 +54,25 @@ pub struct Exception {
 /// One decoded thread context. Only registers needed for stack walking are exposed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ThreadContext {
-    pub instruction_pointer: u64,
-    pub stack_pointer: u64,
+    /// Instruction pointer from the thread context.\n    pub instruction_pointer: u64,
+    /// Stack pointer from the thread context.\n    pub stack_pointer: u64,
 }
 
 /// A module mapped into the crashed process.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Module {
-    pub base: u64,
-    pub size: u32,
-    pub timestamp: u32,
-    pub version: (u16, u16, u16, u16),
-    pub name: String,
+    /// Module base address.\n    pub base: u64,
+    /// Mapped image size in bytes.\n    pub size: u32,
+    /// PE timestamp recorded in the dump.\n    pub timestamp: u32,
+    /// Product version components.\n    pub version: (u16, u16, u16, u16),
+    /// Module file name.\n    pub name: String,
 }
 
 /// A thread record. Stack bytes and context remain in the original dump.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Thread {
-    pub id: u32,
-    pub stack_start: u64,
+    /// Thread identifier.\n    pub id: u32,
+    /// Virtual address where the captured stack starts.\n    pub stack_start: u64,
     stack_size: u32,
     stack_rva: u32,
     context_size: u32,
@@ -82,9 +82,9 @@ pub struct Thread {
 /// A stack address that belongs to a known module.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Frame {
-    pub address: u64,
-    pub module: String,
-    pub offset: u64,
+    /// Faulting or frame address.\n    pub address: u64,
+    /// Module containing the frame address.\n    pub module: String,
+    /// Offset from the module base.\n    pub offset: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -262,7 +262,7 @@ impl<'a> Minidump<'a> {
     }
 
     /// Returns a memory view containing `address`, checking MemoryList and Memory64List.
-    pub fn memory_at(&self, address: u64, maximum: usize) -> Result<Option<&'a [u8]>> {
+    pub fn memory_at(&self, address: u64, maximum: usize) -> Result<Option<&[u8]>> {
         if let Some(bytes) = self.memory_list_at(address, maximum)? {
             return Ok(Some(bytes));
         }
