@@ -89,32 +89,47 @@ fn tokenize(text: &str) -> Result<Vec<Token>> {
     let mut tokens = Vec::new();
     let mut position = 0_usize;
     while position < chars.len() {
-        let character = chars.get(position).copied().ok_or_else(|| Error::damaged("Valve KeyValues cursor"))?;
+        let character = chars
+            .get(position)
+            .copied()
+            .ok_or_else(|| Error::damaged("Valve KeyValues cursor"))?;
         if character.is_whitespace() {
-            position = position.checked_add(1).ok_or_else(|| Error::damaged("Valve KeyValues position overflow"))?;
+            position = position
+                .checked_add(1)
+                .ok_or_else(|| Error::damaged("Valve KeyValues position overflow"))?;
             continue;
         }
         if character == '/' {
-            let next_position = position.checked_add(1).ok_or_else(|| Error::damaged("Valve KeyValues position overflow"))?;
+            let next_position = position
+                .checked_add(1)
+                .ok_or_else(|| Error::damaged("Valve KeyValues position overflow"))?;
             if chars.get(next_position).copied() == Some('/') {
-                position = next_position.checked_add(1).ok_or_else(|| Error::damaged("Valve KeyValues position overflow"))?;
+                position = next_position
+                    .checked_add(1)
+                    .ok_or_else(|| Error::damaged("Valve KeyValues position overflow"))?;
                 while let Some(value) = chars.get(position).copied() {
                     if value == '\r' || value == '\n' {
                         break;
                     }
-                    position = position.checked_add(1).ok_or_else(|| Error::damaged("Valve KeyValues position overflow"))?;
+                    position = position
+                        .checked_add(1)
+                        .ok_or_else(|| Error::damaged("Valve KeyValues position overflow"))?;
                 }
                 continue;
             }
         }
         if character == '{' {
             tokens.push(Token::Open);
-            position = position.checked_add(1).ok_or_else(|| Error::damaged("Valve KeyValues position overflow"))?;
+            position = position
+                .checked_add(1)
+                .ok_or_else(|| Error::damaged("Valve KeyValues position overflow"))?;
             continue;
         }
         if character == '}' {
             tokens.push(Token::Close);
-            position = position.checked_add(1).ok_or_else(|| Error::damaged("Valve KeyValues position overflow"))?;
+            position = position
+                .checked_add(1)
+                .ok_or_else(|| Error::damaged("Valve KeyValues position overflow"))?;
             continue;
         }
         if character == '"' {
@@ -128,22 +143,32 @@ fn tokenize(text: &str) -> Result<Vec<Token>> {
             if value.is_whitespace() || value == '{' || value == '}' {
                 break;
             }
-            position = position.checked_add(1).ok_or_else(|| Error::damaged("Valve KeyValues position overflow"))?;
+            position = position
+                .checked_add(1)
+                .ok_or_else(|| Error::damaged("Valve KeyValues position overflow"))?;
         }
         if start == position {
             return Err(Error::damaged("Empty Valve KeyValues token"));
         }
-        let value: String = chars.get(start..position).ok_or_else(|| Error::damaged("Valve KeyValues token range"))?.iter().collect();
+        let value: String = chars
+            .get(start..position)
+            .ok_or_else(|| Error::damaged("Valve KeyValues token range"))?
+            .iter()
+            .collect();
         tokens.push(Token::Value(value));
     }
     Ok(tokens)
 }
 
 fn read_quoted(chars: &[char], quote_position: usize) -> Result<(String, usize)> {
-    let mut position = quote_position.checked_add(1).ok_or_else(|| Error::damaged("Valve KeyValues position overflow"))?;
+    let mut position = quote_position
+        .checked_add(1)
+        .ok_or_else(|| Error::damaged("Valve KeyValues position overflow"))?;
     let mut value = String::new();
     while let Some(character) = chars.get(position).copied() {
-        position = position.checked_add(1).ok_or_else(|| Error::damaged("Valve KeyValues position overflow"))?;
+        position = position
+            .checked_add(1)
+            .ok_or_else(|| Error::damaged("Valve KeyValues position overflow"))?;
         if character == '"' {
             return Ok((value, position));
         }
@@ -151,7 +176,9 @@ fn read_quoted(chars: &[char], quote_position: usize) -> Result<(String, usize)>
             if let Some(escaped) = chars.get(position).copied() {
                 if escaped == '\\' || escaped == '"' {
                     value.push(escaped);
-                    position = position.checked_add(1).ok_or_else(|| Error::damaged("Valve KeyValues position overflow"))?;
+                    position = position
+                        .checked_add(1)
+                        .ok_or_else(|| Error::damaged("Valve KeyValues position overflow"))?;
                 } else {
                     value.push('\\');
                 }
@@ -175,7 +202,9 @@ fn read_object(tokens: &[Token], position: &mut usize, expect_close: bool, depth
             if !expect_close {
                 return Err(Error::damaged("Unexpected closing brace in Valve KeyValues"));
             }
-            *position = position.checked_add(1).ok_or_else(|| Error::damaged("Valve KeyValues token position overflow"))?;
+            *position = position
+                .checked_add(1)
+                .ok_or_else(|| Error::damaged("Valve KeyValues token position overflow"))?;
             return Ok(result);
         }
         let key = match token {
@@ -183,13 +212,21 @@ fn read_object(tokens: &[Token], position: &mut usize, expect_close: bool, depth
             Token::Open => return Err(Error::damaged("Expected a Valve KeyValues key/value pair")),
             Token::Close => return Err(Error::damaged("Unexpected closing brace in Valve KeyValues")),
         };
-        *position = position.checked_add(1).ok_or_else(|| Error::damaged("Valve KeyValues token position overflow"))?;
-        let next = tokens.get(*position).ok_or_else(|| Error::damaged("Expected a Valve KeyValues key/value pair"))?;
-        *position = position.checked_add(1).ok_or_else(|| Error::damaged("Valve KeyValues token position overflow"))?;
+        *position = position
+            .checked_add(1)
+            .ok_or_else(|| Error::damaged("Valve KeyValues token position overflow"))?;
+        let next = tokens
+            .get(*position)
+            .ok_or_else(|| Error::damaged("Expected a Valve KeyValues key/value pair"))?;
+        *position = position
+            .checked_add(1)
+            .ok_or_else(|| Error::damaged("Valve KeyValues token position overflow"))?;
         let value = match next {
             Token::Value(value) => Value::String(value.clone()),
             Token::Open => {
-                let next_depth = depth.checked_add(1).ok_or_else(|| Error::damaged("Valve KeyValues depth overflow"))?;
+                let next_depth = depth
+                    .checked_add(1)
+                    .ok_or_else(|| Error::damaged("Valve KeyValues depth overflow"))?;
                 Value::Object(read_object(tokens, position, true, next_depth)?)
             }
             Token::Close => return Err(Error::damaged("Expected a Valve KeyValues value or object")),
@@ -208,7 +245,8 @@ mod tests {
 
     #[test]
     fn library_folders_fixture_shape() {
-        let text = r#""libraryfolders" { "0" "C:\\Steam" "1" { "path" "D:\\Games\\SteamLibrary" "apps" { "41700" "1" } } }"#;
+        let text =
+            r#""libraryfolders" { "0" "C:\\Steam" "1" { "path" "D:\\Games\\SteamLibrary" "apps" { "41700" "1" } } }"#;
         let root = parse(text).unwrap_or_else(|error| panic!("{error}"));
         let folders = root.get_object("LIBRARYFOLDERS").unwrap_or_else(|| panic!("folders"));
         assert_eq!(folders.get_string("0"), Some("C:\\Steam"));
