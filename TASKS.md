@@ -353,6 +353,25 @@ MiB/s you measured or estimate. Tests: the attached icons decode to stated dimen
 the pixels (compute it and say how); hand-made streams for each block type; truncation everywhere; a zip bomb stops
 at the limit.
 
+## X9 — LZO1X: a real compressor (ChatGPT, after X1)
+
+Attachments: your accepted `lzo1x.rs`, `lzo1x-extended-m4.lzo` / `.raw` (a stream with real matches), `cursor.rs`,
+`error.rs`, `lints.toml`.
+
+The C# editor never compressed: it wrote the whole image as one literal run, so an edited save is larger than its
+unpacked image. Add to `lzo1x.rs`:
+
+```rust
+pub fn compress_fast(payload: &[u8]) -> Vec<u8>;   // real LZO1X-1 class compression
+```
+
+keeping `compress` (literal-only) as it is. Any stream is acceptable that the standard LZO1X decoder — the game's —
+decodes to `payload`: M1–M4 matches, a hash table of 2^14 entries on the stack or in one allocation, one pass, no
+`unsafe`, no `[]` indexing. Output must never exceed `payload.len() + payload.len()/16 + 67`. Tests: round trip
+through `decompress` for 2 000 fixed-seed buffers (sizes 0…300 000, repetitive, random, mixed, long zero runs —
+saves are full of them); every match distance class (≤ 0x800, ≤ 0x4000, ≤ 0xBFFF) produced at least once (assert by
+parsing your own output); ratio on the attached `.raw` no worse than the attached `.lzo`; speed stated.
+
 ---
 
 ## C4 — Checks and crash analysis (Codex)
