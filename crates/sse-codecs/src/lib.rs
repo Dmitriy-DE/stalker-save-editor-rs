@@ -2,3 +2,6 @@
 
 /// LZO1X as the X-Ray engine uses it for saves.
 pub mod lzo1x;
+
+/// Safe OpenType/TrueType parsing and glyph coverage rasterisation.
+pub mod font;
