@@ -10,3 +10,5 @@ pub mod lzhuf;
 pub mod crc32;
 /// Valve text KeyValues reader used for Steam library discovery.
 pub mod vdf;
+/// Strict streaming RFC 8259 JSON reader and writer.
+pub mod json;
