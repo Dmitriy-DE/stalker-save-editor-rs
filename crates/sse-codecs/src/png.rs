@@ -506,7 +506,18 @@ fn decode_pass(
             .ok_or_else(|| Error::damaged("truncated PNG row"))?;
         current.copy_from_slice(encoded);
         unfilter(filter, &mut current, &previous, bpp)?;
-        write_pixels(&current, width, row, header, palette, transparency, pass, output)?;
+        write_pixels(
+            &current,
+            width,
+            row,
+            PixelWrite {
+                header,
+                palette,
+                transparency,
+                pass,
+            },
+            output,
+        )?;
         core::mem::swap(&mut previous, &mut current);
         source = end;
         row = row
@@ -578,16 +589,23 @@ fn paeth(a: u8, b: u8, c: u8) -> Result<u8> {
     }
 }
 
+#[derive(Clone, Copy)]
+struct PixelWrite<'a> {
+    header: Header,
+    palette: Option<&'a [u8]>,
+    transparency: Option<Transparency<'a>>,
+    pass: Pass,
+}
+
 fn write_pixels(
     row_bytes: &[u8],
     pass_width: u32,
     pass_row: u32,
-    header: Header,
-    palette: Option<&[u8]>,
-    transparency: Option<Transparency<'_>>,
-    pass: Pass,
+    context: PixelWrite<'_>,
     output: &mut [u8],
 ) -> Result<()> {
+    let header = context.header;
+    let pass = context.pass;
     let channel_count = usize::from(channels(header.color_type)?);
     let mut x = 0_u32;
     while x < pass_width {
@@ -595,7 +613,13 @@ fn write_pixels(
             .ok()
             .and_then(|value| value.checked_mul(channel_count))
             .ok_or_else(|| Error::damaged("PNG sample index overflow"))?;
-        let rgba = pixel_rgba(row_bytes, sample_base, header, palette, transparency)?;
+        let rgba = pixel_rgba(
+            row_bytes,
+            sample_base,
+            header,
+            context.palette,
+            context.transparency,
+        )?;
         let destination_x = pass
             .x_start
             .checked_add(
