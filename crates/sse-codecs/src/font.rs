@@ -859,12 +859,7 @@ fn kern_lookup(data: &[u8], table: Table, left: u16, right: u16) -> Result<Optio
             let mut low = 0_usize;
             let mut high = pairs;
             while low < high {
-                let middle = checked_add(
-                    low,
-                    high.saturating_sub(low)
-                        .checked_div(2)
-                        .unwrap_or_default(),
-                )?;
+                let middle = checked_add(low, high.saturating_sub(low).checked_div(2).unwrap_or_default())?;
                 let pair = checked_add(pairs_start, checked_mul(middle, 6)?)?;
                 let pair_right = checked_add(pair, 2)?;
                 let right = u32::from(be_u16_at(data, pair_right)?);
