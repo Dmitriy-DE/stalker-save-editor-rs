@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 sse-core = { path = "../sse-core" }
+sse-xray = { path = "../sse-xray" }
 
 [lints]
 workspace = true
