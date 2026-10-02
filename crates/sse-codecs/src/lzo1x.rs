@@ -1000,14 +1000,7 @@ mod tests {
         let mut data = Vec::with_capacity(capacity);
         data.extend_from_slice(&marker);
         let filler = distance.saturating_sub(marker.len());
-        let mut state = u64::from(salt).wrapping_add(0x1234_5678_9ABC_DEF0);
-        for _ in 0..filler {
-            state ^= state.checked_shl(13).unwrap_or_default();
-            state ^= state.checked_shr(7).unwrap_or_default();
-            state ^= state.checked_shl(17).unwrap_or_default();
-            let byte = state.to_le_bytes().first().copied().unwrap_or_default();
-            data.push(byte);
-        }
+        data.extend(core::iter::repeat_n(0_u8, filler));
         data.extend_from_slice(&marker);
         data
     }
