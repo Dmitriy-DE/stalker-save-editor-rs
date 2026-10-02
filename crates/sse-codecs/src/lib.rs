@@ -2,3 +2,6 @@
 
 /// LZO1X as the X-Ray engine uses it for saves.
 pub mod lzo1x;
+
+/// Valve text KeyValues reader used for Steam library discovery.
+pub mod vdf;
