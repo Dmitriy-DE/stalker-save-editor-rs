@@ -651,7 +651,7 @@ fn memory_subslice(
     size: u64,
     file_rva: u64,
     maximum: usize,
-) -> Result<Option<&'a [u8]>> {
+) -> Result<Option<&[u8]>> {
     let end = start
         .checked_add(size)
         .ok_or_else(|| Error::damaged("memory range address overflow"))?;
