@@ -258,7 +258,7 @@ mod tests {
 
     #[test]
     fn comments_and_reference_escapes() {
-        let node = parse("// hello\n key \\\"raw\\q\\\\slash\\\" ").unwrap_or_else(|error| panic!("{error}"));
+        let node = parse("// hello\n key \"raw\\q\\\\slash\" ").unwrap_or_else(|error| panic!("{error}"));
         assert_eq!(node.get_string("key"), Some("raw\\q\\slash"));
     }
 
