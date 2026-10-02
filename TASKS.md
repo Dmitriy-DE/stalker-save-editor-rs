@@ -523,9 +523,19 @@ only by us.
 
 ---
 
-## U0 — Interface toolkit decision (Claude)
+## U0 — Interface toolkit decision (Claude) — done
 
-Three throwaway prototypes of one screen (save list with thumbnails, inventory table of 2 000 rows with icons, detail
-panel, the current dark theme, Russian + Chinese text, scale 100–200%): Slint, egui and our own (system window, own rasteriser and font code). Measure idle memory, cold
-start, binary size, scroll smoothness; compare screenshots with the C# editor. The choice and the numbers go into
-`PLAN.md`; the prototypes are deleted.
+Measured Slint, egui and our own; the numbers and the choice (our own `sse-ui`) are in `PLAN.md`.
+
+## U1 — `sse-ui` (Claude)
+
+Retained tree of widgets with damage tracking (nothing is drawn when nothing changed), software canvas (rectangles,
+rounded corners, images, 8-bit coverage text from X6's font code, glyph atlas with a stated limit), layout (rows,
+columns, grid, wrap), virtual list and table as the only lists, scroll, text field with selection and clipboard,
+buttons, check boxes, sliders, drop-downs, tabs, tooltips, dialogs that never block, keyboard focus, the theme of
+the C# editor (colours, Oswald headings, accents), interface scale. Window trait with the X11 backend (wire
+protocol, shared-memory images). A screenshot binary (developer-only, silent) that renders any screen to a file
+without a window: this is how screens are accepted and tested in CI.
+
+U2–U5 (window on Windows, Wayland, macOS, canvas on the web) and S1–S5 (screens) get their texts when U1 is merged:
+they are written against its widget set.
