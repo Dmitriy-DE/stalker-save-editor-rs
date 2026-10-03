@@ -31,11 +31,9 @@ pub struct Hunk {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 /// One changed byte interval in the old and new images.
 pub struct ByteRange {
-    pub old_start: usize,
-    /// Old-image exclusive end byte.
+    /// Old-image inclusive start byte.\n    pub old_start: usize,\n    /// Old-image exclusive end byte.
     pub old_end: usize,
-    pub new_start: usize,
-    /// New-image exclusive end byte.
+    /// New-image inclusive start byte.\n    pub new_start: usize,\n    /// New-image exclusive end byte.
     pub new_end: usize,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -99,7 +97,7 @@ pub fn line_diff(old: &[u8], new: &[u8], maximum_trace_cells: usize) -> Result<V
         .checked_mul(2)
         .and_then(|v| v.checked_add(3))
         .ok_or_else(|| Error::damaged("diff width overflow"))?;
-    if width.checked_mul(max_d.saturating_add(1)).unwrap_or(usize::MAX) > maximum_trace_cells {
+    if width.saturating_mul(max_d.saturating_add(1)) > maximum_trace_cells {
         return linear_fallback(&a, &b);
     }
     let off = max_d
@@ -109,7 +107,7 @@ pub fn line_diff(old: &[u8], new: &[u8], maximum_trace_cells: usize) -> Result<V
     let mut trace: Vec<Vec<isize>> = Vec::new();
     for d in 0..=max_d {
         let di = isize::try_from(d).map_err(|_| Error::damaged("diff distance"))?;
-        let mut k = -di;
+        let mut k = di.saturating_neg();
         while k <= di {
             let idx = isize::try_from(off)
                 .ok()
@@ -118,7 +116,7 @@ pub fn line_diff(old: &[u8], new: &[u8], maximum_trace_cells: usize) -> Result<V
                 .ok_or_else(|| Error::damaged("diff diagonal"))?;
             let left = idx.checked_sub(1).and_then(|x| v.get(x)).copied().unwrap_or(-1);
             let right = idx.checked_add(1).and_then(|x| v.get(x)).copied().unwrap_or(-1);
-            let mut x = if k == -di || (k != di && left < right) {
+            let mut x = if k == di.saturating_neg() || (k != di && left < right) {
                 right
             } else {
                 left.saturating_add(1)
@@ -161,8 +159,7 @@ fn backtrack(a: &[&[u8]], b: &[&[u8]], trace: &[Vec<isize>], off: usize) -> Resu
         let k = x.saturating_sub(y);
         let di = isize::try_from(d).map_err(|_| Error::damaged("diff d"))?;
         let oi = isize::try_from(off).map_err(|_| Error::damaged("diff off"))?;
-        let prev_k = if k == -di
-            || (k != di
+        let prev_k = if k == di.saturating_neg()\n            || (k != di
                 && prev
                     .get(usize::try_from(oi.saturating_add(k).saturating_sub(1)).unwrap_or(usize::MAX))
                     .copied()
@@ -240,7 +237,7 @@ fn linear_fallback(a: &[&[u8]], b: &[&[u8]]) -> Result<Vec<LineOp>> {
     let mut s = 0usize;
     while s < a.len().saturating_sub(p)
         && s < b.len().saturating_sub(p)
-        && a.get(a.len().saturating_sub(1 + s)) == b.get(b.len().saturating_sub(1 + s))
+        && a.get(a.len().saturating_sub(1_usize.saturating_add(s))) == b.get(b.len().saturating_sub(1_usize.saturating_add(s)))
     {
         s = s.saturating_add(1);
     }
@@ -248,10 +245,10 @@ fn linear_fallback(a: &[&[u8]], b: &[&[u8]]) -> Result<Vec<LineOp>> {
     for x in a.iter().take(p) {
         out.push(LineOp::Equal((*x).to_vec()));
     }
-    for x in a.iter().skip(p).take(a.len().saturating_sub(p + s)) {
+    for x in a.iter().skip(p).take(a.len().saturating_sub(p.saturating_add(s))) {
         out.push(LineOp::Delete((*x).to_vec()));
     }
-    for x in b.iter().skip(p).take(b.len().saturating_sub(p + s)) {
+    for x in b.iter().skip(p).take(b.len().saturating_sub(p.saturating_add(s))) {
         out.push(LineOp::Insert((*x).to_vec()));
     }
     for x in a.iter().skip(a.len().saturating_sub(s)) {
@@ -344,11 +341,9 @@ fn counts(ops: &[LineOp]) -> (usize, usize) {
     for x in ops {
         match x {
             LineOp::Equal(_) => {
-                a += 1;
-                b += 1
+                a = a.saturating_add(1);\n                b = b.saturating_add(1)
             }
-            LineOp::Delete(_) => a += 1,
-            LineOp::Insert(_) => b += 1,
+            LineOp::Delete(_) => a = a.saturating_add(1),\n            LineOp::Insert(_) => b = b.saturating_add(1),
         }
     }
     (a, b)
