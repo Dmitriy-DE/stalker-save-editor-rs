@@ -1,5 +1,7 @@
 //! Our own interface toolkit (U1): canvas, text, layout, widgets, windows. Owner: Claude.
 
+/// Standalone byte/line diff engine (X22).
+pub mod diff;
 /// Text field editing model (X27).
 pub mod edit;
 /// Measure-and-arrange layout over an arena (X26).
