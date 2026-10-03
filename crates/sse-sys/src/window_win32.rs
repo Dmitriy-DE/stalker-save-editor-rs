@@ -771,7 +771,7 @@ fn paint(hwnd: w::Hwnd, s: &State) {
             );
         }
     }
-    unsafe { w::EndPaint(hwnd, &p) }
+    unsafe { w::EndPaint(hwnd, &p); }
 }
 
 // IFileOpenDialog and IShellItem vtable prefixes, in documented COM order.
