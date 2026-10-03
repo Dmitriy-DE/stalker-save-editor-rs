@@ -139,3 +139,143 @@ enum Ast {
     Repeat {
         node: Box<Self>,
         min: usize,
+        max: Option<usize>,
+        greedy: bool,
+    },
+    Capture {
+        group: usize,
+        node: Box<Self>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PatchArm {
+    Next,
+    First,
+    Second,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Patch {
+    instruction: usize,
+    arm: PatchArm,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Fragment {
+    start: usize,
+    outs: Vec<Patch>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Instruction {
+    Consume(Matcher, Option<usize>),
+    Split(Option<usize>, Option<usize>),
+    Jump(Option<usize>),
+    Save(usize, Option<usize>),
+    Assert(Assertion, Option<usize>),
+    Match,
+}
+
+#[derive(Debug, Clone)]
+struct Program {
+    instructions: Vec<Instruction>,
+    start: usize,
+    capture_slots: usize,
+    options: RegexOptions,
+}
+
+#[derive(Debug, Clone)]
+struct Compiler {
+    instructions: Vec<Instruction>,
+}
+
+impl Compiler {
+    fn new() -> Self {
+        Self {
+            instructions: Vec::new(),
+        }
+    }
+
+    fn emit(&mut self, instruction: Instruction) -> Result<usize> {
+        if self.instructions.len() >= MAX_PROGRAM_STATES {
+            return Err(Error::Refused("regex NFA exceeds the state limit".to_owned()));
+        }
+        let at = self.instructions.len();
+        self.instructions.push(instruction);
+        Ok(at)
+    }
+
+    fn patch(&mut self, patches: &[Patch], target: usize) -> Result<()> {
+        for patch in patches {
+            let instruction = self
+                .instructions
+                .get_mut(patch.instruction)
+                .ok_or_else(|| Error::damaged("regex patch points outside the program"))?;
+            let slot = match (instruction, patch.arm) {
+                (Instruction::Consume(_, next), PatchArm::Next)
+                | (Instruction::Jump(next), PatchArm::Next)
+                | (Instruction::Save(_, next), PatchArm::Next)
+                | (Instruction::Assert(_, next), PatchArm::Next) => next,
+                (Instruction::Split(first, _), PatchArm::First) => first,
+                (Instruction::Split(_, second), PatchArm::Second) => second,
+                _ => return Err(Error::damaged("regex patch arm does not match instruction")),
+            };
+            *slot = Some(target);
+        }
+        Ok(())
+    }
+
+    fn compile(&mut self, ast: &Ast) -> Result<Fragment> {
+        match ast {
+            Ast::Empty => {
+                let start = self.emit(Instruction::Jump(None))?;
+                Ok(Fragment {
+                    start,
+                    outs: vec![Patch {
+                        instruction: start,
+                        arm: PatchArm::Next,
+                    }],
+                })
+            }
+            Ast::Atom(matcher) => {
+                let start = self.emit(Instruction::Consume(matcher.clone(), None))?;
+                Ok(Fragment {
+                    start,
+                    outs: vec![Patch {
+                        instruction: start,
+                        arm: PatchArm::Next,
+                    }],
+                })
+            }
+            Ast::Assertion(assertion) => {
+                let start = self.emit(Instruction::Assert(*assertion, None))?;
+                Ok(Fragment {
+                    start,
+                    outs: vec![Patch {
+                        instruction: start,
+                        arm: PatchArm::Next,
+                    }],
+                })
+            }
+            Ast::Concat(nodes) => self.compile_concat(nodes),
+            Ast::Alternation(nodes) => self.compile_alternation(nodes),
+            Ast::Repeat {
+                node,
+                min,
+                max,
+                greedy,
+            } => self.compile_repeat(node, *min, *max, *greedy),
+            Ast::Capture { group, node } => self.compile_capture(*group, node),
+        }
+    }
+
+    fn compile_concat(&mut self, nodes: &[Ast]) -> Result<Fragment> {
+        let Some(first) = nodes.first() else {
+            return self.compile(&Ast::Empty);
+        };
+        let mut fragment = self.compile(first)?;
+        for node in nodes.iter().skip(1) {
+            let next = self.compile(node)?;
+            self.patch(&fragment.outs, next.start)?;
+            fragment = Fragment {
