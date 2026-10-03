@@ -4,383 +4,13 @@
 //! PNG without opening a window or playing sounds; `--bench` reports paint timings.
 
 use sse_core::{Error, Result};
-use sse_ui::event_loop::{channel_pair, App, Flow, Message, WindowEvent};
-use sse_ui::glyphs::{Face, Fonts, TextStyle};
-use sse_ui::layout::{Align, Edges, NodeKind, Size, Style};
-use sse_ui::raster::Color;
-use sse_ui::widget::{Content, Look, TextAlign, Tree, WidgetId};
+use sse_ui::event_loop::channel_pair;
+use sse_ui::glyphs::Fonts;
+use sse_ui::screens::shell::Shell;
+use sse_ui::screens::style::{rgb, BG_BASE};
+use sse_ui::screens::{AppMessage, ScreenId};
+use sse_ui::widget::Tree;
 use std::time::{Duration, Instant};
-
-// StalkerTheme.cs dark palette; replaced by the X36 theme tokens.
-const BG_BASE: u32 = 0x0C0D0A;
-const BG_PANEL: u32 = 0x101311;
-const BG_ELEVATED: u32 = 0x151814;
-const BG_HOVER: u32 = 0x23261F;
-const BORDER_SUBTLE: u32 = 0x242922;
-const ACCENT: u32 = 0xD6A62D;
-const TEXT_PRIMARY: u32 = 0xD8D2BE;
-const TEXT_SECONDARY: u32 = 0xA29D90;
-const TEXT_MUTED: u32 = 0x716F67;
-const TEXT_KHAKI: u32 = 0xD8BA8C;
-
-const SCREENS: [(&str, &str); 7] = [
-    ("СЕЙВЫ", "Сохранения на этом компьютере"),
-    ("ИНВЕНТАРЬ", "Предметы в рюкзаке и на поясе"),
-    ("ДЕНЬГИ", "Деньги и торговля"),
-    ("ИСПРАВЛЕНИЯ", "Исправления вылетов и ошибок игры"),
-    ("КОМПАНЬОН", "Мод-компаньон в игре"),
-    ("ПРОВЕРКА", "Проверка скриптов и модов"),
-    ("НАСТРОЙКИ", "Язык, тема, обновления"),
-];
-
-fn rgb(value: u32) -> Color {
-    let [_, r, g, b] = value.to_be_bytes();
-    Color::rgba(r, g, b, 255)
-}
-
-struct Shell {
-    nav: Vec<WidgetId>,
-    title: WidgetId,
-    subtitle: WidgetId,
-    status: WidgetId,
-    selected: usize,
-}
-
-fn nav_look(selected: bool) -> Look {
-    Look {
-        fill: selected.then(|| rgb(BG_ELEVATED)),
-        hover_fill: Some(rgb(BG_HOVER)),
-        pressed_fill: Some(rgb(BG_ELEVATED)),
-        accent_bar: selected.then(|| (rgb(ACCENT), 3.0)),
-        text: rgb(if selected { TEXT_PRIMARY } else { TEXT_SECONDARY }),
-        hover_text: Some(rgb(TEXT_PRIMARY)),
-        align: TextAlign::Start,
-        ..Look::default()
-    }
-}
-
-fn build(tree: &mut Tree) -> Result<Shell> {
-    let column = |grow: f32| Style {
-        grow,
-        align_items: Align::Stretch,
-        ..Style::default()
-    };
-    let root = tree.add(
-        None,
-        NodeKind::Row,
-        Style {
-            align_items: Align::Stretch,
-            ..Style::default()
-        },
-        Content::Panel,
-        Look::default(),
-    )?;
-
-    let sidebar_style = Style {
-        preferred: Size::new(232.0, 0.0),
-        min: Size::new(232.0, 0.0),
-        shrink: 0.0,
-        padding: Edges {
-            left: 0.0,
-            top: 20.0,
-            right: 0.0,
-            bottom: 16.0,
-        },
-        gap: Size::new(0.0, 2.0),
-        align_items: Align::Stretch,
-        ..Style::default()
-    };
-    let sidebar_look = Look {
-        fill: Some(rgb(BG_PANEL)),
-        border: Some((rgb(BORDER_SUBTLE), 1.0)),
-        ..Look::default()
-    };
-    let sidebar = tree.add(
-        Some(root),
-        NodeKind::Column,
-        sidebar_style,
-        Content::Panel,
-        sidebar_look,
-    )?;
-    let brand = Style {
-        padding: Edges {
-            left: 20.0,
-            top: 0.0,
-            right: 20.0,
-            bottom: 0.0,
-        },
-        ..Style::default()
-    };
-    tree.add(
-        Some(sidebar),
-        NodeKind::Leaf,
-        brand,
-        Content::Label {
-            text: "S.T.A.L.K.E.R.".to_owned(),
-            style: TextStyle::new(Face::Heading, 22.0),
-        },
-        Look {
-            text: rgb(ACCENT),
-            ..Look::default()
-        },
-    )?;
-    tree.add(
-        Some(sidebar),
-        NodeKind::Leaf,
-        Style {
-            padding: Edges {
-                left: 20.0,
-                top: 0.0,
-                right: 20.0,
-                bottom: 18.0,
-            },
-            ..Style::default()
-        },
-        Content::Label {
-            text: "Редактор сохранений".to_owned(),
-            style: TextStyle::new(Face::Body, 14.0),
-        },
-        Look {
-            text: rgb(TEXT_MUTED),
-            ..Look::default()
-        },
-    )?;
-    let mut nav = Vec::new();
-    for (index, (name, _)) in SCREENS.iter().enumerate() {
-        let style = Style {
-            min: Size::new(0.0, 40.0),
-            padding: Edges {
-                left: 22.0,
-                top: 0.0,
-                right: 12.0,
-                bottom: 0.0,
-            },
-            ..Style::default()
-        };
-        let id = tree.add(
-            Some(sidebar),
-            NodeKind::Leaf,
-            style,
-            Content::Button {
-                text: (*name).to_owned(),
-                style: TextStyle::new(Face::Heading, 15.0),
-            },
-            nav_look(index == 0),
-        )?;
-        nav.push(id);
-    }
-    tree.add(
-        Some(sidebar),
-        NodeKind::Leaf,
-        Style {
-            grow: 1.0,
-            ..Style::default()
-        },
-        Content::Panel,
-        Look::default(),
-    )?;
-    tree.add(
-        Some(sidebar),
-        NodeKind::Leaf,
-        brand,
-        Content::Label {
-            text: "2.0.0-dev · Rust".to_owned(),
-            style: TextStyle::new(Face::Body, 13.0),
-        },
-        Look {
-            text: rgb(TEXT_MUTED),
-            ..Look::default()
-        },
-    )?;
-
-    let main = tree.add(
-        Some(root),
-        NodeKind::Column,
-        column(1.0),
-        Content::Panel,
-        Look::default(),
-    )?;
-    let header = tree.add(
-        Some(main),
-        NodeKind::Column,
-        Style {
-            padding: Edges {
-                left: 32.0,
-                top: 24.0,
-                right: 32.0,
-                bottom: 16.0,
-            },
-            align_items: Align::Stretch,
-            ..Style::default()
-        },
-        Content::Panel,
-        Look::default(),
-    )?;
-    let title = tree.add(
-        Some(header),
-        NodeKind::Leaf,
-        Style::default(),
-        Content::Label {
-            text: SCREENS[0].0.to_owned(),
-            style: TextStyle::new(Face::Heading, 30.0),
-        },
-        Look {
-            text: rgb(TEXT_PRIMARY),
-            ..Look::default()
-        },
-    )?;
-    let subtitle = tree.add(
-        Some(header),
-        NodeKind::Leaf,
-        Style::default(),
-        Content::Label {
-            text: SCREENS[0].1.to_owned(),
-            style: TextStyle::new(Face::Body, 16.0),
-        },
-        Look {
-            text: rgb(TEXT_SECONDARY),
-            ..Look::default()
-        },
-    )?;
-    let content = tree.add(
-        Some(main),
-        NodeKind::Column,
-        Style {
-            grow: 1.0,
-            margin: Edges {
-                left: 32.0,
-                top: 0.0,
-                right: 32.0,
-                bottom: 20.0,
-            },
-            padding: Edges::all(20.0),
-            gap: Size::new(0.0, 10.0),
-            align_items: Align::Stretch,
-            ..Style::default()
-        },
-        Content::Panel,
-        Look {
-            fill: Some(rgb(BG_ELEVATED)),
-            border: Some((rgb(BORDER_SUBTLE), 1.0)),
-            radius: 4.0,
-            ..Look::default()
-        },
-    )?;
-    let row_look = Look {
-        fill: Some(rgb(BG_PANEL)),
-        hover_fill: Some(rgb(BG_HOVER)),
-        radius: 3.0,
-        text: rgb(TEXT_KHAKI),
-        ..Look::default()
-    };
-    for line in ["Зона · Свалка · 14:32", "Бар «100 рентген» · 09:05", "Янтарь · 22:47"]
-    {
-        tree.add(
-            Some(content),
-            NodeKind::Leaf,
-            Style {
-                min: Size::new(0.0, 44.0),
-                padding: Edges {
-                    left: 16.0,
-                    top: 0.0,
-                    right: 16.0,
-                    bottom: 0.0,
-                },
-                ..Style::default()
-            },
-            Content::Button {
-                text: line.to_owned(),
-                style: TextStyle::new(Face::Body, 16.0),
-            },
-            row_look,
-        )?;
-    }
-    let status = tree.add(
-        Some(main),
-        NodeKind::Leaf,
-        Style {
-            min: Size::new(0.0, 28.0),
-            padding: Edges {
-                left: 32.0,
-                top: 0.0,
-                right: 32.0,
-                bottom: 0.0,
-            },
-            ..Style::default()
-        },
-        Content::Label {
-            text: "Готово".to_owned(),
-            style: TextStyle::new(Face::Body, 13.0),
-        },
-        Look {
-            fill: Some(rgb(BG_PANEL)),
-            text: rgb(TEXT_MUTED),
-            ..Look::default()
-        },
-    )?;
-    Ok(Shell {
-        nav,
-        title,
-        subtitle,
-        status,
-        selected: 0,
-    })
-}
-
-/// Worker message: seconds since start, from a timer thread.
-struct Tick(u64);
-
-impl Shell {
-    fn select(&mut self, tree: &mut Tree, index: usize) -> Result<()> {
-        if index == self.selected {
-            return Ok(());
-        }
-        if let Some(old) = self.nav.get(self.selected) {
-            tree.set_look(*old, nav_look(false))?;
-        }
-        if let Some(new) = self.nav.get(index) {
-            tree.set_look(*new, nav_look(true))?;
-        }
-        if let Some((name, line)) = SCREENS.get(index) {
-            tree.set_text(self.title, name)?;
-            tree.set_text(self.subtitle, line)?;
-        }
-        self.selected = index;
-        Ok(())
-    }
-}
-
-impl App<Tick> for Shell {
-    fn message(&mut self, tree: &mut Tree, message: &Message<Tick>, clicked: Option<WidgetId>) -> Flow {
-        if let Some(index) = clicked.and_then(|id| self.nav.iter().position(|nav| *nav == id)) {
-            let _ = self.select(tree, index);
-        }
-        match message {
-            Message::User(Tick(seconds)) => {
-                let _ = tree.set_text(self.status, &format!("Готово · работает {seconds} с"));
-            }
-            Message::Window(WindowEvent::Key {
-                pressed: true, keysym, ..
-            }) => {
-                // Up/Down walk the navigation, Escape quits.
-                let count = self.nav.len();
-                match keysym {
-                    0xff1b => return Flow::Exit,
-                    0xff52 => {
-                        let _ = self.select(tree, self.selected.checked_sub(1).unwrap_or(count.saturating_sub(1)));
-                    }
-                    0xff54 => {
-                        let next = self.selected.saturating_add(1);
-                        let _ = self.select(tree, if next >= count { 0 } else { next });
-                    }
-                    _ => {}
-                }
-            }
-            _ => {}
-        }
-        Flow::Continue
-    }
-}
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -409,9 +39,13 @@ fn screenshot(args: &[String]) -> Result<()> {
         .ok_or_else(|| Error::Refused("usage: --screenshot OUT.png [WxH] [NAV]".to_owned()))?;
     let (width, height) = parse_size(args.get(2));
     let mut tree = Tree::new(Fonts::bundled()?, rgb(BG_BASE));
-    let mut shell = build(&mut tree)?;
-    if let Some(index) = args.get(3).and_then(|value| value.parse().ok()) {
-        shell.select(&mut tree, index)?;
+    let mut shell = Shell::build(&mut tree, None)?;
+    if let Some(id) = args
+        .get(3)
+        .and_then(|value| value.parse::<usize>().ok())
+        .and_then(|i| ScreenId::ALL.get(i))
+    {
+        shell.open(&mut tree, *id)?;
     }
     tree.resize(width, height);
     let stride = usize::try_from(width).unwrap_or(0);
@@ -424,7 +58,7 @@ fn bench() -> Result<()> {
     let (width, height) = (1280, 800);
     let started = Instant::now();
     let mut tree = Tree::new(Fonts::bundled()?, rgb(BG_BASE));
-    let mut shell = build(&mut tree)?;
+    let mut shell = Shell::build(&mut tree, None)?;
     tree.resize(width, height);
     let stride = usize::try_from(width).unwrap_or(0);
     let mut frame = vec![0_u32; stride.saturating_mul(usize::try_from(height).unwrap_or(0))];
@@ -434,7 +68,10 @@ fn bench() -> Result<()> {
     let mut pixels = 0_u64;
     let switching = Instant::now();
     for round in 0..rounds {
-        shell.select(&mut tree, round.checked_rem(SCREENS.len()).unwrap_or(0))?;
+        let id = ScreenId::ALL
+            .get(round.checked_rem(ScreenId::ALL.len()).unwrap_or(0))
+            .copied();
+        shell.open(&mut tree, id.unwrap_or(ScreenId::Overview))?;
         for rect in tree.paint(&mut frame, stride)? {
             pixels = pixels.saturating_add(u64::from(rect.width).saturating_mul(u64::from(rect.height)));
         }
@@ -466,9 +103,9 @@ fn bench() -> Result<()> {
 
 #[cfg(all(unix, not(target_os = "macos")))]
 fn window() -> Result<()> {
-    let (proxy, receiver) = channel_pair::<Tick>();
+    let (proxy, receiver) = channel_pair::<AppMessage>();
     let mut tree = Tree::new(Fonts::bundled()?, rgb(BG_BASE));
-    let mut shell = build(&mut tree)?;
+    let mut shell = Shell::build(&mut tree, Some(proxy.clone()))?;
     let (width, height) = (1280_u16, 800_u16);
     let mut backend =
         sse_ui::x11_window::X11Window::open("S.T.A.L.K.E.R. Save Editor", width, height, BG_BASE, proxy.clone())?;
@@ -476,7 +113,7 @@ fn window() -> Result<()> {
     let started = Instant::now();
     std::thread::spawn(move || loop {
         std::thread::sleep(Duration::from_secs(1));
-        if !proxy.send(Tick(started.elapsed().as_secs())) {
+        if !proxy.send(AppMessage::Tick(started.elapsed().as_secs())) {
             return;
         }
     });
@@ -487,7 +124,7 @@ fn window() -> Result<()> {
 
 #[cfg(not(all(unix, not(target_os = "macos"))))]
 fn window() -> Result<()> {
-    let _ = (channel_pair::<Tick>, Duration::from_secs, BG_BASE);
+    let _ = (channel_pair::<AppMessage>, Duration::from_secs, BG_BASE, Instant::now);
     Err(Error::Refused(
         "window backend for this platform comes in U3/U4; use --screenshot".to_owned(),
     ))

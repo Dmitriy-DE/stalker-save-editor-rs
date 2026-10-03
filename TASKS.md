@@ -769,3 +769,27 @@ without a window: this is how screens are accepted and tested in CI.
 
 U2–U5 (window on Windows, Wayland, macOS, canvas on the web) and S1–S5 (screens) get their texts when U1 is merged:
 they are written against its widget set.
+
+## Экраны S1–S5: каркас
+
+Каркас лежит в `crates/sse-ui/src/screens/`:
+- `mod.rs` — `ScreenId` (20 экранов как в меню C#), трейт `Screen`, `AppMessage`;
+- `shell.rs` — рамка;
+- `style.rs` — палитра и готовые блоки: `card`, `row`, `label`, `button`.
+
+У каждого пакета свой файл, чужие файлы не трогать:
+
+| Пакет | Файл |
+|---|---|
+| S2 | `saves.rs` |
+| S3 | `history.rs` |
+| S4 | `games.rs` |
+| S5 | `services.rs` |
+| S1 | `app.rs` |
+
+Заглушку `Placeholder` замени своим типом, реализующим `Screen`. Образец — `Settings` в `app.rs`:
+- виджеты строятся один раз, их id хранятся в полях;
+- клики приходят в `message`;
+- медленную работу делай в потоке, результат возвращай через `cx.proxy` → `AppMessage::ToScreen(id, Box::new(..))`.
+
+Снимок экрана: `sse-shell --screenshot out.png 1280x860 N`, где N — номер в `ScreenId::ALL`.

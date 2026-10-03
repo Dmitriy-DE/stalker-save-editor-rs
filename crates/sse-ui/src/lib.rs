@@ -16,6 +16,8 @@ pub mod locale;
 pub mod path;
 /// Software raster primitives over a premultiplied BGRA surface (X14).
 pub mod raster;
+/// Editor screens, the shell and the screen registry (S1–S5).
+pub mod screens;
 /// Line breaking, carets, ellipsis and search folding (X13).
 pub mod text;
 /// Generated Unicode 17 grapheme and line-break property tables.
