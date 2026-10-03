@@ -687,16 +687,25 @@ pub fn analyze_game_install_from_steam(target: GameTarget, directory: &Path) -> 
 }
 
 fn read_steam_build_id(target: GameTarget, game_directory: &Path) -> Option<String> {
+    const MAXIMUM_STEAM_MANIFEST_BYTES: u64 = 1024 * 1024;
+
     let app_id = target.steam_app_id();
     let canonical_game = fs::canonicalize(game_directory).ok()?;
     let library_root = game_directory.parent()?.parent()?.parent()?;
     let steamapps = library_root.join("steamapps");
     let manifest_path = steamapps.join(format!("appmanifest_{app_id}.acf"));
-    let manifest_len = fs::metadata(&manifest_path).ok()?.len();
-    if manifest_len > 1024 * 1024 {
+    let manifest_file = File::open(&manifest_path).ok()?;
+    if manifest_file.metadata().ok()?.len() > MAXIMUM_STEAM_MANIFEST_BYTES {
         return None;
     }
-    let manifest = fs::read_to_string(manifest_path).ok()?;
+    let mut manifest = String::new();
+    manifest_file
+        .take(MAXIMUM_STEAM_MANIFEST_BYTES.saturating_add(1))
+        .read_to_string(&mut manifest)
+        .ok()?;
+    if u64::try_from(manifest.len()).ok()? > MAXIMUM_STEAM_MANIFEST_BYTES {
+        return None;
+    }
     let fields = parse_app_state(&manifest)?;
     if fields.app_id.as_deref() != Some(app_id) {
         return None;
@@ -1324,7 +1333,28 @@ fn state_index(state: u32) -> usize {
 }
 
 fn game_matches(signature_game: &str, requested_game: Option<&str>) -> bool {
-    signature_game == "any" || requested_game.is_none_or(|game| signature_game.eq_ignore_ascii_case(game))
+    signature_game == "any"
+        || match requested_game {
+            None => true,
+            Some(game) => normalize_crash_game(game) == Some(signature_game),
+        }
+}
+
+fn normalize_crash_game(game: &str) -> Option<&'static str> {
+    let game = game.trim();
+    if ["cs", "cs-ee", "clear sky", "stalker-cs", "stalker-cs-ee"]
+        .iter()
+        .any(|alias| game.eq_ignore_ascii_case(alias))
+    {
+        Some("cs")
+    } else if ["soc", "soc-ee", "shadow of chernobyl", "stalker-soc", "stalker-soc-ee"]
+        .iter()
+        .any(|alias| game.eq_ignore_ascii_case(alias))
+    {
+        Some("soc")
+    } else {
+        None
+    }
 }
 
 fn build_automaton() -> Automaton {

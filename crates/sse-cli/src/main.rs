@@ -51,14 +51,12 @@ fn run(arguments: &[String]) -> u8 {
         {
             report(doctor_save(arguments.get(2), is_json(arguments)))
         }
-        Some("doctor")
-            if (arguments.len() == 3
-                || (arguments.len() == 4 && (is_json(arguments) || arguments.get(3).is_some()))
-                || (arguments.len() == 5 && is_json(arguments)))
-                && arguments.get(1).map(String::as_str) == Some("crash") =>
-        {
-            let game = arguments.get(3).filter(|value| value.as_str() != "--json");
-            report(doctor_crash(arguments.get(2), game, is_json(arguments)))
+        Some("doctor") if arguments.len() >= 3 && arguments.get(1).map(String::as_str) == Some("crash") => {
+            let Some((game, json)) = parse_crash_options(arguments) else {
+                eprintln!("{USAGE}");
+                return sse_core::ExitCode::Usage as u8;
+            };
+            report(doctor_crash(arguments.get(2), game, json))
         }
         Some("doctor")
             if (arguments.len() == 4 || (arguments.len() == 5 && is_json(arguments)))
@@ -1358,6 +1356,31 @@ fn is_json(arguments: &[String]) -> bool {
     arguments.last().map(String::as_str) == Some("--json")
 }
 
+fn parse_crash_options(arguments: &[String]) -> Option<(Option<&String>, bool)> {
+    let mut game = None;
+    let mut json = false;
+    let mut cursor = 3_usize;
+    while cursor < arguments.len() {
+        match arguments.get(cursor)?.as_str() {
+            "--json" => {
+                json = true;
+                cursor = cursor.checked_add(1)?;
+            }
+            "--game" => {
+                let value_at = cursor.checked_add(1)?;
+                let value = arguments.get(value_at)?;
+                if value.starts_with("--") {
+                    return None;
+                }
+                game = Some(value);
+                cursor = cursor.checked_add(2)?;
+            }
+            _ => return None,
+        }
+    }
+    Some((game, json))
+}
+
 fn doctor_save(path: Option<&String>, json: bool) -> sse_core::Result<()> {
     let path = path.ok_or_else(|| Error::damaged("missing save path"))?;
     let packed = SaveBuffer::read(Path::new(path))?;
@@ -1649,6 +1672,7 @@ mod doctor_tests {
             "doctor".to_owned(),
             "crash".to_owned(),
             path.to_string_lossy().into_owned(),
+            "--game".to_owned(),
             "cs".to_owned(),
         ];
 
@@ -1661,6 +1685,18 @@ mod doctor_tests {
         let _ = std::fs::remove_file(path);
         assert_eq!(exit_code, sse_core::ExitCode::Done as u8);
         assert_eq!(json_exit_code, sse_core::ExitCode::Done as u8);
+    }
+
+    #[test]
+    fn doctor_crash_rejects_unknown_options() {
+        let arguments = vec![
+            "doctor".to_owned(),
+            "crash".to_owned(),
+            "synthetic.log".to_owned(),
+            "--unknown".to_owned(),
+        ];
+
+        assert_eq!(run(&arguments), sse_core::ExitCode::Usage as u8);
     }
 
     #[test]

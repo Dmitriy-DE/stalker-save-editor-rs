@@ -15,6 +15,11 @@ fn documented_crash_signatures_match_case_insensitively_and_filter_by_game() {
     assert_eq!(matched.map(|signature| signature.id), Some("cs.wrong-target-wild-napr"));
     assert_eq!(matched.map(|signature| signature.advice), Some(CrashAdvice::RepairSave));
     assert!(CrashSignatureCatalog::match_log(line, Some("soc")).is_none());
+    assert_eq!(
+        CrashSignatureCatalog::match_log(line, Some("Clear Sky")).map(|signature| signature.id),
+        Some("cs.wrong-target-wild-napr")
+    );
+    assert!(CrashSignatureCatalog::match_log(line, Some("future game")).is_none());
 }
 
 #[test]
