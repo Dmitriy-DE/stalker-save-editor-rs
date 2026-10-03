@@ -181,6 +181,7 @@ impl GameFileTree {
                 continue;
             }
 
+            let archive = Arc::new(archive);
             for entry in wanted_entries {
                 let relative = normalize_game_path(&entry.name);
                 stamp.push_str(&format!(
@@ -190,14 +191,9 @@ impl GameFileTree {
 
                 let origin = archive_path.to_string_lossy().to_string();
                 let file = if defer_archive_content {
-                    let cap_path = archive_path.clone();
+                    let arc = Arc::clone(&archive);
                     let cap_entry_name = entry.name.clone();
-                    let cap_h_dec = header_decoder.clone();
-                    let cap_e_dec = entry_decoder.clone();
-                    GameFile::new(relative.clone(), origin, move || {
-                        let arc = XRayArchive::open_with_decoder(&cap_path, cap_h_dec.clone(), cap_e_dec.clone())?;
-                        arc.read_file(&cap_entry_name)
-                    })
+                    GameFile::new(relative.clone(), origin, move || arc.read_file(&cap_entry_name))
                 } else {
                     match archive.read_file(&entry.name) {
                         Ok(bytes) => GameFile::from_bytes(relative.clone(), origin, bytes),

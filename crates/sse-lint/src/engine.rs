@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use crate::condfuncs::{check_condfuncs_line, extract_lua_function_defs};
 use crate::condlists::check_condlists_text;
-use crate::dialogs::check_dialogs_xml;
+use crate::dialogs::check_all_dialogs;
 use crate::globals::LuaGlobalsAnalyzer;
 use crate::infos::InfoPortionIndex;
 use crate::logic_refs::check_logic_refs_text;
@@ -104,9 +104,8 @@ impl LintEngine {
 
         // --- CHECKER 3: check_dialogs ---
         if checker_filter.is_none() || checker_filter == Some("check_dialogs") {
-            for (path, text) in &xml_files {
-                check_dialogs_xml(path, text, &mut findings);
-            }
+            let files: Vec<(&str, &str)> = xml_files.iter().map(|(p, t)| (p.as_str(), t.as_str())).collect();
+            check_all_dialogs(&files, &mut findings);
         }
 
         // --- CHECKER 4: check_condfuncs ---
@@ -183,6 +182,9 @@ impl LintEngine {
                 globals_analyzer.add_module(mod_name);
             }
             for (path, bytes) in &script_files {
+                if path.ends_with("lua_help.script") {
+                    continue;
+                }
                 globals_analyzer.scan_script(path, bytes);
             }
             let max_files = self.options.max_files_globals.unwrap_or(1);

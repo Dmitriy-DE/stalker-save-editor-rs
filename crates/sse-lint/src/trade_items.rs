@@ -31,7 +31,7 @@ pub fn check_trade_file(path: &str, text: &str, known_sections: &HashSet<String>
             continue;
         };
 
-        if sec.eq_ignore_ascii_case("trader") {
+        if sec.eq_ignore_ascii_case("trader") || sec.to_ascii_lowercase().starts_with("discount") {
             continue;
         }
 
