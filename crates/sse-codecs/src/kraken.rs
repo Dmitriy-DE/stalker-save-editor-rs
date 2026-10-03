@@ -625,6 +625,37 @@ struct HuffRange {
     count: u16,
 }
 
+const HUFF_PREFIX: [usize; 12] = [0, 0, 2, 6, 14, 30, 62, 126, 254, 510, 766, 1022];
+const HUFF_SYMBOL_SLOTS: usize = 1280;
+
+fn store_huff_symbol(
+    syms: &mut [u8],
+    counts: &mut [usize; 12],
+    code_len: usize,
+    symbol: u8,
+) -> Result<()> {
+    let start = HUFF_PREFIX
+        .get(code_len)
+        .copied()
+        .ok_or_else(|| Error::damaged("Huffman code length outside prefix table"))?;
+    let count = counts
+        .get(code_len)
+        .copied()
+        .ok_or_else(|| Error::damaged("Huffman code length bucket missing"))?;
+    let slot = start
+        .checked_add(count)
+        .ok_or_else(|| Error::damaged("Huffman symbol slot overflow"))?;
+    *syms
+        .get_mut(slot)
+        .ok_or_else(|| Error::damaged("Huffman symbol slot outside table"))? = symbol;
+    *counts
+        .get_mut(code_len)
+        .ok_or_else(|| Error::damaged("Huffman code length bucket missing"))? = count
+        .checked_add(1)
+        .ok_or_else(|| Error::damaged("Huffman code length count overflow"))?;
+    Ok(())
+}
+
 fn read_fluff(bits: &mut HeaderBits<'_>, num_symbols: usize) -> Result<usize> {
     if num_symbols == 256 {
         return Ok(0);
@@ -849,11 +880,12 @@ fn read_huff_lengths_old(bits: &mut HeaderBits<'_>, syms: &mut Vec<u8>, counts: 
                 bits.refill()?;
                 let code_index =
                     usize::try_from(code_len).map_err(|_| Error::damaged("Huffman code length conversion failed"))?;
-                *counts
-                    .get_mut(code_index)
-                    .ok_or_else(|| Error::damaged("Huffman code-length bucket outside table"))? =
-                    counts.get(code_index).copied().unwrap_or_default().saturating_add(1);
-                syms.push(u8::try_from(symbol).map_err(|_| Error::damaged("Huffman symbol exceeds byte"))?);
+                store_huff_symbol(
+                    syms,
+                    counts,
+                    code_index,
+                    u8::try_from(symbol).map_err(|_| Error::damaged("Huffman symbol exceeds byte"))?,
+                )?;
                 symbol = symbol.saturating_add(1);
             }
             if symbol == 256 {
@@ -872,10 +904,11 @@ fn read_huff_lengths_old(bits: &mut HeaderBits<'_>, syms: &mut Vec<u8>, counts: 
             return Err(Error::damaged("zero sparse Huffman symbols"));
         }
         if num_symbols == 1 {
-            syms.push(
+            *syms
+                .get_mut(0)
+                .ok_or_else(|| Error::damaged("Huffman single-symbol slot missing"))? =
                 u8::try_from(bits.read_bits_no_refill(8)?)
-                    .map_err(|_| Error::damaged("Huffman symbol exceeds byte"))?,
-            );
+                    .map_err(|_| Error::damaged("Huffman symbol exceeds byte"))?;
             return Ok(1);
         }
         let width = bits.read_bits_no_refill(3)?;
@@ -892,11 +925,7 @@ fn read_huff_lengths_old(bits: &mut HeaderBits<'_>, syms: &mut Vec<u8>, counts: 
             }
             let index =
                 usize::try_from(code_len).map_err(|_| Error::damaged("Huffman code length conversion failed"))?;
-            *counts
-                .get_mut(index)
-                .ok_or_else(|| Error::damaged("Huffman length bucket missing"))? =
-                counts.get(index).copied().unwrap_or_default().saturating_add(1);
-            syms.push(symbol);
+            store_huff_symbol(syms, counts, index, symbol)?;
         }
         Ok(num_symbols)
     }
@@ -950,15 +979,16 @@ fn read_huff_lengths_new(bits: &mut HeaderBits<'_>, syms: &mut Vec<u8>, counts: 
                 .ok_or_else(|| Error::damaged("new Huffman code length missing"))?;
             code_at = code_at.saturating_add(1);
             let index = usize::from(code);
-            *counts
-                .get_mut(index)
-                .ok_or_else(|| Error::damaged("Huffman length bucket missing"))? =
-                counts.get(index).copied().unwrap_or_default().saturating_add(1);
-            syms.push(u8::try_from(symbol).map_err(|_| Error::damaged("new Huffman symbol exceeds byte"))?);
+            store_huff_symbol(
+                syms,
+                counts,
+                index,
+                u8::try_from(symbol).map_err(|_| Error::damaged("new Huffman symbol exceeds byte"))?,
+            )?;
             symbol = symbol.saturating_add(1);
         }
     }
-    if syms.len() != num_symbols {
+    if code_at != num_symbols {
         return Err(Error::damaged("new Huffman range coverage mismatch"));
     }
     Ok(num_symbols)
@@ -967,18 +997,23 @@ fn read_huff_lengths_new(bits: &mut HeaderBits<'_>, syms: &mut Vec<u8>, counts: 
 fn make_huff_lut(counts: &[usize; 12], syms: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
     let mut lengths = vec![0_u8; HUFF_LUT];
     let mut symbols = vec![0_u8; HUFF_LUT];
-    let mut source = 0_usize;
     let mut slot = 0_usize;
     for length in 1_usize..=HUFF_BITS {
         let count = counts.get(length).copied().unwrap_or_default();
+        let start = HUFF_PREFIX
+            .get(length)
+            .copied()
+            .ok_or_else(|| Error::damaged("Huffman prefix start missing"))?;
         let repeat_shift = u32::try_from(HUFF_BITS.saturating_sub(length))
             .map_err(|_| Error::damaged("Huffman repeat shift conversion failed"))?;
         let repeat = 1_usize.checked_shl(repeat_shift).unwrap_or_default();
-        for _ in 0..count {
+        for index in 0..count {
+            let symbol_slot = start
+                .checked_add(index)
+                .ok_or_else(|| Error::damaged("Huffman symbol index overflow"))?;
             let symbol = *syms
-                .get(source)
-                .ok_or_else(|| Error::damaged("Huffman symbol table shorter than code counts"))?;
-            source = source.saturating_add(1);
+                .get(symbol_slot)
+                .ok_or_else(|| Error::damaged("Huffman symbol bucket outside table"))?;
             for _ in 0..repeat {
                 let reversed = reverse_11(slot)?;
                 *lengths
@@ -994,7 +1029,7 @@ fn make_huff_lut(counts: &[usize; 12], syms: &[u8]) -> Result<(Vec<u8>, Vec<u8>)
             }
         }
     }
-    if slot != HUFF_LUT || source != syms.len() {
+    if slot != HUFF_LUT {
         return Err(Error::damaged("Huffman tree is not complete"));
     }
     Ok((lengths, symbols))
@@ -1164,7 +1199,7 @@ fn decode_huff_three(stream_a: &[u8], shared: &[u8], output: &mut [u8], lengths:
 fn decode_huffman(source: &[u8], output: &mut [u8], kind: u8) -> Result<()> {
     let mut bits = HeaderBits::new(source)?;
     let mut counts = [0_usize; 12];
-    let mut syms = Vec::with_capacity(MAX_HUFF_SYMBOLS);
+    let mut syms = vec![0_u8; HUFF_SYMBOL_SLOTS];
     let first = bits.read_bit_no_refill()?;
     let num = if first == 0 {
         read_huff_lengths_old(&mut bits, &mut syms, &mut counts)?
