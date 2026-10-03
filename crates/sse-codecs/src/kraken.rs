@@ -2216,29 +2216,41 @@ impl<'a> OffsetBits<'a> {
         if self.bitpos > 24 {
             return Err(Error::damaged("offset reader bit position exceeds refill bound"));
         }
-        let data_len = i64::try_from(self.data.len()).map_err(|_| Error::damaged("offset source length exceeds i64"))?;
+        let data_len =
+            i64::try_from(self.data.len()).map_err(|_| Error::damaged("offset source length exceeds i64"))?;
         while self.bitpos > 0 {
             let byte = if self.backward {
-                self.pos = self.pos.checked_sub(1).ok_or_else(|| Error::damaged("backward offset position underflow"))?;
+                self.pos = self
+                    .pos
+                    .checked_sub(1)
+                    .ok_or_else(|| Error::damaged("backward offset position underflow"))?;
                 if self.pos >= 0 && self.pos < data_len {
-                    let index = usize::try_from(self.pos).map_err(|_| Error::damaged("backward offset index conversion failed"))?;
+                    let index = usize::try_from(self.pos)
+                        .map_err(|_| Error::damaged("backward offset index conversion failed"))?;
                     self.data.get(index).copied().unwrap_or_default()
                 } else {
                     0
                 }
             } else {
                 let byte = if self.pos >= 0 && self.pos < data_len {
-                    let index = usize::try_from(self.pos).map_err(|_| Error::damaged("forward offset index conversion failed"))?;
+                    let index = usize::try_from(self.pos)
+                        .map_err(|_| Error::damaged("forward offset index conversion failed"))?;
                     self.data.get(index).copied().unwrap_or_default()
                 } else {
                     0
                 };
-                self.pos = self.pos.checked_add(1).ok_or_else(|| Error::damaged("forward offset position overflow"))?;
+                self.pos = self
+                    .pos
+                    .checked_add(1)
+                    .ok_or_else(|| Error::damaged("forward offset position overflow"))?;
                 byte
             };
             let shift = u32::try_from(self.bitpos).map_err(|_| Error::damaged("offset bit shift conversion failed"))?;
             self.bits |= u32::from(byte).checked_shl(shift).unwrap_or_default();
-            self.bitpos = self.bitpos.checked_sub(8).ok_or_else(|| Error::damaged("offset bit position underflow"))?;
+            self.bitpos = self
+                .bitpos
+                .checked_sub(8)
+                .ok_or_else(|| Error::damaged("offset bit position underflow"))?;
         }
         Ok(())
     }
@@ -2249,7 +2261,9 @@ impl<'a> OffsetBits<'a> {
         if n > 24 {
             return Err(Error::damaged("offset bit read exceeds 24"));
         }
-        let shift = 32_u32.checked_sub(n).ok_or_else(|| Error::damaged("offset bit shift underflow"))?;
+        let shift = 32_u32
+            .checked_sub(n)
+            .ok_or_else(|| Error::damaged("offset bit shift underflow"))?;
         let value = self.bits >> shift;
         self.bits = self.bits.checked_shl(n).unwrap_or_default();
         self.bitpos = self
@@ -2262,7 +2276,10 @@ impl<'a> OffsetBits<'a> {
         let value = if n <= 24 {
             self.read_zero(n)?
         } else {
-            let high = self.read_zero(24)?.checked_shl(n.saturating_sub(24)).unwrap_or_default();
+            let high = self
+                .read_zero(24)?
+                .checked_shl(n.saturating_sub(24))
+                .unwrap_or_default();
             self.refill()?;
             high | self.read_zero(n.saturating_sub(24))?
         };
@@ -2323,9 +2340,13 @@ impl<'a> OffsetBits<'a> {
     fn effective_pos(&self) -> Result<i64> {
         let residual = i64::from((24_i32.saturating_sub(self.bitpos)).max(0) >> 3);
         if self.backward {
-            self.pos.checked_add(residual).ok_or_else(|| Error::damaged("backward effective offset overflow"))
+            self.pos
+                .checked_add(residual)
+                .ok_or_else(|| Error::damaged("backward effective offset overflow"))
         } else {
-            self.pos.checked_sub(residual).ok_or_else(|| Error::damaged("forward effective offset underflow"))
+            self.pos
+                .checked_sub(residual)
+                .ok_or_else(|| Error::damaged("forward effective offset underflow"))
         }
     }
 }
@@ -2898,9 +2919,7 @@ mod tests {
         let tail = block.get(at.checked_add(marker.len())?..)?;
         let colon = tail.find(':')?;
         let value = tail.get(colon.checked_add(1)?..)?.trim_start();
-        let end = value
-            .find(|ch: char| !ch.is_ascii_digit())
-            .unwrap_or(value.len());
+        let end = value.find(|ch: char| !ch.is_ascii_digit()).unwrap_or(value.len());
         value.get(..end)?.parse::<usize>().ok()
     }
 
@@ -2932,12 +2951,11 @@ mod tests {
         for fixture in fixtures {
             let packed = fs::read(root.join(format!("{}.kraken", fixture.name)))
                 .unwrap_or_else(|error| panic!("read packed {}: {error}", fixture.name));
-            let raw = fs::read(root.join(&fixture.raw))
-                .unwrap_or_else(|error| panic!("read raw {}: {error}", fixture.raw));
+            let raw =
+                fs::read(root.join(&fixture.raw)).unwrap_or_else(|error| panic!("read raw {}: {error}", fixture.raw));
             assert_eq!(raw.len(), fixture.size, "{} raw size", fixture.name);
             let mut decoded = vec![0_u8; fixture.size];
-            decompress_into(&packed, &mut decoded)
-                .unwrap_or_else(|error| panic!("decode {}: {error:?}", fixture.name));
+            decompress_into(&packed, &mut decoded).unwrap_or_else(|error| panic!("decode {}: {error:?}", fixture.name));
             assert_eq!(decoded, raw, "{} differs from the C++ reference output", fixture.name);
         }
     }
