@@ -85,13 +85,11 @@ impl Message {
         let word = read_u32_ne(bytes, 4)?;
         let size_u32 = word >> 16;
         let opcode_u32 = word & 0xffff;
-        let size = usize::try_from(size_u32)
-            .map_err(|_| Error::damaged("Wayland message size does not fit usize"))?;
+        let size = usize::try_from(size_u32).map_err(|_| Error::damaged("Wayland message size does not fit usize"))?;
         if size != bytes.len() || size < HEADER_BYTES || size.checked_rem(4) != Some(0) {
             return Err(Error::damaged("Wayland message size/header mismatch"));
         }
-        let opcode = u16::try_from(opcode_u32)
-            .map_err(|_| Error::damaged("Wayland opcode does not fit u16"))?;
+        let opcode = u16::try_from(opcode_u32).map_err(|_| Error::damaged("Wayland opcode does not fit u16"))?;
         Ok(Self {
             object: ObjectId::new(object_raw)?,
             opcode,
@@ -199,10 +197,7 @@ impl WireWriter {
             .len()
             .checked_add(1)
             .ok_or_else(|| Error::Refused("Wayland string length overflow".to_owned()))?;
-        self.uint(
-            u32::try_from(wire_len)
-                .map_err(|_| Error::Refused("Wayland string length exceeds u32".to_owned()))?,
-        );
+        self.uint(u32::try_from(wire_len).map_err(|_| Error::Refused("Wayland string length exceeds u32".to_owned()))?);
         self.payload.extend_from_slice(content);
         self.payload.push(0);
         pad_vec_4(&mut self.payload)?;
@@ -218,8 +213,7 @@ impl WireWriter {
             return Err(Error::Refused("Wayland array exceeds the hard limit".to_owned()));
         }
         self.uint(
-            u32::try_from(value.len())
-                .map_err(|_| Error::Refused("Wayland array length exceeds u32".to_owned()))?,
+            u32::try_from(value.len()).map_err(|_| Error::Refused("Wayland array length exceeds u32".to_owned()))?,
         );
         self.payload.extend_from_slice(value);
         pad_vec_4(&mut self.payload)?;
@@ -235,10 +229,12 @@ impl WireWriter {
             .checked_add(self.payload.len())
             .ok_or_else(|| Error::Refused("Wayland message size overflow".to_owned()))?;
         if size > MAX_MESSAGE_BYTES || size.checked_rem(4) != Some(0) {
-            return Err(Error::Refused("Wayland message exceeds size or alignment limits".to_owned()));
+            return Err(Error::Refused(
+                "Wayland message exceeds size or alignment limits".to_owned(),
+            ));
         }
-        let size_u16 = u16::try_from(size)
-            .map_err(|_| Error::Refused("Wayland message size exceeds u16".to_owned()))?;
+        let size_u16 =
+            u16::try_from(size).map_err(|_| Error::Refused("Wayland message size exceeds u16".to_owned()))?;
         let size_word = u32::from(size_u16)
             .checked_shl(16)
             .ok_or_else(|| Error::Refused("Wayland size header shift overflow".to_owned()))?;
@@ -356,8 +352,8 @@ impl<'a> WireReader<'a> {
     /// # Errors
     /// Returns [`Error::Damaged`] for bad length, missing NUL, invalid UTF-8 or truncated padding.
     pub fn string(&mut self) -> Result<String> {
-        let length = usize::try_from(self.uint()?)
-            .map_err(|_| Error::damaged("Wayland string length conversion failed"))?;
+        let length =
+            usize::try_from(self.uint()?).map_err(|_| Error::damaged("Wayland string length conversion failed"))?;
         if length == 0 || length > MAX_STRING_BYTES {
             return Err(Error::damaged("Wayland string length is invalid"));
         }
@@ -384,8 +380,8 @@ impl<'a> WireReader<'a> {
     /// # Errors
     /// Returns [`Error::Damaged`] for excessive or truncated arrays.
     pub fn array(&mut self) -> Result<Vec<u8>> {
-        let length = usize::try_from(self.uint()?)
-            .map_err(|_| Error::damaged("Wayland array length conversion failed"))?;
+        let length =
+            usize::try_from(self.uint()?).map_err(|_| Error::damaged("Wayland array length conversion failed"))?;
         if length > MAX_ARRAY_BYTES {
             return Err(Error::damaged("Wayland array exceeds hard limit"));
         }
@@ -595,7 +591,9 @@ impl ObjectTable {
     /// Returns [`Error::Damaged`] for duplicates or a client-range id.
     pub fn register_server(&mut self, id: ObjectId, interface: Interface, version: u32) -> Result<()> {
         if id.raw() < SERVER_ID_START {
-            return Err(Error::damaged("server-created Wayland object is inside client id range"));
+            return Err(Error::damaged(
+                "server-created Wayland object is inside client id range",
+            ));
         }
         if self.objects.contains_key(&id) {
             return Err(Error::damaged("Wayland server reused a live object id"));
@@ -723,13 +721,7 @@ impl<T: Transport> Client<T> {
     }
 
     /// Sends `wl_surface.attach`.
-    pub fn surface_attach(
-        &mut self,
-        surface: ObjectId,
-        buffer: Option<ObjectId>,
-        x: i32,
-        y: i32,
-    ) -> Result<()> {
+    pub fn surface_attach(&mut self, surface: ObjectId, buffer: Option<ObjectId>, x: i32, y: i32) -> Result<()> {
         self.objects.require(surface, Interface::WlSurface)?;
         if let Some(id) = buffer {
             self.objects.require(id, Interface::WlBuffer)?;
@@ -742,14 +734,7 @@ impl<T: Transport> Client<T> {
     }
 
     /// Sends `wl_surface.damage_buffer`.
-    pub fn surface_damage_buffer(
-        &mut self,
-        surface: ObjectId,
-        x: i32,
-        y: i32,
-        width: i32,
-        height: i32,
-    ) -> Result<()> {
+    pub fn surface_damage_buffer(&mut self, surface: ObjectId, x: i32, y: i32, width: i32, height: i32) -> Result<()> {
         let info = self.objects.require(surface, Interface::WlSurface)?;
         if info.version < 4 {
             return Err(Error::Refused("wl_surface.damage_buffer requires version 4".to_owned()));
@@ -782,7 +767,9 @@ impl<T: Transport> Client<T> {
     pub fn surface_set_buffer_scale(&mut self, surface: ObjectId, scale: i32) -> Result<()> {
         let info = self.objects.require(surface, Interface::WlSurface)?;
         if info.version < 3 || scale <= 0 {
-            return Err(Error::Refused("wl_surface buffer scale requires v3 and a positive value".to_owned()));
+            return Err(Error::Refused(
+                "wl_surface buffer scale requires v3 and a positive value".to_owned(),
+            ));
         }
         let mut writer = WireWriter::new(surface, 8);
         writer.int(scale);
@@ -790,13 +777,8 @@ impl<T: Transport> Client<T> {
     }
 
     /// Creates a `wp_fractional_scale_v1` object for a surface.
-    pub fn fractional_scale(
-        &mut self,
-        manager: ObjectId,
-        surface: ObjectId,
-    ) -> Result<ObjectId> {
-        self.objects
-            .require(manager, Interface::WpFractionalScaleManagerV1)?;
+    pub fn fractional_scale(&mut self, manager: ObjectId, surface: ObjectId) -> Result<ObjectId> {
+        self.objects.require(manager, Interface::WpFractionalScaleManagerV1)?;
         self.objects.require(surface, Interface::WlSurface)?;
         let id = self.objects.allocate(Interface::WpFractionalScaleV1, 1)?;
         let mut writer = WireWriter::new(manager, 1);
@@ -894,12 +876,7 @@ impl<T: Transport> Client<T> {
     }
 
     /// Sets the minimum xdg-toplevel size.
-    pub fn xdg_toplevel_set_min_size(
-        &mut self,
-        toplevel: ObjectId,
-        width: i32,
-        height: i32,
-    ) -> Result<()> {
+    pub fn xdg_toplevel_set_min_size(&mut self, toplevel: ObjectId, width: i32, height: i32) -> Result<()> {
         self.objects.require(toplevel, Interface::XdgToplevel)?;
         if width < 0 || height < 0 {
             return Err(Error::Refused("xdg minimum size cannot be negative".to_owned()));
@@ -911,17 +888,10 @@ impl<T: Transport> Client<T> {
     }
 
     /// Creates server-side decoration control for an xdg toplevel.
-    pub fn decoration_for_toplevel(
-        &mut self,
-        manager: ObjectId,
-        toplevel: ObjectId,
-    ) -> Result<ObjectId> {
-        self.objects
-            .require(manager, Interface::ZxdgDecorationManagerV1)?;
+    pub fn decoration_for_toplevel(&mut self, manager: ObjectId, toplevel: ObjectId) -> Result<ObjectId> {
+        self.objects.require(manager, Interface::ZxdgDecorationManagerV1)?;
         self.objects.require(toplevel, Interface::XdgToplevel)?;
-        let id = self
-            .objects
-            .allocate(Interface::ZxdgToplevelDecorationV1, 1)?;
+        let id = self.objects.allocate(Interface::ZxdgToplevelDecorationV1, 1)?;
         let mut writer = WireWriter::new(manager, 1);
         writer.new_id(id);
         writer.object(Some(toplevel));
@@ -931,8 +901,7 @@ impl<T: Transport> Client<T> {
 
     /// Requests server-side (`1`) or client-side (`2`) decoration mode.
     pub fn decoration_set_mode(&mut self, decoration: ObjectId, mode: u32) -> Result<()> {
-        self.objects
-            .require(decoration, Interface::ZxdgToplevelDecorationV1)?;
+        self.objects.require(decoration, Interface::ZxdgToplevelDecorationV1)?;
         if mode != 1 && mode != 2 {
             return Err(Error::Refused("unknown xdg-decoration mode".to_owned()));
         }
@@ -963,8 +932,7 @@ impl<T: Transport> Client<T> {
 
     /// Creates a `wl_data_source` used to own clipboard text.
     pub fn data_create_source(&mut self, manager: ObjectId) -> Result<ObjectId> {
-        self.objects
-            .require(manager, Interface::WlDataDeviceManager)?;
+        self.objects.require(manager, Interface::WlDataDeviceManager)?;
         let id = self.objects.allocate(Interface::WlDataSource, 3)?;
         let mut writer = WireWriter::new(manager, 0);
         writer.new_id(id);
@@ -974,8 +942,7 @@ impl<T: Transport> Client<T> {
 
     /// Creates a seat-bound data device.
     pub fn data_get_device(&mut self, manager: ObjectId, seat: ObjectId) -> Result<ObjectId> {
-        self.objects
-            .require(manager, Interface::WlDataDeviceManager)?;
+        self.objects.require(manager, Interface::WlDataDeviceManager)?;
         self.objects.require(seat, Interface::WlSeat)?;
         let id = self.objects.allocate(Interface::WlDataDevice, 3)?;
         let mut writer = WireWriter::new(manager, 1);
@@ -994,12 +961,7 @@ impl<T: Transport> Client<T> {
     }
 
     /// Makes `source` the current clipboard selection, or clears the selection with `None`.
-    pub fn data_device_set_selection(
-        &mut self,
-        device: ObjectId,
-        source: Option<ObjectId>,
-        serial: u32,
-    ) -> Result<()> {
+    pub fn data_device_set_selection(&mut self, device: ObjectId, source: Option<ObjectId>, serial: u32) -> Result<()> {
         self.objects.require(device, Interface::WlDataDevice)?;
         if let Some(id) = source {
             self.objects.require(id, Interface::WlDataSource)?;
@@ -1248,11 +1210,7 @@ pub fn decode_event(interface: Interface, message: &Message) -> Result<Event> {
                 .object()?
                 .ok_or_else(|| Error::damaged("keyboard enter has null surface"))?;
             let keys = array_u32(&reader.array()?)?;
-            Event::KeyboardEnter {
-                serial,
-                surface,
-                keys,
-            }
+            Event::KeyboardEnter { serial, surface, keys }
         }
         (Interface::WlKeyboard, 2) => Event::KeyboardLeave {
             serial: reader.uint()?,
@@ -1498,10 +1456,7 @@ fn parse_keycodes(block: &str) -> Result<BTreeMap<String, u32>> {
         let after_open = open
             .checked_add(1)
             .ok_or_else(|| Error::damaged("XKB keycode offset overflow"))?;
-        let Some(relative_close) = statement
-            .get(after_open..)
-            .and_then(|rest| rest.find('>'))
-        else {
+        let Some(relative_close) = statement.get(after_open..).and_then(|rest| rest.find('>')) else {
             continue;
         };
         let close = after_open
@@ -1532,10 +1487,7 @@ fn parse_keycodes(block: &str) -> Result<BTreeMap<String, u32>> {
 fn parse_types(block: &str) -> Result<BTreeMap<String, XkbType>> {
     let mut result = BTreeMap::new();
     let mut cursor = 0_usize;
-    while let Some(relative) = block
-        .get(cursor..)
-        .and_then(|rest| rest.find("type"))
-    {
+    while let Some(relative) = block.get(cursor..).and_then(|rest| rest.find("type")) {
         let start = cursor
             .checked_add(relative)
             .ok_or_else(|| Error::damaged("XKB type cursor overflow"))?;
@@ -1719,7 +1671,10 @@ fn parse_key_body(body: &str) -> Result<XkbKey> {
         }
     }
 
-    while groups.last().is_some_and(|group| group.levels.is_empty() && group.type_name.is_none()) {
+    while groups
+        .last()
+        .is_some_and(|group| group.levels.is_empty() && group.type_name.is_none())
+    {
         let _ = groups.pop();
     }
     Ok(XkbKey { groups })
@@ -1750,8 +1705,7 @@ fn parse_keysym_list(list: &str) -> Result<Vec<u32>> {
 fn keysym_from_name(name: &str) -> Result<u32> {
     if let Some(hex) = name.strip_prefix('U') {
         if hex.len() >= 4 && hex.len() <= 8 && hex.chars().all(|value| value.is_ascii_hexdigit()) {
-            let code = u32::from_str_radix(hex, 16)
-                .map_err(|_| Error::damaged("invalid Unicode XKB keysym"))?;
+            let code = u32::from_str_radix(hex, 16).map_err(|_| Error::damaged("invalid Unicode XKB keysym"))?;
             return 0x0100_0000_u32
                 .checked_add(code)
                 .ok_or_else(|| Error::damaged("Unicode keysym overflow"));
@@ -2107,8 +2061,7 @@ fn array_u32(bytes: &[u8]) -> Result<Vec<u32>> {
     }
     let mut result = Vec::with_capacity(bytes.len().checked_div(4).unwrap_or_default());
     for chunk in bytes.chunks_exact(4) {
-        let array = <[u8; 4]>::try_from(chunk)
-            .map_err(|_| Error::damaged("Wayland array chunk width mismatch"))?;
+        let array = <[u8; 4]>::try_from(chunk).map_err(|_| Error::damaged("Wayland array chunk width mismatch"))?;
         result.push(u32::from_ne_bytes(array));
     }
     Ok(result)
@@ -2117,8 +2070,8 @@ fn array_u32(bytes: &[u8]) -> Result<Vec<u32>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        decode_event, keysym_to_char, Client, Event, Fixed, Interface, KeyModifiers, Message,
-        ObjectId, Transport, WireReader, WireWriter, XkbKeymap,
+        decode_event, keysym_to_char, Client, Event, Fixed, Interface, KeyModifiers, Message, ObjectId, Transport,
+        WireReader, WireWriter, XkbKeymap,
     };
     use sse_core::{Error, Result};
     use std::collections::VecDeque;
@@ -2222,7 +2175,10 @@ mod tests {
         let _pool = client.shm_create_pool(shm, 77, 4096).unwrap_or_else(|_| unreachable!());
         let sent = &client.transport_mut().sent;
         assert_eq!(sent.len(), 6);
-        assert_eq!(sent.last().map(|entry| entry.1.as_slice()), Some(std::slice::from_ref(&77_u32)));
+        assert_eq!(
+            sent.last().map(|entry| entry.1.as_slice()),
+            Some(std::slice::from_ref(&77_u32))
+        );
     }
 
     #[test]
