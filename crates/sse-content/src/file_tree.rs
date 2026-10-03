@@ -26,6 +26,7 @@ pub enum CompanionGame {
 }
 
 /// One logical file in the game's data tree.
+#[derive(Clone)]
 pub struct GameFile {
     /// Relative path normalized with forward slashes (e.g. `configs/system.ltx`).
     pub relative_path: String,
@@ -65,6 +66,7 @@ impl GameFile {
 }
 
 /// The composite view of an installed game's data.
+#[derive(Clone)]
 pub struct GameFileTree {
     /// Map of normalized relative paths to game files.
     pub files: HashMap<String, GameFile>,
@@ -81,6 +83,28 @@ pub struct GameFileTree {
 }
 
 impl GameFileTree {
+    /// Simplified loader with default options.
+    ///
+    /// # Errors
+    /// Returns [`Error::System`] or [`Error::Damaged`] on failure.
+    pub fn load_simple(
+        game: CompanionGame,
+        game_directory: impl AsRef<Path>,
+        wanted: impl Fn(&str) -> bool,
+        defer_archive_content: bool,
+    ) -> Result<Self> {
+        Self::load(
+            game,
+            game_directory,
+            wanted,
+            None,
+            true,
+            defer_archive_content,
+            false,
+            None,
+            None,
+        )
+    }
     /// Loads the game file tree according to `fsgame.ltx` and wanted paths.
     ///
     /// # Errors

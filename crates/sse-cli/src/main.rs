@@ -7,7 +7,11 @@ use std::process::ExitCode;
 use sse_core::{Error, SaveBuffer};
 use sse_xray::Save;
 
-const USAGE: &str = "Usage: stalker-save <version|info|inventory|edit> ...\n\
+mod fixes;
+mod lint;
+mod update;
+
+const USAGE: &str = "Usage: stalker-save <version|info|inventory|edit|fixes|update|lint> ...\n\
 Exit codes: 0 done, 2 wrong arguments, 3 refused (unsupported or unsafe), 4 unreadable or damaged input, 5 file or system error.";
 
 fn main() -> ExitCode {
@@ -32,6 +36,9 @@ fn run(arguments: &[String]) -> u8 {
             eprintln!("Error: Invalid arguments. {USAGE}");
             sse_core::ExitCode::Usage as u8
         }
+        Some("fixes") => fixes::run_fixes(arguments.get(1..).unwrap_or_default()) as u8,
+        Some("lint") => lint::run_lint(arguments.get(1..).unwrap_or_default()) as u8,
+        Some("update") => update::run_update(arguments.get(1..).unwrap_or_default()) as u8,
         Some(_) => {
             eprintln!("{USAGE}");
             sse_core::ExitCode::Usage as u8

@@ -1,0 +1,4704 @@
+{
+ "schema_version": 1,
+ "source": "Upgrade prototype SID -> localization key (sid_upgrades_ArmUpg_<effect>_<tier>) from the vanilla reference reports of github.com/moritzstrobel/BPRUpgradesExpanded (Python/AnalysisArmor/Reports/armor_upgrade_details.json). Identifiers only; no game text. Weapon upgrades: UpgradeTargetPart and effect icon name from the vanilla UpgradePrototypes.cfg in the same repository (identifiers only).",
+ "upgrades": {
+  "Anomaly_Scientific_Armor_MaxDurability_Left_1_1": {
+   "effect": "durable",
+   "tier": 1
+  },
+  "Anomaly_Scientific_Armor_MaxDurability_Left_2_2": {
+   "effect": "durable",
+   "tier": 2
+  },
+  "Anomaly_Scientific_Armor_container_Left_1_1": {
+   "effect": "container",
+   "tier": 1
+  },
+  "Anomaly_Scientific_Armor_container_Left_1_2": {
+   "effect": "container",
+   "tier": 2
+  },
+  "Anomaly_Scientific_Armor_container_Left_3_1": {
+   "effect": "container",
+   "tier": 1
+  },
+  "Anomaly_Scientific_Armor_protectionChemical_Left_2_1": {
+   "effect": "chem",
+   "tier": 2
+  },
+  "Anomaly_Scientific_Armor_protectionChemical_protectionElectrical_Left_3_2": {
+   "effect": "electr_chem",
+   "tier": 1
+  },
+  "Anomaly_Scientific_Armor_protectionElectrical_Left_2_2": {
+   "effect": "electr",
+   "tier": 2
+  },
+  "Anomaly_Scientific_Armor_protectionPsi_Left_3_1": {
+   "effect": "psy",
+   "tier": 1
+  },
+  "Anomaly_Scientific_Armor_protectionRadiation_Left_1_1": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "Anomaly_Scientific_Armor_protectionRadiation_Left_2_1": {
+   "effect": "rad",
+   "tier": 2
+  },
+  "Anomaly_Scientific_Armor_protectionThermal_Left_1_1": {
+   "effect": "fire",
+   "tier": 1
+  },
+  "Anomaly_Scientific_Armor_protectionThermal_protectionChemica_Left_3_1": {
+   "effect": "fire_chem",
+   "tier": 2
+  },
+  "Anomaly_Scientific_Armor_rad_container_Left_2_1": {
+   "effect": "container_radconsume",
+   "tier": 1
+  },
+  "Anomaly_Scientific_Armor_reductionWeight_Left_2_1": {
+   "effect": "weight",
+   "tier": 2
+  },
+  "Anomaly_Scientific_Armor_regenerationStamina_Left_3_1": {
+   "effect": "stamina",
+   "tier": 1
+  },
+  "BattleExoskeleton_Varta_Armor_AddRunEffect_Left_1_1": {
+   "effect": "exo_sprint",
+   "tier": 1
+  },
+  "BattleExoskeleton_Varta_Armor_EXOMaxDurability_Left_2_1": {
+   "effect": "exo_durable",
+   "tier": 1
+  },
+  "BattleExoskeleton_Varta_Armor_EXOMaxDurability_Left_2_2": {
+   "effect": "exo_durable",
+   "tier": 2
+  },
+  "BattleExoskeleton_Varta_Armor_EXOprotectionPhysical_Left_2_2": {
+   "effect": "exo_bp",
+   "tier": 1
+  },
+  "BattleExoskeleton_Varta_Armor_EXOprotectionPhysical_Left_3_1": {
+   "effect": "exo_bp",
+   "tier": 2
+  },
+  "BattleExoskeleton_Varta_Armor_EXOregenerationStamina_Left_2_1": {
+   "effect": "exo_stamina",
+   "tier": 1
+  },
+  "BattleExoskeleton_Varta_Armor_accuracy_Left_3_1": {
+   "effect": "exo_hands",
+   "tier": 1
+  },
+  "BattleExoskeleton_Varta_Armor_carryingCapacity_Left_3_2": {
+   "effect": "pockets",
+   "tier": 1
+  },
+  "BattleExoskeleton_Varta_Armor_container_Left_3_1": {
+   "effect": "container",
+   "tier": 1
+  },
+  "BattleExoskeleton_Varta_Armor_protectionChemical_Left_2_1": {
+   "effect": "chem",
+   "tier": 2
+  },
+  "BattleExoskeleton_Varta_Armor_protectionChemical_protectionElectrical_Left_3_1": {
+   "effect": "electr_chem",
+   "tier": 2
+  },
+  "BattleExoskeleton_Varta_Armor_protectionElectrical_Left_1_1": {
+   "effect": "electr",
+   "tier": 1
+  },
+  "BattleExoskeleton_Varta_Armor_protectionRadiation_Right_1_1": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "BattleExoskeleton_Varta_Armor_protectionRadiation_Right_2_1": {
+   "effect": "rad",
+   "tier": 2
+  },
+  "BattleExoskeleton_Varta_Armor_protectionThermal_Left_2_2": {
+   "effect": "fire",
+   "tier": 1
+  },
+  "BattleExoskeleton_Varta_Armor_protectionThermal_Left_3_2": {
+   "effect": "fire",
+   "tier": 2
+  },
+  "BattleExoskeleton_Varta_Armor_rad_container_Left_1_1": {
+   "effect": "container_radconsume",
+   "tier": 2
+  },
+  "BattleExoskeleton_Varta_Armor_rad_container_Left_1_2": {
+   "effect": "container_radconsume",
+   "tier": 1
+  },
+  "BattleExoskeleton_Varta_Armor_rad_container_Left_2_1": {
+   "effect": "container_radconsume",
+   "tier": 1
+  },
+  "BattleExoskeleton_Varta_Armor_rad_container_Left_2_2": {
+   "effect": "container_radconsume",
+   "tier": 3
+  },
+  "BattleExoskeleton_Varta_Armor_reductionWeight_Left_1_1": {
+   "effect": "weight",
+   "tier": 2
+  },
+  "Battle_Dolg_Armor_MaxDurability_Left_1_1": {
+   "effect": "durable",
+   "tier": 1
+  },
+  "Battle_Dolg_Armor_container_Left_1_2": {
+   "effect": "container",
+   "tier": 1
+  },
+  "Battle_Dolg_Armor_protectionChemical_Left_1_1": {
+   "effect": "chem",
+   "tier": 1
+  },
+  "Battle_Dolg_Armor_protectionChemical_Left_3_2": {
+   "effect": "chem",
+   "tier": 2
+  },
+  "Battle_Dolg_Armor_protectionElectrical_Left_3_1": {
+   "effect": "electr",
+   "tier": 2
+  },
+  "Battle_Dolg_Armor_protectionPhysical_Left_2_1": {
+   "effect": "bp",
+   "tier": 1
+  },
+  "Battle_Dolg_Armor_protectionPhysical_Left_2_2": {
+   "effect": "bp",
+   "tier": 2
+  },
+  "Battle_Dolg_Armor_protectionRadiation_Left_1_1": {
+   "effect": "rad",
+   "tier": 2
+  },
+  "Battle_Dolg_Armor_protectionThermal_Left_1_2": {
+   "effect": "fire",
+   "tier": 1
+  },
+  "Battle_Dolg_Armor_protectionThermal_Left_2_1": {
+   "effect": "fire",
+   "tier": 2
+  },
+  "Battle_Dolg_Armor_protectionThermal_protectionElectrical_Left_2_2": {
+   "effect": "fire_electr",
+   "tier": 2
+  },
+  "Battle_Dolg_Armor_radiationAbsorption_Left_2_1": {
+   "effect": "container_radconsume",
+   "tier": 1
+  },
+  "Battle_Dolg_Armor_regenerationStamina_Left_3_1": {
+   "effect": "stamina",
+   "tier": 1
+  },
+  "Battle_Dolg_Armor_regenerationStamina_Left_3_2": {
+   "effect": "stamina",
+   "tier": 2
+  },
+  "Battle_Military_Helmet_MaxDurability_Left_2_1": {
+   "effect": "durable",
+   "tier": 1
+  },
+  "Battle_Military_Helmet_protectionChemical_Left_1_1": {
+   "effect": "chem",
+   "tier": 2
+  },
+  "Battle_Military_Helmet_protectionChemical_protectionElectrical_Left_2_2": {
+   "effect": "electr_chem",
+   "tier": 1
+  },
+  "Battle_Military_Helmet_protectionChemical_protectionTherma_Left_2_1": {
+   "effect": "fire_chem",
+   "tier": 1
+  },
+  "Battle_Military_Helmet_protectionElectrical_Left_1_2": {
+   "effect": "electr",
+   "tier": 1
+  },
+  "Battle_Military_Helmet_protectionPhysical_Left_1_1": {
+   "effect": "bp",
+   "tier": 1
+  },
+  "Battle_Military_Helmet_protectionPhysical_Left_2_2": {
+   "effect": "bp",
+   "tier": 2
+  },
+  "Battle_Military_Helmet_protectionPhysical_Left_3_1": {
+   "effect": "bp",
+   "tier": 1
+  },
+  "Battle_Military_Helmet_protectionThermal_Left_3_1": {
+   "effect": "fire",
+   "tier": 2
+  },
+  "Battle_Military_Helmet_reductionWeight_Left_1_2": {
+   "effect": "weight",
+   "tier": 2
+  },
+  "Battle_Monolith_Armor_Backpack_Left_3_2": {
+   "effect": "backpack",
+   "tier": 2
+  },
+  "Battle_Monolith_Armor_MaxDurability_Left_2_2": {
+   "effect": "durable",
+   "tier": 1
+  },
+  "Battle_Monolith_Armor_container_Left_1_1": {
+   "effect": "container",
+   "tier": 1
+  },
+  "Battle_Monolith_Armor_container_Left_1_2": {
+   "effect": "container",
+   "tier": 2
+  },
+  "Battle_Monolith_Armor_protectionChemical_Left_3_1": {
+   "effect": "chem",
+   "tier": 2
+  },
+  "Battle_Monolith_Armor_protectionElectrical_Left_2_1": {
+   "effect": "electr",
+   "tier": 2
+  },
+  "Battle_Monolith_Armor_protectionPhysical_Left_1_1": {
+   "effect": "bp",
+   "tier": 2
+  },
+  "Battle_Monolith_Armor_protectionPhysical_Left_3_1": {
+   "effect": "bp",
+   "tier": 1
+  },
+  "Battle_Monolith_Armor_protectionRadiation_Left_1_1": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "Battle_Monolith_Armor_protectionRadiation_Left_2_1": {
+   "effect": "rad",
+   "tier": 2
+  },
+  "Battle_Monolith_Armor_protectionThermal_Left_2_2": {
+   "effect": "fire",
+   "tier": 1
+  },
+  "Battle_Monolith_Armor_protectionThermal_protectionChemical_Left_1_1": {
+   "effect": "fire_chem",
+   "tier": 2
+  },
+  "Battle_Monolith_Armor_protectionThermal_protectionElectrical_Left_1_2": {
+   "effect": "fire_electr",
+   "tier": 2
+  },
+  "Battle_Monolith_Armor_rad_container_Left_3_1": {
+   "effect": "container_radconsume",
+   "tier": 1
+  },
+  "Battle_Monolith_Armor_radiationAbsorption_Left_3_2": {
+   "effect": "container_radconsume",
+   "tier": 2
+  },
+  "Battle_Monolith_Armor_reductionWeight_Left_2_1": {
+   "effect": "weight",
+   "tier": 1
+  },
+  "Battle_Monolith_Armor_reductionWeight_Left_2_2": {
+   "effect": "weight",
+   "tier": 2
+  },
+  "Battle_Monolith_Armor_regenerationStamina_Left_3_1": {
+   "effect": "stamina",
+   "tier": 1
+  },
+  "Battle_Spark_Armor_MaxDurability_Left_1_1": {
+   "effect": "durable",
+   "tier": 1
+  },
+  "Battle_Spark_Armor_container_Left_1_2": {
+   "effect": "container",
+   "tier": 1
+  },
+  "Battle_Spark_Armor_container_Left_2_1": {
+   "effect": "container",
+   "tier": 2
+  },
+  "Battle_Spark_Armor_protectionChemical_Left_1_1": {
+   "effect": "chem",
+   "tier": 1
+  },
+  "Battle_Spark_Armor_protectionChemical_protectionElectrical_Left_3_2": {
+   "effect": "electr_chem",
+   "tier": 1
+  },
+  "Battle_Spark_Armor_protectionPhysical_Left_2_1": {
+   "effect": "bp",
+   "tier": 2
+  },
+  "Battle_Spark_Armor_protectionRadiation_Left_3_1": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "Battle_Spark_Armor_protectionRadiation_Left_3_2": {
+   "effect": "rad",
+   "tier": 2
+  },
+  "Battle_Spark_Armor_protectionThermal_Left_2_2": {
+   "effect": "fire",
+   "tier": 2
+  },
+  "Battle_Spark_Armor_protectionThermal_protectionElectrical_Left_2_1": {
+   "effect": "fire_electr",
+   "tier": 2
+  },
+  "Battle_Spark_Armor_protectionThermal_protectionElectrical_Left_3_1": {
+   "effect": "fire_electr",
+   "tier": 1
+  },
+  "Battle_Spark_Armor_radiationAbsorption_Left_1_1": {
+   "effect": "container_radconsume",
+   "tier": 1
+  },
+  "Battle_Spark_Armor_radiationAbsorption_Left_2_2": {
+   "effect": "container_radconsume",
+   "tier": 2
+  },
+  "Battle_Spark_Armor_reductionWeight_Left_2_2": {
+   "effect": "weight",
+   "tier": 2
+  },
+  "Battle_Spark_Armor_regenerationStamina_Left_3_1": {
+   "effect": "stamina",
+   "tier": 1
+  },
+  "Battle_Svoboda_Armor_MaxDurability_Left_1_1": {
+   "effect": "durable",
+   "tier": 1
+  },
+  "Battle_Svoboda_Armor_container_Left_1_1": {
+   "effect": "container",
+   "tier": 2
+  },
+  "Battle_Svoboda_Armor_container_Left_1_2": {
+   "effect": "container",
+   "tier": 1
+  },
+  "Battle_Svoboda_Armor_protectionChemical_Left_1_1": {
+   "effect": "chem",
+   "tier": 1
+  },
+  "Battle_Svoboda_Armor_protectionPhysical_Left_2_1": {
+   "effect": "bp",
+   "tier": 2
+  },
+  "Battle_Svoboda_Armor_protectionRadiation_Left_2_1": {
+   "effect": "rad",
+   "tier": 2
+  },
+  "Battle_Svoboda_Armor_protectionRadiation_Left_3_1": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "Battle_Svoboda_Armor_protectionThermal_Left_2_2": {
+   "effect": "fire",
+   "tier": 2
+  },
+  "Battle_Svoboda_Armor_protectionThermal_protectionElectrical_Left_2_1": {
+   "effect": "fire_electr",
+   "tier": 2
+  },
+  "Battle_Svoboda_Armor_protectionThermal_protectionElectrical_Left_3_1": {
+   "effect": "fire_electr",
+   "tier": 1
+  },
+  "Battle_Svoboda_Armor_radiationAbsorption_Left_2_2": {
+   "effect": "container_radconsume",
+   "tier": 1
+  },
+  "Battle_Svoboda_Armor_radiationAbsorption_Left_3_1": {
+   "effect": "container_radconsume",
+   "tier": 2
+  },
+  "Battle_Svoboda_Armor_reductionWeight_Left_2_2": {
+   "effect": "weight",
+   "tier": 2
+  },
+  "Battle_Varta_Armor_container_Left_1_1": {
+   "effect": "container",
+   "tier": 2
+  },
+  "Battle_Varta_Armor_protectionChemical_Left_1_2": {
+   "effect": "chem",
+   "tier": 1
+  },
+  "Battle_Varta_Armor_protectionPhysical2_Left_3_2": {
+   "effect": "bp",
+   "tier": 2
+  },
+  "Battle_Varta_Armor_protectionPhysical_Left_2_1": {
+   "effect": "bp",
+   "tier": 2
+  },
+  "Battle_Varta_Armor_protectionRadiation2_Left_3_1": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "Battle_Varta_Armor_protectionRadiation_Left_2_2": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "Battle_Varta_Armor_protectionThermal_Left_1_1": {
+   "effect": "fire",
+   "tier": 1
+  },
+  "Battle_Varta_Armor_protectionThermal_protectionElectrical_Left_2_1": {
+   "effect": "fire_electr",
+   "tier": 1
+  },
+  "Battle_Varta_Armor_reductionWeight_Left_1_2": {
+   "effect": "weight",
+   "tier": 2
+  },
+  "Battle_Varta_Armor_regenerationStamina_Left_1_1": {
+   "effect": "stamina",
+   "tier": 1
+  },
+  "Battle_Varta_Armor_wearing2_Left_2_2": {
+   "effect": "durable",
+   "tier": 1
+  },
+  "Battle_Varta_Armor_wearing3_Left_3_1": {
+   "effect": "durable",
+   "tier": 2
+  },
+  "Battle_Varta_Armor_wearing_Left_1_1": {
+   "effect": "durable",
+   "tier": 1
+  },
+  "Default_Military_Armor_carryingCapacity_Left_3_1": {
+   "effect": "pockets",
+   "tier": 1
+  },
+  "Default_Military_Armor_container_Left_1_1": {
+   "effect": "container",
+   "tier": 2
+  },
+  "Default_Military_Armor_protectionChemical_Left_1_2": {
+   "effect": "chem",
+   "tier": 1
+  },
+  "Default_Military_Armor_protectionPhysical_Left_2_1": {
+   "effect": "bp",
+   "tier": 2
+  },
+  "Default_Military_Armor_protectionThermal_Left_1_1": {
+   "effect": "fire",
+   "tier": 1
+  },
+  "Default_Military_Armor_protectionThermal_protectionChemical_Left_2_2": {
+   "effect": "fire_chem",
+   "tier": 1
+  },
+  "Default_Military_Armor_protectionThermal_protectionElectrical_Left_2_1": {
+   "effect": "fire_electr",
+   "tier": 1
+  },
+  "Default_Military_Armor_reductionWeight_Left_1_2": {
+   "effect": "weight",
+   "tier": 1
+  },
+  "Default_Military_Armor_regenerationStamina_Left_1_1": {
+   "effect": "stamina",
+   "tier": 1
+  },
+  "Default_Military_Armor_wearing2_Left_2_2": {
+   "effect": "durable",
+   "tier": 1
+  },
+  "Default_Military_Armor_wearing_Left_1_1": {
+   "effect": "durable",
+   "tier": 1
+  },
+  "Exoskeleton_Dolg_Armor_Backpack_Right_2_1": {
+   "effect": "pockets",
+   "tier": 2
+  },
+  "Exoskeleton_Dolg_Armor_EXOMaxDurability_Left_2_1": {
+   "effect": "exo_durable",
+   "tier": 1
+  },
+  "Exoskeleton_Dolg_Armor_EXOMaxDurability_Left_2_2": {
+   "effect": "exo_durable",
+   "tier": 2
+  },
+  "Exoskeleton_Dolg_Armor_EXOprotectionPhysical_Left_1_1": {
+   "effect": "exo_bp",
+   "tier": 1
+  },
+  "Exoskeleton_Dolg_Armor_EXOprotectionPhysical_Left_3_1": {
+   "effect": "exo_bp",
+   "tier": 2
+  },
+  "Exoskeleton_Dolg_Armor_EXOregenerationStamina_Right_1_1": {
+   "effect": "exo_stamina",
+   "tier": 1
+  },
+  "Exoskeleton_Dolg_Armor_PSY_Left_3_2": {
+   "effect": "psy",
+   "tier": 2
+  },
+  "Exoskeleton_Dolg_Armor_container_Left_1_1": {
+   "effect": "container",
+   "tier": 1
+  },
+  "Exoskeleton_Dolg_Armor_container_Left_2_1": {
+   "effect": "container",
+   "tier": 2
+  },
+  "Exoskeleton_Dolg_Armor_protectionChemical_protectionElectrical_Left_3_2": {
+   "effect": "electr_chem",
+   "tier": 1
+  },
+  "Exoskeleton_Dolg_Armor_protectionElectrical_Left_1_1": {
+   "effect": "electr",
+   "tier": 1
+  },
+  "Exoskeleton_Dolg_Armor_protectionRadiation_Left_1_2": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "Exoskeleton_Dolg_Armor_protectionRadiation_Left_2_2": {
+   "effect": "rad",
+   "tier": 2
+  },
+  "Exoskeleton_Dolg_Armor_protectionThermal_Left_1_2": {
+   "effect": "fire",
+   "tier": 2
+  },
+  "Exoskeleton_Dolg_Armor_protectionThermal_protectionChemica_Left_3_1": {
+   "effect": "fire_chem",
+   "tier": 2
+  },
+  "Exoskeleton_Dolg_Armor_rad_container_Left_2_2": {
+   "effect": "container_radconsume",
+   "tier": 1
+  },
+  "Exoskeleton_Dolg_Armor_rad_container_Left_3_1": {
+   "effect": "container_radconsume",
+   "tier": 2
+  },
+  "Exoskeleton_Dolg_Armor_reductionWeight_Left_2_2": {
+   "effect": "weight",
+   "tier": 2
+  },
+  "Exoskeleton_Mercenaries_Armor_AddRunEffect_Right_1_1": {
+   "effect": "exo_sprint",
+   "tier": 1
+  },
+  "Exoskeleton_Mercenaries_Armor_EXOMaxDurability_Left_1_1": {
+   "effect": "exo_durable",
+   "tier": 2
+  },
+  "Exoskeleton_Mercenaries_Armor_EXOprotectionPhysical_Left_2_1": {
+   "effect": "exo_bp",
+   "tier": 1
+  },
+  "Exoskeleton_Mercenaries_Armor_EXOprotectionPhysical_Left_3_1": {
+   "effect": "exo_bp",
+   "tier": 2
+  },
+  "Exoskeleton_Mercenaries_Armor_PSY_Left_2_2": {
+   "effect": "psy",
+   "tier": 2
+  },
+  "Exoskeleton_Mercenaries_Armor_carryingCapacity_Left_3_2": {
+   "effect": "pockets",
+   "tier": 1
+  },
+  "Exoskeleton_Mercenaries_Armor_protectionChemical_Left_1_1": {
+   "effect": "chem",
+   "tier": 2
+  },
+  "Exoskeleton_Mercenaries_Armor_protectionChemical_protectionElectrical_Left_3_2": {
+   "effect": "electr_chem",
+   "tier": 1
+  },
+  "Exoskeleton_Mercenaries_Armor_protectionElectrical_Left_2_1": {
+   "effect": "electr",
+   "tier": 1
+  },
+  "Exoskeleton_Mercenaries_Armor_protectionRadiation_Left_1_2": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "Exoskeleton_Mercenaries_Armor_protectionRadiation_Left_2_1": {
+   "effect": "rad",
+   "tier": 2
+  },
+  "Exoskeleton_Mercenaries_Armor_protectionThermal_Left_2_2": {
+   "effect": "fire",
+   "tier": 2
+  },
+  "Exoskeleton_Mercenaries_Armor_protectionThermal_protectionChemica_Left_3_1": {
+   "effect": "fire_chem",
+   "tier": 2
+  },
+  "Exoskeleton_Mercenaries_Armor_rad_container_Left_1_1": {
+   "effect": "container_radconsume",
+   "tier": 1
+  },
+  "Exoskeleton_Mercenaries_Armor_rad_container_Left_2_1": {
+   "effect": "container_radconsume",
+   "tier": 2
+  },
+  "Exoskeleton_Mercenaries_Armor_rad_container_Left_2_2": {
+   "effect": "container",
+   "tier": 1
+  },
+  "Exoskeleton_Mercenaries_Armor_rad_container_Left_3_1": {
+   "effect": "container_radconsume",
+   "tier": 1
+  },
+  "Exoskeleton_Mercenaries_Armor_rad_container_Left_3_2": {
+   "effect": "container_radconsume",
+   "tier": 3
+  },
+  "Exoskeleton_Mercenaries_Armor_reductionWeight_Left_2_2": {
+   "effect": "weight",
+   "tier": 2
+  },
+  "Exoskeleton_Monolith_Armor_AddRunEffect_Right_2_1": {
+   "effect": "exo_sprint",
+   "tier": 1
+  },
+  "Exoskeleton_Monolith_Armor_EXOMaxDurability_Left_1_1": {
+   "effect": "exo_durable",
+   "tier": 2
+  },
+  "Exoskeleton_Monolith_Armor_EXOprotectionPhysical_Left_2_1": {
+   "effect": "exo_bp",
+   "tier": 1
+  },
+  "Exoskeleton_Monolith_Armor_EXOprotectionPhysical_Left_3_1": {
+   "effect": "exo_bp",
+   "tier": 2
+  },
+  "Exoskeleton_Monolith_Armor_EXOregenerationStamina_Left_3_2": {
+   "effect": "exo_stamina",
+   "tier": 1
+  },
+  "Exoskeleton_Monolith_Armor_PSY_Left_2_2": {
+   "effect": "psy",
+   "tier": 1
+  },
+  "Exoskeleton_Monolith_Armor_PSY_Left_3_1": {
+   "effect": "psy",
+   "tier": 2
+  },
+  "Exoskeleton_Monolith_Armor_carryingCapacity_Right_1_1": {
+   "effect": "pockets",
+   "tier": 1
+  },
+  "Exoskeleton_Monolith_Armor_protectionChemical_Left_1_1": {
+   "effect": "chem",
+   "tier": 1
+  },
+  "Exoskeleton_Monolith_Armor_protectionChemical_protectionElectrical_Left_3_2": {
+   "effect": "electr_chem",
+   "tier": 1
+  },
+  "Exoskeleton_Monolith_Armor_protectionElectrical_Left_2_2": {
+   "effect": "electr",
+   "tier": 1
+  },
+  "Exoskeleton_Monolith_Armor_protectionRadiation_Left_1_2": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "Exoskeleton_Monolith_Armor_protectionRadiation_Left_2_1": {
+   "effect": "rad",
+   "tier": 2
+  },
+  "Exoskeleton_Monolith_Armor_protectionThermal_Left_2_1": {
+   "effect": "fire",
+   "tier": 1
+  },
+  "Exoskeleton_Monolith_Armor_protectionThermal_protectionChemica_Left_3_1": {
+   "effect": "fire_chem",
+   "tier": 2
+  },
+  "Exoskeleton_Monolith_Armor_rad_container_Left_1_1": {
+   "effect": "container_radconsume",
+   "tier": 1
+  },
+  "Exoskeleton_Monolith_Armor_rad_container_Left_2_1": {
+   "effect": "container_radconsume",
+   "tier": 2
+  },
+  "Exoskeleton_Monolith_Armor_rad_container_Left_3_1": {
+   "effect": "container_radconsume",
+   "tier": 3
+  },
+  "Exoskeleton_Monolith_Armor_rad_container_Left_3_2": {
+   "effect": "container_radconsume",
+   "tier": 1
+  },
+  "Exoskeleton_Monolith_Armor_reductionWeight_Left_2_2": {
+   "effect": "weight",
+   "tier": 2
+  },
+  "Exoskeleton_Neutral_Armor_AddRunEffect_Right_2_1": {
+   "effect": "exo_sprint",
+   "tier": 1
+  },
+  "Exoskeleton_Neutral_Armor_EXOMaxDurability_Left_1_1": {
+   "effect": "exo_durable",
+   "tier": 2
+  },
+  "Exoskeleton_Neutral_Armor_EXOMaxDurability_Left_2_1": {
+   "effect": "exo_durable",
+   "tier": 1
+  },
+  "Exoskeleton_Neutral_Armor_EXOprotectionPhysical_Left_1_1": {
+   "effect": "exo_bp",
+   "tier": 1
+  },
+  "Exoskeleton_Neutral_Armor_EXOprotectionPhysical_Left_3_1": {
+   "effect": "exo_bp",
+   "tier": 2
+  },
+  "Exoskeleton_Neutral_Armor_EXOregenerationStamina_Right_1_1": {
+   "effect": "exo_stamina",
+   "tier": 1
+  },
+  "Exoskeleton_Neutral_Armor_PSY_Left_2_3": {
+   "effect": "psy",
+   "tier": 1
+  },
+  "Exoskeleton_Neutral_Armor_PSY_Left_3_1": {
+   "effect": "psy",
+   "tier": 2
+  },
+  "Exoskeleton_Neutral_Armor_carryingCapacity_Left_3_2": {
+   "effect": "pockets",
+   "tier": 2
+  },
+  "Exoskeleton_Neutral_Armor_container_Left_2_2": {
+   "effect": "container",
+   "tier": 1
+  },
+  "Exoskeleton_Neutral_Armor_protectionChemical_protectionTherma_Left_3_1": {
+   "effect": "fire_chem",
+   "tier": 2
+  },
+  "Exoskeleton_Neutral_Armor_protectionElectrical_Left_2_2": {
+   "effect": "electr",
+   "tier": 1
+  },
+  "Exoskeleton_Neutral_Armor_protectionRadiation_Left_1_2": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "Exoskeleton_Neutral_Armor_protectionRadiation_Left_2_2": {
+   "effect": "rad",
+   "tier": 2
+  },
+  "Exoskeleton_Neutral_Armor_protectionThermal_Left_2_1": {
+   "effect": "fire",
+   "tier": 2
+  },
+  "Exoskeleton_Neutral_Armor_rad_container_Left_1_1": {
+   "effect": "container_radconsume",
+   "tier": 1
+  },
+  "Exoskeleton_Neutral_Armor_rad_container_Left_2_1": {
+   "effect": "container_radconsume",
+   "tier": 2
+  },
+  "Exoskeleton_Neutral_Armor_rad_container_Left_3_1": {
+   "effect": "container_radconsume",
+   "tier": 3
+  },
+  "Exoskeleton_Neutral_Armor_rad_container_Left_3_2": {
+   "effect": "container_radconsume",
+   "tier": 1
+  },
+  "Exoskeleton_Neutral_Armor_reductionWeight_Left_2_2": {
+   "effect": "weight",
+   "tier": 2
+  },
+  "Exoskeleton_Svoboda_Armor_AddRunEffect_Right_2_1": {
+   "effect": "exo_sprint",
+   "tier": 1
+  },
+  "Exoskeleton_Svoboda_Armor_Backpack_Left_3_2": {
+   "effect": "pockets",
+   "tier": 2
+  },
+  "Exoskeleton_Svoboda_Armor_EXOMaxDurability_Left_2_1": {
+   "effect": "exo_durable",
+   "tier": 2
+  },
+  "Exoskeleton_Svoboda_Armor_EXOprotectionPhysical_Left_1_1": {
+   "effect": "exo_bp",
+   "tier": 1
+  },
+  "Exoskeleton_Svoboda_Armor_EXOprotectionPhysical_Left_3_1": {
+   "effect": "exo_bp",
+   "tier": 2
+  },
+  "Exoskeleton_Svoboda_Armor_EXOregenerationStamina_Right_1_1": {
+   "effect": "exo_stamina",
+   "tier": 1
+  },
+  "Exoskeleton_Svoboda_Armor_PSY_Left_2_3": {
+   "effect": "psy",
+   "tier": 1
+  },
+  "Exoskeleton_Svoboda_Armor_PSY_Left_3_2": {
+   "effect": "psy",
+   "tier": 2
+  },
+  "Exoskeleton_Svoboda_Armor_protectionChemical_Left_2_1": {
+   "effect": "chem",
+   "tier": 2
+  },
+  "Exoskeleton_Svoboda_Armor_protectionChemical_protectionElectrical_Left_3_2": {
+   "effect": "electr_chem",
+   "tier": 1
+  },
+  "Exoskeleton_Svoboda_Armor_protectionElectrical_Left_1_1": {
+   "effect": "electr",
+   "tier": 1
+  },
+  "Exoskeleton_Svoboda_Armor_protectionRadiation_Left_1_2": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "Exoskeleton_Svoboda_Armor_protectionRadiation_Left_2_2": {
+   "effect": "rad",
+   "tier": 2
+  },
+  "Exoskeleton_Svoboda_Armor_protectionRadiation_Left_3_1": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "Exoskeleton_Svoboda_Armor_protectionThermal_Left_1_2": {
+   "effect": "fire",
+   "tier": 2
+  },
+  "Exoskeleton_Svoboda_Armor_protectionThermal_protectionChemica_Left_3_1": {
+   "effect": "fire_chem",
+   "tier": 2
+  },
+  "Exoskeleton_Svoboda_Armor_rad_container_Left_1_1": {
+   "effect": "container_radconsume",
+   "tier": 1
+  },
+  "Exoskeleton_Svoboda_Armor_rad_container_Left_2_1": {
+   "effect": "container_radconsume",
+   "tier": 2
+  },
+  "Exoskeleton_Svoboda_Armor_rad_container_Left_2_2": {
+   "effect": "container_radconsume",
+   "tier": 3
+  },
+  "Exoskeleton_Svoboda_Armor_rad_container_Left_3_1": {
+   "effect": "container_radconsume",
+   "tier": 1
+  },
+  "Exoskeleton_Svoboda_Armor_reductionWeight_Left_2_2": {
+   "effect": "weight",
+   "tier": 2
+  },
+  "Heavy2_Military_Armor_MaxDurability_Left_2_1": {
+   "effect": "durable",
+   "tier": 1
+  },
+  "Heavy2_Military_Armor_carryingCapacity_Left_1_1": {
+   "effect": "pockets",
+   "tier": 1
+  },
+  "Heavy2_Military_Armor_container_Left_1_1": {
+   "effect": "container",
+   "tier": 1
+  },
+  "Heavy2_Military_Armor_container_Left_1_2": {
+   "effect": "container",
+   "tier": 2
+  },
+  "Heavy2_Military_Armor_protectionChemical_Left_2_1": {
+   "effect": "chem",
+   "tier": 2
+  },
+  "Heavy2_Military_Armor_protectionElectrical_Left_1_1": {
+   "effect": "electr",
+   "tier": 1
+  },
+  "Heavy2_Military_Armor_protectionPhysical_Left_2_2": {
+   "effect": "bp",
+   "tier": 1
+  },
+  "Heavy2_Military_Armor_protectionPhysical_Left_3_1": {
+   "effect": "bp",
+   "tier": 2
+  },
+  "Heavy2_Military_Armor_protectionRadiation_Left_1_1": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "Heavy2_Military_Armor_protectionThermal_Left_2_2": {
+   "effect": "fire",
+   "tier": 2
+  },
+  "Heavy2_Military_Armor_rad_container_Left_2_1": {
+   "effect": "container_radconsume",
+   "tier": 1
+  },
+  "Heavy2_Military_Armor_rad_container_Left_3_1": {
+   "effect": "container_radconsume",
+   "tier": 2
+  },
+  "Heavy2_Military_Armor_reductionWeight_Left_3_2": {
+   "effect": "weight",
+   "tier": 2
+  },
+  "Heavy2_Military_Armor_regenerationStamina_Left_2_1": {
+   "effect": "stamina",
+   "tier": 1
+  },
+  "HeavyAnomaly_Monolith_Armor_MaxDurability_Left_2_1": {
+   "effect": "durable",
+   "tier": 1
+  },
+  "HeavyAnomaly_Monolith_Armor_PSY_Left_3_1": {
+   "effect": "psy",
+   "tier": 2
+  },
+  "HeavyAnomaly_Monolith_Armor_carryingCapacity_Left_2_2": {
+   "effect": "pockets",
+   "tier": 1
+  },
+  "HeavyAnomaly_Monolith_Armor_container_Left_1_1": {
+   "effect": "container",
+   "tier": 1
+  },
+  "HeavyAnomaly_Monolith_Armor_container_Left_1_2": {
+   "effect": "container",
+   "tier": 2
+  },
+  "HeavyAnomaly_Monolith_Armor_protectionPhysical_Left_1_1": {
+   "effect": "bp",
+   "tier": 1
+  },
+  "HeavyAnomaly_Monolith_Armor_protectionPhysical_Left_3_1": {
+   "effect": "bp",
+   "tier": 2
+  },
+  "HeavyAnomaly_Monolith_Armor_protectionRadiation_Left_1_1": {
+   "effect": "rad",
+   "tier": 2
+  },
+  "HeavyAnomaly_Monolith_Armor_protectionRadiation_Left_3_1": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "HeavyAnomaly_Monolith_Armor_protectionThermal_Left_2_1": {
+   "effect": "fire",
+   "tier": 2
+  },
+  "HeavyAnomaly_Monolith_Armor_protectionThermal_protectionChemical_Left_1_2": {
+   "effect": "fire_electr",
+   "tier": 2
+  },
+  "HeavyAnomaly_Monolith_Armor_protectionThermal_protectionElectrical_protectionChemical_Left_1_1": {
+   "effect": "el_chem_fire",
+   "tier": 1
+  },
+  "HeavyAnomaly_Monolith_Armor_radiationAbsorption_Left_2_1": {
+   "effect": "container_radconsume",
+   "tier": 1
+  },
+  "HeavyAnomaly_Monolith_Armor_radiationAbsorption_Left_2_2": {
+   "effect": "container_radconsume",
+   "tier": 2
+  },
+  "HeavyAnomaly_Monolith_Armor_reductionWeight_Left_2_2": {
+   "effect": "weight",
+   "tier": 2
+  },
+  "HeavyAnomaly_Monolith_Armor_regenerationStamina_Left_2_1": {
+   "effect": "stamina",
+   "tier": 1
+  },
+  "HeavyAnomaly_Scientific_Armor_MaxDurability_Left_1_1": {
+   "effect": "durable",
+   "tier": 1
+  },
+  "HeavyAnomaly_Scientific_Armor_ProtectionChemical_Left_1_1": {
+   "effect": "chem",
+   "tier": 2
+  },
+  "HeavyAnomaly_Scientific_Armor_container_Left_1_1": {
+   "effect": "container",
+   "tier": 1
+  },
+  "HeavyAnomaly_Scientific_Armor_container_Left_2_1": {
+   "effect": "container",
+   "tier": 2
+  },
+  "HeavyAnomaly_Scientific_Armor_protectionChemical_protectionTherma_Left_2_1": {
+   "effect": "fire_chem",
+   "tier": 2
+  },
+  "HeavyAnomaly_Scientific_Armor_protectionChemical_protectionTherma_Left_2_2": {
+   "effect": "fire_chem",
+   "tier": 2
+  },
+  "HeavyAnomaly_Scientific_Armor_protectionElectrical_Left_1_2": {
+   "effect": "electr",
+   "tier": 2
+  },
+  "HeavyAnomaly_Scientific_Armor_protectionPhysical_Left_2_1": {
+   "effect": "bp",
+   "tier": 1
+  },
+  "HeavyAnomaly_Scientific_Armor_protectionPhysical_Left_3_1": {
+   "effect": "bp",
+   "tier": 2
+  },
+  "HeavyAnomaly_Scientific_Armor_protectionRadiation_Left_1_1": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "HeavyAnomaly_Scientific_Armor_protectionThermal_protectionElectrical_Left_3_1": {
+   "effect": "fire_electr",
+   "tier": 2
+  },
+  "HeavyAnomaly_Scientific_Armor_radiationAbsorption_Left_2_2": {
+   "effect": "container_radconsume",
+   "tier": 3
+  },
+  "HeavyAnomaly_Scientific_Armor_radiationAbsorption_Left_3_1": {
+   "effect": "container_radconsume",
+   "tier": 2
+  },
+  "HeavyAnomaly_Scientific_Armor_radiationAbsorption_Left_3_2": {
+   "effect": "container_radconsume",
+   "tier": 1
+  },
+  "HeavyAnomaly_Scientific_Armor_reductionWeight_Left_2_2": {
+   "effect": "weight",
+   "tier": 2
+  },
+  "HeavyAnomaly_Spark_Armor_MaxDurability_Left_1_1": {
+   "effect": "durable",
+   "tier": 1
+  },
+  "HeavyAnomaly_Spark_Armor_PSY_Left_1_2": {
+   "effect": "psy",
+   "tier": 1
+  },
+  "HeavyAnomaly_Spark_Armor_ProtectionChemical_Left_1_1": {
+   "effect": "chem",
+   "tier": 2
+  },
+  "HeavyAnomaly_Spark_Armor_carryingCapacity_Left_2_1": {
+   "effect": "pockets",
+   "tier": 2
+  },
+  "HeavyAnomaly_Spark_Armor_container_Left_1_1": {
+   "effect": "container",
+   "tier": 1
+  },
+  "HeavyAnomaly_Spark_Armor_container_radconsume_Left_2_1": {
+   "effect": "container_radconsume",
+   "tier": 1
+  },
+  "HeavyAnomaly_Spark_Armor_container_radconsume_Left_3_1": {
+   "effect": "container_radconsume",
+   "tier": 2
+  },
+  "HeavyAnomaly_Spark_Armor_container_radconsume_Left_3_2": {
+   "effect": "container_radconsume",
+   "tier": 3
+  },
+  "HeavyAnomaly_Spark_Armor_protectionElectrical_Left_1_2": {
+   "effect": "electr",
+   "tier": 2
+  },
+  "HeavyAnomaly_Spark_Armor_protectionPhysical_Left_3_1": {
+   "effect": "bp",
+   "tier": 1
+  },
+  "HeavyAnomaly_Spark_Armor_protectionRadiation_Left_1_1": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "HeavyAnomaly_Spark_Armor_protectionThermal_protectionChemical_Left_2_1": {
+   "effect": "fire_chem",
+   "tier": 1
+  },
+  "HeavyAnomaly_Spark_Armor_protectionThermal_protectionChemical_Left_3_1": {
+   "effect": "fire_chem",
+   "tier": 2
+  },
+  "HeavyAnomaly_Spark_Armor_protectionThermal_protectionElectrical_Left_3_1": {
+   "effect": "fire_electr",
+   "tier": 2
+  },
+  "HeavyAnomaly_Spark_Armor_rad_PSY_Left_2_1": {
+   "effect": "rad_psy",
+   "tier": 1
+  },
+  "HeavyAnomaly_Spark_Armor_reductionWeight_Left_2_2": {
+   "effect": "weight",
+   "tier": 2
+  },
+  "HeavyAnomaly_Spark_Armor_regenerationStamina_Left_3_2": {
+   "effect": "stamina",
+   "tier": 1
+  },
+  "HeavyBattle_Spark_Armor_MaxDurability_Left_1_1": {
+   "effect": "durable",
+   "tier": 2
+  },
+  "HeavyBattle_Spark_Armor_MaxDurability_Left_1_2": {
+   "effect": "durable",
+   "tier": 1
+  },
+  "HeavyBattle_Spark_Armor_PSY_Left_2_2": {
+   "effect": "psy",
+   "tier": 1
+  },
+  "HeavyBattle_Spark_Armor_PSY_Left_3_1": {
+   "effect": "psy",
+   "tier": 2
+  },
+  "HeavyBattle_Spark_Armor_ProtectionChemical_Left_3_2": {
+   "effect": "chem",
+   "tier": 1
+  },
+  "HeavyBattle_Spark_Armor_carryingCapacity_Left_3_1": {
+   "effect": "pockets",
+   "tier": 2
+  },
+  "HeavyBattle_Spark_Armor_container_Left_1_1": {
+   "effect": "container",
+   "tier": 1
+  },
+  "HeavyBattle_Spark_Armor_container_Left_2_1": {
+   "effect": "container",
+   "tier": 2
+  },
+  "HeavyBattle_Spark_Armor_protectionChemical_protectionElectrical_Left_3_1": {
+   "effect": "electr_chem",
+   "tier": 2
+  },
+  "HeavyBattle_Spark_Armor_protectionChemical_protectionTherma_Left_2_1": {
+   "effect": "fire_chem",
+   "tier": 1
+  },
+  "HeavyBattle_Spark_Armor_protectionPhysical_Left_1_1": {
+   "effect": "bp",
+   "tier": 1
+  },
+  "HeavyBattle_Spark_Armor_protectionPhysical_Left_2_1": {
+   "effect": "bp",
+   "tier": 2
+  },
+  "HeavyBattle_Spark_Armor_protectionRadiation_Left_1_1": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "HeavyBattle_Spark_Armor_protectionRadiation_Left_2_1": {
+   "effect": "rad",
+   "tier": 2
+  },
+  "HeavyBattle_Spark_Armor_protectionThermal_Left_1_2": {
+   "effect": "fire",
+   "tier": 1
+  },
+  "HeavyBattle_Spark_Armor_protectionThermal_protectionElectrical_Left_2_2": {
+   "effect": "fire_electr",
+   "tier": 1
+  },
+  "HeavyBattle_Spark_Armor_rad_container_Left_2_2": {
+   "effect": "container_radconsume",
+   "tier": 1
+  },
+  "HeavyBattle_Spark_Armor_radiationAbsorption_Left_3_1": {
+   "effect": "container_radconsume",
+   "tier": 2
+  },
+  "HeavyBattle_Spark_Armor_reductionWeight_Left_2_2": {
+   "effect": "weight",
+   "tier": 2
+  },
+  "HeavyExoskeleton_Dolg_Armor_Backpack_Left_3_2": {
+   "effect": "pockets",
+   "tier": 2
+  },
+  "HeavyExoskeleton_Dolg_Armor_EXOMaxDurability_Left_2_1": {
+   "effect": "exo_durable",
+   "tier": 2
+  },
+  "HeavyExoskeleton_Dolg_Armor_EXOMaxDurability_Left_3_1": {
+   "effect": "exo_durable",
+   "tier": 1
+  },
+  "HeavyExoskeleton_Dolg_Armor_EXOprotectionPhysical_Left_1_1": {
+   "effect": "exo_bp",
+   "tier": 2
+  },
+  "HeavyExoskeleton_Dolg_Armor_EXOregenerationStamina_Left_1_1": {
+   "effect": "exo_stamina",
+   "tier": 1
+  },
+  "HeavyExoskeleton_Dolg_Armor_PSY_Left_3_2": {
+   "effect": "psy",
+   "tier": 2
+  },
+  "HeavyExoskeleton_Dolg_Armor_container_Left_1_1": {
+   "effect": "container",
+   "tier": 1
+  },
+  "HeavyExoskeleton_Dolg_Armor_container_Left_3_1": {
+   "effect": "container",
+   "tier": 2
+  },
+  "HeavyExoskeleton_Dolg_Armor_protectionChemical_Left_1_1": {
+   "effect": "chem",
+   "tier": 1
+  },
+  "HeavyExoskeleton_Dolg_Armor_protectionChemical_protectionElectrical_Left_3_2": {
+   "effect": "electr_chem",
+   "tier": 1
+  },
+  "HeavyExoskeleton_Dolg_Armor_protectionElectrical_Left_2_1": {
+   "effect": "electr",
+   "tier": 1
+  },
+  "HeavyExoskeleton_Dolg_Armor_protectionRadiation_Left_1_2": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "HeavyExoskeleton_Dolg_Armor_protectionRadiation_Left_2_2": {
+   "effect": "rad",
+   "tier": 2
+  },
+  "HeavyExoskeleton_Dolg_Armor_protectionThermal_Left_1_2": {
+   "effect": "fire",
+   "tier": 2
+  },
+  "HeavyExoskeleton_Dolg_Armor_protectionThermal_protectionChemica_Left_3_1": {
+   "effect": "fire_chem",
+   "tier": 2
+  },
+  "HeavyExoskeleton_Dolg_Armor_rad_container_Left_2_1": {
+   "effect": "container_radconsume",
+   "tier": 2
+  },
+  "HeavyExoskeleton_Dolg_Armor_rad_container_Left_2_2": {
+   "effect": "container_radconsume",
+   "tier": 1
+  },
+  "HeavyExoskeleton_Dolg_Armor_reductionWeight_Left_2_1": {
+   "effect": "weight",
+   "tier": 2
+  },
+  "HeavyExoskeleton_Monolith_Armor_AddRunEffect_Right_2_1": {
+   "effect": "exo_sprint",
+   "tier": 1
+  },
+  "HeavyExoskeleton_Monolith_Armor_EXOMaxDurability_Right_1_1": {
+   "effect": "exo_durable",
+   "tier": 2
+  },
+  "HeavyExoskeleton_Monolith_Armor_EXOprotectionPhysical_Left_2_1": {
+   "effect": "exo_bp",
+   "tier": 1
+  },
+  "HeavyExoskeleton_Monolith_Armor_EXOprotectionPhysical_Left_3_1": {
+   "effect": "exo_bp",
+   "tier": 2
+  },
+  "HeavyExoskeleton_Monolith_Armor_EXOregenerationStamina_Left_3_2": {
+   "effect": "exo_stamina",
+   "tier": 1
+  },
+  "HeavyExoskeleton_Monolith_Armor_PSY_Left_2_2": {
+   "effect": "psy",
+   "tier": 1
+  },
+  "HeavyExoskeleton_Monolith_Armor_PSY_Left_3_1": {
+   "effect": "psy",
+   "tier": 2
+  },
+  "HeavyExoskeleton_Monolith_Armor_accuracy_Right_3_1": {
+   "effect": "exo_hands",
+   "tier": 1
+  },
+  "HeavyExoskeleton_Monolith_Armor_pockets_Left_1_1": {
+   "effect": "pockets",
+   "tier": 2
+  },
+  "HeavyExoskeleton_Monolith_Armor_protectionChemical_Left_1_1": {
+   "effect": "chem",
+   "tier": 2
+  },
+  "HeavyExoskeleton_Monolith_Armor_protectionChemical_protectionElectrical_Left_3_2": {
+   "effect": "electr_chem",
+   "tier": 2
+  },
+  "HeavyExoskeleton_Monolith_Armor_protectionChemical_protectionTherma_Left_3_1": {
+   "effect": "fire_chem",
+   "tier": 2
+  },
+  "HeavyExoskeleton_Monolith_Armor_protectionElectrical_Left_2_2": {
+   "effect": "electr",
+   "tier": 1
+  },
+  "HeavyExoskeleton_Monolith_Armor_protectionRadiation_Left_1_2": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "HeavyExoskeleton_Monolith_Armor_protectionRadiation_Left_2_1": {
+   "effect": "rad",
+   "tier": 2
+  },
+  "HeavyExoskeleton_Monolith_Armor_protectionThermal_Left_2_1": {
+   "effect": "fire",
+   "tier": 2
+  },
+  "HeavyExoskeleton_Monolith_Armor_rad_container_Left_1_1": {
+   "effect": "container_radconsume",
+   "tier": 1
+  },
+  "HeavyExoskeleton_Monolith_Armor_rad_container_Left_2_1": {
+   "effect": "container_radconsume",
+   "tier": 2
+  },
+  "HeavyExoskeleton_Monolith_Armor_rad_container_Left_3_1": {
+   "effect": "container_radconsume",
+   "tier": 3
+  },
+  "HeavyExoskeleton_Monolith_Armor_rad_container_Left_3_2": {
+   "effect": "container_radconsume",
+   "tier": 1
+  },
+  "HeavyExoskeleton_Monolith_Armor_reductionWeight_Left_2_2": {
+   "effect": "weight",
+   "tier": 2
+  },
+  "HeavyExoskeleton_Svoboda_Armor_EXOMaxDurability_Left_1_2": {
+   "effect": "exo_durable",
+   "tier": 2
+  },
+  "HeavyExoskeleton_Svoboda_Armor_EXOprotectionPhysical_Left_1_1": {
+   "effect": "exo_bp",
+   "tier": 1
+  },
+  "HeavyExoskeleton_Svoboda_Armor_EXOprotectionPhysical_Left_3_1": {
+   "effect": "exo_bp",
+   "tier": 2
+  },
+  "HeavyExoskeleton_Svoboda_Armor_EXOregenerationStamina_Right_1_1": {
+   "effect": "exo_stamina",
+   "tier": 1
+  },
+  "HeavyExoskeleton_Svoboda_Armor_PSY_Left_2_2": {
+   "effect": "psy",
+   "tier": 1
+  },
+  "HeavyExoskeleton_Svoboda_Armor_PSY_Left_3_1": {
+   "effect": "psy",
+   "tier": 2
+  },
+  "HeavyExoskeleton_Svoboda_Armor_carryingCapacity_Left_3_2": {
+   "effect": "pockets",
+   "tier": 1
+  },
+  "HeavyExoskeleton_Svoboda_Armor_container_Left_1_1": {
+   "effect": "container",
+   "tier": 1
+  },
+  "HeavyExoskeleton_Svoboda_Armor_container_Left_2_1": {
+   "effect": "container",
+   "tier": 2
+  },
+  "HeavyExoskeleton_Svoboda_Armor_protectionChemical_protectionElectrical_Left_3_1": {
+   "effect": "electr_chem",
+   "tier": 1
+  },
+  "HeavyExoskeleton_Svoboda_Armor_protectionElectrical_Left_1_1": {
+   "effect": "electr",
+   "tier": 1
+  },
+  "HeavyExoskeleton_Svoboda_Armor_protectionRadiation_Left_2_1": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "HeavyExoskeleton_Svoboda_Armor_protectionRadiation_Left_3_2": {
+   "effect": "rad",
+   "tier": 2
+  },
+  "HeavyExoskeleton_Svoboda_Armor_protectionThermal_Left_1_2": {
+   "effect": "fire",
+   "tier": 2
+  },
+  "HeavyExoskeleton_Svoboda_Armor_protectionThermal_protectionChemica_Left_2_1": {
+   "effect": "fire_chem",
+   "tier": 2
+  },
+  "HeavyExoskeleton_Svoboda_Armor_rad_container_Left_2_2": {
+   "effect": "container_radconsume",
+   "tier": 1
+  },
+  "HeavyExoskeleton_Svoboda_Armor_rad_container_Left_3_1": {
+   "effect": "container_radconsume",
+   "tier": 2
+  },
+  "HeavyExoskeleton_Svoboda_Armor_reductionWeight_Left_2_1": {
+   "effect": "weight",
+   "tier": 2
+  },
+  "Heavy_Dolg_Armor_MaxDurability_Left_1_1": {
+   "effect": "durable",
+   "tier": 1
+  },
+  "Heavy_Dolg_Armor_MaxDurability_Left_1_2": {
+   "effect": "durable",
+   "tier": 2
+  },
+  "Heavy_Dolg_Armor_ProtectionChemical_Left_1_1": {
+   "effect": "chem",
+   "tier": 2
+  },
+  "Heavy_Dolg_Armor_backpack_Left_3_2": {
+   "effect": "backpack",
+   "tier": 2
+  },
+  "Heavy_Dolg_Armor_container_Left_1_1": {
+   "effect": "container",
+   "tier": 1
+  },
+  "Heavy_Dolg_Armor_container_Left_3_1": {
+   "effect": "container",
+   "tier": 2
+  },
+  "Heavy_Dolg_Armor_protectionChemical_protectionElectrical_Left_3_1": {
+   "effect": "electr_chem",
+   "tier": 2
+  },
+  "Heavy_Dolg_Armor_protectionElectrical_Left_2_2": {
+   "effect": "electr",
+   "tier": 1
+  },
+  "Heavy_Dolg_Armor_protectionPhysical_Left_2_1": {
+   "effect": "bp",
+   "tier": 1
+  },
+  "Heavy_Dolg_Armor_protectionPhysical_Left_3_1": {
+   "effect": "bp",
+   "tier": 2
+  },
+  "Heavy_Dolg_Armor_protectionRadiation_Left_1_1": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "Heavy_Dolg_Armor_protectionRadiation_Left_2_1": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "Heavy_Dolg_Armor_protectionThermal_Left_2_1": {
+   "effect": "fire",
+   "tier": 1
+  },
+  "Heavy_Dolg_Armor_radiationAbsorption_Left_2_1": {
+   "effect": "container_radconsume",
+   "tier": 1
+  },
+  "Heavy_Dolg_Armor_reductionWeight_Left_2_2": {
+   "effect": "weight",
+   "tier": 2
+  },
+  "Heavy_Dolg_Armor_regenerationStamina_Left_3_1": {
+   "effect": "stamina",
+   "tier": 1
+  },
+  "Heavy_Duty_Helmet_MaxDurability_Left_2_1": {
+   "effect": "durable",
+   "tier": 1
+  },
+  "Heavy_Duty_Helmet_MaxDurability_Left_3_1": {
+   "effect": "durable",
+   "tier": 2
+  },
+  "Heavy_Duty_Helmet_protectionChemical_protectionElectrical_Left_2_1": {
+   "effect": "electr_chem",
+   "tier": 1
+  },
+  "Heavy_Duty_Helmet_protectionPhysical_Left_1_1": {
+   "effect": "bp",
+   "tier": 1
+  },
+  "Heavy_Duty_Helmet_protectionPhysical_Left_2_2": {
+   "effect": "bp",
+   "tier": 2
+  },
+  "Heavy_Duty_Helmet_protectionPhysical_Left_3_1": {
+   "effect": "bp",
+   "tier": 1
+  },
+  "Heavy_Duty_Helmet_protectionRadiation_Left_1_1": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "Heavy_Duty_Helmet_protectionRadiation_Left_1_2": {
+   "effect": "rad",
+   "tier": 2
+  },
+  "Heavy_Duty_Helmet_protectionThermal_Left_1_1": {
+   "effect": "fire",
+   "tier": 2
+  },
+  "Heavy_Duty_Helmet_reductionWeight_Left_1_2": {
+   "effect": "weight",
+   "tier": 2
+  },
+  "Heavy_Mercenaries_Armor_Backpack_Left_3_1": {
+   "effect": "backpack",
+   "tier": 2
+  },
+  "Heavy_Mercenaries_Armor_MaxDurability_Left_1_2": {
+   "effect": "durable",
+   "tier": 1
+  },
+  "Heavy_Mercenaries_Armor_MaxDurability_Left_2_1": {
+   "effect": "durable",
+   "tier": 2
+  },
+  "Heavy_Mercenaries_Armor_container_Left_1_1": {
+   "effect": "container",
+   "tier": 1
+  },
+  "Heavy_Mercenaries_Armor_protectionChemical_Left_1_1": {
+   "effect": "chem",
+   "tier": 2
+  },
+  "Heavy_Mercenaries_Armor_protectionChemical_protectionElectrical_Left_3_2": {
+   "effect": "electr_chem",
+   "tier": 1
+  },
+  "Heavy_Mercenaries_Armor_protectionElectrical_Left_2_2": {
+   "effect": "electr",
+   "tier": 2
+  },
+  "Heavy_Mercenaries_Armor_protectionPhysical_Left_1_1": {
+   "effect": "bp",
+   "tier": 1
+  },
+  "Heavy_Mercenaries_Armor_protectionPhysical_Left_2_1": {
+   "effect": "bp",
+   "tier": 2
+  },
+  "Heavy_Mercenaries_Armor_protectionRadiation_Left_1_1": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "Heavy_Mercenaries_Armor_protectionRadiation_Left_3_1": {
+   "effect": "rad",
+   "tier": 2
+  },
+  "Heavy_Mercenaries_Armor_protectionThermal_Left_2_1": {
+   "effect": "fire",
+   "tier": 2
+  },
+  "Heavy_Mercenaries_Armor_protectionThermal_protectionElectrical_Left_3_1": {
+   "effect": "fire_electr",
+   "tier": 2
+  },
+  "Heavy_Mercenaries_Armor_rad_container_Left_3_1": {
+   "effect": "container_radconsume",
+   "tier": 2
+  },
+  "Heavy_Mercenaries_Armor_radiationAbsorption_Left_2_1": {
+   "effect": "container_radconsume",
+   "tier": 1
+  },
+  "Heavy_Military_Helmet_MaxDurability_Left_2_1": {
+   "effect": "durable",
+   "tier": 1
+  },
+  "Heavy_Military_Helmet_MaxDurability_Left_3_1": {
+   "effect": "durable",
+   "tier": 2
+  },
+  "Heavy_Military_Helmet_PSY_Left_1_2": {
+   "effect": "psy",
+   "tier": 1
+  },
+  "Heavy_Military_Helmet_PSY_Left_2_1": {
+   "effect": "psy",
+   "tier": 2
+  },
+  "Heavy_Military_Helmet_protectionChemical_Left_1_1": {
+   "effect": "chem",
+   "tier": 2
+  },
+  "Heavy_Military_Helmet_protectionChemical_protectionTherma_Left_2_1": {
+   "effect": "fire_chem",
+   "tier": 1
+  },
+  "Heavy_Military_Helmet_protectionElectrical_Left_3_1": {
+   "effect": "electr",
+   "tier": 1
+  },
+  "Heavy_Military_Helmet_protectionPhysical_Left_1_1": {
+   "effect": "bp",
+   "tier": 1
+  },
+  "Heavy_Military_Helmet_protectionPhysical_Left_2_2": {
+   "effect": "bp",
+   "tier": 2
+  },
+  "Heavy_Military_Helmet_protectionRadiation_Left_1_1": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "Heavy_Military_Helmet_protectionRadiation_Left_2_2": {
+   "effect": "rad",
+   "tier": 2
+  },
+  "Heavy_Military_Helmet_protectionThermal_Left_1_2": {
+   "effect": "fire",
+   "tier": 2
+  },
+  "Heavy_Military_Helmet_rad_PSY_Left_3_1": {
+   "effect": "rad_psy",
+   "tier": 1
+  },
+  "Heavy_Military_Helmet_reductionWeight_Left_1_2": {
+   "effect": "weight",
+   "tier": 2
+  },
+  "Heavy_Svoboda_Armor_MaxDurability_Left_1_1": {
+   "effect": "durable",
+   "tier": 2
+  },
+  "Heavy_Svoboda_Armor_MaxDurability_Left_1_2": {
+   "effect": "durable",
+   "tier": 1
+  },
+  "Heavy_Svoboda_Armor_carryingCapacity_Left_3_1": {
+   "effect": "pockets",
+   "tier": 2
+  },
+  "Heavy_Svoboda_Armor_container_Left_1_1": {
+   "effect": "container",
+   "tier": 1
+  },
+  "Heavy_Svoboda_Armor_container_radiationAbsorption_Left_1_2": {
+   "effect": "container_radconsume",
+   "tier": 1
+  },
+  "Heavy_Svoboda_Armor_container_radiationAbsorption_Left_2_1": {
+   "effect": "container_radconsume",
+   "tier": 2
+  },
+  "Heavy_Svoboda_Armor_protectionChemical_protectionElectrical_Left_3_1": {
+   "effect": "electr_chem",
+   "tier": 2
+  },
+  "Heavy_Svoboda_Armor_protectionPhysical_Left_1_1": {
+   "effect": "bp",
+   "tier": 1
+  },
+  "Heavy_Svoboda_Armor_protectionPhysical_Left_2_1": {
+   "effect": "bp",
+   "tier": 2
+  },
+  "Heavy_Svoboda_Armor_protectionRadiation_Left_1_1": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "Heavy_Svoboda_Armor_protectionRadiation_Left_2_1": {
+   "effect": "rad",
+   "tier": 2
+  },
+  "Heavy_Svoboda_Armor_protectionThermal_protectionChemical_Left_2_1": {
+   "effect": "fire_chem",
+   "tier": 1
+  },
+  "Heavy_Svoboda_Armor_protectionThermal_protectionElectrical_Left_2_2": {
+   "effect": "fire_electr",
+   "tier": 1
+  },
+  "Heavy_Svoboda_Armor_reductionWeight_Left_2_2": {
+   "effect": "weight",
+   "tier": 2
+  },
+  "Heavy_Svoboda_Armor_regenerationStamina_Left_3_1": {
+   "effect": "stamina",
+   "tier": 1
+  },
+  "Heavy_Svoboda_Helmet_MaxDurability_Left_2_1": {
+   "effect": "durable",
+   "tier": 1
+  },
+  "Heavy_Svoboda_Helmet_PSY_Left_2_2": {
+   "effect": "psy",
+   "tier": 2
+  },
+  "Heavy_Svoboda_Helmet_protectionChemical_Left_2_1": {
+   "effect": "chem",
+   "tier": 2
+  },
+  "Heavy_Svoboda_Helmet_protectionChemical_protectionElectrical_Left_3_1": {
+   "effect": "electr_chem",
+   "tier": 1
+  },
+  "Heavy_Svoboda_Helmet_protectionChemical_protectionTherma_Left_3_1": {
+   "effect": "fire_chem",
+   "tier": 1
+  },
+  "Heavy_Svoboda_Helmet_protectionElectrical_Left_1_1": {
+   "effect": "electr",
+   "tier": 1
+  },
+  "Heavy_Svoboda_Helmet_protectionPhysical_Left_1_1": {
+   "effect": "bp",
+   "tier": 1
+  },
+  "Heavy_Svoboda_Helmet_protectionPhysical_Left_2_2": {
+   "effect": "bp",
+   "tier": 2
+  },
+  "Heavy_Svoboda_Helmet_protectionPhysical_Left_3_1": {
+   "effect": "bp",
+   "tier": 1
+  },
+  "Heavy_Svoboda_Helmet_protectionRadiation_Left_1_1": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "Heavy_Svoboda_Helmet_protectionRadiation_Left_2_1": {
+   "effect": "rad",
+   "tier": 2
+  },
+  "Heavy_Svoboda_Helmet_protectionThermal_Left_2_2": {
+   "effect": "fire",
+   "tier": 2
+  },
+  "Heavy_Svoboda_Helmet_reductionWeight_Left_1_2": {
+   "effect": "weight",
+   "tier": 2
+  },
+  "Heavy_Varta_Helmet_MaxDurability_Left_2_1": {
+   "effect": "durable",
+   "tier": 1
+  },
+  "Heavy_Varta_Helmet_PSY_Left_1_2": {
+   "effect": "psy",
+   "tier": 1
+  },
+  "Heavy_Varta_Helmet_protectionChemical_Left_1_1": {
+   "effect": "chem",
+   "tier": 2
+  },
+  "Heavy_Varta_Helmet_protectionElectrical_Left_2_2": {
+   "effect": "electr",
+   "tier": 1
+  },
+  "Heavy_Varta_Helmet_protectionPhysical_Left_1_1": {
+   "effect": "bp",
+   "tier": 2
+  },
+  "Heavy_Varta_Helmet_protectionRadiation_Left_1_1": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "Heavy_Varta_Helmet_protectionThermal_Left_2_1": {
+   "effect": "fire",
+   "tier": 2
+  },
+  "Heavy_Varta_Helmet_rad_PSY_Left_2_1": {
+   "effect": "rad_psy",
+   "tier": 1
+  },
+  "Heavy_Varta_Helmet_reductionWeight_Left_1_2": {
+   "effect": "weight",
+   "tier": 2
+  },
+  "Jacket_Bandit_Armor_MaxDurability_Left_1_2": {
+   "effect": "durable",
+   "tier": 1
+  },
+  "Jacket_Bandit_Armor_ProtectionStrike2_Left_2_1": {
+   "effect": "bp",
+   "tier": 1
+  },
+  "Jacket_Bandit_Armor_ProtectionStrike_Left_1_1": {
+   "effect": "bp",
+   "tier": 1
+  },
+  "Jacket_Bandit_Armor_container_Left_1_1": {
+   "effect": "container",
+   "tier": 2
+  },
+  "Jacket_Bandit_Armor_protectionChemical_Left_1_2": {
+   "effect": "chem",
+   "tier": 1
+  },
+  "Jacket_Bandit_Armor_protectionRadiation_Left_1_1": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "Jacket_Bandit_Armor_protectionThermal_Left_1_1": {
+   "effect": "fire",
+   "tier": 1
+  },
+  "Jacket_Bandit_Armor_reductionWeight_Left_2_2": {
+   "effect": "weight",
+   "tier": 2
+  },
+  "Jemmy_Neutral_Armor_ArtifactSlots_Left_1_1": {
+   "effect": "container",
+   "tier": 2
+  },
+  "Jemmy_Neutral_Armor_MaxDurability2_Left_2_2": {
+   "effect": "durable",
+   "tier": 1
+  },
+  "Jemmy_Neutral_Armor_MaxDurability_Left_1_2": {
+   "effect": "durable",
+   "tier": 1
+  },
+  "Jemmy_Neutral_Armor_ProtectionBurn_Left_1_1": {
+   "effect": "fire",
+   "tier": 1
+  },
+  "Jemmy_Neutral_Armor_ProtectionChemical_Left_1_2": {
+   "effect": "chem",
+   "tier": 1
+  },
+  "Jemmy_Neutral_Armor_ProtectionStrike2_Left_2_1": {
+   "effect": "bp",
+   "tier": 1
+  },
+  "Jemmy_Neutral_Armor_ProtectionStrike_Left_1_1": {
+   "effect": "bp",
+   "tier": 1
+  },
+  "Jemmy_Neutral_Armor_protectionElectrical_Left_2_1": {
+   "effect": "electr",
+   "tier": 1
+  },
+  "Jemmy_Neutral_Armor_protectionElectrical_protectionThermal_Left_2_2": {
+   "effect": "fire_electr",
+   "tier": 1
+  },
+  "Light_Bandit_Helmet_Armor_protectionRadiation_Left_1_1": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "Light_Bandit_Helmet_Armor_protectionThermal_Left_1_2": {
+   "effect": "fire",
+   "tier": 1
+  },
+  "Light_Bandit_Helmet_Armor_wearing_Left_1_2": {
+   "effect": "durable",
+   "tier": 1
+  },
+  "Light_Duty_Helmet_Armor_protectionPhysical_Left_1_2": {
+   "effect": "bp",
+   "tier": 2
+  },
+  "Light_Duty_Helmet_Armor_protectionRadiation2_Left_1_1": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "Light_Duty_Helmet_Armor_protectionRadiation_Left_1_1": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "Light_Duty_Helmet_Armor_wearing_Left_1_2": {
+   "effect": "durable",
+   "tier": 1
+  },
+  "Light_Mercenaries_Armor_MaxDurability_Left_1_1": {
+   "effect": "durable",
+   "tier": 1
+  },
+  "Light_Mercenaries_Armor_backpack_Left_3_1": {
+   "effect": "backpack",
+   "tier": 1
+  },
+  "Light_Mercenaries_Armor_container_Left_1_1": {
+   "effect": "container",
+   "tier": 1
+  },
+  "Light_Mercenaries_Armor_container_Left_2_1": {
+   "effect": "container",
+   "tier": 2
+  },
+  "Light_Mercenaries_Armor_protectionChemical_protectionTherma_Left_3_1": {
+   "effect": "fire_chem",
+   "tier": 1
+  },
+  "Light_Mercenaries_Armor_protectionPhysical_Left_2_1": {
+   "effect": "bp",
+   "tier": 1
+  },
+  "Light_Mercenaries_Armor_protectionPhysical_Left_2_2": {
+   "effect": "bp",
+   "tier": 2
+  },
+  "Light_Mercenaries_Armor_protectionRadiation_Left_1_2": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "Light_Mercenaries_Armor_protectionThermal_protectionElectrical_Left_1_1": {
+   "effect": "fire_electr",
+   "tier": 1
+  },
+  "Light_Mercenaries_Armor_reductionWeight_Left_1_2": {
+   "effect": "weight",
+   "tier": 2
+  },
+  "Light_Mercenaries_Helmet_Armor_protectionChemical_Left_1_1": {
+   "effect": "chem",
+   "tier": 1
+  },
+  "Light_Mercenaries_Helmet_Armor_protectionRadiation2_Left_1_1": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "Light_Mercenaries_Helmet_Armor_protectionRadiation_Left_1_1": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "Light_Mercenaries_Helmet_Armor_protectionThermal_Left_1_1": {
+   "effect": "fire",
+   "tier": 1
+  },
+  "Light_Mercenaries_Helmet_Armor_wearing_Left_1_2": {
+   "effect": "durable",
+   "tier": 1
+  },
+  "Light_Military_Helmet_Armor_protectionPhysical_Left_1_2": {
+   "effect": "bp",
+   "tier": 2
+  },
+  "Light_Military_Helmet_Armor_protectionRadiation2_Left_1_1": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "Light_Military_Helmet_Armor_protectionRadiation_Left_1_1": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "Light_Military_Helmet_Armor_wearing_Left_1_2": {
+   "effect": "durable",
+   "tier": 1
+  },
+  "Light_Military_Helmet_armor_protectionPsi_Right_1_1": {
+   "effect": "psy",
+   "tier": 1
+  },
+  "Light_Neutral_Helmet_Armor_protectionElectrical_Left_2_2": {
+   "effect": "electr",
+   "tier": 1
+  },
+  "Light_Neutral_Helmet_Armor_protectionRadiation_Left_1_1": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "Light_Neutral_Helmet_Armor_protectionThermal_Left_2_1": {
+   "effect": "fire",
+   "tier": 1
+  },
+  "Light_Neutral_Helmet_Armor_wearing_Left_3_1": {
+   "effect": "durable",
+   "tier": 1
+  },
+  "Middle_Bandit_Armor_MaxDurability_Left_1_1": {
+   "effect": "durable",
+   "tier": 1
+  },
+  "Middle_Bandit_Armor_MaxDurability_Left_1_2": {
+   "effect": "durable",
+   "tier": 2
+  },
+  "Middle_Bandit_Armor_carryingCapacity_Left_2_2": {
+   "effect": "pockets",
+   "tier": 1
+  },
+  "Middle_Bandit_Armor_container_Left_1_1": {
+   "effect": "container",
+   "tier": 1
+  },
+  "Middle_Bandit_Armor_protectionChemical_protectionElectrical_Left_2_1": {
+   "effect": "electr_chem",
+   "tier": 2
+  },
+  "Middle_Bandit_Armor_protectionPhysical_Left_1_2": {
+   "effect": "bp",
+   "tier": 1
+  },
+  "Middle_Bandit_Armor_protectionPhysical_Left_3_1": {
+   "effect": "bp",
+   "tier": 2
+  },
+  "Middle_Bandit_Armor_protectionRadiation_Left_2_2": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "Middle_Bandit_Armor_protectionThermal_protectionElectrical_Left_1_1": {
+   "effect": "fire_electr",
+   "tier": 1
+  },
+  "Middle_Bandit_Armor_rad_container_Left_2_1": {
+   "effect": "container_radconsume",
+   "tier": 1
+  },
+  "Middle_Bandit_Armor_reductionWeight_Left_2_1": {
+   "effect": "weight",
+   "tier": 2
+  },
+  "Nasos_Neutral_Armor_MaxDurability2_Left_2_2": {
+   "effect": "durable",
+   "tier": 1
+  },
+  "Nasos_Neutral_Armor_MaxDurability_Left_1_1": {
+   "effect": "durable",
+   "tier": 1
+  },
+  "Nasos_Neutral_Armor_backpack_Left_3_1": {
+   "effect": "backpack",
+   "tier": 1
+  },
+  "Nasos_Neutral_Armor_container2_Left_2_1": {
+   "effect": "container",
+   "tier": 2
+  },
+  "Nasos_Neutral_Armor_container_Left_1_1": {
+   "effect": "container",
+   "tier": 1
+  },
+  "Nasos_Neutral_Armor_protectionChemical_Left_1_2": {
+   "effect": "chem",
+   "tier": 1
+  },
+  "Nasos_Neutral_Armor_protectionChemical_protectionElectrical_Left_2_1": {
+   "effect": "fire_electr",
+   "tier": 1
+  },
+  "Nasos_Neutral_Armor_protectionChemical_protectionTherma_Left_2_2": {
+   "effect": "fire_chem",
+   "tier": 1
+  },
+  "Nasos_Neutral_Armor_protectionElectrical_Left_3_1": {
+   "effect": "electr",
+   "tier": 2
+  },
+  "Nasos_Neutral_Armor_protectionPhysical_Left_2_1": {
+   "effect": "bp",
+   "tier": 2
+  },
+  "Nasos_Neutral_Armor_protectionRadiation_Left_1_1": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "Nasos_Neutral_Armor_protectionRadiation_Left_2_1": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "Nasos_Neutral_Armor_protectionThermal_Left_1_1": {
+   "effect": "fire",
+   "tier": 1
+  },
+  "Nasos_Neutral_Armor_reductionWeight_Left_1_2": {
+   "effect": "weight",
+   "tier": 2
+  },
+  "Newbie_Neutral_Armor_ArtifactSlots_Left_1_1": {
+   "effect": "container",
+   "tier": 2
+  },
+  "Newbie_Neutral_Armor_ItemWeight_Left_3_1": {
+   "effect": "weight",
+   "tier": 2
+  },
+  "Newbie_Neutral_Armor_MaxDurability_Left_1_2": {
+   "effect": "durable",
+   "tier": 1
+  },
+  "Newbie_Neutral_Armor_ProtectionBurn_Left_1_2": {
+   "effect": "fire",
+   "tier": 1
+  },
+  "Newbie_Neutral_Armor_ProtectionBurn_Left_2_1": {
+   "effect": "fire",
+   "tier": 1
+  },
+  "Newbie_Neutral_Armor_ProtectionChemical_Left_1_1": {
+   "effect": "chem",
+   "tier": 1
+  },
+  "Newbie_Neutral_Armor_ProtectionStrike_Left_1_1": {
+   "effect": "bp",
+   "tier": 1
+  },
+  "Newbie_Neutral_Armor_ProtectionStrike_Left_2_1": {
+   "effect": "bp",
+   "tier": 1
+  },
+  "Newbie_Neutral_Armor_ProtectionStrike_Left_2_2": {
+   "effect": "bp",
+   "tier": 1
+  },
+  "Newbie_Neutral_Armor_protectionElectrical_Left_2_2": {
+   "effect": "electr",
+   "tier": 1
+  },
+  "Rook_Dolg_Armor_MaxDurability_Left_2_1": {
+   "effect": "durable",
+   "tier": 1
+  },
+  "Rook_Dolg_Armor_container_Left_2_1": {
+   "effect": "container",
+   "tier": 1
+  },
+  "Rook_Dolg_Armor_protectionChemical_Left_2_2": {
+   "effect": "chem",
+   "tier": 1
+  },
+  "Rook_Dolg_Armor_protectionElectrical_Left_2_1": {
+   "effect": "electr",
+   "tier": 1
+  },
+  "Rook_Dolg_Armor_protectionPhysical_Left_1_1": {
+   "effect": "bp",
+   "tier": 1
+  },
+  "Rook_Dolg_Armor_protectionPhysical_Left_2_2": {
+   "effect": "bp",
+   "tier": 2
+  },
+  "Rook_Dolg_Armor_protectionRadiation_Left_1_2": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "Rook_Dolg_Armor_protectionThermal_Left_1_1": {
+   "effect": "fire",
+   "tier": 1
+  },
+  "Rook_Dolg_Armor_reductionWeight_Left_1_2": {
+   "effect": "weight",
+   "tier": 2
+  },
+  "Rook_Dolg_Armor_regenerationStamina_Left_1_1": {
+   "effect": "stamina",
+   "tier": 1
+  },
+  "Rook_Svoboda_Armor_MaxDurability_Left_2_1": {
+   "effect": "durable",
+   "tier": 1
+  },
+  "Rook_Svoboda_Armor_container_Left_1_1": {
+   "effect": "container",
+   "tier": 1
+  },
+  "Rook_Svoboda_Armor_protectionChemical_Left_2_2": {
+   "effect": "chem",
+   "tier": 1
+  },
+  "Rook_Svoboda_Armor_protectionElectrical_Left_2_1": {
+   "effect": "electr",
+   "tier": 1
+  },
+  "Rook_Svoboda_Armor_protectionPhysical_Left_1_1": {
+   "effect": "bp",
+   "tier": 1
+  },
+  "Rook_Svoboda_Armor_protectionPhysical_Left_2_2": {
+   "effect": "bp",
+   "tier": 2
+  },
+  "Rook_Svoboda_Armor_protectionRadiation_Left_1_2": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "Rook_Svoboda_Armor_protectionThermal_Left_1_1": {
+   "effect": "fire",
+   "tier": 1
+  },
+  "Rook_Svoboda_Armor_rad_container_Left_2_1": {
+   "effect": "container_radconsume",
+   "tier": 1
+  },
+  "Rook_Svoboda_Armor_reductionWeight_Left_1_2": {
+   "effect": "weight",
+   "tier": 2
+  },
+  "SEVA_Dolg_Armor_Backpack_Left_2_2": {
+   "effect": "backpack",
+   "tier": 2
+  },
+  "SEVA_Dolg_Armor_MaxDurability_Left_1_2": {
+   "effect": "durable",
+   "tier": 2
+  },
+  "SEVA_Dolg_Armor_MaxDurability_Left_2_1": {
+   "effect": "durable",
+   "tier": 1
+  },
+  "SEVA_Dolg_Armor_PSY_Left_1_1": {
+   "effect": "psy",
+   "tier": 1
+  },
+  "SEVA_Dolg_Armor_container_Left_1_1": {
+   "effect": "container",
+   "tier": 1
+  },
+  "SEVA_Dolg_Armor_container_Left_3_1": {
+   "effect": "container",
+   "tier": 2
+  },
+  "SEVA_Dolg_Armor_protectionChemical_Left_2_1": {
+   "effect": "chem",
+   "tier": 2
+  },
+  "SEVA_Dolg_Armor_protectionElectrical_Left_2_2": {
+   "effect": "electr",
+   "tier": 1
+  },
+  "SEVA_Dolg_Armor_protectionPhysical_Left_1_1": {
+   "effect": "bp",
+   "tier": 1
+  },
+  "SEVA_Dolg_Armor_protectionPhysical_Left_3_1": {
+   "effect": "bp",
+   "tier": 2
+  },
+  "SEVA_Dolg_Armor_protectionRadiation_Left_3_1": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "SEVA_Dolg_Armor_protectionRadiation_Left_3_2": {
+   "effect": "rad",
+   "tier": 2
+  },
+  "SEVA_Dolg_Armor_protectionThermal_Left_1_1": {
+   "effect": "fire",
+   "tier": 2
+  },
+  "SEVA_Dolg_Armor_radiationAbsorption_Left_2_1": {
+   "effect": "container_radconsume",
+   "tier": 1
+  },
+  "SEVA_Dolg_Armor_reductionWeight_Left_2_2": {
+   "effect": "weight",
+   "tier": 2
+  },
+  "SEVA_Dolg_Armor_regenerationStamina_Left_2_1": {
+   "effect": "stamina",
+   "tier": 1
+  },
+  "SEVA_Spark_Armor_MaxDurability_Left_2_1": {
+   "effect": "durable",
+   "tier": 1
+  },
+  "SEVA_Spark_Armor_PSY_Left_3_1": {
+   "effect": "psy",
+   "tier": 1
+  },
+  "SEVA_Spark_Armor_PSY_Left_3_2": {
+   "effect": "psy",
+   "tier": 2
+  },
+  "SEVA_Spark_Armor_carryingCapacity_Left_3_1": {
+   "effect": "pockets",
+   "tier": 1
+  },
+  "SEVA_Spark_Armor_container_Left_1_1": {
+   "effect": "container",
+   "tier": 2
+  },
+  "SEVA_Spark_Armor_container_Left_2_2": {
+   "effect": "container",
+   "tier": 2
+  },
+  "SEVA_Spark_Armor_protectionChemical_protectionElectrical_Left_2_1": {
+   "effect": "electr_chem",
+   "tier": 1
+  },
+  "SEVA_Spark_Armor_protectionPhysical_Left_1_1": {
+   "effect": "bp",
+   "tier": 1
+  },
+  "SEVA_Spark_Armor_protectionPhysical_Left_2_1": {
+   "effect": "bp",
+   "tier": 2
+  },
+  "SEVA_Spark_Armor_protectionRadiation_Left_1_1": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "SEVA_Spark_Armor_protectionRadiation_Left_2_2": {
+   "effect": "rad",
+   "tier": 2
+  },
+  "SEVA_Spark_Armor_protectionThermal_protectionElectrical_Left_1_2": {
+   "effect": "fire_electr",
+   "tier": 1
+  },
+  "SEVA_Spark_Armor_protectionThermal_protectionElectrical_Left_2_2": {
+   "effect": "fire_electr",
+   "tier": 2
+  },
+  "SEVA_Spark_Armor_protectionThermal_protectionElectrical_protectionChemical_Left_1_1": {
+   "effect": "el_chem_fire",
+   "tier": 1
+  },
+  "SEVA_Spark_Armor_radiationAbsorption_Left_2_1": {
+   "effect": "container_radconsume",
+   "tier": 1
+  },
+  "SEVA_Spark_Armor_radiationAbsorption_Left_3_1": {
+   "effect": "container_radconsume",
+   "tier": 2
+  },
+  "SEVA_Spark_Armor_reductionWeight_Left_2_2": {
+   "effect": "weight",
+   "tier": 2
+  },
+  "SEVA_Svoboda_Armor_MaxDurability_Left_2_1": {
+   "effect": "durable",
+   "tier": 1
+  },
+  "SEVA_Svoboda_Armor_MaxDurability_Left_2_2": {
+   "effect": "durable",
+   "tier": 2
+  },
+  "SEVA_Svoboda_Armor_PSY_Left_3_1": {
+   "effect": "psy",
+   "tier": 2
+  },
+  "SEVA_Svoboda_Armor_carryingCapacity_Left_1_1": {
+   "effect": "pockets",
+   "tier": 1
+  },
+  "SEVA_Svoboda_Armor_container_Left_1_1": {
+   "effect": "container",
+   "tier": 2
+  },
+  "SEVA_Svoboda_Armor_protectionChemical_protectionElectrical_Left_2_1": {
+   "effect": "electr_chem",
+   "tier": 1
+  },
+  "SEVA_Svoboda_Armor_protectionPhysical_Left_3_1": {
+   "effect": "bp",
+   "tier": 2
+  },
+  "SEVA_Svoboda_Armor_protectionRadiation_Left_1_1": {
+   "effect": "rad",
+   "tier": 2
+  },
+  "SEVA_Svoboda_Armor_protectionRadiation_Left_3_1": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "SEVA_Svoboda_Armor_protectionThermal_protectionElectrical_Left_1_2": {
+   "effect": "fire_electr",
+   "tier": 1
+  },
+  "SEVA_Svoboda_Armor_protectionThermal_protectionElectrical_Left_2_2": {
+   "effect": "fire_electr",
+   "tier": 2
+  },
+  "SEVA_Svoboda_Armor_protectionThermal_protectionElectrical_protectionChemical_Left_1_1": {
+   "effect": "el_chem_fire",
+   "tier": 1
+  },
+  "SEVA_Svoboda_Armor_radiationAbsorption_Left_2_1": {
+   "effect": "container_radconsume",
+   "tier": 1
+  },
+  "SEVA_Svoboda_Armor_radiationAbsorption_Left_3_1": {
+   "effect": "container_radconsume",
+   "tier": 2
+  },
+  "SEVA_Svoboda_Armor_reductionWeight_Left_2_1": {
+   "effect": "weight",
+   "tier": 2
+  },
+  "SEVA_Svoboda_Armor_reductionWeight_Left_2_2": {
+   "effect": "weight",
+   "tier": 1
+  },
+  "SciSEVA_Scientific_Armor_MaxDurability_Left_1_1": {
+   "effect": "durable",
+   "tier": 1
+  },
+  "SciSEVA_Scientific_Armor_MaxDurability_Left_2_1": {
+   "effect": "durable",
+   "tier": 2
+  },
+  "SciSEVA_Scientific_Armor_PSY_Left_1_1": {
+   "effect": "psy",
+   "tier": 2
+  },
+  "SciSEVA_Scientific_Armor_PSY_Left_2_2": {
+   "effect": "psy",
+   "tier": 1
+  },
+  "SciSEVA_Scientific_Armor_carryingCapacity_Left_3_1": {
+   "effect": "pockets",
+   "tier": 1
+  },
+  "SciSEVA_Scientific_Armor_container_Left_1_1": {
+   "effect": "container",
+   "tier": 2
+  },
+  "SciSEVA_Scientific_Armor_protectionChemical_protectionElectrical_Left_3_1": {
+   "effect": "electr_chem",
+   "tier": 1
+  },
+  "SciSEVA_Scientific_Armor_protectionRadiation_Left_1_2": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "SciSEVA_Scientific_Armor_protectionRadiation_Left_2_1": {
+   "effect": "rad",
+   "tier": 2
+  },
+  "SciSEVA_Scientific_Armor_protectionThermal_protectionElectrical_Left_2_1": {
+   "effect": "fire_electr",
+   "tier": 2
+  },
+  "SciSEVA_Scientific_Armor_protectionThermal_protectionElectrical_Left_3_2": {
+   "effect": "fire_electr",
+   "tier": 2
+  },
+  "SciSEVA_Scientific_Armor_protectionThermal_protectionElectrical_protectionChemical_Left_1_1": {
+   "effect": "el_chem_fire",
+   "tier": 1
+  },
+  "SciSEVA_Scientific_Armor_radiationAbsorption_Left_2_1": {
+   "effect": "container_radconsume",
+   "tier": 1
+  },
+  "SciSEVA_Scientific_Armor_radiationAbsorption_Left_2_2": {
+   "effect": "container_radconsume",
+   "tier": 2
+  },
+  "SciSEVA_Scientific_Armor_radiationAbsorption_Left_3_1": {
+   "effect": "container_radconsume",
+   "tier": 3
+  },
+  "SciSEVA_Scientific_Armor_reductionWeight_Left_2_2": {
+   "effect": "weight",
+   "tier": 2
+  },
+  "Seva_Neutral_Armor_MaxDurability_Left_2_1": {
+   "effect": "durable",
+   "tier": 1
+  },
+  "Seva_Neutral_Armor_MaxDurability_Left_2_2": {
+   "effect": "durable",
+   "tier": 2
+  },
+  "Seva_Neutral_Armor_PSY_Left_1_1": {
+   "effect": "psy",
+   "tier": 1
+  },
+  "Seva_Neutral_Armor_PSY_Left_3_1": {
+   "effect": "psy",
+   "tier": 2
+  },
+  "Seva_Neutral_Armor_carryingCapacity_Left_3_2": {
+   "effect": "pockets",
+   "tier": 1
+  },
+  "Seva_Neutral_Armor_container_Left_1_1": {
+   "effect": "container",
+   "tier": 1
+  },
+  "Seva_Neutral_Armor_container_Left_1_2": {
+   "effect": "container",
+   "tier": 2
+  },
+  "Seva_Neutral_Armor_container_radiationAbsorption_Left_2_1": {
+   "effect": "container_radconsume",
+   "tier": 1
+  },
+  "Seva_Neutral_Armor_container_radiationAbsorption_Left_2_2": {
+   "effect": "container_radconsume",
+   "tier": 2
+  },
+  "Seva_Neutral_Armor_protectionChemical_protectionElectrical_Left_2_1": {
+   "effect": "electr_chem",
+   "tier": 1
+  },
+  "Seva_Neutral_Armor_protectionPhysical_Left_1_1": {
+   "effect": "bp",
+   "tier": 1
+  },
+  "Seva_Neutral_Armor_protectionPhysical_Left_3_1": {
+   "effect": "bp",
+   "tier": 2
+  },
+  "Seva_Neutral_Armor_protectionRadiation_Left_3_1": {
+   "effect": "rad",
+   "tier": 2
+  },
+  "Seva_Neutral_Armor_protectionRadiation_Left_3_2": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "Seva_Neutral_Armor_protectionThermal_protectionElectrical_Left_1_2": {
+   "effect": "fire_electr",
+   "tier": 1
+  },
+  "Seva_Neutral_Armor_protectionThermal_protectionElectrical_Left_2_2": {
+   "effect": "fire_electr",
+   "tier": 2
+  },
+  "Seva_Neutral_Armor_protectionThermal_protectionElectrical_protectionChemical_Left_1_1": {
+   "effect": "el_chem_fire",
+   "tier": 1
+  },
+  "Seva_Neutral_Armor_reductionWeight_Left_2_2": {
+   "effect": "weight",
+   "tier": 2
+  },
+  "Seva_Neutral_Armor_regenerationStamina_Left_2_1": {
+   "effect": "stamina",
+   "tier": 1
+  },
+  "Skin_Jacket_Bandit_Armor_ArtifactSlots_Left_1_1": {
+   "effect": "container",
+   "tier": 2
+  },
+  "Skin_Jacket_Bandit_Armor_ItemWeight_Left_2_1": {
+   "effect": "weight",
+   "tier": 2
+  },
+  "Skin_Jacket_Bandit_Armor_MaxDurability_Left_1_2": {
+   "effect": "durable",
+   "tier": 1
+  },
+  "Skin_Jacket_Bandit_Armor_ProtectionBurn_Left_1_1": {
+   "effect": "fire",
+   "tier": 1
+  },
+  "Skin_Jacket_Bandit_Armor_ProtectionChemical_Left_1_2": {
+   "effect": "chem",
+   "tier": 1
+  },
+  "Skin_Jacket_Bandit_Armor_ProtectionStrike_Left_1_1": {
+   "effect": "bp",
+   "tier": 1
+  },
+  "Skin_Jacket_Bandit_Armor_protectionElectrical_Left_2_1": {
+   "effect": "electr",
+   "tier": 1
+  },
+  "Zorya_Neutral_Armor_MaxDurability_Left_1_1": {
+   "effect": "durable",
+   "tier": 1
+  },
+  "Zorya_Neutral_Armor_MaxDurability_Left_2_1": {
+   "effect": "durable",
+   "tier": 1
+  },
+  "Zorya_Neutral_Armor_container_Left_1_1": {
+   "effect": "container",
+   "tier": 1
+  },
+  "Zorya_Neutral_Armor_container_Left_3_1": {
+   "effect": "container",
+   "tier": 2
+  },
+  "Zorya_Neutral_Armor_protectionChemical_Left_1_2": {
+   "effect": "chem",
+   "tier": 1
+  },
+  "Zorya_Neutral_Armor_protectionChemical_Left_3_1": {
+   "effect": "chem",
+   "tier": 1
+  },
+  "Zorya_Neutral_Armor_protectionElectrical_Left_3_2": {
+   "effect": "electr",
+   "tier": 2
+  },
+  "Zorya_Neutral_Armor_protectionPhysical_Left_1_1": {
+   "effect": "bp",
+   "tier": 2
+  },
+  "Zorya_Neutral_Armor_protectionPhysical_Left_2_2": {
+   "effect": "bp",
+   "tier": 2
+  },
+  "Zorya_Neutral_Armor_protectionRadiation_Left_1_1": {
+   "effect": "rad",
+   "tier": 1
+  },
+  "Zorya_Neutral_Armor_protectionRadiation_Left_2_1": {
+   "effect": "rad",
+   "tier": 2
+  },
+  "Zorya_Neutral_Armor_protectionThermal_Left_1_1": {
+   "effect": "fire",
+   "tier": 1
+  },
+  "Zorya_Neutral_Armor_protectionThermal_Left_2_2": {
+   "effect": "fire",
+   "tier": 2
+  },
+  "Zorya_Neutral_Armor_protectionThermal_protectionElectrical_Left_2_1": {
+   "effect": "fire_electr",
+   "tier": 1
+  },
+  "Zorya_Neutral_Armor_radiationAbsorption_Left_2_1": {
+   "effect": "container_radconsume",
+   "tier": 1
+  },
+  "Zorya_Neutral_Armor_reductionWeight_Left_1_2": {
+   "effect": "weight",
+   "tier": 2
+  },
+  "Zorya_Neutral_Armor_regenerationStamina_Left_1_1": {
+   "effect": "stamina",
+   "tier": 1
+  }
+ },
+ "weapon_upgrades": {
+  "GunAK74_Upgrade_Attachment_Offset_Stock": {
+   "effect": "AimingAccuracy",
+   "part": "Stock"
+  },
+  "GunAK74_Upgrade_Attachment_SinMuz": {
+   "effect": "MaxSpread",
+   "part": "Barrel"
+  },
+  "GunAK74_Upgrade_Barrel_1": {
+   "effect": "Recoil",
+   "part": "Barrel"
+  },
+  "GunAK74_Upgrade_Barrel_2_1": {
+   "effect": "ArmorPiercing",
+   "part": "Barrel"
+  },
+  "GunAK74_Upgrade_Barrel_2_2": {
+   "effect": "Falloff",
+   "part": "Barrel"
+  },
+  "GunAK74_Upgrade_Body_2": {
+   "effect": "Range",
+   "part": "Body"
+  },
+  "GunAK74_Upgrade_Stock_1": {
+   "effect": "AimingSpeed",
+   "part": "Stock"
+  },
+  "GunAK74_Upgrade_Stock_2": {
+   "effect": "AimingAccuracy",
+   "part": "Stock"
+  },
+  "GunAK74_Upgrade_Stock_3": {
+   "effect": "Recoil",
+   "part": "Stock"
+  },
+  "GunAKU_Upgrade_Attachment_AutMuz": {
+   "effect": "Recoil",
+   "part": "Barrel"
+  },
+  "GunAKU_Upgrade_Attachment_Offset_Stock": {
+   "effect": "AimingAccuracy",
+   "part": "Stock"
+  },
+  "GunAKU_Upgrade_Body_2_1": {
+   "effect": "Depreciation",
+   "part": "Body"
+  },
+  "GunAKU_Upgrade_Body_2_2": {
+   "effect": "ShootingDepreciation",
+   "part": "Body"
+  },
+  "GunAKU_Upgrade_Handguard_1_1": {
+   "effect": "DropDamage",
+   "part": "Handguard"
+  },
+  "GunAKU_Upgrade_Handguard_1_2": {
+   "effect": "Recoil",
+   "part": "Handguard"
+  },
+  "GunAKU_Upgrade_Handguard_2_1": {
+   "effect": "Falloff",
+   "part": "Handguard"
+  },
+  "GunAKU_Upgrade_Handguard_2_2": {
+   "effect": "MaxSpread",
+   "part": "Handguard"
+  },
+  "GunAKU_Upgrade_Stock_1_1": {
+   "effect": "AimingSpeed",
+   "part": "Stock"
+  },
+  "GunAKU_Upgrade_Stock_1_2": {
+   "effect": "MovementAiming",
+   "part": "Stock"
+  },
+  "GunAPB_Upgrade_Attachment_AutMuz": {
+   "effect": "MaxSpread",
+   "part": "Barrel"
+  },
+  "GunAPB_Upgrade_Attachment_Laser": {
+   "effect": "SpreadReduction",
+   "part": "Barrel"
+  },
+  "GunAPB_Upgrade_Barrel_1": {
+   "effect": "Velocity",
+   "part": "Barrel"
+  },
+  "GunAPB_Upgrade_Barrel_2_1": {
+   "effect": "ArmorPiercing",
+   "part": "Barrel"
+  },
+  "GunAPB_Upgrade_Barrel_2_2": {
+   "effect": "Recoil",
+   "part": "Barrel"
+  },
+  "GunAPB_Upgrade_Barrel_3_1": {
+   "effect": "MaxSpread",
+   "part": "Barrel"
+  },
+  "GunAPB_Upgrade_Barrel_3_2": {
+   "effect": "DropDamage",
+   "part": "Barrel"
+  },
+  "GunAPB_Upgrade_Body_1_1": {
+   "effect": "Depreciation",
+   "part": "Body"
+  },
+  "GunAPB_Upgrade_Body_1_2": {
+   "effect": "ShootingDepreciation",
+   "part": "Body"
+  },
+  "GunAPB_Upgrade_Grip_1": {
+   "effect": "Readiness",
+   "part": "PistolGrip"
+  },
+  "GunAPB_Upgrade_Grip_2_1": {
+   "effect": "AimingReturn",
+   "part": "PistolGrip"
+  },
+  "GunAPB_Upgrade_Grip_2_2": {
+   "effect": "AimingSpeed",
+   "part": "PistolGrip"
+  },
+  "GunAPB_Upgrade_Grip_3": {
+   "effect": "MovementAiming",
+   "part": "PistolGrip"
+  },
+  "GunArev_Upgrade_Attachment_AutMuz": {
+   "effect": "Recoil",
+   "part": "Barrel"
+  },
+  "GunArev_Upgrade_Attachment_Grip": {
+   "effect": "Recoil",
+   "part": "Handguard"
+  },
+  "GunArev_Upgrade_Attachment_Laser": {
+   "effect": "AimingSpeed",
+   "part": "Handguard"
+  },
+  "GunArev_Upgrade_Attachment_Laser_HP": {
+   "effect": "MaxSpread",
+   "part": "Handguard"
+  },
+  "GunArev_Upgrade_Attachment_Offset_Stock": {
+   "effect": "AimingAccuracy",
+   "part": "Stock"
+  },
+  "GunArev_Upgrade_Attachment_SinMuz": {
+   "effect": "MaxSpread",
+   "part": "Barrel"
+  },
+  "GunArev_Upgrade_Barrel_1_1": {
+   "effect": "DropDamage",
+   "part": "Barrel"
+  },
+  "GunArev_Upgrade_Barrel_1_2": {
+   "effect": "MaxSpread",
+   "part": "Barrel"
+  },
+  "GunArev_Upgrade_Barrel_2": {
+   "effect": "ShootingDepreciation",
+   "part": "Barrel"
+  },
+  "GunArev_Upgrade_Barrel_3_2": {
+   "effect": "ArmorPiercing",
+   "part": "Barrel"
+  },
+  "GunArev_Upgrade_Body_1": {
+   "effect": "Range",
+   "part": "Body"
+  },
+  "GunArev_Upgrade_Body_3": {
+   "effect": "Depreciation",
+   "part": "Body"
+  },
+  "GunArev_Upgrade_Grip_1": {
+   "effect": "MovementAiming",
+   "part": "PistolGrip"
+  },
+  "GunArev_Upgrade_Grip_2_1": {
+   "effect": "AimingReturn",
+   "part": "PistolGrip"
+  },
+  "GunArev_Upgrade_Grip_2_2": {
+   "effect": "Recoil",
+   "part": "PistolGrip"
+  },
+  "GunArev_Upgrade_Grip_3_1": {
+   "effect": "Readiness",
+   "part": "PistolGrip"
+  },
+  "GunArev_Upgrade_Grip_3_2": {
+   "effect": "AimingSpeed",
+   "part": "PistolGrip"
+  },
+  "GunArev_Upgrade_Handguard_1_1": {
+   "effect": "AimingAccuracy",
+   "part": "Handguard"
+  },
+  "GunArev_Upgrade_Handguard_1_2": {
+   "effect": "AimingSpeed",
+   "part": "Handguard"
+  },
+  "GunArev_Upgrade_Handguard_2_1": {
+   "effect": "MaxSpread",
+   "part": "Handguard"
+  },
+  "GunArev_Upgrade_Handguard_2_2": {
+   "effect": "Recoil",
+   "part": "Handguard"
+  },
+  "GunArev_Upgrade_Stock_1_1": {
+   "effect": "AimingSpeed",
+   "part": "Stock"
+  },
+  "GunArev_Upgrade_Stock_2_2": {
+   "effect": "Recoil",
+   "part": "Stock"
+  },
+  "GunBucket_Upgrade_Attachment_AutMuz": {
+   "effect": "Recoil",
+   "part": "Barrel"
+  },
+  "GunBucket_Upgrade_Attachment_Laser": {
+   "effect": "AimingSpeed",
+   "part": "Body"
+  },
+  "GunBucket_Upgrade_Attachment_Laser_HP": {
+   "effect": "MaxSpread",
+   "part": "Body"
+  },
+  "GunBucket_Upgrade_Attachment_Offset_Stock": {
+   "effect": "AimingAccuracy",
+   "part": "Stock"
+  },
+  "GunBucket_Upgrade_Barrel_1": {
+   "effect": "Velocity",
+   "part": "Barrel"
+  },
+  "GunBucket_Upgrade_Barrel_2_1": {
+   "effect": "Falloff",
+   "part": "Barrel"
+  },
+  "GunBucket_Upgrade_Barrel_2_2": {
+   "effect": "DropDamage",
+   "part": "Barrel"
+  },
+  "GunBucket_Upgrade_Barrel_3": {
+   "effect": "ArmorPiercing",
+   "part": "Barrel"
+  },
+  "GunBucket_Upgrade_Body_2": {
+   "effect": "Range",
+   "part": "Body"
+  },
+  "GunBucket_Upgrade_Body_3": {
+   "effect": "Depreciation",
+   "part": "Body"
+  },
+  "GunBucket_Upgrade_Grip_1": {
+   "effect": "AimingAccuracy",
+   "part": "PistolGrip"
+  },
+  "GunBucket_Upgrade_Grip_2": {
+   "effect": "MovementAiming",
+   "part": "PistolGrip"
+  },
+  "GunBucket_Upgrade_Grip_3": {
+   "effect": "Recoil",
+   "part": "PistolGrip"
+  },
+  "GunD12_Upgrade_Attachment_Grip": {
+   "effect": "Recoil",
+   "part": "Handguard"
+  },
+  "GunD12_Upgrade_Attachment_Laser": {
+   "effect": "AimingSpeed",
+   "part": "Handguard"
+  },
+  "GunD12_Upgrade_Attachment_Laser_HP": {
+   "effect": "SpreadReduction",
+   "part": "Handguard"
+  },
+  "GunD12_Upgrade_Attachment_Offset_Stock": {
+   "effect": "AimingAccuracy",
+   "part": "Stock"
+  },
+  "GunD12_Upgrade_Attachment_SinMuz": {
+   "effect": "SpreadReduction",
+   "part": "Barrel"
+  },
+  "GunD12_Upgrade_Barrel_1_1": {
+   "effect": "Falloff",
+   "part": "Barrel"
+  },
+  "GunD12_Upgrade_Barrel_1_2": {
+   "effect": "DropDamage",
+   "part": "Barrel"
+  },
+  "GunD12_Upgrade_Barrel_2_1": {
+   "effect": "SlowingSpread",
+   "part": "Barrel"
+  },
+  "GunD12_Upgrade_Barrel_2_2": {
+   "effect": "Falloff",
+   "part": "Barrel"
+  },
+  "GunD12_Upgrade_Barrel_3_1": {
+   "effect": "SpreadReduction",
+   "part": "Barrel"
+  },
+  "GunD12_Upgrade_Barrel_3_2": {
+   "effect": "ArmorPiercing",
+   "part": "Barrel"
+  },
+  "GunD12_Upgrade_Body_1": {
+   "effect": "Range",
+   "part": "Body"
+  },
+  "GunD12_Upgrade_Body_2_1": {
+   "effect": "Depreciation",
+   "part": "Body"
+  },
+  "GunD12_Upgrade_Grip_1_1": {
+   "effect": "AimingSpeed",
+   "part": "PistolGrip"
+  },
+  "GunD12_Upgrade_Grip_1_2": {
+   "effect": "Recoil",
+   "part": "PistolGrip"
+  },
+  "GunD12_Upgrade_Grip_2_1": {
+   "effect": "MovementAiming",
+   "part": "PistolGrip"
+  },
+  "GunD12_Upgrade_Grip_2_2": {
+   "effect": "AimingReturn",
+   "part": "PistolGrip"
+  },
+  "GunD12_Upgrade_Handguard_1_1": {
+   "effect": "Recoil",
+   "part": "Handguard"
+  },
+  "GunD12_Upgrade_Handguard_1_2": {
+   "effect": "MaxSpread",
+   "part": "Handguard"
+  },
+  "GunD12_Upgrade_Stock_2": {
+   "effect": "AimingAccuracy",
+   "part": "Stock"
+  },
+  "GunD12_Upgrade_Stock_3_1": {
+   "effect": "AimingSpeed",
+   "part": "Stock"
+  },
+  "GunD12_Upgrade_Stock_3_2": {
+   "effect": "Recoil",
+   "part": "Stock"
+  },
+  "GunDnipro_Upgrade_Attachment_AutMuz": {
+   "effect": "Recoil",
+   "part": "Barrel"
+  },
+  "GunDnipro_Upgrade_Attachment_Grip": {
+   "effect": "Recoil",
+   "part": "Handguard"
+  },
+  "GunDnipro_Upgrade_Attachment_Laser": {
+   "effect": "AimingSpeed",
+   "part": "Handguard"
+  },
+  "GunDnipro_Upgrade_Attachment_Laser_HP": {
+   "effect": "MaxSpread",
+   "part": "Handguard"
+  },
+  "GunDnipro_Upgrade_Attachment_Offset_Stock": {
+   "effect": "AimingAccuracy",
+   "part": "Stock"
+  },
+  "GunDnipro_Upgrade_Attachment_SinMuz": {
+   "effect": "MaxSpread",
+   "part": "Barrel"
+  },
+  "GunDnipro_Upgrade_Barrel_1_1": {
+   "effect": "Falloff",
+   "part": "Barrel"
+  },
+  "GunDnipro_Upgrade_Barrel_1_2": {
+   "effect": "DropDamage",
+   "part": "Barrel"
+  },
+  "GunDnipro_Upgrade_Barrel_2_1": {
+   "effect": "SlowingSpread",
+   "part": "Barrel"
+  },
+  "GunDnipro_Upgrade_Barrel_2_2": {
+   "effect": "Range",
+   "part": "Barrel"
+  },
+  "GunDnipro_Upgrade_Barrel_3": {
+   "effect": "ArmorPiercing",
+   "part": "Barrel"
+  },
+  "GunDnipro_Upgrade_Body_1": {
+   "effect": "Depreciation",
+   "part": "Body"
+  },
+  "GunDnipro_Upgrade_Body_2": {
+   "effect": "CaliberChange",
+   "part": "Body"
+  },
+  "GunDnipro_Upgrade_Handguard_1_1": {
+   "effect": "MaxSpread",
+   "part": "Handguard"
+  },
+  "GunDnipro_Upgrade_Handguard_1_2": {
+   "effect": "AimingSpeed",
+   "part": "Handguard"
+  },
+  "GunDnipro_Upgrade_Handguard_2_2": {
+   "effect": "AimingAccuracy",
+   "part": "Handguard"
+  },
+  "GunDnipro_Upgrade_Handguard_3": {
+   "effect": "Recoil",
+   "part": "Handguard"
+  },
+  "GunDnipro_Upgrade_Stock_1_1": {
+   "effect": "Recoil",
+   "part": "Stock"
+  },
+  "GunDnipro_Upgrade_Stock_1_2": {
+   "effect": "MovementAiming",
+   "part": "Stock"
+  },
+  "GunDnipro_Upgrade_Stock_2_1": {
+   "effect": "AimingSpeed",
+   "part": "Stock"
+  },
+  "GunDnipro_Upgrade_Stock_2_2": {
+   "effect": "Readiness",
+   "part": "Stock"
+  },
+  "GunFora230_Upgrade_Attachment_Laser": {
+   "effect": "MaxSpread",
+   "part": "Body"
+  },
+  "GunFora230_Upgrade_Attachment_Laser_HP": {
+   "effect": "MaxSpread",
+   "part": "Body"
+  },
+  "GunFora230_Upgrade_Attachment_Offset_Stock": {
+   "effect": "AimingAccuracy",
+   "part": "Stock"
+  },
+  "GunFora230_Upgrade_Attachment_SinMuz": {
+   "effect": "MaxSpread",
+   "part": "Barrel"
+  },
+  "GunFora230_Upgrade_Barrel_1_1": {
+   "effect": "DropDamage",
+   "part": "Barrel"
+  },
+  "GunFora230_Upgrade_Barrel_1_2": {
+   "effect": "MaxSpread",
+   "part": "Barrel"
+  },
+  "GunFora230_Upgrade_Barrel_2": {
+   "effect": "Falloff",
+   "part": "Barrel"
+  },
+  "GunFora230_Upgrade_Body_1": {
+   "effect": "Depreciation",
+   "part": "Body"
+  },
+  "GunFora230_Upgrade_Body_2_1": {
+   "effect": "CaliberChange",
+   "part": "Body"
+  },
+  "GunFora230_Upgrade_Body_2_2": {
+   "effect": "CaliberChange",
+   "part": "Body"
+  },
+  "GunFora230_Upgrade_Handguard_1": {
+   "effect": "Recoil",
+   "part": "Handguard"
+  },
+  "GunFora230_Upgrade_Handguard_2": {
+   "effect": "MaxSpread",
+   "part": "Handguard"
+  },
+  "GunFora230_Upgrade_Stock_1": {
+   "effect": "Recoil",
+   "part": "Stock"
+  },
+  "GunFora230_Upgrade_Stock_2": {
+   "effect": "AimingAccuracy",
+   "part": "Stock"
+  },
+  "GunFora230_Upgrade_Stock_3": {
+   "effect": "Readiness",
+   "part": "Stock"
+  },
+  "GunFora_Upgrade_Attachment_AutMuz": {
+   "effect": "Recoil",
+   "part": "Barrel"
+  },
+  "GunFora_Upgrade_Attachment_Grip": {
+   "effect": "Recoil",
+   "part": "Handguard"
+  },
+  "GunFora_Upgrade_Attachment_Laser": {
+   "effect": "AimingSpeed",
+   "part": "Handguard"
+  },
+  "GunFora_Upgrade_Attachment_Laser_HP": {
+   "effect": "MaxSpread",
+   "part": "Handguard"
+  },
+  "GunFora_Upgrade_Attachment_Offset_Stock": {
+   "effect": "AimingAccuracy",
+   "part": "Stock"
+  },
+  "GunFora_Upgrade_Attachment_SinMuz": {
+   "effect": "MaxSpread",
+   "part": "Barrel"
+  },
+  "GunFora_Upgrade_Barrel_1": {
+   "effect": "ShootingDepreciation",
+   "part": "Barrel"
+  },
+  "GunFora_Upgrade_Barrel_2": {
+   "effect": "Velocity",
+   "part": "Barrel"
+  },
+  "GunFora_Upgrade_Body_1": {
+   "effect": "Depreciation",
+   "part": "Body"
+  },
+  "GunFora_Upgrade_Body_2_1": {
+   "effect": "CaliberChange",
+   "part": "Body"
+  },
+  "GunFora_Upgrade_Body_2_2": {
+   "effect": "Recoil",
+   "part": "Body"
+  },
+  "GunFora_Upgrade_Body_3_1": {
+   "effect": "Range",
+   "part": "Body"
+  },
+  "GunFora_Upgrade_Body_3_2": {
+   "effect": "MovementAiming",
+   "part": "Body"
+  },
+  "GunFora_Upgrade_Handguard_1": {
+   "effect": "Recoil",
+   "part": "Handguard"
+  },
+  "GunFora_Upgrade_Handguard_2_1": {
+   "effect": "MaxSpread",
+   "part": "Handguard"
+  },
+  "GunFora_Upgrade_Handguard_2_2": {
+   "effect": "AimingSpeed",
+   "part": "Handguard"
+  },
+  "GunG37_Upgrade_Attachment_AutMuz": {
+   "effect": "Recoil",
+   "part": "Barrel"
+  },
+  "GunG37_Upgrade_Attachment_Grip": {
+   "effect": "Recoil",
+   "part": "Handguard"
+  },
+  "GunG37_Upgrade_Attachment_Laser": {
+   "effect": "AimingSpeed",
+   "part": "Handguard"
+  },
+  "GunG37_Upgrade_Attachment_Laser_HP": {
+   "effect": "MaxSpread",
+   "part": "Handguard"
+  },
+  "GunG37_Upgrade_Attachment_Offset_Stock": {
+   "effect": "AimingAccuracy",
+   "part": "Stock"
+  },
+  "GunG37_Upgrade_Attachment_SinMuz": {
+   "effect": "MaxSpread",
+   "part": "Barrel"
+  },
+  "GunG37_Upgrade_Barrel_1": {
+   "effect": "ShootingDepreciation",
+   "part": "Barrel"
+  },
+  "GunG37_Upgrade_Barrel_2_1": {
+   "effect": "Falloff",
+   "part": "Barrel"
+  },
+  "GunG37_Upgrade_Barrel_2_2": {
+   "effect": "DropDamage",
+   "part": "Barrel"
+  },
+  "GunG37_Upgrade_Body_1_1": {
+   "effect": "Range",
+   "part": "Body"
+  },
+  "GunG37_Upgrade_Body_1_2": {
+   "effect": "Depreciation",
+   "part": "Body"
+  },
+  "GunG37_Upgrade_Handguard_1_1": {
+   "effect": "MaxSpread",
+   "part": "Handguard"
+  },
+  "GunG37_Upgrade_Handguard_1_2": {
+   "effect": "Recoil",
+   "part": "Handguard"
+  },
+  "GunG37_Upgrade_Stock_1_1": {
+   "effect": "Recoil",
+   "part": "Stock"
+  },
+  "GunG37_Upgrade_Stock_1_2": {
+   "effect": "AimingSpeed",
+   "part": "Stock"
+  },
+  "GunG37_Upgrade_Stock_2_1": {
+   "effect": "AimingAccuracy",
+   "part": "Stock"
+  },
+  "GunGP3A_Upgrade_Attachment_AutMuz": {
+   "effect": "Recoil",
+   "part": "Barrel"
+  },
+  "GunGP3A_Upgrade_Attachment_Grip": {
+   "effect": "Recoil",
+   "part": "Handguard"
+  },
+  "GunGP3A_Upgrade_Attachment_Laser": {
+   "effect": "AimingSpeed",
+   "part": "Handguard"
+  },
+  "GunGP3A_Upgrade_Attachment_Laser_HP": {
+   "effect": "MaxSpread",
+   "part": "Handguard"
+  },
+  "GunGP3A_Upgrade_Attachment_Offset_Stock": {
+   "effect": "AimingAccuracy",
+   "part": "Stock"
+  },
+  "GunGP3A_Upgrade_Attachment_SinMuz": {
+   "effect": "SpreadReduction",
+   "part": "Barrel"
+  },
+  "GunGP3A_Upgrade_Barrel_1_1": {
+   "effect": "DropDamage",
+   "part": "Barrel"
+  },
+  "GunGP3A_Upgrade_Barrel_1_2": {
+   "effect": "MaxSpread",
+   "part": "Barrel"
+  },
+  "GunGP3A_Upgrade_Barrel_2_2": {
+   "effect": "Depreciation",
+   "part": "Barrel"
+  },
+  "GunGP3A_Upgrade_Barrel_3": {
+   "effect": "ArmorPiercing",
+   "part": "Barrel"
+  },
+  "GunGP3A_Upgrade_Body_2_1": {
+   "effect": "ShootingDepreciation",
+   "part": "Body"
+  },
+  "GunGP3A_Upgrade_Body_2_2": {
+   "effect": "Depreciation",
+   "part": "Body"
+  },
+  "GunGP3A_Upgrade_Grip_1_1": {
+   "effect": "AimingAccuracy",
+   "part": "PistolGrip"
+  },
+  "GunGP3A_Upgrade_Grip_1_2": {
+   "effect": "Readiness",
+   "part": "PistolGrip"
+  },
+  "GunGP3A_Upgrade_Grip_2_1": {
+   "effect": "AimingSpeed",
+   "part": "PistolGrip"
+  },
+  "GunGP3A_Upgrade_Grip_2_2": {
+   "effect": "MovementAiming",
+   "part": "PistolGrip"
+  },
+  "GunGP3A_Upgrade_Grip_3": {
+   "effect": "Recoil",
+   "part": "PistolGrip"
+  },
+  "GunGP3A_Upgrade_Handguard_1_1": {
+   "effect": "SpreadReduction",
+   "part": "Handguard"
+  },
+  "GunGP3A_Upgrade_Handguard_1_2": {
+   "effect": "Recoil",
+   "part": "Handguard"
+  },
+  "GunGP3A_Upgrade_Handguard_2_1": {
+   "effect": "AimingSpeed",
+   "part": "Handguard"
+  },
+  "GunGP3A_Upgrade_Stock_1": {
+   "effect": "Recoil",
+   "part": "Stock"
+  },
+  "GunGP3A_Upgrade_Stock_2_1": {
+   "effect": "AimingSpeed",
+   "part": "Stock"
+  },
+  "GunGrim_Upgrade_Attachment_AutMuz": {
+   "effect": "Recoil",
+   "part": "Barrel"
+  },
+  "GunGrim_Upgrade_Attachment_Laser": {
+   "effect": "AimingSpeed",
+   "part": "Body"
+  },
+  "GunGrim_Upgrade_Attachment_Laser_HP": {
+   "effect": "MaxSpread",
+   "part": "Body"
+  },
+  "GunGrim_Upgrade_Attachment_Offset_Stock": {
+   "effect": "AimingAccuracy",
+   "part": "Stock"
+  },
+  "GunGrim_Upgrade_Attachment_SinMuz": {
+   "effect": "MaxSpread",
+   "part": "Barrel"
+  },
+  "GunGrim_Upgrade_Barrel_1_1": {
+   "effect": "Falloff",
+   "part": "Barrel"
+  },
+  "GunGrim_Upgrade_Barrel_1_2": {
+   "effect": "Velocity",
+   "part": "Barrel"
+  },
+  "GunGrim_Upgrade_Barrel_2": {
+   "effect": "ArmorPiercing",
+   "part": "Barrel"
+  },
+  "GunGrim_Upgrade_Body_1": {
+   "effect": "Depreciation",
+   "part": "Body"
+  },
+  "GunGrim_Upgrade_Body_2_1": {
+   "effect": "MaxSpread",
+   "part": "Body"
+  },
+  "GunGrim_Upgrade_Body_3_1": {
+   "effect": "Recoil",
+   "part": "Body"
+  },
+  "GunGrim_Upgrade_Body_3_2": {
+   "effect": "Range",
+   "part": "Body"
+  },
+  "GunGrim_Upgrade_Grip_1": {
+   "effect": "MovementAiming",
+   "part": "PistolGrip"
+  },
+  "GunGrim_Upgrade_Grip_2_1": {
+   "effect": "AimingSpeed",
+   "part": "PistolGrip"
+  },
+  "GunGrim_Upgrade_Grip_2_2": {
+   "effect": "AimingReturn",
+   "part": "PistolGrip"
+  },
+  "GunGrim_Upgrade_Grip_3": {
+   "effect": "Recoil",
+   "part": "PistolGrip"
+  },
+  "GunGrim_Upgrade_Stock_2_1": {
+   "effect": "Recoil",
+   "part": "Stock"
+  },
+  "GunGrim_Upgrade_Stock_2_2": {
+   "effect": "AimingSpeed",
+   "part": "Stock"
+  },
+  "GunGvintar_Upgrade_Attachment_Laser": {
+   "effect": "AimingSpeed",
+   "part": "Body"
+  },
+  "GunGvintar_Upgrade_Attachment_Laser_HP": {
+   "effect": "MaxSpread",
+   "part": "Body"
+  },
+  "GunGvintar_Upgrade_Attachment_Offset_Stock": {
+   "effect": "AimingAccuracy",
+   "part": "Stock"
+  },
+  "GunGvintar_Upgrade_Barrel_1": {
+   "effect": "DropDamage",
+   "part": "Barrel"
+  },
+  "GunGvintar_Upgrade_Barrel_2_1": {
+   "effect": "Range",
+   "part": "Barrel"
+  },
+  "GunGvintar_Upgrade_Barrel_2_2": {
+   "effect": "Velocity",
+   "part": "Barrel"
+  },
+  "GunGvintar_Upgrade_Barrel_3": {
+   "effect": "Falloff",
+   "part": "Barrel"
+  },
+  "GunGvintar_Upgrade_Body_1_1": {
+   "effect": "ShootingDepreciation",
+   "part": "Body"
+  },
+  "GunGvintar_Upgrade_Body_1_2": {
+   "effect": "Depreciation",
+   "part": "Body"
+  },
+  "GunGvintar_Upgrade_Body_3": {
+   "effect": "Range",
+   "part": "Body"
+  },
+  "GunGvintar_Upgrade_Stock_1_1": {
+   "effect": "Recoil",
+   "part": "Stock"
+  },
+  "GunGvintar_Upgrade_Stock_1_2": {
+   "effect": "AimingAccuracy",
+   "part": "Stock"
+  },
+  "GunGvintar_Upgrade_Stock_2_1": {
+   "effect": "MovementAiming",
+   "part": "Stock"
+  },
+  "GunIntegral_Upgrade_Attachment_AutMuz": {
+   "effect": "Recoil",
+   "part": "Barrel"
+  },
+  "GunIntegral_Upgrade_Attachment_FrontExtension": {
+   "effect": "Recoil",
+   "part": "Body"
+  },
+  "GunIntegral_Upgrade_Attachment_Grip": {
+   "effect": "Recoil",
+   "part": "Body"
+  },
+  "GunIntegral_Upgrade_Attachment_Laser": {
+   "effect": "AimingSpeed",
+   "part": "Body"
+  },
+  "GunIntegral_Upgrade_Attachment_Laser_HP": {
+   "effect": "MaxSpread",
+   "part": "Body"
+  },
+  "GunIntegral_Upgrade_Attachment_Offset_Stock": {
+   "effect": "AimingAccuracy",
+   "part": "Stock"
+  },
+  "GunIntegral_Upgrade_Attachment_SinMuz": {
+   "effect": "MaxSpread",
+   "part": "Barrel"
+  },
+  "GunIntegral_Upgrade_Barrel_1": {
+   "effect": "SlowingSpread",
+   "part": "Barrel"
+  },
+  "GunIntegral_Upgrade_Barrel_2": {
+   "effect": "Velocity",
+   "part": "Barrel"
+  },
+  "GunIntegral_Upgrade_Barrel_3_1": {
+   "effect": "Falloff",
+   "part": "Barrel"
+  },
+  "GunIntegral_Upgrade_Barrel_3_2": {
+   "effect": "ArmorPiercing",
+   "part": "Barrel"
+  },
+  "GunIntegral_Upgrade_Body_1": {
+   "effect": "Depreciation",
+   "part": "Body"
+  },
+  "GunIntegral_Upgrade_Body_2_1": {
+   "effect": "Recoil",
+   "part": "Body"
+  },
+  "GunIntegral_Upgrade_Body_2_2": {
+   "effect": "AimingSpeed",
+   "part": "Body"
+  },
+  "GunIntegral_Upgrade_Body_3": {
+   "effect": "CaliberChange",
+   "part": "Body"
+  },
+  "GunIntegral_Upgrade_Stock_1": {
+   "effect": "MovementAiming",
+   "part": "Stock"
+  },
+  "GunIntegral_Upgrade_Stock_2_1": {
+   "effect": "AimingSpeed",
+   "part": "Stock"
+  },
+  "GunIntegral_Upgrade_Stock_2_2": {
+   "effect": "Readiness",
+   "part": "Stock"
+  },
+  "GunKharod_Upgrade_Attachment_AutMuz": {
+   "effect": "Recoil",
+   "part": "Barrel"
+  },
+  "GunKharod_Upgrade_Attachment_Grip": {
+   "effect": "Recoil",
+   "part": "Handguard"
+  },
+  "GunKharod_Upgrade_Attachment_Laser": {
+   "effect": "AimingSpeed",
+   "part": "Handguard"
+  },
+  "GunKharod_Upgrade_Attachment_Laser_HP": {
+   "effect": "MaxSpread",
+   "part": "Handguard"
+  },
+  "GunKharod_Upgrade_Attachment_Offset_Stock": {
+   "effect": "AimingAccuracy",
+   "part": "Stock"
+  },
+  "GunKharod_Upgrade_Barrel_1": {
+   "effect": "Range",
+   "part": "Barrel"
+  },
+  "GunKharod_Upgrade_Barrel_2_1": {
+   "effect": "Falloff",
+   "part": "Barrel"
+  },
+  "GunKharod_Upgrade_Barrel_2_2": {
+   "effect": "Velocity",
+   "part": "Barrel"
+  },
+  "GunKharod_Upgrade_Barrel_3_1": {
+   "effect": "ArmorPiercing",
+   "part": "Barrel"
+  },
+  "GunKharod_Upgrade_Barrel_3_2": {
+   "effect": "DropDamage",
+   "part": "Barrel"
+  },
+  "GunKharod_Upgrade_Body_1": {
+   "effect": "CaliberChange",
+   "part": "Body"
+  },
+  "GunKharod_Upgrade_Grip_1": {
+   "effect": "AimingSpeed",
+   "part": "PistolGrip"
+  },
+  "GunKharod_Upgrade_Grip_2": {
+   "effect": "AimingReturn",
+   "part": "PistolGrip"
+  },
+  "GunKharod_Upgrade_Grip_3": {
+   "effect": "Readiness",
+   "part": "PistolGrip"
+  },
+  "GunKharod_Upgrade_Handguard_2_1": {
+   "effect": "MaxSpread",
+   "part": "Handguard"
+  },
+  "GunKharod_Upgrade_Handguard_2_2": {
+   "effect": "Recoil",
+   "part": "Handguard"
+  },
+  "GunKharod_Upgrade_Stock_1": {
+   "effect": "AimingAccuracy",
+   "part": "Stock"
+  },
+  "GunKharod_Upgrade_Stock_2_1": {
+   "effect": "Recoil",
+   "part": "Stock"
+  },
+  "GunKharod_Upgrade_Stock_2_2": {
+   "effect": "MovementAiming",
+   "part": "Stock"
+  },
+  "GunKharod_Upgrade_Stock_3": {
+   "effect": "AimingSpeed",
+   "part": "Stock"
+  },
+  "GunKora_Upgrade_Attachment_Laser": {
+   "effect": "SpreadReduction",
+   "part": "Body"
+  },
+  "GunKora_Upgrade_Attachment_SinMuz": {
+   "effect": "SpreadReduction",
+   "part": "Barrel"
+  },
+  "GunKora_Upgrade_Barrel_1": {
+   "effect": "Falloff",
+   "part": "Barrel"
+  },
+  "GunKora_Upgrade_Barrel_2": {
+   "effect": "ArmorPiercing",
+   "part": "Barrel"
+  },
+  "GunKora_Upgrade_Body_1": {
+   "effect": "SpreadReduction",
+   "part": "Body"
+  },
+  "GunKora_Upgrade_Grip_1": {
+   "effect": "MovementAiming",
+   "part": "PistolGrip"
+  },
+  "GunKora_Upgrade_Grip_2_1": {
+   "effect": "AimingSpeed",
+   "part": "PistolGrip"
+  },
+  "GunKora_Upgrade_Grip_2_2": {
+   "effect": "Readiness",
+   "part": "PistolGrip"
+  },
+  "GunLavina_Upgrade_Attachment_Grip": {
+   "effect": "Recoil",
+   "part": "Handguard"
+  },
+  "GunLavina_Upgrade_Attachment_Laser": {
+   "effect": "AimingSpeed",
+   "part": "Handguard"
+  },
+  "GunLavina_Upgrade_Attachment_Laser_HP": {
+   "effect": "MaxSpread",
+   "part": "Handguard"
+  },
+  "GunLavina_Upgrade_Attachment_Offset_Stock": {
+   "effect": "AimingAccuracy",
+   "part": "Stock"
+  },
+  "GunLavina_Upgrade_Barrel_1": {
+   "effect": "DropDamage",
+   "part": "Barrel"
+  },
+  "GunLavina_Upgrade_Barrel_2_1": {
+   "effect": "Range",
+   "part": "Barrel"
+  },
+  "GunLavina_Upgrade_Barrel_2_2": {
+   "effect": "Velocity",
+   "part": "Barrel"
+  },
+  "GunLavina_Upgrade_Barrel_3": {
+   "effect": "Falloff",
+   "part": "Barrel"
+  },
+  "GunLavina_Upgrade_Body_1_1": {
+   "effect": "ShootingDepreciation",
+   "part": "Body"
+  },
+  "GunLavina_Upgrade_Body_1_2": {
+   "effect": "Depreciation",
+   "part": "Body"
+  },
+  "GunLavina_Upgrade_Body_3": {
+   "effect": "Range",
+   "part": "Body"
+  },
+  "GunLavina_Upgrade_Grip_1": {
+   "effect": "AimingReturn",
+   "part": "PistolGrip"
+  },
+  "GunLavina_Upgrade_Grip_2": {
+   "effect": "Recoil",
+   "part": "PistolGrip"
+  },
+  "GunLavina_Upgrade_Handguard_1_1": {
+   "effect": "AimingAccuracy",
+   "part": "Handguard"
+  },
+  "GunLavina_Upgrade_Handguard_1_2": {
+   "effect": "MaxSpread",
+   "part": "Handguard"
+  },
+  "GunLavina_Upgrade_Stock_1": {
+   "effect": "AimingSpeed",
+   "part": "Stock"
+  },
+  "GunLavina_Upgrade_Stock_2_1": {
+   "effect": "MovementAiming",
+   "part": "Stock"
+  },
+  "GunM10_Upgrade_Attachment_Laser": {
+   "effect": "MaxSpread",
+   "part": "Body"
+  },
+  "GunM10_Upgrade_Barrel_1": {
+   "effect": "SlowingSpread",
+   "part": "Barrel"
+  },
+  "GunM10_Upgrade_Barrel_2_1": {
+   "effect": "Recoil",
+   "part": "Barrel"
+  },
+  "GunM10_Upgrade_Barrel_2_2": {
+   "effect": "AimingSpeed",
+   "part": "Barrel"
+  },
+  "GunM10_Upgrade_Grip_1": {
+   "effect": "Readiness",
+   "part": "PistolGrip"
+  },
+  "GunM10_Upgrade_Grip_2_1": {
+   "effect": "Recoil",
+   "part": "PistolGrip"
+  },
+  "GunM10_Upgrade_Grip_2_2": {
+   "effect": "MaxSpread",
+   "part": "PistolGrip"
+  },
+  "GunM16_Upgrade_Attachment_Grip": {
+   "effect": "Recoil",
+   "part": "Body"
+  },
+  "GunM16_Upgrade_Attachment_Offset_Stock": {
+   "effect": "AimingAccuracy",
+   "part": "Stock"
+  },
+  "GunM16_Upgrade_Barrel_1": {
+   "effect": "DropDamage",
+   "part": "Barrel"
+  },
+  "GunM16_Upgrade_Barrel_2_1": {
+   "effect": "Range",
+   "part": "Barrel"
+  },
+  "GunM16_Upgrade_Barrel_2_2": {
+   "effect": "Falloff",
+   "part": "Barrel"
+  },
+  "GunM16_Upgrade_Barrel_3": {
+   "effect": "ArmorPiercing",
+   "part": "Barrel"
+  },
+  "GunM16_Upgrade_Body_1": {
+   "effect": "ShootingDepreciation",
+   "part": "Body"
+  },
+  "GunM16_Upgrade_Grip_1": {
+   "effect": "AimingSpeed",
+   "part": "PistolGrip"
+  },
+  "GunM16_Upgrade_Grip_2": {
+   "effect": "MovementAiming",
+   "part": "PistolGrip"
+  },
+  "GunM701_Upgrade_Attachment_Laser": {
+   "effect": "AimingSpeed",
+   "part": "Body"
+  },
+  "GunM701_Upgrade_Attachment_Laser_HP": {
+   "effect": "SpreadReduction",
+   "part": "Body"
+  },
+  "GunM701_Upgrade_Attachment_Offset_Stock": {
+   "effect": "AimingAccuracy",
+   "part": "Stock"
+  },
+  "GunM701_Upgrade_Attachment_SinMuz": {
+   "effect": "Recoil",
+   "part": "Barrel"
+  },
+  "GunM701_Upgrade_Barrel_1": {
+   "effect": "Range",
+   "part": "Barrel"
+  },
+  "GunM701_Upgrade_Barrel_2_1": {
+   "effect": "Falloff",
+   "part": "Barrel"
+  },
+  "GunM701_Upgrade_Barrel_2_2": {
+   "effect": "Velocity",
+   "part": "Barrel"
+  },
+  "GunM701_Upgrade_Barrel_3": {
+   "effect": "ArmorPiercing",
+   "part": "Barrel"
+  },
+  "GunM701_Upgrade_Barrel_3_2": {
+   "effect": "CaliberChange",
+   "part": "Barrel"
+  },
+  "GunM701_Upgrade_Body_1": {
+   "effect": "AimingSpeed",
+   "part": "Body"
+  },
+  "GunM701_Upgrade_Body_2_1": {
+   "effect": "Depreciation",
+   "part": "Body"
+  },
+  "GunM701_Upgrade_Body_3_1": {
+   "effect": "AimingSpeed",
+   "part": "Body"
+  },
+  "GunM701_Upgrade_Body_3_2": {
+   "effect": "AimingAccuracy",
+   "part": "Body"
+  },
+  "GunM701_Upgrade_Stock_2_1": {
+   "effect": "AimingSpeed",
+   "part": "Stock"
+  },
+  "GunM701_Upgrade_Stock_2_2": {
+   "effect": "MovementAiming",
+   "part": "Stock"
+  },
+  "GunM701_Upgrade_Stock_3": {
+   "effect": "Readiness",
+   "part": "Stock"
+  },
+  "GunM860_Upgrade_Attachment_Laser": {
+   "effect": "AimingSpeed",
+   "part": "Barrel"
+  },
+  "GunM860_Upgrade_Attachment_Laser_HP": {
+   "effect": "SpreadReduction",
+   "part": "Barrel"
+  },
+  "GunM860_Upgrade_Attachment_Mag": {
+   "effect": "AimingSpeed",
+   "part": "Body"
+  },
+  "GunM860_Upgrade_Attachment_Offset_Stock": {
+   "effect": "AimingAccuracy",
+   "part": "Stock"
+  },
+  "GunM860_Upgrade_Barrel_1_1": {
+   "effect": "SpreadReduction",
+   "part": "Barrel"
+  },
+  "GunM860_Upgrade_Barrel_1_2": {
+   "effect": "CaliberChange",
+   "part": "Barrel"
+  },
+  "GunM860_Upgrade_Barrel_2_1": {
+   "effect": "ArmorPiercing",
+   "part": "Barrel"
+  },
+  "GunM860_Upgrade_Stock_1_1": {
+   "effect": "Recoil",
+   "part": "Stock"
+  },
+  "GunM860_Upgrade_Stock_1_2": {
+   "effect": "AimingSpeed",
+   "part": "Stock"
+  },
+  "GunM860_Upgrade_Stock_2_1": {
+   "effect": "AimingReturn",
+   "part": "Stock"
+  },
+  "GunM860_Upgrade_Stock_2_2": {
+   "effect": "MovementAiming",
+   "part": "Stock"
+  },
+  "GunM860_Upgrade_Stock_3": {
+   "effect": "Readiness",
+   "part": "Stock"
+  },
+  "GunMark_Upgrade_Attachment_Grip": {
+   "effect": "Recoil",
+   "part": "Handguard"
+  },
+  "GunMark_Upgrade_Attachment_Laser": {
+   "effect": "AimingSpeed",
+   "part": "Handguard"
+  },
+  "GunMark_Upgrade_Attachment_Laser_HP": {
+   "effect": "SpreadReduction",
+   "part": "Handguard"
+  },
+  "GunMark_Upgrade_Attachment_Offset_Stock": {
+   "effect": "AimingAccuracy",
+   "part": "Stock"
+  },
+  "GunMark_Upgrade_Attachment_SinMuz": {
+   "effect": "MaxSpread",
+   "part": "Barrel"
+  },
+  "GunMark_Upgrade_Barrel_1_1": {
+   "effect": "Falloff",
+   "part": "Barrel"
+  },
+  "GunMark_Upgrade_Barrel_1_2": {
+   "effect": "Recoil",
+   "part": "Barrel"
+  },
+  "GunMark_Upgrade_Barrel_2_1": {
+   "effect": "DropDamage",
+   "part": "Barrel"
+  },
+  "GunMark_Upgrade_Barrel_2_2": {
+   "effect": "ArmorPiercing",
+   "part": "Barrel"
+  },
+  "GunMark_Upgrade_Body_1_1": {
+   "effect": "Range",
+   "part": "Body"
+  },
+  "GunMark_Upgrade_Body_1_2": {
+   "effect": "Autosh",
+   "part": "Body"
+  },
+  "GunMark_Upgrade_Grip_1_1": {
+   "effect": "AimingAccuracy",
+   "part": "PistolGrip"
+  },
+  "GunMark_Upgrade_Grip_1_2": {
+   "effect": "MovementAiming",
+   "part": "PistolGrip"
+  },
+  "GunMark_Upgrade_Grip_2": {
+   "effect": "Recoil",
+   "part": "PistolGrip"
+  },
+  "GunMark_Upgrade_Grip_3_1": {
+   "effect": "AimingReturn",
+   "part": "PistolGrip"
+  },
+  "GunMark_Upgrade_Grip_3_2": {
+   "effect": "AimingSpeed",
+   "part": "PistolGrip"
+  },
+  "GunObrez_Upgrade_Barrel_1": {
+   "effect": "SpreadReduction",
+   "part": "Barrel"
+  },
+  "GunObrez_Upgrade_Grip_1": {
+   "effect": "Recoil",
+   "part": "PistolGrip"
+  },
+  "GunObrez_Upgrade_Grip_2": {
+   "effect": "MovementAiming",
+   "part": "PistolGrip"
+  },
+  "GunObrez_Upgrade_Handguard_1": {
+   "effect": "Recoil",
+   "part": "Handguard"
+  },
+  "GunPKP_Upgrade_Attachment_AutMuz": {
+   "effect": "Recoil",
+   "part": "Barrel"
+  },
+  "GunPKP_Upgrade_Attachment_Grip": {
+   "effect": "Recoil",
+   "part": "Handguard"
+  },
+  "GunPKP_Upgrade_Attachment_Offset_Stock": {
+   "effect": "AimingAccuracy",
+   "part": "Stock"
+  },
+  "GunPKP_Upgrade_Barrel_2": {
+   "effect": "Depreciation",
+   "part": "Barrel"
+  },
+  "GunPKP_Upgrade_Barrel_3": {
+   "effect": "ArmorPiercing",
+   "part": "Barrel"
+  },
+  "GunPKP_Upgrade_Body_1_1": {
+   "effect": "ShootingDepreciation",
+   "part": "Body"
+  },
+  "GunPKP_Upgrade_Body_1_2": {
+   "effect": "Depreciation",
+   "part": "Body"
+  },
+  "GunPKP_Upgrade_Handguard_1": {
+   "effect": "MaxSpread",
+   "part": "Handguard"
+  },
+  "GunPKP_Upgrade_Handguard_2_1": {
+   "effect": "Recoil",
+   "part": "Handguard"
+  },
+  "GunPKP_Upgrade_Handguard_2_2": {
+   "effect": "AimingSpeed",
+   "part": "Handguard"
+  },
+  "GunPKP_Upgrade_Stock_1": {
+   "effect": "AimingSpeed",
+   "part": "Stock"
+  },
+  "GunPKP_Upgrade_Stock_2_2": {
+   "effect": "MovementAiming",
+   "part": "Stock"
+  },
+  "GunPKP_Upgrade_Stock_3": {
+   "effect": "Recoil",
+   "part": "Stock"
+  },
+  "GunPM_Upgrade_Barrel_1": {
+   "effect": "Velocity",
+   "part": "Barrel"
+  },
+  "GunPM_Upgrade_Barrel_2": {
+   "effect": "ArmorPiercing",
+   "part": "Barrel"
+  },
+  "GunRam2_Upgrade_Attachment_Grip": {
+   "effect": "Recoil",
+   "part": "Handguard"
+  },
+  "GunRam2_Upgrade_Attachment_Laser": {
+   "effect": "AimingSpeed",
+   "part": "Handguard"
+  },
+  "GunRam2_Upgrade_Attachment_Laser_HP": {
+   "effect": "SpreadReduction",
+   "part": "Handguard"
+  },
+  "GunRam2_Upgrade_Attachment_Offset_Stock": {
+   "effect": "AimingAccuracy",
+   "part": "Stock"
+  },
+  "GunRam2_Upgrade_Attachment_SinMuz": {
+   "effect": "SpreadReduction",
+   "part": "Barrel"
+  },
+  "GunRam2_Upgrade_Body_2": {
+   "effect": "Depreciation",
+   "part": "Body"
+  },
+  "GunRam2_Upgrade_Handguard_1_1": {
+   "effect": "SpreadReduction",
+   "part": "Handguard"
+  },
+  "GunRam2_Upgrade_Handguard_1_2": {
+   "effect": "Recoil",
+   "part": "Handguard"
+  },
+  "GunRam2_Upgrade_Handguard_2_1": {
+   "effect": "Falloff",
+   "part": "Handguard"
+  },
+  "GunRam2_Upgrade_Handguard_2_2": {
+   "effect": "AimingSpeed",
+   "part": "Handguard"
+  },
+  "GunRam2_Upgrade_Stock_1": {
+   "effect": "Readiness",
+   "part": "Stock"
+  },
+  "GunRam2_Upgrade_Stock_2_1": {
+   "effect": "Recoil",
+   "part": "Stock"
+  },
+  "GunRam2_Upgrade_Stock_2_2": {
+   "effect": "MovementAiming",
+   "part": "Stock"
+  },
+  "GunRam2_Upgrade_Stock_3_1": {
+   "effect": "AimingReturn",
+   "part": "Stock"
+  },
+  "GunRam2_Upgrade_Stock_3_2": {
+   "effect": "AimingSpeed",
+   "part": "Stock"
+  },
+  "GunRhino_Upgrade_Attachment_Laser": {
+   "effect": "SpreadReduction",
+   "part": "Barrel"
+  },
+  "GunRhino_Upgrade_Attachment_SinMuz": {
+   "effect": "SpreadReduction",
+   "part": "Barrel"
+  },
+  "GunRhino_Upgrade_Barrel_1": {
+   "effect": "Velocity",
+   "part": "Barrel"
+  },
+  "GunRhino_Upgrade_Barrel_2_1": {
+   "effect": "SpreadReduction",
+   "part": "Barrel"
+  },
+  "GunRhino_Upgrade_Barrel_2_2": {
+   "effect": "DropDamage",
+   "part": "Barrel"
+  },
+  "GunRhino_Upgrade_Barrel_3": {
+   "effect": "ArmorPiercing",
+   "part": "Barrel"
+  },
+  "GunRhino_Upgrade_Body_1_1": {
+   "effect": "CaliberChange",
+   "part": "Body"
+  },
+  "GunRhino_Upgrade_Body_1_2": {
+   "effect": "AimingAccuracy",
+   "part": "Body"
+  },
+  "GunRhino_Upgrade_Grip_2_1": {
+   "effect": "AimingSpeed",
+   "part": "PistolGrip"
+  },
+  "GunRhino_Upgrade_Grip_2_2": {
+   "effect": "MovementAiming",
+   "part": "PistolGrip"
+  },
+  "GunRhino_Upgrade_Grip_3": {
+   "effect": "Readiness",
+   "part": "PistolGrip"
+  },
+  "GunSKP_Upgrade_Attachment_AutMuz": {
+   "effect": "Recoil",
+   "part": "Barrel"
+  },
+  "GunSKP_Upgrade_Attachment_Grip": {
+   "effect": "Recoil",
+   "part": "Handguard"
+  },
+  "GunSKP_Upgrade_Attachment_Laser": {
+   "effect": "AimingSpeed",
+   "part": "Handguard"
+  },
+  "GunSKP_Upgrade_Attachment_Laser_HP": {
+   "effect": "MaxSpread",
+   "part": "Handguard"
+  },
+  "GunSKP_Upgrade_Attachment_Offset_Stock": {
+   "effect": "AimingAccuracy",
+   "part": "Stock"
+  },
+  "GunSKP_Upgrade_Attachment_SinMuz": {
+   "effect": "SpreadReduction",
+   "part": "Barrel"
+  },
+  "GunSKP_Upgrade_Barrel_1_1": {
+   "effect": "Falloff",
+   "part": "Barrel"
+  },
+  "GunSKP_Upgrade_Barrel_1_2": {
+   "effect": "Velocity",
+   "part": "Barrel"
+  },
+  "GunSKP_Upgrade_Barrel_2_1": {
+   "effect": "DropDamage",
+   "part": "Barrel"
+  },
+  "GunSKP_Upgrade_Barrel_3_1": {
+   "effect": "ArmorPiercing",
+   "part": "Barrel"
+  },
+  "GunSKP_Upgrade_Barrel_3_2": {
+   "effect": "Range",
+   "part": "Barrel"
+  },
+  "GunSKP_Upgrade_Body_1": {
+   "effect": "Range",
+   "part": "Body"
+  },
+  "GunSKP_Upgrade_Grip_1_1": {
+   "effect": "AimingAccuracy",
+   "part": "PistolGrip"
+  },
+  "GunSKP_Upgrade_Grip_1_2": {
+   "effect": "AimingReturn",
+   "part": "PistolGrip"
+  },
+  "GunSKP_Upgrade_Grip_2": {
+   "effect": "Readiness",
+   "part": "PistolGrip"
+  },
+  "GunSKP_Upgrade_Handguard_1_1": {
+   "effect": "SpreadReduction",
+   "part": "Handguard"
+  },
+  "GunSKP_Upgrade_Handguard_1_2": {
+   "effect": "Recoil",
+   "part": "Handguard"
+  },
+  "GunSKP_Upgrade_Handguard_2": {
+   "effect": "AimingSpeed",
+   "part": "Handguard"
+  },
+  "GunSKP_Upgrade_Stock_1_1": {
+   "effect": "MovementAiming",
+   "part": "Stock"
+  },
+  "GunSPSA_Upgrade_Attachment_Grip": {
+   "effect": "Recoil",
+   "part": "Body"
+  },
+  "GunSPSA_Upgrade_Attachment_Laser": {
+   "effect": "AimingSpeed",
+   "part": "Barrel"
+  },
+  "GunSPSA_Upgrade_Attachment_Laser_HP": {
+   "effect": "SpreadReduction",
+   "part": "Barrel"
+  },
+  "GunSPSA_Upgrade_Attachment_Offset_Stock": {
+   "effect": "AimingAccuracy",
+   "part": "Stock"
+  },
+  "GunSPSA_Upgrade_Attachment_SinMuz": {
+   "effect": "SpreadReduction",
+   "part": "Barrel"
+  },
+  "GunSPSA_Upgrade_Barrel_1": {
+   "effect": "ArmorPiercing",
+   "part": "Barrel"
+  },
+  "GunSPSA_Upgrade_Barrel_2_1": {
+   "effect": "Falloff",
+   "part": "Barrel"
+  },
+  "GunSPSA_Upgrade_Barrel_2_2": {
+   "effect": "SlowingSpread",
+   "part": "Barrel"
+  },
+  "GunSPSA_Upgrade_Barrel_3_1": {
+   "effect": "DropDamage",
+   "part": "Barrel"
+  },
+  "GunSPSA_Upgrade_Barrel_3_2": {
+   "effect": "SpreadReduction",
+   "part": "Barrel"
+  },
+  "GunSPSA_Upgrade_Body_1": {
+   "effect": "Recoil",
+   "part": "Body"
+  },
+  "GunSPSA_Upgrade_Body_2_1": {
+   "effect": "Depreciation",
+   "part": "Body"
+  },
+  "GunSPSA_Upgrade_Body_3_1": {
+   "effect": "AimingSpeed",
+   "part": "Body"
+  },
+  "GunSPSA_Upgrade_Body_3_2": {
+   "effect": "MaxSpread",
+   "part": "Body"
+  },
+  "GunSPSA_Upgrade_Stock_1": {
+   "effect": "AimingSpeed",
+   "part": "Stock"
+  },
+  "GunSPSA_Upgrade_Stock_2_1": {
+   "effect": "Recoil",
+   "part": "Stock"
+  },
+  "GunSPSA_Upgrade_Stock_2_2": {
+   "effect": "MovementAiming",
+   "part": "Stock"
+  },
+  "GunSVDM_Upgrade_Attachment_Laser": {
+   "effect": "AimingSpeed",
+   "part": "Body"
+  },
+  "GunSVDM_Upgrade_Attachment_Laser_HP": {
+   "effect": "SpreadReduction",
+   "part": "Body"
+  },
+  "GunSVDM_Upgrade_Attachment_Offset_Stock": {
+   "effect": "AimingAccuracy",
+   "part": "Stock"
+  },
+  "GunSVDM_Upgrade_Attachment_SinMuz": {
+   "effect": "SpreadReduction",
+   "part": "Barrel"
+  },
+  "GunSVDM_Upgrade_Barrel_1": {
+   "effect": "Falloff",
+   "part": "Barrel"
+  },
+  "GunSVDM_Upgrade_Barrel_2_1": {
+   "effect": "DropDamage",
+   "part": "Barrel"
+  },
+  "GunSVDM_Upgrade_Barrel_2_2": {
+   "effect": "Range",
+   "part": "Barrel"
+  },
+  "GunSVDM_Upgrade_Barrel_3": {
+   "effect": "Velocity",
+   "part": "Barrel"
+  },
+  "GunSVDM_Upgrade_Barrel_3_2": {
+   "effect": "CaliberChange",
+   "part": "Barrel"
+  },
+  "GunSVDM_Upgrade_Body_1_1": {
+   "effect": "Depreciation",
+   "part": "Body"
+  },
+  "GunSVDM_Upgrade_Stock_1": {
+   "effect": "AimingAccuracy",
+   "part": "Stock"
+  },
+  "GunSVDM_Upgrade_Stock_2_1": {
+   "effect": "AimingSpeed",
+   "part": "Stock"
+  },
+  "GunSVDM_Upgrade_Stock_2_2": {
+   "effect": "AimingReturn",
+   "part": "Stock"
+  },
+  "GunSVU_Upgrade_Attachment_Grip": {
+   "effect": "Recoil",
+   "part": "Handguard"
+  },
+  "GunSVU_Upgrade_Attachment_Laser": {
+   "effect": "AimingSpeed",
+   "part": "Handguard"
+  },
+  "GunSVU_Upgrade_Attachment_Laser_HP": {
+   "effect": "SpreadReduction",
+   "part": "Handguard"
+  },
+  "GunSVU_Upgrade_Attachment_Offset_Stock": {
+   "effect": "AimingAccuracy",
+   "part": "Stock"
+  },
+  "GunSVU_Upgrade_Attachment_SinMuz": {
+   "effect": "SpreadReduction",
+   "part": "Barrel"
+  },
+  "GunSVU_Upgrade_Barrel_1_1": {
+   "effect": "Range",
+   "part": "Barrel"
+  },
+  "GunSVU_Upgrade_Barrel_1_2": {
+   "effect": "Falloff",
+   "part": "Barrel"
+  },
+  "GunSVU_Upgrade_Barrel_2_1": {
+   "effect": "DropDamage",
+   "part": "Barrel"
+  },
+  "GunSVU_Upgrade_Barrel_2_2": {
+   "effect": "Velocity",
+   "part": "Barrel"
+  },
+  "GunSVU_Upgrade_Barrel_3": {
+   "effect": "ArmorPiercing",
+   "part": "Barrel"
+  },
+  "GunSVU_Upgrade_Barrel_3_2": {
+   "effect": "CaliberChange",
+   "part": "Barrel"
+  },
+  "GunSVU_Upgrade_Grip_1_1": {
+   "effect": "AimingSpeed",
+   "part": "PistolGrip"
+  },
+  "GunSVU_Upgrade_Grip_1_2": {
+   "effect": "Readiness",
+   "part": "PistolGrip"
+  },
+  "GunSVU_Upgrade_Grip_2_1": {
+   "effect": "AimingAccuracy",
+   "part": "PistolGrip"
+  },
+  "GunSVU_Upgrade_Grip_2_2": {
+   "effect": "AimingReturn",
+   "part": "PistolGrip"
+  },
+  "GunSVU_Upgrade_Grip_3_1": {
+   "effect": "MovementAiming",
+   "part": "PistolGrip"
+  },
+  "GunSVU_Upgrade_Grip_3_2": {
+   "effect": "Recoil",
+   "part": "PistolGrip"
+  },
+  "GunSVU_Upgrade_Handguard_1": {
+   "effect": "Depreciation",
+   "part": "Handguard"
+  },
+  "GunSVU_Upgrade_Handguard_2_2": {
+   "effect": "Range",
+   "part": "Handguard"
+  },
+  "GunSVU_Upgrade_Handguard_3": {
+   "effect": "AimingAccuracy",
+   "part": "Handguard"
+  },
+  "GunSVU_Upgrade_Stock_1_1": {
+   "effect": "AimingAccuracy",
+   "part": "Stock"
+  },
+  "GunSVU_Upgrade_Stock_1_2": {
+   "effect": "MovementAiming",
+   "part": "Stock"
+  },
+  "GunSVU_Upgrade_Stock_2_2": {
+   "effect": "Recoil",
+   "part": "Stock"
+  },
+  "GunSVU_Upgrade_Stock_3": {
+   "effect": "AimingSpeed",
+   "part": "Stock"
+  },
+  "GunTOZ_Upgrade_Attachment_Offset_Stock": {
+   "effect": "AimingAccuracy",
+   "part": "Stock"
+  },
+  "GunTOZ_Upgrade_Barrel_2_1": {
+   "effect": "CaliberChange",
+   "part": "Barrel"
+  },
+  "GunTOZ_Upgrade_Barrel_3": {
+   "effect": "ArmorPiercing",
+   "part": "Barrel"
+  },
+  "GunTOZ_Upgrade_Handguard_1": {
+   "effect": "Recoil",
+   "part": "Handguard"
+  },
+  "GunTOZ_Upgrade_Stock_1": {
+   "effect": "Recoil",
+   "part": "Stock"
+  },
+  "GunTOZ_Upgrade_Stock_2": {
+   "effect": "AimingSpeed",
+   "part": "Stock"
+  },
+  "GunTOZ_Upgrade_Stock_3": {
+   "effect": "MovementAiming",
+   "part": "Stock"
+  },
+  "GunThreeLine_Upgrade_Attachment_Grip": {
+   "effect": "Recoil",
+   "part": "Barrel"
+  },
+  "GunThreeLine_Upgrade_Attachment_Offset_Stock": {
+   "effect": "AimingAccuracy",
+   "part": "Stock"
+  },
+  "GunThreeLine_Upgrade_Attachment_SinMuz": {
+   "effect": "SpreadReduction",
+   "part": "Barrel"
+  },
+  "GunThreeLine_Upgrade_Barrel_1": {
+   "effect": "Depreciation",
+   "part": "Barrel"
+  },
+  "GunThreeLine_Upgrade_Barrel_2_2": {
+   "effect": "AimingAccuracy",
+   "part": "Barrel"
+  },
+  "GunThreeLine_Upgrade_Barrel_3": {
+   "effect": "ArmorPiercing",
+   "part": "Barrel"
+  },
+  "GunThreeLine_Upgrade_Grip_1": {
+   "effect": "AimingSpeed",
+   "part": "PistolGrip"
+  },
+  "GunThreeLine_Upgrade_Grip_2_1": {
+   "effect": "AimingAccuracy",
+   "part": "PistolGrip"
+  },
+  "GunThreeLine_Upgrade_Grip_2_2": {
+   "effect": "MovementAiming",
+   "part": "PistolGrip"
+  },
+  "GunThreeLine_Upgrade_Stock_1_2": {
+   "effect": "AimingSpeed",
+   "part": "Stock"
+  },
+  "GunUDP_Upgrade_Attachment_Laser": {
+   "effect": "SpreadReduction",
+   "part": "Barrel"
+  },
+  "GunUDP_Upgrade_Barrel_1": {
+   "effect": "Falloff",
+   "part": "Barrel"
+  },
+  "GunUDP_Upgrade_Barrel_2_1": {
+   "effect": "DropDamage",
+   "part": "Barrel"
+  },
+  "GunUDP_Upgrade_Barrel_2_2": {
+   "effect": "ArmorPiercing",
+   "part": "Barrel"
+  },
+  "GunUDP_Upgrade_Body_1": {
+   "effect": "Readiness",
+   "part": "Body"
+  },
+  "GunUDP_Upgrade_Body_2": {
+   "effect": "MovementAiming",
+   "part": "Body"
+  },
+  "GunViper_Upgrade_Attachment_Laser": {
+   "effect": "AimingSpeed",
+   "part": "Barrel"
+  },
+  "GunViper_Upgrade_Attachment_Laser_HP": {
+   "effect": "MaxSpread",
+   "part": "Barrel"
+  },
+  "GunViper_Upgrade_Attachment_Offset_Stock": {
+   "effect": "AimingAccuracy",
+   "part": "Stock"
+  },
+  "GunViper_Upgrade_Barrel_1_1": {
+   "effect": "Velocity",
+   "part": "Barrel"
+  },
+  "GunViper_Upgrade_Barrel_1_2": {
+   "effect": "ShootingDepreciation",
+   "part": "Barrel"
+  },
+  "GunViper_Upgrade_Barrel_2_1": {
+   "effect": "ArmorPiercing",
+   "part": "Barrel"
+  },
+  "GunViper_Upgrade_Barrel_2_2": {
+   "effect": "Falloff",
+   "part": "Barrel"
+  },
+  "GunViper_Upgrade_Barrel_3": {
+   "effect": "MaxSpread",
+   "part": "Barrel"
+  },
+  "GunViper_Upgrade_Body_1": {
+   "effect": "Depreciation",
+   "part": "Body"
+  },
+  "GunViper_Upgrade_Body_2": {
+   "effect": "MovementAiming",
+   "part": "Body"
+  },
+  "GunViper_Upgrade_Body_3_1": {
+   "effect": "CaliberChange",
+   "part": "Body"
+  },
+  "GunViper_Upgrade_Body_3_2": {
+   "effect": "Recoil",
+   "part": "Body"
+  },
+  "GunZubr_Upgrade_Attachment_AutMuz": {
+   "effect": "Recoil",
+   "part": "Barrel"
+  },
+  "GunZubr_Upgrade_Attachment_Laser": {
+   "effect": "AimingSpeed",
+   "part": "Handguard"
+  },
+  "GunZubr_Upgrade_Attachment_Laser_HP": {
+   "effect": "MaxSpread",
+   "part": "Handguard"
+  },
+  "GunZubr_Upgrade_Attachment_Offset_Stock": {
+   "effect": "AimingAccuracy",
+   "part": "Stock"
+  },
+  "GunZubr_Upgrade_Attachment_SinMuz": {
+   "effect": "MaxSpread",
+   "part": "Barrel"
+  },
+  "GunZubr_Upgrade_Barrel_1": {
+   "effect": "DropDamage",
+   "part": "Barrel"
+  },
+  "GunZubr_Upgrade_Barrel_2_1": {
+   "effect": "ArmorPiercing",
+   "part": "Barrel"
+  },
+  "GunZubr_Upgrade_Barrel_2_2": {
+   "effect": "MaxSpread",
+   "part": "Barrel"
+  },
+  "GunZubr_Upgrade_Barrel_3": {
+   "effect": "Range",
+   "part": "Barrel"
+  },
+  "GunZubr_Upgrade_Body_2": {
+   "effect": "Depreciation",
+   "part": "Body"
+  },
+  "GunZubr_Upgrade_Grip_1": {
+   "effect": "AimingReturn",
+   "part": "PistolGrip"
+  },
+  "GunZubr_Upgrade_Grip_2_1": {
+   "effect": "MovementAiming",
+   "part": "PistolGrip"
+  },
+  "GunZubr_Upgrade_Grip_2_2": {
+   "effect": "AimingAccuracy",
+   "part": "PistolGrip"
+  },
+  "GunZubr_Upgrade_Grip_3": {
+   "effect": "Recoil",
+   "part": "PistolGrip"
+  },
+  "GunZubr_Upgrade_Handguard_1": {
+   "effect": "Recoil",
+   "part": "Handguard"
+  },
+  "GunZubr_Upgrade_Handguard_2_1": {
+   "effect": "AimingSpeed",
+   "part": "Handguard"
+  },
+  "GunZubr_Upgrade_Handguard_2_2": {
+   "effect": "MaxSpread",
+   "part": "Handguard"
+  }
+ }
+}

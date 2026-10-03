@@ -3,11 +3,24 @@
 version = 4
 
 [[package]]
+name = "sse-catalog"
+version = "2.0.0-dev"
+dependencies = [
+ "sse-codecs",
+ "sse-content",
+ "sse-core",
+]
+
+[[package]]
 name = "sse-cli"
 version = "2.0.0-dev"
 dependencies = [
  "sse-codecs",
+ "sse-content",
  "sse-core",
+ "sse-fixes",
+ "sse-lint",
+ "sse-update",
  "sse-xray",
 ]
 
@@ -31,6 +44,26 @@ name = "sse-core"
 version = "2.0.0-dev"
 
 [[package]]
+name = "sse-fixes"
+version = "2.0.0-dev"
+dependencies = [
+ "sse-catalog",
+ "sse-codecs",
+ "sse-content",
+ "sse-core",
+]
+
+[[package]]
+name = "sse-lint"
+version = "2.0.0-dev"
+dependencies = [
+ "sse-codecs",
+ "sse-content",
+ "sse-core",
+ "sse-fixes",
+]
+
+[[package]]
 name = "sse-s2"
 version = "2.0.0-dev"
 dependencies = [
@@ -41,11 +74,20 @@ dependencies = [
 name = "sse-storage"
 version = "2.0.0-dev"
 dependencies = [
+ "sse-codecs",
  "sse-core",
 ]
 
 [[package]]
 name = "sse-ui"
+version = "2.0.0-dev"
+dependencies = [
+ "sse-codecs",
+ "sse-core",
+]
+
+[[package]]
+name = "sse-update"
 version = "2.0.0-dev"
 dependencies = [
  "sse-codecs",

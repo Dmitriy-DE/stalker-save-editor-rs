@@ -1,5 +1,5 @@
 [package]
-name = "sse-storage"
+name = "sse-update"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

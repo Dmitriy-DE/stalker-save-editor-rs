@@ -13,6 +13,10 @@ path = "src/main.rs"
 sse-codecs = { path = "../sse-codecs" }
 sse-core = { path = "../sse-core" }
 sse-xray = { path = "../sse-xray" }
+sse-content = { path = "../sse-content" }
+sse-fixes = { path = "../sse-fixes" }
+sse-lint = { path = "../sse-lint" }
+sse-update = { path = "../sse-update" }
 
 [lints]
 workspace = true

@@ -1,5 +1,5 @@
 [package]
-name = "sse-storage"
+name = "sse-lint"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,6 +7,8 @@ rust-version.workspace = true
 
 [dependencies]
 sse-core = { path = "../sse-core" }
+sse-content = { path = "../sse-content" }
+sse-fixes = { path = "../sse-fixes" }
 sse-codecs = { path = "../sse-codecs" }
 
 [lints]
