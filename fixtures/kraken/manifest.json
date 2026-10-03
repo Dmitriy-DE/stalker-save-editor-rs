@@ -1,0 +1,163 @@
+[
+ {
+  "name": "text-like-l1",
+  "raw": "text-like.raw",
+  "size": 300000,
+  "packed": 141,
+  "sha256": "74c3ac3aa8e3322c0e6a5e24b947e4a23a8fb3224434b3641970b3e5a7a33ace"
+ },
+ {
+  "name": "text-like-l2",
+  "raw": "text-like.raw",
+  "size": 300000,
+  "packed": 144,
+  "sha256": "74c3ac3aa8e3322c0e6a5e24b947e4a23a8fb3224434b3641970b3e5a7a33ace"
+ },
+ {
+  "name": "text-like-l4",
+  "raw": "text-like.raw",
+  "size": 300000,
+  "packed": 144,
+  "sha256": "74c3ac3aa8e3322c0e6a5e24b947e4a23a8fb3224434b3641970b3e5a7a33ace"
+ },
+ {
+  "name": "text-like-l6",
+  "raw": "text-like.raw",
+  "size": 300000,
+  "packed": 133,
+  "sha256": "74c3ac3aa8e3322c0e6a5e24b947e4a23a8fb3224434b3641970b3e5a7a33ace"
+ },
+ {
+  "name": "text-like-l8",
+  "raw": "text-like.raw",
+  "size": 300000,
+  "packed": 133,
+  "sha256": "74c3ac3aa8e3322c0e6a5e24b947e4a23a8fb3224434b3641970b3e5a7a33ace"
+ },
+ {
+  "name": "save-like-small-l1",
+  "raw": "save-like-small.raw",
+  "size": 70000,
+  "packed": 24313,
+  "sha256": "9b1188dde912b9009a447f64538bf0b297f2960ed050d28b044b5995862ac919"
+ },
+ {
+  "name": "save-like-small-l2",
+  "raw": "save-like-small.raw",
+  "size": 70000,
+  "packed": 23458,
+  "sha256": "9b1188dde912b9009a447f64538bf0b297f2960ed050d28b044b5995862ac919"
+ },
+ {
+  "name": "save-like-small-l4",
+  "raw": "save-like-small.raw",
+  "size": 70000,
+  "packed": 22983,
+  "sha256": "9b1188dde912b9009a447f64538bf0b297f2960ed050d28b044b5995862ac919"
+ },
+ {
+  "name": "save-like-small-l6",
+  "raw": "save-like-small.raw",
+  "size": 70000,
+  "packed": 22588,
+  "sha256": "9b1188dde912b9009a447f64538bf0b297f2960ed050d28b044b5995862ac919"
+ },
+ {
+  "name": "save-like-multi-block-l1",
+  "raw": "save-like-multi-block.raw",
+  "size": 700000,
+  "packed": 238096,
+  "sha256": "4881f55ec947d0ecdc5ac6dfd42d31afb88b78eaa1655f295a564fa1c905d5ff"
+ },
+ {
+  "name": "save-like-multi-block-l2",
+  "raw": "save-like-multi-block.raw",
+  "size": 700000,
+  "packed": 229567,
+  "sha256": "4881f55ec947d0ecdc5ac6dfd42d31afb88b78eaa1655f295a564fa1c905d5ff"
+ },
+ {
+  "name": "save-like-multi-block-l4",
+  "raw": "save-like-multi-block.raw",
+  "size": 700000,
+  "packed": 223953,
+  "sha256": "4881f55ec947d0ecdc5ac6dfd42d31afb88b78eaa1655f295a564fa1c905d5ff"
+ },
+ {
+  "name": "save-like-multi-block-l6",
+  "raw": "save-like-multi-block.raw",
+  "size": 700000,
+  "packed": 218906,
+  "sha256": "4881f55ec947d0ecdc5ac6dfd42d31afb88b78eaa1655f295a564fa1c905d5ff"
+ },
+ {
+  "name": "random-l1",
+  "raw": "random.raw",
+  "size": 100000,
+  "packed": 100002,
+  "sha256": "add2c86b0ebdf62e8ffc3ff5741a7955cb82b1f20aac436d79104b25c32851b9"
+ },
+ {
+  "name": "random-l2",
+  "raw": "random.raw",
+  "size": 100000,
+  "packed": 100002,
+  "sha256": "add2c86b0ebdf62e8ffc3ff5741a7955cb82b1f20aac436d79104b25c32851b9"
+ },
+ {
+  "name": "random-l4",
+  "raw": "random.raw",
+  "size": 100000,
+  "packed": 100002,
+  "sha256": "add2c86b0ebdf62e8ffc3ff5741a7955cb82b1f20aac436d79104b25c32851b9"
+ },
+ {
+  "name": "random-l6",
+  "raw": "random.raw",
+  "size": 100000,
+  "packed": 100002,
+  "sha256": "add2c86b0ebdf62e8ffc3ff5741a7955cb82b1f20aac436d79104b25c32851b9"
+ },
+ {
+  "name": "random-l8",
+  "raw": "random.raw",
+  "size": 100000,
+  "packed": 100002,
+  "sha256": "add2c86b0ebdf62e8ffc3ff5741a7955cb82b1f20aac436d79104b25c32851b9"
+ },
+ {
+  "name": "one-byte-l1",
+  "raw": "one-byte.raw",
+  "size": 1,
+  "packed": 6,
+  "sha256": "8de0b3c47f112c59745f717a626932264c422a7563954872e237b223af4ad643"
+ },
+ {
+  "name": "one-byte-l2",
+  "raw": "one-byte.raw",
+  "size": 1,
+  "packed": 6,
+  "sha256": "8de0b3c47f112c59745f717a626932264c422a7563954872e237b223af4ad643"
+ },
+ {
+  "name": "one-byte-l4",
+  "raw": "one-byte.raw",
+  "size": 1,
+  "packed": 6,
+  "sha256": "8de0b3c47f112c59745f717a626932264c422a7563954872e237b223af4ad643"
+ },
+ {
+  "name": "one-byte-l6",
+  "raw": "one-byte.raw",
+  "size": 1,
+  "packed": 6,
+  "sha256": "8de0b3c47f112c59745f717a626932264c422a7563954872e237b223af4ad643"
+ },
+ {
+  "name": "one-byte-l8",
+  "raw": "one-byte.raw",
+  "size": 1,
+  "packed": 6,
+  "sha256": "8de0b3c47f112c59745f717a626932264c422a7563954872e237b223af4ad643"
+ }
+]

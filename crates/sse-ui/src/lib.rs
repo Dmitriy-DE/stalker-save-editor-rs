@@ -8,3 +8,5 @@ pub mod list;
 pub mod raster;
 /// Line breaking, carets, ellipsis and search folding (X13).
 pub mod text;
+/// X11 core protocol, MIT-SHM, XKB and clipboard encoding over a transport trait (X11).
+pub mod x11;
