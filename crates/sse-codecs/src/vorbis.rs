@@ -1450,6 +1450,7 @@ impl Complex {
     }
 }
 
+#[allow(clippy::cast_possible_truncation)]
 fn deterministic_sin_cos(angle: f32) -> (f32, f32) {
     const PI64: f64 = 3.141_592_653_589_793;
     const HALF_PI64: f64 = PI64 / 2.0;
