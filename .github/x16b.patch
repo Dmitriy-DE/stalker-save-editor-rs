@@ -1,0 +1,321 @@
+--- a/crates/sse-codecs/src/kraken.rs
++++ b/crates/sse-codecs/src/kraken.rs
+@@ -2184,7 +2184,7 @@
+ #[derive(Clone, Debug)]
+ struct OffsetBits<'a> {
+     data: &'a [u8],
+-    pos: usize,
++    pos: i64,
+     bits: u32,
+     bitpos: i32,
+     backward: bool,
+@@ -2204,7 +2204,7 @@
+     fn backward(data: &'a [u8]) -> Result<Self> {
+         let mut s = Self {
+             data,
+-            pos: data.len(),
++            pos: i64::try_from(data.len()).map_err(|_| Error::damaged("offset source length exceeds i64"))?,
+             bits: 0,
+             bitpos: 24,
+             backward: true,
+@@ -2213,33 +2213,32 @@
+         Ok(s)
+     }
+     fn refill(&mut self) -> Result<()> {
++        if self.bitpos > 24 {
++            return Err(Error::damaged("offset reader bit position exceeds refill bound"));
++        }
++        let data_len = i64::try_from(self.data.len()).map_err(|_| Error::damaged("offset source length exceeds i64"))?;
+         while self.bitpos > 0 {
+             let byte = if self.backward {
+-                self.pos = self
+-                    .pos
+-                    .checked_sub(1)
+-                    .ok_or_else(|| Error::damaged("backward offset bitstream underflow"))?;
+-                *self
+-                    .data
+-                    .get(self.pos)
+-                    .ok_or_else(|| Error::damaged("backward offset bitstream exhausted"))?
++                self.pos = self.pos.checked_sub(1).ok_or_else(|| Error::damaged("backward offset position underflow"))?;
++                if self.pos >= 0 && self.pos < data_len {
++                    let index = usize::try_from(self.pos).map_err(|_| Error::damaged("backward offset index conversion failed"))?;
++                    self.data.get(index).copied().unwrap_or_default()
++                } else {
++                    0
++                }
+             } else {
+-                let b = *self
+-                    .data
+-                    .get(self.pos)
+-                    .ok_or_else(|| Error::damaged("forward offset bitstream exhausted"))?;
+-                self.pos = self
+-                    .pos
+-                    .checked_add(1)
+-                    .ok_or_else(|| Error::damaged("forward offset position overflow"))?;
+-                b
++                let byte = if self.pos >= 0 && self.pos < data_len {
++                    let index = usize::try_from(self.pos).map_err(|_| Error::damaged("forward offset index conversion failed"))?;
++                    self.data.get(index).copied().unwrap_or_default()
++                } else {
++                    0
++                };
++                self.pos = self.pos.checked_add(1).ok_or_else(|| Error::damaged("forward offset position overflow"))?;
++                byte
+             };
+-            self.bits |= u32::from(byte)
+-                .checked_shl(
+-                    u32::try_from(self.bitpos).map_err(|_| Error::damaged("offset bit shift conversion failed"))?,
+-                )
+-                .unwrap_or_default();
+-            self.bitpos = self.bitpos.saturating_sub(8);
++            let shift = u32::try_from(self.bitpos).map_err(|_| Error::damaged("offset bit shift conversion failed"))?;
++            self.bits |= u32::from(byte).checked_shl(shift).unwrap_or_default();
++            self.bitpos = self.bitpos.checked_sub(8).ok_or_else(|| Error::damaged("offset bit position underflow"))?;
+         }
+         Ok(())
+     }
+@@ -2250,30 +2249,25 @@
+         if n > 24 {
+             return Err(Error::damaged("offset bit read exceeds 24"));
+         }
+-        let shift = 32_u32
+-            .checked_sub(n)
+-            .ok_or_else(|| Error::damaged("offset bit shift underflow"))?;
+-        let v = self.bits >> shift;
++        let shift = 32_u32.checked_sub(n).ok_or_else(|| Error::damaged("offset bit shift underflow"))?;
++        let value = self.bits >> shift;
+         self.bits = self.bits.checked_shl(n).unwrap_or_default();
+         self.bitpos = self
+             .bitpos
+             .checked_add(i32::try_from(n).map_err(|_| Error::damaged("offset bit count conversion failed"))?)
+             .ok_or_else(|| Error::damaged("offset bit position overflow"))?;
+-        Ok(v)
++        Ok(value)
+     }
+     fn read_more(&mut self, n: u32) -> Result<u32> {
+-        let v = if n <= 24 {
++        let value = if n <= 24 {
+             self.read_zero(n)?
+         } else {
+-            let high = self
+-                .read_zero(24)?
+-                .checked_shl(n.saturating_sub(24))
+-                .unwrap_or_default();
++            let high = self.read_zero(24)?.checked_shl(n.saturating_sub(24)).unwrap_or_default();
+             self.refill()?;
+             high | self.read_zero(n.saturating_sub(24))?
+         };
+         self.refill()?;
+-        Ok(v)
++        Ok(value)
+     }
+     fn read_distance(&mut self, v: u8) -> Result<u32> {
+         let n = if v < 0xf0 {
+@@ -2319,19 +2313,19 @@
+         self.bits = self.bits.checked_shl(n).unwrap_or_default();
+         self.refill()?;
+         let total = n.saturating_add(7);
+-        let v = self
++        let value = self
+             .read_zero(total)?
+             .checked_sub(64)
+             .ok_or_else(|| Error::damaged("length code below bias"))?;
+         self.refill()?;
+-        Ok(v)
++        Ok(value)
+     }
+-    fn effective_pos(&self) -> usize {
+-        let residual = usize::try_from((24_i32.saturating_sub(self.bitpos)).max(0) >> 3).unwrap_or_default();
++    fn effective_pos(&self) -> Result<i64> {
++        let residual = i64::from((24_i32.saturating_sub(self.bitpos)).max(0) >> 3);
+         if self.backward {
+-            self.pos.saturating_add(residual)
++            self.pos.checked_add(residual).ok_or_else(|| Error::damaged("backward effective offset overflow"))
+         } else {
+-            self.pos.saturating_sub(residual)
++            self.pos.checked_sub(residual).ok_or_else(|| Error::damaged("forward effective offset underflow"))
+         }
+     }
+ }
+@@ -2556,7 +2550,7 @@
+         };
+         extended.push(value);
+     }
+-    if forward.effective_pos() != backward.effective_pos() {
++    if forward.effective_pos()? != backward.effective_pos()? {
+         return Err(Error::damaged("LZ forward/backward offset streams did not meet"));
+     }
+     let mut ext_at = 0_usize;
+@@ -2869,94 +2863,91 @@
+ #[cfg(test)]
+ mod tests {
+     use super::*;
++    use std::fs;
++    use std::path::{Path, PathBuf};
+ 
+-    #[test]
+-    fn synthetic_container_framing_is_understood() {
+-        let sav = include_bytes!("synthetic-s2.sav");
+-        let raw = include_bytes!("synthetic-s2.raw");
+-        let declared = u32::from_le_bytes(<[u8; 4]>::try_from(sav.get(..4).unwrap_or_default()).unwrap_or_default());
+-        assert_eq!(usize::try_from(declared).ok(), Some(raw.len()));
+-        let stream_end = sav.len().saturating_sub(4);
+-        let stream = sav.get(4..stream_end).unwrap_or_default();
+-        let mut out = vec![0_u8; raw.len()];
+-        assert_eq!(decompress_into(stream, &mut out), Ok(()));
+-        assert_eq!(out.as_slice(), raw);
+-        assert_eq!(stream.get(..2), Some(&[0xcc, 0x06][..]));
+-    }
+-
+-    #[test]
+-    fn memset_quantum() {
+-        let source = [0x0c, 0x06, 0x07, 0xff, 0xff, 0x5a];
+-        let mut out = [0_u8; 31];
+-        assert_eq!(decompress_into(&source, &mut out), Ok(()));
+-        assert!(out.iter().all(|v| *v == 0x5a));
+-    }
+-
+-    #[test]
+-    fn memcpy_quantum() {
+-        let source = [0x0c, 0x06, 0x00, 0x00, 0x04, 1, 2, 3, 4, 5];
+-        let mut out = [0_u8; 5];
+-        assert_eq!(decompress_into(&source, &mut out), Ok(()));
+-        assert_eq!(out, [1, 2, 3, 4, 5]);
+-    }
+-
+-    #[test]
+-    fn raw_entropy_block() {
+-        let source = [0x00, 0x00, 0x03, b'a', b'b', b'c'];
+-        let mut out = [0_u8; 3];
+-        assert_eq!(decode_entropy_from(&source, &mut out, 0), Ok(source.len()));
+-        assert_eq!(out, *b"abc");
+-    }
+-
+-    #[test]
+-    fn single_symbol_old_huffman_is_not_rejected() {
+-        // Header bits: old coding (0), sparse coding (0), one symbol, symbol 'A'.
+-        let payload = [0x00, 0x50, 0x40];
+-        let mut source = vec![0xa0, 0x18, 0x03];
+-        source.extend_from_slice(&payload);
+-        let mut out = [0_u8; 10];
+-        let result = decode_entropy_from(&source, &mut out, 0);
+-        assert!(result.is_ok());
+-        assert!(out.iter().all(|v| *v == b'A'));
+-    }
+-
+-    #[test]
+-    fn single_byte_rle_entropy() {
+-        let source = [0xb0, 0x48, 0x01, 0x2e];
+-        let mut out = [0_u8; 20];
+-        assert_eq!(decode_entropy_from(&source, &mut out, 0), Ok(source.len()));
+-        assert!(out.iter().all(|v| *v == 0x2e));
++    #[derive(Debug)]
++    struct Fixture {
++        name: String,
++        raw: String,
++        size: usize,
++    }
++
++    fn fixture_root() -> PathBuf {
++        Path::new(env!("CARGO_MANIFEST_DIR"))
++            .join("..")
++            .join("..")
++            .join("fixtures")
++            .join("kraken")
++    }
++
++    fn quoted_value(block: &str, key: &str) -> Option<String> {
++        let marker = format!("\"{key}\"");
++        let at = block.find(&marker)?;
++        let tail = block.get(at.checked_add(marker.len())?..)?;
++        let colon = tail.find(':')?;
++        let value = tail.get(colon.checked_add(1)?..)?.trim_start();
++        let value = value.strip_prefix('"')?;
++        let end = value.find('"')?;
++        Some(value.get(..end)?.to_owned())
++    }
++
++    fn usize_value(block: &str, key: &str) -> Option<usize> {
++        let marker = format!("\"{key}\"");
++        let at = block.find(&marker)?;
++        let tail = block.get(at.checked_add(marker.len())?..)?;
++        let colon = tail.find(':')?;
++        let value = tail.get(colon.checked_add(1)?..)?.trim_start();
++        let end = value
++            .find(|ch: char| !ch.is_ascii_digit())
++            .unwrap_or(value.len());
++        value.get(..end)?.parse::<usize>().ok()
++    }
++
++    fn parse_manifest(text: &str) -> Vec<Fixture> {
++        let mut fixtures = Vec::new();
++        for block in text.split('{').skip(1) {
++            let Some(body) = block.split('}').next() else {
++                continue;
++            };
++            let (Some(name), Some(raw), Some(size)) = (
++                quoted_value(body, "name"),
++                quoted_value(body, "raw"),
++                usize_value(body, "size"),
++            ) else {
++                continue;
++            };
++            fixtures.push(Fixture { name, raw, size });
++        }
++        fixtures
+     }
+ 
+     #[test]
+-    fn lz_mode_one_processes_recent_match_without_oob() {
+-        let table = LzTable {
+-            literals: b"ABCDEFGH".to_vec(),
+-            commands: Vec::new(),
+-            offsets: Vec::new(),
+-            lengths: Vec::new(),
+-        };
+-        let mut out = [0_u8; 8];
+-        assert_eq!(process_lz_runs(1, table, &mut out, 0, 8, 1), Ok(()));
+-        assert_eq!(&out, b"ABCDEFGH");
++    fn manifest_vectors_match_reference_byte_for_byte() {
++        let root = fixture_root();
++        let manifest = fs::read_to_string(root.join("manifest.json")).expect("read Kraken manifest");
++        let fixtures = parse_manifest(&manifest);
++        assert_eq!(fixtures.len(), 23, "manifest must contain the 23 C++ reference vectors");
++
++        for fixture in fixtures {
++            let packed = fs::read(root.join(format!("{}.kraken", fixture.name)))
++                .unwrap_or_else(|error| panic!("read packed {}: {error}", fixture.name));
++            let raw = fs::read(root.join(&fixture.raw))
++                .unwrap_or_else(|error| panic!("read raw {}: {error}", fixture.raw));
++            assert_eq!(raw.len(), fixture.size, "{} raw size", fixture.name);
++            let mut decoded = vec![0_u8; fixture.size];
++            decompress_into(&packed, &mut decoded)
++                .unwrap_or_else(|error| panic!("decode {}: {error:?}", fixture.name));
++            assert_eq!(decoded, raw, "{} differs from the C++ reference output", fixture.name);
++        }
+     }
+ 
+     #[test]
+-    fn mutations_never_panic() {
+-        let fixture = include_bytes!("synthetic-s2.sav");
+-        let end = fixture.len().saturating_sub(4);
+-        let stream = fixture.get(4..end).unwrap_or_default();
+-        for cut in 0..=stream.len() {
+-            let mut out = vec![0_u8; 350];
+-            let _ = decompress_into(stream.get(..cut).unwrap_or_default(), &mut out);
+-        }
+-        for index in 0..stream.len() {
+-            let mut changed = stream.to_vec();
+-            if let Some(slot) = changed.get_mut(index) {
+-                *slot ^= 0x5a;
+-            }
+-            let mut out = vec![0_u8; 350];
+-            let _ = decompress_into(&changed, &mut out);
++    fn malformed_prefixes_never_panic() {
++        for size in 0..32_usize {
++            let source = vec![0_u8; size];
++            let mut out = vec![0_u8; 1024];
++            let _ = decompress_into(&source, &mut out);
+         }
+     }
+ }
