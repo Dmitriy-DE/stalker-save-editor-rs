@@ -629,10 +629,7 @@ impl<'a> Parser<'a> {
     }
     fn expr(&mut self, min: u8) -> Result<NodeId> {
         let mut left = self.unary()?;
-        loop {
-            let Some((lb, rb)) = self.bin_bp() else {
-                break;
-            };
+        while let Some((lb, rb)) = self.bin_bp() {
             if lb < min {
                 break;
             }
