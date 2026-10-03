@@ -1,0 +1,177 @@
+-- Cross-level teleportation module for S.T.A.L.K.E.R. Save Editor Companion.
+-- Supports Shadow of Chernobyl (SoC), Clear Sky (CS), and Call of Pripyat (CoP).
+--
+-- References:
+-- 1. Engine C++ sources (OpenXRay / OGSR):
+--    - CoP: OpenXRay/xray-16 src/xrServerEntities/xrServer_Objects_ALife.cpp:766-805
+--    - CS:  OpenXRay/xray-15 cs/engine/xrServerEntities/xrServer_Objects_ALife.cpp:1376-1413
+--    - SoC: OGSR/OGSR-Engine ogsr_engine/COMMON_AI/xrServer_Objects_ALife.cpp:454-491
+-- 2. Vanilla scripts:
+--    - CS:  gamedata_cs/scripts/se_level_changer.script:8-15
+--    - CoP: gamedata/scripts/se_level_changer.script:19-26
+--    - SoC: pure CSE_ALifeLevelChanger in engine (no se_level_changer.script)
+-- 3. Community mods:
+--    - SoC: Spatial-Subway gamedata/scripts/teleportator.script:200-264
+--    - CoP: so-xray gamedata/scripts/god.script
+
+-- Reliable runtime game detection based on exported engine classes.
+-- - CoP introduces CUIListBox (lua_help.script:6477)
+-- - CS has vector2 (lua_help.script:7468) and se_level_changer
+-- - SoC lacks vector2 and CUIListBox, has CUILabel (lua_help.script:6469)
+function detect_game()
+	if _G.CUIListBox ~= nil then
+		return "cop"
+	elseif _G.vector2 ~= nil then
+		return "cs"
+	else
+		return "soc"
+	end
+end
+
+-- Teleport level changer for Shadow of Chernobyl (SHoC / ТЧ).
+-- Packet structure ends after silent_mode (no se_level_changer wrapper or save markers).
+function spawn_level_changer_soc(dest_level, dest_pos, dest_gv, dest_lv)
+	local actor = db.actor
+	local obj = alife():create("level_changer", actor:position(), 1, actor:game_vertex_id())
+	local packet = net_packet()
+	packet:w_begin(0)
+	obj:STATE_Write(packet)
+	packet:r_seek(2)
+	local game_vertex_id = packet:r_u16()
+	local unk1 = packet:r_float()
+	local unk2 = packet:r_s32()
+	local level_vertex_id = packet:r_s32()
+	local object_flags = packet:r_s32()
+	local custom_data = packet:r_stringZ()
+	local story_id = packet:r_s32()
+	local unk3 = packet:r_s32()
+	local shape_count = packet:r_u8()
+	for _ = 1, shape_count do
+		if packet:r_u8() == 0 then
+			packet:r_vec3()
+			packet:r_float()
+		else
+			packet:r_vec3()
+			packet:r_vec3()
+			packet:r_vec3()
+			packet:r_vec3()
+		end
+	end
+	local restrictor_type = packet:r_u8()
+	packet:r_u16()
+	packet:r_s32()
+	packet:r_vec3()
+	local dest_direction = packet:r_vec3()
+	packet:r_stringZ()
+	local dest_graph_point = packet:r_stringZ()
+	packet:r_u8() -- silent mode
+
+	packet:w_u16(game_vertex_id)
+	packet:w_float(unk1)
+	packet:w_s32(unk2)
+	packet:w_s32(level_vertex_id)
+	packet:w_s32(object_flags)
+	packet:w_stringZ(custom_data)
+	packet:w_s32(story_id)
+	packet:w_s32(unk3)
+	packet:w_u8(1) -- one sphere of radius 2 around the actor
+	packet:w_u8(0)
+	packet:w_vec3(vector():set(0, 0, 0))
+	packet:w_float(2)
+	packet:w_u8(restrictor_type)
+	packet:w_u16(dest_gv)
+	packet:w_s32(dest_lv or 1)
+	packet:w_vec3(dest_pos)
+	packet:w_vec3(dest_direction)
+	packet:w_stringZ(dest_level)
+	packet:w_stringZ(dest_graph_point)
+	packet:w_u8(1) -- silent mode: no confirmation dialog (end of SoC packet)
+	obj:STATE_Read(packet, packet:w_tell() - packet:r_tell())
+	return obj
+end
+
+-- Teleport level changer for Call of Pripyat (CoP / ЗП).
+-- Appends se_level_changer fields: enabled (u8), hint (stringZ), save_marker (u16).
+function spawn_level_changer_cop(dest_level, dest_pos, dest_gv, dest_lv)
+	local actor = db.actor
+	local obj = alife():create("level_changer", actor:position(), 1, actor:game_vertex_id())
+	local packet = net_packet()
+	packet:w_begin(0)
+	obj:STATE_Write(packet)
+	packet:r_seek(2)
+	local game_vertex_id = packet:r_u16()
+	local unk1 = packet:r_float()
+	local unk2 = packet:r_s32()
+	local level_vertex_id = packet:r_s32()
+	local object_flags = packet:r_s32()
+	local custom_data = packet:r_stringZ()
+	local story_id = packet:r_s32()
+	local unk3 = packet:r_s32()
+	local shape_count = packet:r_u8()
+	for _ = 1, shape_count do
+		if packet:r_u8() == 0 then
+			packet:r_vec3()
+			packet:r_float()
+		else
+			packet:r_vec3()
+			packet:r_vec3()
+			packet:r_vec3()
+			packet:r_vec3()
+		end
+	end
+	local restrictor_type = packet:r_u8()
+	packet:r_u16()
+	packet:r_s32()
+	packet:r_vec3()
+	local dest_direction = packet:r_vec3()
+	packet:r_stringZ()
+	local dest_graph_point = packet:r_stringZ()
+	packet:r_u8()
+	local enabled = packet:r_u8()
+	local hint = packet:r_stringZ()
+	local marker = packet:r_u16()
+
+	packet:w_u16(game_vertex_id)
+	packet:w_float(unk1)
+	packet:w_s32(unk2)
+	packet:w_s32(level_vertex_id)
+	packet:w_s32(object_flags)
+	packet:w_stringZ(custom_data)
+	packet:w_s32(story_id)
+	packet:w_s32(unk3)
+	packet:w_u8(1) -- one sphere of radius 2 around the actor
+	packet:w_u8(0)
+	packet:w_vec3(vector():set(0, 0, 0))
+	packet:w_float(2)
+	packet:w_u8(restrictor_type)
+	packet:w_u16(dest_gv)
+	packet:w_s32(dest_lv or 1)
+	packet:w_vec3(dest_pos)
+	packet:w_vec3(dest_direction)
+	packet:w_stringZ(dest_level)
+	packet:w_stringZ(dest_graph_point)
+	packet:w_u8(1) -- silent mode: no confirmation dialog
+	packet:w_u8(enabled)
+	packet:w_stringZ(hint)
+	packet:w_u16(marker)
+	obj:STATE_Read(packet, packet:w_tell() - packet:r_tell())
+	return obj
+end
+
+-- Teleport level changer for Clear Sky (CS / ЧН).
+-- Uses same se_level_changer layout as CoP.
+function spawn_level_changer_cs(dest_level, dest_pos, dest_gv, dest_lv)
+	return spawn_level_changer_cop(dest_level, dest_pos, dest_gv, dest_lv)
+end
+
+-- Universal dispatcher function choosing format by detected game.
+function spawn_level_changer(dest_level, dest_pos, dest_gv, dest_lv)
+	local g = detect_game()
+	if g == "soc" then
+		return spawn_level_changer_soc(dest_level, dest_pos, dest_gv, dest_lv)
+	elseif g == "cs" then
+		return spawn_level_changer_cs(dest_level, dest_pos, dest_gv, dest_lv)
+	else
+		return spawn_level_changer_cop(dest_level, dest_pos, dest_gv, dest_lv)
+	end
+end

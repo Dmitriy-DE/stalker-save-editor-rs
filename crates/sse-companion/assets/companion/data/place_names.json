@@ -1,0 +1,383 @@
+{
+  "cop": {
+    "zat_stalker_base_smart": {
+      "ru": "«Скадовск»",
+      "en": "Skadovsk",
+      "source": "configs/text/rus/st_land_names.xml:st_zat_a2_name (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata/configs/scripts/zaton/smart/zat_stalker_base_smart.ltx#L4)"
+    },
+    "jup_a6": {
+      "ru": "«Янов»",
+      "en": "Yanov",
+      "source": "configs/text/rus/st_land_names.xml:st_jup_a6_name (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata/configs/scripts/jupiter/smart/jup_a6.ltx#L1)"
+    },
+    "pri_a16": {
+      "ru": "Прачечная",
+      "en": "Laundromat",
+      "source": "configs/text/rus/st_land_names.xml:st_pri_a16_name (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata/configs/scripts/pripyat/smart/pri_a16.ltx#L1)"
+    },
+    "pri_a28_base": {
+      "ru": "Прачечная",
+      "en": "Laundromat",
+      "source": "configs/text/rus/st_land_names.xml:st_pri_a16_name (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata/configs/scripts/pripyat/smart/pri_a28_base.ltx#L1)"
+    },
+    "jup_b41": {
+      "ru": "Бункер учёных",
+      "en": "Scientists’ bunker",
+      "source": "configs/text/rus/st_land_names.xml:st_jup_b6_name (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata/configs/scripts/jupiter/smart/jup_b41.ltx#L1)"
+    },
+    "zat_b100": {
+      "ru": "Аномалия «Железный лес»",
+      "en": "Iron Forest anomaly",
+      "source": "configs/text/rus/st_land_names.xml:st_zat_b100_name (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata/configs/scripts/zaton/smart/zat_b100.ltx#L1)"
+    },
+    "zat_b56": {
+      "ru": "Аномалия «Цирк»",
+      "en": "Circus anomaly",
+      "source": "configs/text/rus/st_land_names.xml:st_zat_b56_name (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata/configs/scripts/zaton/smart/zat_b56.ltx#L1)"
+    },
+    "zat_b53": {
+      "ru": "Аномалия «Котёл»",
+      "en": "Boiler anomaly",
+      "source": "configs/text/rus/st_land_names.xml:st_zat_b53_name (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata/configs/scripts/zaton/smart/zat_b53.ltx#L1)"
+    },
+    "zat_b39": {
+      "ru": "Аномалия «Соснодуб»",
+      "en": "Oakpine anomaly",
+      "source": "configs/text/rus/st_land_names.xml:st_zat_b39_name (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata/configs/scripts/zaton/smart/zat_b39.ltx#L1)"
+    },
+    "zat_b38": {
+      "ru": "ВНЗ «Круг»",
+      "en": "Krug antenna complex",
+      "source": "configs/text/rus/st_land_names.xml:st_zat_b38_name (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata/configs/scripts/zaton/smart/zat_b38.ltx#L1)"
+    },
+    "jup_b1": {
+      "ru": "Аномалия «Пепелище»",
+      "en": "Ash Heap anomaly",
+      "source": "configs/text/rus/st_land_names.xml:st_jup_b1_name (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata/configs/scripts/jupiter/smart/jup_b1.ltx#L1)"
+    },
+    "jup_b6_anom_2": {
+      "ru": "Аномалия «Пепелище»",
+      "en": "Ash Heap anomaly",
+      "source": "configs/text/rus/st_land_names.xml:st_jup_b1_name (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata/configs/scripts/jupiter/smart/jup_b6_anom_2.ltx#L1)"
+    },
+    "jup_b46": {
+      "ru": "Градирня",
+      "en": "Cooling tower",
+      "source": "configs/text/rus/st_land_names.xml:st_jup_b46_name (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata/configs/scripts/jupiter/smart/jup_b46.ltx#L1)"
+    },
+    "jup_b8_smart_terrain": {
+      "ru": "Завод «Юпитер»",
+      "en": "Jupiter plant",
+      "source": "configs/text/rus/st_land_names.xml:st_jup_a9_name (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata/configs/scripts/jupiter/smart/jup_b8_smart_terrain.ltx#L1)"
+    },
+    "jup_a9": {
+      "ru": "Завод «Юпитер»",
+      "en": "Jupiter plant",
+      "source": "configs/text/rus/st_land_names.xml:st_jup_a9_name (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata/configs/scripts/jupiter/smart/jup_a9.ltx#L1)"
+    },
+    "zat_b5_smart_terrain": {
+      "ru": "Лесничество",
+      "en": "Ranger station",
+      "source": "configs/text/rus/st_land_names.xml:st_zat_b5_name (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata/configs/scripts/zaton/smart/zat_b5_smart_terrain.ltx#L1)"
+    },
+    "zat_b7_stalker_raider": {
+      "ru": "«Шевченко»",
+      "en": "Shevchenko",
+      "source": "configs/text/rus/st_land_names.xml:st_zat_b7_name (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata/configs/scripts/zaton/smart/zat_b7_stalker_raider.ltx#L1)"
+    },
+    "zat_b14_smart_terrain": {
+      "ru": "Земснаряд",
+      "en": "Dredge station",
+      "source": "configs/text/rus/st_land_names.xml:st_zat_b14_name (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata/configs/scripts/zaton/smart/zat_b14_smart_terrain.ltx#L1)"
+    },
+    "zat_b20_smart_terrain": {
+      "ru": "Сгоревший хутор",
+      "en": "Burnt farmstead",
+      "source": "configs/text/rus/st_land_names.xml:st_zat_b20_name (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata/configs/scripts/zaton/smart/zat_b20_smart_terrain.ltx#L1)"
+    },
+    "zat_b40_smart_terrain": {
+      "ru": "Станция переработки отходов",
+      "en": "Waste processing station",
+      "source": "configs/text/rus/st_land_names.xml:st_zat_b40_name (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata/configs/scripts/zaton/smart/zat_b40_smart_terrain.ltx#L1)"
+    },
+    "zat_b103_merc_smart": {
+      "ru": "Цеха подстанции",
+      "en": "Substation workshops",
+      "source": "configs/text/rus/st_land_names.xml:st_zat_b103_name (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata/configs/scripts/zaton/smart/zat_b103_merc_smart.ltx#L1)"
+    },
+    "zat_b104_zombied": {
+      "ru": "Лесопилка",
+      "en": "Sawmill",
+      "source": "configs/text/rus/st_land_names.xml:st_zat_b104_name (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata/configs/scripts/zaton/smart/zat_b104_zombied.ltx#L1)"
+    },
+    "zat_b106_smart_terrain": {
+      "ru": "«Изумрудное»",
+      "en": "Izumrudnoye",
+      "source": "configs/text/rus/st_land_names.xml:st_zat_b106_name (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata/configs/scripts/zaton/smart/zat_b106_smart_terrain.ltx#L1)"
+    },
+    "jup_b200": {
+      "ru": "Цементный завод",
+      "en": "Cement factory",
+      "source": "configs/text/rus/st_land_names.xml:st_jup_b200_name (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata/configs/scripts/jupiter/smart/jup_b200.ltx#L1)"
+    },
+    "jup_b19": {
+      "ru": "Копачи",
+      "en": "Kopachy",
+      "source": "configs/text/rus/st_land_names.xml:st_jup_b19_name (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata/configs/scripts/jupiter/smart/jup_b19.ltx#L1)"
+    },
+    "jup_b206": {
+      "ru": "Аномальная роща",
+      "en": "Anomalous grove",
+      "source": "configs/text/rus/st_land_names.xml:st_jup_b206_name (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata/configs/scripts/jupiter/smart/jup_b206.ltx#L1)"
+    },
+    "jup_b207": {
+      "ru": "",
+      "en": "",
+      "source": "configs/text/rus/st_land_names.xml:st_jup_b207_name (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata/configs/scripts/jupiter/smart/jup_b207.ltx#L1)"
+    },
+    "jup_b209": {
+      "ru": "Аномалия «Битум»",
+      "en": "Bitumen anomaly",
+      "source": "configs/text/rus/st_land_names.xml:st_jup_b209_name (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata/configs/scripts/jupiter/smart/jup_b209.ltx#L1)"
+    },
+    "jup_a12": {
+      "ru": "Склад контейнеров",
+      "en": "Container warehouse",
+      "source": "configs/text/rus/st_land_names.xml:st_jup_a12_name (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata/configs/scripts/jupiter/smart/jup_a12.ltx#L1)"
+    },
+    "pri_a18_smart_terrain": {
+      "ru": "Магазин «Книги»",
+      "en": "Book store",
+      "source": "configs/text/rus/st_land_names.xml:st_pri_a18_name (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata/configs/scripts/pripyat/smart/pri_a18_smart_terrain.ltx#L1)"
+    },
+    "pri_a21_smart_terrain": {
+      "ru": "Гастроном",
+      "en": "Grocery store",
+      "source": "configs/text/rus/st_land_names.xml:st_pri_a21_name (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata/configs/scripts/pripyat/smart/pri_a21_smart_terrain.ltx#L1)"
+    },
+    "pri_a22_smart_terrain": {
+      "ru": "",
+      "en": "",
+      "source": "configs/text/rus/st_land_names.xml:st_pri_a22_name (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata/configs/scripts/pripyat/smart/pri_a22_smart_terrain.ltx#L1)"
+    },
+    "pri_a25_smart_terrain": {
+      "ru": "Детский сад",
+      "en": "Kindergarten",
+      "source": "configs/text/rus/st_land_names.xml:st_pri_a25_name (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata/configs/scripts/pripyat/smart/pri_a25_smart_terrain.ltx#L1)"
+    },
+    "pri_b36_smart_terrain": {
+      "ru": "Речной порт",
+      "en": "River port",
+      "source": "configs/text/rus/st_land_names.xml:st_pri_b36_name (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata/configs/scripts/pripyat/smart/pri_b36_smart_terrain.ltx#L1)"
+    },
+    "pri_b304": {
+      "ru": "Универмаг",
+      "en": "Department store",
+      "source": "configs/text/rus/st_land_names.xml:st_pri_b304_name (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata/configs/scripts/pripyat/smart/pri_b304.ltx#L1)"
+    },
+    "pri_b307": {
+      "ru": "Аномалия «Вулкан»",
+      "en": "Volcano anomaly",
+      "source": "configs/text/rus/st_land_names.xml:st_pri_b307_name (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata/configs/scripts/pripyat/smart/pri_b307.ltx#L1)"
+    },
+    "pri_a28_evac": {
+      "ru": "",
+      "en": "",
+      "source": "configs/text/rus/st_land_names.xml:st_pri_a28_evac_name (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata/configs/scripts/pripyat/smart/pri_a28_evac.ltx#L1)"
+    }
+  },
+  "cs": {
+    "mar_smart_terrain_csky_base": {
+      "ru": "База «Чистого неба»",
+      "en": "Clear Sky base",
+      "source": "smart_names.ltx:st_name_mar_smart_terrain_csky_base (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata_cs/configs/misc/smart_names.ltx#L82)"
+    },
+    "gar_smart_terrain_3_5": {
+      "ru": "Депо",
+      "en": "Depot",
+      "source": "smart_names.ltx:st_name_gar_smart_terrain_3_5 (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata_cs/configs/misc/smart_names.ltx#L25)"
+    },
+    "agr_smart_terrain_1_6": {
+      "ru": "База «Долга»",
+      "en": "Duty base",
+      "source": "smart_names.ltx:st_name_agr_smart_terrain_1_6 (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata_cs/configs/misc/smart_names.ltx#L89)"
+    },
+    "agr_smart_terrain_4_4": {
+      "ru": "Лагерь сталкеров",
+      "en": "Stalker camp",
+      "source": "smart_names.ltx:st_name_agr_smart_terrain_4_4 (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata_cs/configs/misc/smart_names.ltx#L97)"
+    },
+    "val_smart_terrain_7_4": {
+      "ru": "База «Свободы»",
+      "en": "Freedom base",
+      "source": "smart_names.ltx:st_name_val_smart_terrain_7_4 (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata_cs/configs/misc/smart_names.ltx#L159)"
+    },
+    "val_smart_terrain_7_3": {
+      "ru": "Ангар дядьки Яра",
+      "en": "Uncle Yar's hangar",
+      "source": "smart_names.ltx:st_name_val_smart_terrain_7_3 (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata_cs/configs/misc/smart_names.ltx#L158)"
+    },
+    "esc_smart_terrain_2_12": {
+      "ru": "Центр деревни",
+      "en": "Village center",
+      "source": "smart_names.ltx:st_name_esc_smart_terrain_2_12 (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata_cs/configs/misc/smart_names.ltx#L169)"
+    },
+    "esc_smart_terrain_5_7": {
+      "ru": "База нейтралов",
+      "en": "Neutral base",
+      "source": "smart_names.ltx:st_name_esc_smart_terrain_5_7 (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata_cs/configs/misc/smart_names.ltx#L182)"
+    },
+    "esc_smart_terrain_3_6": {
+      "ru": "Стоянка в ложбине",
+      "en": "Encampment in trough",
+      "source": "smart_names.ltx:st_name_esc_smart_terrain_3_6 (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata_cs/configs/misc/smart_names.ltx#L173)"
+    },
+    "yan_smart_terrain_6_4": {
+      "ru": "Лагерь учёных",
+      "en": "Scientists' camp",
+      "source": "smart_names.ltx:st_name_yan_smart_terrain_6_4 (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata_cs/configs/misc/smart_names.ltx#L282)"
+    },
+    "red_smart_terrain_4_2": {
+      "ru": "Лагерь у капера",
+      "en": "Camp near caper",
+      "source": "smart_names.ltx:st_name_red_smart_terrain_4_2 (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata_cs/configs/misc/smart_names.ltx#L248)"
+    },
+    "red_smart_terrain_bridge": {
+      "ru": "Мост в Лиманск",
+      "en": "Bridge to Limansk",
+      "source": "smart_names.ltx:st_name_red_smart_terrain_bridge (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata_cs/configs/misc/smart_names.ltx#L254)"
+    },
+    "lim_smart_terrain_1": {
+      "ru": "Двор",
+      "en": "Yard",
+      "source": "smart_names.ltx:st_name_lim_smart_terrain_1 (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata_cs/configs/misc/smart_names.ltx#L204)"
+    },
+    "lim_smart_terrain_10": {
+      "ru": "Дорога к «пожарке»",
+      "en": "Road to fire station",
+      "source": "smart_names.ltx:st_name_lim_smart_terrain_10 (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata_cs/configs/misc/smart_names.ltx#L205)"
+    },
+    "mar_smart_terrain_10_5": {
+      "ru": "Механизаторский двор",
+      "en": "Machine yard",
+      "source": "smart_names.ltx:st_name_mar_smart_terrain_10_5 (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata_cs/configs/misc/smart_names.ltx#L57)"
+    },
+    "mar_smart_terrain_11_11": {
+      "ru": "Южный хутор",
+      "en": "Southern farmstead",
+      "source": "smart_names.ltx:st_name_mar_smart_terrain_11_11 (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata_cs/configs/misc/smart_names.ltx#L59)"
+    },
+    "mar_smart_terrain_8_8": {
+      "ru": "Сгоревший хутор",
+      "en": "Burnt farmstead",
+      "source": "smart_names.ltx:st_name_mar_smart_terrain_8_8 (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata_cs/configs/misc/smart_names.ltx#L79)"
+    },
+    "mil_smart_terrain_7_7": {
+      "ru": "Спортплощадка",
+      "en": "Sports ground",
+      "source": "smart_names.ltx:st_name_mil_smart_terrain_7_7 (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata_cs/configs/misc/smart_names.ltx#L226)"
+    },
+    "mil_smart_terrain_3_8": {
+      "ru": "Барьер",
+      "en": "Barrier",
+      "source": "smart_names.ltx:st_name_mil_smart_terrain_3_8 (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata_cs/configs/misc/smart_names.ltx#L218)"
+    }
+  },
+  "soc": {
+    "esc_lager": {
+      "ru": "Деревня новичков",
+      "en": "Rookie Village",
+      "source": "scripts/gulag_escape.script:293 (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata_soc/scripts/gulag_escape.script#L293)"
+    },
+    "esc_blokpost": {
+      "ru": "Южный блокпост",
+      "en": "Southern Checkpoint",
+      "source": "scripts/gulag_escape.script:8 (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata_soc/scripts/gulag_escape.script#L8)"
+    },
+    "esc_bridge": {
+      "ru": "Железнодорожная насыпь",
+      "en": "Railway Embankment",
+      "source": "scripts/gulag_escape.script:601 (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata_soc/scripts/gulag_escape.script#L601)"
+    },
+    "esc_fabrika_bandit": {
+      "ru": "АТП",
+      "en": "Car Park (ATP)",
+      "source": "scripts/gulag_escape.script:513 (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata_soc/scripts/gulag_escape.script#L513)"
+    },
+    "gar_hellcar_group": {
+      "ru": "Стоянка брошенной техники",
+      "en": "Vehicle Graveyard",
+      "source": "scripts/gulag_garbage.script:8 (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata_soc/scripts/gulag_garbage.script#L8)"
+    },
+    "gar_seryi_group": {
+      "ru": "Ангар (депо на Свалке)",
+      "en": "Train Hangar (Garbage)",
+      "source": "scripts/gulag_garbage.script:125 (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata_soc/scripts/gulag_garbage.script#L125)"
+    },
+    "gar_dolg_blokpost": {
+      "ru": "Застава «Долга» на Свалке",
+      "en": "Duty Checkpoint (Garbage)",
+      "source": "scripts/gulag_garbage.script:273 (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata_soc/scripts/gulag_garbage.script#L273)"
+    },
+    "agr_factory_hold": {
+      "ru": "Фабрика «Агропром»",
+      "en": "Agroprom Factory",
+      "source": "scripts/gulag_agroprom.script:8 (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata_soc/scripts/gulag_agroprom.script#L8)"
+    },
+    "agr_nii": {
+      "ru": "Комплекс НИИ «Агропром»",
+      "en": "Agroprom Research Institute",
+      "source": "scripts/gulag_agroprom.script:190 (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata_soc/scripts/gulag_agroprom.script#L190)"
+    },
+    "val_lager_bandits": {
+      "ru": "База бандитов в Тёмной долине",
+      "en": "Bandit Base (Dark Valley)",
+      "source": "scripts/gulag_dark_valley.script:8 (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata_soc/scripts/gulag_dark_valley.script#L8)"
+    },
+    "bar_dolg_general": {
+      "ru": "База «Долга» (Бар «100 рентген»)",
+      "en": "Duty Base (100 Rads Bar)",
+      "source": "scripts/gulag_bar.script:8 (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata_soc/scripts/gulag_bar.script#L8)"
+    },
+    "bar_zastava": {
+      "ru": "Блокпост Бара",
+      "en": "Bar Checkpoint",
+      "source": "scripts/gulag_bar.script:85 (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata_soc/scripts/gulag_bar.script#L85)"
+    },
+    "yan_st_stalker": {
+      "ru": "Бункер учёных на Янтаре",
+      "en": "Mobile Lab (Yantar)",
+      "source": "scripts/gulag_yantar.script:8 (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata_soc/scripts/gulag_yantar.script#L8)"
+    },
+    "mil_freedom": {
+      "ru": "Военные склады (база «Свободы»)",
+      "en": "Army Warehouses (Freedom Base)",
+      "source": "scripts/gulag_military.script:8 (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata_soc/scripts/gulag_military.script#L8)"
+    },
+    "mil_village": {
+      "ru": "Деревня кровососов",
+      "en": "Bloodsucker Village",
+      "source": "scripts/gulag_military.script:210 (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata_soc/scripts/gulag_military.script#L210)"
+    },
+    "rad_antenna": {
+      "ru": "Антенны Выжигателя мозгов",
+      "en": "Brain Scorcher Antennas",
+      "source": "scripts/gulag_radar.script:8 (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata_soc/scripts/gulag_radar.script#L8)"
+    },
+    "pri_st_monolith": {
+      "ru": "База «Монолита» в Припяти",
+      "en": "Monolith Base (Pripyat)",
+      "source": "scripts/gulag_pripyat.script:8 (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata_soc/scripts/gulag_pripyat.script#L8)"
+    },
+    "pri_stadium": {
+      "ru": "Стадион «Авангард»",
+      "en": "Avanhard Stadium",
+      "source": "scripts/gulag_pripyat.script:64 (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata_soc/scripts/gulag_pripyat.script#L64)"
+    },
+    "sar_monolith_general": {
+      "ru": "Саркофаг (база «Монолита»)",
+      "en": "Sarcophagus (Monolith Base)",
+      "source": "scripts/gulag_sarcofag.script:4 (https://github.com/ixray-team/ixray-1.6-stcop/blob/master/gamedata_soc/scripts/gulag_sarcofag.script#L4)"
+    }
+  }
+}
