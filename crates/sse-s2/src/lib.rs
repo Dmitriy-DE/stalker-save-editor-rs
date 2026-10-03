@@ -1830,7 +1830,7 @@ fn pack_and_verify_s2_image(image: &[u8], changed_ranges: &[Range<usize>]) -> Re
     }
     let unpacked_size =
         u32::try_from(image.len()).map_err(|_| Error::Refused("S2 image exceeds u32 length".to_owned()))?;
-    let compressed = sse_codecs::kraken::compress(image);
+    let compressed = sse_codecs::kraken_c3a::compress(image);
     if compressed.is_empty() {
         return Err(Error::Refused("Kraken encoder refused the S2 image".to_owned()));
     }
@@ -1845,7 +1845,7 @@ fn pack_and_verify_s2_image(image: &[u8], changed_ranges: &[Range<usize>]) -> Re
     packed.extend_from_slice(&crc.to_le_bytes());
 
     let mut verified = vec![0_u8; image.len()];
-    sse_codecs::kraken::decompress_into(&compressed, &mut verified)?;
+    sse_codecs::kraken_c3a::decompress_into(&compressed, &mut verified)?;
     for range in changed_ranges {
         let expected = image
             .get(range.clone())
