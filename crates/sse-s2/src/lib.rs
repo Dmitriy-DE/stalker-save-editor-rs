@@ -2051,6 +2051,10 @@ mod tests {
         let packed = pack_and_verify_s2_image(&image, &changed_ranges);
         assert!(packed.is_ok());
         let Ok(packed) = packed else { return };
+        let reread = S2Container::from_bytes(&packed);
+        assert!(reread.is_ok());
+        let Ok(reread) = reread else { return };
+        assert_eq!(reread.image(), image);
         assert_eq!(super::read_u32(&packed, 0), Ok(350));
         let trailer = packed.len().saturating_sub(4);
         let expected_crc = packed.get(..trailer).map(crc32::crc32);
