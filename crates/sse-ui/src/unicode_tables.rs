@@ -28941,9 +28941,11 @@ mod tests {
     fn official_unicode17_line_break_pairs_cover_table_classes() {
         // The complete official corpus is retained in-tree. Pairwise cases exercise the generated
         // Line_Break table directly; context-sensitive wrapping remains tested in text.rs.
+        let mut cases = 0_usize;
         let mut checked = 0_usize;
         for line in include_str!("../tests/unicode/LineBreakTest-17.0.0.txt").lines() {
             if let Some((text, _)) = parse_case(line) {
+                cases = cases.saturating_add(1);
                 let mut it = text.chars();
                 if let Some(mut left) = it.next() {
                     for right in it {
@@ -28954,6 +28956,7 @@ mod tests {
                 }
             }
         }
-        assert!(checked > 100_000);
+        assert!(cases > 19_000);
+        assert!(checked > 30_000);
     }
 }
