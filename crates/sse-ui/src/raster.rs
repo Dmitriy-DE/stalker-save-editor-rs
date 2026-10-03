@@ -467,7 +467,7 @@ impl<'a> Surface<'a> {
                 let Some(row) = full_row.get_mut(start_x..end_x) else {
                     return;
                 };
-                let mut chunks = row.chunks_exact_mut(8);
+                let mut chunks = row.chunks_exact_mut(16);
                 for chunk in &mut chunks {
                     dim_chunk_arithmetic(chunk, alpha, inverse_alpha);
                 }
@@ -1227,7 +1227,7 @@ fn raster_worker_count(pixel_count: usize) -> usize {
     std::thread::available_parallelism()
         .map(std::num::NonZeroUsize::get)
         .unwrap_or(1)
-        .min(8)
+        .min(4)
 }
 
 fn for_each_row_mut_parallel(
@@ -1803,8 +1803,11 @@ fn blend_black_mask_row(
             blend_black_covered(destination_pixel, *coverage, inverse_by_coverage);
         }
     }
-    let remainder = destination_chunks.into_remainder();
-    for (destination_pixel, coverage) in remainder.iter_mut().zip(source_chunks.remainder()) {
+    for (destination_pixel, coverage) in destination_chunks
+        .into_remainder()
+        .iter_mut()
+        .zip(source_chunks.remainder())
+    {
         if *coverage == u8::MAX {
             dim_pixel_lut(destination_pixel, alpha, full_coverage_scale);
         } else if *coverage != 0 {
@@ -1816,7 +1819,8 @@ fn blend_black_mask_row(
 #[inline(always)]
 fn dim_pixel_arithmetic(pixel: &mut u32, alpha: u8, inverse_alpha: u8) {
     let attenuated = scale_packed_arithmetic(*pixel, inverse_alpha);
-    let result_alpha = alpha.saturating_add(pixel_alpha(attenuated));
+    // Scaled alpha is at most `inverse_alpha`; `alpha + inverse_alpha` is 255.
+    let result_alpha = alpha.wrapping_add(pixel_alpha(attenuated));
     *pixel = (attenuated & 0x00ff_ffff) | u32::from(result_alpha).wrapping_shl(24);
 }
 
@@ -1849,11 +1853,13 @@ fn scale_packed_arithmetic(pixel: u32, scale: u8) -> u32 {
     let blue_red = pixel & 0x00ff_00ff;
     let green_alpha = pixel.wrapping_shr(8) & 0x00ff_00ff;
     let scale_pair = |pair: u32| {
-        let product = pair.saturating_mul(scale).saturating_add(0x007f_007f);
+        // `pair` has two byte values in 16-bit lanes. The product, rounding bias,
+        // correction, and final bias stay below `u32::MAX` for every u8 scale.
+        let product = pair.wrapping_mul(scale).wrapping_add(0x007f_007f);
         let correction = product.wrapping_shr(8) & 0x00ff_00ff;
         product
-            .saturating_add(correction)
-            .saturating_add(0x0001_0001)
+            .wrapping_add(correction)
+            .wrapping_add(0x0001_0001)
             .wrapping_shr(8)
             & 0x00ff_00ff
     };
