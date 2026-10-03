@@ -595,7 +595,16 @@ fn stroke_polyline(
     style: StrokeStyle,
     out: &mut Vec<Segment>,
 ) -> Result<()> {
-    let points = deduplicate_points(&polyline.points);
+    let mut points = deduplicate_points(&polyline.points);
+    if polyline.closed
+        && points.len() >= 2
+        && points
+            .first()
+            .zip(points.last())
+            .is_some_and(|(first, last)| first.distance(*last) <= EPSILON)
+    {
+        let _ = points.pop();
+    }
     if points.len() < 2 {
         return Ok(());
     }
