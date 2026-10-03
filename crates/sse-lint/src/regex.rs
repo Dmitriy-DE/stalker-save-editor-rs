@@ -816,7 +816,7 @@ impl Regex {
 
     fn run(&self, text: &str) -> Option<Captures> {
         let state_count = self.program.instructions.len();
-        let mut active = Vec::new();
+        let mut active: Vec<Thread> = Vec::new();
         let mut best: Option<Vec<Option<usize>>> = None;
         let mut position = 0_usize;
         let mut previous: Option<char> = None;
@@ -870,7 +870,7 @@ impl Regex {
                             .add_thread(
                                 &mut next_threads,
                                 &mut seen,
-                                *next_pc,
+                                next_pc,
                                 thread.slots,
                                 next_position,
                                 Some(character),
@@ -916,7 +916,7 @@ impl Regex {
                 .get(pc)
                 .ok_or_else(|| Error::damaged("regex VM instruction missing"))?;
             match instruction {
-                Instruction::Consume(_, _) | Instruction::Match => out.push(Thread { pc, slots: captures }),
+                Instruction::Consume(_, Some(_)) | Instruction::Match => out.push(Thread { pc, slots: captures }),
                 Instruction::Jump(Some(target)) => stack.push((*target, captures)),
                 Instruction::Split(first, second) => {
                     if let Some(second_pc) = second {
