@@ -10,3 +10,6 @@ pub mod raster;
 pub mod text;
 /// X11 core protocol, MIT-SHM, XKB and clipboard encoding over a transport trait (X11).
 pub mod x11;
+
+/// Wayland protocol marshalling and XKB text-keymap support (X12).
+pub mod wayland;
