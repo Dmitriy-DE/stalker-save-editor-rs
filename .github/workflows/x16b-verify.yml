@@ -1,0 +1,41 @@
+name: x16b-verify
+on:
+  push:
+    branches: ["wp/X16b-kraken"]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: Materialize X16b
+        shell: bash
+        run: |
+          git show 7a3033aaa7f8df8867ae1e56b0871cf857274801:crates/xverify/src/kraken.rs > crates/sse-codecs/src/kraken.rs
+          git apply .github/x16b.patch
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path("crates/sse-codecs/src/lib.rs")
+          s=p.read_text()
+          if "pub mod kraken;" not in s:
+              s += "\n/// Oodle Kraken decompressor used by STALKER 2 saves.\npub mod kraken;\n"
+          p.write_text(s)
+          PY
+          cargo fmt --all
+      - name: Clippy
+        run: cargo clippy -p sse-codecs --all-targets -- -D warnings
+      - name: Manifest parity
+        run: cargo test -p sse-codecs kraken::tests::manifest_vectors_match_reference_byte_for_byte -- --nocapture
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: x16b-materialized
+          path: |
+            crates/sse-codecs/src/kraken.rs
+            crates/sse-codecs/src/lib.rs
