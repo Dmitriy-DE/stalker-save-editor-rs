@@ -1672,6 +1672,12 @@ mod tests {
         assert_eq!(pcm.channels, 1);
         assert_eq!(pcm.rate, 48_000);
         assert_eq!(pcm.samples.len(), 23_487);
+        eprintln!(
+            "x10 select first64={:?} min={:?} max={:?}",
+            pcm.samples.get(..64).unwrap_or(&pcm.samples),
+            pcm.samples.iter().min(),
+            pcm.samples.iter().max()
+        );
         assert_eq!(fnv64(&pcm.samples), 0x388f_979d_1a42_93bb);
     }
 
