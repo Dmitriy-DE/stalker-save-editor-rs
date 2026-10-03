@@ -71,9 +71,7 @@ pub fn compare(
         if pixel_bad {
             bad = bad.saturating_add(1);
         }
-        let o = i
-            .checked_mul(4)
-            .ok_or_else(|| Error::damaged("golden diff offset"))?;
+        let o = i.checked_mul(4).ok_or_else(|| Error::damaged("golden diff offset"))?;
         diff[o] = pd;
         diff[o + 1] = if pixel_bad { 0 } else { pd };
         diff[o + 2] = 0;
