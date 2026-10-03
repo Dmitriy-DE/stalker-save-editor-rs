@@ -43,6 +43,7 @@ const CF_UNICODETEXT: u32 = 13;
 const GMEM_MOVEABLE: u32 = 2;
 const MOD_NOREPEAT: u32 = 0x4000;
 
+/// Rectangle in physical framebuffer pixels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Rect {
     /// Left pixel.
