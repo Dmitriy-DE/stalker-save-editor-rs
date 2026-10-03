@@ -795,7 +795,7 @@ fn huff_convert_ranges(
     Ok(ranges)
 }
 
-fn read_huff_lengths_old(bits: &mut HeaderBits<'_>, syms: &mut Vec<u8>, counts: &mut [usize; 12]) -> Result<usize> {
+fn read_huff_lengths_old(bits: &mut HeaderBits<'_>, syms: &mut [u8], counts: &mut [usize; 12]) -> Result<usize> {
     if bits.read_bit_no_refill()? != 0 {
         let forced = bits.read_bits_no_refill(2)?;
         let mut symbol = 0_usize;
@@ -925,7 +925,7 @@ fn read_huff_lengths_old(bits: &mut HeaderBits<'_>, syms: &mut Vec<u8>, counts: 
     }
 }
 
-fn read_huff_lengths_new(bits: &mut HeaderBits<'_>, syms: &mut Vec<u8>, counts: &mut [usize; 12]) -> Result<usize> {
+fn read_huff_lengths_new(bits: &mut HeaderBits<'_>, syms: &mut [u8], counts: &mut [usize; 12]) -> Result<usize> {
     let forced_bits = u8::try_from(bits.read_bits_no_refill(2)?)
         .map_err(|_| Error::damaged("new Huffman forced width conversion failed"))?;
     let num_symbols = usize::try_from(bits.read_bits_no_refill(8)?)
