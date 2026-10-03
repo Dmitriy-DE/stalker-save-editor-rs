@@ -620,6 +620,19 @@ mod tests {
     }
 
     #[test]
+    fn ten_mib_repetitive_meets_ten_mib_per_second_floor() {
+        let data = vec![b'a'; 10 * 1024 * 1024];
+        let started = std::time::Instant::now();
+        let encoded = compress_raw(&data, Level::Default).unwrap_or_default();
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(1),
+            "10 MiB compression missed the 10 MiB/s task floor"
+        );
+        assert!(encoded.len() < 20_000);
+        assert_eq!(inflate_raw(&encoded, data.len()).unwrap_or_default(), data);
+    }
+
+    #[test]
     fn default_writes_dynamic_huffman() {
         let d = b"dynamic huffman repeated repeated repeated repeated text";
         let v = compress_raw(d, Level::Default).unwrap_or_default();
