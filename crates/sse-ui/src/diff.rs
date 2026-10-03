@@ -242,7 +242,8 @@ fn linear_fallback(a: &[&[u8]], b: &[&[u8]]) -> Result<Vec<LineOp>> {
     let mut s = 0usize;
     while s < a.len().saturating_sub(p)
         && s < b.len().saturating_sub(p)
-        && a.get(a.len().saturating_sub(1_usize.saturating_add(s))) == b.get(b.len().saturating_sub(1_usize.saturating_add(s)))
+        && a.get(a.len().saturating_sub(1_usize.saturating_add(s)))
+            == b.get(b.len().saturating_sub(1_usize.saturating_add(s)))
     {
         s = s.saturating_add(1);
     }
