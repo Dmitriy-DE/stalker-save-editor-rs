@@ -1,6 +1,6 @@
 //! Fresh-hash guarded Steam and Auto-Cloud write transactions.
 
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -8,7 +8,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use sse_codecs::sha256;
 
 use crate::api::{SteamApi, SteamError, WriteFailure};
-use crate::discovery::auto_cloud_path;
 
 /// Maximum bytes accepted in a cloud file frame.
 pub const MAX_CLOUD_FILE_BYTES: usize = 64 * 1024 * 1024;
@@ -60,8 +59,17 @@ pub enum WriteStatus {
     Uncertain,
 }
 
-/// Release-aware save verifier required before any cloud or Auto-Cloud write.
-pub trait SaveFormatVerifier {
+mod verifier_sealed {
+    pub trait Sealed {}
+}
+
+/// Release-aware verifier required before any cloud write.
+///
+/// This trait is sealed so external callers cannot supply a verifier that accepts arbitrary
+/// bytes. The only implementation currently available is fail-closed until the format readers
+/// are integrated.
+#[allow(private_bounds)]
+pub trait SaveFormatVerifier: verifier_sealed::Sealed {
     /// Rejects bytes that are not a save for `app_id` and `remote_name`.
     fn verify(&mut self, app_id: u32, remote_name: &str, bytes: &[u8]) -> Result<(), SteamError>;
 }
@@ -69,6 +77,8 @@ pub trait SaveFormatVerifier {
 /// Fail-closed verifier used until C1/C3 reader crates are integrated.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct UnavailableSaveFormatVerifier;
+
+impl verifier_sealed::Sealed for UnavailableSaveFormatVerifier {}
 
 impl SaveFormatVerifier for UnavailableSaveFormatVerifier {
     fn verify(&mut self, _app_id: u32, _remote_name: &str, _bytes: &[u8]) -> Result<(), SteamError> {
@@ -247,56 +257,10 @@ pub fn write_auto_cloud(
     write_enabled: bool,
     verifier: &mut dyn SaveFormatVerifier,
 ) -> Result<WriteReceipt, SteamError> {
-    if !write_enabled {
-        return Err(SteamError::new("Auto-Cloud writing is disabled before I/O"));
-    }
-    validate_size(prepared.output.len())?;
-    if sha256::sha256(&prepared.output) != prepared.output_sha256 {
-        return Err(SteamError::new("prepared output hash does not match its bytes"));
-    }
-    let target = auto_cloud_path(root, remote_name)?;
-    let fresh = read_bounded(&target)?;
-    if sha256::sha256(&fresh) != prepared.source_sha256 {
-        return Err(SteamError::new("Auto-Cloud source changed after analysis"));
-    }
-    verifier.verify(crate::discovery::STALKER_2_APP_ID, remote_name, &fresh)?;
-    verifier.verify(crate::discovery::STALKER_2_APP_ID, remote_name, &prepared.output)?;
-    let (backup_path, recovery_path) = write_artifacts(artifact_directory, remote_name, &fresh, &prepared.output)?;
-    let target_parent = target
-        .parent()
-        .ok_or_else(|| SteamError::new("Auto-Cloud target has no parent directory"))?;
-    let temp_path = unique_artifact_path(target_parent, "pending")?;
-    write_exclusive(&temp_path, &prepared.output)?;
-    if let Err(error) = fs::rename(&temp_path, &target) {
-        let _ = fs::remove_file(&temp_path);
-        return Ok(uncertain_receipt(
-            backup_path,
-            recovery_path,
-            prepared.output_sha256,
-            format!("Auto-Cloud replacement outcome is uncertain: {error}"),
-        ));
-    }
-    match read_bounded(&target) {
-        Ok(bytes) if sha256::sha256(&bytes) == prepared.output_sha256 => Ok(WriteReceipt {
-            status: WriteStatus::Verified,
-            backup_path,
-            recovery_path,
-            output_sha256: prepared.output_sha256,
-            reason: None,
-        }),
-        Ok(_) => Ok(uncertain_receipt(
-            backup_path,
-            recovery_path,
-            prepared.output_sha256,
-            "Auto-Cloud read-back hash mismatch".to_owned(),
-        )),
-        Err(error) => Ok(uncertain_receipt(
-            backup_path,
-            recovery_path,
-            prepared.output_sha256,
-            format!("Auto-Cloud read-back failed: {error}"),
-        )),
-    }
+    let _ = (root, remote_name, prepared, artifact_directory, write_enabled, verifier);
+    Err(SteamError::new(
+        "Auto-Cloud writes are disabled until descriptor-relative path operations are available",
+    ))
 }
 
 fn validate_size(size: usize) -> Result<(), SteamError> {
@@ -305,29 +269,6 @@ fn validate_size(size: usize) -> Result<(), SteamError> {
     }
     Ok(())
 }
-
-fn read_bounded(path: &Path) -> Result<Vec<u8>, SteamError> {
-    let file = File::open(path).map_err(|error| SteamError::new(error.to_string()))?;
-    let size = file
-        .metadata()
-        .map_err(|error| SteamError::new(error.to_string()))?
-        .len();
-    if size > u64::try_from(MAX_CLOUD_FILE_BYTES).unwrap_or(u64::MAX) {
-        return Err(SteamError::new("cloud file exceeds the configured size bound"));
-    }
-    let mut bytes = Vec::with_capacity(usize::try_from(size).unwrap_or(0));
-    file.take(
-        u64::try_from(MAX_CLOUD_FILE_BYTES)
-            .unwrap_or(u64::MAX)
-            .saturating_add(1),
-    )
-    .read_to_end(&mut bytes)
-    .map_err(|error| SteamError::new(error.to_string()))?;
-    validate_size(bytes.len())?;
-    Ok(bytes)
-}
-
-use std::io::Read;
 
 fn write_artifacts(
     directory: &Path,

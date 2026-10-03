@@ -5,24 +5,16 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use sse_steam::achievements::{AchievementConfirmation, AchievementService};
-use sse_steam::api::{CloudFile, ScriptedSteamApi, SteamApi, WriteBehavior};
+use sse_steam::api::{CloudFile, ScriptedSteamApi, SteamApi};
 use sse_steam::cloud::{
-    validate_remote_save_path, write_auto_cloud, PreparedEdit, SaveFormatVerifier, SteamCloudWriteTransaction,
-    WriteStatus,
+    validate_remote_save_path, write_auto_cloud, PreparedEdit, SteamCloudWriteTransaction,
+    UnavailableSaveFormatVerifier,
 };
 use sse_steam::discovery::{auto_cloud_path, find_auto_cloud_root, parse_library_paths, STALKER_2_APP_ID};
 use sse_steam::protocol::{
     decode_request, decode_response_body, encode_frame, handle_request, read_frame, serve_one, Request, MAX_FRAME_BYTES,
 };
 use sse_steam::worker::{classify_worker_args, WorkerArgs};
-
-struct SyntheticFormatVerifier;
-
-impl SaveFormatVerifier for SyntheticFormatVerifier {
-    fn verify(&mut self, _app_id: u32, _remote_name: &str, _bytes: &[u8]) -> Result<(), sse_steam::api::SteamError> {
-        Ok(())
-    }
-}
 
 fn temp_dir(label: &str) -> PathBuf {
     let nanos = SystemTime::now()
@@ -63,6 +55,31 @@ fn timed_out_worker_is_killed_and_write_result_is_uncertain() {
         })
     ));
     assert!(started.elapsed() < Duration::from_secs(1));
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[cfg(unix)]
+#[test]
+fn timeout_does_not_wait_for_a_descendant_holding_inherited_stdout() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::{Duration, Instant};
+
+    let directory = temp_dir("timeout-descendant");
+    let worker = directory.join("slow-worker");
+    assert!(fs::write(&worker, "#!/bin/sh\nsleep 2 &\nwait\n").is_ok());
+    let permissions = fs::metadata(&worker).map(|metadata| metadata.permissions());
+    assert!(permissions.is_ok_and(|mut value| {
+        value.set_mode(0o755);
+        fs::set_permissions(&worker, value).is_ok()
+    }));
+    let request = Request::List { app_id: 4500 };
+    let started = Instant::now();
+    let result = sse_steam::worker::run_worker_process(&worker, &request, Duration::from_millis(40));
+    assert!(matches!(
+        result,
+        Err(sse_steam::worker::WorkerProcessError::Timeout { .. })
+    ));
+    assert!(started.elapsed() < Duration::from_millis(500));
     let _ = fs::remove_dir_all(directory);
 }
 
@@ -240,45 +257,39 @@ fn worker_write_fails_closed_without_a_release_format_reader() {
 }
 
 #[test]
-fn write_transaction_checks_fresh_hash_and_never_retries_uncertain_write() {
+fn public_cloud_write_api_fails_closed_until_a_release_reader_is_integrated() {
     let artifacts = temp_dir("transaction");
     let mut api = ScriptedSteamApi::default();
     let remote_name = "_appdata_/savedgames/save.sav";
     api.files.insert(remote_name.into(), b"fresh source".to_vec());
     let prepared = PreparedEdit::new(b"fresh source", b"edited save");
-    api.write_behavior = WriteBehavior::FailAfterWrite("lost response".into());
-    let mut verifier = SyntheticFormatVerifier;
+    let mut verifier = UnavailableSaveFormatVerifier;
     let result =
         SteamCloudWriteTransaction::upload(&mut api, &mut verifier, 4500, remote_name, &prepared, &artifacts, true);
-    assert!(result.is_ok());
-    let Ok(receipt) = result else { return };
-    assert_eq!(receipt.status, WriteStatus::Uncertain);
-    assert_eq!(api.write_count, 1);
-    assert!(receipt.backup_path.is_file());
-    assert!(receipt.recovery_path.is_file());
+    assert!(result.is_err());
+    assert_eq!(api.write_count, 0);
+    assert!(fs::read_dir(&artifacts).is_ok_and(|entries| entries.count() == 0));
     let _ = fs::remove_dir_all(artifacts);
 }
 
 #[test]
-fn successful_cloud_transaction_keeps_one_backup_and_verifies_readback() {
+fn public_cloud_write_api_cannot_be_enabled_by_a_boolean() {
     let artifacts = temp_dir("verified");
     let mut api = ScriptedSteamApi::default();
     let remote_name = "_appdata_/savedgames/save.sav";
     api.files.insert(remote_name.into(), b"fresh source".to_vec());
     let prepared = PreparedEdit::new(b"fresh source", b"edited save");
-    let mut verifier = SyntheticFormatVerifier;
+    let mut verifier = UnavailableSaveFormatVerifier;
     let result =
         SteamCloudWriteTransaction::upload(&mut api, &mut verifier, 4500, remote_name, &prepared, &artifacts, true);
-    assert!(result.is_ok_and(|receipt| {
-        receipt.status == WriteStatus::Verified
-            && fs::read(receipt.backup_path).is_ok_and(|bytes| bytes == b"fresh source")
-            && fs::read(receipt.recovery_path).is_ok_and(|bytes| bytes == b"edited save")
-    }));
+    assert!(result.is_err());
+    assert_eq!(api.write_count, 0);
+    assert!(fs::read_dir(&artifacts).is_ok_and(|entries| entries.count() == 0));
     let _ = fs::remove_dir_all(artifacts);
 }
 
 #[test]
-fn auto_cloud_writer_checks_fresh_hash_and_reads_back_written_bytes() {
+fn auto_cloud_writer_is_disabled_until_path_operations_are_race_safe() {
     let root = temp_dir("auto-cloud-write");
     let game_root = root.join("Stalker2/Saved/STEAM/SaveGames/Data");
     assert!(fs::create_dir_all(&game_root).is_ok());
@@ -286,7 +297,7 @@ fn auto_cloud_writer_checks_fresh_hash_and_reads_back_written_bytes() {
     assert!(fs::write(&target, b"cloud original").is_ok());
     let artifacts = root.join("artifacts");
     let prepared = PreparedEdit::new(b"cloud original", b"cloud edited");
-    let mut verifier = SyntheticFormatVerifier;
+    let mut verifier = UnavailableSaveFormatVerifier;
     let result = write_auto_cloud(
         &root,
         "Stalker2/Saved/STEAM/SaveGames/Data/slot.sav",
@@ -295,11 +306,8 @@ fn auto_cloud_writer_checks_fresh_hash_and_reads_back_written_bytes() {
         true,
         &mut verifier,
     );
-    assert!(result.is_ok_and(|receipt| {
-        receipt.status == WriteStatus::Verified
-            && fs::read(&target).is_ok_and(|bytes| bytes == b"cloud edited")
-            && fs::read(receipt.backup_path).is_ok_and(|bytes| bytes == b"cloud original")
-    }));
+    assert!(result.is_err());
+    assert!(fs::read(&target).is_ok_and(|bytes| bytes == b"cloud original"));
     let _ = fs::remove_dir_all(root);
 }
 
@@ -310,7 +318,7 @@ fn stale_cloud_source_is_refused_before_any_write() {
     let remote_name = "_appdata_/savedgames/save.sav";
     api.files.insert(remote_name.into(), b"newer source".to_vec());
     let prepared = PreparedEdit::new(b"old source", b"edited save");
-    let mut verifier = SyntheticFormatVerifier;
+    let mut verifier = UnavailableSaveFormatVerifier;
     assert!(SteamCloudWriteTransaction::upload(
         &mut api,
         &mut verifier,

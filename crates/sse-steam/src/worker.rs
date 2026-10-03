@@ -181,8 +181,10 @@ pub fn run_worker_process(
         }
         if Instant::now() >= deadline {
             terminate_child(&mut child);
-            let _ = writer.join();
-            let _ = reader.join();
+            // A descendant may have inherited stdout and keep the reader blocked after the
+            // direct worker exits. Dropping these handles detaches cleanup from the deadline.
+            drop(writer);
+            drop(reader);
             return Err(WorkerProcessError::Timeout {
                 write_outcome_uncertain: matches!(
                     request,
