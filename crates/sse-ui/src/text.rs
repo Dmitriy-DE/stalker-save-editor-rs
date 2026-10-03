@@ -887,7 +887,6 @@ fn is_variation_selector(character: char) -> bool {
     matches!(u32::from(character), 0xfe00..=0xfe0f | 0xe0100..=0xe01ef)
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
