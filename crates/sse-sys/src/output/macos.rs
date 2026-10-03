@@ -115,8 +115,12 @@ fn run(mut pcm: Vec<i16>, channels: u8, rate: u32, volume: f32) {
     if unsafe { AudioQueueEnqueueBuffer(queue, buffer, 0, ptr::null()) } == 0
         && unsafe { AudioQueueStart(queue, ptr::null()) } == 0
     {
-        let frames = pcm.len() / usize::from(channels);
-        let millis = u64::try_from(frames).unwrap_or(u64::MAX).saturating_mul(1000) / u64::from(rate);
+        let frames = pcm.len().checked_div(usize::from(channels)).unwrap_or(0);
+        let millis = u64::try_from(frames)
+            .unwrap_or(u64::MAX)
+            .saturating_mul(1000)
+            .checked_div(u64::from(rate))
+            .unwrap_or(0);
         thread::sleep(Duration::from_millis(millis.saturating_add(50)));
         // SAFETY: queue is live; immediate stop is appropriate for one-shot teardown after duration elapsed.
         let _ = unsafe { AudioQueueStop(queue, 1) };
