@@ -699,3 +699,143 @@ impl Parser {
             's' => Ok(ClassTerm::Space),
             'w' => Ok(ClassTerm::Word),
             'n' => Ok(ClassTerm::Range('\n', '\n')),
+            'r' => Ok(ClassTerm::Range('\r', '\r')),
+            't' => Ok(ClassTerm::Range('\t', '\t')),
+            other => Ok(ClassTerm::Range(other, other)),
+        }
+    }
+
+    fn peek(&self) -> Option<char> {
+        self.chars.get(self.position).copied()
+    }
+
+    fn bump(&mut self) -> Result<()> {
+        self.position = self
+            .position
+            .checked_add(1)
+            .ok_or_else(|| self.error("regex parser position overflow"))?;
+        Ok(())
+    }
+
+    fn expect(&mut self, expected: char) -> Result<()> {
+        if self.peek() != Some(expected) {
+            return Err(self.error("unexpected regex token"));
+        }
+        self.bump()
+    }
+
+    fn error(&self, message: &str) -> Error {
+        Error::damaged(format!("{message} at pattern char {}", self.position))
+    }
+}
+
+#[derive(Debug, Clone)]
+struct Thread {
+    pc: usize,
+    slots: Vec<Option<usize>>,
+}
+
+/// A compiled regular expression.
+#[derive(Debug, Clone)]
+pub struct Regex {
+    program: Program,
+    required_literal: Option<String>,
+}
+
+impl Regex {
+    /// Compiles a case-sensitive regular expression.
+    ///
+    /// # Errors
+    /// Returns [`Error::Damaged`] for malformed syntax and [`Error::Refused`] for configured resource limits.
+    pub fn new(pattern: &str) -> Result<Self> {
+        Self::with_options(pattern, RegexOptions::default())
+    }
+
+    /// Compiles a regular expression using explicit options.
+    ///
+    /// A leading `(?i)` is also accepted and enables the same case-insensitive mode.
+    ///
+    /// # Errors
+    /// Returns [`Error::Damaged`] for malformed syntax and [`Error::Refused`] for configured resource limits.
+    pub fn with_options(pattern: &str, mut options: RegexOptions) -> Result<Self> {
+        let body = if let Some(rest) = pattern.strip_prefix("(?i)") {
+            options.case_insensitive = true;
+            rest
+        } else {
+            pattern
+        };
+        let (ast, capture_count) = Parser::new(body)?.parse()?;
+        let required_literal = required_literal(&ast, options.case_insensitive);
+        let mut compiler = Compiler::new();
+        let inner = compiler.compile(&ast)?;
+        let end_save = compiler.emit(Instruction::Save(1, None))?;
+        compiler.patch(&inner.outs, end_save)?;
+        let matched = compiler.emit(Instruction::Match)?;
+        compiler.patch(
+            &[Patch {
+                instruction: end_save,
+                arm: PatchArm::Next,
+            }],
+            matched,
+        )?;
+        let start_save = compiler.emit(Instruction::Save(0, Some(inner.start)))?;
+        let groups = capture_count
+            .checked_add(1)
+            .ok_or_else(|| Error::Refused("regex capture count overflow".to_owned()))?;
+        let capture_slots = groups
+            .checked_mul(2)
+            .ok_or_else(|| Error::Refused("regex capture slot overflow".to_owned()))?;
+        Ok(Self {
+            program: Program {
+                instructions: compiler.instructions,
+                start: start_save,
+                capture_slots,
+                options,
+            },
+            required_literal,
+        })
+    }
+
+    /// Returns whether the expression occurs anywhere in `text`.
+    #[must_use]
+    pub fn is_match(&self, text: &str) -> bool {
+        self.run(text).is_some()
+    }
+
+    /// Returns the leftmost first match using greedy/lazy branch priority.
+    #[must_use]
+    pub fn find(&self, text: &str) -> Option<Match> {
+        self.run(text).and_then(|captures| captures.get(0))
+    }
+
+    /// Returns capture ranges for the leftmost first match.
+    #[must_use]
+    pub fn captures(&self, text: &str) -> Option<Captures> {
+        self.run(text)
+    }
+
+    /// Longest literal conservatively known to occur in every match, when one exists.
+    #[must_use]
+    pub fn required_literal(&self) -> Option<&str> {
+        self.required_literal.as_deref()
+    }
+
+    fn run(&self, text: &str) -> Option<Captures> {
+        let state_count = self.program.instructions.len();
+        let mut active = Vec::new();
+        let mut best: Option<Vec<Option<usize>>> = None;
+        let mut position = 0_usize;
+        let mut previous: Option<char> = None;
+
+        loop {
+            let next_character = text.get(position..).and_then(|tail| tail.chars().next());
+            if best.is_none() {
+                let mut seen = vec![false; state_count];
+                for thread in &active {
+                    if let Some(slot) = seen.get_mut(thread.pc) {
+                        *slot = true;
+                    }
+                }
+                let mut slots = vec![None; self.program.capture_slots];
+                if let Some(start) = slots.get_mut(0) {
+                    *start = Some(position);
