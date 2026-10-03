@@ -460,9 +460,7 @@ mod tests {
         put32(&mut out, attrs);
         put32(&mut out, 0);
         out.extend_from_slice(name);
-        let directory_size = u32::try_from(out.len())
-            .unwrap_or(u32::MAX)
-            .saturating_sub(central);
+        let directory_size = u32::try_from(out.len()).unwrap_or(u32::MAX).saturating_sub(central);
         put32(&mut out, 0x0605_4b50);
         put16(&mut out, 0);
         put16(&mut out, 0);
