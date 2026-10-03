@@ -1,6 +1,6 @@
 //! Cached vector icons and C#-style icon button variants.
 
-use crate::path::{FillRule, Icon, Point, StrokeStyle, Transform};
+use crate::path::{Icon, Point, StrokeStyle, Transform};
 use sse_core::{Error, Result};
 
 const MAX_CACHE: usize = 128;
@@ -107,7 +107,10 @@ fn rasterize(icon: Icon, size: u16, color: u32) -> Result<IconBitmap> {
             let mut covered = 0u8;
             for sy in [0.25, 0.75] {
                 for sx in [0.25, 0.75] {
-                    if flat.contains(Point::new((x as f64) + sx, (y as f64) + sy)) {
+                    if flat.contains(Point::new(
+                        f64::from(u16::try_from(x).unwrap_or_default()) + sx,
+                        f64::from(u16::try_from(y).unwrap_or_default()) + sy,
+                    )) {
                         covered = covered.saturating_add(1);
                     }
                 }
