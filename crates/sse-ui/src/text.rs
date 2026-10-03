@@ -879,17 +879,6 @@ fn is_hard_break_char(character: char) -> bool {
     )
 }
 
-fn is_control(character: char) -> bool {
-    matches!(
-        grapheme_class(character),
-        GraphemeClass::Cr | GraphemeClass::Lf | GraphemeClass::Control
-    )
-}
-
-fn is_extend(character: char) -> bool {
-    grapheme_class(character) == GraphemeClass::Extend
-}
-
 fn is_combining_mark(character: char) -> bool {
     grapheme_class(character) == GraphemeClass::Extend
 }
@@ -898,21 +887,6 @@ fn is_variation_selector(character: char) -> bool {
     matches!(u32::from(character), 0xfe00..=0xfe0f | 0xe0100..=0xe01ef)
 }
 
-fn is_regional_indicator(character: char) -> bool {
-    grapheme_class(character) == GraphemeClass::RegionalIndicator
-}
-
-fn is_extended_pictographic(character: char) -> bool {
-    unicode_extended_pictographic(character)
-}
-
-fn is_spacing_mark(character: char) -> bool {
-    grapheme_class(character) == GraphemeClass::SpacingMark
-}
-
-fn is_prepend(character: char) -> bool {
-    grapheme_class(character) == GraphemeClass::Prepend
-}
 
 #[cfg(test)]
 mod tests {
