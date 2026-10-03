@@ -85,7 +85,10 @@ fn emit_match(w: &mut Bits, len: usize, dist: usize) -> Result<()> {
         .find(|(_, b)| **b <= len)
         .map(|(i, _)| i)
         .ok_or_else(|| Error::damaged("deflate length"))?;
-    emit_lit(w, u16::try_from(257_usize.saturating_add(li)).map_err(|_| Error::damaged("length symbol"))?)?;
+    emit_lit(
+        w,
+        u16::try_from(257_usize.saturating_add(li)).map_err(|_| Error::damaged("length symbol"))?,
+    )?;
     let eb = *LE.get(li).ok_or_else(|| Error::damaged("length extra"))?;
     w.put(
         u32::try_from(len.saturating_sub(*LB.get(li).unwrap_or(&len))).map_err(|_| Error::damaged("length extra"))?,
@@ -160,19 +163,35 @@ struct Code {
 }
 
 fn length_symbol(len: usize) -> Result<(usize, u8, u32)> {
-    let index = LB.iter().enumerate().rev().find(|(_, base)| **base <= len)
-        .map(|(index, _)| index).ok_or_else(|| Error::damaged("deflate length"))?;
+    let index = LB
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, base)| **base <= len)
+        .map(|(index, _)| index)
+        .ok_or_else(|| Error::damaged("deflate length"))?;
     let base = LB.get(index).copied().unwrap_or(len);
-    Ok((257_usize.saturating_add(index), LE.get(index).copied().unwrap_or(0),
-        u32::try_from(len.saturating_sub(base)).map_err(|_| Error::damaged("length extra"))?))
+    Ok((
+        257_usize.saturating_add(index),
+        LE.get(index).copied().unwrap_or(0),
+        u32::try_from(len.saturating_sub(base)).map_err(|_| Error::damaged("length extra"))?,
+    ))
 }
 
 fn distance_symbol(dist: usize) -> Result<(usize, u8, u32)> {
-    let index = DB.iter().enumerate().rev().find(|(_, base)| **base <= dist)
-        .map(|(index, _)| index).ok_or_else(|| Error::damaged("deflate distance"))?;
+    let index = DB
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, base)| **base <= dist)
+        .map(|(index, _)| index)
+        .ok_or_else(|| Error::damaged("deflate distance"))?;
     let base = DB.get(index).copied().unwrap_or(dist);
-    Ok((index, DE.get(index).copied().unwrap_or(0),
-        u32::try_from(dist.saturating_sub(base)).map_err(|_| Error::damaged("distance extra"))?))
+    Ok((
+        index,
+        DE.get(index).copied().unwrap_or(0),
+        u32::try_from(dist.saturating_sub(base)).map_err(|_| Error::damaged("distance extra"))?,
+    ))
 }
 
 fn tokenize(input: &[u8], level: Level) -> Vec<Token> {
@@ -185,27 +204,42 @@ fn tokenize(input: &[u8], level: Level) -> Vec<Token> {
     while p < input.len() {
         let current = best(input, p, &head, &prev, chain);
         if let Some(hash) = hash3(input, p) {
-            if let Some(slot) = prev.get_mut(p) { *slot = head.get(hash).copied().flatten(); }
-            if let Some(slot) = head.get_mut(hash) { *slot = Some(p); }
+            if let Some(slot) = prev.get_mut(p) {
+                *slot = head.get(hash).copied().flatten();
+            }
+            if let Some(slot) = head.get_mut(hash) {
+                *slot = Some(p);
+            }
         }
         let use_match = if current.0 >= 3 && p.saturating_add(1) < input.len() {
             let next = best(input, p.saturating_add(1), &head, &prev, lazy);
             next.0 <= current.0.saturating_add(1)
-        } else { current.0 >= 3 };
+        } else {
+            current.0 >= 3
+        };
         if use_match {
-            out.push(Token::Match { len: current.0, dist: current.1 });
+            out.push(Token::Match {
+                len: current.0,
+                dist: current.1,
+            });
             let end = p.saturating_add(current.0).min(input.len());
             let mut q = p.saturating_add(1);
             while q < end {
                 if let Some(hash) = hash3(input, q) {
-                    if let Some(slot) = prev.get_mut(q) { *slot = head.get(hash).copied().flatten(); }
-                    if let Some(slot) = head.get_mut(hash) { *slot = Some(q); }
+                    if let Some(slot) = prev.get_mut(q) {
+                        *slot = head.get(hash).copied().flatten();
+                    }
+                    if let Some(slot) = head.get_mut(hash) {
+                        *slot = Some(q);
+                    }
                 }
                 q = q.saturating_add(1);
             }
             p = end;
         } else {
-            if let Some(byte) = input.get(p).copied() { out.push(Token::Lit(byte)); }
+            if let Some(byte) = input.get(p).copied() {
+                out.push(Token::Lit(byte));
+            }
             p = p.saturating_add(1);
         }
     }
@@ -213,12 +247,19 @@ fn tokenize(input: &[u8], level: Level) -> Vec<Token> {
 }
 
 fn huffman_lengths(freq: &[u32], maximum: u8) -> Result<Vec<u8>> {
-    let used: Vec<usize> = freq.iter().enumerate()
-        .filter_map(|(symbol, count)| (*count != 0).then_some(symbol)).collect();
+    let used: Vec<usize> = freq
+        .iter()
+        .enumerate()
+        .filter_map(|(symbol, count)| (*count != 0).then_some(symbol))
+        .collect();
     let mut result = vec![0_u8; freq.len()];
-    if used.is_empty() { return Ok(result); }
+    if used.is_empty() {
+        return Ok(result);
+    }
     if used.len() == 1 {
-        if let Some(slot) = result.get_mut(used.first().copied().unwrap_or(0)) { *slot = 1; }
+        if let Some(slot) = result.get_mut(used.first().copied().unwrap_or(0)) {
+            *slot = 1;
+        }
         return Ok(result);
     }
     let mut parent: Vec<Option<usize>> = vec![None; used.len()];
@@ -231,8 +272,12 @@ fn huffman_lengths(freq: &[u32], maximum: u8) -> Result<Vec<u8>> {
         let Some(Reverse((fb, sb, b))) = heap.pop() else { break };
         let node = parent.len();
         parent.push(None);
-        if let Some(slot) = parent.get_mut(a) { *slot = Some(node); }
-        if let Some(slot) = parent.get_mut(b) { *slot = Some(node); }
+        if let Some(slot) = parent.get_mut(a) {
+            *slot = Some(node);
+        }
+        if let Some(slot) = parent.get_mut(b) {
+            *slot = Some(node);
+        }
         heap.push(Reverse((fa.saturating_add(fb), sa.min(sb), node)));
     }
     let mut raw = Vec::with_capacity(used.len());
@@ -247,7 +292,9 @@ fn huffman_lengths(freq: &[u32], maximum: u8) -> Result<Vec<u8>> {
     }
     if raw.iter().copied().max().unwrap_or(1) <= maximum {
         for (symbol, depth) in used.iter().copied().zip(raw) {
-            if let Some(slot) = result.get_mut(symbol) { *slot = depth; }
+            if let Some(slot) = result.get_mut(symbol) {
+                *slot = depth;
+            }
         }
         return Ok(result);
     }
@@ -255,18 +302,30 @@ fn huffman_lengths(freq: &[u32], maximum: u8) -> Result<Vec<u8>> {
     let mut overflow = 0_usize;
     for depth in raw {
         let clipped = depth.min(maximum);
-        if let Some(slot) = counts.get_mut(usize::from(clipped)) { *slot = slot.saturating_add(1); }
-        if depth > maximum { overflow = overflow.saturating_add(1); }
+        if let Some(slot) = counts.get_mut(usize::from(clipped)) {
+            *slot = slot.saturating_add(1);
+        }
+        if depth > maximum {
+            overflow = overflow.saturating_add(1);
+        }
     }
     while overflow > 0 {
         let mut bits = maximum.saturating_sub(1);
         while bits > 0 && counts.get(usize::from(bits)).copied().unwrap_or(0) == 0 {
             bits = bits.saturating_sub(1);
         }
-        if bits == 0 { return Err(Error::damaged("cannot limit deflate Huffman tree")); }
-        if let Some(slot) = counts.get_mut(usize::from(bits)) { *slot = slot.saturating_sub(1); }
-        if let Some(slot) = counts.get_mut(usize::from(bits.saturating_add(1))) { *slot = slot.saturating_add(2); }
-        if let Some(slot) = counts.get_mut(usize::from(maximum)) { *slot = slot.saturating_sub(1); }
+        if bits == 0 {
+            return Err(Error::damaged("cannot limit deflate Huffman tree"));
+        }
+        if let Some(slot) = counts.get_mut(usize::from(bits)) {
+            *slot = slot.saturating_sub(1);
+        }
+        if let Some(slot) = counts.get_mut(usize::from(bits.saturating_add(1))) {
+            *slot = slot.saturating_add(2);
+        }
+        if let Some(slot) = counts.get_mut(usize::from(maximum)) {
+            *slot = slot.saturating_sub(1);
+        }
         overflow = overflow.saturating_sub(overflow.min(2));
     }
     let mut ordered = used;
@@ -275,44 +334,69 @@ fn huffman_lengths(freq: &[u32], maximum: u8) -> Result<Vec<u8>> {
     for bits in (1..=maximum).rev() {
         let amount = counts.get(usize::from(bits)).copied().unwrap_or(0);
         for _ in 0..amount {
-            let symbol = ordered.get(cursor).copied()
+            let symbol = ordered
+                .get(cursor)
+                .copied()
                 .ok_or_else(|| Error::damaged("deflate Huffman assignment"))?;
-            if let Some(slot) = result.get_mut(symbol) { *slot = bits; }
+            if let Some(slot) = result.get_mut(symbol) {
+                *slot = bits;
+            }
             cursor = cursor.saturating_add(1);
         }
     }
-    if cursor != ordered.len() { return Err(Error::damaged("incomplete deflate Huffman assignment")); }
+    if cursor != ordered.len() {
+        return Err(Error::damaged("incomplete deflate Huffman assignment"));
+    }
     Ok(result)
 }
 
 fn canonical(lengths: &[u8], maximum: u8) -> Result<Vec<Code>> {
     let mut counts = vec![0_u16; usize::from(maximum).saturating_add(1)];
     for length in lengths.iter().copied().filter(|length| *length != 0) {
-        if length > maximum { return Err(Error::damaged("deflate Huffman length exceeds limit")); }
-        if let Some(slot) = counts.get_mut(usize::from(length)) { *slot = slot.saturating_add(1); }
+        if length > maximum {
+            return Err(Error::damaged("deflate Huffman length exceeds limit"));
+        }
+        if let Some(slot) = counts.get_mut(usize::from(length)) {
+            *slot = slot.saturating_add(1);
+        }
     }
     let mut next = vec![0_u16; counts.len()];
     let mut code = 0_u16;
     for bits in 1..=maximum {
-        code = code.saturating_add(counts.get(usize::from(bits.saturating_sub(1))).copied().unwrap_or(0))
+        code = code
+            .saturating_add(counts.get(usize::from(bits.saturating_sub(1))).copied().unwrap_or(0))
             .wrapping_shl(1);
-        if let Some(slot) = next.get_mut(usize::from(bits)) { *slot = code; }
+        if let Some(slot) = next.get_mut(usize::from(bits)) {
+            *slot = code;
+        }
     }
     let mut result = vec![Code::default(); lengths.len()];
     for (symbol, length) in lengths.iter().copied().enumerate() {
-        if length == 0 { continue; }
+        if length == 0 {
+            continue;
+        }
         let raw = next.get(usize::from(length)).copied().unwrap_or(0);
-        if let Some(slot) = next.get_mut(usize::from(length)) { *slot = slot.saturating_add(1); }
+        if let Some(slot) = next.get_mut(usize::from(length)) {
+            *slot = slot.saturating_add(1);
+        }
         if let Some(slot) = result.get_mut(symbol) {
-            *slot = Code { bits: rev(raw, length), len: length };
+            *slot = Code {
+                bits: rev(raw, length),
+                len: length,
+            };
         }
     }
     Ok(result)
 }
 
 fn emit_code(writer: &mut Bits, codes: &[Code], symbol: usize) -> Result<()> {
-    let code = codes.get(symbol).copied().ok_or_else(|| Error::damaged("missing deflate Huffman symbol"))?;
-    if code.len == 0 { return Err(Error::damaged("zero-length deflate Huffman symbol")); }
+    let code = codes
+        .get(symbol)
+        .copied()
+        .ok_or_else(|| Error::damaged("missing deflate Huffman symbol"))?;
+    if code.len == 0 {
+        return Err(Error::damaged("zero-length deflate Huffman symbol"));
+    }
     writer.put(u32::from(code.bits), code.len)
 }
 
@@ -334,7 +418,11 @@ fn emit_tokens(writer: &mut Bits, tokens: &[Token], literal: &[Code], distance: 
 }
 
 #[derive(Clone, Copy)]
-struct LengthToken { symbol: usize, extra: u32, bits: u8 }
+struct LengthToken {
+    symbol: usize,
+    extra: u32,
+    bits: u8,
+}
 
 fn encode_lengths(lengths: &[u8]) -> Vec<LengthToken> {
     let mut out = Vec::new();
@@ -342,32 +430,59 @@ fn encode_lengths(lengths: &[u8]) -> Vec<LengthToken> {
     while p < lengths.len() {
         let value = lengths.get(p).copied().unwrap_or(0);
         let mut run = 1_usize;
-        while p.saturating_add(run) < lengths.len()
-            && lengths.get(p.saturating_add(run)).copied() == Some(value) {
+        while p.saturating_add(run) < lengths.len() && lengths.get(p.saturating_add(run)).copied() == Some(value) {
             run = run.saturating_add(1);
         }
         let mut left = run;
         if value == 0 {
             while left >= 11 {
                 let n = left.min(138);
-                out.push(LengthToken { symbol: 18, extra: u32::try_from(n.saturating_sub(11)).unwrap_or_default(), bits: 7 });
+                out.push(LengthToken {
+                    symbol: 18,
+                    extra: u32::try_from(n.saturating_sub(11)).unwrap_or_default(),
+                    bits: 7,
+                });
                 left = left.saturating_sub(n);
             }
             if left >= 3 {
                 let n = left.min(10);
-                out.push(LengthToken { symbol: 17, extra: u32::try_from(n.saturating_sub(3)).unwrap_or_default(), bits: 3 });
+                out.push(LengthToken {
+                    symbol: 17,
+                    extra: u32::try_from(n.saturating_sub(3)).unwrap_or_default(),
+                    bits: 3,
+                });
                 left = left.saturating_sub(n);
             }
-            for _ in 0..left { out.push(LengthToken { symbol: 0, extra: 0, bits: 0 }); }
+            for _ in 0..left {
+                out.push(LengthToken {
+                    symbol: 0,
+                    extra: 0,
+                    bits: 0,
+                });
+            }
         } else {
-            out.push(LengthToken { symbol: usize::from(value), extra: 0, bits: 0 });
+            out.push(LengthToken {
+                symbol: usize::from(value),
+                extra: 0,
+                bits: 0,
+            });
             left = left.saturating_sub(1);
             while left >= 3 {
                 let n = left.min(6);
-                out.push(LengthToken { symbol: 16, extra: u32::try_from(n.saturating_sub(3)).unwrap_or_default(), bits: 2 });
+                out.push(LengthToken {
+                    symbol: 16,
+                    extra: u32::try_from(n.saturating_sub(3)).unwrap_or_default(),
+                    bits: 2,
+                });
                 left = left.saturating_sub(n);
             }
-            for _ in 0..left { out.push(LengthToken { symbol: usize::from(value), extra: 0, bits: 0 }); }
+            for _ in 0..left {
+                out.push(LengthToken {
+                    symbol: usize::from(value),
+                    extra: 0,
+                    bits: 0,
+                });
+            }
         }
         p = p.saturating_add(run);
     }
@@ -378,46 +493,77 @@ fn emit_dynamic(writer: &mut Bits, tokens: &[Token]) -> Result<()> {
     const ORDER: [usize; 19] = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];
     let mut lf = vec![0_u32; 286];
     let mut df = vec![0_u32; 30];
-    if let Some(slot) = lf.get_mut(256) { *slot = 1; }
+    if let Some(slot) = lf.get_mut(256) {
+        *slot = 1;
+    }
     for token in tokens {
         match *token {
-            Token::Lit(byte) => if let Some(slot) = lf.get_mut(usize::from(byte)) { *slot = slot.saturating_add(1); },
+            Token::Lit(byte) => {
+                if let Some(slot) = lf.get_mut(usize::from(byte)) {
+                    *slot = slot.saturating_add(1);
+                }
+            }
             Token::Match { len, dist } => {
                 let (ls, _, _) = length_symbol(len)?;
                 let (ds, _, _) = distance_symbol(dist)?;
-                if let Some(slot) = lf.get_mut(ls) { *slot = slot.saturating_add(1); }
-                if let Some(slot) = df.get_mut(ds) { *slot = slot.saturating_add(1); }
+                if let Some(slot) = lf.get_mut(ls) {
+                    *slot = slot.saturating_add(1);
+                }
+                if let Some(slot) = df.get_mut(ds) {
+                    *slot = slot.saturating_add(1);
+                }
             }
         }
     }
     if df.iter().all(|value| *value == 0) {
-        if let Some(slot) = df.first_mut() { *slot = 1; }
+        if let Some(slot) = df.first_mut() {
+            *slot = 1;
+        }
     }
     let ll = huffman_lengths(&lf, 15)?;
     let dl = huffman_lengths(&df, 15)?;
-    let hlit = ll.iter().rposition(|value| *value != 0)
-        .map_or(257, |index| index.saturating_add(1).max(257)).min(286);
-    let hdist = dl.iter().rposition(|value| *value != 0)
-        .map_or(1, |index| index.saturating_add(1).max(1)).min(30);
+    let hlit = ll
+        .iter()
+        .rposition(|value| *value != 0)
+        .map_or(257, |index| index.saturating_add(1).max(257))
+        .min(286);
+    let hdist = dl
+        .iter()
+        .rposition(|value| *value != 0)
+        .map_or(1, |index| index.saturating_add(1).max(1))
+        .min(30);
     let mut lengths = Vec::with_capacity(hlit.saturating_add(hdist));
     lengths.extend_from_slice(ll.get(..hlit).ok_or_else(|| Error::damaged("literal lengths"))?);
     lengths.extend_from_slice(dl.get(..hdist).ok_or_else(|| Error::damaged("distance lengths"))?);
     let encoded = encode_lengths(&lengths);
     let mut cf = vec![0_u32; 19];
     for item in &encoded {
-        if let Some(slot) = cf.get_mut(item.symbol) { *slot = slot.saturating_add(1); }
+        if let Some(slot) = cf.get_mut(item.symbol) {
+            *slot = slot.saturating_add(1);
+        }
     }
     let cl = huffman_lengths(&cf, 7)?;
-    let hclen = ORDER.iter().rposition(|symbol| cl.get(*symbol).copied().unwrap_or(0) != 0)
+    let hclen = ORDER
+        .iter()
+        .rposition(|symbol| cl.get(*symbol).copied().unwrap_or(0) != 0)
         .map_or(4, |index| index.saturating_add(1).max(4));
     let lc = canonical(&ll, 15)?;
     let dc = canonical(&dl, 15)?;
     let cc = canonical(&cl, 7)?;
     writer.put(1, 1)?;
     writer.put(2, 2)?;
-    writer.put(u32::try_from(hlit.saturating_sub(257)).map_err(|_| Error::damaged("HLIT"))?, 5)?;
-    writer.put(u32::try_from(hdist.saturating_sub(1)).map_err(|_| Error::damaged("HDIST"))?, 5)?;
-    writer.put(u32::try_from(hclen.saturating_sub(4)).map_err(|_| Error::damaged("HCLEN"))?, 4)?;
+    writer.put(
+        u32::try_from(hlit.saturating_sub(257)).map_err(|_| Error::damaged("HLIT"))?,
+        5,
+    )?;
+    writer.put(
+        u32::try_from(hdist.saturating_sub(1)).map_err(|_| Error::damaged("HDIST"))?,
+        5,
+    )?;
+    writer.put(
+        u32::try_from(hclen.saturating_sub(4)).map_err(|_| Error::damaged("HCLEN"))?,
+        4,
+    )?;
     for symbol in ORDER.iter().copied().take(hclen) {
         writer.put(u32::from(cl.get(symbol).copied().unwrap_or(0)), 3)?;
     }
