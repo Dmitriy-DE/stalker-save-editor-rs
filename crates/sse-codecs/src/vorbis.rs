@@ -1450,6 +1450,55 @@ impl Complex {
     }
 }
 
+fn deterministic_sin_cos(angle: f32) -> (f32, f32) {
+    const PI64: f64 = 3.141_592_653_589_793;
+    const HALF_PI64: f64 = PI64 / 2.0;
+    const TAU64: f64 = PI64 * 2.0;
+    let mut x = f64::from(angle);
+    while x > PI64 {
+        x -= TAU64;
+    }
+    while x < -PI64 {
+        x += TAU64;
+    }
+    let mut cos_sign = 1.0_f64;
+    if x > HALF_PI64 {
+        x = PI64 - x;
+        cos_sign = -1.0;
+    } else if x < -HALF_PI64 {
+        x = -PI64 - x;
+        cos_sign = -1.0;
+    }
+    let x2 = x * x;
+    let sin = x
+        * (1.0
+            + x2
+                * (-1.0 / 6.0
+                    + x2
+                        * (1.0 / 120.0
+                            + x2
+                                * (-1.0 / 5_040.0
+                                    + x2
+                                        * (1.0 / 362_880.0
+                                            + x2
+                                                * (-1.0 / 39_916_800.0
+                                                    + x2 * (1.0 / 6_227_020_800.0)))))));
+    let cos = cos_sign
+        * (1.0
+            + x2
+                * (-1.0 / 2.0
+                    + x2
+                        * (1.0 / 24.0
+                            + x2
+                                * (-1.0 / 720.0
+                                    + x2
+                                        * (1.0 / 40_320.0
+                                            + x2
+                                                * (-1.0 / 3_628_800.0
+                                                    + x2 * (1.0 / 479_001_600.0)))))));
+    (sin as f32, cos as f32)
+}
+
 fn fft(values: &mut [Complex]) -> Result<()> {
     let n = values.len();
     if !n.is_power_of_two() || n == 0 {
@@ -1470,10 +1519,8 @@ fn fft(values: &mut [Complex]) -> Result<()> {
     let mut length = 2_usize;
     while length <= n {
         let angle = -2.0 * PI / (length as f32);
-        let root = Complex {
-            re: angle.cos(),
-            im: angle.sin(),
-        };
+        let (sin, cos) = deterministic_sin_cos(angle);
+        let root = Complex { re: cos, im: sin };
         let half = length.saturating_div(2);
         let mut base = 0_usize;
         while base < n {
@@ -1510,9 +1557,10 @@ fn dct4(input: &[f32]) -> Result<Vec<f32>> {
     for (index, value) in input.iter().copied().enumerate() {
         let angle = -PI * (index as f32) / (2.0 * n as f32);
         if let Some(slot) = work.get_mut(index) {
+            let (sin, cos) = deterministic_sin_cos(angle);
             *slot = Complex {
-                re: value * angle.cos(),
-                im: value * angle.sin(),
+                re: value * cos,
+                im: value * sin,
             };
         }
     }
@@ -1520,10 +1568,8 @@ fn dct4(input: &[f32]) -> Result<Vec<f32>> {
     let mut output = Vec::with_capacity(n);
     for index in 0..n {
         let angle = -PI * ((index.saturating_mul(2).saturating_add(1)) as f32) / (4.0 * n as f32);
-        let rotation = Complex {
-            re: angle.cos(),
-            im: angle.sin(),
-        };
+        let (sin, cos) = deterministic_sin_cos(angle);
+        let rotation = Complex { re: cos, im: sin };
         output.push(work.get(index).copied().unwrap_or_default().mul(rotation).re);
     }
     Ok(output)
@@ -1573,9 +1619,9 @@ fn window(n: usize, small: usize, long: bool, previous_long: bool, next_long: bo
     let mut result = vec![0_f32; n];
     for index in left_start..left_end {
         let phase = ((index.saturating_sub(left_start)) as f32 + 0.5) / (left_n.max(1) as f32) * (PI / 2.0);
-        let sine = phase.sin();
+        let sine = deterministic_sin_cos(phase).0;
         if let Some(slot) = result.get_mut(index) {
-            *slot = (PI / 2.0 * sine * sine).sin();
+            *slot = deterministic_sin_cos(PI / 2.0 * sine * sine).0;
         }
     }
     for slot in result.iter_mut().take(right_start).skip(left_end) {
@@ -1584,9 +1630,9 @@ fn window(n: usize, small: usize, long: bool, previous_long: bool, next_long: bo
     for index in right_start..right_end.min(n) {
         let phase =
             ((index.saturating_sub(right_start)) as f32 + 0.5) / (right_n.max(1) as f32) * (PI / 2.0) + PI / 2.0;
-        let sine = phase.sin();
+        let sine = deterministic_sin_cos(phase).0;
         if let Some(slot) = result.get_mut(index) {
-            *slot = (PI / 2.0 * sine * sine).sin();
+            *slot = deterministic_sin_cos(PI / 2.0 * sine * sine).0;
         }
     }
     result
