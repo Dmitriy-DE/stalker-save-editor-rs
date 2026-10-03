@@ -830,7 +830,13 @@ fn decode_floor(floor: &Floor1, books: &[Codebook], bits: &mut Bits<'_>) -> Resu
     if y.len() != floor.x.len() {
         return Err(Error::damaged("Vorbis floor value count mismatch"));
     }
-    let mut active = vec![true; y.len()];
+    let mut active = vec![false; y.len()];
+    if let Some(slot) = active.get_mut(0) {
+        *slot = true;
+    }
+    if let Some(slot) = active.get_mut(1) {
+        *slot = true;
+    }
     for index in 2..y.len() {
         let low = low_neighbor(&floor.x, index)?;
         let high = high_neighbor(&floor.x, index)?;
@@ -846,9 +852,6 @@ fn decode_floor(floor: &Floor1, books: &[Codebook], bits: &mut Bits<'_>) -> Resu
         let low_room = predicted;
         let room = 2_i32.saturating_mul(high_room.min(low_room));
         let final_value = if value == 0 {
-            if let Some(slot) = active.get_mut(index) {
-                *slot = false;
-            }
             predicted
         } else if value >= room {
             if high_room > low_room {
@@ -864,6 +867,17 @@ fn decode_floor(floor: &Floor1, books: &[Codebook], bits: &mut Bits<'_>) -> Resu
         } else {
             predicted.saturating_add(value.saturating_div(2))
         };
+        if value != 0 {
+            if let Some(slot) = active.get_mut(index) {
+                *slot = true;
+            }
+            if let Some(slot) = active.get_mut(low) {
+                *slot = true;
+            }
+            if let Some(slot) = active.get_mut(high) {
+                *slot = true;
+            }
+        }
         if let Some(slot) = y.get_mut(index) {
             *slot = final_value;
         }
