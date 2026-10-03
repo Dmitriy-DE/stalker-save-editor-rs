@@ -67,7 +67,6 @@ struct Cluster {
     hard_break: bool,
     soft_hyphen: bool,
     whitespace: bool,
-    cjk: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -760,7 +759,6 @@ fn make_cluster<M: Metrics>(slice: &str, start: usize, end: usize, metrics: &M) 
     let hard_break = slice.chars().all(is_hard_break_char);
     let soft_hyphen = slice == "\u{00ad}";
     let whitespace = !hard_break && slice.chars().all(char::is_whitespace);
-    let cjk = slice.chars().any(is_cjk_character);
     let (width, first_visible, last_visible) = measure_cluster(slice, metrics);
     Some(Cluster {
         start,
@@ -773,7 +771,6 @@ fn make_cluster<M: Metrics>(slice: &str, start: usize, end: usize, metrics: &M) 
         hard_break,
         soft_hyphen,
         whitespace,
-        cjk,
     })
 }
 
@@ -848,10 +845,6 @@ fn is_kinsoku_start(character: char) -> bool {
             | LineBreakClass::Ns
             | LineBreakClass::Po
     )
-}
-
-fn is_kinsoku_end(character: char) -> bool {
-    matches!(line_break_class(character), LineBreakClass::Op)
 }
 
 fn is_cjk_character(character: char) -> bool {
