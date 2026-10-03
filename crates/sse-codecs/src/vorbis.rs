@@ -399,7 +399,11 @@ fn read_codebook(bits: &mut Bits<'_>) -> Result<Codebook> {
             let mut divisor = 1_usize;
             for dimension in 0..dimensions {
                 let index = if lookup == 1 {
-                    entry.checked_div(divisor).unwrap_or(0).checked_rem(lookup_values.max(1)).unwrap_or(0)
+                    entry
+                        .checked_div(divisor)
+                        .unwrap_or(0)
+                        .checked_rem(lookup_values.max(1))
+                        .unwrap_or(0)
                 } else {
                     entry.saturating_mul(dimensions).saturating_add(dimension)
                 };
