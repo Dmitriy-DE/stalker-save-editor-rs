@@ -638,7 +638,7 @@ mod tests {
     #[test]
     fn default_is_within_five_percent_of_zlib_6_on_text_fixture() {
         const PARAGRAPH: &[u8] =
-            b"Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.\\n";
+            b"Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.\n";
         let mut data = Vec::with_capacity(PARAGRAPH.len().saturating_mul(10_000));
         for _ in 0..10_000 {
             data.extend_from_slice(PARAGRAPH);
