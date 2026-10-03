@@ -32,10 +32,12 @@ pub struct Hunk {
 /// One changed byte interval in the old and new images.
 pub struct ByteRange {
     /// Old-image inclusive start byte.
-    pub old_start: usize,\n    /// Old-image exclusive end byte.
+    pub old_start: usize,
+    /// Old-image exclusive end byte.
     pub old_end: usize,
     /// New-image inclusive start byte.
-    pub new_start: usize,\n    /// New-image exclusive end byte.
+    pub new_start: usize,
+    /// New-image exclusive end byte.
     pub new_end: usize,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
