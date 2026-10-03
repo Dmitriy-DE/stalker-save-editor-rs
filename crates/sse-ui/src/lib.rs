@@ -4,6 +4,8 @@
 pub mod edit;
 /// Virtual list and table model (X28).
 pub mod list;
+/// Numbers, sizes, dates and plural forms in the 15 interface languages (X23).
+pub mod locale;
 /// SVG path data, flattening, strokes and the 28 interface icons (X25).
 pub mod path;
 /// Software raster primitives over a premultiplied BGRA surface (X14).
