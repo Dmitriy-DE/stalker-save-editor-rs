@@ -8,6 +8,8 @@ pub mod lzhuf;
 
 /// IEEE CRC-32 used by archive and container formats.
 pub mod crc32;
+/// Raw DEFLATE compressor.
+pub mod deflate;
 /// Safe OpenType/TrueType parsing and glyph coverage rasterisation.
 pub mod font;
 /// Zlib/DEFLATE decoder used by PNG and package tooling.
@@ -20,6 +22,8 @@ pub mod minidump;
 pub mod p256;
 /// Valve text KeyValues reader used for Steam library discovery.
 pub mod vdf;
+/// ZIP reader and reproducible writer.
+pub mod zip;
 
 /// PNG decoder to RGBA8.
 pub mod png;
