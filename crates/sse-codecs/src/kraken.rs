@@ -1362,7 +1362,7 @@ fn decode_rle(source: &[u8], output: &mut [u8], depth: usize) -> Result<()> {
         let cmd = *front
             .get(back.saturating_sub(1))
             .ok_or_else(|| Error::damaged("RLE command end underflow"))?;
-        if u32::from(cmd).saturating_sub(1) >= 0x2f {
+        if cmd == 0 || cmd >= 0x30 {
             back = back.saturating_sub(1);
             let copy = usize::from((!cmd) & 0x0f);
             let run = usize::from(cmd >> 4);
@@ -3028,6 +3028,36 @@ mod tests {
             decompress_into(&packed, &mut decoded).unwrap_or_else(|error| panic!("decode {}: {error:?}", fixture.name));
             assert_eq!(decoded, raw, "{} differs from the C++ reference output", fixture.name);
         }
+    }
+
+    #[test]
+    fn rle_command_classes_decode_from_opposite_ends() {
+        let short_copy = b"short-copy-1234";
+        let long_copy = [b'L'; 64];
+        let mut source = Vec::new();
+        source.push(0);
+        source.push(b'R');
+        source.extend_from_slice(b"xy");
+        source.extend_from_slice(short_copy);
+        source.extend_from_slice(&long_copy);
+
+        // Commands are consumed from the back while literal bytes are consumed
+        // from the front. In execution order these are: set RLE byte, short
+        // run, two-byte short copy/run, short copy (cmd 0), long run, long copy.
+        source.extend_from_slice(&[0x00, 0x02, 0x00, 0x09, 0x00, 0x02, 0x11, 0x3f, 0x01]);
+
+        let mut expected = Vec::new();
+        expected.extend_from_slice(b"RRR");
+        expected.extend_from_slice(b"xy");
+        expected.extend_from_slice(b"RRRR");
+        expected.extend_from_slice(short_copy);
+        expected.extend(std::iter::repeat_n(b'R', 128));
+        expected.extend_from_slice(&long_copy);
+
+        let mut output = vec![0_u8; expected.len()];
+        let decoded = decode_rle(&source, &mut output, 0);
+        assert!(decoded.is_ok(), "hand-built RLE array failed: {decoded:?}");
+        assert_eq!(output, expected);
     }
 
     #[test]
