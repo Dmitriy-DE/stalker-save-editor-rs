@@ -97,84 +97,9 @@ pub enum IndicConjunct {
 
 const GRAPHEME_RANGES: &[Range] = &[
     Range {
-        start: 0x600,
-        end: 0x605,
-        class: GraphemeClass::Prepend as u8,
-    },
-    Range {
-        start: 0x6dd,
-        end: 0x6dd,
-        class: GraphemeClass::Prepend as u8,
-    },
-    Range {
-        start: 0x70f,
-        end: 0x70f,
-        class: GraphemeClass::Prepend as u8,
-    },
-    Range {
-        start: 0x890,
-        end: 0x891,
-        class: GraphemeClass::Prepend as u8,
-    },
-    Range {
-        start: 0x8e2,
-        end: 0x8e2,
-        class: GraphemeClass::Prepend as u8,
-    },
-    Range {
-        start: 0xd4e,
-        end: 0xd4e,
-        class: GraphemeClass::Prepend as u8,
-    },
-    Range {
-        start: 0x110bd,
-        end: 0x110bd,
-        class: GraphemeClass::Prepend as u8,
-    },
-    Range {
-        start: 0x110cd,
-        end: 0x110cd,
-        class: GraphemeClass::Prepend as u8,
-    },
-    Range {
-        start: 0x111c2,
-        end: 0x111c3,
-        class: GraphemeClass::Prepend as u8,
-    },
-    Range {
-        start: 0x113d1,
-        end: 0x113d1,
-        class: GraphemeClass::Prepend as u8,
-    },
-    Range {
-        start: 0x1193f,
-        end: 0x1193f,
-        class: GraphemeClass::Prepend as u8,
-    },
-    Range {
-        start: 0x11941,
-        end: 0x11941,
-        class: GraphemeClass::Prepend as u8,
-    },
-    Range {
-        start: 0x11a84,
-        end: 0x11a89,
-        class: GraphemeClass::Prepend as u8,
-    },
-    Range {
-        start: 0x11d46,
-        end: 0x11d46,
-        class: GraphemeClass::Prepend as u8,
-    },
-    Range {
-        start: 0x11f02,
-        end: 0x11f02,
-        class: GraphemeClass::Prepend as u8,
-    },
-    Range {
-        start: 0xd,
-        end: 0xd,
-        class: GraphemeClass::Cr as u8,
+        start: 0x0,
+        end: 0x9,
+        class: GraphemeClass::Control as u8,
     },
     Range {
         start: 0xa,
@@ -182,14 +107,14 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Lf as u8,
     },
     Range {
-        start: 0x0,
-        end: 0x9,
-        class: GraphemeClass::Control as u8,
-    },
-    Range {
         start: 0xb,
         end: 0xc,
         class: GraphemeClass::Control as u8,
+    },
+    Range {
+        start: 0xd,
+        end: 0xd,
+        class: GraphemeClass::Cr as u8,
     },
     Range {
         start: 0xe,
@@ -204,111 +129,6 @@ const GRAPHEME_RANGES: &[Range] = &[
     Range {
         start: 0xad,
         end: 0xad,
-        class: GraphemeClass::Control as u8,
-    },
-    Range {
-        start: 0x61c,
-        end: 0x61c,
-        class: GraphemeClass::Control as u8,
-    },
-    Range {
-        start: 0x180e,
-        end: 0x180e,
-        class: GraphemeClass::Control as u8,
-    },
-    Range {
-        start: 0x200b,
-        end: 0x200b,
-        class: GraphemeClass::Control as u8,
-    },
-    Range {
-        start: 0x200e,
-        end: 0x200f,
-        class: GraphemeClass::Control as u8,
-    },
-    Range {
-        start: 0x2028,
-        end: 0x2028,
-        class: GraphemeClass::Control as u8,
-    },
-    Range {
-        start: 0x2029,
-        end: 0x2029,
-        class: GraphemeClass::Control as u8,
-    },
-    Range {
-        start: 0x202a,
-        end: 0x202e,
-        class: GraphemeClass::Control as u8,
-    },
-    Range {
-        start: 0x2060,
-        end: 0x2064,
-        class: GraphemeClass::Control as u8,
-    },
-    Range {
-        start: 0x2065,
-        end: 0x2065,
-        class: GraphemeClass::Control as u8,
-    },
-    Range {
-        start: 0x2066,
-        end: 0x206f,
-        class: GraphemeClass::Control as u8,
-    },
-    Range {
-        start: 0xfeff,
-        end: 0xfeff,
-        class: GraphemeClass::Control as u8,
-    },
-    Range {
-        start: 0xfff0,
-        end: 0xfff8,
-        class: GraphemeClass::Control as u8,
-    },
-    Range {
-        start: 0xfff9,
-        end: 0xfffb,
-        class: GraphemeClass::Control as u8,
-    },
-    Range {
-        start: 0x13430,
-        end: 0x1343f,
-        class: GraphemeClass::Control as u8,
-    },
-    Range {
-        start: 0x1bca0,
-        end: 0x1bca3,
-        class: GraphemeClass::Control as u8,
-    },
-    Range {
-        start: 0x1d173,
-        end: 0x1d17a,
-        class: GraphemeClass::Control as u8,
-    },
-    Range {
-        start: 0xe0000,
-        end: 0xe0000,
-        class: GraphemeClass::Control as u8,
-    },
-    Range {
-        start: 0xe0001,
-        end: 0xe0001,
-        class: GraphemeClass::Control as u8,
-    },
-    Range {
-        start: 0xe0002,
-        end: 0xe001f,
-        class: GraphemeClass::Control as u8,
-    },
-    Range {
-        start: 0xe0080,
-        end: 0xe00ff,
-        class: GraphemeClass::Control as u8,
-    },
-    Range {
-        start: 0xe01f0,
-        end: 0xe0fff,
         class: GraphemeClass::Control as u8,
     },
     Range {
@@ -352,9 +172,19 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x600,
+        end: 0x605,
+        class: GraphemeClass::Prepend as u8,
+    },
+    Range {
         start: 0x610,
         end: 0x61a,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x61c,
+        end: 0x61c,
+        class: GraphemeClass::Control as u8,
     },
     Range {
         start: 0x64b,
@@ -372,6 +202,11 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x6dd,
+        end: 0x6dd,
+        class: GraphemeClass::Prepend as u8,
+    },
+    Range {
         start: 0x6df,
         end: 0x6e4,
         class: GraphemeClass::Extend as u8,
@@ -385,6 +220,11 @@ const GRAPHEME_RANGES: &[Range] = &[
         start: 0x6ea,
         end: 0x6ed,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x70f,
+        end: 0x70f,
+        class: GraphemeClass::Prepend as u8,
     },
     Range {
         start: 0x711,
@@ -437,6 +277,11 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x890,
+        end: 0x891,
+        class: GraphemeClass::Prepend as u8,
+    },
+    Range {
         start: 0x897,
         end: 0x89f,
         class: GraphemeClass::Extend as u8,
@@ -447,9 +292,19 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x8e2,
+        end: 0x8e2,
+        class: GraphemeClass::Prepend as u8,
+    },
+    Range {
         start: 0x8e3,
         end: 0x902,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x903,
+        end: 0x903,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0x93a,
@@ -457,9 +312,19 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x93b,
+        end: 0x93b,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x93c,
         end: 0x93c,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x93e,
+        end: 0x940,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0x941,
@@ -467,9 +332,19 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x949,
+        end: 0x94c,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x94d,
         end: 0x94d,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x94e,
+        end: 0x94f,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0x951,
@@ -487,6 +362,11 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x982,
+        end: 0x983,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x9bc,
         end: 0x9bc,
         class: GraphemeClass::Extend as u8,
@@ -497,9 +377,24 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x9bf,
+        end: 0x9c0,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x9c1,
         end: 0x9c4,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x9c7,
+        end: 0x9c8,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
+        start: 0x9cb,
+        end: 0x9cc,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0x9cd,
@@ -527,9 +422,19 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0xa03,
+        end: 0xa03,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0xa3c,
         end: 0xa3c,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0xa3e,
+        end: 0xa40,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0xa41,
@@ -567,9 +472,19 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0xa83,
+        end: 0xa83,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0xabc,
         end: 0xabc,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0xabe,
+        end: 0xac0,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0xac1,
@@ -580,6 +495,16 @@ const GRAPHEME_RANGES: &[Range] = &[
         start: 0xac7,
         end: 0xac8,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0xac9,
+        end: 0xac9,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
+        start: 0xacb,
+        end: 0xacc,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0xacd,
@@ -602,6 +527,11 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0xb02,
+        end: 0xb03,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0xb3c,
         end: 0xb3c,
         class: GraphemeClass::Extend as u8,
@@ -617,9 +547,24 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0xb40,
+        end: 0xb40,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0xb41,
         end: 0xb44,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0xb47,
+        end: 0xb48,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
+        start: 0xb4b,
+        end: 0xb4c,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0xb4d,
@@ -652,9 +597,29 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0xbbf,
+        end: 0xbbf,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0xbc0,
         end: 0xbc0,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0xbc1,
+        end: 0xbc2,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
+        start: 0xbc6,
+        end: 0xbc8,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
+        start: 0xbca,
+        end: 0xbcc,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0xbcd,
@@ -672,6 +637,11 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0xc01,
+        end: 0xc03,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0xc04,
         end: 0xc04,
         class: GraphemeClass::Extend as u8,
@@ -685,6 +655,11 @@ const GRAPHEME_RANGES: &[Range] = &[
         start: 0xc3e,
         end: 0xc40,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0xc41,
+        end: 0xc44,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0xc46,
@@ -712,9 +687,19 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0xc82,
+        end: 0xc83,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0xcbc,
         end: 0xcbc,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0xcbe,
+        end: 0xcbe,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0xcbf,
@@ -727,9 +712,19 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0xcc1,
+        end: 0xcc1,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0xcc2,
         end: 0xcc2,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0xcc3,
+        end: 0xcc4,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0xcc6,
@@ -762,9 +757,19 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0xcf3,
+        end: 0xcf3,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0xd00,
         end: 0xd01,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0xd02,
+        end: 0xd03,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0xd3b,
@@ -777,14 +782,34 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0xd3f,
+        end: 0xd40,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0xd41,
         end: 0xd44,
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0xd46,
+        end: 0xd48,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
+        start: 0xd4a,
+        end: 0xd4c,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0xd4d,
         end: 0xd4d,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0xd4e,
+        end: 0xd4e,
+        class: GraphemeClass::Prepend as u8,
     },
     Range {
         start: 0xd57,
@@ -802,6 +827,11 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0xd82,
+        end: 0xd83,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0xdca,
         end: 0xdca,
         class: GraphemeClass::Extend as u8,
@@ -810,6 +840,11 @@ const GRAPHEME_RANGES: &[Range] = &[
         start: 0xdcf,
         end: 0xdcf,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0xdd0,
+        end: 0xdd1,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0xdd2,
@@ -822,14 +857,29 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0xdd8,
+        end: 0xdde,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0xddf,
         end: 0xddf,
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0xdf2,
+        end: 0xdf3,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0xe31,
         end: 0xe31,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0xe33,
+        end: 0xe33,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0xe34,
@@ -845,6 +895,11 @@ const GRAPHEME_RANGES: &[Range] = &[
         start: 0xeb1,
         end: 0xeb1,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0xeb3,
+        end: 0xeb3,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0xeb4,
@@ -877,9 +932,19 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0xf3e,
+        end: 0xf3f,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0xf71,
         end: 0xf7e,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0xf7f,
+        end: 0xf7f,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0xf80,
@@ -912,6 +977,11 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x1031,
+        end: 0x1031,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x1032,
         end: 0x1037,
         class: GraphemeClass::Extend as u8,
@@ -922,9 +992,19 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x103b,
+        end: 0x103c,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x103d,
         end: 0x103e,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x1056,
+        end: 0x1057,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0x1058,
@@ -947,6 +1027,11 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x1084,
+        end: 0x1084,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x1085,
         end: 0x1086,
         class: GraphemeClass::Extend as u8,
@@ -960,6 +1045,21 @@ const GRAPHEME_RANGES: &[Range] = &[
         start: 0x109d,
         end: 0x109d,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x1100,
+        end: 0x115f,
+        class: GraphemeClass::L as u8,
+    },
+    Range {
+        start: 0x1160,
+        end: 0x11a7,
+        class: GraphemeClass::V as u8,
+    },
+    Range {
+        start: 0x11a8,
+        end: 0x11ff,
+        class: GraphemeClass::T as u8,
     },
     Range {
         start: 0x135d,
@@ -1002,14 +1102,29 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x17b6,
+        end: 0x17b6,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x17b7,
         end: 0x17bd,
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x17be,
+        end: 0x17c5,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x17c6,
         end: 0x17c6,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x17c7,
+        end: 0x17c8,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0x17c9,
@@ -1025,6 +1140,11 @@ const GRAPHEME_RANGES: &[Range] = &[
         start: 0x180b,
         end: 0x180d,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x180e,
+        end: 0x180e,
+        class: GraphemeClass::Control as u8,
     },
     Range {
         start: 0x180f,
@@ -1047,14 +1167,34 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x1923,
+        end: 0x1926,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x1927,
         end: 0x1928,
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x1929,
+        end: 0x192b,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
+        start: 0x1930,
+        end: 0x1931,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x1932,
         end: 0x1932,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x1933,
+        end: 0x1938,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0x1939,
@@ -1067,14 +1207,29 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x1a19,
+        end: 0x1a1a,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x1a1b,
         end: 0x1a1b,
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x1a55,
+        end: 0x1a55,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x1a56,
         end: 0x1a56,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x1a57,
+        end: 0x1a57,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0x1a58,
@@ -1095,6 +1250,11 @@ const GRAPHEME_RANGES: &[Range] = &[
         start: 0x1a65,
         end: 0x1a6c,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x1a6d,
+        end: 0x1a72,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0x1a73,
@@ -1132,6 +1292,11 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x1b04,
+        end: 0x1b04,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x1b34,
         end: 0x1b34,
         class: GraphemeClass::Extend as u8,
@@ -1162,6 +1327,11 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x1b3e,
+        end: 0x1b41,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x1b42,
         end: 0x1b42,
         class: GraphemeClass::Extend as u8,
@@ -1182,9 +1352,24 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x1b82,
+        end: 0x1b82,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
+        start: 0x1ba1,
+        end: 0x1ba1,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x1ba2,
         end: 0x1ba5,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x1ba6,
+        end: 0x1ba7,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0x1ba8,
@@ -1207,14 +1392,29 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x1be7,
+        end: 0x1be7,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x1be8,
         end: 0x1be9,
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x1bea,
+        end: 0x1bec,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x1bed,
         end: 0x1bed,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x1bee,
+        end: 0x1bee,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0x1bef,
@@ -1227,9 +1427,19 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x1c24,
+        end: 0x1c2b,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x1c2c,
         end: 0x1c33,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x1c34,
+        end: 0x1c35,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0x1c36,
@@ -1247,6 +1457,11 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x1ce1,
+        end: 0x1ce1,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x1ce2,
         end: 0x1ce8,
         class: GraphemeClass::Extend as u8,
@@ -1262,6 +1477,11 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x1cf7,
+        end: 0x1cf7,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x1cf8,
         end: 0x1cf9,
         class: GraphemeClass::Extend as u8,
@@ -1272,9 +1492,54 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x200b,
+        end: 0x200b,
+        class: GraphemeClass::Control as u8,
+    },
+    Range {
         start: 0x200c,
         end: 0x200c,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x200d,
+        end: 0x200d,
+        class: GraphemeClass::Zwj as u8,
+    },
+    Range {
+        start: 0x200e,
+        end: 0x200f,
+        class: GraphemeClass::Control as u8,
+    },
+    Range {
+        start: 0x2028,
+        end: 0x2028,
+        class: GraphemeClass::Control as u8,
+    },
+    Range {
+        start: 0x2029,
+        end: 0x2029,
+        class: GraphemeClass::Control as u8,
+    },
+    Range {
+        start: 0x202a,
+        end: 0x202e,
+        class: GraphemeClass::Control as u8,
+    },
+    Range {
+        start: 0x2060,
+        end: 0x2064,
+        class: GraphemeClass::Control as u8,
+    },
+    Range {
+        start: 0x2065,
+        end: 0x2065,
+        class: GraphemeClass::Control as u8,
+    },
+    Range {
+        start: 0x2066,
+        end: 0x206f,
+        class: GraphemeClass::Control as u8,
     },
     Range {
         start: 0x20d0,
@@ -1372,14 +1637,34 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0xa823,
+        end: 0xa824,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0xa825,
         end: 0xa826,
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0xa827,
+        end: 0xa827,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0xa82c,
         end: 0xa82c,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0xa880,
+        end: 0xa881,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
+        start: 0xa8b4,
+        end: 0xa8c3,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0xa8c4,
@@ -1407,9 +1692,19 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0xa952,
+        end: 0xa952,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0xa953,
         end: 0xa953,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0xa960,
+        end: 0xa97c,
+        class: GraphemeClass::L as u8,
     },
     Range {
         start: 0xa980,
@@ -1417,9 +1712,19 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0xa983,
+        end: 0xa983,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0xa9b3,
         end: 0xa9b3,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0xa9b4,
+        end: 0xa9b5,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0xa9b6,
@@ -1427,9 +1732,19 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0xa9ba,
+        end: 0xa9bb,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0xa9bc,
         end: 0xa9bd,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0xa9be,
+        end: 0xa9bf,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0xa9c0,
@@ -1447,9 +1762,19 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0xaa2f,
+        end: 0xaa30,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0xaa31,
         end: 0xaa32,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0xaa33,
+        end: 0xaa34,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0xaa35,
@@ -1465,6 +1790,11 @@ const GRAPHEME_RANGES: &[Range] = &[
         start: 0xaa4c,
         end: 0xaa4c,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0xaa4d,
+        end: 0xaa4d,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0xaa7c,
@@ -1497,9 +1827,24 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0xaaeb,
+        end: 0xaaeb,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0xaaec,
         end: 0xaaed,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0xaaee,
+        end: 0xaaef,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
+        start: 0xaaf5,
+        end: 0xaaf5,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0xaaf6,
@@ -1507,9 +1852,19 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0xabe3,
+        end: 0xabe4,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0xabe5,
         end: 0xabe5,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0xabe6,
+        end: 0xabe7,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0xabe8,
@@ -1517,9 +1872,4019 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0xabe9,
+        end: 0xabea,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
+        start: 0xabec,
+        end: 0xabec,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0xabed,
         end: 0xabed,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0xac00,
+        end: 0xac00,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xac01,
+        end: 0xac1b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xac1c,
+        end: 0xac1c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xac1d,
+        end: 0xac37,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xac38,
+        end: 0xac38,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xac39,
+        end: 0xac53,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xac54,
+        end: 0xac54,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xac55,
+        end: 0xac6f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xac70,
+        end: 0xac70,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xac71,
+        end: 0xac8b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xac8c,
+        end: 0xac8c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xac8d,
+        end: 0xaca7,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xaca8,
+        end: 0xaca8,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xaca9,
+        end: 0xacc3,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xacc4,
+        end: 0xacc4,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xacc5,
+        end: 0xacdf,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xace0,
+        end: 0xace0,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xace1,
+        end: 0xacfb,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xacfc,
+        end: 0xacfc,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xacfd,
+        end: 0xad17,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xad18,
+        end: 0xad18,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xad19,
+        end: 0xad33,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xad34,
+        end: 0xad34,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xad35,
+        end: 0xad4f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xad50,
+        end: 0xad50,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xad51,
+        end: 0xad6b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xad6c,
+        end: 0xad6c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xad6d,
+        end: 0xad87,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xad88,
+        end: 0xad88,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xad89,
+        end: 0xada3,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xada4,
+        end: 0xada4,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xada5,
+        end: 0xadbf,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xadc0,
+        end: 0xadc0,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xadc1,
+        end: 0xaddb,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xaddc,
+        end: 0xaddc,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xaddd,
+        end: 0xadf7,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xadf8,
+        end: 0xadf8,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xadf9,
+        end: 0xae13,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xae14,
+        end: 0xae14,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xae15,
+        end: 0xae2f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xae30,
+        end: 0xae30,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xae31,
+        end: 0xae4b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xae4c,
+        end: 0xae4c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xae4d,
+        end: 0xae67,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xae68,
+        end: 0xae68,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xae69,
+        end: 0xae83,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xae84,
+        end: 0xae84,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xae85,
+        end: 0xae9f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xaea0,
+        end: 0xaea0,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xaea1,
+        end: 0xaebb,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xaebc,
+        end: 0xaebc,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xaebd,
+        end: 0xaed7,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xaed8,
+        end: 0xaed8,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xaed9,
+        end: 0xaef3,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xaef4,
+        end: 0xaef4,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xaef5,
+        end: 0xaf0f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xaf10,
+        end: 0xaf10,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xaf11,
+        end: 0xaf2b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xaf2c,
+        end: 0xaf2c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xaf2d,
+        end: 0xaf47,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xaf48,
+        end: 0xaf48,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xaf49,
+        end: 0xaf63,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xaf64,
+        end: 0xaf64,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xaf65,
+        end: 0xaf7f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xaf80,
+        end: 0xaf80,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xaf81,
+        end: 0xaf9b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xaf9c,
+        end: 0xaf9c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xaf9d,
+        end: 0xafb7,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xafb8,
+        end: 0xafb8,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xafb9,
+        end: 0xafd3,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xafd4,
+        end: 0xafd4,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xafd5,
+        end: 0xafef,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xaff0,
+        end: 0xaff0,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xaff1,
+        end: 0xb00b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb00c,
+        end: 0xb00c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb00d,
+        end: 0xb027,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb028,
+        end: 0xb028,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb029,
+        end: 0xb043,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb044,
+        end: 0xb044,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb045,
+        end: 0xb05f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb060,
+        end: 0xb060,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb061,
+        end: 0xb07b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb07c,
+        end: 0xb07c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb07d,
+        end: 0xb097,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb098,
+        end: 0xb098,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb099,
+        end: 0xb0b3,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb0b4,
+        end: 0xb0b4,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb0b5,
+        end: 0xb0cf,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb0d0,
+        end: 0xb0d0,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb0d1,
+        end: 0xb0eb,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb0ec,
+        end: 0xb0ec,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb0ed,
+        end: 0xb107,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb108,
+        end: 0xb108,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb109,
+        end: 0xb123,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb124,
+        end: 0xb124,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb125,
+        end: 0xb13f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb140,
+        end: 0xb140,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb141,
+        end: 0xb15b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb15c,
+        end: 0xb15c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb15d,
+        end: 0xb177,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb178,
+        end: 0xb178,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb179,
+        end: 0xb193,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb194,
+        end: 0xb194,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb195,
+        end: 0xb1af,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb1b0,
+        end: 0xb1b0,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb1b1,
+        end: 0xb1cb,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb1cc,
+        end: 0xb1cc,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb1cd,
+        end: 0xb1e7,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb1e8,
+        end: 0xb1e8,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb1e9,
+        end: 0xb203,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb204,
+        end: 0xb204,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb205,
+        end: 0xb21f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb220,
+        end: 0xb220,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb221,
+        end: 0xb23b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb23c,
+        end: 0xb23c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb23d,
+        end: 0xb257,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb258,
+        end: 0xb258,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb259,
+        end: 0xb273,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb274,
+        end: 0xb274,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb275,
+        end: 0xb28f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb290,
+        end: 0xb290,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb291,
+        end: 0xb2ab,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb2ac,
+        end: 0xb2ac,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb2ad,
+        end: 0xb2c7,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb2c8,
+        end: 0xb2c8,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb2c9,
+        end: 0xb2e3,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb2e4,
+        end: 0xb2e4,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb2e5,
+        end: 0xb2ff,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb300,
+        end: 0xb300,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb301,
+        end: 0xb31b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb31c,
+        end: 0xb31c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb31d,
+        end: 0xb337,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb338,
+        end: 0xb338,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb339,
+        end: 0xb353,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb354,
+        end: 0xb354,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb355,
+        end: 0xb36f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb370,
+        end: 0xb370,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb371,
+        end: 0xb38b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb38c,
+        end: 0xb38c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb38d,
+        end: 0xb3a7,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb3a8,
+        end: 0xb3a8,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb3a9,
+        end: 0xb3c3,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb3c4,
+        end: 0xb3c4,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb3c5,
+        end: 0xb3df,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb3e0,
+        end: 0xb3e0,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb3e1,
+        end: 0xb3fb,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb3fc,
+        end: 0xb3fc,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb3fd,
+        end: 0xb417,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb418,
+        end: 0xb418,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb419,
+        end: 0xb433,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb434,
+        end: 0xb434,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb435,
+        end: 0xb44f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb450,
+        end: 0xb450,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb451,
+        end: 0xb46b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb46c,
+        end: 0xb46c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb46d,
+        end: 0xb487,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb488,
+        end: 0xb488,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb489,
+        end: 0xb4a3,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb4a4,
+        end: 0xb4a4,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb4a5,
+        end: 0xb4bf,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb4c0,
+        end: 0xb4c0,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb4c1,
+        end: 0xb4db,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb4dc,
+        end: 0xb4dc,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb4dd,
+        end: 0xb4f7,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb4f8,
+        end: 0xb4f8,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb4f9,
+        end: 0xb513,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb514,
+        end: 0xb514,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb515,
+        end: 0xb52f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb530,
+        end: 0xb530,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb531,
+        end: 0xb54b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb54c,
+        end: 0xb54c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb54d,
+        end: 0xb567,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb568,
+        end: 0xb568,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb569,
+        end: 0xb583,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb584,
+        end: 0xb584,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb585,
+        end: 0xb59f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb5a0,
+        end: 0xb5a0,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb5a1,
+        end: 0xb5bb,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb5bc,
+        end: 0xb5bc,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb5bd,
+        end: 0xb5d7,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb5d8,
+        end: 0xb5d8,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb5d9,
+        end: 0xb5f3,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb5f4,
+        end: 0xb5f4,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb5f5,
+        end: 0xb60f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb610,
+        end: 0xb610,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb611,
+        end: 0xb62b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb62c,
+        end: 0xb62c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb62d,
+        end: 0xb647,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb648,
+        end: 0xb648,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb649,
+        end: 0xb663,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb664,
+        end: 0xb664,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb665,
+        end: 0xb67f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb680,
+        end: 0xb680,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb681,
+        end: 0xb69b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb69c,
+        end: 0xb69c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb69d,
+        end: 0xb6b7,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb6b8,
+        end: 0xb6b8,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb6b9,
+        end: 0xb6d3,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb6d4,
+        end: 0xb6d4,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb6d5,
+        end: 0xb6ef,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb6f0,
+        end: 0xb6f0,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb6f1,
+        end: 0xb70b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb70c,
+        end: 0xb70c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb70d,
+        end: 0xb727,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb728,
+        end: 0xb728,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb729,
+        end: 0xb743,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb744,
+        end: 0xb744,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb745,
+        end: 0xb75f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb760,
+        end: 0xb760,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb761,
+        end: 0xb77b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb77c,
+        end: 0xb77c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb77d,
+        end: 0xb797,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb798,
+        end: 0xb798,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb799,
+        end: 0xb7b3,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb7b4,
+        end: 0xb7b4,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb7b5,
+        end: 0xb7cf,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb7d0,
+        end: 0xb7d0,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb7d1,
+        end: 0xb7eb,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb7ec,
+        end: 0xb7ec,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb7ed,
+        end: 0xb807,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb808,
+        end: 0xb808,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb809,
+        end: 0xb823,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb824,
+        end: 0xb824,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb825,
+        end: 0xb83f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb840,
+        end: 0xb840,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb841,
+        end: 0xb85b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb85c,
+        end: 0xb85c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb85d,
+        end: 0xb877,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb878,
+        end: 0xb878,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb879,
+        end: 0xb893,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb894,
+        end: 0xb894,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb895,
+        end: 0xb8af,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb8b0,
+        end: 0xb8b0,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb8b1,
+        end: 0xb8cb,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb8cc,
+        end: 0xb8cc,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb8cd,
+        end: 0xb8e7,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb8e8,
+        end: 0xb8e8,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb8e9,
+        end: 0xb903,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb904,
+        end: 0xb904,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb905,
+        end: 0xb91f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb920,
+        end: 0xb920,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb921,
+        end: 0xb93b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb93c,
+        end: 0xb93c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb93d,
+        end: 0xb957,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb958,
+        end: 0xb958,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb959,
+        end: 0xb973,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb974,
+        end: 0xb974,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb975,
+        end: 0xb98f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb990,
+        end: 0xb990,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb991,
+        end: 0xb9ab,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb9ac,
+        end: 0xb9ac,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb9ad,
+        end: 0xb9c7,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb9c8,
+        end: 0xb9c8,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb9c9,
+        end: 0xb9e3,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xb9e4,
+        end: 0xb9e4,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xb9e5,
+        end: 0xb9ff,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xba00,
+        end: 0xba00,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xba01,
+        end: 0xba1b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xba1c,
+        end: 0xba1c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xba1d,
+        end: 0xba37,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xba38,
+        end: 0xba38,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xba39,
+        end: 0xba53,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xba54,
+        end: 0xba54,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xba55,
+        end: 0xba6f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xba70,
+        end: 0xba70,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xba71,
+        end: 0xba8b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xba8c,
+        end: 0xba8c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xba8d,
+        end: 0xbaa7,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbaa8,
+        end: 0xbaa8,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbaa9,
+        end: 0xbac3,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbac4,
+        end: 0xbac4,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbac5,
+        end: 0xbadf,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbae0,
+        end: 0xbae0,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbae1,
+        end: 0xbafb,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbafc,
+        end: 0xbafc,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbafd,
+        end: 0xbb17,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbb18,
+        end: 0xbb18,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbb19,
+        end: 0xbb33,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbb34,
+        end: 0xbb34,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbb35,
+        end: 0xbb4f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbb50,
+        end: 0xbb50,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbb51,
+        end: 0xbb6b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbb6c,
+        end: 0xbb6c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbb6d,
+        end: 0xbb87,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbb88,
+        end: 0xbb88,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbb89,
+        end: 0xbba3,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbba4,
+        end: 0xbba4,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbba5,
+        end: 0xbbbf,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbbc0,
+        end: 0xbbc0,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbbc1,
+        end: 0xbbdb,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbbdc,
+        end: 0xbbdc,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbbdd,
+        end: 0xbbf7,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbbf8,
+        end: 0xbbf8,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbbf9,
+        end: 0xbc13,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbc14,
+        end: 0xbc14,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbc15,
+        end: 0xbc2f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbc30,
+        end: 0xbc30,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbc31,
+        end: 0xbc4b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbc4c,
+        end: 0xbc4c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbc4d,
+        end: 0xbc67,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbc68,
+        end: 0xbc68,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbc69,
+        end: 0xbc83,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbc84,
+        end: 0xbc84,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbc85,
+        end: 0xbc9f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbca0,
+        end: 0xbca0,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbca1,
+        end: 0xbcbb,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbcbc,
+        end: 0xbcbc,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbcbd,
+        end: 0xbcd7,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbcd8,
+        end: 0xbcd8,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbcd9,
+        end: 0xbcf3,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbcf4,
+        end: 0xbcf4,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbcf5,
+        end: 0xbd0f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbd10,
+        end: 0xbd10,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbd11,
+        end: 0xbd2b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbd2c,
+        end: 0xbd2c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbd2d,
+        end: 0xbd47,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbd48,
+        end: 0xbd48,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbd49,
+        end: 0xbd63,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbd64,
+        end: 0xbd64,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbd65,
+        end: 0xbd7f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbd80,
+        end: 0xbd80,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbd81,
+        end: 0xbd9b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbd9c,
+        end: 0xbd9c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbd9d,
+        end: 0xbdb7,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbdb8,
+        end: 0xbdb8,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbdb9,
+        end: 0xbdd3,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbdd4,
+        end: 0xbdd4,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbdd5,
+        end: 0xbdef,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbdf0,
+        end: 0xbdf0,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbdf1,
+        end: 0xbe0b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbe0c,
+        end: 0xbe0c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbe0d,
+        end: 0xbe27,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbe28,
+        end: 0xbe28,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbe29,
+        end: 0xbe43,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbe44,
+        end: 0xbe44,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbe45,
+        end: 0xbe5f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbe60,
+        end: 0xbe60,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbe61,
+        end: 0xbe7b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbe7c,
+        end: 0xbe7c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbe7d,
+        end: 0xbe97,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbe98,
+        end: 0xbe98,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbe99,
+        end: 0xbeb3,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbeb4,
+        end: 0xbeb4,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbeb5,
+        end: 0xbecf,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbed0,
+        end: 0xbed0,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbed1,
+        end: 0xbeeb,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbeec,
+        end: 0xbeec,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbeed,
+        end: 0xbf07,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbf08,
+        end: 0xbf08,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbf09,
+        end: 0xbf23,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbf24,
+        end: 0xbf24,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbf25,
+        end: 0xbf3f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbf40,
+        end: 0xbf40,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbf41,
+        end: 0xbf5b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbf5c,
+        end: 0xbf5c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbf5d,
+        end: 0xbf77,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbf78,
+        end: 0xbf78,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbf79,
+        end: 0xbf93,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbf94,
+        end: 0xbf94,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbf95,
+        end: 0xbfaf,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbfb0,
+        end: 0xbfb0,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbfb1,
+        end: 0xbfcb,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbfcc,
+        end: 0xbfcc,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbfcd,
+        end: 0xbfe7,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xbfe8,
+        end: 0xbfe8,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xbfe9,
+        end: 0xc003,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc004,
+        end: 0xc004,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc005,
+        end: 0xc01f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc020,
+        end: 0xc020,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc021,
+        end: 0xc03b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc03c,
+        end: 0xc03c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc03d,
+        end: 0xc057,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc058,
+        end: 0xc058,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc059,
+        end: 0xc073,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc074,
+        end: 0xc074,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc075,
+        end: 0xc08f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc090,
+        end: 0xc090,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc091,
+        end: 0xc0ab,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc0ac,
+        end: 0xc0ac,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc0ad,
+        end: 0xc0c7,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc0c8,
+        end: 0xc0c8,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc0c9,
+        end: 0xc0e3,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc0e4,
+        end: 0xc0e4,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc0e5,
+        end: 0xc0ff,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc100,
+        end: 0xc100,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc101,
+        end: 0xc11b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc11c,
+        end: 0xc11c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc11d,
+        end: 0xc137,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc138,
+        end: 0xc138,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc139,
+        end: 0xc153,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc154,
+        end: 0xc154,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc155,
+        end: 0xc16f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc170,
+        end: 0xc170,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc171,
+        end: 0xc18b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc18c,
+        end: 0xc18c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc18d,
+        end: 0xc1a7,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc1a8,
+        end: 0xc1a8,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc1a9,
+        end: 0xc1c3,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc1c4,
+        end: 0xc1c4,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc1c5,
+        end: 0xc1df,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc1e0,
+        end: 0xc1e0,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc1e1,
+        end: 0xc1fb,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc1fc,
+        end: 0xc1fc,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc1fd,
+        end: 0xc217,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc218,
+        end: 0xc218,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc219,
+        end: 0xc233,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc234,
+        end: 0xc234,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc235,
+        end: 0xc24f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc250,
+        end: 0xc250,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc251,
+        end: 0xc26b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc26c,
+        end: 0xc26c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc26d,
+        end: 0xc287,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc288,
+        end: 0xc288,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc289,
+        end: 0xc2a3,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc2a4,
+        end: 0xc2a4,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc2a5,
+        end: 0xc2bf,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc2c0,
+        end: 0xc2c0,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc2c1,
+        end: 0xc2db,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc2dc,
+        end: 0xc2dc,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc2dd,
+        end: 0xc2f7,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc2f8,
+        end: 0xc2f8,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc2f9,
+        end: 0xc313,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc314,
+        end: 0xc314,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc315,
+        end: 0xc32f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc330,
+        end: 0xc330,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc331,
+        end: 0xc34b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc34c,
+        end: 0xc34c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc34d,
+        end: 0xc367,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc368,
+        end: 0xc368,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc369,
+        end: 0xc383,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc384,
+        end: 0xc384,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc385,
+        end: 0xc39f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc3a0,
+        end: 0xc3a0,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc3a1,
+        end: 0xc3bb,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc3bc,
+        end: 0xc3bc,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc3bd,
+        end: 0xc3d7,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc3d8,
+        end: 0xc3d8,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc3d9,
+        end: 0xc3f3,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc3f4,
+        end: 0xc3f4,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc3f5,
+        end: 0xc40f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc410,
+        end: 0xc410,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc411,
+        end: 0xc42b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc42c,
+        end: 0xc42c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc42d,
+        end: 0xc447,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc448,
+        end: 0xc448,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc449,
+        end: 0xc463,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc464,
+        end: 0xc464,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc465,
+        end: 0xc47f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc480,
+        end: 0xc480,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc481,
+        end: 0xc49b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc49c,
+        end: 0xc49c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc49d,
+        end: 0xc4b7,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc4b8,
+        end: 0xc4b8,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc4b9,
+        end: 0xc4d3,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc4d4,
+        end: 0xc4d4,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc4d5,
+        end: 0xc4ef,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc4f0,
+        end: 0xc4f0,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc4f1,
+        end: 0xc50b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc50c,
+        end: 0xc50c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc50d,
+        end: 0xc527,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc528,
+        end: 0xc528,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc529,
+        end: 0xc543,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc544,
+        end: 0xc544,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc545,
+        end: 0xc55f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc560,
+        end: 0xc560,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc561,
+        end: 0xc57b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc57c,
+        end: 0xc57c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc57d,
+        end: 0xc597,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc598,
+        end: 0xc598,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc599,
+        end: 0xc5b3,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc5b4,
+        end: 0xc5b4,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc5b5,
+        end: 0xc5cf,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc5d0,
+        end: 0xc5d0,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc5d1,
+        end: 0xc5eb,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc5ec,
+        end: 0xc5ec,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc5ed,
+        end: 0xc607,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc608,
+        end: 0xc608,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc609,
+        end: 0xc623,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc624,
+        end: 0xc624,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc625,
+        end: 0xc63f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc640,
+        end: 0xc640,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc641,
+        end: 0xc65b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc65c,
+        end: 0xc65c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc65d,
+        end: 0xc677,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc678,
+        end: 0xc678,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc679,
+        end: 0xc693,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc694,
+        end: 0xc694,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc695,
+        end: 0xc6af,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc6b0,
+        end: 0xc6b0,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc6b1,
+        end: 0xc6cb,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc6cc,
+        end: 0xc6cc,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc6cd,
+        end: 0xc6e7,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc6e8,
+        end: 0xc6e8,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc6e9,
+        end: 0xc703,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc704,
+        end: 0xc704,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc705,
+        end: 0xc71f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc720,
+        end: 0xc720,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc721,
+        end: 0xc73b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc73c,
+        end: 0xc73c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc73d,
+        end: 0xc757,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc758,
+        end: 0xc758,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc759,
+        end: 0xc773,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc774,
+        end: 0xc774,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc775,
+        end: 0xc78f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc790,
+        end: 0xc790,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc791,
+        end: 0xc7ab,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc7ac,
+        end: 0xc7ac,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc7ad,
+        end: 0xc7c7,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc7c8,
+        end: 0xc7c8,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc7c9,
+        end: 0xc7e3,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc7e4,
+        end: 0xc7e4,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc7e5,
+        end: 0xc7ff,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc800,
+        end: 0xc800,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc801,
+        end: 0xc81b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc81c,
+        end: 0xc81c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc81d,
+        end: 0xc837,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc838,
+        end: 0xc838,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc839,
+        end: 0xc853,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc854,
+        end: 0xc854,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc855,
+        end: 0xc86f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc870,
+        end: 0xc870,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc871,
+        end: 0xc88b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc88c,
+        end: 0xc88c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc88d,
+        end: 0xc8a7,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc8a8,
+        end: 0xc8a8,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc8a9,
+        end: 0xc8c3,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc8c4,
+        end: 0xc8c4,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc8c5,
+        end: 0xc8df,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc8e0,
+        end: 0xc8e0,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc8e1,
+        end: 0xc8fb,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc8fc,
+        end: 0xc8fc,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc8fd,
+        end: 0xc917,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc918,
+        end: 0xc918,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc919,
+        end: 0xc933,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc934,
+        end: 0xc934,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc935,
+        end: 0xc94f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc950,
+        end: 0xc950,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc951,
+        end: 0xc96b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc96c,
+        end: 0xc96c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc96d,
+        end: 0xc987,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc988,
+        end: 0xc988,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc989,
+        end: 0xc9a3,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc9a4,
+        end: 0xc9a4,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc9a5,
+        end: 0xc9bf,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc9c0,
+        end: 0xc9c0,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc9c1,
+        end: 0xc9db,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc9dc,
+        end: 0xc9dc,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc9dd,
+        end: 0xc9f7,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xc9f8,
+        end: 0xc9f8,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xc9f9,
+        end: 0xca13,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xca14,
+        end: 0xca14,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xca15,
+        end: 0xca2f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xca30,
+        end: 0xca30,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xca31,
+        end: 0xca4b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xca4c,
+        end: 0xca4c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xca4d,
+        end: 0xca67,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xca68,
+        end: 0xca68,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xca69,
+        end: 0xca83,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xca84,
+        end: 0xca84,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xca85,
+        end: 0xca9f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xcaa0,
+        end: 0xcaa0,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xcaa1,
+        end: 0xcabb,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xcabc,
+        end: 0xcabc,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xcabd,
+        end: 0xcad7,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xcad8,
+        end: 0xcad8,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xcad9,
+        end: 0xcaf3,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xcaf4,
+        end: 0xcaf4,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xcaf5,
+        end: 0xcb0f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xcb10,
+        end: 0xcb10,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xcb11,
+        end: 0xcb2b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xcb2c,
+        end: 0xcb2c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xcb2d,
+        end: 0xcb47,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xcb48,
+        end: 0xcb48,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xcb49,
+        end: 0xcb63,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xcb64,
+        end: 0xcb64,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xcb65,
+        end: 0xcb7f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xcb80,
+        end: 0xcb80,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xcb81,
+        end: 0xcb9b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xcb9c,
+        end: 0xcb9c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xcb9d,
+        end: 0xcbb7,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xcbb8,
+        end: 0xcbb8,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xcbb9,
+        end: 0xcbd3,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xcbd4,
+        end: 0xcbd4,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xcbd5,
+        end: 0xcbef,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xcbf0,
+        end: 0xcbf0,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xcbf1,
+        end: 0xcc0b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xcc0c,
+        end: 0xcc0c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xcc0d,
+        end: 0xcc27,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xcc28,
+        end: 0xcc28,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xcc29,
+        end: 0xcc43,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xcc44,
+        end: 0xcc44,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xcc45,
+        end: 0xcc5f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xcc60,
+        end: 0xcc60,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xcc61,
+        end: 0xcc7b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xcc7c,
+        end: 0xcc7c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xcc7d,
+        end: 0xcc97,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xcc98,
+        end: 0xcc98,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xcc99,
+        end: 0xccb3,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xccb4,
+        end: 0xccb4,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xccb5,
+        end: 0xcccf,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xccd0,
+        end: 0xccd0,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xccd1,
+        end: 0xcceb,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xccec,
+        end: 0xccec,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xcced,
+        end: 0xcd07,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xcd08,
+        end: 0xcd08,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xcd09,
+        end: 0xcd23,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xcd24,
+        end: 0xcd24,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xcd25,
+        end: 0xcd3f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xcd40,
+        end: 0xcd40,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xcd41,
+        end: 0xcd5b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xcd5c,
+        end: 0xcd5c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xcd5d,
+        end: 0xcd77,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xcd78,
+        end: 0xcd78,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xcd79,
+        end: 0xcd93,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xcd94,
+        end: 0xcd94,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xcd95,
+        end: 0xcdaf,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xcdb0,
+        end: 0xcdb0,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xcdb1,
+        end: 0xcdcb,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xcdcc,
+        end: 0xcdcc,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xcdcd,
+        end: 0xcde7,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xcde8,
+        end: 0xcde8,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xcde9,
+        end: 0xce03,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xce04,
+        end: 0xce04,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xce05,
+        end: 0xce1f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xce20,
+        end: 0xce20,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xce21,
+        end: 0xce3b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xce3c,
+        end: 0xce3c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xce3d,
+        end: 0xce57,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xce58,
+        end: 0xce58,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xce59,
+        end: 0xce73,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xce74,
+        end: 0xce74,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xce75,
+        end: 0xce8f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xce90,
+        end: 0xce90,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xce91,
+        end: 0xceab,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xceac,
+        end: 0xceac,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xcead,
+        end: 0xcec7,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xcec8,
+        end: 0xcec8,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xcec9,
+        end: 0xcee3,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xcee4,
+        end: 0xcee4,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xcee5,
+        end: 0xceff,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xcf00,
+        end: 0xcf00,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xcf01,
+        end: 0xcf1b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xcf1c,
+        end: 0xcf1c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xcf1d,
+        end: 0xcf37,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xcf38,
+        end: 0xcf38,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xcf39,
+        end: 0xcf53,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xcf54,
+        end: 0xcf54,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xcf55,
+        end: 0xcf6f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xcf70,
+        end: 0xcf70,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xcf71,
+        end: 0xcf8b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xcf8c,
+        end: 0xcf8c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xcf8d,
+        end: 0xcfa7,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xcfa8,
+        end: 0xcfa8,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xcfa9,
+        end: 0xcfc3,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xcfc4,
+        end: 0xcfc4,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xcfc5,
+        end: 0xcfdf,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xcfe0,
+        end: 0xcfe0,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xcfe1,
+        end: 0xcffb,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xcffc,
+        end: 0xcffc,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xcffd,
+        end: 0xd017,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd018,
+        end: 0xd018,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd019,
+        end: 0xd033,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd034,
+        end: 0xd034,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd035,
+        end: 0xd04f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd050,
+        end: 0xd050,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd051,
+        end: 0xd06b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd06c,
+        end: 0xd06c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd06d,
+        end: 0xd087,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd088,
+        end: 0xd088,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd089,
+        end: 0xd0a3,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd0a4,
+        end: 0xd0a4,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd0a5,
+        end: 0xd0bf,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd0c0,
+        end: 0xd0c0,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd0c1,
+        end: 0xd0db,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd0dc,
+        end: 0xd0dc,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd0dd,
+        end: 0xd0f7,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd0f8,
+        end: 0xd0f8,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd0f9,
+        end: 0xd113,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd114,
+        end: 0xd114,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd115,
+        end: 0xd12f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd130,
+        end: 0xd130,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd131,
+        end: 0xd14b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd14c,
+        end: 0xd14c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd14d,
+        end: 0xd167,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd168,
+        end: 0xd168,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd169,
+        end: 0xd183,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd184,
+        end: 0xd184,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd185,
+        end: 0xd19f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd1a0,
+        end: 0xd1a0,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd1a1,
+        end: 0xd1bb,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd1bc,
+        end: 0xd1bc,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd1bd,
+        end: 0xd1d7,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd1d8,
+        end: 0xd1d8,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd1d9,
+        end: 0xd1f3,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd1f4,
+        end: 0xd1f4,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd1f5,
+        end: 0xd20f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd210,
+        end: 0xd210,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd211,
+        end: 0xd22b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd22c,
+        end: 0xd22c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd22d,
+        end: 0xd247,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd248,
+        end: 0xd248,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd249,
+        end: 0xd263,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd264,
+        end: 0xd264,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd265,
+        end: 0xd27f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd280,
+        end: 0xd280,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd281,
+        end: 0xd29b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd29c,
+        end: 0xd29c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd29d,
+        end: 0xd2b7,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd2b8,
+        end: 0xd2b8,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd2b9,
+        end: 0xd2d3,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd2d4,
+        end: 0xd2d4,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd2d5,
+        end: 0xd2ef,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd2f0,
+        end: 0xd2f0,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd2f1,
+        end: 0xd30b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd30c,
+        end: 0xd30c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd30d,
+        end: 0xd327,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd328,
+        end: 0xd328,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd329,
+        end: 0xd343,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd344,
+        end: 0xd344,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd345,
+        end: 0xd35f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd360,
+        end: 0xd360,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd361,
+        end: 0xd37b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd37c,
+        end: 0xd37c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd37d,
+        end: 0xd397,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd398,
+        end: 0xd398,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd399,
+        end: 0xd3b3,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd3b4,
+        end: 0xd3b4,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd3b5,
+        end: 0xd3cf,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd3d0,
+        end: 0xd3d0,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd3d1,
+        end: 0xd3eb,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd3ec,
+        end: 0xd3ec,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd3ed,
+        end: 0xd407,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd408,
+        end: 0xd408,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd409,
+        end: 0xd423,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd424,
+        end: 0xd424,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd425,
+        end: 0xd43f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd440,
+        end: 0xd440,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd441,
+        end: 0xd45b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd45c,
+        end: 0xd45c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd45d,
+        end: 0xd477,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd478,
+        end: 0xd478,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd479,
+        end: 0xd493,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd494,
+        end: 0xd494,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd495,
+        end: 0xd4af,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd4b0,
+        end: 0xd4b0,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd4b1,
+        end: 0xd4cb,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd4cc,
+        end: 0xd4cc,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd4cd,
+        end: 0xd4e7,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd4e8,
+        end: 0xd4e8,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd4e9,
+        end: 0xd503,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd504,
+        end: 0xd504,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd505,
+        end: 0xd51f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd520,
+        end: 0xd520,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd521,
+        end: 0xd53b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd53c,
+        end: 0xd53c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd53d,
+        end: 0xd557,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd558,
+        end: 0xd558,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd559,
+        end: 0xd573,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd574,
+        end: 0xd574,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd575,
+        end: 0xd58f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd590,
+        end: 0xd590,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd591,
+        end: 0xd5ab,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd5ac,
+        end: 0xd5ac,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd5ad,
+        end: 0xd5c7,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd5c8,
+        end: 0xd5c8,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd5c9,
+        end: 0xd5e3,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd5e4,
+        end: 0xd5e4,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd5e5,
+        end: 0xd5ff,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd600,
+        end: 0xd600,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd601,
+        end: 0xd61b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd61c,
+        end: 0xd61c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd61d,
+        end: 0xd637,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd638,
+        end: 0xd638,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd639,
+        end: 0xd653,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd654,
+        end: 0xd654,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd655,
+        end: 0xd66f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd670,
+        end: 0xd670,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd671,
+        end: 0xd68b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd68c,
+        end: 0xd68c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd68d,
+        end: 0xd6a7,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd6a8,
+        end: 0xd6a8,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd6a9,
+        end: 0xd6c3,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd6c4,
+        end: 0xd6c4,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd6c5,
+        end: 0xd6df,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd6e0,
+        end: 0xd6e0,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd6e1,
+        end: 0xd6fb,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd6fc,
+        end: 0xd6fc,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd6fd,
+        end: 0xd717,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd718,
+        end: 0xd718,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd719,
+        end: 0xd733,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd734,
+        end: 0xd734,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd735,
+        end: 0xd74f,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd750,
+        end: 0xd750,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd751,
+        end: 0xd76b,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd76c,
+        end: 0xd76c,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd76d,
+        end: 0xd787,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd788,
+        end: 0xd788,
+        class: GraphemeClass::Lv as u8,
+    },
+    Range {
+        start: 0xd789,
+        end: 0xd7a3,
+        class: GraphemeClass::Lvt as u8,
+    },
+    Range {
+        start: 0xd7b0,
+        end: 0xd7c6,
+        class: GraphemeClass::V as u8,
+    },
+    Range {
+        start: 0xd7cb,
+        end: 0xd7fb,
+        class: GraphemeClass::T as u8,
     },
     Range {
         start: 0xfb1e,
@@ -1537,9 +5902,24 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0xfeff,
+        end: 0xfeff,
+        class: GraphemeClass::Control as u8,
+    },
+    Range {
         start: 0xff9e,
         end: 0xff9f,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0xfff0,
+        end: 0xfff8,
+        class: GraphemeClass::Control as u8,
+    },
+    Range {
+        start: 0xfff9,
+        end: 0xfffb,
+        class: GraphemeClass::Control as u8,
     },
     Range {
         start: 0x101fd,
@@ -1617,9 +5997,19 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x11000,
+        end: 0x11000,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x11001,
         end: 0x11001,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x11002,
+        end: 0x11002,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0x11038,
@@ -1642,9 +6032,24 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x11082,
+        end: 0x11082,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
+        start: 0x110b0,
+        end: 0x110b2,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x110b3,
         end: 0x110b6,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x110b7,
+        end: 0x110b8,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0x110b9,
@@ -1652,9 +6057,19 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x110bd,
+        end: 0x110bd,
+        class: GraphemeClass::Prepend as u8,
+    },
+    Range {
         start: 0x110c2,
         end: 0x110c2,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x110cd,
+        end: 0x110cd,
+        class: GraphemeClass::Prepend as u8,
     },
     Range {
         start: 0x11100,
@@ -1667,9 +6082,19 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x1112c,
+        end: 0x1112c,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x1112d,
         end: 0x11134,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x11145,
+        end: 0x11146,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0x11173,
@@ -1682,9 +6107,24 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x11182,
+        end: 0x11182,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
+        start: 0x111b3,
+        end: 0x111b5,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x111b6,
         end: 0x111be,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x111bf,
+        end: 0x111bf,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0x111c0,
@@ -1692,9 +6132,19 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x111c2,
+        end: 0x111c3,
+        class: GraphemeClass::Prepend as u8,
+    },
+    Range {
         start: 0x111c9,
         end: 0x111cc,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x111ce,
+        end: 0x111ce,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0x111cf,
@@ -1702,9 +6152,19 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x1122c,
+        end: 0x1122e,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x1122f,
         end: 0x11231,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x11232,
+        end: 0x11233,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0x11234,
@@ -1737,6 +6197,11 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x112e0,
+        end: 0x112e2,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x112e3,
         end: 0x112ea,
         class: GraphemeClass::Extend as u8,
@@ -1745,6 +6210,11 @@ const GRAPHEME_RANGES: &[Range] = &[
         start: 0x11300,
         end: 0x11301,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x11302,
+        end: 0x11303,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0x1133b,
@@ -1757,9 +6227,29 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x1133f,
+        end: 0x1133f,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x11340,
         end: 0x11340,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x11341,
+        end: 0x11344,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
+        start: 0x11347,
+        end: 0x11348,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
+        start: 0x1134b,
+        end: 0x1134c,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0x1134d,
@@ -1770,6 +6260,11 @@ const GRAPHEME_RANGES: &[Range] = &[
         start: 0x11357,
         end: 0x11357,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x11362,
+        end: 0x11363,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0x11366,
@@ -1785,6 +6280,11 @@ const GRAPHEME_RANGES: &[Range] = &[
         start: 0x113b8,
         end: 0x113b8,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x113b9,
+        end: 0x113ba,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0x113bb,
@@ -1807,6 +6307,16 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x113ca,
+        end: 0x113ca,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
+        start: 0x113cc,
+        end: 0x113cd,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x113ce,
         end: 0x113ce,
         class: GraphemeClass::Extend as u8,
@@ -1822,6 +6332,11 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x113d1,
+        end: 0x113d1,
+        class: GraphemeClass::Prepend as u8,
+    },
+    Range {
         start: 0x113d2,
         end: 0x113d2,
         class: GraphemeClass::Extend as u8,
@@ -1832,14 +6347,29 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x11435,
+        end: 0x11437,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x11438,
         end: 0x1143f,
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x11440,
+        end: 0x11441,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x11442,
         end: 0x11444,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x11445,
+        end: 0x11445,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0x11446,
@@ -1857,9 +6387,19 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x114b1,
+        end: 0x114b2,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x114b3,
         end: 0x114b8,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x114b9,
+        end: 0x114b9,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0x114ba,
@@ -1867,14 +6407,29 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x114bb,
+        end: 0x114bc,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x114bd,
         end: 0x114bd,
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x114be,
+        end: 0x114be,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x114bf,
         end: 0x114c0,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x114c1,
+        end: 0x114c1,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0x114c2,
@@ -1887,14 +6442,29 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x115b0,
+        end: 0x115b1,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x115b2,
         end: 0x115b5,
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x115b8,
+        end: 0x115bb,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x115bc,
         end: 0x115bd,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x115be,
+        end: 0x115be,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0x115bf,
@@ -1907,14 +6477,29 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x11630,
+        end: 0x11632,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x11633,
         end: 0x1163a,
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x1163b,
+        end: 0x1163c,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x1163d,
         end: 0x1163d,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x1163e,
+        end: 0x1163e,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0x1163f,
@@ -1927,9 +6512,19 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x116ac,
+        end: 0x116ac,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x116ad,
         end: 0x116ad,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x116ae,
+        end: 0x116af,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0x116b0,
@@ -1952,6 +6547,11 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x1171e,
+        end: 0x1171e,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x1171f,
         end: 0x1171f,
         class: GraphemeClass::Extend as u8,
@@ -1962,14 +6562,29 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x11726,
+        end: 0x11726,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x11727,
         end: 0x1172b,
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x1182c,
+        end: 0x1182e,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x1182f,
         end: 0x11837,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x11838,
+        end: 0x11838,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0x11839,
@@ -1980,6 +6595,16 @@ const GRAPHEME_RANGES: &[Range] = &[
         start: 0x11930,
         end: 0x11930,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x11931,
+        end: 0x11935,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
+        start: 0x11937,
+        end: 0x11938,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0x1193b,
@@ -1997,9 +6622,34 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x1193f,
+        end: 0x1193f,
+        class: GraphemeClass::Prepend as u8,
+    },
+    Range {
+        start: 0x11940,
+        end: 0x11940,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
+        start: 0x11941,
+        end: 0x11941,
+        class: GraphemeClass::Prepend as u8,
+    },
+    Range {
+        start: 0x11942,
+        end: 0x11942,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x11943,
         end: 0x11943,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x119d1,
+        end: 0x119d3,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0x119d4,
@@ -2012,9 +6662,19 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x119dc,
+        end: 0x119df,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x119e0,
         end: 0x119e0,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x119e4,
+        end: 0x119e4,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0x11a01,
@@ -2025,6 +6685,11 @@ const GRAPHEME_RANGES: &[Range] = &[
         start: 0x11a33,
         end: 0x11a38,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x11a39,
+        end: 0x11a39,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0x11a3b,
@@ -2042,14 +6707,29 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x11a57,
+        end: 0x11a58,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x11a59,
         end: 0x11a5b,
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x11a84,
+        end: 0x11a89,
+        class: GraphemeClass::Prepend as u8,
+    },
+    Range {
         start: 0x11a8a,
         end: 0x11a96,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x11a97,
+        end: 0x11a97,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0x11a98,
@@ -2062,14 +6742,34 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x11b61,
+        end: 0x11b61,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x11b62,
         end: 0x11b64,
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x11b65,
+        end: 0x11b65,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x11b66,
         end: 0x11b66,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x11b67,
+        end: 0x11b67,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
+        start: 0x11c2f,
+        end: 0x11c2f,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0x11c30,
@@ -2082,6 +6782,11 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x11c3e,
+        end: 0x11c3e,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x11c3f,
         end: 0x11c3f,
         class: GraphemeClass::Extend as u8,
@@ -2092,14 +6797,29 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x11ca9,
+        end: 0x11ca9,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x11caa,
         end: 0x11cb0,
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x11cb1,
+        end: 0x11cb1,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x11cb2,
         end: 0x11cb3,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x11cb4,
+        end: 0x11cb4,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0x11cb5,
@@ -2127,9 +6847,19 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x11d46,
+        end: 0x11d46,
+        class: GraphemeClass::Prepend as u8,
+    },
+    Range {
         start: 0x11d47,
         end: 0x11d47,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x11d8a,
+        end: 0x11d8e,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0x11d90,
@@ -2137,9 +6867,19 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x11d93,
+        end: 0x11d94,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x11d95,
         end: 0x11d95,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x11d96,
+        end: 0x11d96,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0x11d97,
@@ -2152,14 +6892,39 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x11ef5,
+        end: 0x11ef6,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x11f00,
         end: 0x11f01,
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x11f02,
+        end: 0x11f02,
+        class: GraphemeClass::Prepend as u8,
+    },
+    Range {
+        start: 0x11f03,
+        end: 0x11f03,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
+        start: 0x11f34,
+        end: 0x11f35,
+        class: GraphemeClass::SpacingMark as u8,
+    },
+    Range {
         start: 0x11f36,
         end: 0x11f3a,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x11f3e,
+        end: 0x11f3f,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0x11f40,
@@ -2182,6 +6947,11 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x13430,
+        end: 0x1343f,
+        class: GraphemeClass::Control as u8,
+    },
+    Range {
         start: 0x13440,
         end: 0x13440,
         class: GraphemeClass::Extend as u8,
@@ -2195,6 +6965,11 @@ const GRAPHEME_RANGES: &[Range] = &[
         start: 0x1611e,
         end: 0x16129,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x1612a,
+        end: 0x1612c,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0x1612d,
@@ -2212,9 +6987,24 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x16d63,
+        end: 0x16d63,
+        class: GraphemeClass::V as u8,
+    },
+    Range {
+        start: 0x16d67,
+        end: 0x16d6a,
+        class: GraphemeClass::V as u8,
+    },
+    Range {
         start: 0x16f4f,
         end: 0x16f4f,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x16f51,
+        end: 0x16f87,
+        class: GraphemeClass::SpacingMark as u8,
     },
     Range {
         start: 0x16f8f,
@@ -2235,6 +7025,11 @@ const GRAPHEME_RANGES: &[Range] = &[
         start: 0x1bc9d,
         end: 0x1bc9e,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x1bca0,
+        end: 0x1bca3,
+        class: GraphemeClass::Control as u8,
     },
     Range {
         start: 0x1cf00,
@@ -2260,6 +7055,11 @@ const GRAPHEME_RANGES: &[Range] = &[
         start: 0x1d16d,
         end: 0x1d172,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0x1d173,
+        end: 0x1d17a,
+        class: GraphemeClass::Control as u8,
     },
     Range {
         start: 0x1d17b,
@@ -2397,9 +7197,29 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0x1f1e6,
+        end: 0x1f1ff,
+        class: GraphemeClass::RegionalIndicator as u8,
+    },
+    Range {
         start: 0x1f3fb,
         end: 0x1f3ff,
         class: GraphemeClass::Extend as u8,
+    },
+    Range {
+        start: 0xe0000,
+        end: 0xe0000,
+        class: GraphemeClass::Control as u8,
+    },
+    Range {
+        start: 0xe0001,
+        end: 0xe0001,
+        class: GraphemeClass::Control as u8,
+    },
+    Range {
+        start: 0xe0002,
+        end: 0xe001f,
+        class: GraphemeClass::Control as u8,
     },
     Range {
         start: 0xe0020,
@@ -2407,4839 +7227,19 @@ const GRAPHEME_RANGES: &[Range] = &[
         class: GraphemeClass::Extend as u8,
     },
     Range {
+        start: 0xe0080,
+        end: 0xe00ff,
+        class: GraphemeClass::Control as u8,
+    },
+    Range {
         start: 0xe0100,
         end: 0xe01ef,
         class: GraphemeClass::Extend as u8,
     },
     Range {
-        start: 0x1f1e6,
-        end: 0x1f1ff,
-        class: GraphemeClass::RegionalIndicator as u8,
-    },
-    Range {
-        start: 0x903,
-        end: 0x903,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x93b,
-        end: 0x93b,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x93e,
-        end: 0x940,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x949,
-        end: 0x94c,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x94e,
-        end: 0x94f,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x982,
-        end: 0x983,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x9bf,
-        end: 0x9c0,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x9c7,
-        end: 0x9c8,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x9cb,
-        end: 0x9cc,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xa03,
-        end: 0xa03,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xa3e,
-        end: 0xa40,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xa83,
-        end: 0xa83,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xabe,
-        end: 0xac0,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xac9,
-        end: 0xac9,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xacb,
-        end: 0xacc,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xb02,
-        end: 0xb03,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xb40,
-        end: 0xb40,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xb47,
-        end: 0xb48,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xb4b,
-        end: 0xb4c,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xbbf,
-        end: 0xbbf,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xbc1,
-        end: 0xbc2,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xbc6,
-        end: 0xbc8,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xbca,
-        end: 0xbcc,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xc01,
-        end: 0xc03,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xc41,
-        end: 0xc44,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xc82,
-        end: 0xc83,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xcbe,
-        end: 0xcbe,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xcc1,
-        end: 0xcc1,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xcc3,
-        end: 0xcc4,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xcf3,
-        end: 0xcf3,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xd02,
-        end: 0xd03,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xd3f,
-        end: 0xd40,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xd46,
-        end: 0xd48,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xd4a,
-        end: 0xd4c,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xd82,
-        end: 0xd83,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xdd0,
-        end: 0xdd1,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xdd8,
-        end: 0xdde,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xdf2,
-        end: 0xdf3,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xe33,
-        end: 0xe33,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xeb3,
-        end: 0xeb3,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xf3e,
-        end: 0xf3f,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xf7f,
-        end: 0xf7f,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x1031,
-        end: 0x1031,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x103b,
-        end: 0x103c,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x1056,
-        end: 0x1057,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x1084,
-        end: 0x1084,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x17b6,
-        end: 0x17b6,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x17be,
-        end: 0x17c5,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x17c7,
-        end: 0x17c8,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x1923,
-        end: 0x1926,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x1929,
-        end: 0x192b,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x1930,
-        end: 0x1931,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x1933,
-        end: 0x1938,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x1a19,
-        end: 0x1a1a,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x1a55,
-        end: 0x1a55,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x1a57,
-        end: 0x1a57,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x1a6d,
-        end: 0x1a72,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x1b04,
-        end: 0x1b04,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x1b3e,
-        end: 0x1b41,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x1b82,
-        end: 0x1b82,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x1ba1,
-        end: 0x1ba1,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x1ba6,
-        end: 0x1ba7,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x1be7,
-        end: 0x1be7,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x1bea,
-        end: 0x1bec,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x1bee,
-        end: 0x1bee,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x1c24,
-        end: 0x1c2b,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x1c34,
-        end: 0x1c35,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x1ce1,
-        end: 0x1ce1,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x1cf7,
-        end: 0x1cf7,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xa823,
-        end: 0xa824,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xa827,
-        end: 0xa827,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xa880,
-        end: 0xa881,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xa8b4,
-        end: 0xa8c3,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xa952,
-        end: 0xa952,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xa983,
-        end: 0xa983,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xa9b4,
-        end: 0xa9b5,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xa9ba,
-        end: 0xa9bb,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xa9be,
-        end: 0xa9bf,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xaa2f,
-        end: 0xaa30,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xaa33,
-        end: 0xaa34,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xaa4d,
-        end: 0xaa4d,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xaaeb,
-        end: 0xaaeb,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xaaee,
-        end: 0xaaef,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xaaf5,
-        end: 0xaaf5,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xabe3,
-        end: 0xabe4,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xabe6,
-        end: 0xabe7,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xabe9,
-        end: 0xabea,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0xabec,
-        end: 0xabec,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x11000,
-        end: 0x11000,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x11002,
-        end: 0x11002,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x11082,
-        end: 0x11082,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x110b0,
-        end: 0x110b2,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x110b7,
-        end: 0x110b8,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x1112c,
-        end: 0x1112c,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x11145,
-        end: 0x11146,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x11182,
-        end: 0x11182,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x111b3,
-        end: 0x111b5,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x111bf,
-        end: 0x111bf,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x111ce,
-        end: 0x111ce,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x1122c,
-        end: 0x1122e,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x11232,
-        end: 0x11233,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x112e0,
-        end: 0x112e2,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x11302,
-        end: 0x11303,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x1133f,
-        end: 0x1133f,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x11341,
-        end: 0x11344,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x11347,
-        end: 0x11348,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x1134b,
-        end: 0x1134c,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x11362,
-        end: 0x11363,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x113b9,
-        end: 0x113ba,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x113ca,
-        end: 0x113ca,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x113cc,
-        end: 0x113cd,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x11435,
-        end: 0x11437,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x11440,
-        end: 0x11441,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x11445,
-        end: 0x11445,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x114b1,
-        end: 0x114b2,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x114b9,
-        end: 0x114b9,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x114bb,
-        end: 0x114bc,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x114be,
-        end: 0x114be,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x114c1,
-        end: 0x114c1,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x115b0,
-        end: 0x115b1,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x115b8,
-        end: 0x115bb,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x115be,
-        end: 0x115be,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x11630,
-        end: 0x11632,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x1163b,
-        end: 0x1163c,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x1163e,
-        end: 0x1163e,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x116ac,
-        end: 0x116ac,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x116ae,
-        end: 0x116af,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x1171e,
-        end: 0x1171e,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x11726,
-        end: 0x11726,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x1182c,
-        end: 0x1182e,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x11838,
-        end: 0x11838,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x11931,
-        end: 0x11935,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x11937,
-        end: 0x11938,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x11940,
-        end: 0x11940,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x11942,
-        end: 0x11942,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x119d1,
-        end: 0x119d3,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x119dc,
-        end: 0x119df,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x119e4,
-        end: 0x119e4,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x11a39,
-        end: 0x11a39,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x11a57,
-        end: 0x11a58,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x11a97,
-        end: 0x11a97,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x11b61,
-        end: 0x11b61,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x11b65,
-        end: 0x11b65,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x11b67,
-        end: 0x11b67,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x11c2f,
-        end: 0x11c2f,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x11c3e,
-        end: 0x11c3e,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x11ca9,
-        end: 0x11ca9,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x11cb1,
-        end: 0x11cb1,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x11cb4,
-        end: 0x11cb4,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x11d8a,
-        end: 0x11d8e,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x11d93,
-        end: 0x11d94,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x11d96,
-        end: 0x11d96,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x11ef5,
-        end: 0x11ef6,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x11f03,
-        end: 0x11f03,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x11f34,
-        end: 0x11f35,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x11f3e,
-        end: 0x11f3f,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x1612a,
-        end: 0x1612c,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x16f51,
-        end: 0x16f87,
-        class: GraphemeClass::SpacingMark as u8,
-    },
-    Range {
-        start: 0x1100,
-        end: 0x115f,
-        class: GraphemeClass::L as u8,
-    },
-    Range {
-        start: 0xa960,
-        end: 0xa97c,
-        class: GraphemeClass::L as u8,
-    },
-    Range {
-        start: 0x1160,
-        end: 0x11a7,
-        class: GraphemeClass::V as u8,
-    },
-    Range {
-        start: 0xd7b0,
-        end: 0xd7c6,
-        class: GraphemeClass::V as u8,
-    },
-    Range {
-        start: 0x16d63,
-        end: 0x16d63,
-        class: GraphemeClass::V as u8,
-    },
-    Range {
-        start: 0x16d67,
-        end: 0x16d6a,
-        class: GraphemeClass::V as u8,
-    },
-    Range {
-        start: 0x11a8,
-        end: 0x11ff,
-        class: GraphemeClass::T as u8,
-    },
-    Range {
-        start: 0xd7cb,
-        end: 0xd7fb,
-        class: GraphemeClass::T as u8,
-    },
-    Range {
-        start: 0xac00,
-        end: 0xac00,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xac1c,
-        end: 0xac1c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xac38,
-        end: 0xac38,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xac54,
-        end: 0xac54,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xac70,
-        end: 0xac70,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xac8c,
-        end: 0xac8c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xaca8,
-        end: 0xaca8,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xacc4,
-        end: 0xacc4,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xace0,
-        end: 0xace0,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xacfc,
-        end: 0xacfc,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xad18,
-        end: 0xad18,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xad34,
-        end: 0xad34,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xad50,
-        end: 0xad50,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xad6c,
-        end: 0xad6c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xad88,
-        end: 0xad88,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xada4,
-        end: 0xada4,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xadc0,
-        end: 0xadc0,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xaddc,
-        end: 0xaddc,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xadf8,
-        end: 0xadf8,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xae14,
-        end: 0xae14,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xae30,
-        end: 0xae30,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xae4c,
-        end: 0xae4c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xae68,
-        end: 0xae68,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xae84,
-        end: 0xae84,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xaea0,
-        end: 0xaea0,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xaebc,
-        end: 0xaebc,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xaed8,
-        end: 0xaed8,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xaef4,
-        end: 0xaef4,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xaf10,
-        end: 0xaf10,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xaf2c,
-        end: 0xaf2c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xaf48,
-        end: 0xaf48,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xaf64,
-        end: 0xaf64,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xaf80,
-        end: 0xaf80,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xaf9c,
-        end: 0xaf9c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xafb8,
-        end: 0xafb8,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xafd4,
-        end: 0xafd4,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xaff0,
-        end: 0xaff0,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb00c,
-        end: 0xb00c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb028,
-        end: 0xb028,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb044,
-        end: 0xb044,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb060,
-        end: 0xb060,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb07c,
-        end: 0xb07c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb098,
-        end: 0xb098,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb0b4,
-        end: 0xb0b4,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb0d0,
-        end: 0xb0d0,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb0ec,
-        end: 0xb0ec,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb108,
-        end: 0xb108,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb124,
-        end: 0xb124,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb140,
-        end: 0xb140,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb15c,
-        end: 0xb15c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb178,
-        end: 0xb178,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb194,
-        end: 0xb194,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb1b0,
-        end: 0xb1b0,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb1cc,
-        end: 0xb1cc,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb1e8,
-        end: 0xb1e8,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb204,
-        end: 0xb204,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb220,
-        end: 0xb220,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb23c,
-        end: 0xb23c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb258,
-        end: 0xb258,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb274,
-        end: 0xb274,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb290,
-        end: 0xb290,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb2ac,
-        end: 0xb2ac,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb2c8,
-        end: 0xb2c8,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb2e4,
-        end: 0xb2e4,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb300,
-        end: 0xb300,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb31c,
-        end: 0xb31c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb338,
-        end: 0xb338,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb354,
-        end: 0xb354,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb370,
-        end: 0xb370,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb38c,
-        end: 0xb38c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb3a8,
-        end: 0xb3a8,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb3c4,
-        end: 0xb3c4,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb3e0,
-        end: 0xb3e0,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb3fc,
-        end: 0xb3fc,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb418,
-        end: 0xb418,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb434,
-        end: 0xb434,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb450,
-        end: 0xb450,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb46c,
-        end: 0xb46c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb488,
-        end: 0xb488,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb4a4,
-        end: 0xb4a4,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb4c0,
-        end: 0xb4c0,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb4dc,
-        end: 0xb4dc,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb4f8,
-        end: 0xb4f8,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb514,
-        end: 0xb514,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb530,
-        end: 0xb530,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb54c,
-        end: 0xb54c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb568,
-        end: 0xb568,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb584,
-        end: 0xb584,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb5a0,
-        end: 0xb5a0,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb5bc,
-        end: 0xb5bc,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb5d8,
-        end: 0xb5d8,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb5f4,
-        end: 0xb5f4,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb610,
-        end: 0xb610,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb62c,
-        end: 0xb62c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb648,
-        end: 0xb648,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb664,
-        end: 0xb664,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb680,
-        end: 0xb680,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb69c,
-        end: 0xb69c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb6b8,
-        end: 0xb6b8,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb6d4,
-        end: 0xb6d4,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb6f0,
-        end: 0xb6f0,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb70c,
-        end: 0xb70c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb728,
-        end: 0xb728,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb744,
-        end: 0xb744,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb760,
-        end: 0xb760,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb77c,
-        end: 0xb77c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb798,
-        end: 0xb798,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb7b4,
-        end: 0xb7b4,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb7d0,
-        end: 0xb7d0,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb7ec,
-        end: 0xb7ec,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb808,
-        end: 0xb808,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb824,
-        end: 0xb824,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb840,
-        end: 0xb840,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb85c,
-        end: 0xb85c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb878,
-        end: 0xb878,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb894,
-        end: 0xb894,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb8b0,
-        end: 0xb8b0,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb8cc,
-        end: 0xb8cc,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb8e8,
-        end: 0xb8e8,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb904,
-        end: 0xb904,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb920,
-        end: 0xb920,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb93c,
-        end: 0xb93c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb958,
-        end: 0xb958,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb974,
-        end: 0xb974,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb990,
-        end: 0xb990,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb9ac,
-        end: 0xb9ac,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb9c8,
-        end: 0xb9c8,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xb9e4,
-        end: 0xb9e4,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xba00,
-        end: 0xba00,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xba1c,
-        end: 0xba1c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xba38,
-        end: 0xba38,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xba54,
-        end: 0xba54,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xba70,
-        end: 0xba70,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xba8c,
-        end: 0xba8c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbaa8,
-        end: 0xbaa8,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbac4,
-        end: 0xbac4,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbae0,
-        end: 0xbae0,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbafc,
-        end: 0xbafc,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbb18,
-        end: 0xbb18,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbb34,
-        end: 0xbb34,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbb50,
-        end: 0xbb50,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbb6c,
-        end: 0xbb6c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbb88,
-        end: 0xbb88,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbba4,
-        end: 0xbba4,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbbc0,
-        end: 0xbbc0,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbbdc,
-        end: 0xbbdc,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbbf8,
-        end: 0xbbf8,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbc14,
-        end: 0xbc14,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbc30,
-        end: 0xbc30,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbc4c,
-        end: 0xbc4c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbc68,
-        end: 0xbc68,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbc84,
-        end: 0xbc84,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbca0,
-        end: 0xbca0,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbcbc,
-        end: 0xbcbc,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbcd8,
-        end: 0xbcd8,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbcf4,
-        end: 0xbcf4,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbd10,
-        end: 0xbd10,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbd2c,
-        end: 0xbd2c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbd48,
-        end: 0xbd48,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbd64,
-        end: 0xbd64,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbd80,
-        end: 0xbd80,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbd9c,
-        end: 0xbd9c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbdb8,
-        end: 0xbdb8,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbdd4,
-        end: 0xbdd4,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbdf0,
-        end: 0xbdf0,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbe0c,
-        end: 0xbe0c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbe28,
-        end: 0xbe28,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbe44,
-        end: 0xbe44,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbe60,
-        end: 0xbe60,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbe7c,
-        end: 0xbe7c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbe98,
-        end: 0xbe98,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbeb4,
-        end: 0xbeb4,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbed0,
-        end: 0xbed0,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbeec,
-        end: 0xbeec,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbf08,
-        end: 0xbf08,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbf24,
-        end: 0xbf24,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbf40,
-        end: 0xbf40,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbf5c,
-        end: 0xbf5c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbf78,
-        end: 0xbf78,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbf94,
-        end: 0xbf94,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbfb0,
-        end: 0xbfb0,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbfcc,
-        end: 0xbfcc,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xbfe8,
-        end: 0xbfe8,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc004,
-        end: 0xc004,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc020,
-        end: 0xc020,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc03c,
-        end: 0xc03c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc058,
-        end: 0xc058,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc074,
-        end: 0xc074,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc090,
-        end: 0xc090,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc0ac,
-        end: 0xc0ac,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc0c8,
-        end: 0xc0c8,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc0e4,
-        end: 0xc0e4,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc100,
-        end: 0xc100,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc11c,
-        end: 0xc11c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc138,
-        end: 0xc138,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc154,
-        end: 0xc154,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc170,
-        end: 0xc170,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc18c,
-        end: 0xc18c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc1a8,
-        end: 0xc1a8,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc1c4,
-        end: 0xc1c4,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc1e0,
-        end: 0xc1e0,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc1fc,
-        end: 0xc1fc,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc218,
-        end: 0xc218,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc234,
-        end: 0xc234,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc250,
-        end: 0xc250,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc26c,
-        end: 0xc26c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc288,
-        end: 0xc288,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc2a4,
-        end: 0xc2a4,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc2c0,
-        end: 0xc2c0,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc2dc,
-        end: 0xc2dc,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc2f8,
-        end: 0xc2f8,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc314,
-        end: 0xc314,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc330,
-        end: 0xc330,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc34c,
-        end: 0xc34c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc368,
-        end: 0xc368,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc384,
-        end: 0xc384,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc3a0,
-        end: 0xc3a0,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc3bc,
-        end: 0xc3bc,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc3d8,
-        end: 0xc3d8,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc3f4,
-        end: 0xc3f4,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc410,
-        end: 0xc410,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc42c,
-        end: 0xc42c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc448,
-        end: 0xc448,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc464,
-        end: 0xc464,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc480,
-        end: 0xc480,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc49c,
-        end: 0xc49c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc4b8,
-        end: 0xc4b8,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc4d4,
-        end: 0xc4d4,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc4f0,
-        end: 0xc4f0,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc50c,
-        end: 0xc50c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc528,
-        end: 0xc528,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc544,
-        end: 0xc544,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc560,
-        end: 0xc560,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc57c,
-        end: 0xc57c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc598,
-        end: 0xc598,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc5b4,
-        end: 0xc5b4,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc5d0,
-        end: 0xc5d0,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc5ec,
-        end: 0xc5ec,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc608,
-        end: 0xc608,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc624,
-        end: 0xc624,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc640,
-        end: 0xc640,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc65c,
-        end: 0xc65c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc678,
-        end: 0xc678,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc694,
-        end: 0xc694,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc6b0,
-        end: 0xc6b0,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc6cc,
-        end: 0xc6cc,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc6e8,
-        end: 0xc6e8,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc704,
-        end: 0xc704,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc720,
-        end: 0xc720,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc73c,
-        end: 0xc73c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc758,
-        end: 0xc758,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc774,
-        end: 0xc774,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc790,
-        end: 0xc790,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc7ac,
-        end: 0xc7ac,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc7c8,
-        end: 0xc7c8,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc7e4,
-        end: 0xc7e4,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc800,
-        end: 0xc800,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc81c,
-        end: 0xc81c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc838,
-        end: 0xc838,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc854,
-        end: 0xc854,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc870,
-        end: 0xc870,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc88c,
-        end: 0xc88c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc8a8,
-        end: 0xc8a8,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc8c4,
-        end: 0xc8c4,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc8e0,
-        end: 0xc8e0,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc8fc,
-        end: 0xc8fc,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc918,
-        end: 0xc918,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc934,
-        end: 0xc934,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc950,
-        end: 0xc950,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc96c,
-        end: 0xc96c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc988,
-        end: 0xc988,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc9a4,
-        end: 0xc9a4,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc9c0,
-        end: 0xc9c0,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc9dc,
-        end: 0xc9dc,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xc9f8,
-        end: 0xc9f8,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xca14,
-        end: 0xca14,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xca30,
-        end: 0xca30,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xca4c,
-        end: 0xca4c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xca68,
-        end: 0xca68,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xca84,
-        end: 0xca84,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xcaa0,
-        end: 0xcaa0,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xcabc,
-        end: 0xcabc,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xcad8,
-        end: 0xcad8,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xcaf4,
-        end: 0xcaf4,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xcb10,
-        end: 0xcb10,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xcb2c,
-        end: 0xcb2c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xcb48,
-        end: 0xcb48,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xcb64,
-        end: 0xcb64,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xcb80,
-        end: 0xcb80,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xcb9c,
-        end: 0xcb9c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xcbb8,
-        end: 0xcbb8,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xcbd4,
-        end: 0xcbd4,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xcbf0,
-        end: 0xcbf0,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xcc0c,
-        end: 0xcc0c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xcc28,
-        end: 0xcc28,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xcc44,
-        end: 0xcc44,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xcc60,
-        end: 0xcc60,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xcc7c,
-        end: 0xcc7c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xcc98,
-        end: 0xcc98,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xccb4,
-        end: 0xccb4,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xccd0,
-        end: 0xccd0,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xccec,
-        end: 0xccec,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xcd08,
-        end: 0xcd08,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xcd24,
-        end: 0xcd24,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xcd40,
-        end: 0xcd40,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xcd5c,
-        end: 0xcd5c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xcd78,
-        end: 0xcd78,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xcd94,
-        end: 0xcd94,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xcdb0,
-        end: 0xcdb0,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xcdcc,
-        end: 0xcdcc,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xcde8,
-        end: 0xcde8,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xce04,
-        end: 0xce04,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xce20,
-        end: 0xce20,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xce3c,
-        end: 0xce3c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xce58,
-        end: 0xce58,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xce74,
-        end: 0xce74,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xce90,
-        end: 0xce90,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xceac,
-        end: 0xceac,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xcec8,
-        end: 0xcec8,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xcee4,
-        end: 0xcee4,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xcf00,
-        end: 0xcf00,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xcf1c,
-        end: 0xcf1c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xcf38,
-        end: 0xcf38,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xcf54,
-        end: 0xcf54,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xcf70,
-        end: 0xcf70,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xcf8c,
-        end: 0xcf8c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xcfa8,
-        end: 0xcfa8,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xcfc4,
-        end: 0xcfc4,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xcfe0,
-        end: 0xcfe0,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xcffc,
-        end: 0xcffc,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd018,
-        end: 0xd018,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd034,
-        end: 0xd034,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd050,
-        end: 0xd050,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd06c,
-        end: 0xd06c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd088,
-        end: 0xd088,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd0a4,
-        end: 0xd0a4,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd0c0,
-        end: 0xd0c0,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd0dc,
-        end: 0xd0dc,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd0f8,
-        end: 0xd0f8,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd114,
-        end: 0xd114,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd130,
-        end: 0xd130,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd14c,
-        end: 0xd14c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd168,
-        end: 0xd168,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd184,
-        end: 0xd184,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd1a0,
-        end: 0xd1a0,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd1bc,
-        end: 0xd1bc,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd1d8,
-        end: 0xd1d8,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd1f4,
-        end: 0xd1f4,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd210,
-        end: 0xd210,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd22c,
-        end: 0xd22c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd248,
-        end: 0xd248,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd264,
-        end: 0xd264,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd280,
-        end: 0xd280,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd29c,
-        end: 0xd29c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd2b8,
-        end: 0xd2b8,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd2d4,
-        end: 0xd2d4,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd2f0,
-        end: 0xd2f0,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd30c,
-        end: 0xd30c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd328,
-        end: 0xd328,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd344,
-        end: 0xd344,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd360,
-        end: 0xd360,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd37c,
-        end: 0xd37c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd398,
-        end: 0xd398,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd3b4,
-        end: 0xd3b4,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd3d0,
-        end: 0xd3d0,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd3ec,
-        end: 0xd3ec,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd408,
-        end: 0xd408,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd424,
-        end: 0xd424,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd440,
-        end: 0xd440,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd45c,
-        end: 0xd45c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd478,
-        end: 0xd478,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd494,
-        end: 0xd494,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd4b0,
-        end: 0xd4b0,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd4cc,
-        end: 0xd4cc,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd4e8,
-        end: 0xd4e8,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd504,
-        end: 0xd504,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd520,
-        end: 0xd520,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd53c,
-        end: 0xd53c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd558,
-        end: 0xd558,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd574,
-        end: 0xd574,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd590,
-        end: 0xd590,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd5ac,
-        end: 0xd5ac,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd5c8,
-        end: 0xd5c8,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd5e4,
-        end: 0xd5e4,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd600,
-        end: 0xd600,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd61c,
-        end: 0xd61c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd638,
-        end: 0xd638,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd654,
-        end: 0xd654,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd670,
-        end: 0xd670,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd68c,
-        end: 0xd68c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd6a8,
-        end: 0xd6a8,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd6c4,
-        end: 0xd6c4,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd6e0,
-        end: 0xd6e0,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd6fc,
-        end: 0xd6fc,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd718,
-        end: 0xd718,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd734,
-        end: 0xd734,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd750,
-        end: 0xd750,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd76c,
-        end: 0xd76c,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xd788,
-        end: 0xd788,
-        class: GraphemeClass::Lv as u8,
-    },
-    Range {
-        start: 0xac01,
-        end: 0xac1b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xac1d,
-        end: 0xac37,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xac39,
-        end: 0xac53,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xac55,
-        end: 0xac6f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xac71,
-        end: 0xac8b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xac8d,
-        end: 0xaca7,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xaca9,
-        end: 0xacc3,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xacc5,
-        end: 0xacdf,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xace1,
-        end: 0xacfb,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xacfd,
-        end: 0xad17,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xad19,
-        end: 0xad33,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xad35,
-        end: 0xad4f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xad51,
-        end: 0xad6b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xad6d,
-        end: 0xad87,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xad89,
-        end: 0xada3,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xada5,
-        end: 0xadbf,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xadc1,
-        end: 0xaddb,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xaddd,
-        end: 0xadf7,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xadf9,
-        end: 0xae13,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xae15,
-        end: 0xae2f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xae31,
-        end: 0xae4b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xae4d,
-        end: 0xae67,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xae69,
-        end: 0xae83,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xae85,
-        end: 0xae9f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xaea1,
-        end: 0xaebb,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xaebd,
-        end: 0xaed7,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xaed9,
-        end: 0xaef3,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xaef5,
-        end: 0xaf0f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xaf11,
-        end: 0xaf2b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xaf2d,
-        end: 0xaf47,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xaf49,
-        end: 0xaf63,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xaf65,
-        end: 0xaf7f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xaf81,
-        end: 0xaf9b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xaf9d,
-        end: 0xafb7,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xafb9,
-        end: 0xafd3,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xafd5,
-        end: 0xafef,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xaff1,
-        end: 0xb00b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb00d,
-        end: 0xb027,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb029,
-        end: 0xb043,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb045,
-        end: 0xb05f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb061,
-        end: 0xb07b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb07d,
-        end: 0xb097,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb099,
-        end: 0xb0b3,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb0b5,
-        end: 0xb0cf,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb0d1,
-        end: 0xb0eb,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb0ed,
-        end: 0xb107,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb109,
-        end: 0xb123,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb125,
-        end: 0xb13f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb141,
-        end: 0xb15b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb15d,
-        end: 0xb177,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb179,
-        end: 0xb193,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb195,
-        end: 0xb1af,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb1b1,
-        end: 0xb1cb,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb1cd,
-        end: 0xb1e7,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb1e9,
-        end: 0xb203,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb205,
-        end: 0xb21f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb221,
-        end: 0xb23b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb23d,
-        end: 0xb257,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb259,
-        end: 0xb273,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb275,
-        end: 0xb28f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb291,
-        end: 0xb2ab,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb2ad,
-        end: 0xb2c7,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb2c9,
-        end: 0xb2e3,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb2e5,
-        end: 0xb2ff,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb301,
-        end: 0xb31b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb31d,
-        end: 0xb337,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb339,
-        end: 0xb353,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb355,
-        end: 0xb36f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb371,
-        end: 0xb38b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb38d,
-        end: 0xb3a7,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb3a9,
-        end: 0xb3c3,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb3c5,
-        end: 0xb3df,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb3e1,
-        end: 0xb3fb,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb3fd,
-        end: 0xb417,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb419,
-        end: 0xb433,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb435,
-        end: 0xb44f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb451,
-        end: 0xb46b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb46d,
-        end: 0xb487,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb489,
-        end: 0xb4a3,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb4a5,
-        end: 0xb4bf,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb4c1,
-        end: 0xb4db,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb4dd,
-        end: 0xb4f7,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb4f9,
-        end: 0xb513,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb515,
-        end: 0xb52f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb531,
-        end: 0xb54b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb54d,
-        end: 0xb567,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb569,
-        end: 0xb583,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb585,
-        end: 0xb59f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb5a1,
-        end: 0xb5bb,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb5bd,
-        end: 0xb5d7,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb5d9,
-        end: 0xb5f3,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb5f5,
-        end: 0xb60f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb611,
-        end: 0xb62b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb62d,
-        end: 0xb647,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb649,
-        end: 0xb663,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb665,
-        end: 0xb67f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb681,
-        end: 0xb69b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb69d,
-        end: 0xb6b7,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb6b9,
-        end: 0xb6d3,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb6d5,
-        end: 0xb6ef,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb6f1,
-        end: 0xb70b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb70d,
-        end: 0xb727,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb729,
-        end: 0xb743,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb745,
-        end: 0xb75f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb761,
-        end: 0xb77b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb77d,
-        end: 0xb797,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb799,
-        end: 0xb7b3,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb7b5,
-        end: 0xb7cf,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb7d1,
-        end: 0xb7eb,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb7ed,
-        end: 0xb807,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb809,
-        end: 0xb823,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb825,
-        end: 0xb83f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb841,
-        end: 0xb85b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb85d,
-        end: 0xb877,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb879,
-        end: 0xb893,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb895,
-        end: 0xb8af,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb8b1,
-        end: 0xb8cb,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb8cd,
-        end: 0xb8e7,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb8e9,
-        end: 0xb903,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb905,
-        end: 0xb91f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb921,
-        end: 0xb93b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb93d,
-        end: 0xb957,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb959,
-        end: 0xb973,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb975,
-        end: 0xb98f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb991,
-        end: 0xb9ab,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb9ad,
-        end: 0xb9c7,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb9c9,
-        end: 0xb9e3,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xb9e5,
-        end: 0xb9ff,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xba01,
-        end: 0xba1b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xba1d,
-        end: 0xba37,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xba39,
-        end: 0xba53,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xba55,
-        end: 0xba6f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xba71,
-        end: 0xba8b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xba8d,
-        end: 0xbaa7,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbaa9,
-        end: 0xbac3,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbac5,
-        end: 0xbadf,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbae1,
-        end: 0xbafb,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbafd,
-        end: 0xbb17,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbb19,
-        end: 0xbb33,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbb35,
-        end: 0xbb4f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbb51,
-        end: 0xbb6b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbb6d,
-        end: 0xbb87,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbb89,
-        end: 0xbba3,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbba5,
-        end: 0xbbbf,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbbc1,
-        end: 0xbbdb,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbbdd,
-        end: 0xbbf7,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbbf9,
-        end: 0xbc13,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbc15,
-        end: 0xbc2f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbc31,
-        end: 0xbc4b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbc4d,
-        end: 0xbc67,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbc69,
-        end: 0xbc83,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbc85,
-        end: 0xbc9f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbca1,
-        end: 0xbcbb,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbcbd,
-        end: 0xbcd7,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbcd9,
-        end: 0xbcf3,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbcf5,
-        end: 0xbd0f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbd11,
-        end: 0xbd2b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbd2d,
-        end: 0xbd47,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbd49,
-        end: 0xbd63,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbd65,
-        end: 0xbd7f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbd81,
-        end: 0xbd9b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbd9d,
-        end: 0xbdb7,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbdb9,
-        end: 0xbdd3,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbdd5,
-        end: 0xbdef,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbdf1,
-        end: 0xbe0b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbe0d,
-        end: 0xbe27,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbe29,
-        end: 0xbe43,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbe45,
-        end: 0xbe5f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbe61,
-        end: 0xbe7b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbe7d,
-        end: 0xbe97,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbe99,
-        end: 0xbeb3,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbeb5,
-        end: 0xbecf,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbed1,
-        end: 0xbeeb,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbeed,
-        end: 0xbf07,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbf09,
-        end: 0xbf23,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbf25,
-        end: 0xbf3f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbf41,
-        end: 0xbf5b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbf5d,
-        end: 0xbf77,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbf79,
-        end: 0xbf93,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbf95,
-        end: 0xbfaf,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbfb1,
-        end: 0xbfcb,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbfcd,
-        end: 0xbfe7,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xbfe9,
-        end: 0xc003,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc005,
-        end: 0xc01f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc021,
-        end: 0xc03b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc03d,
-        end: 0xc057,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc059,
-        end: 0xc073,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc075,
-        end: 0xc08f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc091,
-        end: 0xc0ab,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc0ad,
-        end: 0xc0c7,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc0c9,
-        end: 0xc0e3,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc0e5,
-        end: 0xc0ff,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc101,
-        end: 0xc11b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc11d,
-        end: 0xc137,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc139,
-        end: 0xc153,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc155,
-        end: 0xc16f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc171,
-        end: 0xc18b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc18d,
-        end: 0xc1a7,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc1a9,
-        end: 0xc1c3,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc1c5,
-        end: 0xc1df,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc1e1,
-        end: 0xc1fb,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc1fd,
-        end: 0xc217,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc219,
-        end: 0xc233,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc235,
-        end: 0xc24f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc251,
-        end: 0xc26b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc26d,
-        end: 0xc287,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc289,
-        end: 0xc2a3,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc2a5,
-        end: 0xc2bf,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc2c1,
-        end: 0xc2db,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc2dd,
-        end: 0xc2f7,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc2f9,
-        end: 0xc313,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc315,
-        end: 0xc32f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc331,
-        end: 0xc34b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc34d,
-        end: 0xc367,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc369,
-        end: 0xc383,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc385,
-        end: 0xc39f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc3a1,
-        end: 0xc3bb,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc3bd,
-        end: 0xc3d7,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc3d9,
-        end: 0xc3f3,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc3f5,
-        end: 0xc40f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc411,
-        end: 0xc42b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc42d,
-        end: 0xc447,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc449,
-        end: 0xc463,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc465,
-        end: 0xc47f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc481,
-        end: 0xc49b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc49d,
-        end: 0xc4b7,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc4b9,
-        end: 0xc4d3,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc4d5,
-        end: 0xc4ef,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc4f1,
-        end: 0xc50b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc50d,
-        end: 0xc527,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc529,
-        end: 0xc543,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc545,
-        end: 0xc55f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc561,
-        end: 0xc57b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc57d,
-        end: 0xc597,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc599,
-        end: 0xc5b3,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc5b5,
-        end: 0xc5cf,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc5d1,
-        end: 0xc5eb,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc5ed,
-        end: 0xc607,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc609,
-        end: 0xc623,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc625,
-        end: 0xc63f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc641,
-        end: 0xc65b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc65d,
-        end: 0xc677,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc679,
-        end: 0xc693,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc695,
-        end: 0xc6af,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc6b1,
-        end: 0xc6cb,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc6cd,
-        end: 0xc6e7,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc6e9,
-        end: 0xc703,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc705,
-        end: 0xc71f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc721,
-        end: 0xc73b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc73d,
-        end: 0xc757,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc759,
-        end: 0xc773,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc775,
-        end: 0xc78f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc791,
-        end: 0xc7ab,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc7ad,
-        end: 0xc7c7,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc7c9,
-        end: 0xc7e3,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc7e5,
-        end: 0xc7ff,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc801,
-        end: 0xc81b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc81d,
-        end: 0xc837,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc839,
-        end: 0xc853,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc855,
-        end: 0xc86f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc871,
-        end: 0xc88b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc88d,
-        end: 0xc8a7,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc8a9,
-        end: 0xc8c3,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc8c5,
-        end: 0xc8df,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc8e1,
-        end: 0xc8fb,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc8fd,
-        end: 0xc917,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc919,
-        end: 0xc933,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc935,
-        end: 0xc94f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc951,
-        end: 0xc96b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc96d,
-        end: 0xc987,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc989,
-        end: 0xc9a3,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc9a5,
-        end: 0xc9bf,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc9c1,
-        end: 0xc9db,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc9dd,
-        end: 0xc9f7,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xc9f9,
-        end: 0xca13,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xca15,
-        end: 0xca2f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xca31,
-        end: 0xca4b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xca4d,
-        end: 0xca67,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xca69,
-        end: 0xca83,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xca85,
-        end: 0xca9f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xcaa1,
-        end: 0xcabb,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xcabd,
-        end: 0xcad7,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xcad9,
-        end: 0xcaf3,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xcaf5,
-        end: 0xcb0f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xcb11,
-        end: 0xcb2b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xcb2d,
-        end: 0xcb47,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xcb49,
-        end: 0xcb63,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xcb65,
-        end: 0xcb7f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xcb81,
-        end: 0xcb9b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xcb9d,
-        end: 0xcbb7,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xcbb9,
-        end: 0xcbd3,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xcbd5,
-        end: 0xcbef,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xcbf1,
-        end: 0xcc0b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xcc0d,
-        end: 0xcc27,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xcc29,
-        end: 0xcc43,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xcc45,
-        end: 0xcc5f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xcc61,
-        end: 0xcc7b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xcc7d,
-        end: 0xcc97,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xcc99,
-        end: 0xccb3,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xccb5,
-        end: 0xcccf,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xccd1,
-        end: 0xcceb,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xcced,
-        end: 0xcd07,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xcd09,
-        end: 0xcd23,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xcd25,
-        end: 0xcd3f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xcd41,
-        end: 0xcd5b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xcd5d,
-        end: 0xcd77,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xcd79,
-        end: 0xcd93,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xcd95,
-        end: 0xcdaf,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xcdb1,
-        end: 0xcdcb,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xcdcd,
-        end: 0xcde7,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xcde9,
-        end: 0xce03,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xce05,
-        end: 0xce1f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xce21,
-        end: 0xce3b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xce3d,
-        end: 0xce57,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xce59,
-        end: 0xce73,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xce75,
-        end: 0xce8f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xce91,
-        end: 0xceab,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xcead,
-        end: 0xcec7,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xcec9,
-        end: 0xcee3,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xcee5,
-        end: 0xceff,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xcf01,
-        end: 0xcf1b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xcf1d,
-        end: 0xcf37,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xcf39,
-        end: 0xcf53,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xcf55,
-        end: 0xcf6f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xcf71,
-        end: 0xcf8b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xcf8d,
-        end: 0xcfa7,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xcfa9,
-        end: 0xcfc3,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xcfc5,
-        end: 0xcfdf,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xcfe1,
-        end: 0xcffb,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xcffd,
-        end: 0xd017,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd019,
-        end: 0xd033,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd035,
-        end: 0xd04f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd051,
-        end: 0xd06b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd06d,
-        end: 0xd087,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd089,
-        end: 0xd0a3,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd0a5,
-        end: 0xd0bf,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd0c1,
-        end: 0xd0db,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd0dd,
-        end: 0xd0f7,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd0f9,
-        end: 0xd113,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd115,
-        end: 0xd12f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd131,
-        end: 0xd14b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd14d,
-        end: 0xd167,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd169,
-        end: 0xd183,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd185,
-        end: 0xd19f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd1a1,
-        end: 0xd1bb,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd1bd,
-        end: 0xd1d7,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd1d9,
-        end: 0xd1f3,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd1f5,
-        end: 0xd20f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd211,
-        end: 0xd22b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd22d,
-        end: 0xd247,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd249,
-        end: 0xd263,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd265,
-        end: 0xd27f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd281,
-        end: 0xd29b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd29d,
-        end: 0xd2b7,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd2b9,
-        end: 0xd2d3,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd2d5,
-        end: 0xd2ef,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd2f1,
-        end: 0xd30b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd30d,
-        end: 0xd327,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd329,
-        end: 0xd343,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd345,
-        end: 0xd35f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd361,
-        end: 0xd37b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd37d,
-        end: 0xd397,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd399,
-        end: 0xd3b3,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd3b5,
-        end: 0xd3cf,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd3d1,
-        end: 0xd3eb,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd3ed,
-        end: 0xd407,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd409,
-        end: 0xd423,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd425,
-        end: 0xd43f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd441,
-        end: 0xd45b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd45d,
-        end: 0xd477,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd479,
-        end: 0xd493,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd495,
-        end: 0xd4af,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd4b1,
-        end: 0xd4cb,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd4cd,
-        end: 0xd4e7,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd4e9,
-        end: 0xd503,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd505,
-        end: 0xd51f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd521,
-        end: 0xd53b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd53d,
-        end: 0xd557,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd559,
-        end: 0xd573,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd575,
-        end: 0xd58f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd591,
-        end: 0xd5ab,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd5ad,
-        end: 0xd5c7,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd5c9,
-        end: 0xd5e3,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd5e5,
-        end: 0xd5ff,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd601,
-        end: 0xd61b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd61d,
-        end: 0xd637,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd639,
-        end: 0xd653,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd655,
-        end: 0xd66f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd671,
-        end: 0xd68b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd68d,
-        end: 0xd6a7,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd6a9,
-        end: 0xd6c3,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd6c5,
-        end: 0xd6df,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd6e1,
-        end: 0xd6fb,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd6fd,
-        end: 0xd717,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd719,
-        end: 0xd733,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd735,
-        end: 0xd74f,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd751,
-        end: 0xd76b,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd76d,
-        end: 0xd787,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0xd789,
-        end: 0xd7a3,
-        class: GraphemeClass::Lvt as u8,
-    },
-    Range {
-        start: 0x200d,
-        end: 0x200d,
-        class: GraphemeClass::Zwj as u8,
+        start: 0xe01f0,
+        end: 0xe0fff,
+        class: GraphemeClass::Control as u8,
     },
 ];
 const LINE_RANGES: &[Range] = &[
@@ -25969,486 +25969,6 @@ const EXTENDED_PICTOGRAPHIC: &[(u32, u32)] = &[
 ];
 const INCB_RANGES: &[Range] = &[
     Range {
-        start: 0x94d,
-        end: 0x94d,
-        class: IndicConjunct::Linker as u8,
-    },
-    Range {
-        start: 0x9cd,
-        end: 0x9cd,
-        class: IndicConjunct::Linker as u8,
-    },
-    Range {
-        start: 0xacd,
-        end: 0xacd,
-        class: IndicConjunct::Linker as u8,
-    },
-    Range {
-        start: 0xb4d,
-        end: 0xb4d,
-        class: IndicConjunct::Linker as u8,
-    },
-    Range {
-        start: 0xc4d,
-        end: 0xc4d,
-        class: IndicConjunct::Linker as u8,
-    },
-    Range {
-        start: 0xd4d,
-        end: 0xd4d,
-        class: IndicConjunct::Linker as u8,
-    },
-    Range {
-        start: 0x1039,
-        end: 0x1039,
-        class: IndicConjunct::Linker as u8,
-    },
-    Range {
-        start: 0x17d2,
-        end: 0x17d2,
-        class: IndicConjunct::Linker as u8,
-    },
-    Range {
-        start: 0x1a60,
-        end: 0x1a60,
-        class: IndicConjunct::Linker as u8,
-    },
-    Range {
-        start: 0x1b44,
-        end: 0x1b44,
-        class: IndicConjunct::Linker as u8,
-    },
-    Range {
-        start: 0x1bab,
-        end: 0x1bab,
-        class: IndicConjunct::Linker as u8,
-    },
-    Range {
-        start: 0xa9c0,
-        end: 0xa9c0,
-        class: IndicConjunct::Linker as u8,
-    },
-    Range {
-        start: 0xaaf6,
-        end: 0xaaf6,
-        class: IndicConjunct::Linker as u8,
-    },
-    Range {
-        start: 0x10a3f,
-        end: 0x10a3f,
-        class: IndicConjunct::Linker as u8,
-    },
-    Range {
-        start: 0x11133,
-        end: 0x11133,
-        class: IndicConjunct::Linker as u8,
-    },
-    Range {
-        start: 0x113d0,
-        end: 0x113d0,
-        class: IndicConjunct::Linker as u8,
-    },
-    Range {
-        start: 0x1193e,
-        end: 0x1193e,
-        class: IndicConjunct::Linker as u8,
-    },
-    Range {
-        start: 0x11a47,
-        end: 0x11a47,
-        class: IndicConjunct::Linker as u8,
-    },
-    Range {
-        start: 0x11a99,
-        end: 0x11a99,
-        class: IndicConjunct::Linker as u8,
-    },
-    Range {
-        start: 0x11f42,
-        end: 0x11f42,
-        class: IndicConjunct::Linker as u8,
-    },
-    Range {
-        start: 0x915,
-        end: 0x939,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x958,
-        end: 0x95f,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x978,
-        end: 0x97f,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x995,
-        end: 0x9a8,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x9aa,
-        end: 0x9b0,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x9b2,
-        end: 0x9b2,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x9b6,
-        end: 0x9b9,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x9dc,
-        end: 0x9dd,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x9df,
-        end: 0x9df,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x9f0,
-        end: 0x9f1,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0xa95,
-        end: 0xaa8,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0xaaa,
-        end: 0xab0,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0xab2,
-        end: 0xab3,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0xab5,
-        end: 0xab9,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0xaf9,
-        end: 0xaf9,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0xb15,
-        end: 0xb28,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0xb2a,
-        end: 0xb30,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0xb32,
-        end: 0xb33,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0xb35,
-        end: 0xb39,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0xb5c,
-        end: 0xb5d,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0xb5f,
-        end: 0xb5f,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0xb71,
-        end: 0xb71,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0xc15,
-        end: 0xc28,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0xc2a,
-        end: 0xc39,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0xc58,
-        end: 0xc5a,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0xd15,
-        end: 0xd3a,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x1000,
-        end: 0x102a,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x103f,
-        end: 0x103f,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x1050,
-        end: 0x1055,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x105a,
-        end: 0x105d,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x1061,
-        end: 0x1061,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x1065,
-        end: 0x1066,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x106e,
-        end: 0x1070,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x1075,
-        end: 0x1081,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x108e,
-        end: 0x108e,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x1780,
-        end: 0x17b3,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x1a20,
-        end: 0x1a54,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x1b0b,
-        end: 0x1b0c,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x1b13,
-        end: 0x1b33,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x1b45,
-        end: 0x1b4c,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x1b83,
-        end: 0x1ba0,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x1bae,
-        end: 0x1baf,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x1bbb,
-        end: 0x1bbd,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0xa989,
-        end: 0xa98b,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0xa98f,
-        end: 0xa9b2,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0xa9e0,
-        end: 0xa9e4,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0xa9e7,
-        end: 0xa9ef,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0xa9fa,
-        end: 0xa9fe,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0xaa60,
-        end: 0xaa6f,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0xaa71,
-        end: 0xaa73,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0xaa7a,
-        end: 0xaa7a,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0xaa7e,
-        end: 0xaa7f,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0xaae0,
-        end: 0xaaea,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0xabc0,
-        end: 0xabda,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x10a00,
-        end: 0x10a00,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x10a10,
-        end: 0x10a13,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x10a15,
-        end: 0x10a17,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x10a19,
-        end: 0x10a35,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x11103,
-        end: 0x11126,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x11144,
-        end: 0x11144,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x11147,
-        end: 0x11147,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x11380,
-        end: 0x11389,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x1138b,
-        end: 0x1138b,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x1138e,
-        end: 0x1138e,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x11390,
-        end: 0x113b5,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x11900,
-        end: 0x11906,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x11909,
-        end: 0x11909,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x1190c,
-        end: 0x11913,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x11915,
-        end: 0x11916,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x11918,
-        end: 0x1192f,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x11a00,
-        end: 0x11a00,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x11a0b,
-        end: 0x11a32,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x11a50,
-        end: 0x11a50,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x11a5c,
-        end: 0x11a83,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x11f04,
-        end: 0x11f10,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
-        start: 0x11f12,
-        end: 0x11f33,
-        class: IndicConjunct::Consonant as u8,
-    },
-    Range {
         start: 0x300,
         end: 0x36f,
         class: IndicConjunct::Extend as u8,
@@ -26589,6 +26109,11 @@ const INCB_RANGES: &[Range] = &[
         class: IndicConjunct::Extend as u8,
     },
     Range {
+        start: 0x915,
+        end: 0x939,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
         start: 0x93a,
         end: 0x93a,
         class: IndicConjunct::Extend as u8,
@@ -26604,9 +26129,19 @@ const INCB_RANGES: &[Range] = &[
         class: IndicConjunct::Extend as u8,
     },
     Range {
+        start: 0x94d,
+        end: 0x94d,
+        class: IndicConjunct::Linker as u8,
+    },
+    Range {
         start: 0x951,
         end: 0x957,
         class: IndicConjunct::Extend as u8,
+    },
+    Range {
+        start: 0x958,
+        end: 0x95f,
+        class: IndicConjunct::Consonant as u8,
     },
     Range {
         start: 0x962,
@@ -26614,9 +26149,34 @@ const INCB_RANGES: &[Range] = &[
         class: IndicConjunct::Extend as u8,
     },
     Range {
+        start: 0x978,
+        end: 0x97f,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
         start: 0x981,
         end: 0x981,
         class: IndicConjunct::Extend as u8,
+    },
+    Range {
+        start: 0x995,
+        end: 0x9a8,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
+        start: 0x9aa,
+        end: 0x9b0,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
+        start: 0x9b2,
+        end: 0x9b2,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
+        start: 0x9b6,
+        end: 0x9b9,
+        class: IndicConjunct::Consonant as u8,
     },
     Range {
         start: 0x9bc,
@@ -26634,14 +26194,34 @@ const INCB_RANGES: &[Range] = &[
         class: IndicConjunct::Extend as u8,
     },
     Range {
+        start: 0x9cd,
+        end: 0x9cd,
+        class: IndicConjunct::Linker as u8,
+    },
+    Range {
         start: 0x9d7,
         end: 0x9d7,
         class: IndicConjunct::Extend as u8,
     },
     Range {
+        start: 0x9dc,
+        end: 0x9dd,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
+        start: 0x9df,
+        end: 0x9df,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
         start: 0x9e2,
         end: 0x9e3,
         class: IndicConjunct::Extend as u8,
+    },
+    Range {
+        start: 0x9f0,
+        end: 0x9f1,
+        class: IndicConjunct::Consonant as u8,
     },
     Range {
         start: 0x9fe,
@@ -26694,6 +26274,26 @@ const INCB_RANGES: &[Range] = &[
         class: IndicConjunct::Extend as u8,
     },
     Range {
+        start: 0xa95,
+        end: 0xaa8,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
+        start: 0xaaa,
+        end: 0xab0,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
+        start: 0xab2,
+        end: 0xab3,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
+        start: 0xab5,
+        end: 0xab9,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
         start: 0xabc,
         end: 0xabc,
         class: IndicConjunct::Extend as u8,
@@ -26709,9 +26309,19 @@ const INCB_RANGES: &[Range] = &[
         class: IndicConjunct::Extend as u8,
     },
     Range {
+        start: 0xacd,
+        end: 0xacd,
+        class: IndicConjunct::Linker as u8,
+    },
+    Range {
         start: 0xae2,
         end: 0xae3,
         class: IndicConjunct::Extend as u8,
+    },
+    Range {
+        start: 0xaf9,
+        end: 0xaf9,
+        class: IndicConjunct::Consonant as u8,
     },
     Range {
         start: 0xafa,
@@ -26722,6 +26332,26 @@ const INCB_RANGES: &[Range] = &[
         start: 0xb01,
         end: 0xb01,
         class: IndicConjunct::Extend as u8,
+    },
+    Range {
+        start: 0xb15,
+        end: 0xb28,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
+        start: 0xb2a,
+        end: 0xb30,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
+        start: 0xb32,
+        end: 0xb33,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
+        start: 0xb35,
+        end: 0xb39,
+        class: IndicConjunct::Consonant as u8,
     },
     Range {
         start: 0xb3c,
@@ -26744,6 +26374,11 @@ const INCB_RANGES: &[Range] = &[
         class: IndicConjunct::Extend as u8,
     },
     Range {
+        start: 0xb4d,
+        end: 0xb4d,
+        class: IndicConjunct::Linker as u8,
+    },
+    Range {
         start: 0xb55,
         end: 0xb56,
         class: IndicConjunct::Extend as u8,
@@ -26754,9 +26389,24 @@ const INCB_RANGES: &[Range] = &[
         class: IndicConjunct::Extend as u8,
     },
     Range {
+        start: 0xb5c,
+        end: 0xb5d,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
+        start: 0xb5f,
+        end: 0xb5f,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
         start: 0xb62,
         end: 0xb63,
         class: IndicConjunct::Extend as u8,
+    },
+    Range {
+        start: 0xb71,
+        end: 0xb71,
+        class: IndicConjunct::Consonant as u8,
     },
     Range {
         start: 0xb82,
@@ -26794,6 +26444,16 @@ const INCB_RANGES: &[Range] = &[
         class: IndicConjunct::Extend as u8,
     },
     Range {
+        start: 0xc15,
+        end: 0xc28,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
+        start: 0xc2a,
+        end: 0xc39,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
         start: 0xc3c,
         end: 0xc3c,
         class: IndicConjunct::Extend as u8,
@@ -26814,9 +26474,19 @@ const INCB_RANGES: &[Range] = &[
         class: IndicConjunct::Extend as u8,
     },
     Range {
+        start: 0xc4d,
+        end: 0xc4d,
+        class: IndicConjunct::Linker as u8,
+    },
+    Range {
         start: 0xc55,
         end: 0xc56,
         class: IndicConjunct::Extend as u8,
+    },
+    Range {
+        start: 0xc58,
+        end: 0xc5a,
+        class: IndicConjunct::Consonant as u8,
     },
     Range {
         start: 0xc62,
@@ -26884,6 +26554,11 @@ const INCB_RANGES: &[Range] = &[
         class: IndicConjunct::Extend as u8,
     },
     Range {
+        start: 0xd15,
+        end: 0xd3a,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
         start: 0xd3b,
         end: 0xd3c,
         class: IndicConjunct::Extend as u8,
@@ -26897,6 +26572,11 @@ const INCB_RANGES: &[Range] = &[
         start: 0xd41,
         end: 0xd44,
         class: IndicConjunct::Extend as u8,
+    },
+    Range {
+        start: 0xd4d,
+        end: 0xd4d,
+        class: IndicConjunct::Linker as u8,
     },
     Range {
         start: 0xd57,
@@ -27019,6 +26699,11 @@ const INCB_RANGES: &[Range] = &[
         class: IndicConjunct::Extend as u8,
     },
     Range {
+        start: 0x1000,
+        end: 0x102a,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
         start: 0x102d,
         end: 0x1030,
         class: IndicConjunct::Extend as u8,
@@ -27027,6 +26712,11 @@ const INCB_RANGES: &[Range] = &[
         start: 0x1032,
         end: 0x1037,
         class: IndicConjunct::Extend as u8,
+    },
+    Range {
+        start: 0x1039,
+        end: 0x1039,
+        class: IndicConjunct::Linker as u8,
     },
     Range {
         start: 0x103a,
@@ -27039,9 +26729,24 @@ const INCB_RANGES: &[Range] = &[
         class: IndicConjunct::Extend as u8,
     },
     Range {
+        start: 0x103f,
+        end: 0x103f,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
+        start: 0x1050,
+        end: 0x1055,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
         start: 0x1058,
         end: 0x1059,
         class: IndicConjunct::Extend as u8,
+    },
+    Range {
+        start: 0x105a,
+        end: 0x105d,
+        class: IndicConjunct::Consonant as u8,
     },
     Range {
         start: 0x105e,
@@ -27049,9 +26754,29 @@ const INCB_RANGES: &[Range] = &[
         class: IndicConjunct::Extend as u8,
     },
     Range {
+        start: 0x1061,
+        end: 0x1061,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
+        start: 0x1065,
+        end: 0x1066,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
+        start: 0x106e,
+        end: 0x1070,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
         start: 0x1071,
         end: 0x1074,
         class: IndicConjunct::Extend as u8,
+    },
+    Range {
+        start: 0x1075,
+        end: 0x1081,
+        class: IndicConjunct::Consonant as u8,
     },
     Range {
         start: 0x1082,
@@ -27067,6 +26792,11 @@ const INCB_RANGES: &[Range] = &[
         start: 0x108d,
         end: 0x108d,
         class: IndicConjunct::Extend as u8,
+    },
+    Range {
+        start: 0x108e,
+        end: 0x108e,
+        class: IndicConjunct::Consonant as u8,
     },
     Range {
         start: 0x109d,
@@ -27109,6 +26839,11 @@ const INCB_RANGES: &[Range] = &[
         class: IndicConjunct::Extend as u8,
     },
     Range {
+        start: 0x1780,
+        end: 0x17b3,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
         start: 0x17b4,
         end: 0x17b5,
         class: IndicConjunct::Extend as u8,
@@ -27127,6 +26862,11 @@ const INCB_RANGES: &[Range] = &[
         start: 0x17c9,
         end: 0x17d1,
         class: IndicConjunct::Extend as u8,
+    },
+    Range {
+        start: 0x17d2,
+        end: 0x17d2,
+        class: IndicConjunct::Linker as u8,
     },
     Range {
         start: 0x17d3,
@@ -27189,6 +26929,11 @@ const INCB_RANGES: &[Range] = &[
         class: IndicConjunct::Extend as u8,
     },
     Range {
+        start: 0x1a20,
+        end: 0x1a54,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
         start: 0x1a56,
         end: 0x1a56,
         class: IndicConjunct::Extend as u8,
@@ -27197,6 +26942,11 @@ const INCB_RANGES: &[Range] = &[
         start: 0x1a58,
         end: 0x1a5e,
         class: IndicConjunct::Extend as u8,
+    },
+    Range {
+        start: 0x1a60,
+        end: 0x1a60,
+        class: IndicConjunct::Linker as u8,
     },
     Range {
         start: 0x1a62,
@@ -27244,6 +26994,16 @@ const INCB_RANGES: &[Range] = &[
         class: IndicConjunct::Extend as u8,
     },
     Range {
+        start: 0x1b0b,
+        end: 0x1b0c,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
+        start: 0x1b13,
+        end: 0x1b33,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
         start: 0x1b34,
         end: 0x1b34,
         class: IndicConjunct::Extend as u8,
@@ -27284,6 +27044,16 @@ const INCB_RANGES: &[Range] = &[
         class: IndicConjunct::Extend as u8,
     },
     Range {
+        start: 0x1b44,
+        end: 0x1b44,
+        class: IndicConjunct::Linker as u8,
+    },
+    Range {
+        start: 0x1b45,
+        end: 0x1b4c,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
         start: 0x1b6b,
         end: 0x1b73,
         class: IndicConjunct::Extend as u8,
@@ -27292,6 +27062,11 @@ const INCB_RANGES: &[Range] = &[
         start: 0x1b80,
         end: 0x1b81,
         class: IndicConjunct::Extend as u8,
+    },
+    Range {
+        start: 0x1b83,
+        end: 0x1ba0,
+        class: IndicConjunct::Consonant as u8,
     },
     Range {
         start: 0x1ba2,
@@ -27309,9 +27084,24 @@ const INCB_RANGES: &[Range] = &[
         class: IndicConjunct::Extend as u8,
     },
     Range {
+        start: 0x1bab,
+        end: 0x1bab,
+        class: IndicConjunct::Linker as u8,
+    },
+    Range {
         start: 0x1bac,
         end: 0x1bad,
         class: IndicConjunct::Extend as u8,
+    },
+    Range {
+        start: 0x1bae,
+        end: 0x1baf,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
+        start: 0x1bbb,
+        end: 0x1bbd,
+        class: IndicConjunct::Consonant as u8,
     },
     Range {
         start: 0x1be6,
@@ -27529,6 +27319,16 @@ const INCB_RANGES: &[Range] = &[
         class: IndicConjunct::Extend as u8,
     },
     Range {
+        start: 0xa989,
+        end: 0xa98b,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
+        start: 0xa98f,
+        end: 0xa9b2,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
         start: 0xa9b3,
         end: 0xa9b3,
         class: IndicConjunct::Extend as u8,
@@ -27544,9 +27344,29 @@ const INCB_RANGES: &[Range] = &[
         class: IndicConjunct::Extend as u8,
     },
     Range {
+        start: 0xa9c0,
+        end: 0xa9c0,
+        class: IndicConjunct::Linker as u8,
+    },
+    Range {
+        start: 0xa9e0,
+        end: 0xa9e4,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
         start: 0xa9e5,
         end: 0xa9e5,
         class: IndicConjunct::Extend as u8,
+    },
+    Range {
+        start: 0xa9e7,
+        end: 0xa9ef,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
+        start: 0xa9fa,
+        end: 0xa9fe,
+        class: IndicConjunct::Consonant as u8,
     },
     Range {
         start: 0xaa29,
@@ -27574,9 +27394,29 @@ const INCB_RANGES: &[Range] = &[
         class: IndicConjunct::Extend as u8,
     },
     Range {
+        start: 0xaa60,
+        end: 0xaa6f,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
+        start: 0xaa71,
+        end: 0xaa73,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
+        start: 0xaa7a,
+        end: 0xaa7a,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
         start: 0xaa7c,
         end: 0xaa7c,
         class: IndicConjunct::Extend as u8,
+    },
+    Range {
+        start: 0xaa7e,
+        end: 0xaa7f,
+        class: IndicConjunct::Consonant as u8,
     },
     Range {
         start: 0xaab0,
@@ -27604,9 +27444,24 @@ const INCB_RANGES: &[Range] = &[
         class: IndicConjunct::Extend as u8,
     },
     Range {
+        start: 0xaae0,
+        end: 0xaaea,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
         start: 0xaaec,
         end: 0xaaed,
         class: IndicConjunct::Extend as u8,
+    },
+    Range {
+        start: 0xaaf6,
+        end: 0xaaf6,
+        class: IndicConjunct::Linker as u8,
+    },
+    Range {
+        start: 0xabc0,
+        end: 0xabda,
+        class: IndicConjunct::Consonant as u8,
     },
     Range {
         start: 0xabe5,
@@ -27659,6 +27514,11 @@ const INCB_RANGES: &[Range] = &[
         class: IndicConjunct::Extend as u8,
     },
     Range {
+        start: 0x10a00,
+        end: 0x10a00,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
         start: 0x10a01,
         end: 0x10a03,
         class: IndicConjunct::Extend as u8,
@@ -27674,9 +27534,29 @@ const INCB_RANGES: &[Range] = &[
         class: IndicConjunct::Extend as u8,
     },
     Range {
+        start: 0x10a10,
+        end: 0x10a13,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
+        start: 0x10a15,
+        end: 0x10a17,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
+        start: 0x10a19,
+        end: 0x10a35,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
         start: 0x10a38,
         end: 0x10a3a,
         class: IndicConjunct::Extend as u8,
+    },
+    Range {
+        start: 0x10a3f,
+        end: 0x10a3f,
+        class: IndicConjunct::Linker as u8,
     },
     Range {
         start: 0x10ae5,
@@ -27759,6 +27639,11 @@ const INCB_RANGES: &[Range] = &[
         class: IndicConjunct::Extend as u8,
     },
     Range {
+        start: 0x11103,
+        end: 0x11126,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
         start: 0x11127,
         end: 0x1112b,
         class: IndicConjunct::Extend as u8,
@@ -27769,9 +27654,24 @@ const INCB_RANGES: &[Range] = &[
         class: IndicConjunct::Extend as u8,
     },
     Range {
+        start: 0x11133,
+        end: 0x11133,
+        class: IndicConjunct::Linker as u8,
+    },
+    Range {
         start: 0x11134,
         end: 0x11134,
         class: IndicConjunct::Extend as u8,
+    },
+    Range {
+        start: 0x11144,
+        end: 0x11144,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
+        start: 0x11147,
+        end: 0x11147,
+        class: IndicConjunct::Consonant as u8,
     },
     Range {
         start: 0x11173,
@@ -27884,6 +27784,26 @@ const INCB_RANGES: &[Range] = &[
         class: IndicConjunct::Extend as u8,
     },
     Range {
+        start: 0x11380,
+        end: 0x11389,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
+        start: 0x1138b,
+        end: 0x1138b,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
+        start: 0x1138e,
+        end: 0x1138e,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
+        start: 0x11390,
+        end: 0x113b5,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
         start: 0x113b8,
         end: 0x113b8,
         class: IndicConjunct::Extend as u8,
@@ -27917,6 +27837,11 @@ const INCB_RANGES: &[Range] = &[
         start: 0x113cf,
         end: 0x113cf,
         class: IndicConjunct::Extend as u8,
+    },
+    Range {
+        start: 0x113d0,
+        end: 0x113d0,
+        class: IndicConjunct::Linker as u8,
     },
     Range {
         start: 0x113d2,
@@ -28074,6 +27999,31 @@ const INCB_RANGES: &[Range] = &[
         class: IndicConjunct::Extend as u8,
     },
     Range {
+        start: 0x11900,
+        end: 0x11906,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
+        start: 0x11909,
+        end: 0x11909,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
+        start: 0x1190c,
+        end: 0x11913,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
+        start: 0x11915,
+        end: 0x11916,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
+        start: 0x11918,
+        end: 0x1192f,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
         start: 0x11930,
         end: 0x11930,
         class: IndicConjunct::Extend as u8,
@@ -28087,6 +28037,11 @@ const INCB_RANGES: &[Range] = &[
         start: 0x1193d,
         end: 0x1193d,
         class: IndicConjunct::Extend as u8,
+    },
+    Range {
+        start: 0x1193e,
+        end: 0x1193e,
+        class: IndicConjunct::Linker as u8,
     },
     Range {
         start: 0x11943,
@@ -28109,9 +28064,19 @@ const INCB_RANGES: &[Range] = &[
         class: IndicConjunct::Extend as u8,
     },
     Range {
+        start: 0x11a00,
+        end: 0x11a00,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
         start: 0x11a01,
         end: 0x11a0a,
         class: IndicConjunct::Extend as u8,
+    },
+    Range {
+        start: 0x11a0b,
+        end: 0x11a32,
+        class: IndicConjunct::Consonant as u8,
     },
     Range {
         start: 0x11a33,
@@ -28124,6 +28089,16 @@ const INCB_RANGES: &[Range] = &[
         class: IndicConjunct::Extend as u8,
     },
     Range {
+        start: 0x11a47,
+        end: 0x11a47,
+        class: IndicConjunct::Linker as u8,
+    },
+    Range {
+        start: 0x11a50,
+        end: 0x11a50,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
         start: 0x11a51,
         end: 0x11a56,
         class: IndicConjunct::Extend as u8,
@@ -28134,6 +28109,11 @@ const INCB_RANGES: &[Range] = &[
         class: IndicConjunct::Extend as u8,
     },
     Range {
+        start: 0x11a5c,
+        end: 0x11a83,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
         start: 0x11a8a,
         end: 0x11a96,
         class: IndicConjunct::Extend as u8,
@@ -28142,6 +28122,11 @@ const INCB_RANGES: &[Range] = &[
         start: 0x11a98,
         end: 0x11a98,
         class: IndicConjunct::Extend as u8,
+    },
+    Range {
+        start: 0x11a99,
+        end: 0x11a99,
+        class: IndicConjunct::Linker as u8,
     },
     Range {
         start: 0x11b60,
@@ -28244,6 +28229,16 @@ const INCB_RANGES: &[Range] = &[
         class: IndicConjunct::Extend as u8,
     },
     Range {
+        start: 0x11f04,
+        end: 0x11f10,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
+        start: 0x11f12,
+        end: 0x11f33,
+        class: IndicConjunct::Consonant as u8,
+    },
+    Range {
         start: 0x11f36,
         end: 0x11f3a,
         class: IndicConjunct::Extend as u8,
@@ -28257,6 +28252,11 @@ const INCB_RANGES: &[Range] = &[
         start: 0x11f41,
         end: 0x11f41,
         class: IndicConjunct::Extend as u8,
+    },
+    Range {
+        start: 0x11f42,
+        end: 0x11f42,
+        class: IndicConjunct::Linker as u8,
     },
     Range {
         start: 0x11f5a,
