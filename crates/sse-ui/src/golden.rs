@@ -14,12 +14,19 @@ pub struct Tolerance {
 /// Comparison statistics and an RGBA difference image.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Comparison {
+    /// Compared width.
     pub width: u32,
+    /// Compared height.
     pub height: u32,
+    /// Pixels exceeding the per-channel tolerance.
     pub differing_pixels: usize,
+    /// Total compared pixels.
     pub total_pixels: usize,
+    /// Largest absolute channel delta observed.
     pub max_channel_delta: u8,
+    /// Whether both tolerance gates passed.
     pub accepted: bool,
+    /// RGBA diagnostic difference image.
     pub diff_rgba: Vec<u8>,
 }
 
@@ -73,7 +80,9 @@ pub fn compare(
         diff[o + 3] = 255;
     }
     let pixels = expected / 4;
-    let accepted = (bad as f64) <= ((pixels as f64) * f64::from(tolerance.pixel_fraction));
+    let bad_u32 = u32::try_from(bad).map_err(|_| Error::damaged("golden bad-pixel count"))?;
+    let pixels_u32 = u32::try_from(pixels).map_err(|_| Error::damaged("golden pixel count"))?;
+    let accepted = f64::from(bad_u32) <= f64::from(pixels_u32) * f64::from(tolerance.pixel_fraction);
     Ok(Comparison {
         width,
         height,
