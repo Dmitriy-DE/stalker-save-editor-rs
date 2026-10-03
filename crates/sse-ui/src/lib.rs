@@ -30,3 +30,6 @@ pub mod x11;
 /// X11 window backend over a Unix socket (U1).
 #[cfg(all(unix, not(target_os = "macos")))]
 pub mod x11_window;
+
+/// Reusable retained widgets.
+pub mod widgets;
