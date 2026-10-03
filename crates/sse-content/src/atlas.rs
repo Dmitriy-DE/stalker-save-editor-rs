@@ -462,3 +462,4 @@ fn read_u32_le_offset(bytes: &[u8], offset: &mut usize) -> Option<u32> {
     *offset = offset.checked_add(4)?;
     Some(u32::from_le_bytes(slice.try_into().ok()?))
 }
+The requested file reference is not currently visible. Use files.search or files.list to rediscover the file, then retry with a returned ref_id or file_id.
