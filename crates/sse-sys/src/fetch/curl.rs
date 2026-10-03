@@ -122,12 +122,7 @@ struct CallbackState<'a> {
     too_large: bool,
 }
 
-unsafe extern "C" fn write_callback(
-    data: *mut c_char,
-    size: usize,
-    count: usize,
-    user: *mut c_void,
-) -> usize {
+unsafe extern "C" fn write_callback(data: *mut c_char, size: usize, count: usize, user: *mut c_void) -> usize {
     let Some(length) = size.checked_mul(count) else {
         return 0;
     };
@@ -159,8 +154,7 @@ unsafe extern "C" fn write_callback(
 }
 
 fn milliseconds(value: std::time::Duration) -> Result<c_long> {
-    c_long::try_from(value.as_millis())
-        .map_err(|_| Error::Refused("timeout is too large".to_owned()))
+    c_long::try_from(value.as_millis()).map_err(|_| Error::Refused("timeout is too large".to_owned()))
 }
 
 fn curl_error(api: &Api, code: c_int) -> Error {
@@ -181,15 +175,11 @@ pub(super) fn get(
     sink: &mut dyn FnMut(&[u8]) -> bool,
 ) -> Result<Response> {
     let api = api()?;
-    let url_c =
-        CString::new(url).map_err(|_| Error::Refused("URL contains NUL".to_owned()))?;
+    let url_c = CString::new(url).map_err(|_| Error::Refused("URL contains NUL".to_owned()))?;
     let range = if range_from == 0 {
         None
     } else {
-        Some(
-            CString::new(format!("{range_from}-"))
-                .map_err(|_| Error::Refused("range contains NUL".to_owned()))?,
-        )
+        Some(CString::new(format!("{range_from}-")).map_err(|_| Error::Refused("range contains NUL".to_owned()))?)
     };
     // SAFETY: API was resolved from libcurl and global initialization succeeded.
     let handle = unsafe { (api.easy_init)() };
@@ -223,10 +213,7 @@ pub(super) fn get(
         set_long(CURLOPT_FOLLOWLOCATION, 1)?;
         set_long(CURLOPT_MAXREDIRS, 8)?;
         set_long(CURLOPT_NOSIGNAL, 1)?;
-        set_long(
-            CURLOPT_CONNECTTIMEOUT_MS,
-            milliseconds(config.connect_timeout)?,
-        )?;
+        set_long(CURLOPT_CONNECTTIMEOUT_MS, milliseconds(config.connect_timeout)?)?;
         set_long(CURLOPT_TIMEOUT_MS, milliseconds(config.total_timeout)?)?;
         if let Some(range) = &range {
             // SAFETY: range CString lives through perform and CURLOPT_RANGE expects a char pointer.
@@ -236,13 +223,7 @@ pub(super) fn get(
             }
         }
         // SAFETY: function pointer matches curl_write_callback and state remains live through perform.
-        let code = unsafe {
-            (api.easy_setopt)(
-                handle,
-                CURLOPT_WRITEFUNCTION,
-                write_callback as WriteCallback,
-            )
-        };
+        let code = unsafe { (api.easy_setopt)(handle, CURLOPT_WRITEFUNCTION, write_callback as WriteCallback) };
         if code != CURLE_OK {
             return Err(curl_error(api, code));
         }
@@ -264,9 +245,7 @@ pub(super) fn get(
                 return Err(Error::Refused("fetch cancelled by sink".to_owned()));
             }
             if state.too_large {
-                return Err(Error::Refused(
-                    "HTTPS response exceeds size limit".to_owned(),
-                ));
+                return Err(Error::Refused("HTTPS response exceeds size limit".to_owned()));
             }
             return Err(curl_error(api, code));
         }
@@ -274,38 +253,23 @@ pub(super) fn get(
         let mut content_length: i64 = -1;
         let mut effective: *mut c_char = ptr::null_mut();
         // SAFETY: output pointers match the documented CURLINFO result types and handle is live.
-        if unsafe { (api.easy_getinfo)(handle, CURLINFO_RESPONSE_CODE, &mut status) } != CURLE_OK
-        {
-            return Err(Error::System(
-                "libcurl could not report HTTP status".to_owned(),
-            ));
+        if unsafe { (api.easy_getinfo)(handle, CURLINFO_RESPONSE_CODE, &mut status) } != CURLE_OK {
+            return Err(Error::System("libcurl could not report HTTP status".to_owned()));
         }
         // SAFETY: curl_off_t is a signed 64-bit integer on the supported 64-bit targets.
-        let _ = unsafe {
-            (api.easy_getinfo)(
-                handle,
-                CURLINFO_CONTENT_LENGTH_DOWNLOAD_T,
-                &mut content_length,
-            )
-        };
+        let _ = unsafe { (api.easy_getinfo)(handle, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &mut content_length) };
         // SAFETY: EFFECTIVE_URL returns a libcurl-owned char pointer.
-        let _ =
-            unsafe { (api.easy_getinfo)(handle, CURLINFO_EFFECTIVE_URL, &mut effective) };
-        let status =
-            u16::try_from(status).map_err(|_| Error::damaged("HTTP status out of range"))?;
+        let _ = unsafe { (api.easy_getinfo)(handle, CURLINFO_EFFECTIVE_URL, &mut effective) };
+        let status = u16::try_from(status).map_err(|_| Error::damaged("HTTP status out of range"))?;
         let content_length = u64::try_from(content_length).ok();
         if content_length.is_some_and(|length| length > config.max_bytes) {
-            return Err(Error::Refused(
-                "HTTPS response exceeds size limit".to_owned(),
-            ));
+            return Err(Error::Refused("HTTPS response exceeds size limit".to_owned()));
         }
         let final_url = if effective.is_null() {
             url.to_owned()
         } else {
             // SAFETY: non-null EFFECTIVE_URL is a NUL-terminated string owned until cleanup.
-            unsafe { CStr::from_ptr(effective) }
-                .to_string_lossy()
-                .into_owned()
+            unsafe { CStr::from_ptr(effective) }.to_string_lossy().into_owned()
         };
         if !final_url.starts_with("https://") {
             return Err(Error::Refused("redirect left HTTPS".to_owned()));
