@@ -1,7 +1,5 @@
 //! Our own interface toolkit (U1): canvas, text, layout, widgets, windows. Owner: Claude.
 
-/// Deterministic atlas packer and glyph cache (X24).
-pub mod atlas;
 /// Text field editing model (X27).
 pub mod edit;
 /// Measure-and-arrange layout over an arena (X26).
