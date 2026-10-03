@@ -27,6 +27,9 @@ pub fn decompress(stream: &[u8], expected_size: usize) -> Result<Vec<u8>> {
     if stream.len() >= 5 && stream.first().copied() == Some(17) {
         reader.skip(1)?;
         bitstream_version = reader.u8()?;
+        if bitstream_version > 1 {
+            return Err(Error::damaged("unsupported LZO bitstream version"));
+        }
     }
 
     if reader.remaining() > 0 && peek_u8(stream, reader.position())? > 17 {
@@ -765,6 +768,15 @@ fn ensure_output_capacity(current_length: usize, expected_size: usize, additiona
 mod tests {
     use super::{compress, compress_fast, decompress};
     use sse_core::Error;
+
+    #[test]
+    fn unknown_bitstream_version_is_rejected_before_commands_are_decoded() {
+        // 17,2 announces a future bitstream version. The following 17,0,0 is a
+        // perfectly valid v0/v1 end marker, so the old decoder silently accepted
+        // this five-byte stream as an empty payload.
+        let stream = [17_u8, 2, 17, 0, 0];
+        assert!(matches!(decompress(&stream, 0), Err(Error::Damaged(_))));
+    }
 
     #[test]
     fn attached_literal_fixtures_work_both_ways() {
