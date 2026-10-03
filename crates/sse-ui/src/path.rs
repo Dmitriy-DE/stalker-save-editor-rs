@@ -947,7 +947,7 @@ impl<'a> Parser<'a> {
             let command = self
                 .last_command
                 .ok_or_else(|| self.error("path data starts without a command"))?;
-            if command.to_ascii_uppercase() == b'Z' {
+            if command.eq_ignore_ascii_case(&b'Z') {
                 return Err(self.error("numbers cannot implicitly repeat close-path"));
             }
             Ok(command)
