@@ -197,10 +197,14 @@ mod tests {
     #[test]
     fn cache_reuses_and_bounds() {
         let mut c = IconCache::new();
-        let a = c.get(Icon::Save, 24, 0xffffff).unwrap_or_else(|error| panic!("{error:?}"))
+        let a = c
+            .get(Icon::Save, 24, 0xffffff)
+            .unwrap_or_else(|error| panic!("{error:?}"))
             .alpha
             .clone();
-        let b = c.get(Icon::Save, 24, 0xffffff).unwrap_or_else(|error| panic!("{error:?}"))
+        let b = c
+            .get(Icon::Save, 24, 0xffffff)
+            .unwrap_or_else(|error| panic!("{error:?}"))
             .alpha
             .clone();
         assert_eq!(a, b);
