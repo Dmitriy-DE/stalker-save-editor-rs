@@ -2334,6 +2334,12 @@ impl<'a> OffsetBits<'a> {
             .read_zero(total)?
             .checked_sub(64)
             .ok_or_else(|| Error::damaged("length code below bias"))?;
+        // The C++ reference is intentionally asymmetric here: the forward
+        // length reader shifts the bit accumulator twice, while the backward
+        // reader shifts it once. The second shift does not advance bitpos.
+        if !self.backward {
+            self.bits = self.bits.checked_shl(total).unwrap_or_default();
+        }
         self.refill()?;
         Ok(value)
     }
@@ -2571,8 +2577,13 @@ fn unpack_offsets(
         };
         extended.push(value);
     }
-    if forward.effective_pos()? != backward.effective_pos()? {
-        return Err(Error::damaged("LZ forward/backward offset streams did not meet"));
+    let forward_pos = forward.effective_pos()?;
+    let backward_pos = backward.effective_pos()?;
+    if forward_pos != backward_pos {
+        return Err(Error::damaged(format!(
+            "LZ forward/backward offset streams did not meet: forward={forward_pos}, backward={backward_pos}, forward_bitpos={}, backward_bitpos={}",
+            forward.bitpos, backward.bitpos
+        )));
     }
     let mut ext_at = 0_usize;
     let mut lengths = Vec::with_capacity(packed_lengths.len());
@@ -2944,8 +2955,7 @@ mod tests {
     #[test]
     fn manifest_vectors_match_reference_byte_for_byte() {
         let root = fixture_root();
-        let manifest = fs::read_to_string(root.join("manifest.json"))
-            .unwrap_or_else(|error| panic!("read Kraken manifest: {error}"));
+        let manifest = fs::read_to_string(root.join("manifest.json")).unwrap_or_else(|error| panic!("read Kraken manifest: {error}"));
         let fixtures = parse_manifest(&manifest);
         assert_eq!(fixtures.len(), 23, "manifest must contain the 23 C++ reference vectors");
 
