@@ -627,12 +627,7 @@ struct HuffRange {
 const HUFF_PREFIX: [usize; 12] = [0, 0, 2, 6, 14, 30, 62, 126, 254, 510, 766, 1022];
 const HUFF_SYMBOL_SLOTS: usize = 1280;
 
-fn store_huff_symbol(
-    syms: &mut [u8],
-    counts: &mut [usize; 12],
-    code_len: usize,
-    symbol: u8,
-) -> Result<()> {
+fn store_huff_symbol(syms: &mut [u8], counts: &mut [usize; 12], code_len: usize, symbol: u8) -> Result<()> {
     let start = HUFF_PREFIX
         .get(code_len)
         .copied()
