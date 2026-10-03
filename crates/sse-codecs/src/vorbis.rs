@@ -871,6 +871,7 @@ fn decode_floor(floor: &Floor1, books: &[Codebook], bits: &mut Bits<'_>) -> Resu
     Ok(Some(FloorPacket { y, active }))
 }
 
+#[allow(clippy::excessive_precision)]
 const FLOOR1_INVERSE_DB: [f32; 256] = [
     1.0649863e-07_f32,
     1.1341951e-07_f32,
