@@ -25,6 +25,7 @@ pub mod lexer;
 pub mod logic_refs;
 pub mod models;
 pub mod module_calls;
+pub mod regex;
 pub mod spawn_diff;
 pub mod trade_items;
 
