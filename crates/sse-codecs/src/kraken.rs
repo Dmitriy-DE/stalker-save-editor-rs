@@ -629,7 +629,9 @@ fn read_fluff(bits: &mut HeaderBits<'_>, num_symbols: usize) -> Result<usize> {
     if num_symbols == 256 {
         return Ok(0);
     }
-    let mut x = 257_usize.saturating_sub(num_symbols);
+    let mut x = 257_usize
+        .checked_sub(num_symbols)
+        .ok_or_else(|| Error::damaged("invalid Huffman symbol count"))?;
     x = x.min(num_symbols);
     x = x
         .checked_mul(2)
@@ -637,23 +639,55 @@ fn read_fluff(bits: &mut HeaderBits<'_>, num_symbols: usize) -> Result<usize> {
     if x == 0 {
         return Err(Error::damaged("invalid Huffman symbol count"));
     }
-    let y = usize::try_from(usize::BITS.saturating_sub((x.saturating_sub(1)).leading_zeros()))
-        .map_err(|_| Error::damaged("Huffman fluff bit count conversion failed"))?;
-    let value =
-        bits.read_bits_no_refill(u32::try_from(y).map_err(|_| Error::damaged("Huffman fluff width overflow"))?)?;
-    let z = (1_usize
-        .checked_shl(u32::try_from(y).map_err(|_| Error::damaged("Huffman fluff shift width overflow"))?)
-        .unwrap_or_default())
-    .saturating_sub(x);
-    let value_usize = usize::try_from(value).map_err(|_| Error::damaged("Huffman fluff value conversion failed"))?;
-    if value_usize >> 1 >= z {
-        Ok(value_usize.saturating_sub(z))
-    } else {
-        // The reference consumes one fewer bit in this branch. Reconstruct that by rewinding one logical bit.
-        bits.bits = bits.bits.rotate_right(1);
-        bits.bitpos = bits.bitpos.saturating_sub(1);
-        Ok(value_usize >> 1)
+
+    let y = usize::BITS
+        .checked_sub(
+            x.checked_sub(1)
+                .ok_or_else(|| Error::damaged("Huffman fluff range underflow"))?
+                .leading_zeros(),
+        )
+        .ok_or_else(|| Error::damaged("Huffman fluff bit count underflow"))?;
+    if y == 0 || y > 31 {
+        return Err(Error::damaged("Huffman fluff bit count outside 1..31"));
     }
+
+    let shift = 32_u32
+        .checked_sub(y)
+        .ok_or_else(|| Error::damaged("Huffman fluff shift underflow"))?;
+    let value = bits.bits >> shift;
+    let range = 1_usize
+        .checked_shl(y)
+        .ok_or_else(|| Error::damaged("Huffman fluff range shift overflow"))?;
+    let z = range
+        .checked_sub(x)
+        .ok_or_else(|| Error::damaged("Huffman fluff range subtraction underflow"))?;
+    let value_usize =
+        usize::try_from(value).map_err(|_| Error::damaged("Huffman fluff value conversion failed"))?;
+
+    let (consume, result) = if value_usize >> 1 >= z {
+        (
+            y,
+            value_usize
+                .checked_sub(z)
+                .ok_or_else(|| Error::damaged("Huffman fluff value underflow"))?,
+        )
+    } else {
+        (
+            y.checked_sub(1)
+                .ok_or_else(|| Error::damaged("Huffman fluff consume underflow"))?,
+            value_usize >> 1,
+        )
+    };
+
+    bits.bits = bits.bits.checked_shl(consume).unwrap_or_default();
+    bits.bitpos = bits
+        .bitpos
+        .checked_add(
+            i32::try_from(consume)
+                .map_err(|_| Error::damaged("Huffman fluff consume conversion failed"))?,
+        )
+        .ok_or_else(|| Error::damaged("Huffman fluff bit position overflow"))?;
+    Ok(result)
 }
 
 fn huff_convert_ranges(
@@ -2502,11 +2536,6 @@ fn unpack_offsets(
     scale: u8,
     packed_lengths: &[u8],
 ) -> Result<(Vec<i32>, Vec<u32>)> {
-    #[cfg(test)]
-    if bits_source.len() == 852 && packed_offsets.len() == 1177 {
-        eprintln!("X16B_DEBUG packed_offsets={packed_offsets:02x?}");
-    }
-
     let mut forward = OffsetBits::forward(bits_source)?;
     let mut backward = OffsetBits::backward(bits_source)?;
     if backward.bits < 0x2000 {
