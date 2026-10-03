@@ -7,8 +7,6 @@ use std::process::ExitCode;
 use sse_core::{Error, SaveBuffer};
 use sse_xray::Save;
 
-mod sha256;
-
 const USAGE: &str = "Usage: stalker-save <version|info|inventory|edit> ...\n\
 Exit codes: 0 done, 2 wrong arguments, 3 refused (unsupported or unsafe), 4 unreadable or damaged input, 5 file or system error.";
 
@@ -63,7 +61,7 @@ fn read_info(path: Option<&String>) -> sse_core::Result<()> {
     println!("Format: {}", save.format().id());
     println!("Packed: {}", packed.len());
     println!("Raw: {}", save.raw_size());
-    println!("SHA256: {}", sha256::lower_hex(&sha256::digest(packed.as_slice())));
+    println!("SHA256: {}", sse_codecs::sha256::sha256_hex(packed.as_slice()));
     println!("Money: {}", save.money()?);
     println!("Inventory objects: {}", save.inventory()?.len());
     Ok(())
