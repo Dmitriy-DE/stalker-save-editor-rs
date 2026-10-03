@@ -553,9 +553,9 @@ pub fn pack_rectangles<T: Clone>(
             return Err("rectangle exceeds atlas page".to_owned());
         }
         if let Some(original) = hashes.get(&r.pixel_hash).copied() {
-            if let Some(Some((p, x, y, _))) = placed.get(original) {
+            if let Some((p, x, y, _)) = placed.get(original).and_then(|value| *value) {
                 if let Some(slot) = placed.get_mut(index) {
-                    *slot = Some((*p, *x, *y, original));
+                    *slot = Some((p, x, y, original));
                 }
                 continue;
             }
