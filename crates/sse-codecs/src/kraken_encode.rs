@@ -166,7 +166,11 @@ fn distance_code(distance: usize) -> Result<(u8, u32, u32)> {
     if !(8..=15).contains(&high) {
         return Err(Error::damaged("Kraken distance high bits"));
     }
-    let low = if width == 0 { 0 } else { q & 1_u32.checked_shl(width).unwrap_or_default().saturating_sub(1) };
+    let low = if width == 0 {
+        0
+    } else {
+        q & 1_u32.checked_shl(width).unwrap_or_default().saturating_sub(1)
+    };
     let packed = width
         .checked_mul(8)
         .and_then(|v| v.checked_add(high.saturating_sub(8)))
