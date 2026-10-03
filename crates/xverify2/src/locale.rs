@@ -69,7 +69,11 @@ impl PluralOperands {
     /// Creates operands for an integer value.
     #[must_use]
     pub const fn integer(value: u64) -> Self {
-        Self { integer: value, visible_fraction_digits: 0, fraction: 0 }
+        Self {
+            integer: value,
+            visible_fraction_digits: 0,
+            fraction: 0,
+        }
     }
 }
 
@@ -128,10 +132,7 @@ pub fn plural_cardinal(locale: Locale, value: PluralOperands) -> PluralCategory 
                 PluralCategory::One
             } else if v == 0 && (2..=4).contains(&mod10) && !(12..=14).contains(&mod100) {
                 PluralCategory::Few
-            } else if v == 0
-                && i != 1
-                && (mod10 <= 1 || (5..=9).contains(&mod10) || (12..=14).contains(&mod100))
-            {
+            } else if v == 0 && i != 1 && (mod10 <= 1 || (5..=9).contains(&mod10) || (12..=14).contains(&mod100)) {
                 PluralCategory::Many
             } else {
                 PluralCategory::Other
@@ -167,7 +168,11 @@ pub fn plural_cardinal(locale: Locale, value: PluralOperands) -> PluralCategory 
             }
         }
         Locale::En | Locale::De => {
-            if v == 0 && i == 1 { PluralCategory::One } else { PluralCategory::Other }
+            if v == 0 && i == 1 {
+                PluralCategory::One
+            } else {
+                PluralCategory::Other
+            }
         }
         Locale::Tr | Locale::Ja | Locale::Ko | Locale::ZhCn | Locale::ZhTw => PluralCategory::Other,
     }
@@ -211,7 +216,10 @@ pub fn format_size(out: &mut String, locale: Locale, bytes: u64) -> Result<()> {
     } else {
         let whole = bytes.div_euclid(divisor);
         let remainder = bytes.rem_euclid(divisor);
-        let tenth = remainder.saturating_mul(10).saturating_add(divisor.div_euclid(2)).div_euclid(divisor);
+        let tenth = remainder
+            .saturating_mul(10)
+            .saturating_add(divisor.div_euclid(2))
+            .div_euclid(divisor);
         let mut rounded_whole = whole;
         let mut rounded_tenth = tenth;
         if rounded_tenth >= 10 {
@@ -219,7 +227,11 @@ pub fn format_size(out: &mut String, locale: Locale, bytes: u64) -> Result<()> {
             rounded_tenth = 0;
         }
         let signed = i64::try_from(rounded_whole).map_err(|_| Error::damaged("scaled size does not fit i64"))?;
-        let fraction = if rounded_tenth == 0 { None } else { Some((rounded_tenth, 1)) };
+        let fraction = if rounded_tenth == 0 {
+            None
+        } else {
+            Some((rounded_tenth, 1))
+        };
         format_number(out, locale, signed, fraction)?;
     }
     out.push(' ');
@@ -364,11 +376,31 @@ fn write_number_word_suffix(out: &mut String, locale: Locale, value: i64, word: 
 
 fn number_style(locale: Locale) -> NumberStyle {
     match locale {
-        Locale::Ru | Locale::Uk | Locale::Pl | Locale::Cs => NumberStyle { group: NBSP, decimal: ',', minimum_group_digits: 1 },
-        Locale::Fr => NumberStyle { group: NNBSP, decimal: ',', minimum_group_digits: 1 },
-        Locale::De | Locale::It | Locale::Tr | Locale::PtBr => NumberStyle { group: '.', decimal: ',', minimum_group_digits: 1 },
-        Locale::Es => NumberStyle { group: '.', decimal: ',', minimum_group_digits: 2 },
-        Locale::En | Locale::Ja | Locale::Ko | Locale::ZhCn | Locale::ZhTw => NumberStyle { group: ',', decimal: '.', minimum_group_digits: 1 },
+        Locale::Ru | Locale::Uk | Locale::Pl | Locale::Cs => NumberStyle {
+            group: NBSP,
+            decimal: ',',
+            minimum_group_digits: 1,
+        },
+        Locale::Fr => NumberStyle {
+            group: NNBSP,
+            decimal: ',',
+            minimum_group_digits: 1,
+        },
+        Locale::De | Locale::It | Locale::Tr | Locale::PtBr => NumberStyle {
+            group: '.',
+            decimal: ',',
+            minimum_group_digits: 1,
+        },
+        Locale::Es => NumberStyle {
+            group: '.',
+            decimal: ',',
+            minimum_group_digits: 2,
+        },
+        Locale::En | Locale::Ja | Locale::Ko | Locale::ZhCn | Locale::ZhTw => NumberStyle {
+            group: ',',
+            decimal: '.',
+            minimum_group_digits: 1,
+        },
     }
 }
 
@@ -377,30 +409,48 @@ fn write_grouped_unsigned(out: &mut String, value: u64, style: NumberStyle) -> R
     let mut count = 0_usize;
     let mut remaining = value;
     loop {
-        let digit = u8::try_from(remaining.rem_euclid(10)).map_err(|_| Error::damaged("decimal digit conversion failed"))?;
-        let slot = digits.get_mut(count).ok_or_else(|| Error::damaged("number has too many decimal digits"))?;
+        let digit =
+            u8::try_from(remaining.rem_euclid(10)).map_err(|_| Error::damaged("decimal digit conversion failed"))?;
+        let slot = digits
+            .get_mut(count)
+            .ok_or_else(|| Error::damaged("number has too many decimal digits"))?;
         *slot = digit;
-        count = count.checked_add(1).ok_or_else(|| Error::damaged("digit count overflow"))?;
+        count = count
+            .checked_add(1)
+            .ok_or_else(|| Error::damaged("digit count overflow"))?;
         remaining = remaining.div_euclid(10);
-        if remaining == 0 { break; }
+        if remaining == 0 {
+            break;
+        }
     }
     let group = count >= usize::from(style.minimum_group_digits).saturating_add(3);
     for reverse_index in (0..count).rev() {
         if group && reverse_index != count.saturating_sub(1) && reverse_index.saturating_add(1).rem_euclid(3) == 0 {
             out.push(style.group);
         }
-        let digit = digits.get(reverse_index).copied().ok_or_else(|| Error::damaged("digit index outside buffer"))?;
+        let digit = digits
+            .get(reverse_index)
+            .copied()
+            .ok_or_else(|| Error::damaged("digit index outside buffer"))?;
         out.push(char::from(b'0'.saturating_add(digit)));
     }
     Ok(())
 }
 
 fn write_fraction(out: &mut String, digits: u64, visible: u8) -> Result<()> {
-    if visible > 18 { return Err(Error::damaged("too many visible fraction digits")); }
+    if visible > 18 {
+        return Err(Error::damaged("too many visible fraction digits"));
+    }
     let mut divisor = 1_u64;
-    for _ in 1..visible { divisor = divisor.saturating_mul(10); }
+    for _ in 1..visible {
+        divisor = divisor.saturating_mul(10);
+    }
     let modulus = divisor.saturating_mul(10);
-    let normalized = if modulus == 0 { digits } else { digits.rem_euclid(modulus) };
+    let normalized = if modulus == 0 {
+        digits
+    } else {
+        digits.rem_euclid(modulus)
+    };
     let mut current_divisor = divisor;
     for _ in 0..visible {
         let digit = normalized.div_euclid(current_divisor).rem_euclid(10);
@@ -420,84 +470,417 @@ fn validate_date(date: Date) -> Result<()> {
 
 fn size_unit(locale: Locale, power: u8) -> &'static str {
     match locale {
-        Locale::Ru | Locale::Uk => match power { 0 => "Б", 1 => "КБ", 2 => "МБ", _ => "ГБ" },
-        Locale::ZhCn => match power { 0 => "字节", 1 => "千字节", 2 => "兆字节", _ => "吉字节" },
-        Locale::ZhTw => match power { 0 => "位元組", 1 => "KB", 2 => "MB", _ => "GB" },
-        _ => match power { 0 => "B", 1 => "KB", 2 => "MB", _ => "GB" },
+        Locale::Ru | Locale::Uk => match power {
+            0 => "Б",
+            1 => "КБ",
+            2 => "МБ",
+            _ => "ГБ",
+        },
+        Locale::ZhCn => match power {
+            0 => "字节",
+            1 => "千字节",
+            2 => "兆字节",
+            _ => "吉字节",
+        },
+        Locale::ZhTw => match power {
+            0 => "位元組",
+            1 => "KB",
+            2 => "MB",
+            _ => "GB",
+        },
+        _ => match power {
+            0 => "B",
+            1 => "KB",
+            2 => "MB",
+            _ => "GB",
+        },
     }
 }
 
 fn yesterday(locale: Locale) -> &'static str {
     match locale {
-        Locale::Ru => "вчера", Locale::Uk => "вчора", Locale::En => "yesterday", Locale::De => "gestern",
-        Locale::Fr => "hier", Locale::Es => "ayer", Locale::It => "ieri", Locale::Pl => "wczoraj", Locale::Cs => "včera",
-        Locale::Tr => "dün", Locale::PtBr => "ontem", Locale::Ja => "昨日", Locale::Ko => "어제", Locale::ZhCn => "昨天", Locale::ZhTw => "昨天",
+        Locale::Ru => "вчера",
+        Locale::Uk => "вчора",
+        Locale::En => "yesterday",
+        Locale::De => "gestern",
+        Locale::Fr => "hier",
+        Locale::Es => "ayer",
+        Locale::It => "ieri",
+        Locale::Pl => "wczoraj",
+        Locale::Cs => "včera",
+        Locale::Tr => "dün",
+        Locale::PtBr => "ontem",
+        Locale::Ja => "昨日",
+        Locale::Ko => "어제",
+        Locale::ZhCn => "昨天",
+        Locale::ZhTw => "昨天",
     }
 }
 
 fn ru_relative(unit: RelativeUnit, cat: PluralCategory) -> &'static str {
     match unit {
-        RelativeUnit::Second => match cat { PluralCategory::One => "секунду", PluralCategory::Few => "секунды", _ => "секунд" },
-        RelativeUnit::Minute => match cat { PluralCategory::One => "минуту", PluralCategory::Few => "минуты", _ => "минут" },
-        RelativeUnit::Hour => match cat { PluralCategory::One => "час", PluralCategory::Few => "часа", _ => "часов" },
-        RelativeUnit::Day => match cat { PluralCategory::One => "день", PluralCategory::Few => "дня", _ => "дней" },
+        RelativeUnit::Second => match cat {
+            PluralCategory::One => "секунду",
+            PluralCategory::Few => "секунды",
+            _ => "секунд",
+        },
+        RelativeUnit::Minute => match cat {
+            PluralCategory::One => "минуту",
+            PluralCategory::Few => "минуты",
+            _ => "минут",
+        },
+        RelativeUnit::Hour => match cat {
+            PluralCategory::One => "час",
+            PluralCategory::Few => "часа",
+            _ => "часов",
+        },
+        RelativeUnit::Day => match cat {
+            PluralCategory::One => "день",
+            PluralCategory::Few => "дня",
+            _ => "дней",
+        },
     }
 }
 fn uk_relative(unit: RelativeUnit, cat: PluralCategory) -> &'static str {
     match unit {
-        RelativeUnit::Second => match cat { PluralCategory::One => "секунду", PluralCategory::Few => "секунди", _ => "секунд" },
-        RelativeUnit::Minute => match cat { PluralCategory::One => "хвилину", PluralCategory::Few => "хвилини", _ => "хвилин" },
-        RelativeUnit::Hour => match cat { PluralCategory::One => "годину", PluralCategory::Few => "години", _ => "годин" },
-        RelativeUnit::Day => match cat { PluralCategory::One => "день", PluralCategory::Few => "дні", _ => "днів" },
+        RelativeUnit::Second => match cat {
+            PluralCategory::One => "секунду",
+            PluralCategory::Few => "секунди",
+            _ => "секунд",
+        },
+        RelativeUnit::Minute => match cat {
+            PluralCategory::One => "хвилину",
+            PluralCategory::Few => "хвилини",
+            _ => "хвилин",
+        },
+        RelativeUnit::Hour => match cat {
+            PluralCategory::One => "годину",
+            PluralCategory::Few => "години",
+            _ => "годин",
+        },
+        RelativeUnit::Day => match cat {
+            PluralCategory::One => "день",
+            PluralCategory::Few => "дні",
+            _ => "днів",
+        },
     }
 }
 fn en_relative(unit: RelativeUnit, cat: PluralCategory) -> &'static str {
     let one = cat == PluralCategory::One;
-    match unit { RelativeUnit::Second => if one { "second" } else { "seconds" }, RelativeUnit::Minute => if one { "minute" } else { "minutes" }, RelativeUnit::Hour => if one { "hour" } else { "hours" }, RelativeUnit::Day => if one { "day" } else { "days" } }
+    match unit {
+        RelativeUnit::Second => {
+            if one {
+                "second"
+            } else {
+                "seconds"
+            }
+        }
+        RelativeUnit::Minute => {
+            if one {
+                "minute"
+            } else {
+                "minutes"
+            }
+        }
+        RelativeUnit::Hour => {
+            if one {
+                "hour"
+            } else {
+                "hours"
+            }
+        }
+        RelativeUnit::Day => {
+            if one {
+                "day"
+            } else {
+                "days"
+            }
+        }
+    }
 }
 fn de_relative(unit: RelativeUnit, cat: PluralCategory) -> &'static str {
     let one = cat == PluralCategory::One;
-    match unit { RelativeUnit::Second => if one { "Sekunde" } else { "Sekunden" }, RelativeUnit::Minute => if one { "Minute" } else { "Minuten" }, RelativeUnit::Hour => if one { "Stunde" } else { "Stunden" }, RelativeUnit::Day => if one { "Tag" } else { "Tagen" } }
+    match unit {
+        RelativeUnit::Second => {
+            if one {
+                "Sekunde"
+            } else {
+                "Sekunden"
+            }
+        }
+        RelativeUnit::Minute => {
+            if one {
+                "Minute"
+            } else {
+                "Minuten"
+            }
+        }
+        RelativeUnit::Hour => {
+            if one {
+                "Stunde"
+            } else {
+                "Stunden"
+            }
+        }
+        RelativeUnit::Day => {
+            if one {
+                "Tag"
+            } else {
+                "Tagen"
+            }
+        }
+    }
 }
 fn fr_relative(unit: RelativeUnit, cat: PluralCategory) -> &'static str {
     let one = cat == PluralCategory::One;
-    match unit { RelativeUnit::Second => if one { "seconde" } else { "secondes" }, RelativeUnit::Minute => if one { "minute" } else { "minutes" }, RelativeUnit::Hour => if one { "heure" } else { "heures" }, RelativeUnit::Day => if one { "jour" } else { "jours" } }
+    match unit {
+        RelativeUnit::Second => {
+            if one {
+                "seconde"
+            } else {
+                "secondes"
+            }
+        }
+        RelativeUnit::Minute => {
+            if one {
+                "minute"
+            } else {
+                "minutes"
+            }
+        }
+        RelativeUnit::Hour => {
+            if one {
+                "heure"
+            } else {
+                "heures"
+            }
+        }
+        RelativeUnit::Day => {
+            if one {
+                "jour"
+            } else {
+                "jours"
+            }
+        }
+    }
 }
 fn es_relative(unit: RelativeUnit, cat: PluralCategory) -> &'static str {
     let one = cat == PluralCategory::One;
-    match unit { RelativeUnit::Second => if one { "segundo" } else { "segundos" }, RelativeUnit::Minute => if one { "minuto" } else { "minutos" }, RelativeUnit::Hour => if one { "hora" } else { "horas" }, RelativeUnit::Day => if one { "día" } else { "días" } }
+    match unit {
+        RelativeUnit::Second => {
+            if one {
+                "segundo"
+            } else {
+                "segundos"
+            }
+        }
+        RelativeUnit::Minute => {
+            if one {
+                "minuto"
+            } else {
+                "minutos"
+            }
+        }
+        RelativeUnit::Hour => {
+            if one {
+                "hora"
+            } else {
+                "horas"
+            }
+        }
+        RelativeUnit::Day => {
+            if one {
+                "día"
+            } else {
+                "días"
+            }
+        }
+    }
 }
 fn it_relative(unit: RelativeUnit, cat: PluralCategory) -> &'static str {
     let one = cat == PluralCategory::One;
-    match unit { RelativeUnit::Second => if one { "secondo" } else { "secondi" }, RelativeUnit::Minute => if one { "minuto" } else { "minuti" }, RelativeUnit::Hour => if one { "ora" } else { "ore" }, RelativeUnit::Day => if one { "giorno" } else { "giorni" } }
+    match unit {
+        RelativeUnit::Second => {
+            if one {
+                "secondo"
+            } else {
+                "secondi"
+            }
+        }
+        RelativeUnit::Minute => {
+            if one {
+                "minuto"
+            } else {
+                "minuti"
+            }
+        }
+        RelativeUnit::Hour => {
+            if one {
+                "ora"
+            } else {
+                "ore"
+            }
+        }
+        RelativeUnit::Day => {
+            if one {
+                "giorno"
+            } else {
+                "giorni"
+            }
+        }
+    }
 }
 fn pl_relative(unit: RelativeUnit, cat: PluralCategory) -> &'static str {
     match unit {
-        RelativeUnit::Second => match cat { PluralCategory::One => "sekundę", PluralCategory::Few => "sekundy", _ => "sekund" },
-        RelativeUnit::Minute => match cat { PluralCategory::One => "minutę", PluralCategory::Few => "minuty", _ => "minut" },
-        RelativeUnit::Hour => match cat { PluralCategory::One => "godzinę", PluralCategory::Few => "godziny", _ => "godzin" },
-        RelativeUnit::Day => match cat { PluralCategory::One => "dzień", PluralCategory::Few => "dni", _ => "dni" },
+        RelativeUnit::Second => match cat {
+            PluralCategory::One => "sekundę",
+            PluralCategory::Few => "sekundy",
+            _ => "sekund",
+        },
+        RelativeUnit::Minute => match cat {
+            PluralCategory::One => "minutę",
+            PluralCategory::Few => "minuty",
+            _ => "minut",
+        },
+        RelativeUnit::Hour => match cat {
+            PluralCategory::One => "godzinę",
+            PluralCategory::Few => "godziny",
+            _ => "godzin",
+        },
+        RelativeUnit::Day => match cat {
+            PluralCategory::One => "dzień",
+            PluralCategory::Few => "dni",
+            _ => "dni",
+        },
     }
 }
 fn cs_relative(unit: RelativeUnit, cat: PluralCategory) -> &'static str {
-    match unit { RelativeUnit::Second => if cat == PluralCategory::One { "sekundou" } else { "sekundami" }, RelativeUnit::Minute => if cat == PluralCategory::One { "minutou" } else { "minutami" }, RelativeUnit::Hour => if cat == PluralCategory::One { "hodinou" } else { "hodinami" }, RelativeUnit::Day => if cat == PluralCategory::One { "dnem" } else { "dny" } }
+    match unit {
+        RelativeUnit::Second => {
+            if cat == PluralCategory::One {
+                "sekundou"
+            } else {
+                "sekundami"
+            }
+        }
+        RelativeUnit::Minute => {
+            if cat == PluralCategory::One {
+                "minutou"
+            } else {
+                "minutami"
+            }
+        }
+        RelativeUnit::Hour => {
+            if cat == PluralCategory::One {
+                "hodinou"
+            } else {
+                "hodinami"
+            }
+        }
+        RelativeUnit::Day => {
+            if cat == PluralCategory::One {
+                "dnem"
+            } else {
+                "dny"
+            }
+        }
+    }
 }
-fn tr_relative(unit: RelativeUnit) -> &'static str { match unit { RelativeUnit::Second => "saniye", RelativeUnit::Minute => "dakika", RelativeUnit::Hour => "saat", RelativeUnit::Day => "gün" } }
-fn pt_relative(unit: RelativeUnit, cat: PluralCategory) -> &'static str { let one=cat==PluralCategory::One; match unit { RelativeUnit::Second=>if one{"segundo"}else{"segundos"}, RelativeUnit::Minute=>if one{"minuto"}else{"minutos"}, RelativeUnit::Hour=>if one{"hora"}else{"horas"}, RelativeUnit::Day=>if one{"dia"}else{"dias"} } }
-fn ja_relative(unit: RelativeUnit) -> &'static str { match unit { RelativeUnit::Second=>"秒", RelativeUnit::Minute=>"分", RelativeUnit::Hour=>"時間", RelativeUnit::Day=>"日" } }
-fn ko_relative(unit: RelativeUnit) -> &'static str { match unit { RelativeUnit::Second=>"초", RelativeUnit::Minute=>"분", RelativeUnit::Hour=>"시간", RelativeUnit::Day=>"일" } }
+fn tr_relative(unit: RelativeUnit) -> &'static str {
+    match unit {
+        RelativeUnit::Second => "saniye",
+        RelativeUnit::Minute => "dakika",
+        RelativeUnit::Hour => "saat",
+        RelativeUnit::Day => "gün",
+    }
+}
+fn pt_relative(unit: RelativeUnit, cat: PluralCategory) -> &'static str {
+    let one = cat == PluralCategory::One;
+    match unit {
+        RelativeUnit::Second => {
+            if one {
+                "segundo"
+            } else {
+                "segundos"
+            }
+        }
+        RelativeUnit::Minute => {
+            if one {
+                "minuto"
+            } else {
+                "minutos"
+            }
+        }
+        RelativeUnit::Hour => {
+            if one {
+                "hora"
+            } else {
+                "horas"
+            }
+        }
+        RelativeUnit::Day => {
+            if one {
+                "dia"
+            } else {
+                "dias"
+            }
+        }
+    }
+}
+fn ja_relative(unit: RelativeUnit) -> &'static str {
+    match unit {
+        RelativeUnit::Second => "秒",
+        RelativeUnit::Minute => "分",
+        RelativeUnit::Hour => "時間",
+        RelativeUnit::Day => "日",
+    }
+}
+fn ko_relative(unit: RelativeUnit) -> &'static str {
+    match unit {
+        RelativeUnit::Second => "초",
+        RelativeUnit::Minute => "분",
+        RelativeUnit::Hour => "시간",
+        RelativeUnit::Day => "일",
+    }
+}
 fn zh_relative(locale: Locale, unit: RelativeUnit) -> &'static str {
     match (locale, unit) {
-        (Locale::ZhTw, RelativeUnit::Second) => "秒", (Locale::ZhTw, RelativeUnit::Minute) => " 分鐘", (Locale::ZhTw, RelativeUnit::Hour) => " 小時", (Locale::ZhTw, RelativeUnit::Day) => " 天",
-        (_, RelativeUnit::Second) => "秒", (_, RelativeUnit::Minute) => "分钟", (_, RelativeUnit::Hour) => "小时", (_, RelativeUnit::Day) => "天",
+        (Locale::ZhTw, RelativeUnit::Second) => "秒",
+        (Locale::ZhTw, RelativeUnit::Minute) => " 分鐘",
+        (Locale::ZhTw, RelativeUnit::Hour) => " 小時",
+        (Locale::ZhTw, RelativeUnit::Day) => " 天",
+        (_, RelativeUnit::Second) => "秒",
+        (_, RelativeUnit::Minute) => "分钟",
+        (_, RelativeUnit::Hour) => "小时",
+        (_, RelativeUnit::Day) => "天",
     }
 }
 
-fn two_separator(locale: Locale) -> &'static str { final_separator(locale) }
-fn middle_separator(locale: Locale) -> &'static str { match locale { Locale::Ja | Locale::ZhCn | Locale::ZhTw => "、", _ => ", " } }
+fn two_separator(locale: Locale) -> &'static str {
+    final_separator(locale)
+}
+fn middle_separator(locale: Locale) -> &'static str {
+    match locale {
+        Locale::Ja | Locale::ZhCn | Locale::ZhTw => "、",
+        _ => ", ",
+    }
+}
 fn final_separator(locale: Locale) -> &'static str {
     match locale {
-        Locale::Ru => " и ", Locale::Uk => " і ", Locale::En => " and ", Locale::De => " und ", Locale::Fr => " et ", Locale::Es => " y ", Locale::It => " e ", Locale::Pl => " i ", Locale::Cs => " a ", Locale::Tr => " ve ", Locale::PtBr => " e ", Locale::Ko => " 및 ", Locale::Ja => "、", Locale::ZhCn | Locale::ZhTw => " 和 ",
+        Locale::Ru => " и ",
+        Locale::Uk => " і ",
+        Locale::En => " and ",
+        Locale::De => " und ",
+        Locale::Fr => " et ",
+        Locale::Es => " y ",
+        Locale::It => " e ",
+        Locale::Pl => " i ",
+        Locale::Cs => " a ",
+        Locale::Tr => " ve ",
+        Locale::PtBr => " e ",
+        Locale::Ko => " 및 ",
+        Locale::Ja => "、",
+        Locale::ZhCn | Locale::ZhTw => " 和 ",
     }
 }
 
@@ -520,29 +903,242 @@ mod tests {
     }
 
     const CASES: &[Case] = &[
-        Case { locale: Locale::Ru, number: "1\u{00a0}234\u{00a0}567,05", size: "1,5 МБ", money: "12\u{00a0}345 RU", date: "03.10.2026", minutes: "3 минуты назад", yesterday: "вчера", list: "a, b и c", one: PluralCategory::One, two: PluralCategory::Few, five: PluralCategory::Many },
-        Case { locale: Locale::Uk, number: "1\u{00a0}234\u{00a0}567,05", size: "1,5 МБ", money: "12\u{00a0}345 RU", date: "03.10.2026", minutes: "3 хвилини тому", yesterday: "вчора", list: "a, b і c", one: PluralCategory::One, two: PluralCategory::Few, five: PluralCategory::Many },
-        Case { locale: Locale::En, number: "1,234,567.05", size: "1.5 MB", money: "12,345 RU", date: "10/03/2026", minutes: "3 minutes ago", yesterday: "yesterday", list: "a, b and c", one: PluralCategory::One, two: PluralCategory::Other, five: PluralCategory::Other },
-        Case { locale: Locale::De, number: "1.234.567,05", size: "1,5 MB", money: "12.345 RU", date: "03.10.2026", minutes: "vor 3 Minuten", yesterday: "gestern", list: "a, b und c", one: PluralCategory::One, two: PluralCategory::Other, five: PluralCategory::Other },
-        Case { locale: Locale::Fr, number: "1\u{202f}234\u{202f}567,05", size: "1,5 MB", money: "12\u{202f}345 RU", date: "03/10/2026", minutes: "il y a 3 minutes", yesterday: "hier", list: "a, b et c", one: PluralCategory::One, two: PluralCategory::Other, five: PluralCategory::Other },
-        Case { locale: Locale::Es, number: "1.234.567,05", size: "1,5 MB", money: "12.345 RU", date: "03/10/2026", minutes: "hace 3 minutos", yesterday: "ayer", list: "a, b y c", one: PluralCategory::One, two: PluralCategory::Other, five: PluralCategory::Other },
-        Case { locale: Locale::It, number: "1.234.567,05", size: "1,5 MB", money: "12.345 RU", date: "03/10/2026", minutes: "3 minuti fa", yesterday: "ieri", list: "a, b e c", one: PluralCategory::One, two: PluralCategory::Other, five: PluralCategory::Other },
-        Case { locale: Locale::Pl, number: "1\u{00a0}234\u{00a0}567,05", size: "1,5 MB", money: "12\u{00a0}345 RU", date: "03.10.2026", minutes: "3 minuty temu", yesterday: "wczoraj", list: "a, b i c", one: PluralCategory::One, two: PluralCategory::Few, five: PluralCategory::Many },
-        Case { locale: Locale::Cs, number: "1\u{00a0}234\u{00a0}567,05", size: "1,5 MB", money: "12\u{00a0}345 RU", date: "03.10.2026", minutes: "před 3 minutami", yesterday: "včera", list: "a, b a c", one: PluralCategory::One, two: PluralCategory::Few, five: PluralCategory::Other },
-        Case { locale: Locale::Tr, number: "1.234.567,05", size: "1,5 MB", money: "12.345 RU", date: "03.10.2026", minutes: "3 dakika önce", yesterday: "dün", list: "a, b ve c", one: PluralCategory::Other, two: PluralCategory::Other, five: PluralCategory::Other },
-        Case { locale: Locale::PtBr, number: "1.234.567,05", size: "1,5 MB", money: "12.345 RU", date: "03/10/2026", minutes: "há 3 minutos", yesterday: "ontem", list: "a, b e c", one: PluralCategory::One, two: PluralCategory::Other, five: PluralCategory::Other },
-        Case { locale: Locale::Ja, number: "1,234,567.05", size: "1.5 MB", money: "12,345 RU", date: "2026/10/03", minutes: "3 分前", yesterday: "昨日", list: "a、b、c", one: PluralCategory::Other, two: PluralCategory::Other, five: PluralCategory::Other },
-        Case { locale: Locale::Ko, number: "1,234,567.05", size: "1.5 MB", money: "12,345 RU", date: "2026. 10. 03.", minutes: "3분 전", yesterday: "어제", list: "a, b 및 c", one: PluralCategory::Other, two: PluralCategory::Other, five: PluralCategory::Other },
-        Case { locale: Locale::ZhCn, number: "1,234,567.05", size: "1.5 兆字节", money: "12,345 RU", date: "2026年10月3日", minutes: "3分钟前", yesterday: "昨天", list: "a、b 和 c", one: PluralCategory::Other, two: PluralCategory::Other, five: PluralCategory::Other },
-        Case { locale: Locale::ZhTw, number: "1,234,567.05", size: "1.5 MB", money: "12,345 RU", date: "2026年10月3日", minutes: "3 分鐘前", yesterday: "昨天", list: "a、b 和 c", one: PluralCategory::Other, two: PluralCategory::Other, five: PluralCategory::Other },
+        Case {
+            locale: Locale::Ru,
+            number: "1\u{00a0}234\u{00a0}567,05",
+            size: "1,5 МБ",
+            money: "12\u{00a0}345 RU",
+            date: "03.10.2026",
+            minutes: "3 минуты назад",
+            yesterday: "вчера",
+            list: "a, b и c",
+            one: PluralCategory::One,
+            two: PluralCategory::Few,
+            five: PluralCategory::Many,
+        },
+        Case {
+            locale: Locale::Uk,
+            number: "1\u{00a0}234\u{00a0}567,05",
+            size: "1,5 МБ",
+            money: "12\u{00a0}345 RU",
+            date: "03.10.2026",
+            minutes: "3 хвилини тому",
+            yesterday: "вчора",
+            list: "a, b і c",
+            one: PluralCategory::One,
+            two: PluralCategory::Few,
+            five: PluralCategory::Many,
+        },
+        Case {
+            locale: Locale::En,
+            number: "1,234,567.05",
+            size: "1.5 MB",
+            money: "12,345 RU",
+            date: "10/03/2026",
+            minutes: "3 minutes ago",
+            yesterday: "yesterday",
+            list: "a, b and c",
+            one: PluralCategory::One,
+            two: PluralCategory::Other,
+            five: PluralCategory::Other,
+        },
+        Case {
+            locale: Locale::De,
+            number: "1.234.567,05",
+            size: "1,5 MB",
+            money: "12.345 RU",
+            date: "03.10.2026",
+            minutes: "vor 3 Minuten",
+            yesterday: "gestern",
+            list: "a, b und c",
+            one: PluralCategory::One,
+            two: PluralCategory::Other,
+            five: PluralCategory::Other,
+        },
+        Case {
+            locale: Locale::Fr,
+            number: "1\u{202f}234\u{202f}567,05",
+            size: "1,5 MB",
+            money: "12\u{202f}345 RU",
+            date: "03/10/2026",
+            minutes: "il y a 3 minutes",
+            yesterday: "hier",
+            list: "a, b et c",
+            one: PluralCategory::One,
+            two: PluralCategory::Other,
+            five: PluralCategory::Other,
+        },
+        Case {
+            locale: Locale::Es,
+            number: "1.234.567,05",
+            size: "1,5 MB",
+            money: "12.345 RU",
+            date: "03/10/2026",
+            minutes: "hace 3 minutos",
+            yesterday: "ayer",
+            list: "a, b y c",
+            one: PluralCategory::One,
+            two: PluralCategory::Other,
+            five: PluralCategory::Other,
+        },
+        Case {
+            locale: Locale::It,
+            number: "1.234.567,05",
+            size: "1,5 MB",
+            money: "12.345 RU",
+            date: "03/10/2026",
+            minutes: "3 minuti fa",
+            yesterday: "ieri",
+            list: "a, b e c",
+            one: PluralCategory::One,
+            two: PluralCategory::Other,
+            five: PluralCategory::Other,
+        },
+        Case {
+            locale: Locale::Pl,
+            number: "1\u{00a0}234\u{00a0}567,05",
+            size: "1,5 MB",
+            money: "12\u{00a0}345 RU",
+            date: "03.10.2026",
+            minutes: "3 minuty temu",
+            yesterday: "wczoraj",
+            list: "a, b i c",
+            one: PluralCategory::One,
+            two: PluralCategory::Few,
+            five: PluralCategory::Many,
+        },
+        Case {
+            locale: Locale::Cs,
+            number: "1\u{00a0}234\u{00a0}567,05",
+            size: "1,5 MB",
+            money: "12\u{00a0}345 RU",
+            date: "03.10.2026",
+            minutes: "před 3 minutami",
+            yesterday: "včera",
+            list: "a, b a c",
+            one: PluralCategory::One,
+            two: PluralCategory::Few,
+            five: PluralCategory::Other,
+        },
+        Case {
+            locale: Locale::Tr,
+            number: "1.234.567,05",
+            size: "1,5 MB",
+            money: "12.345 RU",
+            date: "03.10.2026",
+            minutes: "3 dakika önce",
+            yesterday: "dün",
+            list: "a, b ve c",
+            one: PluralCategory::Other,
+            two: PluralCategory::Other,
+            five: PluralCategory::Other,
+        },
+        Case {
+            locale: Locale::PtBr,
+            number: "1.234.567,05",
+            size: "1,5 MB",
+            money: "12.345 RU",
+            date: "03/10/2026",
+            minutes: "há 3 minutos",
+            yesterday: "ontem",
+            list: "a, b e c",
+            one: PluralCategory::One,
+            two: PluralCategory::Other,
+            five: PluralCategory::Other,
+        },
+        Case {
+            locale: Locale::Ja,
+            number: "1,234,567.05",
+            size: "1.5 MB",
+            money: "12,345 RU",
+            date: "2026/10/03",
+            minutes: "3 分前",
+            yesterday: "昨日",
+            list: "a、b、c",
+            one: PluralCategory::Other,
+            two: PluralCategory::Other,
+            five: PluralCategory::Other,
+        },
+        Case {
+            locale: Locale::Ko,
+            number: "1,234,567.05",
+            size: "1.5 MB",
+            money: "12,345 RU",
+            date: "2026. 10. 03.",
+            minutes: "3분 전",
+            yesterday: "어제",
+            list: "a, b 및 c",
+            one: PluralCategory::Other,
+            two: PluralCategory::Other,
+            five: PluralCategory::Other,
+        },
+        Case {
+            locale: Locale::ZhCn,
+            number: "1,234,567.05",
+            size: "1.5 兆字节",
+            money: "12,345 RU",
+            date: "2026年10月3日",
+            minutes: "3分钟前",
+            yesterday: "昨天",
+            list: "a、b 和 c",
+            one: PluralCategory::Other,
+            two: PluralCategory::Other,
+            five: PluralCategory::Other,
+        },
+        Case {
+            locale: Locale::ZhTw,
+            number: "1,234,567.05",
+            size: "1.5 MB",
+            money: "12,345 RU",
+            date: "2026年10月3日",
+            minutes: "3 分鐘前",
+            yesterday: "昨天",
+            list: "a、b 和 c",
+            one: PluralCategory::Other,
+            two: PluralCategory::Other,
+            five: PluralCategory::Other,
+        },
     ];
 
-    fn rendered_number(locale: Locale) -> String { let mut out=String::new(); assert!(format_number(&mut out, locale, 1_234_567, Some((5,2))).is_ok()); out }
-    fn rendered_size(locale: Locale) -> String { let mut out=String::new(); assert!(format_size(&mut out, locale, 1_572_864).is_ok()); out }
-    fn rendered_money(locale: Locale) -> String { let mut out=String::new(); assert!(format_money_ru(&mut out, locale, 12_345).is_ok()); out }
-    fn rendered_date(locale: Locale) -> String { let mut out=String::new(); assert!(format_date(&mut out, locale, Date{year:2026,month:10,day:3}).is_ok()); out }
-    fn rendered_relative(locale: Locale, value:i64, unit:RelativeUnit) -> String { let mut out=String::new(); assert!(format_relative(&mut out,locale,value,unit).is_ok()); out }
-    fn rendered_list(locale: Locale) -> String { let mut out=String::new(); join_list(&mut out,locale,&["a","b","c"]); out }
+    fn rendered_number(locale: Locale) -> String {
+        let mut out = String::new();
+        assert!(format_number(&mut out, locale, 1_234_567, Some((5, 2))).is_ok());
+        out
+    }
+    fn rendered_size(locale: Locale) -> String {
+        let mut out = String::new();
+        assert!(format_size(&mut out, locale, 1_572_864).is_ok());
+        out
+    }
+    fn rendered_money(locale: Locale) -> String {
+        let mut out = String::new();
+        assert!(format_money_ru(&mut out, locale, 12_345).is_ok());
+        out
+    }
+    fn rendered_date(locale: Locale) -> String {
+        let mut out = String::new();
+        assert!(format_date(
+            &mut out,
+            locale,
+            Date {
+                year: 2026,
+                month: 10,
+                day: 3
+            }
+        )
+        .is_ok());
+        out
+    }
+    fn rendered_relative(locale: Locale, value: i64, unit: RelativeUnit) -> String {
+        let mut out = String::new();
+        assert!(format_relative(&mut out, locale, value, unit).is_ok());
+        out
+    }
+    fn rendered_list(locale: Locale) -> String {
+        let mut out = String::new();
+        join_list(&mut out, locale, &["a", "b", "c"]);
+        out
+    }
 
     #[test]
     fn ten_cases_per_language() {
@@ -552,18 +1148,38 @@ mod tests {
             assert_eq!(rendered_size(case.locale), case.size);
             assert_eq!(rendered_money(case.locale), case.money);
             assert_eq!(rendered_date(case.locale), case.date);
-            assert_eq!(rendered_relative(case.locale,3,RelativeUnit::Minute), case.minutes);
-            assert_eq!(rendered_relative(case.locale,1,RelativeUnit::Day), case.yesterday);
+            assert_eq!(rendered_relative(case.locale, 3, RelativeUnit::Minute), case.minutes);
+            assert_eq!(rendered_relative(case.locale, 1, RelativeUnit::Day), case.yesterday);
             assert_eq!(rendered_list(case.locale), case.list);
-            assert_eq!(plural_cardinal(case.locale,PluralOperands::integer(1)),case.one);
-            assert_eq!(plural_cardinal(case.locale,PluralOperands::integer(2)),case.two);
-            assert_eq!(plural_cardinal(case.locale,PluralOperands::integer(5)),case.five);
+            assert_eq!(plural_cardinal(case.locale, PluralOperands::integer(1)), case.one);
+            assert_eq!(plural_cardinal(case.locale, PluralOperands::integer(2)), case.two);
+            assert_eq!(plural_cardinal(case.locale, PluralOperands::integer(5)), case.five);
         }
     }
 
     #[test]
     fn fractions_use_visible_digit_count() {
-        assert_eq!(plural_cardinal(Locale::Ru, PluralOperands{integer:1,visible_fraction_digits:1,fraction:0}), PluralCategory::Other);
-        assert_eq!(plural_cardinal(Locale::Cs, PluralOperands{integer:2,visible_fraction_digits:1,fraction:5}), PluralCategory::Many);
+        assert_eq!(
+            plural_cardinal(
+                Locale::Ru,
+                PluralOperands {
+                    integer: 1,
+                    visible_fraction_digits: 1,
+                    fraction: 0
+                }
+            ),
+            PluralCategory::Other
+        );
+        assert_eq!(
+            plural_cardinal(
+                Locale::Cs,
+                PluralOperands {
+                    integer: 2,
+                    visible_fraction_digits: 1,
+                    fraction: 5
+                }
+            ),
+            PluralCategory::Many
+        );
     }
 }
