@@ -1399,3 +1399,143 @@ impl Set {
     pub fn is_match(&self, text: &str) -> Result<bool> {
         Ok(!self.matches(text)?.is_empty())
     }
+
+    /// Creates a bounded-memory chunk scanner for line-oriented logs.
+    #[must_use]
+    pub fn scanner(&self) -> SetScanner<'_> {
+        SetScanner {
+            set: self,
+            pending: Vec::new(),
+            line_number: 1,
+        }
+    }
+}
+
+/// One pattern hit produced by [`SetScanner`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StreamMatch {
+    /// Zero-based pattern index in the [`Set`].
+    pub pattern_index: usize,
+    /// One-based log line number.
+    pub line_number: u64,
+}
+
+/// Incremental, bounded-memory scanner for UTF-8 log lines.
+#[derive(Debug)]
+pub struct SetScanner<'a> {
+    set: &'a Set,
+    pending: Vec<u8>,
+    line_number: u64,
+}
+
+impl SetScanner<'_> {
+    /// Scans one arbitrary byte chunk. A UTF-8 code point or matching line may span chunks.
+    ///
+    /// Completed hits are appended to `out`. The scanner keeps at most one unfinished log line.
+    ///
+    /// # Errors
+    /// Returns [`Error::Refused`] for a line above 1 MiB and [`Error::Damaged`] for invalid UTF-8.
+    pub fn push(&mut self, chunk: &[u8], out: &mut Vec<StreamMatch>) -> Result<()> {
+        for byte in chunk.iter().copied() {
+            if byte == b'\n' {
+                self.scan_pending(out)?;
+                self.pending.clear();
+                self.line_number = self
+                    .line_number
+                    .checked_add(1)
+                    .ok_or_else(|| Error::Refused("log line number overflow".to_owned()))?;
+            } else {
+                if self.pending.len() >= MAX_STREAM_LINE_BYTES {
+                    return Err(Error::Refused("log line exceeds 1 MiB streaming limit".to_owned()));
+                }
+                self.pending.push(byte);
+            }
+        }
+        Ok(())
+    }
+
+    /// Scans the final unterminated line, if any.
+    ///
+    /// # Errors
+    /// Returns [`Error::Damaged`] for invalid UTF-8.
+    pub fn finish(&mut self, out: &mut Vec<StreamMatch>) -> Result<()> {
+        if !self.pending.is_empty() {
+            self.scan_pending(out)?;
+            self.pending.clear();
+        }
+        Ok(())
+    }
+
+    fn scan_pending(&self, out: &mut Vec<StreamMatch>) -> Result<()> {
+        let line = if self.pending.last().copied() == Some(b'\r') {
+            self.pending
+                .get(..self.pending.len().saturating_sub(1))
+                .ok_or_else(|| Error::damaged("log CR trim range invalid"))?
+        } else {
+            self.pending.as_slice()
+        };
+        let text = std::str::from_utf8(line).map_err(|_| Error::damaged("log stream is not UTF-8"))?;
+        for pattern_index in self.set.matches(text)? {
+            out.push(StreamMatch {
+                pattern_index,
+                line_number: self.line_number,
+            });
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Captures, Match, Regex, RegexOptions, Set, StreamMatch};
+    use std::time::Instant;
+
+    const CATALOGUE: [(&str, &str); 47] = [
+        (r"wrong target for storyline quest:\s*logic@work5,\s*gar_smart_terrain_6_3", "wrong target for storyline quest: logic@work5, gar_smart_terrain_6_3"),
+        (r"Insufficient smart_terrain jobs", "Insufficient smart_terrain jobs"),
+        (r"cant find animation for slot", "cant find animation for slot"),
+        (r"sim_squad_generic\.script:\d+:\s*attempt to index field '\?' \(a nil value\)", "sim_squad_generic.script:123: attempt to index field '?' (a nil value)"),
+        (r"pstor_load_all: not registered type N \d+ encountered", "pstor_load_all: not registered type N 123 encountered"),
+        (r"sim_combat\.script:\d+:\s*attempt to index field 'actor' \(a nil value\)", "sim_combat.script:123: attempt to index field 'actor' (a nil value)"),
+        (r"sim_combat\.script:\d+:\s*attempt to index local 'attack_squad_obj'", "sim_combat.script:123: attempt to index local 'attack_squad_obj'"),
+        (r"sim_squad_generic\.script:\d+:\s*attempt to index field 'current_action'", "sim_squad_generic.script:123: attempt to index field 'current_action'"),
+        (r"sim_squad_generic\.script:\d+:\s*attempt to index local 'task' \(a nil value\)", "sim_squad_generic.script:123: attempt to index local 'task' (a nil value)"),
+        (r"se_monster\.script:\d+:\s*attempt to index local 'squad' \(a nil value\)", "se_monster.script:123: attempt to index local 'squad' (a nil value)"),
+        (r"heli_combat\.script:\d+:\s*attempt to perform arithmetic on field 'change_(?:dir|pos)_time'", "heli_combat.script:123: attempt to perform arithmetic on field 'change_dir_time'"),
+        (r"sr_bloodsucker\.script:\d+:\s*attempt to index field 'npc_squad'", "sr_bloodsucker.script:123: attempt to index field 'npc_squad'"),
+        (r"patrol path \[agr_stalker_leader_walk\] is inaccessible", "patrol path [agr_stalker_leader_walk] is inaccessible"),
+        (r"esc_smart_terrain_3_7_walker_1_walk", "esc_smart_terrain_3_7_walker_1_walk"),
+        (r"wrong target for storyline quest", "wrong target for storyline quest"),
+        (r"Insufficient smart_terrain jobs mil_smart_terrain_2_1", "Insufficient smart_terrain jobs mil_smart_terrain_2_1"),
+        (r"Path between \[mil_smart_terrain_7_11\] and \[mil_smart_terrain_7_10\] doesnt exist", "Path between [mil_smart_terrain_7_11] and [mil_smart_terrain_7_10] doesnt exist"),
+        (r"Can't find model file 'dynamics\\equipments\\item_rukzak\.ogf'", "Can't find model file 'dynamics\\equipments\\item_rukzak.ogf'"),
+        (r"xr_kamp\.script:\d+:\s*bad argument #1 to 'random' \(interval is empty\)", "xr_kamp.script:123: bad argument #1 to 'random' (interval is empty)"),
+        (r"sr_robbery\.script:\d+:\s*attempt to index field '\?' \(a nil value\)", "sr_robbery.script:123: attempt to index field '?' (a nil value)"),
+        (r"actor_reaction\.script:\d+:\s*attempt to index local 'manager'", "actor_reaction.script:123: attempt to index local 'manager'"),
+        (r"task_objects\.script:\d+:\s*attempt to index field '\?' \(a nil value\)", "task_objects.script:123: attempt to index field '?' (a nil value)"),
+        (r"bind_anomaly_zone\.script:\d+:\s*attempt to index local 'art'", "bind_anomaly_zone.script:123: attempt to index local 'art'"),
+        (r"You are saving too much", "You are saving too much"),
+        (r"patrol path\s*\[esc_smart_terrain_3_7_walker_1_walk\]", "patrol path [esc_smart_terrain_3_7_walker_1_walk]"),
+        (r"patrol path\s*\[red_smart_terrain_3_2_patrol_1_walk\] is inaccessible", "patrol path [red_smart_terrain_3_2_patrol_1_walk] is inaccessible"),
+        (r"patrol path\s*\[agr_stalker_leader_walk\] is inaccessible", "patrol path [agr_stalker_leader_walk] is inaccessible"),
+        (r"Can't find model file 'dynamics\\equipments\\item_rukzak\.ogf'", "Can't find model file 'dynamics\\equipments\\item_rukzak.ogf'"),
+        (r"Unable to give treasure \[gar_treasure_quest_smuggler_weapons\]", "Unable to give treasure [gar_treasure_quest_smuggler_weapons]"),
+        (r"There is no squad \[red_pursuit_bounty_hunters_squad_\d+\] in sim_board", "There is no squad [red_pursuit_bounty_hunters_squad_123] in sim_board"),
+        (r"Path between \[mil_smart_terrain_7_11\] and \[mil_smart_terrain_7_10\] doesnt exist", "Path between [mil_smart_terrain_7_11] and [mil_smart_terrain_7_10] doesnt exist"),
+        (r"xr_gulag\.script:\d+:\s*attempt to index local 'job' \(a nil value\)", "xr_gulag.script:123: attempt to index local 'job' (a nil value)"),
+        (r"heli_combat\.script:\d+:\s*attempt to perform arithmetic on field 'change_(?:dir|pos)_time'", "heli_combat.script:123: attempt to perform arithmetic on field 'change_dir_time'"),
+        (r"xr_kamp\.script:\d+:\s*attempt to index field '\?' \(a nil value\)|get dest Vertex: nil", "xr_kamp.script:123: attempt to index field '?' (a nil value)"),
+        (r"xr_danger\.script:\d+:\s*attempt to index field 'ignore_types' \(a nil value\)", "xr_danger.script:123: attempt to index field 'ignore_types' (a nil value)"),
+        (r"xr_effects\.script:\d+:\s*attempt to index local 'bandit1' \(a nil value\)", "xr_effects.script:123: attempt to index local 'bandit1' (a nil value)"),
+        (r"dBodyStateValide\(b\)", "dBodyStateValide(b)"),
+        (r"entity not found\.\s*id_parent=\d+\s*id_entity=\d+", "entity not found. id_parent=123 id_entity=123"),
+        (r"(?:SMapLocation|CMapLocation::UpdateSpot) binded to non-existent object", "SMapLocation binded to non-existent object"),
+        (r"there is no specified level in the game graph|There is no proper graph point neighbour", "there is no specified level in the game graph"),
+        (r"cannot find rank for", "cannot find rank for"),
+        (r"bad argument #2 to 'format' \(string expected, got no value\)", "bad argument #2 to 'format' (string expected, got no value)"),
+        (r"Can't find model file '", "Can't find model file '"),
+        (r"Can't open section '", "Can't open section '"),
+        (r"Can't find variable \S+ in \[", "Can't find variable token in ["),
+        (r"string table xml file not found", "string table xml file not found"),
+        (r"Expression\s*:\s*hFile>0", "Expression : hFile>0"),
+    ];
