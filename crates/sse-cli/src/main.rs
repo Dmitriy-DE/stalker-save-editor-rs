@@ -1972,7 +1972,7 @@ mod doctor_tests {
     #[test]
     fn json_string_escapes_quotes_slashes_and_controls() {
         assert_eq!(
-            json_string("a\n\"b\\c\u{0001}").expect("JSON string"),
+            json_string("a\n\"b\\c\u{0001}").unwrap_or_else(|error| format!("JSON encoding error: {error}")),
             "\"a\\n\\\"b\\\\c\\u0001\""
         );
     }
@@ -1980,7 +1980,7 @@ mod doctor_tests {
     #[test]
     fn save_doctor_json_contains_status_counts_and_rule_evidence() {
         let report = sse_doctor::analyze_save(SYNTHETIC_XRAY_SAVE);
-        let output = super::json_save_report(&report).expect("JSON report");
+        let output = super::json_save_report(&report).unwrap_or_else(|error| format!("JSON report error: {error}"));
 
         assert!(output.starts_with('{'));
         assert!(output.ends_with('}'));
