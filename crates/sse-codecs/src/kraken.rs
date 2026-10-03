@@ -1069,6 +1069,40 @@ impl<'a> LsbForward<'a> {
         self.bit_position = end;
         Ok(())
     }
+    fn read(&mut self, count: u8, padded: bool) -> Result<u32> {
+        let value = self.peek(count)?;
+        if padded {
+            self.bit_position = self
+                .bit_position
+                .checked_add(usize::from(count))
+                .ok_or_else(|| Error::damaged("bit position overflow"))?;
+        } else {
+            self.consume(count)?;
+        }
+        let mask = if count == 32 {
+            u32::MAX
+        } else {
+            1_u32.checked_shl(u32::from(count)).unwrap_or_default().saturating_sub(1)
+        };
+        Ok(value & mask)
+    }
+    fn read(&mut self, count: u8, padded: bool) -> Result<u32> {
+        let value = self.peek(count)?;
+        if padded {
+            self.bit_position = self
+                .bit_position
+                .checked_add(usize::from(count))
+                .ok_or_else(|| Error::damaged("bit position overflow"))?;
+        } else {
+            self.consume(count)?;
+        }
+        let mask = if count == 32 {
+            u32::MAX
+        } else {
+            1_u32.checked_shl(u32::from(count)).unwrap_or_default().saturating_sub(1)
+        };
+        Ok(value & mask)
+    }
     fn consumed_ceil(&self) -> usize {
         self.bit_position.saturating_add(7).checked_div(8).unwrap_or_default()
     }
