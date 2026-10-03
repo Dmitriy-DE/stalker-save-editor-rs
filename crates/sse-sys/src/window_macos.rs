@@ -1,3 +1,4 @@
+//! X18 implementation.
 //! Cocoa software window using Objective-C runtime calls only.
 //!
 //! NSApplication is created without a nib. A runtime-allocated NSView receives text through interpretKeyEvents /
