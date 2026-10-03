@@ -222,20 +222,11 @@ fn tokenize(input: &[u8], level: Level) -> Vec<Token> {
                 len: current.0,
                 dist: current.1,
             });
-            let end = p.saturating_add(current.0).min(input.len());
-            let mut q = p.saturating_add(1);
-            while q < end {
-                if let Some(hash) = hash3(input, q) {
-                    if let Some(slot) = prev.get_mut(q) {
-                        *slot = head.get(hash).copied().flatten();
-                    }
-                    if let Some(slot) = head.get_mut(hash) {
-                        *slot = Some(q);
-                    }
-                }
-                q = q.saturating_add(1);
-            }
-            p = end;
+            // Only token starts enter the chain. Inserting every byte covered
+            // by a match multiplies hash work on repetitive data without
+            // improving correctness; the 32 KiB window still retains many
+            // recent token-start candidates.
+            p = p.saturating_add(current.0).min(input.len());
         } else {
             if let Some(byte) = input.get(p).copied() {
                 out.push(Token::Lit(byte));
