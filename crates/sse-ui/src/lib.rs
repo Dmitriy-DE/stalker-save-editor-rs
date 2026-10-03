@@ -14,6 +14,8 @@ pub mod path;
 pub mod raster;
 /// Line breaking, carets, ellipsis and search folding (X13).
 pub mod text;
+/// Generated Unicode 17 grapheme and line-break property tables.
+pub mod unicode_tables;
 pub mod wayland;
 /// X11 core protocol, MIT-SHM, XKB and clipboard encoding over a transport trait (X11).
 pub mod x11;
