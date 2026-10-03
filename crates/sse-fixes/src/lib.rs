@@ -10,6 +10,7 @@ pub mod fs_util;
 pub mod identify;
 pub mod models;
 pub mod store;
+pub mod toolkit;
 
 pub use all_spawn::AllSpawnEditor;
 pub use catalog::GameFixCatalog;

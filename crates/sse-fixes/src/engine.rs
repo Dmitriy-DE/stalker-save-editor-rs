@@ -164,6 +164,15 @@ impl GameFixEngine {
         Ok(result)
     }
 
+    /// Loads the installed manifest for a fix.
+    ///
+    /// # Errors
+    /// Returns an error if the manifest cannot be read or is invalid.
+    pub fn get_manifest(&self, fix_id: &str, game_dir: &Path) -> Result<GameFixManifest> {
+        let manifest_path = get_manifest_path(game_dir, fix_id);
+        read_manifest(&manifest_path, fix_id)
+    }
+
     /// Returns file status for all files managed by active fixes in the game directory.
     ///
     /// # Errors
