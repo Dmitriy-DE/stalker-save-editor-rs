@@ -419,3 +419,143 @@ impl Parser {
         if self.peek().is_some() {
             return Err(self.error("unexpected trailing regex token"));
         }
+        Ok((ast, self.capture_count))
+    }
+
+    fn parse_alternation(&mut self) -> Result<Ast> {
+        let mut alternatives = vec![self.parse_concat()?];
+        while self.peek() == Some('|') {
+            self.bump()?;
+            alternatives.push(self.parse_concat()?);
+        }
+        if alternatives.len() == 1 {
+            alternatives
+                .pop()
+                .ok_or_else(|| self.error("regex alternation unexpectedly empty"))
+        } else {
+            Ok(Ast::Alternation(alternatives))
+        }
+    }
+
+    fn parse_concat(&mut self) -> Result<Ast> {
+        let mut nodes = Vec::new();
+        while let Some(character) = self.peek() {
+            if character == ')' || character == '|' {
+                break;
+            }
+            nodes.push(self.parse_repeated()?);
+        }
+        if nodes.is_empty() {
+            Ok(Ast::Empty)
+        } else if nodes.len() == 1 {
+            nodes.pop().ok_or_else(|| self.error("regex concatenation unexpectedly empty"))
+        } else {
+            Ok(Ast::Concat(nodes))
+        }
+    }
+
+    fn parse_repeated(&mut self) -> Result<Ast> {
+        let mut node = self.parse_atom()?;
+        loop {
+            let Some(character) = self.peek() else {
+                break;
+            };
+            let quantifier = match character {
+                '*' => {
+                    self.bump()?;
+                    Some((0, None))
+                }
+                '+' => {
+                    self.bump()?;
+                    Some((1, None))
+                }
+                '?' => {
+                    self.bump()?;
+                    Some((0, Some(1)))
+                }
+                '{' => Some(self.parse_braced_repeat()?),
+                _ => None,
+            };
+            let Some((min, max)) = quantifier else {
+                break;
+            };
+            let greedy = if self.peek() == Some('?') {
+                self.bump()?;
+                false
+            } else {
+                true
+            };
+            node = Ast::Repeat {
+                node: Box::new(node),
+                min,
+                max,
+                greedy,
+            };
+        }
+        Ok(node)
+    }
+
+    fn parse_braced_repeat(&mut self) -> Result<(usize, Option<usize>)> {
+        self.expect('{')?;
+        let min = self.parse_usize()?;
+        let max = match self.peek() {
+            Some('}') => Some(min),
+            Some(',') => {
+                self.bump()?;
+                if self.peek() == Some('}') {
+                    None
+                } else {
+                    Some(self.parse_usize()?)
+                }
+            }
+            _ => return Err(self.error("malformed regex repeat")),
+        };
+        self.expect('}')?;
+        if min > MAX_REPEAT || max.is_some_and(|value| value > MAX_REPEAT) {
+            return Err(Error::Refused("regex repeat exceeds the configured limit".to_owned()));
+        }
+        if max.is_some_and(|value| value < min) {
+            return Err(self.error("regex repeat maximum is smaller than minimum"));
+        }
+        Ok((min, max))
+    }
+
+    fn parse_usize(&mut self) -> Result<usize> {
+        let mut value = 0_usize;
+        let mut digits = 0_usize;
+        while let Some(character) = self.peek() {
+            let Some(digit) = character.to_digit(10) else {
+                break;
+            };
+            value = value
+                .checked_mul(10)
+                .and_then(|current| current.checked_add(usize::try_from(digit).ok()?))
+                .ok_or_else(|| self.error("regex repeat number overflow"))?;
+            digits = digits
+                .checked_add(1)
+                .ok_or_else(|| self.error("regex repeat digit count overflow"))?;
+            self.bump()?;
+        }
+        if digits == 0 {
+            Err(self.error("regex repeat requires a number"))
+        } else {
+            Ok(value)
+        }
+    }
+
+    fn parse_atom(&mut self) -> Result<Ast> {
+        let Some(character) = self.peek() else {
+            return Err(self.error("regex atom is missing"));
+        };
+        match character {
+            '(' => self.parse_group(),
+            '[' => self.parse_class().map(|class| Ast::Atom(Matcher::Class(class))),
+            '.' => {
+                self.bump()?;
+                Ok(Ast::Atom(Matcher::Dot))
+            }
+            '^' => {
+                self.bump()?;
+                Ok(Ast::Assertion(Assertion::Start))
+            }
+            '$' => {
