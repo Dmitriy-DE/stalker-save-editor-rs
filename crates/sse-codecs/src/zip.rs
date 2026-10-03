@@ -50,7 +50,7 @@ fn safe_name(name: &str) -> bool {
     !name.split(['/', '\\']).any(|x| x == "..")
 }
 fn cp437(bytes: &[u8]) -> String {
-    const HI:&str="ÇüéâäàåçêëèïîìÄÅÉæÆôöòûùÿÖÜ¢£¥₧ƒáíóúñÑªº¿⌐¬½¼¡«»░▒▓│┤ÁÂÀ©╣║╗╝¢¥┐└┴┬├─┼ãÃ╚╔╩╦╠═╬¤ðÐÊËÈıÍÎÏ┘┌█▄¦Ì▀ÓßÔÒõÕµþÞÚÛÙýÝ¯´≡±‗¾¶§÷¸°¨·¹³²■ ";
+    const HI: &str = "ÇüéâäàåçêëèïîìÄÅÉæÆôöòûùÿÖÜ¢£¥₧ƒáíóúñÑªº¿⌐¬½¼¡«»░▒▓│┤╡╢╖╕╣║╗╝╜╛┐└┴┬├─┼╞╟╚╔╩╦╠═╬╧╨╤╥╙╘╒╓╫╪┘┌█▄▌▐▀αßΓπΣσµτΦΘΩδ∞φε∩≡±≥≤⌠⌡÷≈°∙·√ⁿ²■ ";
     let chars: Vec<char> = HI.chars().collect();
     let mut s = String::new();
     for x in bytes {
@@ -470,6 +470,14 @@ mod tests {
         put32(&mut out, central);
         put16(&mut out, 0);
         out
+    }
+
+    #[test]
+    fn cp437_tail_matches_the_standard_table() {
+        assert_eq!(cp437(&[0xb5, 0xb6, 0xb7, 0xb8]), "╡╢╖╕");
+        assert_eq!(cp437(&[0xbd, 0xbe, 0xc6, 0xcf]), "╜╛╞╧");
+        assert_eq!(cp437(&[0xdb, 0xdc, 0xdd, 0xde, 0xdf]), "█▄▌▐▀");
+        assert_eq!(cp437(&[0xe0, 0xe2, 0xea, 0xec, 0xfb]), "αΓΩ∞√");
     }
 
     #[test]
