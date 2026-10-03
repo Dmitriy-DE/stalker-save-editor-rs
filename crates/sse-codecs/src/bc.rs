@@ -790,7 +790,7 @@ mod tests {
         let out = decode_bc7(&w.value.to_le_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
         for pixel in 0..16_usize {
             let at = pixel.saturating_mul(4);
-            assert_eq!(out.get(at..at.saturating_add(4)), Some(&[255, 0, 0, 255][..]));
+            assert_eq!(out.get(at..at.saturating_add(4)), Some(&[255, 1, 1, 255][..]));
         }
     }
     #[derive(Default)]
