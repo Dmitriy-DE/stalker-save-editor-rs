@@ -1082,7 +1082,10 @@ impl<'a> LsbForward<'a> {
         let mask = if count == 32 {
             u32::MAX
         } else {
-            1_u32.checked_shl(u32::from(count)).unwrap_or_default().saturating_sub(1)
+            1_u32
+                .checked_shl(u32::from(count))
+                .unwrap_or_default()
+                .saturating_sub(1)
         };
         Ok(value & mask)
     }
@@ -1099,7 +1102,10 @@ impl<'a> LsbForward<'a> {
         let mask = if count == 32 {
             u32::MAX
         } else {
-            1_u32.checked_shl(u32::from(count)).unwrap_or_default().saturating_sub(1)
+            1_u32
+                .checked_shl(u32::from(count))
+                .unwrap_or_default()
+                .saturating_sub(1)
         };
         Ok(value & mask)
     }
