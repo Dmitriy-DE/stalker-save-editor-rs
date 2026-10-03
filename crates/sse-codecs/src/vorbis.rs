@@ -1075,3 +1075,431 @@ fn decode_residue_type2(
     }
     Ok(())
 }
+
+
+#[derive(Clone, Copy, Default)]
+struct Complex {
+    re: f32,
+    im: f32,
+}
+
+impl Complex {
+    fn mul(self, other: Self) -> Self {
+        Self {
+            re: self.re * other.re - self.im * other.im,
+            im: self.re * other.im + self.im * other.re,
+        }
+    }
+
+    fn add(self, other: Self) -> Self {
+        Self {
+            re: self.re + other.re,
+            im: self.im + other.im,
+        }
+    }
+
+    fn sub(self, other: Self) -> Self {
+        Self {
+            re: self.re - other.re,
+            im: self.im - other.im,
+        }
+    }
+}
+
+fn fft(values: &mut [Complex]) -> Result<()> {
+    let n = values.len();
+    if !n.is_power_of_two() || n == 0 {
+        return Err(Error::damaged("Vorbis FFT size is not a power of two"));
+    }
+    let mut j = 0_usize;
+    for i in 1..n {
+        let mut bit = n.wrapping_shr(1);
+        while j & bit != 0 {
+            j ^= bit;
+            bit = bit.wrapping_shr(1);
+        }
+        j ^= bit;
+        if i < j {
+            values.swap(i, j);
+        }
+    }
+    let mut length = 2_usize;
+    while length <= n {
+        let angle = -2.0 * PI / (length as f32);
+        let root = Complex {
+            re: angle.cos(),
+            im: angle.sin(),
+        };
+        let half = length.saturating_div(2);
+        let mut base = 0_usize;
+        while base < n {
+            let mut factor = Complex { re: 1.0, im: 0.0 };
+            for offset in 0..half {
+                let left_index = base.saturating_add(offset);
+                let right_index = left_index.saturating_add(half);
+                let left = values.get(left_index).copied().unwrap_or_default();
+                let right = values.get(right_index).copied().unwrap_or_default().mul(factor);
+                if let Some(slot) = values.get_mut(left_index) {
+                    *slot = left.add(right);
+                }
+                if let Some(slot) = values.get_mut(right_index) {
+                    *slot = left.sub(right);
+                }
+                factor = factor.mul(root);
+            }
+            base = base.saturating_add(length);
+        }
+        length = length.saturating_mul(2);
+    }
+    Ok(())
+}
+
+fn dct4(input: &[f32]) -> Result<Vec<f32>> {
+    let n = input.len();
+    if n == 0 || !n.is_power_of_two() {
+        return Err(Error::damaged("Vorbis DCT-IV size"));
+    }
+    let fft_len = n.checked_mul(2).ok_or_else(|| Error::damaged("Vorbis DCT-IV size overflow"))?;
+    let mut work = vec![Complex::default(); fft_len];
+    for (index, value) in input.iter().copied().enumerate() {
+        let angle = -PI * (index as f32) / (2.0 * n as f32);
+        if let Some(slot) = work.get_mut(index) {
+            *slot = Complex {
+                re: value * angle.cos(),
+                im: value * angle.sin(),
+            };
+        }
+    }
+    fft(&mut work)?;
+    let mut output = Vec::with_capacity(n);
+    for index in 0..n {
+        let angle = -PI * ((index.saturating_mul(2).saturating_add(1)) as f32) / (4.0 * n as f32);
+        let rotation = Complex {
+            re: angle.cos(),
+            im: angle.sin(),
+        };
+        output.push(work.get(index).copied().unwrap_or_default().mul(rotation).re);
+    }
+    Ok(output)
+}
+
+fn imdct(spectrum: &[f32]) -> Result<Vec<f32>> {
+    let m = spectrum.len();
+    if m == 0 || m % 2 != 0 {
+        return Err(Error::damaged("Vorbis IMDCT spectrum size"));
+    }
+    let transformed = dct4(spectrum)?;
+    let scale = 2.0 / (m as f32);
+    let quarter = m.saturating_div(2);
+    let mut output = Vec::with_capacity(m.saturating_mul(2));
+    for index in quarter..m {
+        output.push(transformed.get(index).copied().unwrap_or(0.0) * scale);
+    }
+    for index in (0..m).rev() {
+        output.push(-transformed.get(index).copied().unwrap_or(0.0) * scale);
+    }
+    for index in 0..quarter {
+        output.push(-transformed.get(index).copied().unwrap_or(0.0) * scale);
+    }
+    Ok(output)
+}
+
+fn window(n: usize, small: usize, long: bool, previous_long: bool, next_long: bool) -> Vec<f32> {
+    let center = n.saturating_div(2);
+    let (left_start, left_end, left_n) = if long && !previous_long {
+        (
+            n.saturating_div(4).saturating_sub(small.saturating_div(4)),
+            n.saturating_div(4).saturating_add(small.saturating_div(4)),
+            small.saturating_div(2),
+        )
+    } else {
+        (0, center, center)
+    };
+    let three_quarters = n.saturating_mul(3).saturating_div(4);
+    let (right_start, right_end, right_n) = if long && !next_long {
+        (
+            three_quarters.saturating_sub(small.saturating_div(4)),
+            three_quarters.saturating_add(small.saturating_div(4)),
+            small.saturating_div(2),
+        )
+    } else {
+        (center, n, center)
+    };
+    let mut result = vec![0_f32; n];
+    for index in left_start..left_end {
+        let phase = ((index.saturating_sub(left_start)) as f32 + 0.5) / (left_n.max(1) as f32) * (PI / 2.0);
+        let sine = phase.sin();
+        if let Some(slot) = result.get_mut(index) {
+            *slot = (PI / 2.0 * sine * sine).sin();
+        }
+    }
+    for slot in result.iter_mut().take(right_start).skip(left_end) {
+        *slot = 1.0;
+    }
+    for index in right_start..right_end.min(n) {
+        let phase = ((index.saturating_sub(right_start)) as f32 + 0.5) / (right_n.max(1) as f32) * (PI / 2.0) + PI / 2.0;
+        let sine = phase.sin();
+        if let Some(slot) = result.get_mut(index) {
+            *slot = (PI / 2.0 * sine * sine).sin();
+        }
+    }
+    result
+}
+
+struct AudioBlock {
+    channels: Vec<Vec<f32>>,
+    size: usize,
+}
+
+fn decode_audio(packet: &[u8], ident: Ident, setup: &Setup) -> Result<AudioBlock> {
+    let mut bits = Bits::new(packet);
+    if bits.flag()? {
+        return Err(Error::damaged("Vorbis header packet in audio stream"));
+    }
+    let mode_bits = ilog(setup.modes.len().saturating_sub(1));
+    let mode_index = usize::try_from(bits.read(mode_bits)?).unwrap_or(usize::MAX);
+    let mode = setup.modes.get(mode_index).copied().ok_or_else(|| Error::damaged("Vorbis mode out of range"))?;
+    let n = if mode.long { ident.large } else { ident.small };
+    let previous_long = if mode.long { bits.flag()? } else { false };
+    let next_long = if mode.long { bits.flag()? } else { false };
+    let mapping = setup
+        .mappings
+        .get(mode.mapping)
+        .ok_or_else(|| Error::damaged("Vorbis mapping out of range"))?;
+
+    let channel_count = usize::from(ident.channels);
+    let mut floors = Vec::with_capacity(channel_count);
+    let mut no_residue = Vec::with_capacity(channel_count);
+    for channel in 0..channel_count {
+        let submap = mapping.mux.get(channel).copied().unwrap_or(0);
+        let floor_index = mapping.floors.get(submap).copied().ok_or_else(|| Error::damaged("Vorbis floor mapping"))?;
+        let decoded = decode_floor(
+            setup.floors.get(floor_index).ok_or_else(|| Error::damaged("Vorbis floor"))?,
+            &setup.books,
+            &mut bits,
+        )?;
+        no_residue.push(decoded.is_none());
+        floors.push(decoded);
+    }
+    for (magnitude, angle) in &mapping.coupling {
+        if !no_residue.get(*magnitude).copied().unwrap_or(true)
+            || !no_residue.get(*angle).copied().unwrap_or(true)
+        {
+            if let Some(slot) = no_residue.get_mut(*magnitude) {
+                *slot = false;
+            }
+            if let Some(slot) = no_residue.get_mut(*angle) {
+                *slot = false;
+            }
+        }
+    }
+
+    let spectral_len = n.saturating_div(2);
+    let mut spectra = vec![vec![0_f32; spectral_len]; channel_count];
+    for submap in 0..mapping.submaps {
+        let selected: Vec<usize> = (0..channel_count)
+            .filter(|channel| mapping.mux.get(*channel).copied().unwrap_or(0) == submap)
+            .collect();
+        if selected.is_empty() {
+            continue;
+        }
+        let residue_index = mapping.residues.get(submap).copied().ok_or_else(|| Error::damaged("Vorbis residue mapping"))?;
+        let residue = setup.residues.get(residue_index).ok_or_else(|| Error::damaged("Vorbis residue"))?;
+        let mut temporary = vec![vec![0_f32; spectral_len]; selected.len()];
+        let temporary_skip: Vec<bool> = selected
+            .iter()
+            .map(|channel| no_residue.get(*channel).copied().unwrap_or(true))
+            .collect();
+        if residue.kind == 2 {
+            decode_residue_type2(residue, &setup.books, &mut bits, &mut temporary, &temporary_skip, spectral_len)?;
+        } else {
+            decode_residue_channels(residue, &setup.books, &mut bits, &mut temporary, &temporary_skip, spectral_len)?;
+        }
+        for (local, channel) in selected.iter().copied().enumerate() {
+            if let (Some(source), Some(target)) = (temporary.get(local), spectra.get_mut(channel)) {
+                target.copy_from_slice(source);
+            }
+        }
+    }
+
+    for (magnitude, angle) in mapping.coupling.iter().copied().rev() {
+        for sample in 0..spectral_len {
+            let m = spectra.get(magnitude).and_then(|values| values.get(sample)).copied().unwrap_or(0.0);
+            let a = spectra.get(angle).and_then(|values| values.get(sample)).copied().unwrap_or(0.0);
+            let (new_m, new_a) = if m > 0.0 {
+                if a > 0.0 { (m, m - a) } else { (m + a, m) }
+            } else if a > 0.0 {
+                (m, m + a)
+            } else {
+                (m - a, m)
+            };
+            if let Some(slot) = spectra.get_mut(magnitude).and_then(|values| values.get_mut(sample)) {
+                *slot = new_m;
+            }
+            if let Some(slot) = spectra.get_mut(angle).and_then(|values| values.get_mut(sample)) {
+                *slot = new_a;
+            }
+        }
+    }
+
+    let win = window(n, ident.small, mode.long, previous_long, next_long);
+    let mut channels = Vec::with_capacity(channel_count);
+    for channel in 0..channel_count {
+        if let Some(floor_packet) = floors.get(channel).and_then(Option::as_ref) {
+            let submap = mapping.mux.get(channel).copied().unwrap_or(0);
+            let floor_index = mapping.floors.get(submap).copied().unwrap_or(0);
+            let curve = floor_curve(
+                setup.floors.get(floor_index).ok_or_else(|| Error::damaged("Vorbis floor synthesis"))?,
+                floor_packet,
+                spectral_len,
+            );
+            if let Some(spectrum) = spectra.get_mut(channel) {
+                for sample in 0..spectral_len {
+                    if let Some(slot) = spectrum.get_mut(sample) {
+                        *slot *= curve.get(sample).copied().unwrap_or(0.0);
+                    }
+                }
+            }
+        } else if let Some(spectrum) = spectra.get_mut(channel) {
+            spectrum.fill(0.0);
+        }
+        let mut time = imdct(spectra.get(channel).ok_or_else(|| Error::damaged("Vorbis spectrum"))?)?;
+        for (sample, factor) in time.iter_mut().zip(win.iter().copied()) {
+            *sample *= factor;
+        }
+        channels.push(time);
+    }
+    Ok(AudioBlock { channels, size: n })
+}
+
+fn overlap(previous: &AudioBlock, current: &AudioBlock, output: &mut Vec<f32>) {
+    let count = previous
+        .size
+        .saturating_div(4)
+        .saturating_add(current.size.saturating_div(4));
+    let channels = previous.channels.len().min(current.channels.len());
+    let current_shift = current
+        .size
+        .saturating_div(4)
+        .saturating_sub(previous.size.saturating_div(4));
+    for frame in 0..count {
+        for channel in 0..channels {
+            let previous_index = previous.size.saturating_div(2).saturating_add(frame);
+            let previous_value = previous
+                .channels
+                .get(channel)
+                .and_then(|values| values.get(previous_index))
+                .copied()
+                .unwrap_or(0.0);
+            let signed_current = (frame as isize)
+                .saturating_add(current.size.saturating_div(4) as isize)
+                .saturating_sub(previous.size.saturating_div(4) as isize);
+            let current_value = if signed_current < 0 {
+                0.0
+            } else {
+                current
+                    .channels
+                    .get(channel)
+                    .and_then(|values| values.get(usize::try_from(signed_current).unwrap_or(usize::MAX)))
+                    .copied()
+                    .unwrap_or(0.0)
+            };
+            let _ = current_shift;
+            output.push(previous_value + current_value);
+        }
+    }
+}
+
+#[allow(clippy::cast_possible_truncation)]
+fn to_i16(value: f32) -> i16 {
+    let scaled = (value * 32768.0).round().clamp(-32768.0, 32767.0);
+    scaled as i16
+}
+
+/// Decodes a complete single-stream Ogg/Vorbis-I file to interleaved PCM.
+///
+/// Floor type 1, residue types 0/1/2, mapping type 0, channel coupling and
+/// both Vorbis block sizes are supported. Floor type 0 is explicitly refused.
+pub fn decode(input: &[u8]) -> Result<Pcm> {
+    let packets = ogg::packets(input)?;
+    if packets.len() < 4 {
+        return Err(Error::damaged("Vorbis stream has no audio packets"));
+    }
+    let ident = identification(
+        &packets
+            .first()
+            .ok_or_else(|| Error::damaged("missing Vorbis identification"))?
+            .data,
+    )?;
+    validate_comment(
+        &packets
+            .get(1)
+            .ok_or_else(|| Error::damaged("missing Vorbis comments"))?
+            .data,
+    )?;
+    let setup = setup(
+        &packets
+            .get(2)
+            .ok_or_else(|| Error::damaged("missing Vorbis setup"))?
+            .data,
+        ident,
+    )?;
+
+    let mut previous = None;
+    let mut pcm = Vec::<f32>::new();
+    let mut initial_center = None;
+    let mut final_granule = None;
+    for packet in packets.iter().skip(3) {
+        let block = decode_audio(&packet.data, ident, &setup)?;
+        if initial_center.is_none() {
+            initial_center = Some(block.size.saturating_div(2));
+        }
+        if let Some(old) = previous.as_ref() {
+            overlap(old, &block, &mut pcm);
+        }
+        previous = Some(block);
+        if let Some(granule) = packet.granule {
+            final_granule = Some(granule);
+        }
+    }
+
+    if let (Some(granule), Some(center)) = (final_granule, initial_center) {
+        let frames = usize::try_from(granule)
+            .unwrap_or(usize::MAX)
+            .saturating_sub(center);
+        let samples = frames
+            .checked_mul(usize::from(ident.channels))
+            .ok_or_else(|| Error::damaged("Vorbis PCM size overflow"))?;
+        pcm.truncate(samples);
+    }
+    Ok(Pcm {
+        channels: ident.channels,
+        rate: ident.rate,
+        samples: pcm.into_iter().map(to_i16).collect(),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lookup1_examples() {
+        assert_eq!(lookup1_values(625, 4), 5);
+        assert_eq!(lookup1_values(16, 2), 4);
+    }
+
+    #[test]
+    fn dct4_matches_direct_small_case() {
+        let input = [1.0_f32, -0.5, 0.25, 2.0];
+        let fast = dct4(&input).unwrap_or_default();
+        for k in 0..input.len() {
+            let mut direct = 0.0_f32;
+            for (n, value) in input.iter().copied().enumerate() {
+                direct += value
+                    * (PI / input.len() as f32 * (n as f32 + 0.5) * (k as f32 + 0.5)).cos();
+            }
+            assert!((fast.get(k).copied().unwrap_or(0.0) - direct).abs() < 0.0001);
+        }
+    }
+}
