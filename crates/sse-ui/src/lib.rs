@@ -14,3 +14,6 @@ pub mod raster;
 pub mod text;
 /// X11 core protocol, MIT-SHM, XKB and clipboard encoding over a transport trait (X11).
 pub mod x11;
+
+/// Retained arithmetic layout engine (X26).
+pub mod layout;
