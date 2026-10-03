@@ -100,7 +100,10 @@ fn identification(packet: &[u8]) -> Result<Ident> {
     if rate == 0 {
         return Err(Error::damaged("zero Vorbis sample rate"));
     }
-    let packed = data.get(21).copied().ok_or_else(|| Error::damaged("Vorbis block sizes"))?;
+    let packed = data
+        .get(21)
+        .copied()
+        .ok_or_else(|| Error::damaged("Vorbis block sizes"))?;
     let small = 1_usize
         .checked_shl(u32::from(packed & 15))
         .ok_or_else(|| Error::damaged("Vorbis small block size"))?;
@@ -265,7 +268,9 @@ fn float32_unpack(value: u32) -> f32 {
 fn pow_leq(base: usize, exponent: usize, limit: usize) -> bool {
     let mut value = 1_usize;
     for _ in 0..exponent {
-        let Some(next) = value.checked_mul(base) else { return false };
+        let Some(next) = value.checked_mul(base) else {
+            return false;
+        };
         value = next;
         if value > limit {
             return false;
@@ -298,7 +303,9 @@ fn read_codebook(bits: &mut Bits<'_>) -> Result<Codebook> {
     let dimensions = usize::try_from(bits.read(16)?).map_err(|_| Error::damaged("Vorbis codebook dimensions"))?;
     let entries = usize::try_from(bits.read(24)?).map_err(|_| Error::damaged("Vorbis codebook entries"))?;
     if dimensions == 0 || entries == 0 || entries > MAX_CODEBOOK_ENTRIES {
-        return Err(Error::Refused("Vorbis codebook dimensions/entry limit exceeded".to_owned()));
+        return Err(Error::Refused(
+            "Vorbis codebook dimensions/entry limit exceeded".to_owned(),
+        ));
     }
     let mut lengths = vec![0_u8; entries];
     if bits.flag()? {
@@ -306,7 +313,8 @@ fn read_codebook(bits: &mut Bits<'_>) -> Result<Codebook> {
         let mut length = u8::try_from(bits.read(5)?).unwrap_or(0).saturating_add(1);
         while entry < entries {
             let width = ilog(entries.saturating_sub(entry));
-            let count = usize::try_from(bits.read(width)?).map_err(|_| Error::damaged("Vorbis ordered codebook count"))?;
+            let count =
+                usize::try_from(bits.read(width)?).map_err(|_| Error::damaged("Vorbis ordered codebook count"))?;
             if count == 0 || entry.saturating_add(count) > entries {
                 return Err(Error::damaged("invalid ordered Vorbis codebook"));
             }
@@ -470,7 +478,11 @@ fn read_floor1(bits: &mut Bits<'_>, books: usize) -> Result<Floor1> {
         maximum_class = maximum_class.max(class);
         partitions.push(class);
     }
-    let class_count = if partitions.is_empty() { 0 } else { maximum_class.saturating_add(1) };
+    let class_count = if partitions.is_empty() {
+        0
+    } else {
+        maximum_class.saturating_add(1)
+    };
     let mut class_dimensions = Vec::with_capacity(class_count);
     let mut class_subclasses = Vec::with_capacity(class_count);
     let mut class_masterbooks = Vec::with_capacity(class_count);
@@ -682,9 +694,11 @@ fn setup(packet: &[u8], ident: Ident) -> Result<Setup> {
     })
 }
 
-
 fn low_neighbor(values: &[usize], index: usize) -> Result<usize> {
-    let target = values.get(index).copied().ok_or_else(|| Error::damaged("Vorbis floor X"))?;
+    let target = values
+        .get(index)
+        .copied()
+        .ok_or_else(|| Error::damaged("Vorbis floor X"))?;
     let mut best = None;
     for prior in 0..index {
         let value = values.get(prior).copied().unwrap_or(0);
@@ -696,7 +710,10 @@ fn low_neighbor(values: &[usize], index: usize) -> Result<usize> {
 }
 
 fn high_neighbor(values: &[usize], index: usize) -> Result<usize> {
-    let target = values.get(index).copied().ok_or_else(|| Error::damaged("Vorbis floor X"))?;
+    let target = values
+        .get(index)
+        .copied()
+        .ok_or_else(|| Error::damaged("Vorbis floor X"))?;
     let mut best = None;
     for prior in 0..index {
         let value = values.get(prior).copied().unwrap_or(usize::MAX);
@@ -714,8 +731,12 @@ fn render_point(x0: usize, y0: i32, x1: usize, y1: i32, x: usize) -> i32 {
     let dx = i64::try_from(x.saturating_sub(x0)).unwrap_or(i64::MAX);
     let offset = ady.saturating_mul(dx).saturating_div(adx);
     let base = i64::from(y0);
-    i32::try_from(if dy < 0 { base.saturating_sub(offset) } else { base.saturating_add(offset) })
-        .unwrap_or(if dy < 0 { i32::MIN } else { i32::MAX })
+    i32::try_from(if dy < 0 {
+        base.saturating_sub(offset)
+    } else {
+        base.saturating_add(offset)
+    })
+    .unwrap_or(if dy < 0 { i32::MIN } else { i32::MAX })
 }
 
 struct FloorPacket {
@@ -751,7 +772,10 @@ fn decode_floor(floor: &Floor1, books: &[Codebook], bits: &mut Bits<'_>) -> Resu
                 .copied()
                 .flatten()
                 .ok_or_else(|| Error::damaged("Vorbis floor masterbook"))?;
-            books.get(master).ok_or_else(|| Error::damaged("Vorbis floor masterbook"))?.scalar(bits)?
+            books
+                .get(master)
+                .ok_or_else(|| Error::damaged("Vorbis floor masterbook"))?
+                .scalar(bits)?
         };
         let mask = 1_usize
             .checked_shl(u32::from(subclasses))
@@ -836,7 +860,11 @@ fn render_line(x0: usize, y0: i32, x1: usize, y1: i32, curve: &mut [f32]) {
     let adx = i32::try_from(x1.saturating_sub(x0)).unwrap_or(i32::MAX).max(1);
     let mut ady = dy.abs();
     let base = dy.saturating_div(adx);
-    let sy = if dy < 0 { base.saturating_sub(1) } else { base.saturating_add(1) };
+    let sy = if dy < 0 {
+        base.saturating_sub(1)
+    } else {
+        base.saturating_add(1)
+    };
     ady = ady.saturating_sub(base.abs().saturating_mul(adx));
     let mut error = 0_i32;
     let mut y = y0;
@@ -862,7 +890,12 @@ fn floor_curve(floor: &Floor1, packet: &FloorPacket, n: usize) -> Vec<f32> {
     let mut order: Vec<usize> = (0..floor.x.len()).collect();
     order.sort_by_key(|index| floor.x.get(*index).copied().unwrap_or(usize::MAX));
     let mut lx = 0_usize;
-    let mut ly = packet.y.first().copied().unwrap_or(0).saturating_mul(i32::try_from(floor.multiplier).unwrap_or(1));
+    let mut ly = packet
+        .y
+        .first()
+        .copied()
+        .unwrap_or(0)
+        .saturating_mul(i32::try_from(floor.multiplier).unwrap_or(1));
     let mut hx = 0_usize;
     let mut hy = ly;
     for index in order.into_iter().skip(1) {
@@ -904,9 +937,7 @@ fn decode_partition(
         for i in 0..step {
             let vector = book.vector(bits)?;
             for (dimension, value) in vector.iter().copied().enumerate() {
-                let index = offset
-                    .saturating_add(i)
-                    .saturating_add(dimension.saturating_mul(step));
+                let index = offset.saturating_add(i).saturating_add(dimension.saturating_mul(step));
                 if let Some(slot) = output.get_mut(index) {
                     *slot += value;
                 }
@@ -1009,7 +1040,9 @@ fn decode_residue_channels(
                         offset,
                         residue.partition,
                         residue.kind,
-                        books.get(book_index).ok_or_else(|| Error::damaged("Vorbis residue book"))?,
+                        books
+                            .get(book_index)
+                            .ok_or_else(|| Error::damaged("Vorbis residue book"))?,
                         bits,
                     )?;
                 }
@@ -1058,7 +1091,9 @@ fn decode_residue_type2(
                     offset,
                     residue.partition,
                     1,
-                    books.get(book_index).ok_or_else(|| Error::damaged("Vorbis residue-2 book"))?,
+                    books
+                        .get(book_index)
+                        .ok_or_else(|| Error::damaged("Vorbis residue-2 book"))?,
                     bits,
                 )?;
             }
@@ -1075,7 +1110,6 @@ fn decode_residue_type2(
     }
     Ok(())
 }
-
 
 #[derive(Clone, Copy, Default)]
 struct Complex {
@@ -1159,7 +1193,9 @@ fn dct4(input: &[f32]) -> Result<Vec<f32>> {
     if n == 0 || !n.is_power_of_two() {
         return Err(Error::damaged("Vorbis DCT-IV size"));
     }
-    let fft_len = n.checked_mul(2).ok_or_else(|| Error::damaged("Vorbis DCT-IV size overflow"))?;
+    let fft_len = n
+        .checked_mul(2)
+        .ok_or_else(|| Error::damaged("Vorbis DCT-IV size overflow"))?;
     let mut work = vec![Complex::default(); fft_len];
     for (index, value) in input.iter().copied().enumerate() {
         let angle = -PI * (index as f32) / (2.0 * n as f32);
@@ -1237,7 +1273,8 @@ fn window(n: usize, small: usize, long: bool, previous_long: bool, next_long: bo
         *slot = 1.0;
     }
     for index in right_start..right_end.min(n) {
-        let phase = ((index.saturating_sub(right_start)) as f32 + 0.5) / (right_n.max(1) as f32) * (PI / 2.0) + PI / 2.0;
+        let phase =
+            ((index.saturating_sub(right_start)) as f32 + 0.5) / (right_n.max(1) as f32) * (PI / 2.0) + PI / 2.0;
         let sine = phase.sin();
         if let Some(slot) = result.get_mut(index) {
             *slot = (PI / 2.0 * sine * sine).sin();
@@ -1258,7 +1295,11 @@ fn decode_audio(packet: &[u8], ident: Ident, setup: &Setup) -> Result<AudioBlock
     }
     let mode_bits = ilog(setup.modes.len().saturating_sub(1));
     let mode_index = usize::try_from(bits.read(mode_bits)?).unwrap_or(usize::MAX);
-    let mode = setup.modes.get(mode_index).copied().ok_or_else(|| Error::damaged("Vorbis mode out of range"))?;
+    let mode = setup
+        .modes
+        .get(mode_index)
+        .copied()
+        .ok_or_else(|| Error::damaged("Vorbis mode out of range"))?;
     let n = if mode.long { ident.large } else { ident.small };
     let previous_long = if mode.long { bits.flag()? } else { false };
     let next_long = if mode.long { bits.flag()? } else { false };
@@ -1272,9 +1313,16 @@ fn decode_audio(packet: &[u8], ident: Ident, setup: &Setup) -> Result<AudioBlock
     let mut no_residue = Vec::with_capacity(channel_count);
     for channel in 0..channel_count {
         let submap = mapping.mux.get(channel).copied().unwrap_or(0);
-        let floor_index = mapping.floors.get(submap).copied().ok_or_else(|| Error::damaged("Vorbis floor mapping"))?;
+        let floor_index = mapping
+            .floors
+            .get(submap)
+            .copied()
+            .ok_or_else(|| Error::damaged("Vorbis floor mapping"))?;
         let decoded = decode_floor(
-            setup.floors.get(floor_index).ok_or_else(|| Error::damaged("Vorbis floor"))?,
+            setup
+                .floors
+                .get(floor_index)
+                .ok_or_else(|| Error::damaged("Vorbis floor"))?,
             &setup.books,
             &mut bits,
         )?;
@@ -1282,9 +1330,7 @@ fn decode_audio(packet: &[u8], ident: Ident, setup: &Setup) -> Result<AudioBlock
         floors.push(decoded);
     }
     for (magnitude, angle) in &mapping.coupling {
-        if !no_residue.get(*magnitude).copied().unwrap_or(true)
-            || !no_residue.get(*angle).copied().unwrap_or(true)
-        {
+        if !no_residue.get(*magnitude).copied().unwrap_or(true) || !no_residue.get(*angle).copied().unwrap_or(true) {
             if let Some(slot) = no_residue.get_mut(*magnitude) {
                 *slot = false;
             }
@@ -1303,17 +1349,38 @@ fn decode_audio(packet: &[u8], ident: Ident, setup: &Setup) -> Result<AudioBlock
         if selected.is_empty() {
             continue;
         }
-        let residue_index = mapping.residues.get(submap).copied().ok_or_else(|| Error::damaged("Vorbis residue mapping"))?;
-        let residue = setup.residues.get(residue_index).ok_or_else(|| Error::damaged("Vorbis residue"))?;
+        let residue_index = mapping
+            .residues
+            .get(submap)
+            .copied()
+            .ok_or_else(|| Error::damaged("Vorbis residue mapping"))?;
+        let residue = setup
+            .residues
+            .get(residue_index)
+            .ok_or_else(|| Error::damaged("Vorbis residue"))?;
         let mut temporary = vec![vec![0_f32; spectral_len]; selected.len()];
         let temporary_skip: Vec<bool> = selected
             .iter()
             .map(|channel| no_residue.get(*channel).copied().unwrap_or(true))
             .collect();
         if residue.kind == 2 {
-            decode_residue_type2(residue, &setup.books, &mut bits, &mut temporary, &temporary_skip, spectral_len)?;
+            decode_residue_type2(
+                residue,
+                &setup.books,
+                &mut bits,
+                &mut temporary,
+                &temporary_skip,
+                spectral_len,
+            )?;
         } else {
-            decode_residue_channels(residue, &setup.books, &mut bits, &mut temporary, &temporary_skip, spectral_len)?;
+            decode_residue_channels(
+                residue,
+                &setup.books,
+                &mut bits,
+                &mut temporary,
+                &temporary_skip,
+                spectral_len,
+            )?;
         }
         for (local, channel) in selected.iter().copied().enumerate() {
             if let (Some(source), Some(target)) = (temporary.get(local), spectra.get_mut(channel)) {
@@ -1324,10 +1391,22 @@ fn decode_audio(packet: &[u8], ident: Ident, setup: &Setup) -> Result<AudioBlock
 
     for (magnitude, angle) in mapping.coupling.iter().copied().rev() {
         for sample in 0..spectral_len {
-            let m = spectra.get(magnitude).and_then(|values| values.get(sample)).copied().unwrap_or(0.0);
-            let a = spectra.get(angle).and_then(|values| values.get(sample)).copied().unwrap_or(0.0);
+            let m = spectra
+                .get(magnitude)
+                .and_then(|values| values.get(sample))
+                .copied()
+                .unwrap_or(0.0);
+            let a = spectra
+                .get(angle)
+                .and_then(|values| values.get(sample))
+                .copied()
+                .unwrap_or(0.0);
             let (new_m, new_a) = if m > 0.0 {
-                if a > 0.0 { (m, m - a) } else { (m + a, m) }
+                if a > 0.0 {
+                    (m, m - a)
+                } else {
+                    (m + a, m)
+                }
             } else if a > 0.0 {
                 (m, m + a)
             } else {
@@ -1349,7 +1428,10 @@ fn decode_audio(packet: &[u8], ident: Ident, setup: &Setup) -> Result<AudioBlock
             let submap = mapping.mux.get(channel).copied().unwrap_or(0);
             let floor_index = mapping.floors.get(submap).copied().unwrap_or(0);
             let curve = floor_curve(
-                setup.floors.get(floor_index).ok_or_else(|| Error::damaged("Vorbis floor synthesis"))?,
+                setup
+                    .floors
+                    .get(floor_index)
+                    .ok_or_else(|| Error::damaged("Vorbis floor synthesis"))?,
                 floor_packet,
                 spectral_len,
             );
@@ -1464,9 +1546,7 @@ pub fn decode(input: &[u8]) -> Result<Pcm> {
     }
 
     if let (Some(granule), Some(center)) = (final_granule, initial_center) {
-        let frames = usize::try_from(granule)
-            .unwrap_or(usize::MAX)
-            .saturating_sub(center);
+        let frames = usize::try_from(granule).unwrap_or(usize::MAX).saturating_sub(center);
         let samples = frames
             .checked_mul(usize::from(ident.channels))
             .ok_or_else(|| Error::damaged("Vorbis PCM size overflow"))?;
@@ -1496,8 +1576,7 @@ mod tests {
         for k in 0..input.len() {
             let mut direct = 0.0_f32;
             for (n, value) in input.iter().copied().enumerate() {
-                direct += value
-                    * (PI / input.len() as f32 * (n as f32 + 0.5) * (k as f32 + 0.5)).cos();
+                direct += value * (PI / input.len() as f32 * (n as f32 + 0.5) * (k as f32 + 0.5)).cos();
             }
             assert!((fast.get(k).copied().unwrap_or(0.0) - direct).abs() < 0.0001);
         }
