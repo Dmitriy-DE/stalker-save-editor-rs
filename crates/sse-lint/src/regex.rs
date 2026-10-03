@@ -1259,3 +1259,143 @@ impl AhoCorasick {
                         .copied()
                         .ok_or_else(|| Error::damaged("Aho-Corasick inherited transition missing"))?;
                     let slot = self
+                        .nodes
+                        .get_mut(state)
+                        .and_then(|node| node.transitions.get_mut(column))
+                        .ok_or_else(|| Error::damaged("Aho-Corasick transition slot missing"))?;
+                    *slot = inherited;
+                    continue;
+                }
+
+                let child_index = usize::try_from(child).map_err(|_| Error::damaged("Aho child id conversion failed"))?;
+                let fallback = self
+                    .nodes
+                    .get(failure_index)
+                    .and_then(|node| node.transitions.get(column))
+                    .copied()
+                    .ok_or_else(|| Error::damaged("Aho fallback transition missing"))?;
+                if let Some(node) = self.nodes.get_mut(child_index) {
+                    node.fail = fallback;
+                } else {
+                    return Err(Error::damaged("Aho child node missing"));
+                }
+                let fallback_index = usize::try_from(fallback)
+                    .map_err(|_| Error::damaged("Aho fallback id conversion failed"))?;
+                let inherited_outputs = self
+                    .nodes
+                    .get(fallback_index)
+                    .map(|node| node.outputs.clone())
+                    .ok_or_else(|| Error::damaged("Aho fallback outputs missing"))?;
+                let child_node = self
+                    .nodes
+                    .get_mut(child_index)
+                    .ok_or_else(|| Error::damaged("Aho child outputs missing"))?;
+                child_node.outputs.extend(inherited_outputs);
+                queue.push_back(child_index);
+            }
+        }
+        Ok(())
+    }
+
+    fn mark_candidates(&self, input: &[u8], flags: &mut [bool]) -> Result<()> {
+        let mut cursor = Cursor::new(input);
+        let mut state = 0_usize;
+        while cursor.remaining() > 0 {
+            let mut byte = cursor.u8()?;
+            if !byte.is_ascii() {
+                state = 0;
+                continue;
+            }
+            if self.case_insensitive {
+                byte = byte.to_ascii_lowercase();
+            }
+            let column = usize::from(byte);
+            let next = self
+                .nodes
+                .get(state)
+                .and_then(|node| node.transitions.get(column))
+                .copied()
+                .ok_or_else(|| Error::damaged("Aho-Corasick scan transition missing"))?;
+            state = usize::try_from(next).map_err(|_| Error::damaged("Aho scan state conversion failed"))?;
+            let outputs = self
+                .nodes
+                .get(state)
+                .map(|node| node.outputs.as_slice())
+                .ok_or_else(|| Error::damaged("Aho scan state missing"))?;
+            for pattern_index in outputs {
+                let flag = flags
+                    .get_mut(*pattern_index)
+                    .ok_or_else(|| Error::damaged("Aho output pattern index outside set"))?;
+                *flag = true;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// A group of expressions with one shared Aho-Corasick literal prefilter.
+#[derive(Debug, Clone)]
+pub struct Set {
+    regexes: Vec<Regex>,
+    prefilter: AhoCorasick,
+    unfiltered: Vec<usize>,
+}
+
+impl Set {
+    /// Compiles all patterns with the same options and builds one prefilter.
+    ///
+    /// # Errors
+    /// Returns compilation errors or a configured pattern/prefilter limit.
+    pub fn new(patterns: &[&str], options: RegexOptions) -> Result<Self> {
+        if patterns.len() > MAX_SET_PATTERNS {
+            return Err(Error::Refused("regex set exceeds pattern limit".to_owned()));
+        }
+        let mut regexes = Vec::with_capacity(patterns.len());
+        let mut literals = Vec::new();
+        let mut unfiltered = Vec::new();
+        for pattern in patterns {
+            let regex = Regex::with_options(pattern, options)?;
+            let index = regexes.len();
+            if let Some(literal) = regex.required_literal().filter(|value| value.is_ascii() && !value.is_empty()) {
+                literals.push((index, literal.to_owned()));
+            } else {
+                unfiltered.push(index);
+            }
+            regexes.push(regex);
+        }
+        let prefilter = AhoCorasick::build(&literals, options.case_insensitive)?;
+        Ok(Self {
+            regexes,
+            prefilter,
+            unfiltered,
+        })
+    }
+
+    /// Returns indices of every pattern matching `text`, in input pattern order.
+    ///
+    /// # Errors
+    /// Returns a damaged-input error only if the internally built prefilter is inconsistent.
+    pub fn matches(&self, text: &str) -> Result<Vec<usize>> {
+        let mut candidates = vec![false; self.regexes.len()];
+        for index in &self.unfiltered {
+            if let Some(flag) = candidates.get_mut(*index) {
+                *flag = true;
+            }
+        }
+        self.prefilter.mark_candidates(text.as_bytes(), &mut candidates)?;
+        let mut result = Vec::new();
+        for (index, regex) in self.regexes.iter().enumerate() {
+            if candidates.get(index).copied().unwrap_or(false) && regex.is_match(text) {
+                result.push(index);
+            }
+        }
+        Ok(result)
+    }
+
+    /// Returns whether at least one pattern matches `text`.
+    ///
+    /// # Errors
+    /// Returns a damaged-input error only if the internally built prefilter is inconsistent.
+    pub fn is_match(&self, text: &str) -> Result<bool> {
+        Ok(!self.matches(text)?.is_empty())
+    }
