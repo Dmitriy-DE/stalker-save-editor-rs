@@ -985,36 +985,6 @@ fn decode_partition(
     Ok(())
 }
 
-fn residue_classifications(
-    residue: &Residue,
-    books: &[Codebook],
-    bits: &mut Bits<'_>,
-    partitions: usize,
-) -> Result<Vec<usize>> {
-    let classbook = books
-        .get(residue.classbook)
-        .ok_or_else(|| Error::damaged("Vorbis residue classbook"))?;
-    let words = classbook.dimensions;
-    if words == 0 {
-        return Err(Error::damaged("zero-dimensional Vorbis residue classbook"));
-    }
-    let mut result = vec![0_usize; partitions];
-    let mut partition = 0_usize;
-    while partition < partitions {
-        let mut value = classbook.scalar(bits)?;
-        let count = words.min(partitions.saturating_sub(partition));
-        for reverse in (0..count).rev() {
-            let index = partition.saturating_add(reverse);
-            if let Some(slot) = result.get_mut(index) {
-                *slot = value.checked_rem(residue.classifications).unwrap_or(0);
-            }
-            value = value.checked_div(residue.classifications).unwrap_or(0);
-        }
-        partition = partition.saturating_add(count);
-    }
-    Ok(result)
-}
-
 fn decode_residue_channels(
     residue: &Residue,
     books: &[Codebook],
@@ -1028,49 +998,70 @@ fn decode_residue_channels(
     if begin >= end || residue.partition == 0 {
         return Ok(());
     }
-    let partitions = end.saturating_sub(begin).checked_div(residue.partition).unwrap_or(0);
-    let mut classes = vec![Vec::<usize>::new(); channels.len()];
+    let partitions = end
+        .saturating_sub(begin)
+        .checked_div(residue.partition)
+        .unwrap_or(0);
+    let classbook = books
+        .get(residue.classbook)
+        .ok_or_else(|| Error::damaged("Vorbis residue classbook"))?;
+    let words = classbook.dimensions;
+    if words == 0 {
+        return Err(Error::damaged("zero-dimensional Vorbis residue classbook"));
+    }
+    let mut classes = vec![vec![0_usize; partitions]; channels.len()];
     for pass in 0..8_usize {
-        if pass == 0 {
-            for (channel, class) in classes.iter_mut().enumerate() {
-                if !skip.get(channel).copied().unwrap_or(true) {
-                    *class = residue_classifications(residue, books, bits, partitions)?;
+        let mut partition = 0_usize;
+        while partition < partitions {
+            let count = words.min(partitions.saturating_sub(partition));
+            if pass == 0 {
+                for channel in 0..channels.len() {
+                    if skip.get(channel).copied().unwrap_or(true) {
+                        continue;
+                    }
+                    let mut value = classbook.scalar(bits)?;
+                    for reverse in (0..count).rev() {
+                        let index = partition.saturating_add(reverse);
+                        if let Some(slot) = classes.get_mut(channel).and_then(|row| row.get_mut(index)) {
+                            *slot = value.checked_rem(residue.classifications).unwrap_or(0);
+                        }
+                        value = value.checked_div(residue.classifications).unwrap_or(0);
+                    }
                 }
             }
-        }
-        for partition in 0..partitions {
-            for channel in 0..channels.len() {
-                if skip.get(channel).copied().unwrap_or(true) {
-                    continue;
-                }
-                let class = classes
-                    .get(channel)
-                    .and_then(|items| items.get(partition))
-                    .copied()
-                    .unwrap_or(0);
-                let book_index = residue
-                    .books
-                    .get(class)
-                    .and_then(|row| row.get(pass))
-                    .copied()
-                    .flatten();
-                if let Some(book_index) = book_index {
-                    let offset = begin.saturating_add(partition.saturating_mul(residue.partition));
-                    let output = channels
-                        .get_mut(channel)
-                        .ok_or_else(|| Error::damaged("Vorbis residue channel"))?;
-                    decode_partition(
-                        output,
-                        offset,
-                        residue.partition,
-                        residue.kind,
-                        books
-                            .get(book_index)
-                            .ok_or_else(|| Error::damaged("Vorbis residue book"))?,
-                        bits,
-                    )?;
+            for offset_partition in 0..count {
+                let absolute = partition.saturating_add(offset_partition);
+                for channel in 0..channels.len() {
+                    if skip.get(channel).copied().unwrap_or(true) {
+                        continue;
+                    }
+                    let class = classes
+                        .get(channel)
+                        .and_then(|row| row.get(absolute))
+                        .copied()
+                        .unwrap_or(0);
+                    let book_index = residue
+                        .books
+                        .get(class)
+                        .and_then(|row| row.get(pass))
+                        .copied()
+                        .flatten();
+                    if let Some(book_index) = book_index {
+                        let output = channels
+                            .get_mut(channel)
+                            .ok_or_else(|| Error::damaged("Vorbis residue channel"))?;
+                        decode_partition(
+                            output,
+                            begin.saturating_add(absolute.saturating_mul(residue.partition)),
+                            residue.partition,
+                            residue.kind,
+                            books.get(book_index).ok_or_else(|| Error::damaged("Vorbis residue book"))?,
+                            bits,
+                        )?;
+                    }
                 }
             }
+            partition = partition.saturating_add(count);
         }
     }
     Ok(())
@@ -1096,38 +1087,64 @@ fn decode_residue_type2(
     if begin >= end || residue.partition == 0 {
         return Ok(());
     }
-    let partitions = end.saturating_sub(begin).checked_div(residue.partition).unwrap_or(0);
-    let classes = residue_classifications(residue, books, bits, partitions)?;
+    let partitions = end
+        .saturating_sub(begin)
+        .checked_div(residue.partition)
+        .unwrap_or(0);
+    let classbook = books
+        .get(residue.classbook)
+        .ok_or_else(|| Error::damaged("Vorbis residue-2 classbook"))?;
+    let words = classbook.dimensions;
+    if words == 0 {
+        return Err(Error::damaged("zero-dimensional Vorbis residue-2 classbook"));
+    }
+    let mut classes = vec![0_usize; partitions];
     let mut interleaved = vec![0_f32; actual];
     for pass in 0..8_usize {
-        for partition in 0..partitions {
-            let class = classes.get(partition).copied().unwrap_or(0);
-            let book_index = residue
-                .books
-                .get(class)
-                .and_then(|row| row.get(pass))
-                .copied()
-                .flatten();
-            if let Some(book_index) = book_index {
-                let offset = begin.saturating_add(partition.saturating_mul(residue.partition));
-                decode_partition(
-                    &mut interleaved,
-                    offset,
-                    residue.partition,
-                    1,
-                    books
-                        .get(book_index)
-                        .ok_or_else(|| Error::damaged("Vorbis residue-2 book"))?,
-                    bits,
-                )?;
+        let mut partition = 0_usize;
+        while partition < partitions {
+            let count = words.min(partitions.saturating_sub(partition));
+            if pass == 0 {
+                let mut value = classbook.scalar(bits)?;
+                for reverse in (0..count).rev() {
+                    let index = partition.saturating_add(reverse);
+                    if let Some(slot) = classes.get_mut(index) {
+                        *slot = value.checked_rem(residue.classifications).unwrap_or(0);
+                    }
+                    value = value.checked_div(residue.classifications).unwrap_or(0);
+                }
             }
+            for offset_partition in 0..count {
+                let absolute = partition.saturating_add(offset_partition);
+                let class = classes.get(absolute).copied().unwrap_or(0);
+                let book_index = residue
+                    .books
+                    .get(class)
+                    .and_then(|row| row.get(pass))
+                    .copied()
+                    .flatten();
+                if let Some(book_index) = book_index {
+                    decode_partition(
+                        &mut interleaved,
+                        begin.saturating_add(absolute.saturating_mul(residue.partition)),
+                        residue.partition,
+                        1,
+                        books.get(book_index).ok_or_else(|| Error::damaged("Vorbis residue-2 book"))?,
+                        bits,
+                    )?;
+                }
+            }
+            partition = partition.saturating_add(count);
         }
     }
     for sample in 0..n {
         for channel in 0..channel_count {
             let source = sample.saturating_mul(channel_count).saturating_add(channel);
             let value = interleaved.get(source).copied().unwrap_or(0.0);
-            if let Some(slot) = channels.get_mut(channel).and_then(|items| items.get_mut(sample)) {
+            if let Some(slot) = channels
+                .get_mut(channel)
+                .and_then(|items| items.get_mut(sample))
+            {
                 *slot = value;
             }
         }
