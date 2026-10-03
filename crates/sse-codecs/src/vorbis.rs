@@ -1638,6 +1638,26 @@ mod tests {
     }
 
     #[test]
+    fn menu_select_matches_reference_pcm() {
+        let data = b64(include_str!("../tests/data/menu_select.ogg.b64"));
+        let pcm = decode(&data).unwrap_or_else(|error| panic!("decode menu_select: {error:?}"));
+        assert_eq!(pcm.channels, 1);
+        assert_eq!(pcm.rate, 48_000);
+        assert_eq!(pcm.samples.len(), 23_487);
+        assert_eq!(fnv64(&pcm.samples), 0x388f_979d_1a42_93bb);
+    }
+
+    #[test]
+    fn menu_switch_matches_reference_pcm() {
+        let data = b64(include_str!("../tests/data/menu_switch.ogg.b64"));
+        let pcm = decode(&data).unwrap_or_else(|error| panic!("decode menu_switch: {error:?}"));
+        assert_eq!(pcm.channels, 1);
+        assert_eq!(pcm.rate, 48_000);
+        assert_eq!(pcm.samples.len(), 23_348);
+        assert_eq!(fnv64(&pcm.samples), 0x2d39_9db9_d105_17a4);
+    }
+
+    #[test]
     fn lookup1_examples() {
         assert_eq!(lookup1_values(625, 4), 5);
         assert_eq!(lookup1_values(16, 2), 4);
