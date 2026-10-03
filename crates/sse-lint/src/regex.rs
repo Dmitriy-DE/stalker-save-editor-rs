@@ -839,3 +839,143 @@ impl Regex {
                 let mut slots = vec![None; self.program.capture_slots];
                 if let Some(start) = slots.get_mut(0) {
                     *start = Some(position);
+                }
+                if self
+                    .add_thread(
+                        &mut active,
+                        &mut seen,
+                        self.program.start,
+                        slots,
+                        position,
+                        previous,
+                        next_character,
+                        text.len(),
+                    )
+                    .is_err()
+                {
+                    return None;
+                }
+            }
+
+            self.record_match(&mut active, &mut best);
+            if active.is_empty() {
+                return best.map(|slots| captures_from_slots(&slots));
+            }
+            let Some(character) = next_character else {
+                return best.map(|slots| captures_from_slots(&slots));
+            };
+            let next_position = position.checked_add(character.len_utf8())?;
+            let following = text.get(next_position..).and_then(|tail| tail.chars().next());
+            let mut next_threads = Vec::new();
+            let mut seen = vec![false; state_count];
+            for thread in active {
+                let instruction = self.program.instructions.get(thread.pc)?;
+                if let Instruction::Consume(matcher, Some(next_pc)) = instruction {
+                    if matcher.matches(character, self.program.options.case_insensitive)
+                        && self
+                            .add_thread(
+                                &mut next_threads,
+                                &mut seen,
+                                *next_pc,
+                                thread.slots,
+                                next_position,
+                                Some(character),
+                                following,
+                                text.len(),
+                            )
+                            .is_err()
+                    {
+                        return None;
+                    }
+                }
+            }
+            active = next_threads;
+            previous = Some(character);
+            position = next_position;
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn add_thread(
+        &self,
+        out: &mut Vec<Thread>,
+        seen: &mut [bool],
+        start_pc: usize,
+        slots: Vec<Option<usize>>,
+        position: usize,
+        previous: Option<char>,
+        next: Option<char>,
+        input_len: usize,
+    ) -> Result<()> {
+        let mut stack = vec![(start_pc, slots)];
+        while let Some((pc, mut captures)) = stack.pop() {
+            let Some(was_seen) = seen.get_mut(pc) else {
+                return Err(Error::damaged("regex VM program counter outside program"));
+            };
+            if *was_seen {
+                continue;
+            }
+            *was_seen = true;
+            let instruction = self
+                .program
+                .instructions
+                .get(pc)
+                .ok_or_else(|| Error::damaged("regex VM instruction missing"))?;
+            match instruction {
+                Instruction::Consume(_, _) | Instruction::Match => out.push(Thread { pc, slots: captures }),
+                Instruction::Jump(Some(target)) => stack.push((*target, captures)),
+                Instruction::Split(first, second) => {
+                    if let Some(second_pc) = second {
+                        stack.push((*second_pc, captures.clone()));
+                    }
+                    if let Some(first_pc) = first {
+                        stack.push((*first_pc, captures));
+                    }
+                }
+                Instruction::Save(slot, Some(target)) => {
+                    let capture = captures
+                        .get_mut(*slot)
+                        .ok_or_else(|| Error::damaged("regex capture slot outside vector"))?;
+                    *capture = Some(position);
+                    stack.push((*target, captures));
+                }
+                Instruction::Assert(assertion, Some(target)) => {
+                    if assertion_holds(*assertion, position, previous, next, input_len) {
+                        stack.push((*target, captures));
+                    }
+                }
+                Instruction::Consume(_, None)
+                | Instruction::Jump(None)
+                | Instruction::Save(_, None)
+                | Instruction::Assert(_, None) => {
+                    return Err(Error::damaged("regex VM contains an unpatched instruction"));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn record_match(&self, active: &mut Vec<Thread>, best: &mut Option<Vec<Option<usize>>>) {
+        let match_at = active.iter().position(|thread| {
+            self.program
+                .instructions
+                .get(thread.pc)
+                .is_some_and(|instruction| matches!(instruction, Instruction::Match))
+        });
+        if let Some(index) = match_at {
+            if let Some(thread) = active.get(index) {
+                *best = Some(thread.slots.clone());
+            }
+            active.truncate(index);
+        }
+    }
+}
+
+fn captures_from_slots(slots: &[Option<usize>]) -> Captures {
+    let mut ranges = Vec::new();
+    let mut position = 0_usize;
+    while position < slots.len() {
+        let end_position = position.saturating_add(1);
+        let range = slots
+            .get(position)
+            .copied()
