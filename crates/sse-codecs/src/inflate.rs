@@ -324,7 +324,30 @@ pub fn inflate_zlib(input: &[u8], maximum: usize) -> Result<Vec<u8>> {
     Ok(output)
 }
 
-/// Inflates a raw RFC 1951 DEFLATE stream with an enforced output ceiling.\npub fn inflate_raw(input: &[u8], maximum: usize) -> Result<Vec<u8>> {\n    let mut reader = BitReader::new(input);\n    let mut output = Vec::new();\n    let mut final_block = false;\n    while !final_block {\n        final_block = reader.read_bit()? != 0;\n        match reader.read_bits(2)? {\n            0 => decode_stored(&mut reader, &mut output, maximum)?,\n            1 => { let (literal, distance) = fixed_trees()?; decode_compressed(&mut reader, &literal, &distance, &mut output, maximum)?; }\n            2 => { let (literal, distance) = dynamic_trees(&mut reader)?; decode_compressed(&mut reader, &literal, &distance, &mut output, maximum)?; }\n            _ => return Err(Error::damaged("reserved DEFLATE block type")),\n        }\n    }\n    Ok(output)\n}\n\nfn decode_stored(reader: &mut BitReader<'_>, output: &mut Vec<u8>, maximum: usize) -> Result<()> {
+/// Inflates a raw RFC 1951 DEFLATE stream with an enforced output ceiling.
+pub fn inflate_raw(input: &[u8], maximum: usize) -> Result<Vec<u8>> {
+    let mut reader = BitReader::new(input);
+    let mut output = Vec::new();
+    let mut final_block = false;
+    while !final_block {
+        final_block = reader.read_bit()? != 0;
+        match reader.read_bits(2)? {
+            0 => decode_stored(&mut reader, &mut output, maximum)?,
+            1 => {
+                let (literal, distance) = fixed_trees()?;
+                decode_compressed(&mut reader, &literal, &distance, &mut output, maximum)?;
+            }
+            2 => {
+                let (literal, distance) = dynamic_trees(&mut reader)?;
+                decode_compressed(&mut reader, &literal, &distance, &mut output, maximum)?;
+            }
+            _ => return Err(Error::damaged("reserved DEFLATE block type")),
+        }
+    }
+    Ok(output)
+}
+
+fn decode_stored(reader: &mut BitReader<'_>, output: &mut Vec<u8>, maximum: usize) -> Result<()> {
     reader.align_byte()?;
     let header = reader.take_bytes(4)?;
     let len = u16::from_le_bytes(
