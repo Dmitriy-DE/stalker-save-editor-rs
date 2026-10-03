@@ -8,8 +8,8 @@
 
 mod buffer;
 mod cursor;
-mod error;
 pub mod diff;
+mod error;
 
 pub use buffer::SaveBuffer;
 pub use cursor::Cursor;
