@@ -621,7 +621,7 @@ mod tests {
 
     #[test]
     fn ten_mib_repetitive_meets_ten_mib_per_second_floor() {
-        let data = vec![b'a'; 10 * 1024 * 1024];
+        let data = vec![b'a'; 10_485_760];
         let started = std::time::Instant::now();
         let encoded = compress_raw(&data, Level::Default).unwrap_or_default();
         assert!(
