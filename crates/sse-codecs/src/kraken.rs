@@ -988,9 +988,9 @@ fn read_huff_lengths_new(bits: &mut HeaderBits<'_>, syms: &mut [u8], counts: &mu
     Ok(num_symbols)
 }
 
-fn make_huff_lut(counts: &[usize; 12], syms: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
-    let mut lengths = vec![0_u8; HUFF_LUT];
-    let mut symbols = vec![0_u8; HUFF_LUT];
+fn make_huff_lut(counts: &[usize; 12], syms: &[u8]) -> Result<([u8; HUFF_LUT], [u8; HUFF_LUT])> {
+    let mut lengths = [0_u8; HUFF_LUT];
+    let mut symbols = [0_u8; HUFF_LUT];
     let mut slot = 0_usize;
     for length in 1_usize..=HUFF_BITS {
         let count = counts.get(length).copied().unwrap_or_default();
@@ -1037,92 +1037,170 @@ fn reverse_11(value: usize) -> Result<usize> {
 #[derive(Clone, Debug)]
 struct LsbForward<'a> {
     data: &'a [u8],
-    byte: usize,
-    bit: u8,
+    bit_position: usize,
 }
 impl<'a> LsbForward<'a> {
     fn new(data: &'a [u8]) -> Self {
-        Self { data, byte: 0, bit: 0 }
+        Self { data, bit_position: 0 }
     }
     fn peek(&self, count: u8) -> Result<u32> {
-        let mut clone = self.clone();
-        clone.read(count, true)
+        if count > 32 {
+            return Err(Error::damaged("forward bit peek exceeds 32 bits"));
+        }
+        let byte = self.bit_position.checked_div(8).unwrap_or_default();
+        let shift = u32::try_from(self.bit_position.checked_rem(8).unwrap_or_default())
+            .map_err(|_| Error::damaged("forward bit shift conversion failed"))?;
+        let word = load_forward_word(self.data, byte)?;
+        Ok(u32::try_from(word.checked_shr(shift).unwrap_or_default() & u64::from(u32::MAX)).unwrap_or_default())
     }
     fn consume(&mut self, count: u8) -> Result<()> {
-        let _ = self.read(count, false)?;
+        let end = self
+            .bit_position
+            .checked_add(usize::from(count))
+            .ok_or_else(|| Error::damaged("forward bit position overflow"))?;
+        let available = self
+            .data
+            .len()
+            .checked_mul(8)
+            .ok_or_else(|| Error::damaged("forward bit capacity overflow"))?;
+        if end > available {
+            return Err(Error::damaged("forward bitstream exhausted"));
+        }
+        self.bit_position = end;
         Ok(())
     }
     fn read(&mut self, count: u8, padded: bool) -> Result<u32> {
-        let mut value = 0_u32;
-        for shift in 0..count {
-            let bit_value = match self.data.get(self.byte).copied() {
-                Some(byte) => (byte >> self.bit) & 1,
-                None if padded => 0,
-                None => return Err(Error::damaged("forward bitstream exhausted")),
-            };
-            value |= u32::from(bit_value).checked_shl(u32::from(shift)).unwrap_or_default();
-            self.bit = self.bit.saturating_add(1);
-            if self.bit == 8 {
-                self.bit = 0;
-                self.byte = self
-                    .byte
-                    .checked_add(1)
-                    .ok_or_else(|| Error::damaged("forward bit position overflow"))?;
-            }
+        let value = self.peek(count)?;
+        if padded {
+            self.bit_position = self
+                .bit_position
+                .checked_add(usize::from(count))
+                .ok_or_else(|| Error::damaged("bit position overflow"))?;
+        } else {
+            self.consume(count)?;
         }
-        Ok(value)
+        let mask = if count == 32 {
+            u32::MAX
+        } else {
+            1_u32
+                .checked_shl(u32::from(count))
+                .unwrap_or_default()
+                .saturating_sub(1)
+        };
+        Ok(value & mask)
     }
     fn consumed_ceil(&self) -> usize {
-        self.byte.saturating_add(usize::from(self.bit != 0))
+        self.bit_position.saturating_add(7).checked_div(8).unwrap_or_default()
     }
 }
 
 #[derive(Clone, Debug)]
 struct LsbBackward<'a> {
     data: &'a [u8],
-    byte_from_end: usize,
-    bit: u8,
+    bit_position: usize,
 }
 impl<'a> LsbBackward<'a> {
     fn new(data: &'a [u8]) -> Self {
-        Self {
-            data,
-            byte_from_end: 0,
-            bit: 0,
-        }
+        Self { data, bit_position: 0 }
     }
     fn peek(&self, count: u8) -> Result<u32> {
-        let mut c = self.clone();
-        c.read(count, true)
+        if count > 32 {
+            return Err(Error::damaged("backward bit peek exceeds 32 bits"));
+        }
+        let byte_from_end = self.bit_position.checked_div(8).unwrap_or_default();
+        let shift = u32::try_from(self.bit_position.checked_rem(8).unwrap_or_default())
+            .map_err(|_| Error::damaged("backward bit shift conversion failed"))?;
+        let word = load_backward_word(self.data, byte_from_end)?;
+        Ok(u32::try_from(word.checked_shr(shift).unwrap_or_default() & u64::from(u32::MAX)).unwrap_or_default())
     }
     fn consume(&mut self, count: u8) -> Result<()> {
-        let _ = self.read(count, false)?;
+        let end = self
+            .bit_position
+            .checked_add(usize::from(count))
+            .ok_or_else(|| Error::damaged("backward bit position overflow"))?;
+        let available = self
+            .data
+            .len()
+            .checked_mul(8)
+            .ok_or_else(|| Error::damaged("backward bit capacity overflow"))?;
+        if end > available {
+            return Err(Error::damaged("backward bitstream exhausted"));
+        }
+        self.bit_position = end;
         Ok(())
     }
     fn read(&mut self, count: u8, padded: bool) -> Result<u32> {
-        let mut value = 0_u32;
-        for shift in 0..count {
-            let index = self.data.len().checked_sub(self.byte_from_end.saturating_add(1));
-            let bit_value = match index.and_then(|i| self.data.get(i)).copied() {
-                Some(byte) => (byte >> self.bit) & 1,
-                None if padded => 0,
-                None => return Err(Error::damaged("backward bitstream exhausted")),
-            };
-            value |= u32::from(bit_value).checked_shl(u32::from(shift)).unwrap_or_default();
-            self.bit = self.bit.saturating_add(1);
-            if self.bit == 8 {
-                self.bit = 0;
-                self.byte_from_end = self
-                    .byte_from_end
-                    .checked_add(1)
-                    .ok_or_else(|| Error::damaged("backward bit position overflow"))?;
-            }
+        let value = self.peek(count)?;
+        if padded {
+            self.bit_position = self
+                .bit_position
+                .checked_add(usize::from(count))
+                .ok_or_else(|| Error::damaged("bit position overflow"))?;
+        } else {
+            self.consume(count)?;
         }
-        Ok(value)
+        let mask = if count == 32 {
+            u32::MAX
+        } else {
+            1_u32
+                .checked_shl(u32::from(count))
+                .unwrap_or_default()
+                .saturating_sub(1)
+        };
+        Ok(value & mask)
     }
     fn consumed_ceil(&self) -> usize {
-        self.byte_from_end.saturating_add(usize::from(self.bit != 0))
+        self.bit_position.saturating_add(7).checked_div(8).unwrap_or_default()
     }
+}
+
+fn load_forward_word(data: &[u8], byte: usize) -> Result<u64> {
+    if byte >= data.len() {
+        return Ok(0);
+    }
+    let remaining = data.len().saturating_sub(byte);
+    if remaining >= 8 {
+        let end = byte
+            .checked_add(8)
+            .ok_or_else(|| Error::damaged("forward word range overflow"))?;
+        let bytes = <[u8; 8]>::try_from(
+            data.get(byte..end)
+                .ok_or_else(|| Error::damaged("forward word outside source"))?,
+        )
+        .map_err(|_| Error::damaged("forward word width"))?;
+        return Ok(u64::from_le_bytes(bytes));
+    }
+    let mut bytes = [0_u8; 8];
+    let tail = data
+        .get(byte..)
+        .ok_or_else(|| Error::damaged("forward tail outside source"))?;
+    bytes
+        .get_mut(..tail.len())
+        .ok_or_else(|| Error::damaged("forward tail destination"))?
+        .copy_from_slice(tail);
+    Ok(u64::from_le_bytes(bytes))
+}
+
+fn load_backward_word(data: &[u8], byte_from_end: usize) -> Result<u64> {
+    if byte_from_end >= data.len() {
+        return Ok(0);
+    }
+    let end = data
+        .len()
+        .checked_sub(byte_from_end)
+        .ok_or_else(|| Error::damaged("backward word end underflow"))?;
+    let count = end.min(8);
+    let start = end.saturating_sub(count);
+    let source = data
+        .get(start..end)
+        .ok_or_else(|| Error::damaged("backward word outside source"))?;
+    let mut bytes = [0_u8; 8];
+    let target_start = 8_usize.saturating_sub(source.len());
+    bytes
+        .get_mut(target_start..)
+        .ok_or_else(|| Error::damaged("backward word destination"))?
+        .copy_from_slice(source);
+    Ok(u64::from_be_bytes(bytes))
 }
 
 fn huff_symbol_forward(reader: &mut LsbForward<'_>, lengths: &[u8], symbols: &[u8]) -> Result<u8> {
@@ -1193,7 +1271,7 @@ fn decode_huff_three(stream_a: &[u8], shared: &[u8], output: &mut [u8], lengths:
 fn decode_huffman(source: &[u8], output: &mut [u8], kind: u8) -> Result<()> {
     let mut bits = HeaderBits::new(source)?;
     let mut counts = [0_usize; 12];
-    let mut syms = vec![0_u8; HUFF_SYMBOL_SLOTS];
+    let mut syms = [0_u8; HUFF_SYMBOL_SLOTS];
     let first = bits.read_bit_no_refill()?;
     let num = if first == 0 {
         read_huff_lengths_old(&mut bits, &mut syms, &mut counts)?
@@ -2842,27 +2920,24 @@ fn copy_match_signed(
     offset: i32,
     count: usize,
 ) -> Result<()> {
+    if offset >= 0 {
+        return Err(Error::damaged("Kraken match offset is not negative"));
+    }
+    let distance = usize::try_from(offset.unsigned_abs())
+        .map_err(|_| Error::damaged("Kraken match distance conversion failed"))?;
+    let source = dst
+        .checked_sub(distance)
+        .ok_or_else(|| Error::damaged("match offset before output start"))?;
+    if source < history_start {
+        return Err(Error::damaged("match offset outside available history"));
+    }
     let end = dst
         .checked_add(count)
         .ok_or_else(|| Error::damaged("match output end overflow"))?;
     if end > block_end {
         return Err(Error::damaged("match exceeds output block"));
     }
-    for index in 0..count {
-        let out = dst
-            .checked_add(index)
-            .ok_or_else(|| Error::damaged("match output position overflow"))?;
-        let reference = add_signed(out, offset)?;
-        if reference < history_start || reference >= out {
-            return Err(Error::damaged("match offset outside available history"));
-        }
-        let value = *output
-            .get(reference)
-            .ok_or_else(|| Error::damaged("match source outside output"))?;
-        if let Some(slot) = output.get_mut(out) {
-            *slot = value;
-        }
-    }
+    copy_match_distance(output, *dst, end, distance)?;
     *dst = end;
     Ok(())
 }
@@ -2881,6 +2956,7 @@ fn add_signed(base: usize, delta: i32) -> Result<usize> {
         .ok_or_else(|| Error::damaged("positive offset overflow"))
     }
 }
+
 fn copy_match(output: &mut [u8], dst: usize, count: usize, distance: usize) -> Result<()> {
     if distance == 0 || distance > dst {
         return Err(Error::damaged("whole-match distance outside output history"));
@@ -2891,19 +2967,43 @@ fn copy_match(output: &mut [u8], dst: usize, count: usize, distance: usize) -> R
     if end > output.len() {
         return Err(Error::damaged("whole-match exceeds output"));
     }
-    for index in 0..count {
-        let out = dst
-            .checked_add(index)
-            .ok_or_else(|| Error::damaged("whole-match output position overflow"))?;
-        let from = out
-            .checked_sub(distance)
-            .ok_or_else(|| Error::damaged("whole-match source before output"))?;
+    copy_match_distance(output, dst, end, distance)
+}
+
+fn copy_match_distance(output: &mut [u8], mut dst: usize, end: usize, distance: usize) -> Result<()> {
+    if distance == 0 || distance > dst {
+        return Err(Error::damaged("match distance outside output history"));
+    }
+    if end > output.len() || dst > end {
+        return Err(Error::damaged("match destination outside output"));
+    }
+    if distance == 1 {
         let value = *output
-            .get(from)
-            .ok_or_else(|| Error::damaged("whole-match source outside output"))?;
-        if let Some(slot) = output.get_mut(out) {
-            *slot = value;
-        }
+            .get(dst.saturating_sub(1))
+            .ok_or_else(|| Error::damaged("single-byte match source outside output"))?;
+        output
+            .get_mut(dst..end)
+            .ok_or_else(|| Error::damaged("single-byte match destination outside output"))?
+            .fill(value);
+        return Ok(());
+    }
+    let source_start = dst
+        .checked_sub(distance)
+        .ok_or_else(|| Error::damaged("match source before output"))?;
+    let mut available = distance;
+    while dst < end {
+        let remaining = end.saturating_sub(dst);
+        let chunk = remaining.min(available);
+        let source_end = source_start
+            .checked_add(chunk)
+            .ok_or_else(|| Error::damaged("match source end overflow"))?;
+        output.copy_within(source_start..source_end, dst);
+        dst = dst
+            .checked_add(chunk)
+            .ok_or_else(|| Error::damaged("match destination overflow"))?;
+        available = available
+            .checked_add(chunk)
+            .ok_or_else(|| Error::damaged("match history growth overflow"))?;
     }
     Ok(())
 }
