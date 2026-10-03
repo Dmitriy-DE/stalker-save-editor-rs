@@ -298,7 +298,7 @@ impl<'a> WireReader<'a> {
     /// # Errors
     /// Returns [`Error::Damaged`] on truncated input.
     pub fn uint(&mut self) -> Result<u32> {
-        Ok(u32::from_ne_bytes(self.array()?))
+        Ok(u32::from_ne_bytes(self.fixed_array()?))
     }
 
     /// Reads a fixed-point value.
