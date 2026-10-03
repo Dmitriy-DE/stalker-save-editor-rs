@@ -25,3 +25,6 @@ pub mod vdf;
 pub mod png;
 /// SHA-256 (FIPS 180-4).
 pub mod sha256;
+
+/// Oodle Kraken decompressor used by STALKER 2 saves.
+pub mod kraken;
