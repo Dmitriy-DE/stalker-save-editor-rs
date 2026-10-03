@@ -1511,25 +1511,25 @@ impl Icon {
     #[must_use]
     pub const fn path_data(self) -> &'static str {
         match self {
-            Self::Saves => "M6 3h11l3 3v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z M8 3v6h8V3 M8 15h8 M8 18h6",
-            Self::Inventory => "M4 7h16v13H4z M8 7V4h8v3 M8 11h3v3H8z M13 11h3v3h-3z M8 16h3v2H8z M13 16h3v2h-3z",
+            Self::Saves => "M5 8h13a2 2 0 0 1 2 2v9H7a2 2 0 0 1-2-2z M7 5h11a2 2 0 0 1 2 2v1 M7 5a2 2 0 0 0-2 2v1 M9 2h9a2 2 0 0 1 2 2v1 M9 2a2 2 0 0 0-2 2v1",
+            Self::Inventory => "M7 8V7a5 5 0 0 1 10 0v1 M5 10a3 3 0 0 1 3-3h8a3 3 0 0 1 3 3v9a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2z M8 13h8v5H8z M5 12H3v5h2 M19 12h2v5h-2",
             Self::Stash => "M3 8h18v12H3z M5 8l2-4h10l2 4 M8 12h8 M10 16h4",
             Self::MapTransitions => "M4 5l5-2 6 2 5-2v16l-5 2-6-2-5 2z M9 3v16 M15 5v16 M12 10h6 M15 7l3 3-3 3",
             Self::Factions => "M8 10a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M16 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M3 20c0-4 2-7 5-7s5 3 5 7 M11 20c0-3 2-6 5-6s5 3 5 6",
-            Self::Backup => "M5 7h14v13H5z M8 7V4h8v3 M8 15a4 4 0 1 0 1-3 M8 12v4h4",
-            Self::Compare => "M7 4v16 M17 4v16 M4 8h6 M14 8h6 M4 16h6 M14 16h6 M8 5l-2 3 2 3 M16 13l2 3-2 3",
-            Self::Timeline => "M4 6h16 M4 12h16 M4 18h16 M8 3v6 M14 9v6 M18 15v6",
+            Self::Backup => "M5 4h11l3 3v13H5z M8 4v5h7V4 M8 16h5 M20 15a4 4 0 1 1-4-4 M20 11v4h-4",
+            Self::Compare => "M4 4h7v16H4z M13 4h7v16h-7z M6 9h3 M9 9l-2-2 M9 9l-2 2 M18 15h-3 M15 15l2-2 M15 15l2 2",
+            Self::Timeline => "M6 3v18 M6 6h.01 M10 6h8 M6 12h.01 M10 12h6 M6 18h.01 M10 18h8",
             Self::Doctor => "M9 4h6v5h5v6h-5v5H9v-5H4V9h5z",
             Self::Games => "M7 9h10a4 4 0 0 1 4 4v3a3 3 0 0 1-5 2l-2-2h-4l-2 2a3 3 0 0 1-5-2v-3a4 4 0 0 1 4-4z M7 13h4 M9 11v4 M16 12h.01 M18 14h.01",
-            Self::Fixes => "M5 5l4 4 M15 15l4 4 M14 5a5 5 0 0 0 5 5l-9 9a3 3 0 0 1-4-4l9-9a5 5 0 0 0-1-1z",
-            Self::Wrench => "M14 5a5 5 0 0 0 5 5l-9 9a3 3 0 0 1-4-4l9-9 M16 4l-3 3 4 4 3-3",
+            Self::Fixes => "M5 15L15 5a4 4 0 0 1 6 6L11 21a4 4 0 0 1-6-6z M9 11l4 4 M11 9l4 4 M9 15h.01 M15 9h.01",
+            Self::Wrench => "M21 4a6 6 0 0 1-8 8L7 18a3 3 0 1 1-4-4l6-6a6 6 0 0 1 8-6l-4 4 3 3 5-5z",
             Self::Companion => "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8z M5 21c0-5 3-7 7-7s7 2 7 7 M4 9l-2 2 2 2 M20 9l2 2-2 2",
             Self::Trophy => "M7 4h10v5a5 5 0 0 1-10 0z M7 6H4v2a4 4 0 0 0 4 4 M17 6h3v2a4 4 0 0 1-4 4 M12 14v4 M8 21h8 M10 18h4",
             Self::Cloud => "M7 18h11a4 4 0 0 0 0-8 6 6 0 0 0-11-2 5 5 0 0 0 0 10z",
             Self::Book => "M4 5a3 3 0 0 1 3-2h5v17H7a3 3 0 0 0-3 2z M20 5a3 3 0 0 0-3-2h-5v17h5a3 3 0 0 1 3 2z",
             Self::ShieldCapabilities => "M12 3l8 3v5c0 5-3 8-8 10-5-2-8-5-8-10V6z M8 12l3 3 5-6",
             Self::Update => "M20 7v5h-5 M4 17v-5h5 M6 9a7 7 0 0 1 12-3l2 2 M18 15a7 7 0 0 1-12 3l-2-2",
-            Self::Settings => "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z M12 3v2 M12 19v2 M3 12h2 M19 12h2 M5.6 5.6L7 7 M17 17l1.4 1.4 M18.4 5.6L17 7 M7 17l-1.4 1.4",
+            Self::Settings => "M10 2h4l.7 2.4 2 .8 2.2 -1.2 2.8 2.8 -1.2 2.2 .8 2 2.4 .7v4l-2.4 .7-.8 2 1.2 2.2 -2.8 2.8 -2.2 -1.2 -2 .8L14 22h-4l-.7-2.4-2-.8L5.1 20l-2.8 -2.8L3.5 15l-.8-2L2 12.3v-.6L2.7 11l.8-2 -1.2 -2.2L5.1 4l2.2 1.2 2-.8z M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z",
             Self::Search => "M10 4a6 6 0 1 0 0 12 6 6 0 0 0 0-12z M14.5 14.5L20 20",
             Self::Add => "M12 5v14 M5 12h14",
             Self::Delete => "M5 7h14 M9 7V4h6v3 M7 7l1 13h8l1-13 M10 10v7 M14 10v7",
@@ -1764,6 +1764,26 @@ mod tests {
             assert!(
                 stroke.as_ref().is_ok_and(|value| !value.segments.is_empty()),
                 "{icon:?}: empty stroke"
+            );
+        }
+    }
+
+    #[test]
+    fn all_icon_strokes_stay_inside_the_24_by_24_box() {
+        for icon in ALL_ICONS {
+            let stroke = icon
+                .path()
+                .and_then(|value| value.stroke_to_fill(Transform::identity(), 0.1, StrokeStyle::icon()));
+            let inside = stroke.as_ref().is_ok_and(|value| {
+                value.segments.iter().all(|segment| {
+                    [segment.from, segment.to].into_iter().all(|point| {
+                        (0.0..=24.0).contains(&point.x) && (0.0..=24.0).contains(&point.y)
+                    })
+                })
+            });
+            assert!(
+                inside,
+                "{icon:?}: stroke extends outside the 24x24 box: {stroke:?}"
             );
         }
     }
