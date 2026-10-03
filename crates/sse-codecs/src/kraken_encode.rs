@@ -3,7 +3,6 @@
 //! The LZ parser uses bounded hash chains. Tables are emitted as Kraken entropy
 //! arrays; incompressible sub-blocks fall back to the format's raw LZ chunk.
 
-use crate::kraken::decompress_into;
 use sse_core::{Error, Result};
 
 const BLOCK: usize = 0x40000;
@@ -48,7 +47,7 @@ impl Bits {
             .checked_add(64)
             .ok_or_else(|| Error::damaged("Kraken length overflow"))?;
         let log = 31_u32.saturating_sub(biased.leading_zeros());
-        if log < 6 || log > 18 {
+        if !(6..=18).contains(&log) {
             return Err(Error::Refused(
                 "Kraken extended length outside encoder range".to_owned(),
             ));
@@ -167,7 +166,7 @@ fn distance_code(distance: usize) -> Result<(u8, u32, u32)> {
     if !(8..=15).contains(&high) {
         return Err(Error::damaged("Kraken distance high bits"));
     }
-    let low = if width == 0 { 0 } else { q & ((1_u32 << width) - 1) };
+    let low = if width == 0 { 0 } else { q & 1_u32.checked_shl(width).unwrap_or_default().saturating_sub(1) };
     let packed = width
         .checked_mul(8)
         .and_then(|v| v.checked_add(high.saturating_sub(8)))
@@ -367,13 +366,14 @@ pub fn compress(input: &[u8]) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kraken::decompress_into;
     use std::fs;
     use std::path::Path;
 
     fn round_trip(data: &[u8]) {
-        let packed = compress(data).unwrap();
+        let packed = compress(data).unwrap_or_else(|error| panic!("{error:?}"));
         let mut decoded = vec![0_u8; data.len()];
-        decompress_into(&packed, &mut decoded).unwrap();
+        decompress_into(&packed, &mut decoded).unwrap_or_else(|error| panic!("{error:?}"));
         assert_eq!(decoded, data);
     }
 
@@ -391,7 +391,7 @@ mod tests {
             .join("..")
             .join("fixtures")
             .join("kraken");
-        let manifest = fs::read_to_string(root.join("manifest.json")).unwrap();
+        let manifest = fs::read_to_string(root.join("manifest.json")).unwrap_or_else(|error| panic!("{error:?}"));
         let mut seen = std::collections::BTreeSet::new();
         for line in manifest.lines() {
             let Some(raw) = line.trim().strip_prefix("\"raw\": \"") else {
@@ -401,7 +401,7 @@ mod tests {
                 continue;
             };
             if seen.insert(name.to_owned()) {
-                round_trip(&fs::read(root.join(name)).unwrap());
+                round_trip(&fs::read(root.join(name)).unwrap_or_else(|error| panic!("{error:?}")));
             }
         }
     }
