@@ -2,6 +2,8 @@
 
 /// Text field editing model (X27).
 pub mod edit;
+/// Measure-and-arrange layout over an arena (X26).
+pub mod layout;
 /// Virtual list and table model (X28).
 pub mod list;
 /// Numbers, sizes, dates and plural forms in the 15 interface languages (X23).
