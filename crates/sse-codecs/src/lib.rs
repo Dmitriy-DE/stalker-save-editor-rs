@@ -1,5 +1,7 @@
 //! Codecs and parsers written in this repository. No third-party code.
 
+/// Block-compressed texture decoders (BC1/3/4/5/7).
+pub mod bc;
 /// LZO1X as the X-Ray engine uses it for saves.
 pub mod lzo1x;
 
