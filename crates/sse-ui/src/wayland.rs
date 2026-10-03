@@ -726,9 +726,7 @@ impl<T: Transport> Client<T> {
     /// Creates a `wl_surface` from a compositor.
     pub fn create_surface(&mut self, compositor: ObjectId) -> Result<ObjectId> {
         let compositor_info = self.objects.require(compositor, Interface::WlCompositor)?;
-        let id = self
-            .objects
-            .allocate(Interface::WlSurface, compositor_info.version)?;
+        let id = self.objects.allocate(Interface::WlSurface, compositor_info.version)?;
         let mut writer = WireWriter::new(compositor, 0);
         writer.new_id(id);
         self.send(writer.finish()?)?;
@@ -867,9 +865,7 @@ impl<T: Transport> Client<T> {
     /// Creates an `xdg_toplevel` role for an `xdg_surface`.
     pub fn xdg_get_toplevel(&mut self, xdg_surface: ObjectId) -> Result<ObjectId> {
         let surface_info = self.objects.require(xdg_surface, Interface::XdgSurface)?;
-        let id = self
-            .objects
-            .allocate(Interface::XdgToplevel, surface_info.version)?;
+        let id = self.objects.allocate(Interface::XdgToplevel, surface_info.version)?;
         let mut writer = WireWriter::new(xdg_surface, 1);
         writer.new_id(id);
         self.send(writer.finish()?)?;
@@ -949,12 +945,8 @@ impl<T: Transport> Client<T> {
 
     /// Creates a `wl_data_source` used to own clipboard text.
     pub fn data_create_source(&mut self, manager: ObjectId) -> Result<ObjectId> {
-        let manager_info = self
-            .objects
-            .require(manager, Interface::WlDataDeviceManager)?;
-        let id = self
-            .objects
-            .allocate(Interface::WlDataSource, manager_info.version)?;
+        let manager_info = self.objects.require(manager, Interface::WlDataDeviceManager)?;
+        let id = self.objects.allocate(Interface::WlDataSource, manager_info.version)?;
         let mut writer = WireWriter::new(manager, 0);
         writer.new_id(id);
         self.send(writer.finish()?)?;
@@ -963,13 +955,9 @@ impl<T: Transport> Client<T> {
 
     /// Creates a seat-bound data device.
     pub fn data_get_device(&mut self, manager: ObjectId, seat: ObjectId) -> Result<ObjectId> {
-        let manager_info = self
-            .objects
-            .require(manager, Interface::WlDataDeviceManager)?;
+        let manager_info = self.objects.require(manager, Interface::WlDataDeviceManager)?;
         self.objects.require(seat, Interface::WlSeat)?;
-        let id = self
-            .objects
-            .allocate(Interface::WlDataDevice, manager_info.version)?;
+        let id = self.objects.allocate(Interface::WlDataDevice, manager_info.version)?;
         let mut writer = WireWriter::new(manager, 1);
         writer.new_id(id);
         writer.object(Some(seat));
@@ -1021,8 +1009,7 @@ impl<T: Transport> Client<T> {
                 Ok(Event::DisplayDeleteId(raw))
             }
             Event::DataOfferCreated { id } => {
-                self.objects
-                    .register_server(id, Interface::WlDataOffer, info.version)?;
+                self.objects.register_server(id, Interface::WlDataOffer, info.version)?;
                 Ok(Event::DataOfferCreated { id })
             }
             other => Ok(other),
@@ -2486,5 +2473,4 @@ mod tests {
         let level3 = KeyModifiers::from_xkb_masks(0x80, 0, 0, 0);
         assert_eq!(map.character_from_evdev(41, level3), Some('`'));
     }
-
 }
