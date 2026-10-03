@@ -559,3 +559,143 @@ impl Parser {
                 Ok(Ast::Assertion(Assertion::Start))
             }
             '$' => {
+                self.bump()?;
+                Ok(Ast::Assertion(Assertion::End))
+            }
+            '\\' => self.parse_escape(false),
+            '*' | '+' | '?' | '{' | '}' | ')' | '|' => Err(self.error("regex quantifier or delimiter has no atom")),
+            literal => {
+                self.bump()?;
+                Ok(Ast::Atom(Matcher::Literal(literal)))
+            }
+        }
+    }
+
+    fn parse_group(&mut self) -> Result<Ast> {
+        self.expect('(')?;
+        let capturing = if self.peek() == Some('?') {
+            self.bump()?;
+            if self.peek() == Some(':') {
+                self.bump()?;
+                false
+            } else {
+                return Err(self.error("only non-capturing (?:...) group syntax is supported after ?"));
+            }
+        } else {
+            true
+        };
+        let group = if capturing {
+            self.capture_count = self
+                .capture_count
+                .checked_add(1)
+                .ok_or_else(|| self.error("regex capture count overflow"))?;
+            if self.capture_count >= MAX_CAPTURES {
+                return Err(Error::Refused("regex has too many capture groups".to_owned()));
+            }
+            Some(self.capture_count)
+        } else {
+            None
+        };
+        let node = self.parse_alternation()?;
+        self.expect(')')?;
+        if let Some(group_index) = group {
+            Ok(Ast::Capture {
+                group: group_index,
+                node: Box::new(node),
+            })
+        } else {
+            Ok(node)
+        }
+    }
+
+    fn parse_escape(&mut self, in_class: bool) -> Result<Ast> {
+        self.expect('\\')?;
+        let escaped = self
+            .peek()
+            .ok_or_else(|| self.error("regex escape is truncated"))?;
+        self.bump()?;
+        let class = |term: ClassTerm, negated: bool| {
+            Ast::Atom(Matcher::Class(CharClass {
+                negated,
+                terms: vec![term],
+            }))
+        };
+        let ast = match escaped {
+            'd' => class(ClassTerm::Digit, false),
+            'D' => class(ClassTerm::Digit, true),
+            's' => class(ClassTerm::Space, false),
+            'S' => class(ClassTerm::Space, true),
+            'w' => class(ClassTerm::Word, false),
+            'W' => class(ClassTerm::Word, true),
+            'b' if !in_class => Ast::Assertion(Assertion::WordBoundary),
+            'B' if !in_class => Ast::Assertion(Assertion::NotWordBoundary),
+            'n' => Ast::Atom(Matcher::Literal('\n')),
+            'r' => Ast::Atom(Matcher::Literal('\r')),
+            't' => Ast::Atom(Matcher::Literal('\t')),
+            other => Ast::Atom(Matcher::Literal(other)),
+        };
+        Ok(ast)
+    }
+
+    fn parse_class(&mut self) -> Result<CharClass> {
+        self.expect('[')?;
+        let negated = if self.peek() == Some('^') {
+            self.bump()?;
+            true
+        } else {
+            false
+        };
+        let mut terms = Vec::new();
+        let mut first = true;
+        while let Some(character) = self.peek() {
+            if character == ']' && !first {
+                self.bump()?;
+                if terms.is_empty() {
+                    return Err(self.error("regex character class is empty"));
+                }
+                return Ok(CharClass { negated, terms });
+            }
+            first = false;
+            let left = self.parse_class_term()?;
+            if self.peek() == Some('-') {
+                let after_dash = self
+                    .position
+                    .checked_add(1)
+                    .ok_or_else(|| self.error("regex class cursor overflow"))?;
+                if self.chars.get(after_dash).copied().is_some_and(|next| next != ']') {
+                    self.bump()?;
+                    let right = self.parse_class_term()?;
+                    match (left, right) {
+                        (ClassTerm::Range(start, start_end), ClassTerm::Range(end, end_end))
+                            if start == start_end && end == end_end =>
+                        {
+                            terms.push(ClassTerm::Range(start, end));
+                        }
+                        _ => return Err(self.error("regex ranges require literal endpoints")),
+                    }
+                    continue;
+                }
+            }
+            terms.push(left);
+        }
+        Err(self.error("unterminated regex character class"))
+    }
+
+    fn parse_class_term(&mut self) -> Result<ClassTerm> {
+        let character = self
+            .peek()
+            .ok_or_else(|| self.error("regex character class is truncated"))?;
+        if character != '\\' {
+            self.bump()?;
+            return Ok(ClassTerm::Range(character, character));
+        }
+        self.bump()?;
+        let escaped = self
+            .peek()
+            .ok_or_else(|| self.error("regex class escape is truncated"))?;
+        self.bump()?;
+        match escaped {
+            'd' => Ok(ClassTerm::Digit),
+            's' => Ok(ClassTerm::Space),
+            'w' => Ok(ClassTerm::Word),
+            'n' => Ok(ClassTerm::Range('\n', '\n')),
