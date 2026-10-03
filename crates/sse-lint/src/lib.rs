@@ -23,6 +23,7 @@ pub mod globals;
 pub mod infos;
 pub mod lexer;
 pub mod logic_refs;
+pub mod lua;
 pub mod models;
 pub mod module_calls;
 pub mod regex;
