@@ -10,3 +10,6 @@ pub mod raster;
 pub mod text;
 /// X11 core protocol, MIT-SHM, XKB and clipboard encoding over a transport trait (X11).
 pub mod x11;
+
+/// SVG paths, stroke expansion and interface icons (X25).
+pub mod path;
