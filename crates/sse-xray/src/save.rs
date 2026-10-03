@@ -600,7 +600,8 @@ fn read_placement(raw: &[u8], record: &ObjectRecord) -> Result<Option<String>> {
         1 => {
             let slot = (packed >> 4) & 0x3F;
             let base_slot = (packed >> 10) & 0x3F;
-            if slot < 14 && base_slot < 14 {
+            // Slot 0 is not a slot: C# (`XRayAddWriter.TryReadPlacement`) requires 1..14 for both.
+            if (1..14).contains(&slot) && (1..14).contains(&base_slot) {
                 Ok(Some("slot".to_owned()))
             } else {
                 Ok(None)
