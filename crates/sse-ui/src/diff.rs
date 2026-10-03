@@ -586,8 +586,8 @@ mod tests {
     fn sixty_generated_patch_cases_round_trip() {
         for case in 0_u8..60 {
             let next = case.saturating_add(1);
-            let old = format!("head\\r\\nvalue={case}\\r\\ntail");
-            let new = format!("head\\r\\nvalue={next}\\r\\ntail");
+            let old = format!("head\r\nvalue={case}\r\ntail");
+            let new = format!("head\r\nvalue={next}\r\ntail");
             let hunks = unified_hunks(old.as_bytes(), new.as_bytes(), 1).unwrap_or_default();
             assert_eq!(
                 apply_hunks(old.as_bytes(), &hunks).ok().as_deref(),
@@ -601,7 +601,7 @@ mod tests {
         let target = 1_048_576_usize;
         let mut old = Vec::with_capacity(target);
         while old.len() < target {
-            old.extend_from_slice(b"0123456789abcdef0123456789abcdef\\r\\n");
+            old.extend_from_slice(b"0123456789abcdef0123456789abcdef\r\n");
         }
         old.truncate(target);
         let mut new = old.clone();
