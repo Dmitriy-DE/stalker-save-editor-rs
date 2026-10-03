@@ -7,11 +7,11 @@ pub mod lzo1x;
 pub mod lzhuf;
 
 /// IEEE CRC-32 used by archive and container formats.
-pub mod crc32;
+pub mod crc32;\n/// Raw DEFLATE compressor.\npub mod deflate;
 /// Safe OpenType/TrueType parsing and glyph coverage rasterisation.
 pub mod font;
 /// Zlib/DEFLATE decoder used by PNG and package tooling.
-pub mod inflate;
+pub mod inflate;\n/// ZIP reader and reproducible writer.\npub mod zip;
 /// Strict streaming RFC 8259 JSON reader and writer.
 pub mod json;
 /// Windows minidump reader for crash diagnostics.
