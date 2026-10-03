@@ -4,9 +4,10 @@
 use std::process::ExitCode;
 
 mod fixes;
+mod lint;
 mod update;
 
-const USAGE: &str = "Usage: stalker-save <version|fixes|update|info|inventory|edit> ...\n\
+const USAGE: &str = "Usage: stalker-save <version|fixes|update|lint|info|inventory|edit> ...\n\
 Exit codes: 0 done, 2 wrong arguments, 3 refused (unsupported or unsafe), 4 unreadable or damaged input, 5 file or system error.";
 
 fn main() -> ExitCode {
@@ -19,6 +20,11 @@ fn main() -> ExitCode {
         Some("fixes") => {
             let rest = arguments.get(1..).unwrap_or_default();
             let code = fixes::run_fixes(rest);
+            ExitCode::from(code as u8)
+        }
+        Some("lint") => {
+            let rest = arguments.get(1..).unwrap_or_default();
+            let code = lint::run_lint(rest);
             ExitCode::from(code as u8)
         }
         Some("update") => {

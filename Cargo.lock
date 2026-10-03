@@ -15,8 +15,10 @@ dependencies = [
 name = "sse-cli"
 version = "2.0.0-dev"
 dependencies = [
+ "sse-content",
  "sse-core",
  "sse-fixes",
+ "sse-lint",
  "sse-update",
 ]
 
@@ -47,6 +49,16 @@ dependencies = [
  "sse-codecs",
  "sse-content",
  "sse-core",
+]
+
+[[package]]
+name = "sse-lint"
+version = "2.0.0-dev"
+dependencies = [
+ "sse-codecs",
+ "sse-content",
+ "sse-core",
+ "sse-fixes",
 ]
 
 [[package]]
