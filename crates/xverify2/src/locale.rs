@@ -321,7 +321,7 @@ pub fn format_relative(out: &mut String, locale: Locale, value: i64, unit: Relat
             format_number(out, locale, value, None)?;
             out.push(' ');
             out.push_str(ja_relative(unit));
-            out.push_str("前");
+            out.push('前');
             Ok(())
         }
         Locale::Ko => {
@@ -333,7 +333,7 @@ pub fn format_relative(out: &mut String, locale: Locale, value: i64, unit: Relat
         Locale::ZhCn | Locale::ZhTw => {
             format_number(out, locale, value, None)?;
             out.push_str(zh_relative(locale, unit));
-            out.push_str(if locale == Locale::ZhCn { "前" } else { "前" });
+            out.push('前');
             Ok(())
         }
     }

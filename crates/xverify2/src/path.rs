@@ -126,9 +126,21 @@ pub enum Verb {
     /// Straight line.
     Line(Point),
     /// Quadratic Bézier.
-    Quad { ctrl: Point, to: Point },
+    Quad {
+        /// Control point.
+        ctrl: Point,
+        /// End point.
+        to: Point,
+    },
     /// Cubic Bézier.
-    Cubic { ctrl1: Point, ctrl2: Point, to: Point },
+    Cubic {
+        /// First control point.
+        ctrl1: Point,
+        /// Second control point.
+        ctrl2: Point,
+        /// End point.
+        to: Point,
+    },
     /// Closes the current subpath.
     Close,
 }
@@ -571,8 +583,8 @@ fn arc_to_cubics(
         let t2 = t1 + step;
         let (s1, c1) = t1.sin_cos();
         let (s2, c2) = t2.sin_cos();
-        let p1 = ellipse_point(cx, cy, rx, ry, cos_phi, sin_phi, c1, s1);
-        let p2 = ellipse_point(cx, cy, rx, ry, cos_phi, sin_phi, c2, s2);
+        let p1 = ellipse_point(Point::new(cx, cy), Point::new(rx, ry), Point::new(cos_phi, sin_phi), c1, s1);
+        let p2 = ellipse_point(Point::new(cx, cy), Point::new(rx, ry), Point::new(cos_phi, sin_phi), c2, s2);
         let d1 = ellipse_tangent(rx, ry, cos_phi, sin_phi, c1, s1);
         let d2 = ellipse_tangent(rx, ry, cos_phi, sin_phi, c2, s2);
         let ctrl1 = Point::new(p1.x + alpha * d1.x, p1.y + alpha * d1.y);
@@ -584,8 +596,11 @@ fn arc_to_cubics(
     }
     Ok(cubics)
 }
-fn ellipse_point(cx: f32, cy: f32, rx: f32, ry: f32, cos: f32, sin: f32, ct: f32, st: f32) -> Point {
-    Point::new(cx + cos * rx * ct - sin * ry * st, cy + sin * rx * ct + cos * ry * st)
+fn ellipse_point(center: Point, radii: Point, rotation: Point, ct: f32, st: f32) -> Point {
+    Point::new(
+        center.x + rotation.x * radii.x * ct - rotation.y * radii.y * st,
+        center.y + rotation.y * radii.x * ct + rotation.x * radii.y * st,
+    )
 }
 fn ellipse_tangent(rx: f32, ry: f32, cos: f32, sin: f32, ct: f32, st: f32) -> Point {
     Point::new(-cos * rx * st - sin * ry * ct, -sin * rx * st + cos * ry * ct)

@@ -122,76 +122,171 @@ pub struct Message {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
     /// Registry advertised a global.
-    RegistryGlobal { name: u32, interface: String, version: u32 },
+    RegistryGlobal {
+        /// Server-assigned global name.
+        name: u32,
+        /// Advertised interface name.
+        interface: String,
+        /// Advertised interface version.
+        version: u32,
+    },
     /// Registry removed a global.
-    RegistryGlobalRemove { name: u32 },
+    RegistryGlobalRemove {
+        /// Removed global name.
+        name: u32,
+    },
     /// Callback completed.
-    CallbackDone { callback_data: u32 },
+    CallbackDone {
+        /// Callback-specific completion data.
+        callback_data: u32,
+    },
     /// `xdg_wm_base.ping`.
-    XdgPing { serial: u32 },
+    XdgPing {
+        /// Ping serial to return in pong.
+        serial: u32,
+    },
     /// `xdg_surface.configure`.
-    XdgSurfaceConfigure { serial: u32 },
+    XdgSurfaceConfigure {
+        /// Configure serial to acknowledge.
+        serial: u32,
+    },
     /// `xdg_toplevel.configure`.
-    XdgToplevelConfigure { width: i32, height: i32, states: Vec<u8> },
+    XdgToplevelConfigure {
+        /// Suggested width in surface coordinates.
+        width: i32,
+        /// Suggested height in surface coordinates.
+        height: i32,
+        /// Packed array of toplevel state values.
+        states: Vec<u8>,
+    },
     /// Compositor requested that the toplevel close.
     XdgToplevelClose,
     /// Fractional scale preference in units of 1/120.
-    FractionalScalePreferred { scale_120: u32 },
+    FractionalScalePreferred {
+        /// Preferred scale multiplied by 120.
+        scale_120: u32,
+    },
     /// Seat capabilities bitset.
-    SeatCapabilities { capabilities: u32 },
+    SeatCapabilities {
+        /// Wayland seat capability bits.
+        capabilities: u32,
+    },
     /// Seat name.
-    SeatName { name: String },
+    SeatName {
+        /// Human-readable seat name.
+        name: String,
+    },
     /// Keyboard keymap fd and byte size.
-    KeyboardKeymap { format: u32, fd: FdHandle, size: u32 },
+    KeyboardKeymap {
+        /// Keymap format enum value.
+        format: u32,
+        /// Opaque descriptor handle carrying the keymap.
+        fd: FdHandle,
+        /// Number of keymap bytes available through the descriptor.
+        size: u32,
+    },
     /// Keyboard focus entered a surface.
     KeyboardEnter {
+        /// Event serial.
         serial: u32,
+        /// Surface receiving keyboard focus.
         surface: ObjectId,
+        /// Packed array of currently pressed key codes.
         keys: Vec<u8>,
     },
     /// Keyboard focus left a surface.
-    KeyboardLeave { serial: u32, surface: ObjectId },
+    KeyboardLeave {
+        /// Event serial.
+        serial: u32,
+        /// Surface losing keyboard focus.
+        surface: ObjectId,
+    },
     /// Key press or release.
     KeyboardKey {
+        /// Event serial.
         serial: u32,
+        /// Event timestamp in compositor units.
         time: u32,
+        /// Linux input key code reported by Wayland.
         key: u32,
+        /// Key state enum value.
         state: u32,
     },
     /// Keyboard modifier masks and group.
     KeyboardModifiers {
+        /// Event serial.
         serial: u32,
+        /// Depressed modifier mask.
         depressed: u32,
+        /// Latched modifier mask.
         latched: u32,
+        /// Locked modifier mask.
         locked: u32,
+        /// Active keyboard layout group.
         group: u32,
     },
     /// Keyboard repeat information.
-    KeyboardRepeatInfo { rate: i32, delay: i32 },
+    KeyboardRepeatInfo {
+        /// Repeat rate in characters per second; zero disables repeat.
+        rate: i32,
+        /// Repeat delay in milliseconds.
+        delay: i32,
+    },
     /// Pointer entered a surface.
     PointerEnter {
+        /// Event serial.
         serial: u32,
+        /// Surface receiving pointer focus.
         surface: ObjectId,
+        /// Surface-local X coordinate.
         x: Fixed,
+        /// Surface-local Y coordinate.
         y: Fixed,
     },
     /// Pointer moved.
-    PointerMotion { time: u32, x: Fixed, y: Fixed },
+    PointerMotion {
+        /// Event timestamp in compositor units.
+        time: u32,
+        /// Surface-local X coordinate.
+        x: Fixed,
+        /// Surface-local Y coordinate.
+        y: Fixed,
+    },
     /// Pointer button changed.
     PointerButton {
+        /// Event serial.
         serial: u32,
+        /// Event timestamp in compositor units.
         time: u32,
+        /// Linux input button code.
         button: u32,
+        /// Button state enum value.
         state: u32,
     },
     /// Pointer axis changed.
-    PointerAxis { time: u32, axis: u32, value: Fixed },
+    PointerAxis {
+        /// Event timestamp in compositor units.
+        time: u32,
+        /// Axis enum value.
+        axis: u32,
+        /// Signed fixed-point axis delta.
+        value: Fixed,
+    },
     /// Data device announced an offer object.
-    DataOffer { offer: ObjectId },
+    DataOffer {
+        /// Newly announced data-offer object.
+        offer: ObjectId,
+    },
     /// Clipboard selection changed.
-    DataSelection { offer: Option<ObjectId> },
+    DataSelection {
+        /// Current offer, or `None` when the selection is cleared.
+        offer: Option<ObjectId>,
+    },
     /// A data offer advertised a MIME type.
-    DataOfferMime { mime: String },
+    DataOfferMime {
+        /// Advertised MIME type.
+        mime: String,
+    },
     /// Event not interpreted by the high-level subset.
     Unknown(Message),
 }
@@ -919,9 +1014,11 @@ pub struct XkbKeymap {
 impl XkbKeymap {
     /// Parses an XKB text keymap containing `xkb_keycodes`, `xkb_types`, `xkb_compatibility`, and `xkb_symbols`.
     pub fn parse(text: &str) -> Result<Self> {
-        let mut map = Self::default();
-        map.has_types = text.contains("xkb_types");
-        map.has_compat = text.contains("xkb_compat");
+        let mut map = Self {
+            has_types: text.contains("xkb_types"),
+            has_compat: text.contains("xkb_compat"),
+            ..Self::default()
+        };
         for line in text.lines().map(str::trim) {
             if line.starts_with('<') && line.contains('=') && !line.starts_with("key ") {
                 if let Some((name, value)) = parse_keycode_line(line)? {
@@ -1269,4 +1366,5 @@ xkb_keymap {
             Some('ф')
         );
     }
+}
 }
