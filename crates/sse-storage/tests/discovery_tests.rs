@@ -23,6 +23,7 @@ impl TempDir {
         let path = std::env::temp_dir().join(format!("sse-test-{name}-{count}"));
         let _ = fs::remove_dir_all(&path);
         fs::create_dir_all(&path).expect("failed to create temp dir");
+        let path = canonicalize_temp_root(&path);
         Self { path }
     }
 }
@@ -31,6 +32,21 @@ impl Drop for TempDir {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.path);
     }
+}
+
+fn canonicalize_temp_root(path: &Path) -> PathBuf {
+    fs::canonicalize(path).expect("failed to canonicalize temp dir")
+}
+
+#[cfg(unix)]
+#[test]
+fn temporary_test_roots_canonicalize_symlink_aliases() {
+    use std::os::unix::fs::symlink;
+
+    let temp = TempDir::new("canonical-root");
+    let alias = temp.path.join("alias");
+    symlink(&temp.path, &alias).expect("create directory alias");
+    assert_eq!(canonicalize_temp_root(&alias), temp.path);
 }
 
 #[test]
