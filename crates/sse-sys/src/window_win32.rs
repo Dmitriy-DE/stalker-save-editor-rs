@@ -1,3 +1,4 @@
+//! X17 implementation.
 //! Native Win32 software window.
 //!
 //! The backend uses only hand-written Win32 ABI declarations. Every native call is isolated behind a documented
