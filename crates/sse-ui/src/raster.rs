@@ -20,6 +20,7 @@ const MAX_SHADOW_PIXELS: usize = 8_388_608;
 const MAX_CACHED_SHADOWS: usize = 32;
 const MAX_CACHED_SHADOW_PIXELS: usize = MAX_SHADOW_PIXELS;
 const MAX_SOLID_PIXEL_SCAN: usize = 262_144;
+const MAX_CACHED_SHAPE_SPAN_BYTES: usize = 16_384;
 
 // This const generator is the one place where direct indexing is needed: both counters are
 // initialized to zero and loop strictly below the corresponding 256-element dimension.
@@ -393,7 +394,7 @@ impl<'a> Surface<'a> {
         let bounds = intersect_rect(destination, self.clip);
         let source = color.to_u32();
         if color.b == 0 && color.g == 0 && color.r == 0 {
-            self.blit_black_mask(mask, destination, bounds, color.a);
+            self.blit_black_mask(mask, destination, bounds, color.a, None);
             return;
         }
         let mut table = [CoveredSource::default(); 256];
@@ -451,25 +452,27 @@ impl<'a> Surface<'a> {
             return;
         };
         let inverse_alpha = u8::MAX.saturating_sub(alpha);
-        for y in start_y..end_y {
-            let Some(row_start) = y.checked_mul(self.stride) else {
-                return;
-            };
-            let Some(start) = row_start.checked_add(start_x) else {
-                return;
-            };
-            let Some(end) = row_start.checked_add(end_x) else {
-                return;
-            };
-            let Some(row) = self.pixels.get_mut(start..end) else {
-                return;
-            };
-            let mut chunks = row.chunks_exact_mut(8);
-            for chunk in &mut chunks {
-                dim_chunk_arithmetic(chunk, alpha, inverse_alpha);
-            }
-            dim_chunk_arithmetic(chunks.into_remainder(), alpha, inverse_alpha);
-        }
+        let row_count = end_y.saturating_sub(start_y);
+        let pixel_count = row_count.saturating_mul(row_width);
+        let workers = raster_worker_count(pixel_count);
+        for_each_row_mut_parallel(
+            self.pixels,
+            usize::try_from(self.width).unwrap_or_default(),
+            self.stride,
+            start_y,
+            end_y,
+            workers,
+            |_, full_row| {
+                let Some(row) = full_row.get_mut(start_x..end_x) else {
+                    return;
+                };
+                let mut chunks = row.chunks_exact_mut(8);
+                for chunk in &mut chunks {
+                    dim_chunk_arithmetic(chunk, alpha, inverse_alpha);
+                }
+                dim_chunk_arithmetic(chunks.into_remainder(), alpha, inverse_alpha);
+            },
+        );
     }
 
     /// Draws a rounded-rectangle drop shadow using three separable box blurs.
@@ -488,6 +491,51 @@ impl<'a> Surface<'a> {
         blur_radius: u32,
         color: Color,
         cache: &mut ShadowCache,
+    ) -> Result<()> {
+        self.drop_shadow_internal(rect, radii, offset, blur_radius, color, cache, false)
+    }
+
+    /// Draws a shadow and then fills its opaque rounded rectangle.
+    ///
+    /// The full-coverage interior of a black shadow is skipped because the immediately following opaque fill
+    /// replaces those pixels. Edge coverage remains unchanged.
+    ///
+    /// # Errors
+    /// Returns the same errors as [`Self::drop_shadow`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn drop_shadow_then_fill_rect(
+        &mut self,
+        rect: Rect,
+        radii: Radii,
+        offset: (i32, i32),
+        blur_radius: u32,
+        shadow_color: Color,
+        fill_color: Color,
+        cache: &mut ShadowCache,
+    ) -> Result<()> {
+        self.drop_shadow_internal(
+            rect,
+            radii,
+            offset,
+            blur_radius,
+            shadow_color,
+            cache,
+            fill_color.a == u8::MAX,
+        )?;
+        self.fill_rect(rect, radii, fill_color);
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn drop_shadow_internal(
+        &mut self,
+        rect: Rect,
+        radii: Radii,
+        offset: (i32, i32),
+        blur_radius: u32,
+        color: Color,
+        cache: &mut ShadowCache,
+        skip_under_opaque_fill: bool,
     ) -> Result<()> {
         if color.a == 0 || rect.width == 0 || rect.height == 0 {
             return Ok(());
@@ -532,6 +580,7 @@ impl<'a> Surface<'a> {
         let radii = radii.normalised(f64::from(rect.width), f64::from(rect.height));
         let key = ShadowKey::new(rect.width, rect.height, blur_radius, radii);
         if !cache.contains(key) {
+            let full_spans = make_shape_full_spans(rect.width, rect.height, radii)?;
             cache.recycle_oldest_buffer();
             cache.prepare(width, height)?;
             cache.a.fill(0);
@@ -545,17 +594,43 @@ impl<'a> Surface<'a> {
             }
             cache.blur(blur_radius)?;
             let pixels = std::mem::take(&mut cache.a);
-            if let Err(pixels) = cache.insert(key, width, height, pixels) {
+            if let Err(pixels) = cache.insert(key, width, height, pixels, full_spans) {
                 cache.a = pixels;
             }
         }
-        let (mask_width, mask_height, mask_pixels) = match cache.lookup(key) {
-            Some(mask) => (mask.width, mask.height, mask.pixels.as_slice()),
-            None => (width, height, cache.a.as_slice()),
+        let cached_mask = cache.lookup(key);
+        let fallback_spans;
+        let (mask_width, mask_height, mask_pixels, full_spans) = match cached_mask {
+            Some(mask) => (
+                mask.width,
+                mask.height,
+                mask.pixels.as_slice(),
+                mask.full_spans.as_slice(),
+            ),
+            None => {
+                fallback_spans = make_shape_full_spans(rect.width, rect.height, radii)?;
+                (width, height, cache.a.as_slice(), fallback_spans.as_slice())
+            }
         };
         let stride = usize::try_from(mask_width).map_err(|_| Error::damaged("shadow width does not fit usize"))?;
         let mask = MaskRef::new(mask_pixels, mask_width, mask_height, stride)?;
-        self.blit_mask(mask, destination_x, destination_y, color);
+        if skip_under_opaque_fill && color.b == 0 && color.g == 0 && color.r == 0 {
+            self.blit_black_mask(
+                mask,
+                Rect::new(destination_x, destination_y, width, height),
+                bounds,
+                color.a,
+                Some(ShadowInterior {
+                    rect,
+                    radii,
+                    padding,
+                    offset_y: offset.1,
+                    full_spans,
+                }),
+            );
+        } else {
+            self.blit_mask(mask, destination_x, destination_y, color);
+        }
         Ok(())
     }
 
@@ -575,31 +650,34 @@ impl<'a> Surface<'a> {
         let denominator = rect.height.saturating_sub(1).max(1);
         let start_pixel = gradient.start.to_u32();
         let end_pixel = gradient.end.to_u32();
-        let mut surface_y = bounds.y;
-        for y in start_y..end_y {
-            let Some(row_start) = y.checked_mul(self.stride) else {
-                return;
-            };
-            let Some(start) = row_start.checked_add(start_x) else {
-                return;
-            };
-            let Some(end) = row_start.checked_add(end_x) else {
-                return;
-            };
-            let Some(row) = self.pixels.get_mut(start..end) else {
-                return;
-            };
-            let position = coordinate_offset(surface_y, rect.y).min(denominator);
-            let source = lerp_packed(start_pixel, end_pixel, position, denominator);
-            if pixel_alpha(source) == u8::MAX {
-                row.fill(source);
-            } else {
-                for_each_chunked(row, bounds.x, surface_y, &mut |_, _, pixel| {
-                    *pixel = blend_covered(*pixel, source, u8::MAX);
-                });
-            }
-            surface_y = surface_y.saturating_add(1);
-        }
+        let row_count = end_y.saturating_sub(start_y);
+        let pixel_count = row_count.saturating_mul(row_width);
+        let workers = raster_worker_count(pixel_count);
+        for_each_row_mut_parallel(
+            self.pixels,
+            usize::try_from(self.width).unwrap_or_default(),
+            self.stride,
+            start_y,
+            end_y,
+            workers,
+            |row_index, full_row| {
+                let Some(surface_y) = i32::try_from(row_index).ok() else {
+                    return;
+                };
+                let Some(row) = full_row.get_mut(start_x..end_x) else {
+                    return;
+                };
+                let position = coordinate_offset(surface_y, rect.y).min(denominator);
+                let source = lerp_packed(start_pixel, end_pixel, position, denominator);
+                if pixel_alpha(source) == u8::MAX {
+                    row.fill(source);
+                } else {
+                    for pixel in row {
+                        *pixel = blend_covered(*pixel, source, u8::MAX);
+                    }
+                }
+            },
+        );
     }
 
     fn fill_solid_rect(&mut self, bounds: Rect, source: u32) {
@@ -687,7 +765,14 @@ impl<'a> Surface<'a> {
         }
     }
 
-    fn blit_black_mask(&mut self, mask: MaskRef<'_>, destination: Rect, bounds: Rect, alpha: u8) {
+    fn blit_black_mask(
+        &mut self,
+        mask: MaskRef<'_>,
+        destination: Rect,
+        bounds: Rect,
+        alpha: u8,
+        occluder: Option<ShadowInterior<'_>>,
+    ) {
         let Some((start_y, end_y)) = rect_y_range(bounds) else {
             return;
         };
@@ -743,31 +828,76 @@ impl<'a> Surface<'a> {
             let Some(destination_row) = self.pixels.get_mut(destination_start..destination_end) else {
                 return;
             };
-            let mut destination_chunks = destination_row.chunks_exact_mut(8);
-            let mut source_chunks = source_row.chunks_exact(8);
-            for (destination_chunk, source_chunk) in destination_chunks.by_ref().zip(source_chunks.by_ref()) {
-                if source_chunk.iter().all(|coverage| *coverage == 0) {
-                    continue;
-                }
-                if source_chunk.iter().all(|coverage| *coverage == u8::MAX) {
-                    if !dim_chunk_lut(destination_chunk, alpha, full_coverage_scale) {
-                        for destination_pixel in destination_chunk {
-                            dim_pixel_lut(destination_pixel, alpha, full_coverage_scale);
-                        }
+            if let Some(occluder) = occluder {
+                let occluder_rect = occluder.rect;
+                let clip_left = i64::from(bounds.x);
+                let clip_right = bounds.right();
+                let row_y = i64::from(surface_y);
+                let source_shape_y = i64::from(source_y)
+                    .saturating_add(i64::from(occluder.offset_y))
+                    .saturating_sub(i64::from(occluder.padding));
+                let spans = occluder.full_spans;
+                let (full_start, full_end) = if row_y >= i64::from(occluder_rect.y)
+                    && row_y < occluder_rect.bottom()
+                    && source_shape_y >= 0
+                    && source_shape_y < i64::from(occluder_rect.height)
+                {
+                    let local_span = usize::try_from(source_shape_y)
+                        .ok()
+                        .and_then(|index| spans.get(index).copied());
+                    if let Some(span) = local_span {
+                        (
+                            i64::from(occluder_rect.x).saturating_add(i64::from(span.start)),
+                            i64::from(occluder_rect.x).saturating_add(i64::from(span.end)),
+                        )
+                    } else {
+                        shape_row_full_span(occluder_rect, occluder.radii, surface_y)
                     }
-                    continue;
+                } else {
+                    (clip_left, clip_left)
+                };
+                let full_start = full_start.clamp(clip_left, clip_right);
+                let full_end = full_end.clamp(clip_left, clip_right);
+                if full_start < full_end {
+                    let skip_start = usize::try_from(full_start.saturating_sub(clip_left)).unwrap_or_default();
+                    let skip_width = usize::try_from(full_end.saturating_sub(full_start)).unwrap_or_default();
+                    let (destination_left, destination_remainder) = destination_row.split_at_mut(skip_start);
+                    let (destination_skipped, destination_right) = destination_remainder.split_at_mut(skip_width);
+                    let (source_left, source_remainder) = source_row.split_at(skip_start);
+                    let (source_skipped, source_right) = source_remainder.split_at(skip_width);
+                    let _ = destination_skipped;
+                    let _ = source_skipped;
+                    blend_black_mask_row(
+                        destination_left,
+                        source_left,
+                        alpha,
+                        &inverse_by_coverage,
+                        full_coverage_scale,
+                    );
+                    blend_black_mask_row(
+                        destination_right,
+                        source_right,
+                        alpha,
+                        &inverse_by_coverage,
+                        full_coverage_scale,
+                    );
+                } else {
+                    blend_black_mask_row(
+                        destination_row,
+                        source_row,
+                        alpha,
+                        &inverse_by_coverage,
+                        full_coverage_scale,
+                    );
                 }
-                for (destination_pixel, coverage) in destination_chunk.iter_mut().zip(source_chunk) {
-                    blend_black_covered(destination_pixel, *coverage, &inverse_by_coverage);
-                }
-            }
-            let remainder = destination_chunks.into_remainder();
-            for (destination_pixel, coverage) in remainder.iter_mut().zip(source_chunks.remainder()) {
-                if *coverage == u8::MAX {
-                    dim_pixel_lut(destination_pixel, alpha, full_coverage_scale);
-                } else if *coverage != 0 {
-                    blend_black_covered(destination_pixel, *coverage, &inverse_by_coverage);
-                }
+            } else {
+                blend_black_mask_row(
+                    destination_row,
+                    source_row,
+                    alpha,
+                    &inverse_by_coverage,
+                    full_coverage_scale,
+                );
             }
             surface_y = surface_y.saturating_add(1);
         }
@@ -973,6 +1103,77 @@ impl<'a> Surface<'a> {
     }
 }
 
+fn raster_worker_count(pixel_count: usize) -> usize {
+    if pixel_count < 524_288 {
+        return 1;
+    }
+    std::thread::available_parallelism()
+        .map(std::num::NonZeroUsize::get)
+        .unwrap_or(1)
+        .min(8)
+}
+
+fn for_each_row_mut_parallel(
+    pixels: &mut [u32],
+    surface_width: usize,
+    stride: usize,
+    start_y: usize,
+    end_y: usize,
+    workers: usize,
+    function: impl Fn(usize, &mut [u32]) + Sync,
+) {
+    if surface_width == 0 || stride == 0 || start_y >= end_y {
+        return;
+    }
+    let row_count = end_y.saturating_sub(start_y);
+    let Some(region_start) = start_y.checked_mul(stride) else {
+        return;
+    };
+    let Some(last_row) = end_y.checked_sub(1) else {
+        return;
+    };
+    let Some(region_end) = last_row
+        .checked_mul(stride)
+        .and_then(|offset| offset.checked_add(surface_width))
+    else {
+        return;
+    };
+    let Some(rows) = pixels.get_mut(region_start..region_end) else {
+        return;
+    };
+
+    let workers = workers.max(1).min(row_count);
+    if workers == 1 {
+        for (row_offset, row) in rows.chunks_mut(stride).enumerate() {
+            function(start_y.saturating_add(row_offset), row);
+        }
+        return;
+    }
+
+    let rows_per_worker = row_count
+        .checked_add(workers.saturating_sub(1))
+        .unwrap_or(row_count)
+        .checked_div(workers)
+        .unwrap_or(1);
+    let Some(elements_per_worker) = stride.checked_mul(rows_per_worker) else {
+        return;
+    };
+    if elements_per_worker == 0 {
+        return;
+    }
+    std::thread::scope(|scope| {
+        for (block_index, block) in rows.chunks_mut(elements_per_worker).enumerate() {
+            let first_row = start_y.saturating_add(block_index.saturating_mul(rows_per_worker));
+            let function = &function;
+            scope.spawn(move || {
+                for (row_offset, row) in block.chunks_mut(stride).enumerate() {
+                    function(first_row.saturating_add(row_offset), row);
+                }
+            });
+        }
+    });
+}
+
 /// Reusable storage for drop-shadow masks and blur passes.
 #[derive(Debug)]
 pub struct ShadowCache {
@@ -1017,6 +1218,22 @@ struct ShadowMask {
     width: u32,
     height: u32,
     pixels: Vec<u8>,
+    full_spans: Vec<ShapeSpan>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct ShapeSpan {
+    start: u32,
+    end: u32,
+}
+
+#[derive(Clone, Copy)]
+struct ShadowInterior<'a> {
+    rect: Rect,
+    radii: Radii,
+    padding: u32,
+    offset_y: i32,
+    full_spans: &'a [ShapeSpan],
 }
 
 impl ShadowCache {
@@ -1043,7 +1260,19 @@ impl ShadowCache {
             .capacity()
             .saturating_add(self.b.capacity())
             .saturating_add(self.vertical_sums.capacity().saturating_mul(std::mem::size_of::<u32>()))
-            .saturating_add(self.entries.iter().map(|entry| entry.pixels.capacity()).sum())
+            .saturating_add(
+                self.entries
+                    .iter()
+                    .map(|entry| {
+                        entry.pixels.capacity().saturating_add(
+                            entry
+                                .full_spans
+                                .capacity()
+                                .saturating_mul(std::mem::size_of::<ShapeSpan>()),
+                        )
+                    })
+                    .sum(),
+            )
     }
 
     fn contains(&self, key: ShadowKey) -> bool {
@@ -1066,7 +1295,14 @@ impl ShadowCache {
         self.a = oldest.pixels;
     }
 
-    fn insert(&mut self, key: ShadowKey, width: u32, height: u32, pixels: Vec<u8>) -> std::result::Result<(), Vec<u8>> {
+    fn insert(
+        &mut self,
+        key: ShadowKey,
+        width: u32,
+        height: u32,
+        pixels: Vec<u8>,
+        full_spans: Vec<ShapeSpan>,
+    ) -> std::result::Result<(), Vec<u8>> {
         let pixel_count = pixels.len();
         if pixel_count > MAX_CACHED_SHADOW_PIXELS {
             return Err(pixels);
@@ -1085,6 +1321,7 @@ impl ShadowCache {
             width,
             height,
             pixels,
+            full_spans,
         });
         self.cached_pixels = self.cached_pixels.saturating_add(pixel_count);
         Ok(())
@@ -1402,19 +1639,46 @@ fn dim_chunk_lut(chunk: &mut [u32], alpha: u8, scale: &[u8; 256]) -> bool {
     }
 }
 
+fn blend_black_mask_row(
+    destination: &mut [u32],
+    source: &[u8],
+    alpha: u8,
+    inverse_by_coverage: &[u8; 256],
+    full_coverage_scale: &[u8; 256],
+) {
+    let mut destination_chunks = destination.chunks_exact_mut(8);
+    let mut source_chunks = source.chunks_exact(8);
+    for (destination_chunk, source_chunk) in destination_chunks.by_ref().zip(source_chunks.by_ref()) {
+        if source_chunk.iter().all(|coverage| *coverage == 0) {
+            continue;
+        }
+        if source_chunk.iter().all(|coverage| *coverage == u8::MAX) {
+            if !dim_chunk_lut(destination_chunk, alpha, full_coverage_scale) {
+                for destination_pixel in destination_chunk {
+                    dim_pixel_lut(destination_pixel, alpha, full_coverage_scale);
+                }
+            }
+            continue;
+        }
+        for (destination_pixel, coverage) in destination_chunk.iter_mut().zip(source_chunk) {
+            blend_black_covered(destination_pixel, *coverage, inverse_by_coverage);
+        }
+    }
+    let remainder = destination_chunks.into_remainder();
+    for (destination_pixel, coverage) in remainder.iter_mut().zip(source_chunks.remainder()) {
+        if *coverage == u8::MAX {
+            dim_pixel_lut(destination_pixel, alpha, full_coverage_scale);
+        } else if *coverage != 0 {
+            blend_black_covered(destination_pixel, *coverage, inverse_by_coverage);
+        }
+    }
+}
+
 #[inline(always)]
 fn dim_pixel_arithmetic(pixel: &mut u32, alpha: u8, inverse_alpha: u8) {
-    let original = *pixel;
-    let original_alpha = pixel_alpha(original);
-    let blue = scale_byte_arithmetic(byte(original), inverse_alpha);
-    let green = scale_byte_arithmetic(byte(original.wrapping_shr(8)), inverse_alpha);
-    let red = scale_byte_arithmetic(byte(original.wrapping_shr(16)), inverse_alpha);
-    let result_alpha = if original_alpha == u8::MAX {
-        u8::MAX
-    } else {
-        alpha.saturating_add(scale_byte_arithmetic(original_alpha, inverse_alpha))
-    };
-    *pixel = pack_pixel(blue, green, red, result_alpha);
+    let attenuated = scale_packed_arithmetic(*pixel, inverse_alpha);
+    let result_alpha = alpha.saturating_add(pixel_alpha(attenuated));
+    *pixel = (attenuated & 0x00ff_ffff) | u32::from(result_alpha).wrapping_shl(24);
 }
 
 fn dim_chunk_arithmetic(chunk: &mut [u32], alpha: u8, inverse_alpha: u8) {
@@ -1432,11 +1696,29 @@ fn dim_chunk_arithmetic(chunk: &mut [u32], alpha: u8, inverse_alpha: u8) {
     }
 }
 
+#[cfg(test)]
 #[inline(always)]
 fn scale_byte_arithmetic(channel: u8, scale: u8) -> u8 {
     let product = u32::from(channel).saturating_mul(u32::from(scale)).saturating_add(127);
     let rounded = product.saturating_add(product.wrapping_shr(8)).saturating_add(1);
     u8::try_from(rounded.wrapping_shr(8)).unwrap_or_default()
+}
+
+#[inline(always)]
+fn scale_packed_arithmetic(pixel: u32, scale: u8) -> u32 {
+    let scale = u32::from(scale);
+    let blue_red = pixel & 0x00ff_00ff;
+    let green_alpha = pixel.wrapping_shr(8) & 0x00ff_00ff;
+    let scale_pair = |pair: u32| {
+        let product = pair.saturating_mul(scale).saturating_add(0x007f_007f);
+        let correction = product.wrapping_shr(8) & 0x00ff_00ff;
+        product
+            .saturating_add(correction)
+            .saturating_add(0x0001_0001)
+            .wrapping_shr(8)
+            & 0x00ff_00ff
+    };
+    scale_pair(blue_red) | scale_pair(green_alpha).wrapping_shl(8)
 }
 
 #[inline(always)]
@@ -1569,6 +1851,27 @@ fn rounded_extent(radius: f64) -> i64 {
         let extent = radius.ceil() as u32;
         i64::from(extent)
     }
+}
+
+fn make_shape_full_spans(width: u32, height: u32, radii: Radii) -> Result<Vec<ShapeSpan>> {
+    let span_bytes = usize::try_from(height)
+        .ok()
+        .and_then(|height| height.checked_mul(std::mem::size_of::<ShapeSpan>()));
+    if span_bytes.is_none_or(|bytes| bytes > MAX_CACHED_SHAPE_SPAN_BYTES) || height > i32::MAX as u32 {
+        return Ok(Vec::new());
+    }
+    let row_count = usize::try_from(height).map_err(|_| Error::damaged("shape height does not fit usize"))?;
+    let mut spans = Vec::with_capacity(row_count);
+    let rect = Rect::new(0, 0, width, height);
+    for y in 0..height {
+        let y = i32::try_from(y).map_err(|_| Error::damaged("shape row does not fit coordinates"))?;
+        let (start, end) = shape_row_full_span(rect, radii, y);
+        spans.push(ShapeSpan {
+            start: u32::try_from(start).map_err(|_| Error::damaged("shape span start does not fit u32"))?,
+            end: u32::try_from(end).map_err(|_| Error::damaged("shape span end does not fit u32"))?,
+        });
+    }
+    Ok(spans)
 }
 
 fn shape_row_full_span(rect: Rect, radii: Radii, y: i32) -> (i64, i64) {
@@ -2453,6 +2756,22 @@ mod tests {
     }
 
     #[test]
+    fn packed_integer_scaling_matches_the_byte_lookup_for_every_channel() {
+        for scale in 0_u16..=255_u16 {
+            let scale = u8::try_from(scale).unwrap_or_default();
+            for channel in 0_u16..=255_u16 {
+                let channel = u8::try_from(channel).unwrap_or_default();
+                let pixel = pack_pixel(channel, channel, channel, channel);
+                assert_eq!(
+                    super::scale_packed_arithmetic(pixel, scale),
+                    super::scale_packed(pixel, scale),
+                    "channel={channel}, scale={scale}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn black_mask_blend_matches_generic_source_over() {
         let mut inverse_by_coverage = [0_u8; 256];
         for (coverage, inverse_alpha) in inverse_by_coverage.iter_mut().enumerate() {
@@ -2613,6 +2932,46 @@ mod tests {
     }
 
     #[test]
+    fn opaque_shadow_fill_preserves_the_separate_operations_pixel_for_pixel() -> Result<()> {
+        let initial = vec![Color::rgba(20, 24, 28, 255).to_u32(); 64_usize.saturating_mul(64)];
+        let mut separate = initial.clone();
+        let mut combined = initial;
+        let rect = Rect::new(12, 11, 34, 33);
+        let radii = Radii::all(8.0);
+        let shadow_color = Color::rgba(0, 0, 0, 110);
+        let fill_color = Color::rgba(48, 52, 61, 255);
+        let mut separate_cache = ShadowCache::new();
+        let mut combined_cache = ShadowCache::new();
+        {
+            let mut surface = Surface::new(&mut separate, 64, 64, 64, Rect::new(0, 0, 64, 64))?;
+            surface.drop_shadow(rect, radii, (0, 8), 6, shadow_color, &mut separate_cache)?;
+            surface.fill_rect(rect, radii, fill_color);
+        }
+        {
+            let mut surface = Surface::new(&mut combined, 64, 64, 64, Rect::new(0, 0, 64, 64))?;
+            surface.drop_shadow_then_fill_rect(
+                rect,
+                radii,
+                (0, 8),
+                6,
+                shadow_color,
+                fill_color,
+                &mut combined_cache,
+            )?;
+        }
+        for (position, (expected, actual)) in separate.iter().zip(&combined).enumerate() {
+            assert_eq!(
+                actual,
+                expected,
+                "pixel ({}, {}) differs",
+                position.checked_rem(64).unwrap_or_default(),
+                position.checked_div(64).unwrap_or_default()
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     #[ignore = "throughput measurement; run with --ignored --nocapture on release build"]
     fn throughput_1920x1080_mixed_frame() -> Result<()> {
         let width = 1_920_u32;
@@ -2657,12 +3016,13 @@ mod tests {
                     let x = 48_i32.saturating_add(column.saturating_mul(220));
                     let y = 60_i32.saturating_add(row.saturating_mul(240));
                     let stage = if profile { Some(Instant::now()) } else { None };
-                    surface.drop_shadow(
+                    surface.drop_shadow_then_fill_rect(
                         Rect::new(x, y, 180, 200),
                         Radii::all(14.0),
                         (0, 8),
                         6,
                         Color::rgba(0, 0, 0, 110),
+                        Color::rgba(48, 52, 61, 255),
                         &mut shadow,
                     )?;
                     if let Some(stage) = stage {
@@ -2671,15 +3031,6 @@ mod tests {
                         if row == 0 && column == 0 {
                             cold_shadow = elapsed;
                         }
-                    }
-                    let stage = if profile { Some(Instant::now()) } else { None };
-                    surface.fill_rect(
-                        Rect::new(x, y, 180, 200),
-                        Radii::all(14.0),
-                        Color::rgba(48, 52, 61, 255),
-                    );
-                    if let Some(stage) = stage {
-                        stages[2] = stages[2].saturating_add(stage.elapsed());
                     }
                     let stage = if profile { Some(Instant::now()) } else { None };
                     surface.blit_image(
@@ -2718,8 +3069,8 @@ mod tests {
         println!("mixed 1920x1080 frame: {elapsed:?}, {rate:.1} MPix/s, checksum {checksum:016x}");
         if profile {
             println!(
-                "stage times: gradient {:?}, shadows {:?} (first {:?}, cache hits {:?}), fill {:?}, image {:?}, mask {:?}, dim {:?}",
-                stages[0], stages[1], cold_shadow, stages[1].saturating_sub(cold_shadow), stages[2], stages[3], stages[4], stages[5]
+                "stage times: gradient {:?}, shadow+fill {:?} (first {:?}, cache hits {:?}), image {:?}, mask {:?}, dim {:?}",
+                stages[0], stages[1], cold_shadow, stages[1].saturating_sub(cold_shadow), stages[3], stages[4], stages[5]
             );
         }
         assert_eq!(checksum, 0x8839_bca3_fc5d_aa85);
