@@ -4,10 +4,10 @@ use std::thread;
 
 #[cfg(target_os = "linux")]
 mod linux;
-#[cfg(target_os = "windows")]
-mod windows;
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(target_os = "windows")]
+mod windows;
 
 /// A best-effort sink for short UI sounds.
 ///
@@ -29,18 +29,16 @@ impl Output for SystemOutput {
         }
         let owned = pcm.to_vec();
         let volume = volume.clamp(0.0, 1.0);
-        let _ = thread::Builder::new()
-            .name("sse-ui-sound".to_owned())
-            .spawn(move || {
-                #[cfg(target_os = "linux")]
-                linux::play(owned, channels, rate, volume);
-                #[cfg(target_os = "windows")]
-                windows::play(owned, channels, rate, volume);
-                #[cfg(target_os = "macos")]
-                macos::play(owned, channels, rate, volume);
-                #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
-                let _ = (owned, channels, rate, volume);
-            });
+        let _ = thread::Builder::new().name("sse-ui-sound".to_owned()).spawn(move || {
+            #[cfg(target_os = "linux")]
+            linux::play(owned, channels, rate, volume);
+            #[cfg(target_os = "windows")]
+            windows::play(owned, channels, rate, volume);
+            #[cfg(target_os = "macos")]
+            macos::play(owned, channels, rate, volume);
+            #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+            let _ = (owned, channels, rate, volume);
+        });
     }
 }
 
