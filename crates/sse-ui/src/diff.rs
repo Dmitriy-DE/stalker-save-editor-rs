@@ -31,9 +31,11 @@ pub struct Hunk {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 /// One changed byte interval in the old and new images.
 pub struct ByteRange {
-    /// Old-image inclusive start byte.\n    pub old_start: usize,\n    /// Old-image exclusive end byte.
+    /// Old-image inclusive start byte.
+    pub old_start: usize,\n    /// Old-image exclusive end byte.
     pub old_end: usize,
-    /// New-image inclusive start byte.\n    pub new_start: usize,\n    /// New-image exclusive end byte.
+    /// New-image inclusive start byte.
+    pub new_start: usize,\n    /// New-image exclusive end byte.
     pub new_end: usize,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -159,7 +161,8 @@ fn backtrack(a: &[&[u8]], b: &[&[u8]], trace: &[Vec<isize>], off: usize) -> Resu
         let k = x.saturating_sub(y);
         let di = isize::try_from(d).map_err(|_| Error::damaged("diff d"))?;
         let oi = isize::try_from(off).map_err(|_| Error::damaged("diff off"))?;
-        let prev_k = if k == di.saturating_neg()\n            || (k != di
+        let prev_k = if k == di.saturating_neg()
+            || (k != di
                 && prev
                     .get(usize::try_from(oi.saturating_add(k).saturating_sub(1)).unwrap_or(usize::MAX))
                     .copied()
@@ -341,9 +344,11 @@ fn counts(ops: &[LineOp]) -> (usize, usize) {
     for x in ops {
         match x {
             LineOp::Equal(_) => {
-                a = a.saturating_add(1);\n                b = b.saturating_add(1)
+                a = a.saturating_add(1);
+                b = b.saturating_add(1)
             }
-            LineOp::Delete(_) => a = a.saturating_add(1),\n            LineOp::Insert(_) => b = b.saturating_add(1),
+            LineOp::Delete(_) => a = a.saturating_add(1),
+            LineOp::Insert(_) => b = b.saturating_add(1),
         }
     }
     (a, b)
