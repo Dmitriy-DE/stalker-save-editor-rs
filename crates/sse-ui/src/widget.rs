@@ -107,7 +107,9 @@ impl Content {
     fn text(&self) -> Option<(&str, TextStyle)> {
         match self {
             Self::Panel => None,
-            Self::Label { text, style } | Self::Paragraph { text, style } | Self::Button { text, style } => Some((text.as_str(), *style)),
+            Self::Label { text, style } | Self::Paragraph { text, style } | Self::Button { text, style } => {
+                Some((text.as_str(), *style))
+            }
         }
     }
 
@@ -212,7 +214,11 @@ impl Tree {
     pub fn set_text(&mut self, id: WidgetId, text: &str) -> Result<()> {
         let node = self.node_mut(id)?;
         match &mut node.content {
-            Content::Label { text: old, .. } | Content::Paragraph { text: old, .. } | Content::Button { text: old, .. } if old != text => {
+            Content::Label { text: old, .. }
+            | Content::Paragraph { text: old, .. }
+            | Content::Button { text: old, .. }
+                if old != text =>
+            {
                 text.clone_into(old);
             }
             _ => return Ok(()),
