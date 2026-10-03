@@ -17,6 +17,7 @@ sse-xray = { path = "../sse-xray" }
 sse-content = { path = "../sse-content" }
 sse-fixes = { path = "../sse-fixes" }
 sse-lint = { path = "../sse-lint" }
+sse-steam = { path = "../sse-steam" }
 sse-update = { path = "../sse-update" }
 
 [lints]

@@ -20,6 +20,7 @@ dependencies = [
  "sse-core",
  "sse-fixes",
  "sse-lint",
+ "sse-steam",
  "sse-storage",
  "sse-update",
  "sse-xray",
@@ -66,6 +67,14 @@ dependencies = [
 
 [[package]]
 name = "sse-s2"
+version = "2.0.0-dev"
+dependencies = [
+ "sse-codecs",
+ "sse-core",
+]
+
+[[package]]
+name = "sse-steam"
 version = "2.0.0-dev"
 dependencies = [
  "sse-codecs",

@@ -19,6 +19,9 @@ Exit codes: 0 done, 2 wrong arguments, 3 refused (unsupported or unsafe), 4 unre
 
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(worker_exit) = sse_steam::worker::run_if_worker(&arguments) {
+        return worker_exit;
+    }
     ExitCode::from(run(&arguments))
 }
 
