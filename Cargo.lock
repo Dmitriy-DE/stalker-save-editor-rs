@@ -17,6 +17,7 @@ version = "2.0.0-dev"
 dependencies = [
  "sse-core",
  "sse-fixes",
+ "sse-update",
 ]
 
 [[package]]
@@ -65,6 +66,14 @@ dependencies = [
 
 [[package]]
 name = "sse-ui"
+version = "2.0.0-dev"
+dependencies = [
+ "sse-codecs",
+ "sse-core",
+]
+
+[[package]]
+name = "sse-update"
 version = "2.0.0-dev"
 dependencies = [
  "sse-codecs",
