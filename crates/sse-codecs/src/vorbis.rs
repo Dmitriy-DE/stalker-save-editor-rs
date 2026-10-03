@@ -1787,6 +1787,16 @@ mod tests {
     }
 
     #[test]
+    fn maximum_encodable_codebook_entry_count_is_refused_before_allocation() {
+        // Vorbis stores the entry count in 24 bits, so the task's 2^31
+        // example cannot be represented by a conforming setup header.
+        // Exercise the strongest possible claim instead: 2^24 - 1 entries.
+        let bytes = [0x42_u8, 0x43, 0x56, 0x01, 0x00, 0xff, 0xff, 0xff];
+        let mut bits = Bits::new(&bytes);
+        assert!(matches!(read_codebook(&mut bits), Err(Error::Refused(_))));
+    }
+
+    #[test]
     fn lookup1_examples() {
         assert_eq!(lookup1_values(625, 4), 5);
         assert_eq!(lookup1_values(16, 2), 4);
