@@ -4,6 +4,8 @@
 pub mod edit;
 /// Event loop: window events and worker messages on one channel, idle sleep, damage-only repaint (U1).
 pub mod event_loop;
+/// Pixel-tolerant screenshot golden comparison (X37).
+pub mod golden;
 /// Bundled fonts, glyph cache and text drawing (U1).
 pub mod glyphs;
 /// Measure-and-arrange layout over an arena (X26).
