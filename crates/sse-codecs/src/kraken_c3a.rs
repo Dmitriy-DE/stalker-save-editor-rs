@@ -1,9 +1,13 @@
-//! Bounded Kraken stream decoding.
+//! Independent, bounded Kraken decoding for differential checks against the main decoder.
 //!
-//! This safe initial subset handles raw blocks, stored and fill quanta, and LZNA whole matches.
-//! Compressed entropy tables and checksum verification remain unsupported and are refused.
+//! This implementation handles raw and fill quanta, mode-1 LZ commands, raw/Huffman entropy
+//! tables, and the small LZNA raw/fill/whole-match subset used by the synthetic S2 fixture. It
+//! refuses legacy Huffman tables, tANS, RLE, recursive entropy, checksums, and other Oodle codecs.
 
 use sse_core::{Cursor, Error, Result};
+
+use crate::kraken_c3a_entropy::decode as decode_entropy;
+use crate::kraken_c3a_lz::decode_lz_chunk;
 
 const MAXIMUM_OUTPUT_SIZE: usize = 536_870_912;
 const KRAKEN_QUANTUM_SIZE: usize = 0x40000;
@@ -13,7 +17,7 @@ const LZNA_QUANTUM_SIZE: usize = 0x4000;
 ///
 /// # Errors
 /// Returns [`Error::Damaged`] for malformed or truncated streams and output-size mismatches.
-/// Compressed entropy modes and checksummed quanta that are not implemented return
+/// Entropy variants, checksums, or Oodle codecs outside this decoder's supported subset return
 /// [`Error::Refused`].
 pub fn decompress_into(source: &[u8], output: &mut [u8]) -> Result<()> {
     if output.len() > MAXIMUM_OUTPUT_SIZE {
@@ -52,11 +56,15 @@ pub fn decompress_into(source: &[u8], output: &mut [u8]) -> Result<()> {
                 parse_lzna_quantum(&mut input, header.checksums)?
             };
             match quantum {
+                Quantum::Compressed(length) => {
+                    let bytes = input.take(length)?;
+                    decode_kraken_quantum(bytes, output, output_offset, quantum_len)?;
+                }
                 Quantum::Stored(length) if length == quantum_len => {
                     copy_input(&mut input, output, output_offset, quantum_len)?;
                 }
                 Quantum::Stored(length) if length > quantum_len => {
-                    return Err(Error::damaged("Kraken quantum exceeds its output boundary"));
+                    return Err(Error::damaged("LZNA quantum exceeds its output boundary"));
                 }
                 Quantum::Stored(length) => {
                     input.skip(length)?;
@@ -90,6 +98,7 @@ struct BlockHeader {
 }
 
 enum Quantum {
+    Compressed(usize),
     Stored(usize),
     Fill(u8),
     RawLzna,
@@ -103,7 +112,7 @@ fn parse_block_header(input: &mut Cursor<'_>) -> Result<BlockHeader> {
     }
     let decoder = input.u8()?;
     let decoder_type = decoder & 0x7f;
-    if !matches!(decoder_type, 5 | 6 | 10 | 11 | 12) {
+    if !matches!(decoder_type, 5 | 6) {
         return Err(Error::damaged("unsupported Kraken decoder type"));
     }
     Ok(BlockHeader {
@@ -114,7 +123,7 @@ fn parse_block_header(input: &mut Cursor<'_>) -> Result<BlockHeader> {
 }
 
 fn is_kraken_type(decoder_type: u8) -> bool {
-    matches!(decoder_type, 6 | 10 | 12)
+    decoder_type == 6
 }
 
 fn parse_kraken_quantum(input: &mut Cursor<'_>, checksums: bool) -> Result<Quantum> {
@@ -137,7 +146,56 @@ fn parse_kraken_quantum(input: &mut Cursor<'_>, checksums: bool) -> Result<Quant
             "Kraken quantum checksums are not implemented yet".to_owned(),
         ));
     }
-    Ok(Quantum::Stored(size))
+    Ok(Quantum::Compressed(size))
+}
+
+fn decode_kraken_quantum(source: &[u8], output: &mut [u8], offset: usize, length: usize) -> Result<()> {
+    const SUB_BLOCK_SIZE: usize = 0x20000;
+    let mut input = Cursor::new(source);
+    let end = offset
+        .checked_add(length)
+        .ok_or_else(|| Error::damaged("Kraken quantum output range overflow"))?;
+    let mut destination = offset;
+
+    while destination < end {
+        let raw_size = end.saturating_sub(destination).min(SUB_BLOCK_SIZE);
+        let raw_end = destination
+            .checked_add(raw_size)
+            .ok_or_else(|| Error::damaged("Kraken sub-block range overflow"))?;
+        let header = read_u24_be(&mut input)?;
+        if header & 0x80_0000 == 0 {
+            let written = output
+                .get_mut(destination..raw_end)
+                .ok_or_else(|| Error::damaged("Kraken entropy output outside buffer"))?;
+            let input_at = input.position();
+            let remainder = source
+                .get(input_at..)
+                .ok_or_else(|| Error::damaged("Kraken entropy source position outside input"))?;
+            let used = decode_entropy(remainder, written, 0)?;
+            input.skip(used)?;
+        } else {
+            let compressed_size = usize::try_from(header & 0x7_ffff)
+                .map_err(|_| Error::damaged("Kraken LZ size does not fit this platform"))?;
+            let mode = u8::try_from((header >> 19) & 0x0f)
+                .map_err(|_| Error::damaged("Kraken LZ mode does not fit a byte"))?;
+            let compressed = input.take(compressed_size)?;
+            if compressed_size == raw_size && mode == 0 {
+                output
+                    .get_mut(destination..raw_end)
+                    .ok_or_else(|| Error::damaged("raw Kraken LZ output outside buffer"))?
+                    .copy_from_slice(compressed);
+            } else if compressed_size < raw_size {
+                decode_lz_chunk(mode, compressed, output, destination, raw_end)?;
+            } else {
+                return Err(Error::damaged("invalid Kraken LZ payload size or mode"));
+            }
+        }
+        destination = raw_end;
+    }
+    if input.remaining() != 0 {
+        return Err(Error::damaged("Kraken quantum contains trailing compressed bytes"));
+    }
+    Ok(())
 }
 
 fn parse_lzna_quantum(input: &mut Cursor<'_>, checksums: bool) -> Result<Quantum> {
@@ -286,8 +344,8 @@ mod tests {
     use super::{decompress_into, LZNA_QUANTUM_SIZE};
     use sse_core::Error;
 
-    const CONTAINER: &[u8] = include_bytes!("../../../../fixtures/synthetic/synthetic-s2.sav");
-    const EXPECTED: &[u8] = include_bytes!("../../../../fixtures/synthetic/synthetic-s2.raw");
+    const CONTAINER: &[u8] = include_bytes!("../../../fixtures/synthetic/synthetic-s2.sav");
+    const EXPECTED: &[u8] = include_bytes!("../../../fixtures/synthetic/synthetic-s2.raw");
     const STREAM_OFFSET: usize = 4;
     const STREAM_LENGTH: usize = 352;
 
@@ -296,6 +354,19 @@ mod tests {
             return &[];
         };
         CONTAINER.get(STREAM_OFFSET..end).unwrap_or_default()
+    }
+
+    fn one_quantum_stream(payload: &[u8]) -> Vec<u8> {
+        let encoded_size = u32::try_from(payload.len()).unwrap_or_default().saturating_sub(1);
+        let mut stream = vec![
+            0x0c,
+            0x06,
+            u8::try_from((encoded_size >> 16) & 0xff).unwrap_or_default(),
+            u8::try_from((encoded_size >> 8) & 0xff).unwrap_or_default(),
+            u8::try_from(encoded_size & 0xff).unwrap_or_default(),
+        ];
+        stream.extend_from_slice(payload);
+        stream
     }
 
     #[test]
@@ -335,9 +406,16 @@ mod tests {
     }
 
     #[test]
-    fn stored_quantum_decodes_without_an_intermediate_output_buffer() {
-        let mut stream = vec![0x0c, 0x06, 0x00, 0x01, 0x5d];
-        stream.extend_from_slice(EXPECTED);
+    fn raw_lz_subblock_decodes_without_an_intermediate_output_buffer() {
+        let length = u32::try_from(EXPECTED.len()).unwrap_or_default();
+        let header = 0x80_0000_u32 | length;
+        let mut payload = vec![
+            u8::try_from(header >> 16).unwrap_or_default(),
+            u8::try_from((header >> 8) & 0xff).unwrap_or_default(),
+            u8::try_from(header & 0xff).unwrap_or_default(),
+        ];
+        payload.extend_from_slice(EXPECTED);
+        let stream = one_quantum_stream(&payload);
         let mut output = vec![0; EXPECTED.len()];
         assert_eq!(decompress_into(&stream, &mut output), Ok(()));
         assert_eq!(output, EXPECTED);
@@ -352,8 +430,12 @@ mod tests {
     }
 
     #[test]
-    fn compressed_entropy_mode_is_refused_instead_of_misdecoded() {
-        let stream = [0x0c, 0x06, 0x00, 0x00, 0x02, 1, 2, 3];
+    fn unsupported_tans_entropy_mode_is_refused_instead_of_misdecoded() {
+        let mut payload = vec![0, 0, 0, 0x10];
+        let packed = (u32::try_from(EXPECTED.len().saturating_sub(1)).unwrap_or_default() << 18) | 1;
+        payload.extend_from_slice(&packed.to_be_bytes());
+        payload.push(0xa5);
+        let stream = one_quantum_stream(&payload);
         let mut output = vec![0; EXPECTED.len()];
         assert!(matches!(decompress_into(&stream, &mut output), Err(Error::Refused(_))));
     }
