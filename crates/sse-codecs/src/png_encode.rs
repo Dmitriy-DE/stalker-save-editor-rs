@@ -31,11 +31,7 @@ pub fn encode_rgba8(width: u32, height: u32, pixels: &[u8]) -> Result<Vec<u8>> {
         scan.extend_from_slice(pixels.get(start..end).ok_or_else(|| Error::damaged("PNG pixels"))?);
     }
 
-    let mut z = Vec::with_capacity(
-        scan.len()
-            .saturating_add(scan.len() / 65_535 * 5)
-            .saturating_add(16),
-    );
+    let mut z = Vec::with_capacity(scan.len().saturating_add(scan.len() / 65_535 * 5).saturating_add(16));
     z.extend_from_slice(&[0x78, 0x01]);
     let mut pos = 0usize;
     if scan.is_empty() {
