@@ -5,6 +5,10 @@
 //! the scripts used by the editor, applies practical CJK line-breaking constraints, and performs
 //! locale-aware search folding without allocating a folded copy of the haystack.
 
+use crate::unicode_tables::{
+    grapheme_boundaries, grapheme_class, line_break_class, line_break_pair, GraphemeClass, LineBreakClass,
+};
+
 const SOFT_HYPHEN: char = '\u{00ad}';
 const ELLIPSIS: char = '…';
 
