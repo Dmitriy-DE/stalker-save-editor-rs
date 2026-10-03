@@ -342,8 +342,8 @@ pub fn unified_hunks(old: &[u8], new: &[u8], context: usize) -> Result<Vec<Hunk>
     Ok(hunks)
 }
 fn counts(ops: &[LineOp]) -> (usize, usize) {
-    let mut a = 0;
-    let mut b = 0;
+    let mut a = 0_usize;
+    let mut b = 0_usize;
     for x in ops {
         match x {
             LineOp::Equal(_) => {
