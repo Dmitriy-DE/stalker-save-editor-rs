@@ -122,8 +122,8 @@ pub fn pack_rectangles<T: Clone>(
         for (pi, free) in pages.iter().enumerate() {
             for (fi, f) in free.iter().enumerate() {
                 if pw <= f.w && ph <= f.h {
-                    let short = f.w.saturating_sub(pw).minf.h.saturating_sub(ph);
-                    let long = f.w.saturating_sub(pw).maxf.h.saturating_sub(ph);
+                    let short = f.w.saturating_sub(pw).min(f.h.saturating_sub(ph));
+                    let long = f.w.saturating_sub(pw).max(f.h.saturating_sub(ph));
                     let cand = (pi, fi, short, long, f.y, f.x);
                     if choice
                         .as_ref()
