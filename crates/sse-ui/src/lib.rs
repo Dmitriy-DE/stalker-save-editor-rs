@@ -20,10 +20,10 @@ pub mod raster;
 pub mod screens;
 /// C# screen acceptance inventory (X36).
 pub mod screens_spec;
-/// Visual theme tokens and interface scaling (X36).
-pub mod theme;
 /// Line breaking, carets, ellipsis and search folding (X13).
 pub mod text;
+/// Visual theme tokens and interface scaling (X36).
+pub mod theme;
 /// Generated Unicode 17 grapheme and line-break property tables.
 pub mod unicode_tables;
 pub mod wayland;
