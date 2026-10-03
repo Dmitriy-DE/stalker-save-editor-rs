@@ -1,8 +1,7 @@
 use super::scaled_sample;
 use sse_core::{Error, Result};
 use std::{
-    env,
-    fs,
+    env, fs,
     io::{Read, Write},
     os::unix::net::UnixStream,
     path::PathBuf,
@@ -102,8 +101,7 @@ impl Tags {
 }
 
 fn packet(payload: &[u8]) -> Result<Vec<u8>> {
-    let length = u32::try_from(payload.len())
-        .map_err(|_| Error::Refused("PulseAudio packet too large".to_owned()))?;
+    let length = u32::try_from(payload.len()).map_err(|_| Error::Refused("PulseAudio packet too large".to_owned()))?;
     let mut out = Vec::with_capacity(20usize.saturating_add(payload.len()));
     out.extend_from_slice(&length.to_be_bytes());
     out.extend_from_slice(&u32::MAX.to_be_bytes());
@@ -115,8 +113,8 @@ fn packet(payload: &[u8]) -> Result<Vec<u8>> {
 }
 
 fn memblock(channel: u32, payload: &[u8]) -> Result<Vec<u8>> {
-    let length = u32::try_from(payload.len())
-        .map_err(|_| Error::Refused("PulseAudio audio block too large".to_owned()))?;
+    let length =
+        u32::try_from(payload.len()).map_err(|_| Error::Refused("PulseAudio audio block too large".to_owned()))?;
     let mut out = Vec::with_capacity(20usize.saturating_add(payload.len()));
     out.extend_from_slice(&length.to_be_bytes());
     out.extend_from_slice(&channel.to_be_bytes());
@@ -142,12 +140,9 @@ fn read_frame<T: PulseTransport>(transport: &mut T) -> Result<(u32, Vec<u8>)> {
             .and_then(|value| <[u8; 4]>::try_from(value).ok())
             .ok_or_else(|| Error::damaged("PulseAudio frame channel"))?,
     );
-    let length =
-        usize::try_from(length).map_err(|_| Error::damaged("PulseAudio frame size"))?;
+    let length = usize::try_from(length).map_err(|_| Error::damaged("PulseAudio frame size"))?;
     if length > MAX_PACKET {
-        return Err(Error::Refused(
-            "PulseAudio control packet too large".to_owned(),
-        ));
+        return Err(Error::Refused("PulseAudio control packet too large".to_owned()));
     }
     let mut body = vec![0u8; length];
     transport.receive_exact(&mut body)?;
@@ -186,20 +181,13 @@ fn reply_for<T: PulseTransport>(transport: &mut T, wanted_tag: u32) -> Result<Ve
             continue;
         }
         if command != COMMAND_REPLY {
-            return Err(Error::System(format!(
-                "PulseAudio rejected command {wanted_tag}"
-            )));
+            return Err(Error::System(format!("PulseAudio rejected command {wanted_tag}")));
         }
         return Ok(body.get(offset..).unwrap_or_default().to_vec());
     }
 }
 
-fn send_command<T: PulseTransport>(
-    transport: &mut T,
-    command: u32,
-    tag: u32,
-    tail: Tags,
-) -> Result<Vec<u8>> {
+fn send_command<T: PulseTransport>(transport: &mut T, command: u32, tag: u32, tail: Tags) -> Result<Vec<u8>> {
     let mut tags = Tags::default();
     tags.u32(command);
     tags.u32(tag);
@@ -216,19 +204,12 @@ fn auth<T: PulseTransport>(transport: &mut T, cookie: &[u8; 256]) -> Result<()> 
     let mut offset = 0usize;
     let server_version = tagged_u32(&reply, &mut offset)? & 0x3fff_ffff;
     if server_version < 8 {
-        return Err(Error::Refused(
-            "PulseAudio protocol older than v8".to_owned(),
-        ));
+        return Err(Error::Refused("PulseAudio protocol older than v8".to_owned()));
     }
     Ok(())
 }
 
-fn create_stream<T: PulseTransport>(
-    transport: &mut T,
-    channels: u8,
-    rate: u32,
-    volume: f32,
-) -> Result<(u32, u32)> {
+fn create_stream<T: PulseTransport>(transport: &mut T, channels: u8, rate: u32, volume: f32) -> Result<(u32, u32)> {
     let mut tail = Tags::default();
     tail.string(Some("S.T.A.L.K.E.R. Save Editor UI"));
     tail.sample_spec(channels, rate);
@@ -299,8 +280,7 @@ fn socket_path() -> Option<PathBuf> {
 }
 
 fn run(pcm: &[i16], channels: u8, rate: u32, volume: f32) -> Result<()> {
-    let path = socket_path()
-        .ok_or_else(|| Error::System("PulseAudio runtime socket is unavailable".to_owned()))?;
+    let path = socket_path().ok_or_else(|| Error::System("PulseAudio runtime socket is unavailable".to_owned()))?;
     let stream = UnixStream::connect(&path)?;
     let _ = stream.set_read_timeout(Some(Duration::from_secs(3)));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(3)));
@@ -367,10 +347,7 @@ mod tests {
         assert_eq!(tags.bytes.get(0..5), Some(&[b'L', 1, 2, 3, 4][..]));
         assert_eq!(tags.bytes.get(5..8), Some(&[b't', b'x', 0][..]));
         assert_eq!(tags.bytes.get(8), Some(&b'1'));
-        assert_eq!(
-            tags.bytes.get(9..16),
-            Some(&[b'a', 3, 0, 0, 0xbb, 0x80, 2][..])
-        );
+        assert_eq!(tags.bytes.get(9..16), Some(&[b'a', 3, 0, 0, 0xbb, 0x80, 2][..]));
     }
 
     #[test]
@@ -387,25 +364,14 @@ mod tests {
         let mut tail = Tags::default();
         tail.u32(PROTOCOL_VERSION);
         let mut fake = Fake::default();
-        fake.recv
-            .extend(control_frame(COMMAND_REPLY, 1, &tail.bytes));
+        fake.recv.extend(control_frame(COMMAND_REPLY, 1, &tail.bytes));
         assert!(auth(&mut fake, &[7u8; 256]).is_ok());
         let first = fake.sent.first().cloned().unwrap_or_default();
-        assert!(first.windows(5).any(|window| {
-            window
-                == [
-                    b'L',
-                    0,
-                    0,
-                    0,
-                    u8::try_from(COMMAND_AUTH).unwrap_or_default(),
-                ]
-        }));
+        assert!(first
+            .windows(5)
+            .any(|window| { window == [b'L', 0, 0, 0, u8::try_from(COMMAND_AUTH).unwrap_or_default(),] }));
         assert!(first.windows(257).any(|window| {
-            window.first() == Some(&b'x')
-                && window
-                    .get(1..)
-                    .is_some_and(|value| value.iter().all(|byte| *byte == 7))
+            window.first() == Some(&b'x') && window.get(1..).is_some_and(|value| value.iter().all(|byte| *byte == 7))
         }));
     }
 
@@ -415,8 +381,7 @@ mod tests {
         tail.u32(41);
         tail.u32(7);
         let mut fake = Fake::default();
-        fake.recv
-            .extend(control_frame(COMMAND_REPLY, 2, &tail.bytes));
+        fake.recv.extend(control_frame(COMMAND_REPLY, 2, &tail.bytes));
         assert_eq!(create_stream(&mut fake, 2, 48_000, 0.5), Ok((41, 7)));
     }
 
@@ -424,10 +389,7 @@ mod tests {
     fn wrong_reply_command_is_rejected() {
         let mut fake = Fake::default();
         fake.recv.extend(control_frame(0, 9, &[]));
-        assert!(matches!(
-            reply_for(&mut fake, 9),
-            Err(Error::System(_))
-        ));
+        assert!(matches!(reply_for(&mut fake, 9), Err(Error::System(_))));
     }
 
     #[test]
@@ -437,20 +399,12 @@ mod tests {
         header
             .get_mut(0..4)
             .unwrap_or_default()
-            .copy_from_slice(
-                &(u32::try_from(MAX_PACKET)
-                    .unwrap_or_default()
-                    .saturating_add(1))
-                .to_be_bytes(),
-            );
+            .copy_from_slice(&(u32::try_from(MAX_PACKET).unwrap_or_default().saturating_add(1)).to_be_bytes());
         header
             .get_mut(4..8)
             .unwrap_or_default()
             .copy_from_slice(&u32::MAX.to_be_bytes());
         fake.recv.extend(header);
-        assert!(matches!(
-            read_frame(&mut fake),
-            Err(Error::Refused(_))
-        ));
+        assert!(matches!(read_frame(&mut fake), Err(Error::Refused(_))));
     }
 }
