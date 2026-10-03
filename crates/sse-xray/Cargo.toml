@@ -7,6 +7,7 @@ rust-version.workspace = true
 
 [dependencies]
 sse-core = { path = "../sse-core" }
+sse-codecs = { path = "../sse-codecs" }
 
 [lints]
 workspace = true
