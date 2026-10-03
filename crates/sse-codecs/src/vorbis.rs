@@ -998,10 +998,7 @@ fn decode_residue_channels(
     if begin >= end || residue.partition == 0 {
         return Ok(());
     }
-    let partitions = end
-        .saturating_sub(begin)
-        .checked_div(residue.partition)
-        .unwrap_or(0);
+    let partitions = end.saturating_sub(begin).checked_div(residue.partition).unwrap_or(0);
     let classbook = books
         .get(residue.classbook)
         .ok_or_else(|| Error::damaged("Vorbis residue classbook"))?;
@@ -1055,7 +1052,9 @@ fn decode_residue_channels(
                             begin.saturating_add(absolute.saturating_mul(residue.partition)),
                             residue.partition,
                             residue.kind,
-                            books.get(book_index).ok_or_else(|| Error::damaged("Vorbis residue book"))?,
+                            books
+                                .get(book_index)
+                                .ok_or_else(|| Error::damaged("Vorbis residue book"))?,
                             bits,
                         )?;
                     }
@@ -1087,10 +1086,7 @@ fn decode_residue_type2(
     if begin >= end || residue.partition == 0 {
         return Ok(());
     }
-    let partitions = end
-        .saturating_sub(begin)
-        .checked_div(residue.partition)
-        .unwrap_or(0);
+    let partitions = end.saturating_sub(begin).checked_div(residue.partition).unwrap_or(0);
     let classbook = books
         .get(residue.classbook)
         .ok_or_else(|| Error::damaged("Vorbis residue-2 classbook"))?;
@@ -1129,7 +1125,9 @@ fn decode_residue_type2(
                         begin.saturating_add(absolute.saturating_mul(residue.partition)),
                         residue.partition,
                         1,
-                        books.get(book_index).ok_or_else(|| Error::damaged("Vorbis residue-2 book"))?,
+                        books
+                            .get(book_index)
+                            .ok_or_else(|| Error::damaged("Vorbis residue-2 book"))?,
                         bits,
                     )?;
                 }
@@ -1141,10 +1139,7 @@ fn decode_residue_type2(
         for channel in 0..channel_count {
             let source = sample.saturating_mul(channel_count).saturating_add(channel);
             let value = interleaved.get(source).copied().unwrap_or(0.0);
-            if let Some(slot) = channels
-                .get_mut(channel)
-                .and_then(|items| items.get_mut(sample))
-            {
+            if let Some(slot) = channels.get_mut(channel).and_then(|items| items.get_mut(sample)) {
                 *slot = value;
             }
         }
@@ -1662,11 +1657,8 @@ mod tests {
             .unwrap_or_else(|error| panic!("ident: {error:?}"));
         validate_comment(&packets.get(1).unwrap_or_else(|| panic!("comment packet")).data)
             .unwrap_or_else(|error| panic!("comment: {error:?}"));
-        let setup = setup(
-            &packets.get(2).unwrap_or_else(|| panic!("setup packet")).data,
-            ident,
-        )
-        .unwrap_or_else(|error| panic!("setup: {error:?}"));
+        let setup = setup(&packets.get(2).unwrap_or_else(|| panic!("setup packet")).data, ident)
+            .unwrap_or_else(|error| panic!("setup: {error:?}"));
         for (index, packet) in packets.iter().skip(3).enumerate() {
             let _ = decode_audio(&packet.data, ident, &setup)
                 .unwrap_or_else(|error| panic!("audio packet {index}: {error:?}"));
