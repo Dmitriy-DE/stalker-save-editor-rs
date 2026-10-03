@@ -23,6 +23,8 @@ impl TempDir {
         let path = std::env::temp_dir().join(format!("sse-test-{name}-{count}"));
         let _ = fs::remove_dir_all(&path);
         fs::create_dir_all(&path).expect("failed to create temp dir");
+        // macOS: the temp folder is reached through /var -> /private/var; discovery reports resolved paths.
+        let path = fs::canonicalize(&path).expect("failed to resolve temp dir");
         Self { path }
     }
 }
