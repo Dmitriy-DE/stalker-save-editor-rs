@@ -661,8 +661,7 @@ fn read_fluff(bits: &mut HeaderBits<'_>, num_symbols: usize) -> Result<usize> {
     let z = range
         .checked_sub(x)
         .ok_or_else(|| Error::damaged("Huffman fluff range subtraction underflow"))?;
-    let value_usize =
-        usize::try_from(value).map_err(|_| Error::damaged("Huffman fluff value conversion failed"))?;
+    let value_usize = usize::try_from(value).map_err(|_| Error::damaged("Huffman fluff value conversion failed"))?;
 
     let (consume, result) = if value_usize >> 1 >= z {
         (
@@ -682,10 +681,7 @@ fn read_fluff(bits: &mut HeaderBits<'_>, num_symbols: usize) -> Result<usize> {
     bits.bits = bits.bits.checked_shl(consume).unwrap_or_default();
     bits.bitpos = bits
         .bitpos
-        .checked_add(
-            i32::try_from(consume)
-                .map_err(|_| Error::damaged("Huffman fluff consume conversion failed"))?,
-        )
+        .checked_add(i32::try_from(consume).map_err(|_| Error::damaged("Huffman fluff consume conversion failed"))?)
         .ok_or_else(|| Error::damaged("Huffman fluff bit position overflow"))?;
     Ok(result)
 }
