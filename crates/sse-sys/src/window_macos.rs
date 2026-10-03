@@ -18,6 +18,7 @@ use std::{
 const YES: o::Bool = 1;
 const NO: o::Bool = 0;
 const ANY: u64 = u64::MAX;
+/// Rectangle in physical framebuffer pixels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Rect {
     /// Left pixel.
@@ -190,7 +191,7 @@ impl WakeHandle {
         }
         let cls = o::class(c"NSEvent");
         type F = unsafe extern "C" fn(o::Id, o::Sel, usize, o::Point, usize, f64, isize, o::Id, isize, isize) -> o::Id; // SAFETY: exact NSEvent otherEventWithType selector ABI.
-        let f: F = unsafe { mem::transmute(objc_msgSend_ptr()) };
+        let f: F = unsafe { mem::transmute(objc_msg_send_ptr()) };
         let event = unsafe {
             f(
                 cls,
@@ -212,7 +213,7 @@ impl WakeHandle {
         }
     }
 }
-fn objc_msgSend_ptr() -> *const c_void {
+fn objc_msg_send_ptr() -> *const c_void {
     unsafe extern "C" {
         fn objc_msgSend();
     }
@@ -401,7 +402,7 @@ impl Window for MacWindow {
             o::void_id(layer, o::sel(c"setContents:"), image);
             let scale = o::f64_(self.window, o::sel(c"backingScaleFactor"));
             type F = unsafe extern "C" fn(o::Id, o::Sel, f64);
-            let f: F = mem::transmute(objc_msgSend_ptr());
+            let f: F = mem::transmute(objc_msg_send_ptr());
             f(layer, o::sel(c"setContentsScale:"), scale);
             o::CGImageRelease(image)
         };
@@ -607,7 +608,7 @@ fn decode_event(event: o::Id, view: o::Id, shared: &Arc<Shared>) {
                 unsafe { o::void_id(view, o::sel(c"interpretKeyEvents:"), array) }
             }
         }
-        1 | 2 | 3 | 4 | 25 | 26 => {
+        1..=4 | 25 | 26 => {
             let button = if matches!(ty, 1 | 2) {
                 MouseButton::Left
             } else if matches!(ty, 3 | 4) {
