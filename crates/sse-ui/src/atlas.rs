@@ -8,7 +8,9 @@ use std::collections::HashMap;
 pub struct PackRect<T> {
     /// Caller identifier preserved in the placement.
     pub id: T,
+    /// Rectangle width in pixels.
     pub width: u16,
+    /// Rectangle height in pixels.
     pub height: u16,
     /// Hash of the source pixels used to merge duplicates.
     pub pixel_hash: u64,
@@ -17,12 +19,17 @@ pub struct PackRect<T> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// Deterministic placement of one input rectangle.
 pub struct Placement<T> {
+    /// Caller identifier from the input rectangle.
     pub id: T,
     /// Atlas page index.
     pub page: u16,
+    /// Left pixel coordinate.
     pub x: u16,
+    /// Top pixel coordinate.
     pub y: u16,
+    /// Unpadded rectangle width.
     pub width: u16,
+    /// Unpadded rectangle height.
     pub height: u16,
     /// Original input index when this entry reused a duplicate slot.
     pub duplicate_of: Option<usize>,
@@ -115,8 +122,8 @@ pub fn pack_rectangles<T: Clone>(
         for (pi, free) in pages.iter().enumerate() {
             for (fi, f) in free.iter().enumerate() {
                 if pw <= f.w && ph <= f.h {
-                    let short = (f.w - pw).min(f.h - ph);
-                    let long = (f.w - pw).max(f.h - ph);
+                    let short = f.w.saturating_sub(pw).minf.h.saturating_sub(ph);
+                    let long = f.w.saturating_sub(pw).maxf.h.saturating_sub(ph);
                     let cand = (pi, fi, short, long, f.y, f.x);
                     if choice
                         .as_ref()
@@ -159,7 +166,7 @@ pub fn pack_rectangles<T: Clone>(
         }
         hashes.insert(r.pixel_hash, index);
         used = used
-            .checked_add(u64::from(r.width) * u64::from(r.height))
+            .checked_add(u64::from(r.width).saturating_mul(u64::from(r.height)))
             .ok_or_else(|| "atlas used area overflow".to_owned())?;
     }
     let mut placements = Vec::with_capacity(input.len());
