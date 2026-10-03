@@ -3,8 +3,9 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use sse_content::{CompanionGame, GameFile, GameFileTree};
+use sse_content::{CompanionGame, EntryDecoder, GameFile, GameFileTree, HeaderDecoder};
 use sse_core::ExitCode;
 use sse_lint::{LintEngine, LintOptions, LintSeverity};
 
@@ -69,7 +70,6 @@ pub fn run_lint(args: &[String]) -> ExitCode {
         return ExitCode::System;
     }
 
-    // Try loading with CompanionGame / fsgame.ltx or fallback to directory scan
     let tree = match load_tree_for_lint(&folder) {
         Ok(t) => t,
         Err(e) => {
@@ -113,23 +113,87 @@ pub fn run_lint(args: &[String]) -> ExitCode {
     }
 }
 
-/// Loads a GameFileTree from a game directory or loose folder.
-fn load_tree_for_lint(folder: &Path) -> sse_core::Result<GameFileTree> {
-    // If fsgame.ltx exists, use CompanionGame loader
-    if folder.join("fsgame.ltx").exists() {
-        // Try ShadowOfChernobyl first, then ClearSky / CallOfPripyat
-        let game = if folder.join("gamedata/configs").is_dir() || folder.join("configs").is_dir() {
-            CompanionGame::CallOfPripyat
+/// Builds archive decoders (LZHUF header + LZO1x entries) matching what X-Ray uses.
+///
+/// The header table in X-Ray `.db` archives is either:
+///   - stored raw (chunk type 1 without the compressed flag), or
+///   - LZHUF-compressed, optionally preceded by the regional scrambler.
+///
+/// Entry data is always LZO1x-compressed when `compressed_size != uncompressed_size`.
+fn make_archive_decoders() -> (HeaderDecoder, EntryDecoder) {
+    let header_decoder: HeaderDecoder = Arc::new(|data: &[u8]| -> sse_core::Result<Vec<Vec<u8>>> {
+        let mut candidates: Vec<Vec<u8>> = Vec::new();
+
+        // Try plain LZHUF first (CoP resources/*.db and others)
+        if let Ok(decoded) = sse_codecs::lzhuf::decode(data) {
+            candidates.push(decoded);
+        }
+
+        // Try scramble-then-LZHUF (SoC gamedata.db*, CS gamedata)
+        for world_wide in [true, false] {
+            let descrambled = sse_codecs::lzhuf::descramble(data, world_wide);
+            if let Ok(decoded) = sse_codecs::lzhuf::decode(&descrambled) {
+                candidates.push(decoded);
+            }
+        }
+
+        if candidates.is_empty() {
+            Err(sse_core::Error::damaged("X-Ray archive header could not be decoded"))
         } else {
+            Ok(candidates)
+        }
+    });
+
+    let entry_decoder: EntryDecoder = Arc::new(|data: &[u8], expected_size: usize| -> sse_core::Result<Vec<u8>> {
+        sse_codecs::lzo1x::decompress(data, expected_size)
+    });
+
+    (header_decoder, entry_decoder)
+}
+
+/// Loads a [`GameFileTree`] from a game directory.
+///
+/// If `fsgame.ltx` is present the full G1 file-tree loader is used so both
+/// `.db` archives and loose `gamedata/` files are visible (archives first,
+/// loose overlay on top), exactly as the X-Ray engine sees them.  Archive
+/// headers are decoded with LZHUF (with regional descrambling if needed);
+/// entry bodies are LZO1x-decompressed on demand (`defer_archive_content = true`).
+///
+/// When `fsgame.ltx` is absent the directory is walked recursively as a
+/// loose-only tree (mod directories, extracted archives, CI fixtures).
+fn load_tree_for_lint(folder: &Path) -> sse_core::Result<GameFileTree> {
+    if folder.join("fsgame.ltx").exists() {
+        let (header_decoder, entry_decoder) = make_archive_decoders();
+
+        // Detect game family by the config sub-directory name.
+        // SoC uses config/, CS and CoP use configs/.
+        let game = if folder.join("gamedata/config").is_dir() {
             CompanionGame::ShadowOfChernobyl
+        } else {
+            CompanionGame::CallOfPripyat
         };
 
-        if let Ok(tree) = GameFileTree::load_simple(game, folder, |_| true, false) {
+        let is_wanted = |p: &str| {
+            let lower = p.to_ascii_lowercase();
+            lower.ends_with(".ltx") || lower.ends_with(".xml") || lower.ends_with(".script")
+        };
+
+        if let Ok(tree) = GameFileTree::load(
+            game,
+            folder,
+            is_wanted,
+            None,
+            true,
+            true, // defer: decompress entries on demand to avoid loading all ~2000 files upfront
+            false,
+            Some(header_decoder),
+            Some(entry_decoder),
+        ) {
             return Ok(tree);
         }
     }
 
-    // Fallback: build loose tree from directory directly
+    // Fallback: loose directory walk (mod folders, CI fixture trees, etc.)
     let mut files: HashMap<String, GameFile> = HashMap::new();
     let mut paths = Vec::new();
     collect_files_recursive(folder, &mut paths);
@@ -173,23 +237,29 @@ fn print_json_report(report: &sse_lint::LintReport) {
     println!("{{");
     println!("  \"filesChecked\": {},", report.files_checked);
     println!("  \"elapsedMs\": {},", report.elapsed_ms);
-    println!("  \"totalFindings\": {},", report.findings.len());
     println!("  \"findings\": [");
-    for (idx, finding) in report.findings.iter().enumerate() {
-        let comma = if idx.saturating_add(1) < report.findings.len() {
-            ","
-        } else {
-            ""
+    let mut first = true;
+    for finding in &report.findings {
+        if !first {
+            println!(",");
+        }
+        first = false;
+        let sev = match finding.severity {
+            LintSeverity::Error => "error",
+            LintSeverity::Warning => "warning",
+            LintSeverity::Info => "info",
         };
-        println!(
-            "    {{\"checker\": \"{}\", \"file\": \"{}\", \"line\": {}, \"severity\": \"{}\", \"message\": \"{}\"}}{}",
+        print!(
+            "    {{\"checker\":\"{}\",\"file\":\"{}\",\"line\":{},\"severity\":\"{}\",\"message\":\"{}\"}}",
             finding.checker,
-            finding.file,
+            finding.file.replace('"', "\\\""),
             finding.line,
-            finding.severity.as_str(),
-            finding.message.replace('\"', "\\\""),
-            comma
+            sev,
+            finding.message.replace('"', "\\\"")
         );
+    }
+    if !report.findings.is_empty() {
+        println!();
     }
     println!("  ]");
     println!("}}");

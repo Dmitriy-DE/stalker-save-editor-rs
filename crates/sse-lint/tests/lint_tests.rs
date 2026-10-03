@@ -344,3 +344,89 @@ fn test_fix_regress_simulation() {
     assert_eq!(report_orig.count_by_severity(LintSeverity::Error), 1);
     assert_eq!(report_fixed.count_by_severity(LintSeverity::Error), 0);
 }
+
+#[test]
+fn test_lua_globals_engine_exports() {
+    let script = br#"
+function test_engine_calls()
+    local wnd = CUIWindow()
+    local st = CUIStatic()
+    local box = CUIMessageBoxEx()
+    local item = CUIListBoxItem()
+    local rect = Frect()
+    printf("hello %s", "world")
+    abort("fatal error")
+    if IsMonster(obj) then
+        return true
+    end
+    local ini = ini_file("system.ltx")
+    -- An actual undefined global
+    bogus_unknown_variable_xyz = undefined_var_123
+end
+"#;
+
+    let mut files = HashMap::new();
+    files.insert(
+        "scripts/test.script".to_string(),
+        GameFile::from_bytes("scripts/test.script", "test", script.to_vec()),
+    );
+    let tree = GameFileTree {
+        files,
+        fingerprint: "test".to_string(),
+        has_loose_overlay: true,
+        config_prefix: "configs/".to_string(),
+        data_directory: None,
+        issues: Vec::new(),
+    };
+
+    let engine = LintEngine::new(LintOptions {
+        single_checker: Some("lua_globals".to_string()),
+        ..LintOptions::default()
+    });
+    let report = engine.lint_tree(&tree);
+
+    // Only undefined_var_123 should be flagged; CUIWindow, CUIStatic, CUIMessageBoxEx,
+    // CUIListBoxItem, Frect, printf, abort, IsMonster, ini_file must NOT be flagged.
+    let undefined_names: Vec<&str> = report
+        .findings
+        .iter()
+        .map(|f| {
+            f.message
+                .strip_prefix("undefined global '")
+                .and_then(|s| s.strip_suffix('\''))
+                .unwrap_or(&f.message)
+        })
+        .collect();
+
+    assert!(
+        !undefined_names.contains(&"CUIWindow"),
+        "CUIWindow should not be reported"
+    );
+    assert!(
+        !undefined_names.contains(&"CUIStatic"),
+        "CUIStatic should not be reported"
+    );
+    assert!(
+        !undefined_names.contains(&"CUIMessageBoxEx"),
+        "CUIMessageBoxEx should not be reported"
+    );
+    assert!(
+        !undefined_names.contains(&"CUIListBoxItem"),
+        "CUIListBoxItem should not be reported"
+    );
+    assert!(!undefined_names.contains(&"Frect"), "Frect should not be reported");
+    assert!(!undefined_names.contains(&"printf"), "printf should not be reported");
+    assert!(!undefined_names.contains(&"abort"), "abort should not be reported");
+    assert!(
+        !undefined_names.contains(&"IsMonster"),
+        "IsMonster should not be reported"
+    );
+    assert!(
+        !undefined_names.contains(&"ini_file"),
+        "ini_file should not be reported"
+    );
+    assert!(
+        undefined_names.contains(&"undefined_var_123"),
+        "undefined_var_123 must be reported"
+    );
+}
