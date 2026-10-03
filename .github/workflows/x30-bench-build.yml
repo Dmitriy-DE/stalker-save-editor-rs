@@ -1,0 +1,20 @@
+name: x30-bench-build
+on:
+  push:
+    branches: [wp/X30-kraken-speed]
+    paths:
+      - crates/sse-codecs/examples/x30_bench.rs
+      - .github/workflows/x30-bench-build.yml
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release -p sse-codecs --example x30_bench
+      - uses: actions/upload-artifact@v4
+        with:
+          name: x30-bench-linux
+          path: target/release/examples/x30_bench
+          if-no-files-found: error
