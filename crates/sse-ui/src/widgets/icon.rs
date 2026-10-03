@@ -86,6 +86,12 @@ impl IconCache {
     pub fn len(&self) -> usize {
         self.entries.len()
     }
+
+    /// Whether no icon variants are cached.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
 }
 
 impl Default for IconCache {
@@ -191,8 +197,12 @@ mod tests {
     #[test]
     fn cache_reuses_and_bounds() {
         let mut c = IconCache::new();
-        let a = c.get(Icon::Save, 24, 0xffffff).unwrap().alpha.clone();
-        let b = c.get(Icon::Save, 24, 0xffffff).unwrap().alpha.clone();
+        let a = c.get(Icon::Save, 24, 0xffffff).unwrap_or_else(|error| panic!("{error:?}"))
+            .alpha
+            .clone();
+        let b = c.get(Icon::Save, 24, 0xffffff).unwrap_or_else(|error| panic!("{error:?}"))
+            .alpha
+            .clone();
         assert_eq!(a, b);
         assert_eq!(c.len(), 1);
         assert!(a.iter().any(|v| *v != 0));
