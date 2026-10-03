@@ -979,3 +979,143 @@ fn captures_from_slots(slots: &[Option<usize>]) -> Captures {
         let range = slots
             .get(position)
             .copied()
+            .flatten()
+            .zip(slots.get(end_position).copied().flatten())
+            .map(|(start, end)| Match { start, end });
+        ranges.push(range);
+        position = position.saturating_add(2);
+    }
+    Captures { ranges }
+}
+
+fn assertion_holds(
+    assertion: Assertion,
+    position: usize,
+    previous: Option<char>,
+    next: Option<char>,
+    input_len: usize,
+) -> bool {
+    match assertion {
+        Assertion::Start => position == 0,
+        Assertion::End => position == input_len,
+        Assertion::WordBoundary => previous.is_some_and(is_word) != next.is_some_and(is_word),
+        Assertion::NotWordBoundary => previous.is_some_and(is_word) == next.is_some_and(is_word),
+    }
+}
+
+fn is_word(character: char) -> bool {
+    character == '_' || character.is_ascii_alphanumeric() || is_cyrillic_letter(character)
+}
+
+fn is_cyrillic_letter(character: char) -> bool {
+    matches!(character, 'А'..='я' | 'Ё' | 'ё')
+}
+
+fn fold_case(character: char) -> char {
+    if character.is_ascii_uppercase() {
+        character.to_ascii_lowercase()
+    } else {
+        match character {
+            'А' => 'а',
+            'Б' => 'б',
+            'В' => 'в',
+            'Г' => 'г',
+            'Д' => 'д',
+            'Е' => 'е',
+            'Ё' => 'ё',
+            'Ж' => 'ж',
+            'З' => 'з',
+            'И' => 'и',
+            'Й' => 'й',
+            'К' => 'к',
+            'Л' => 'л',
+            'М' => 'м',
+            'Н' => 'н',
+            'О' => 'о',
+            'П' => 'п',
+            'Р' => 'р',
+            'С' => 'с',
+            'Т' => 'т',
+            'У' => 'у',
+            'Ф' => 'ф',
+            'Х' => 'х',
+            'Ц' => 'ц',
+            'Ч' => 'ч',
+            'Ш' => 'ш',
+            'Щ' => 'щ',
+            'Ъ' => 'ъ',
+            'Ы' => 'ы',
+            'Ь' => 'ь',
+            'Э' => 'э',
+            'Ю' => 'ю',
+            'Я' => 'я',
+            _ => character,
+        }
+    }
+}
+
+fn required_literal(ast: &Ast, case_insensitive: bool) -> Option<String> {
+    let mut value = required_literal_inner(ast)?;
+    if case_insensitive {
+        value = value.chars().map(fold_case).collect();
+    }
+    if value.is_empty() {
+        None
+    } else {
+        Some(value)
+    }
+}
+
+fn required_literal_inner(ast: &Ast) -> Option<String> {
+    match ast {
+        Ast::Atom(Matcher::Literal(character)) => Some(character.to_string()),
+        Ast::Capture { node, .. } => required_literal_inner(node),
+        Ast::Repeat { node, min, .. } if *min > 0 => required_literal_inner(node),
+        Ast::Concat(nodes) => {
+            let mut best: Option<String> = None;
+            let mut run = String::new();
+            for node in nodes {
+                if let Some(exact) = exact_literal(node) {
+                    run.push_str(&exact);
+                } else {
+                    choose_longer(&mut best, std::mem::take(&mut run));
+                    if let Some(candidate) = required_literal_inner(node) {
+                        choose_longer(&mut best, candidate);
+                    }
+                }
+            }
+            choose_longer(&mut best, run);
+            best
+        }
+        Ast::Alternation(nodes) => {
+            let first = nodes.first().and_then(required_literal_inner)?;
+            if nodes
+                .iter()
+                .skip(1)
+                .all(|node| required_literal_inner(node).as_deref() == Some(first.as_str()))
+            {
+                Some(first)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+fn exact_literal(ast: &Ast) -> Option<String> {
+    match ast {
+        Ast::Empty => Some(String::new()),
+        Ast::Atom(Matcher::Literal(character)) => Some(character.to_string()),
+        Ast::Capture { node, .. } => exact_literal(node),
+        Ast::Concat(nodes) => {
+            let mut result = String::new();
+            for node in nodes {
+                result.push_str(&exact_literal(node)?);
+            }
+            Some(result)
+        }
+        Ast::Repeat {
+            node,
+            min,
+            max: Some(max),
