@@ -225,6 +225,7 @@ fn tokenize(input: &[u8], level: Level) -> Vec<Token> {
             let end = p.saturating_add(current.0).min(input.len());
             let insertion_start = match level {
                 Level::Fast => end.saturating_sub(1).max(p.saturating_add(1)),
+                Level::Default if current.1 <= 4 => end.saturating_sub(1).max(p.saturating_add(1)),
                 Level::Default => p.saturating_add(1),
             };
             for covered in insertion_start..end {
