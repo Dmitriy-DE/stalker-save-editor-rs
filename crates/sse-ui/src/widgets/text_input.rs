@@ -152,10 +152,10 @@ mod tests {
                 Key::A,
                 Modifiers {
                     ctrl: true,
-                    shift: false
+                    shift: false,
                 },
                 None,
-                &mut c
+                &mut c,
             )
             .unwrap()
         );
@@ -164,10 +164,10 @@ mod tests {
                 Key::C,
                 Modifiers {
                     ctrl: true,
-                    shift: false
+                    shift: false,
                 },
                 None,
-                &mut c
+                &mut c,
             )
             .unwrap()
         );
