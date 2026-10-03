@@ -16,7 +16,6 @@ const SUB_BLOCK: usize = 0x20000;
 const MAX_SCRATCH: usize = 0x80000;
 const MAX_RECURSION: usize = 16;
 const MAX_ENTROPY_ARRAYS: usize = 63;
-const MAX_HUFF_SYMBOLS: usize = 256;
 const HUFF_BITS: usize = 11;
 const HUFF_LUT: usize = 1 << HUFF_BITS;
 const MAX_LEN_EXTENSIONS: usize = 512;
