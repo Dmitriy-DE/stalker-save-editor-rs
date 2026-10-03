@@ -1483,7 +1483,7 @@ impl SetScanner<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Captures, Match, Regex, RegexOptions, Set, StreamMatch};
+    use super::{Match, Regex, RegexOptions, Set, StreamMatch};
     use std::time::Instant;
 
     const CATALOGUE: [(&str, &str); 47] = [
