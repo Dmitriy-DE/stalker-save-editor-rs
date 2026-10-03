@@ -1594,6 +1594,27 @@ mod tests {
         packed
     }
 
+    fn pack_kraken_stream(raw: &[u8], stream: &[u8]) -> Vec<u8> {
+        let mut packed = Vec::with_capacity(stream.len().saturating_add(8));
+        packed.extend_from_slice(&u32::try_from(raw.len()).unwrap_or_default().to_le_bytes());
+        packed.extend_from_slice(stream);
+        let crc = crc32::crc32(&packed);
+        packed.extend_from_slice(&crc.to_le_bytes());
+        packed
+    }
+
+    #[test]
+    fn container_uses_main_kraken_decoder_for_rle_reference_vector() {
+        const RAW: &[u8] = include_bytes!("../../../fixtures/kraken/save-like-small.raw");
+        const STREAM: &[u8] = include_bytes!("../../../fixtures/kraken/save-like-small-l6.kraken");
+
+        let packed = pack_kraken_stream(RAW, STREAM);
+        assert_eq!(
+            S2Container::from_bytes(&packed).map(|value| value.image() == RAW),
+            Ok(true)
+        );
+    }
+
     #[test]
     fn legacy_1031_reader_matches_the_synthetic_reference_values() {
         let raw = legacy_synthetic_raw();
