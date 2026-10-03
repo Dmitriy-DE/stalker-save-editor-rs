@@ -139,7 +139,7 @@ mod tests {
                 direction: None,
             }],
         )
-        .unwrap();
+        .unwrap_or_else(|error| panic!("{error:?}"));
         let r = t.visible_range(20_000.0, 400.0);
         assert!(r.end - r.start < 20);
         assert_eq!(t.view_len(), 10_000);
@@ -156,9 +156,10 @@ mod tests {
                 direction: None,
             }],
         )
-        .unwrap();
+        .unwrap_or_else(|error| panic!("{error:?}"));
         t.select_view(0, false, false);
-        t.header_click(0, false, |a, b, _| a.cmp(&b)).unwrap();
+        t.header_click(0, false, |a, b, _| a.cmp(&b))
+            .unwrap_or_else(|error| panic!("{error:?}"));
         assert!(t.selected(3));
         assert_eq!(t.visible_row(0), Some(1));
     }
