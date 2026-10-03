@@ -100,6 +100,198 @@ impl Container {
         packed.extend_from_slice(&compressed);
         Ok(SaveBuffer::from_vec(packed))
     }
+
+    #[cfg(test)]
+    pub(crate) fn rebuild_chunk_payloads(&self, raw: &[u8], replacements: &[(u32, &[u8])]) -> Result<Vec<u8>> {
+        let mut found = vec![false; replacements.len()];
+        let mut capacity = raw.len();
+        let mut output = Vec::new();
+        for chunk in &self.chunks {
+            let end = chunk
+                .offset
+                .checked_add(chunk.length)
+                .ok_or_else(|| Error::damaged("X-Ray chunk range overflow"))?;
+            let _payload = raw
+                .get(chunk.offset..end)
+                .ok_or_else(|| Error::damaged("X-Ray chunk is outside the current image"))?;
+            if let Some((index, (_, replacement))) = replacements
+                .iter()
+                .enumerate()
+                .find(|(_, (kind, _))| *kind == chunk.kind)
+            {
+                let already_found = found
+                    .get(index)
+                    .copied()
+                    .ok_or_else(|| Error::damaged("X-Ray replacement index is outside its table"))?;
+                if already_found {
+                    return Err(Error::Refused(format!(
+                        "X-Ray chunk type {} occurs more than once",
+                        chunk.kind
+                    )));
+                }
+                let found_slot = found
+                    .get_mut(index)
+                    .ok_or_else(|| Error::damaged("X-Ray replacement index is outside its table"))?;
+                *found_slot = true;
+                capacity = capacity
+                    .checked_sub(chunk.length)
+                    .and_then(|value| value.checked_add(replacement.len()))
+                    .ok_or_else(|| Error::Refused("X-Ray rebuilt image size overflow".to_owned()))?;
+            }
+        }
+        for ((kind, _), is_found) in replacements.iter().zip(found) {
+            if !is_found {
+                return Err(Error::damaged(format!("missing X-Ray chunk type {kind}")));
+            }
+        }
+        output.reserve(capacity);
+        for chunk in &self.chunks {
+            let end = chunk
+                .offset
+                .checked_add(chunk.length)
+                .ok_or_else(|| Error::damaged("X-Ray chunk range overflow"))?;
+            let payload = raw
+                .get(chunk.offset..end)
+                .ok_or_else(|| Error::damaged("X-Ray chunk is outside the current image"))?;
+            let payload = replacements
+                .iter()
+                .find(|(kind, _)| *kind == chunk.kind)
+                .map_or(payload, |(_, replacement)| *replacement);
+            let payload_length = u32::try_from(payload.len())
+                .map_err(|_| Error::Refused("X-Ray chunk exceeds its u32 length field".to_owned()))?;
+            output.extend_from_slice(&chunk.kind.to_le_bytes());
+            output.extend_from_slice(&payload_length.to_le_bytes());
+            output.extend_from_slice(payload);
+        }
+        Ok(output)
+    }
+
+    /// Replaces chunk payloads in the existing image buffer, without building a second image.
+    pub(crate) fn rebuild_chunk_payloads_in_place(
+        &self,
+        raw: &mut Vec<u8>,
+        replacements: &[(u32, &[u8])],
+    ) -> Result<()> {
+        let mut found = vec![false; replacements.len()];
+        let mut final_size = raw.len();
+        for chunk in &self.chunks {
+            let end = chunk
+                .offset
+                .checked_add(chunk.length)
+                .ok_or_else(|| Error::damaged("X-Ray chunk range overflow"))?;
+            raw.get(chunk.offset..end)
+                .ok_or_else(|| Error::damaged("X-Ray chunk is outside the current image"))?;
+            let header_start = chunk
+                .offset
+                .checked_sub(8)
+                .ok_or_else(|| Error::damaged("X-Ray chunk header offset underflow"))?;
+            let header = raw
+                .get(header_start..chunk.offset)
+                .ok_or_else(|| Error::damaged("X-Ray chunk header is outside the current image"))?;
+            let header_kind = header
+                .get(..4)
+                .ok_or_else(|| Error::damaged("X-Ray chunk type is outside the current image"))?;
+            let header_length = header
+                .get(4..)
+                .ok_or_else(|| Error::damaged("X-Ray chunk length is outside the current image"))?;
+            let indexed_length = u32::try_from(chunk.length)
+                .map_err(|_| Error::damaged("X-Ray chunk length does not fit its header"))?;
+            if header_kind != chunk.kind.to_le_bytes() || header_length != indexed_length.to_le_bytes() {
+                return Err(Error::damaged("X-Ray chunk index does not match the current image"));
+            }
+            if let Some((index, (_, replacement))) = replacements
+                .iter()
+                .enumerate()
+                .find(|(_, (kind, _))| *kind == chunk.kind)
+            {
+                let already_found = found
+                    .get(index)
+                    .copied()
+                    .ok_or_else(|| Error::damaged("X-Ray replacement index is outside its table"))?;
+                if already_found {
+                    return Err(Error::Refused(format!(
+                        "X-Ray chunk type {} occurs more than once",
+                        chunk.kind
+                    )));
+                }
+                let found_slot = found
+                    .get_mut(index)
+                    .ok_or_else(|| Error::damaged("X-Ray replacement index is outside its table"))?;
+                *found_slot = true;
+                u32::try_from(replacement.len())
+                    .map_err(|_| Error::Refused("X-Ray chunk exceeds its u32 length field".to_owned()))?;
+                final_size = final_size
+                    .checked_sub(chunk.length)
+                    .and_then(|size| size.checked_add(replacement.len()))
+                    .ok_or_else(|| Error::Refused("X-Ray rebuilt image size overflow".to_owned()))?;
+            }
+        }
+        for ((kind, _), is_found) in replacements.iter().zip(found) {
+            if !is_found {
+                return Err(Error::damaged(format!("missing X-Ray chunk type {kind}")));
+            }
+        }
+        if final_size == 0 || final_size > MAXIMUM_UNPACKED_SIZE {
+            return Err(Error::Refused(format!("invalid rebuilt X-Ray image size {final_size}")));
+        }
+        raw.try_reserve_exact(final_size.saturating_sub(raw.len()))
+            .map_err(|_| Error::Refused("unable to reserve space for rebuilt X-Ray image".to_owned()))?;
+
+        // Work from the end so each chunk's original offset stays valid while later chunks move.
+        for chunk in self.chunks.iter().rev() {
+            let Some((_, replacement)) = replacements.iter().find(|(kind, _)| *kind == chunk.kind) else {
+                continue;
+            };
+            let old_end = chunk
+                .offset
+                .checked_add(chunk.length)
+                .ok_or_else(|| Error::damaged("X-Ray chunk range overflow"))?;
+            let new_end = chunk
+                .offset
+                .checked_add(replacement.len())
+                .ok_or_else(|| Error::Refused("X-Ray replacement range overflow".to_owned()))?;
+            let old_image_len = raw.len();
+            if replacement.len() > chunk.length {
+                let growth = replacement
+                    .len()
+                    .checked_sub(chunk.length)
+                    .ok_or_else(|| Error::Refused("X-Ray replacement growth underflow".to_owned()))?;
+                let expanded_len = old_image_len
+                    .checked_add(growth)
+                    .ok_or_else(|| Error::Refused("X-Ray rebuilt image size overflow".to_owned()))?;
+                raw.resize(expanded_len, 0);
+                raw.copy_within(old_end..old_image_len, new_end);
+            } else if replacement.len() < chunk.length {
+                let shrinkage = chunk
+                    .length
+                    .checked_sub(replacement.len())
+                    .ok_or_else(|| Error::Refused("X-Ray replacement shrinkage underflow".to_owned()))?;
+                raw.copy_within(old_end..old_image_len, new_end);
+                let shortened_len = old_image_len
+                    .checked_sub(shrinkage)
+                    .ok_or_else(|| Error::Refused("X-Ray rebuilt image size underflow".to_owned()))?;
+                raw.truncate(shortened_len);
+            }
+            raw.get_mut(chunk.offset..new_end)
+                .ok_or_else(|| Error::damaged("X-Ray replacement is outside the rebuilt image"))?
+                .copy_from_slice(replacement);
+            let header_start = chunk
+                .offset
+                .checked_sub(4)
+                .ok_or_else(|| Error::damaged("X-Ray chunk length offset underflow"))?;
+            let header_end = header_start
+                .checked_add(4)
+                .ok_or_else(|| Error::damaged("X-Ray chunk length range overflow"))?;
+            raw.get_mut(header_start..header_end)
+                .ok_or_else(|| Error::damaged("X-Ray chunk length is outside the rebuilt image"))?
+                .copy_from_slice(
+                    &u32::try_from(replacement.len())
+                        .map_err(|_| Error::Refused("X-Ray chunk exceeds its u32 length field".to_owned()))?
+                        .to_le_bytes(),
+                );
+        }
+        Ok(())
+    }
 }
 
 fn parse_chunks(raw: &[u8]) -> Result<Vec<Chunk>> {
@@ -133,6 +325,7 @@ fn parse_chunks(raw: &[u8]) -> Result<Vec<Chunk>> {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::{Container, MAXIMUM_CHUNKS};
     use sse_core::Error;
@@ -158,6 +351,33 @@ mod tests {
         }
         let packed = wrap(3, &raw);
         assert!(matches!(Container::read(&packed), Err(Error::Damaged(_))));
+    }
+
+    #[test]
+    fn in_place_chunk_rebuild_matches_the_reference_for_growth_and_shrinkage() -> sse_core::Result<()> {
+        let raw = chunk(1, b"abc", &chunk(2, b"defg", &chunk(3, b"hi", &[])));
+        let packed = wrap(3, &raw);
+        let container = Container::read(&packed)?;
+        let replacements: [(u32, &[u8]); 2] = [(1, b"longer payload"), (3, b"x")];
+        let expected = container.rebuild_chunk_payloads(&raw, &replacements)?;
+        let mut actual = raw.clone();
+        container.rebuild_chunk_payloads_in_place(&mut actual, &replacements)?;
+        assert_eq!(actual, expected);
+        assert_eq!(Container::read(&wrap(3, &actual))?.image(), actual);
+        Ok(())
+    }
+
+    #[test]
+    fn in_place_chunk_rebuild_rejects_missing_replacements_before_mutating() -> sse_core::Result<()> {
+        let raw = chunk(1, b"payload", &[]);
+        let packed = wrap(3, &raw);
+        let container = Container::read(&packed)?;
+        let mut actual = raw.clone();
+        assert!(container
+            .rebuild_chunk_payloads_in_place(&mut actual, &[(9, b"missing")])
+            .is_err());
+        assert_eq!(actual, raw);
+        Ok(())
     }
 
     #[test]
@@ -226,6 +446,15 @@ mod tests {
         result.extend_from_slice(&version.to_le_bytes());
         result.extend_from_slice(&u32::try_from(raw.len()).unwrap_or_default().to_le_bytes());
         result.extend_from_slice(&compressed);
+        result
+    }
+
+    fn chunk(kind: u32, payload: &[u8], tail: &[u8]) -> Vec<u8> {
+        let mut result = Vec::new();
+        result.extend_from_slice(&kind.to_le_bytes());
+        result.extend_from_slice(&u32::try_from(payload.len()).unwrap_or_default().to_le_bytes());
+        result.extend_from_slice(payload);
+        result.extend_from_slice(tail);
         result
     }
 }

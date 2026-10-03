@@ -3,4 +3,6 @@
 
 pub mod discovery;
 
+pub mod drafts;
+
 pub mod transaction;

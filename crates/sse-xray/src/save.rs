@@ -1,6 +1,7 @@
 //! Read-only indexed X-Ray save views.
 
 use sse_core::{Cursor, Error, Result};
+use std::collections::HashSet;
 
 use crate::container::{Chunk, Container};
 
@@ -38,13 +39,16 @@ pub struct Save {
     actor_version: u16,
     money: u32,
     money_offset: usize,
+    player_faction: Option<i32>,
+    pub(crate) player_faction_offset: Option<usize>,
+    pub(crate) relation_registry: Option<RelationRegistry>,
     game_time: u64,
     time_factor: f32,
     normal_time_factor: f32,
 }
 
 /// One actor-owned inventory object.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct InventoryItem {
     /// Registry handle.
     pub handle: u16,
@@ -58,6 +62,21 @@ pub struct InventoryItem {
     pub(crate) update_count_offset: Option<usize>,
     /// Placement name; `None` means the reader did not prove placement.
     pub placement: Option<String>,
+    pub(crate) placement_offset: Option<usize>,
+    pub(crate) placement_value: Option<u16>,
+    pub(crate) placement_base_slot: Option<u8>,
+    /// Confirmed equipment condition in the serialized STATE field.
+    pub condition: Option<f32>,
+    pub(crate) condition_offset: Option<usize>,
+    pub(crate) update_condition_offset: Option<usize>,
+    pub(crate) client_condition_offset: Option<usize>,
+}
+
+struct PlacementFields {
+    category: String,
+    offset: usize,
+    packed: u16,
+    base_slot: Option<u8>,
 }
 
 /// Indexed registry record. Offsets address the decompressed image and preserve all unknown bytes.
@@ -71,6 +90,10 @@ pub struct RegistryObject {
     pub object_id: u16,
     /// Parent object id.
     pub parent_id: u16,
+    /// Raw-image offset of the object id inside M_SPAWN.
+    pub object_id_offset: usize,
+    /// Raw-image offset of the parent id inside M_SPAWN.
+    pub parent_id_offset: usize,
     /// Spawn serialization version.
     pub version: u16,
     /// Complete record start in the raw image.
@@ -92,6 +115,37 @@ pub struct RegistryObject {
 }
 
 type ObjectRecord = RegistryObject;
+
+#[derive(Debug, Clone)]
+pub(crate) struct RelationRegistry {
+    pub(crate) info_section_end: usize,
+    pub(crate) info_rows: Vec<InfoPortionRow>,
+    pub(crate) relation_rows: Vec<RelationRow>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct InfoPortionRow {
+    pub(crate) object_id: u16,
+    pub(crate) count_offset: usize,
+    pub(crate) end_offset: usize,
+    pub(crate) names: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct RelationRow {
+    pub(crate) object_id: u16,
+    pub(crate) start: usize,
+    pub(crate) end: usize,
+    pub(crate) community_count_offset: usize,
+    pub(crate) communities: Vec<CommunityRelation>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct CommunityRelation {
+    pub(crate) community_id: i32,
+    pub(crate) goodwill: i32,
+    pub(crate) goodwill_offset: usize,
+}
 
 impl Format {
     /// The stable C# release identifier.
@@ -154,7 +208,9 @@ impl Save {
                 format.id()
             )));
         }
-        let (money, money_offset) = read_actor_money(container.image(), &actor)?;
+        let (money, money_offset, player_faction, player_faction_offset) =
+            read_actor_fields(container.image(), &actor)?;
+        let relation_registry = read_relation_registry(&container, format, actor.object_id);
 
         Ok(Self {
             format,
@@ -164,6 +220,9 @@ impl Save {
             actor_version: actor.version,
             money,
             money_offset,
+            player_faction,
+            player_faction_offset,
+            relation_registry,
             game_time,
             time_factor,
             normal_time_factor,
@@ -223,7 +282,15 @@ impl Save {
         Ok(self.money)
     }
 
-    pub(crate) const fn actor_id(&self) -> u16 {
+    /// Player faction numeric identifier if its actor STATE field is recognized.
+    #[must_use]
+    pub const fn player_faction(&self) -> Option<i32> {
+        self.player_faction
+    }
+
+    /// Registry id of the save's unique actor object.
+    #[must_use]
+    pub const fn actor_id(&self) -> u16 {
         self.actor_id
     }
 
@@ -239,6 +306,59 @@ impl Save {
         self.container.repack(raw)
     }
 
+    pub(crate) fn object_chunk_bytes<'a>(&self, raw: &'a [u8]) -> Result<&'a [u8]> {
+        let mut found = None;
+        for chunk in self.container.chunks() {
+            if chunk.kind == 2 {
+                if found.is_some() {
+                    return Err(Error::damaged("duplicate X-Ray OBJECT chunks"));
+                }
+                let end = chunk
+                    .offset
+                    .checked_add(chunk.length)
+                    .ok_or_else(|| Error::damaged("X-Ray OBJECT chunk range overflow"))?;
+                found = Some(
+                    raw.get(chunk.offset..end)
+                        .ok_or_else(|| Error::damaged("X-Ray OBJECT chunk is outside the image"))?,
+                );
+            }
+        }
+        found.ok_or_else(|| Error::damaged("missing X-Ray OBJECT chunk"))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn rebuild_chunks(&self, raw: &[u8], replacements: &[(u32, &[u8])]) -> Result<Vec<u8>> {
+        self.container.rebuild_chunk_payloads(raw, replacements)
+    }
+
+    pub(crate) fn rebuild_chunks_in_place(&self, raw: &mut Vec<u8>, replacements: &[(u32, &[u8])]) -> Result<()> {
+        self.container.rebuild_chunk_payloads_in_place(raw, replacements)
+    }
+
+    pub(crate) fn relation_chunk_bytes<'a>(&self, raw: &'a [u8]) -> Result<&'a [u8]> {
+        let mut found = None;
+        for chunk in self.container.chunks() {
+            if chunk.kind == 9 {
+                if found.is_some() {
+                    return Err(Error::damaged("duplicate X-Ray relation chunks"));
+                }
+                let end = chunk
+                    .offset
+                    .checked_add(chunk.length)
+                    .ok_or_else(|| Error::damaged("X-Ray relation chunk range overflow"))?;
+                found = Some(
+                    raw.get(chunk.offset..end)
+                        .ok_or_else(|| Error::damaged("X-Ray relation chunk is outside the image"))?,
+                );
+            }
+        }
+        found.ok_or_else(|| Error::damaged("missing X-Ray relation chunk"))
+    }
+
+    pub(crate) const fn relation_has_timestamps(&self) -> bool {
+        matches!(self.format, Format::Soc | Format::Cs)
+    }
+
     /// Actor-owned inventory entries.
     pub fn inventory(&self) -> Result<Vec<InventoryItem>> {
         let mut items = Vec::new();
@@ -246,7 +366,8 @@ impl Save {
             if record.parent_id != self.actor_id || record.object_id == self.actor_id {
                 continue;
             }
-            let placement = read_placement(self.container.image(), record)?;
+            let placement_fields = read_placement_fields(self.container.image(), record)?;
+            let condition_fields = read_condition_fields(self.container.image(), record);
             let stack = read_ammo_count(self.container.image(), record);
             items.push(InventoryItem {
                 handle: record.object_id,
@@ -255,7 +376,14 @@ impl Save {
                 count: stack.map(|value| value.0),
                 state_count_offset: stack.map(|value| value.1),
                 update_count_offset: stack.map(|value| value.2),
-                placement,
+                placement: placement_fields.as_ref().map(|fields| fields.category.clone()),
+                placement_offset: placement_fields.as_ref().map(|fields| fields.offset),
+                placement_value: placement_fields.as_ref().map(|fields| fields.packed),
+                placement_base_slot: placement_fields.as_ref().and_then(|fields| fields.base_slot),
+                condition: condition_fields.map(|fields| fields.0),
+                condition_offset: condition_fields.map(|fields| fields.1),
+                update_condition_offset: condition_fields.and_then(|fields| fields.2),
+                client_condition_offset: condition_fields.and_then(|fields| fields.3),
             });
         }
         items.sort_by_key(|item| item.handle);
@@ -402,7 +530,13 @@ fn parse_spawn(packet: &[u8], packet_offset: usize) -> Result<ObjectRecord> {
     reader.skip(2)?;
     reader.skip(6 * 4)?;
     reader.skip(2)?;
+    let object_id_offset = packet_offset
+        .checked_add(reader.position())
+        .ok_or_else(|| Error::damaged("X-Ray object id offset overflow"))?;
     let object_id = reader.u16()?;
+    let parent_id_offset = packet_offset
+        .checked_add(reader.position())
+        .ok_or_else(|| Error::damaged("X-Ray parent id offset overflow"))?;
     let parent_id = reader.u16()?;
     reader.skip(2)?;
     let flags = reader.u16()?;
@@ -461,6 +595,8 @@ fn parse_spawn(packet: &[u8], packet_offset: usize) -> Result<ObjectRecord> {
         name_replace,
         object_id,
         parent_id,
+        object_id_offset,
+        parent_id_offset,
         version,
         record_offset: 0,
         record_length: 0,
@@ -473,7 +609,7 @@ fn parse_spawn(packet: &[u8], packet_offset: usize) -> Result<ObjectRecord> {
     })
 }
 
-fn read_actor_money(raw: &[u8], actor: &ObjectRecord) -> Result<(u32, usize)> {
+fn read_actor_fields(raw: &[u8], actor: &ObjectRecord) -> Result<(u32, usize, Option<i32>, Option<usize>)> {
     let state_end = actor
         .state_offset
         .checked_add(actor.state_length)
@@ -510,10 +646,170 @@ fn read_actor_money(raw: &[u8], actor: &ObjectRecord) -> Result<(u32, usize)> {
         .state_offset
         .checked_add(reader.position())
         .ok_or_else(|| Error::damaged("X-Ray actor money offset overflow"))?;
-    Ok((reader.u32()?, offset))
+    let money = reader.u32()?;
+    if actor.version > 75 && actor.version < 98 {
+        reader.skip(4)?;
+    } else if actor.version >= 98 {
+        let _specific_character = reader.zero_terminated(MAXIMUM_STRING_LENGTH)?;
+    }
+    if actor.version > 77 {
+        reader.skip(4)?;
+    }
+    if actor.version > 81 && actor.version < 96 {
+        reader.skip(4)?;
+    } else if actor.version > 95 {
+        let _character_profile = reader.zero_terminated(MAXIMUM_STRING_LENGTH)?;
+    }
+    let (player_faction, faction_offset) = if actor.version > 85 {
+        let offset = actor
+            .state_offset
+            .checked_add(reader.position())
+            .ok_or_else(|| Error::damaged("X-Ray actor faction offset overflow"))?;
+        (Some(i32::from_le_bytes(reader.u32()?.to_le_bytes())), Some(offset))
+    } else {
+        (None, None)
+    };
+    Ok((money, offset, player_faction, faction_offset))
 }
 
-fn skip_dynamic_visual(reader: &mut Cursor<'_>, version: u16) -> Result<()> {
+fn read_relation_registry(container: &Container, format: Format, _actor_id: u16) -> Option<RelationRegistry> {
+    let has_timestamps = match format {
+        Format::Soc | Format::Cs => true,
+        Format::Cop => false,
+        Format::SocEe | Format::CsEe | Format::CopEe => return None,
+    };
+    let mut relation_chunk = None;
+    for chunk in container.chunks() {
+        if chunk.kind == 9 {
+            if relation_chunk.is_some() {
+                return None;
+            }
+            relation_chunk = Some(chunk);
+        }
+    }
+    let payload = container.chunk_bytes(*relation_chunk?).ok()?;
+    parse_relation_registry(payload, has_timestamps).ok()
+}
+
+pub(crate) fn parse_relation_registry(payload: &[u8], has_timestamps: bool) -> Result<RelationRegistry> {
+    const MAXIMUM_COUNT: u32 = 1_000_000;
+    let mut reader = Cursor::new(payload);
+    let info_count = reader.u32()?;
+    if info_count > MAXIMUM_COUNT
+        || usize::try_from(info_count)
+            .ok()
+            .is_none_or(|count| count > reader.remaining() / 6)
+    {
+        return Err(Error::damaged("X-Ray info-portion object count exceeds its chunk"));
+    }
+    let mut info_rows = Vec::with_capacity(usize::try_from(info_count).unwrap_or_default());
+    let mut info_ids = HashSet::new();
+    for _ in 0..info_count {
+        let object_id = reader.u16()?;
+        if !info_ids.insert(object_id) {
+            return Err(Error::damaged("X-Ray info-portion map repeats an object id"));
+        }
+        let count_offset = reader.position();
+        let count = reader.u32()?;
+        let minimum_width = if has_timestamps { 9_usize } else { 1 };
+        if count > MAXIMUM_COUNT
+            || usize::try_from(count).ok().is_none_or(|items| {
+                reader
+                    .remaining()
+                    .checked_div(minimum_width)
+                    .is_none_or(|maximum_items| items > maximum_items)
+            })
+        {
+            return Err(Error::damaged("X-Ray info-portion vector exceeds its chunk"));
+        }
+        let mut names = Vec::with_capacity(usize::try_from(count).unwrap_or_default());
+        for _ in 0..count {
+            let bytes = reader.zero_terminated(MAXIMUM_STRING_LENGTH)?;
+            names.push(bytes.iter().map(|byte| char::from(*byte)).collect());
+            if has_timestamps {
+                reader.skip(8)?;
+            }
+        }
+        info_rows.push(InfoPortionRow {
+            object_id,
+            count_offset,
+            end_offset: reader.position(),
+            names,
+        });
+    }
+    let info_section_end = reader.position();
+    let row_count = reader.u32()?;
+    if row_count > MAXIMUM_COUNT
+        || usize::try_from(row_count)
+            .ok()
+            .is_none_or(|count| count > reader.remaining() / 10)
+    {
+        return Err(Error::damaged("X-Ray relation row count exceeds its chunk"));
+    }
+    let mut relation_rows = Vec::with_capacity(usize::try_from(row_count).unwrap_or_default());
+    let mut character_ids = HashSet::new();
+    for _ in 0..row_count {
+        let start = reader.position();
+        let object_id = reader.u16()?;
+        if !character_ids.insert(object_id) {
+            return Err(Error::damaged("X-Ray relation registry repeats a character id"));
+        }
+        let personal_count = reader.u32()?;
+        if personal_count > MAXIMUM_COUNT
+            || usize::try_from(personal_count)
+                .ok()
+                .is_none_or(|count| count > reader.remaining() / 6)
+        {
+            return Err(Error::damaged("X-Ray personal relation vector exceeds its chunk"));
+        }
+        let mut personal_ids = HashSet::new();
+        for _ in 0..personal_count {
+            let target_id = reader.u16()?;
+            if !personal_ids.insert(target_id) {
+                return Err(Error::damaged("X-Ray personal relation vector repeats a target id"));
+            }
+            reader.skip(4)?;
+        }
+        let community_count_offset = reader.position();
+        let community_count = reader.u32()?;
+        if community_count > MAXIMUM_COUNT
+            || usize::try_from(community_count)
+                .ok()
+                .is_none_or(|count| count > reader.remaining() / 8)
+        {
+            return Err(Error::damaged("X-Ray community relation vector exceeds its chunk"));
+        }
+        let mut communities = Vec::with_capacity(usize::try_from(community_count).unwrap_or_default());
+        let mut community_ids = HashSet::new();
+        for _ in 0..community_count {
+            let community_id = i32::from_le_bytes(reader.u32()?.to_le_bytes());
+            let goodwill_offset = reader.position();
+            let goodwill = i32::from_le_bytes(reader.u32()?.to_le_bytes());
+            if !community_ids.insert(community_id) {
+                return Err(Error::damaged("X-Ray community relation vector repeats an id"));
+            }
+            communities.push(CommunityRelation {
+                community_id,
+                goodwill,
+                goodwill_offset,
+            });
+        }
+        relation_rows.push(RelationRow {
+            object_id,
+            start,
+            end: reader.position(),
+            community_count_offset,
+            communities,
+        });
+    }
+    Ok(RelationRegistry {
+        info_section_end,
+        info_rows,
+        relation_rows,
+    })
+}
+
+pub(crate) fn skip_dynamic_visual(reader: &mut Cursor<'_>, version: u16) -> Result<()> {
     if version >= 1 {
         if version > 24 {
             if version < 83 {
@@ -611,7 +907,7 @@ fn read_ammo_count(raw: &[u8], record: &ObjectRecord) -> Option<(u16, usize, usi
     Some((count, state_count_offset, update_count_offset))
 }
 
-fn read_placement(raw: &[u8], record: &ObjectRecord) -> Result<Option<String>> {
+fn read_placement_fields(raw: &[u8], record: &ObjectRecord) -> Result<Option<PlacementFields>> {
     if record.client_data_length < 3 {
         return Ok(None);
     }
@@ -638,14 +934,117 @@ fn read_placement(raw: &[u8], record: &ObjectRecord) -> Result<Option<String>> {
             let base_slot = (packed >> 10) & 0x3F;
             // Slot 0 is not a slot: C# (`XRayAddWriter.TryReadPlacement`) requires 1..14 for both.
             if (1..14).contains(&slot) && (1..14).contains(&base_slot) {
-                Ok(Some("slot".to_owned()))
+                Ok(Some(PlacementFields {
+                    category: "slot".to_owned(),
+                    offset,
+                    packed,
+                    base_slot: u8::try_from(base_slot).ok(),
+                }))
             } else {
                 Ok(None)
             }
         }
-        2 => Ok(Some("belt".to_owned())),
-        3 => Ok(Some("ruck".to_owned())),
+        2 => Ok(Some(PlacementFields {
+            category: "belt".to_owned(),
+            offset,
+            packed,
+            base_slot: packed_base_slot(packed),
+        })),
+        3 => Ok(Some(PlacementFields {
+            category: "ruck".to_owned(),
+            offset,
+            packed,
+            base_slot: packed_base_slot(packed),
+        })),
         _ => Ok(None),
+    }
+}
+
+fn packed_base_slot(packed: u16) -> Option<u8> {
+    let base_slot = (packed >> 10) & 0x3F;
+    ((1..14).contains(&base_slot))
+        .then(|| u8::try_from(base_slot).ok())
+        .flatten()
+}
+
+fn read_condition_fields(raw: &[u8], record: &ObjectRecord) -> Option<(f32, usize, Option<usize>, Option<usize>)> {
+    if record.version <= 52 || !has_condition_family(&record.name) {
+        return None;
+    }
+    let state_end = record.state_offset.checked_add(record.state_length)?;
+    let state = raw.get(record.state_offset..state_end)?;
+    let mut reader = Cursor::new(state);
+    skip_dynamic_visual(&mut reader, record.version).ok()?;
+    let offset = record.state_offset.checked_add(reader.position())?;
+    let bytes = raw.get(offset..offset.checked_add(4)?)?;
+    let condition = f32::from_le_bytes(<[u8; 4]>::try_from(bytes).ok()?);
+    if !condition.is_finite() || !(0.0..=1.0).contains(&condition) {
+        return None;
+    }
+
+    let mut update_match = None;
+    let mut update_matches = 0_u8;
+    for relative in [3_usize, 4] {
+        let candidate = record.update_offset.checked_add(relative)?;
+        if relative >= record.update_length {
+            continue;
+        }
+        let encoded = f32::from(*raw.get(candidate)?) / 255.0;
+        if (encoded - condition).abs() <= (1.0 / 255.0) + 1.0e-6 {
+            update_match = Some(candidate);
+            update_matches = update_matches.saturating_add(1);
+        }
+    }
+    if update_matches != 1 {
+        update_match = None;
+    }
+
+    let mut client_match = None;
+    let mut client_matches = 0_u8;
+    if let Some(client_start) = record.client_data_offset {
+        let client_end = client_start.checked_add(record.client_data_length)?;
+        let candidate_start = client_start.checked_add(2)?;
+        let candidate_end = client_end.checked_sub(3)?;
+        for candidate in candidate_start..candidate_end {
+            let condition_end = candidate.checked_add(4)?;
+            let value = raw.get(candidate..condition_end)?;
+            let value = f32::from_le_bytes(<[u8; 4]>::try_from(value).ok()?);
+            if !value.is_finite() || (value - condition).abs() > 1.0e-6 {
+                continue;
+            }
+            let placement_bytes = raw.get(candidate.checked_sub(2)?..candidate)?;
+            let placement = u16::from_le_bytes(<[u8; 2]>::try_from(placement_bytes).ok()?);
+            if recognized_storage(placement) {
+                client_match = Some(candidate);
+                client_matches = client_matches.saturating_add(1);
+            }
+        }
+    }
+    if client_matches != 1 {
+        client_match = None;
+    }
+    Some((condition, offset, update_match, client_match))
+}
+
+fn has_condition_family(name: &str) -> bool {
+    let key = name.to_ascii_lowercase();
+    key.starts_with("wpn_")
+        || key.starts_with("weapon_")
+        || key.starts_with("outfit_")
+        || key.starts_with("scientific_")
+        || key.starts_with("helm_")
+        || key.starts_with("armor_")
+        || key.ends_with("_outfit")
+        || key.ends_with("_helmet")
+        || key.ends_with("_helm")
+        || key.ends_with("_armor")
+}
+
+fn recognized_storage(place: u16) -> bool {
+    match place & 0x0F {
+        2 | 3 => true,
+        1 => ((place >> 4) & 0x3F) < 14 && ((place >> 10) & 0x3F) < 14,
+        _ => false,
     }
 }
 
@@ -720,10 +1119,101 @@ fn cp1251_char(byte: u8) -> char {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::arithmetic_side_effects,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::type_complexity
+)]
 mod tests {
-    use super::{Format, Save};
+    use super::{parse_relation_registry, Format, Save};
     use crate::container::Container;
     use sse_core::Error;
+
+    #[test]
+    fn indexes_original_trilogy_relation_registry() {
+        let cases: [(&[u8], bool); 3] = [
+            (
+                include_bytes!("../../../fixtures/synthetic/writer-factions/soc-relations.sav"),
+                true,
+            ),
+            (
+                include_bytes!("../../../fixtures/synthetic/writer-factions/cs-relations.sav"),
+                true,
+            ),
+            (
+                include_bytes!("../../../fixtures/synthetic/writer-factions/cop-relations.sav"),
+                false,
+            ),
+        ];
+        for (packed, timestamps) in cases {
+            let parsed = Save::read(packed);
+            assert!(parsed.is_ok(), "fixture should parse: {parsed:?}");
+            let Ok(save) = parsed else { continue };
+            assert!(
+                save.relation_registry.is_some(),
+                "{} relation registry: {:?}",
+                save.format().id(),
+                Container::read(packed).and_then(|container| {
+                    let chunk = container
+                        .chunks()
+                        .iter()
+                        .find(|chunk| chunk.kind == 9)
+                        .ok_or_else(|| Error::damaged("missing relation chunk"))?;
+                    let data = container.chunk_bytes(*chunk)?;
+                    parse_relation_registry(data, timestamps).map(|_| ())
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn relation_registry_rejects_truncation_and_hostile_counts_and_survives_mutations() {
+        let packed = include_bytes!("../../../fixtures/synthetic/writer-factions/soc-relations.sav");
+        let container = Container::read(packed);
+        assert!(container.is_ok(), "fixture should decompress: {container:?}");
+        let Ok(container) = container else { return };
+        let chunk = container.chunks().iter().find(|chunk| chunk.kind == 9);
+        assert!(chunk.is_some(), "relation chunk expected");
+        let Some(chunk) = chunk else { return };
+        let payload = container.chunk_bytes(*chunk);
+        assert!(payload.is_ok(), "relation payload should be in bounds: {payload:?}");
+        let Ok(payload) = payload else { return };
+        let registry = parse_relation_registry(payload, true);
+        assert!(registry.is_ok(), "relation payload should parse: {registry:?}");
+        let Ok(registry) = registry else { return };
+        let required_end = registry
+            .relation_rows
+            .last()
+            .map_or(registry.info_section_end.saturating_add(4), |row| row.end);
+        for length in 0..required_end {
+            assert!(
+                parse_relation_registry(&payload[..length], true).is_err(),
+                "accepted relation prefix of length {length}"
+            );
+        }
+
+        let mut hostile_info_count = payload.to_vec();
+        hostile_info_count[..4].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(parse_relation_registry(&hostile_info_count, true).is_err());
+
+        let relation_count_end = registry.info_section_end.saturating_add(4);
+        let mut hostile_relation_count = payload.to_vec();
+        let Some(relation_count) = hostile_relation_count.get_mut(registry.info_section_end..relation_count_end) else {
+            panic!("relation count must be present")
+        };
+        relation_count.copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(parse_relation_registry(&hostile_relation_count, true).is_err());
+
+        for index in 0..payload.len() {
+            let mut mutated = payload.to_vec();
+            let Some(byte) = mutated.get_mut(index) else { continue };
+            *byte ^= 1_u8
+                .checked_shl(u32::try_from(index % 8).unwrap_or_default())
+                .unwrap_or_default();
+            let _ = parse_relation_registry(&mutated, true);
+        }
+    }
 
     #[test]
     fn reads_the_six_formats_by_content_and_decodes_the_actor_inventory() {
