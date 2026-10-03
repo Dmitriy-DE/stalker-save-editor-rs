@@ -2111,7 +2111,7 @@ mod tests {
         Capability, Change, ChangeKind, ChangeSet, Placement,
     };
     use crate::{Format, Save};
-    use sse_catalog::{UpgradeCatalog, UpgradeDefinition};
+    use sse_catalog::{CatalogBundleReader, UpgradeCatalog, UpgradeDefinition};
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -2142,12 +2142,30 @@ mod tests {
         ];
         for (source_bytes, player_expected, relation_expected, combined_expected, _) in cases {
             let source = Save::read(source_bytes)?;
+            let bundle = CatalogBundleReader::load_embedded()
+                .get(source.format().id())
+                .ok_or("matching faction catalog should exist")?;
+            let faction_catalog = bundle.factions.as_ref().ok_or("faction catalog should exist")?;
+            let old_faction = faction_catalog
+                .resolve_numeric(source.player_faction().ok_or("actor faction should be present")?)
+                .ok_or("old actor faction should resolve")?;
+            let bandit = faction_catalog.resolve("bandit")?;
+            let old_faction_key = old_faction.key.clone();
+            let bandit_id = bandit.numeric_id.ok_or("bandit numeric id should exist")?;
             let player = ChangeSet::new(vec![Change::SetPlayerFaction {
                 target_object: source.actor_id(),
                 old_value: source.player_faction().ok_or("actor faction should be present")?,
                 faction_key: "bandit".to_owned(),
             }]);
-            assert_eq!(apply(&source, &player)?.as_slice(), player_expected);
+            let player_output = apply(&source, &player)?;
+            assert_eq!(player_output.as_slice(), player_expected);
+            let player_read_back = Save::read(player_output.as_slice())?;
+            let player_inverse = ChangeSet::new(vec![Change::SetPlayerFaction {
+                target_object: source.actor_id(),
+                old_value: bandit_id,
+                faction_key: old_faction_key,
+            }]);
+            assert_eq!(apply(&player_read_back, &player_inverse)?.as_slice(), source_bytes);
 
             let relation = ChangeSet::new(vec![Change::SetFactionRelation {
                 target_object: source.actor_id(),
@@ -2158,6 +2176,25 @@ mod tests {
             assert_eq!(apply(&source, &relation)?.as_slice(), relation_expected);
             let combined = ChangeSet::new(vec![player.changes()[0].clone(), relation.changes()[0].clone()]);
             assert_eq!(apply(&source, &combined)?.as_slice(), combined_expected);
+
+            let existing_faction = faction_catalog
+                .resolve_numeric(0)
+                .ok_or("fixture relation zero should resolve")?;
+            let existing_relation = ChangeSet::new(vec![Change::SetFactionRelation {
+                target_object: source.actor_id(),
+                faction_key: existing_faction.key.clone(),
+                old_value: Some(100),
+                new_value: 375,
+            }]);
+            let relation_output = apply(&source, &existing_relation)?;
+            let relation_read_back = Save::read(relation_output.as_slice())?;
+            let relation_inverse = ChangeSet::new(vec![Change::SetFactionRelation {
+                target_object: source.actor_id(),
+                faction_key: existing_faction.key.clone(),
+                old_value: Some(375),
+                new_value: 100,
+            }]);
+            assert_eq!(apply(&relation_read_back, &relation_inverse)?.as_slice(), source_bytes);
         }
         Ok(())
     }
@@ -2468,6 +2505,32 @@ mod tests {
                 vec![record.name.clone()],
             )?;
             let catalog = UpgradeCatalog::new(release, vec![upgrade])?;
+            let source_upgrade = UpgradeDefinition::new(
+                "up_a_wpn_test".to_owned(),
+                None,
+                Some("weapon".to_owned()),
+                Some(record.name.clone()),
+                "synthetic fixture inverse".to_owned(),
+                source.format().id().to_owned(),
+                None,
+                None,
+                None,
+                vec![record.name.clone()],
+            )?;
+            let inverse_upgrade = UpgradeDefinition::new(
+                "up_c_wpn_test".to_owned(),
+                None,
+                Some("weapon".to_owned()),
+                Some(record.name.clone()),
+                "synthetic fixture inverse".to_owned(),
+                source.format().id().to_owned(),
+                None,
+                None,
+                None,
+                vec![record.name.clone()],
+            )?;
+            let inverse_catalog =
+                UpgradeCatalog::new(source.format().id().to_owned(), vec![source_upgrade, inverse_upgrade])?;
             let changes = ChangeSet::new(vec![Change::SetUpgrades {
                 target_object: record.object_id,
                 old_value: vec!["up_a_wpn_test".to_owned(), "legacy_unknown".to_owned()],
@@ -2476,6 +2539,16 @@ mod tests {
             let output = apply_with_catalog(&source, &changes, None, Some(&catalog))?;
             assert_eq!(output.as_slice(), expected);
             assert_eq!(Save::read(output.as_slice())?.raw_image(), expected_raw);
+            let verified = Save::read(output.as_slice())?;
+            let inverse = ChangeSet::new(vec![Change::SetUpgrades {
+                target_object: record.object_id,
+                old_value: vec!["legacy_unknown".to_owned(), "up_c_wpn_test".to_owned()],
+                new_value: vec!["up_a_wpn_test".to_owned(), "legacy_unknown".to_owned()],
+            }]);
+            assert_eq!(
+                apply_with_catalog(&verified, &inverse, None, Some(&inverse_catalog))?.as_slice(),
+                source_bytes
+            );
         }
         Ok(())
     }
