@@ -42,12 +42,16 @@ pub struct AtlasEntry {
     /// Index of the page containing this icon.
     pub page_index: u16,
     /// X coordinate on the page in pixels.
+    /// Left pixel coordinate.
     pub x: u16,
     /// Y coordinate on the page in pixels.
+    /// Top pixel coordinate.
     pub y: u16,
     /// Width of the icon in pixels.
+    /// Unpadded rectangle width.
     pub width: u16,
     /// Height of the icon in pixels.
+    /// Unpadded rectangle height.
     pub height: u16,
 }
 
@@ -465,32 +469,44 @@ fn read_u32_le_offset(bytes: &[u8], offset: &mut usize) -> Option<u32> {
 
 /// Rectangle supplied to the deterministic atlas packer.
 #[derive(Clone, Debug, PartialEq, Eq)]
+/// Input rectangle and caller-provided duplicate hash.
 pub struct PackRect<T> {
+    /// Caller identifier preserved in the placement.
     pub id: T,
     pub width: u16,
     pub height: u16,
+    /// Hash of the source pixels used to merge duplicates.
     pub pixel_hash: u64,
 }
 /// Placement of one input rectangle. Duplicate hashes intentionally share coordinates.
 #[derive(Clone, Debug, PartialEq, Eq)]
+/// Deterministic placement of one input rectangle.
 pub struct Placement<T> {
     pub id: T,
+    /// Atlas page index.
     pub page: u16,
     pub x: u16,
     pub y: u16,
     pub width: u16,
     pub height: u16,
+    /// Original input index when this entry reused a duplicate slot.
     pub duplicate_of: Option<usize>,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
+/// Complete multi-page packing result.
 pub struct PackedAtlas<T> {
+    /// Number of allocated pages.
     pub pages: u16,
+    /// Placements in original input order.
     pub placements: Vec<Placement<T>>,
+    /// Sum of non-duplicate unpadded rectangle areas.
     pub used_pixels: u64,
+    /// Total allocated page area.
     pub page_pixels: u64,
 }
 impl<T> PackedAtlas<T> {
     #[must_use]
+    /// Fraction of allocated page pixels occupied by unique source rectangles.
     pub fn fill_ratio(&self) -> f64 {
         if self.page_pixels == 0 {
             0.0
@@ -718,6 +734,7 @@ struct GlyphShelf<K> {
 }
 impl<K: Eq + Clone> GlyphShelfCache<K> {
     #[must_use]
+    /// Creates an empty incremental shelf cache.
     pub fn new(width: u16, height: u16, padding: u16) -> Self {
         Self {
             width,
@@ -727,6 +744,7 @@ impl<K: Eq + Clone> GlyphShelfCache<K> {
             shelves: Vec::new(),
         }
     }
+    /// Looks up a glyph and refreshes its shelf LRU timestamp.
     pub fn get(&mut self, key: &K) -> Option<(u16, u16, u16, u16)> {
         self.tick = self.tick.saturating_add(1);
         for shelf in &mut self.shelves {
@@ -737,6 +755,7 @@ impl<K: Eq + Clone> GlyphShelfCache<K> {
         }
         None
     }
+    /// Inserts a glyph, evicting the least-recently-used shelf when required.
     pub fn insert(&mut self, key: K, w: u16, h: u16) -> std::result::Result<(u16, u16, u16, u16), String> {
         if w == 0 || h == 0 || w > self.width || h > self.height {
             return Err("glyph exceeds cache".to_owned());
