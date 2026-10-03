@@ -222,19 +222,18 @@ fn tokenize(input: &[u8], level: Level) -> Vec<Token> {
                 len: current.0,
                 dist: current.1,
             });
-            // Seed the chain with the last covered position as well as the
-            // token start. This keeps the next match's distance small on long
-            // runs (for example distance 1 for repeated bytes) without paying
-            // the cost of inserting every byte covered by the match.
             let end = p.saturating_add(current.0).min(input.len());
-            let tail = end.saturating_sub(1);
-            if tail > p {
-                if let Some(hash) = hash3(input, tail) {
-                    if let Some(slot) = prev.get_mut(tail) {
+            let insertion_start = match level {
+                Level::Fast => end.saturating_sub(1).max(p.saturating_add(1)),
+                Level::Default => p.saturating_add(1),
+            };
+            for covered in insertion_start..end {
+                if let Some(hash) = hash3(input, covered) {
+                    if let Some(slot) = prev.get_mut(covered) {
                         *slot = head.get(hash).copied().flatten();
                     }
                     if let Some(slot) = head.get_mut(hash) {
-                        *slot = Some(tail);
+                        *slot = Some(covered);
                     }
                 }
             }
