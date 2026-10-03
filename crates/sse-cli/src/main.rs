@@ -3,7 +3,6 @@
 
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
-use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -1386,7 +1385,7 @@ fn doctor_save(path: Option<&String>, json: bool) -> sse_core::Result<()> {
     let packed = SaveBuffer::read(Path::new(path))?;
     let report = sse_doctor::analyze_save(packed.as_slice());
     if json {
-        println!("{}", json_save_report(&report));
+        println!("{}", json_save_report(&report)?);
         if report.status == sse_doctor::SaveDoctorStatus::Error {
             return Err(Error::damaged("save structure could not be validated"));
         }
@@ -1427,7 +1426,7 @@ fn doctor_crash(path: Option<&String>, game: Option<&String>, json: bool) -> sse
     let game = game.map(String::as_str);
     let analysis = sse_doctor::analyze_crash_file(Path::new(path), game)?;
     if json {
-        println!("{}", json_crash_analysis(&analysis));
+        println!("{}", json_crash_analysis(&analysis)?);
         return Ok(());
     }
     println!("Crash kind: {:?}", analysis.kind);
@@ -1448,7 +1447,7 @@ fn doctor_game(target: Option<&String>, directory: Option<&String>, json: bool) 
     let directory = directory.ok_or_else(|| Error::damaged("missing game directory"))?;
     let report = sse_doctor::analyze_game_install_from_steam(target, Path::new(directory));
     if json {
-        println!("{}", json_game_report(&report));
+        println!("{}", json_game_report(&report)?);
         if report.status == sse_doctor::SaveDoctorStatus::Error {
             return Err(Error::damaged(
                 "selected directory does not match the requested game target",
@@ -1480,7 +1479,7 @@ fn doctor_quests(path: Option<&String>, json: bool) -> sse_core::Result<()> {
     let packed = SaveBuffer::read(Path::new(path))?;
     let report = sse_doctor::analyze_quests(packed.as_slice());
     if json {
-        println!("{}", json_quest_report(&report));
+        println!("{}", json_quest_report(&report)?);
         if report.status == sse_doctor::SaveDoctorStatus::Error {
             return Err(Error::damaged(report.summary));
         }
@@ -1498,132 +1497,358 @@ fn doctor_quests(path: Option<&String>, json: bool) -> sse_core::Result<()> {
     Ok(())
 }
 
-// Temporary local JSON string escaping; replace with sse_codecs::json once that codec lands.
-fn json_string(value: &str) -> String {
-    let mut output = String::with_capacity(value.len().saturating_add(2));
-    output.push('"');
-    for character in value.chars() {
-        match character {
-            '"' => output.push_str("\\\""),
-            '\\' => output.push_str("\\\\"),
-            '\n' => output.push_str("\\n"),
-            '\r' => output.push_str("\\r"),
-            '\t' => output.push_str("\\t"),
-            '\u{0008}' => output.push_str("\\b"),
-            '\u{000c}' => output.push_str("\\f"),
-            control if control.is_control() => {
-                let _ = write!(output, "\\u{:04x}", control as u32);
+#[cfg(test)]
+fn json_string(value: &str) -> sse_core::Result<String> {
+    let mut writer = sse_codecs::json::Writer::compact();
+    writer.string(value)?;
+    finish_json(writer)
+}
+
+fn finish_json(writer: sse_codecs::json::Writer) -> sse_core::Result<String> {
+    String::from_utf8(writer.finish()?).map_err(|_| Error::damaged("JSON writer returned invalid UTF-8"))
+}
+
+fn json_write_string(writer: &mut sse_codecs::json::Writer, value: &str) -> sse_core::Result<()> {
+    writer.string(value)
+}
+
+fn json_write_optional_string(writer: &mut sse_codecs::json::Writer, value: Option<&str>) -> sse_core::Result<()> {
+    match value {
+        Some(value) => json_write_string(writer, value),
+        None => writer.null(),
+    }
+}
+
+fn json_write_optional_count(writer: &mut sse_codecs::json::Writer, value: Option<usize>) -> sse_core::Result<()> {
+    match value {
+        Some(value) => writer.u64(u64::try_from(value).map_err(|_| Error::damaged("JSON count does not fit u64"))?),
+        None => writer.null(),
+    }
+}
+
+fn json_write_optional_i32(writer: &mut sse_codecs::json::Writer, value: Option<i32>) -> sse_core::Result<()> {
+    match value {
+        Some(value) => writer.i64(i64::from(value)),
+        None => writer.null(),
+    }
+}
+
+fn json_write_change(writer: &mut sse_codecs::json::Writer, change: &Change) -> sse_core::Result<()> {
+    writer.object_start()?;
+    match change {
+        Change::SetMoney {
+            target_object,
+            old_value,
+            new_value,
+        } => {
+            writer.key("kind")?;
+            writer.string("setMoney")?;
+            writer.key("targetObject")?;
+            writer.u64(u64::from(*target_object))?;
+            writer.key("oldValue")?;
+            writer.u64(u64::from(*old_value))?;
+            writer.key("newValue")?;
+            writer.u64(u64::from(*new_value))?;
+        }
+        Change::SetStack {
+            target_object,
+            old_value,
+            new_value,
+        } => {
+            writer.key("kind")?;
+            writer.string("setStack")?;
+            writer.key("targetObject")?;
+            writer.u64(u64::from(*target_object))?;
+            writer.key("oldValue")?;
+            writer.u64(u64::from(*old_value))?;
+            writer.key("newValue")?;
+            writer.u64(u64::from(*new_value))?;
+        }
+        Change::SetDurability {
+            target_object,
+            old_value,
+            new_value,
+        } => {
+            writer.key("kind")?;
+            writer.string("setDurability")?;
+            writer.key("targetObject")?;
+            writer.u64(u64::from(*target_object))?;
+            writer.key("oldValue")?;
+            writer.number(&old_value.to_string())?;
+            writer.key("newValue")?;
+            writer.number(&new_value.to_string())?;
+        }
+        Change::SetPlacement {
+            target_object,
+            destination,
+        } => {
+            writer.key("kind")?;
+            writer.string("setPlacement")?;
+            writer.key("targetObject")?;
+            writer.u64(u64::from(*target_object))?;
+            writer.key("destination")?;
+            match destination {
+                Placement::Ruck => writer.string("ruck")?,
+                Placement::Belt => writer.string("belt")?,
+                Placement::Slot(slot) => writer.string(&format!("slot:{slot}"))?,
             }
-            character => output.push(character),
+        }
+        Change::MoveItem {
+            target_object,
+            old_parent,
+            new_parent,
+        } => {
+            writer.key("kind")?;
+            writer.string("moveItem")?;
+            writer.key("targetObject")?;
+            writer.u64(u64::from(*target_object))?;
+            writer.key("oldParent")?;
+            writer.u64(u64::from(*old_parent))?;
+            writer.key("newParent")?;
+            writer.u64(u64::from(*new_parent))?;
+        }
+        Change::RemoveItem { target_object } => {
+            writer.key("kind")?;
+            writer.string("removeItem")?;
+            writer.key("targetObject")?;
+            writer.u64(u64::from(*target_object))?;
+        }
+        Change::AddItem {
+            template_object,
+            item_key,
+            object_id,
+            quantity,
+        } => {
+            writer.key("kind")?;
+            writer.string("addItem")?;
+            writer.key("templateObject")?;
+            writer.u64(u64::from(*template_object))?;
+            writer.key("itemKey")?;
+            json_write_string(writer, item_key)?;
+            writer.key("objectId")?;
+            writer.u64(u64::from(*object_id))?;
+            writer.key("quantity")?;
+            writer.u64(u64::from(*quantity))?;
+        }
+        Change::SetPlayerFaction {
+            target_object,
+            old_value,
+            faction_key,
+        } => {
+            writer.key("kind")?;
+            writer.string("setPlayerFaction")?;
+            writer.key("targetObject")?;
+            writer.u64(u64::from(*target_object))?;
+            writer.key("oldValue")?;
+            writer.i64(i64::from(*old_value))?;
+            writer.key("factionKey")?;
+            json_write_string(writer, faction_key)?;
+        }
+        Change::SetFactionRelation {
+            target_object,
+            faction_key,
+            old_value,
+            new_value,
+        } => {
+            writer.key("kind")?;
+            writer.string("setFactionRelation")?;
+            writer.key("targetObject")?;
+            writer.u64(u64::from(*target_object))?;
+            writer.key("factionKey")?;
+            json_write_string(writer, faction_key)?;
+            writer.key("oldValue")?;
+            json_write_optional_i32(writer, *old_value)?;
+            writer.key("newValue")?;
+            writer.i64(i64::from(*new_value))?;
+        }
+        Change::SetUpgrades {
+            target_object,
+            old_value,
+            new_value,
+        } => {
+            writer.key("kind")?;
+            writer.string("setUpgrades")?;
+            writer.key("targetObject")?;
+            writer.u64(u64::from(*target_object))?;
+            writer.key("oldValue")?;
+            writer.array_start()?;
+            for value in old_value {
+                json_write_string(writer, value)?;
+            }
+            writer.array_end()?;
+            writer.key("newValue")?;
+            writer.array_start()?;
+            for value in new_value {
+                json_write_string(writer, value)?;
+            }
+            writer.array_end()?;
+        }
+        Change::AddInfoPortions {
+            target_object,
+            info_portions,
+        } => {
+            writer.key("kind")?;
+            writer.string("addInfoPortions")?;
+            writer.key("targetObject")?;
+            writer.u64(u64::from(*target_object))?;
+            writer.key("infoPortions")?;
+            writer.array_start()?;
+            for value in info_portions {
+                json_write_string(writer, value)?;
+            }
+            writer.array_end()?;
+        }
+        Change::RelocateActor { destination_changer } => {
+            writer.key("kind")?;
+            writer.string("relocateActor")?;
+            writer.key("destinationChanger")?;
+            writer.u64(u64::from(*destination_changer))?;
         }
     }
-    output.push('"');
-    output
+    writer.object_end()
 }
 
-fn json_optional_str(value: Option<&str>) -> String {
-    value.map_or_else(|| "null".to_owned(), json_string)
+fn json_write_findings(
+    writer: &mut sse_codecs::json::Writer,
+    findings: &[sse_doctor::RuleFinding],
+) -> sse_core::Result<()> {
+    writer.array_start()?;
+    for finding in findings {
+        writer.object_start()?;
+        writer.key("id")?;
+        json_write_string(writer, finding.id)?;
+        writer.key("severity")?;
+        json_write_string(writer, &format!("{:?}", finding.severity).to_lowercase())?;
+        writer.key("lookedAt")?;
+        json_write_string(writer, finding.looked_at)?;
+        writer.key("found")?;
+        json_write_string(writer, &finding.found)?;
+        writer.key("repair")?;
+        if let Some(change_set) = &finding.repair {
+            writer.array_start()?;
+            for change in change_set.changes() {
+                json_write_change(writer, change)?;
+            }
+            writer.array_end()?;
+        } else {
+            writer.null()?;
+        }
+        writer.object_end()?;
+    }
+    writer.array_end()
 }
 
-fn json_findings(findings: &[sse_doctor::RuleFinding]) -> String {
-    findings
-        .iter()
-        .map(|finding| {
-            let repairs = finding.repair.as_ref().map_or_else(
-                || "null".to_owned(),
-                |change_set| {
-                    let changes = change_set
-                        .changes()
-                        .iter()
-                        .map(json_change)
-                        .collect::<Vec<_>>()
-                        .join(",");
-                    format!("[{changes}]")
-                },
-            );
-            format!(
-                "{{\"id\":{},\"severity\":{},\"lookedAt\":{},\"found\":{},\"repair\":{repairs}}}",
-                json_string(finding.id),
-                json_string(&format!("{:?}", finding.severity).to_lowercase()),
-                json_string(finding.looked_at),
-                json_string(&finding.found),
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(",")
+fn json_save_report(report: &sse_doctor::SaveDoctorReport) -> sse_core::Result<String> {
+    let mut writer = sse_codecs::json::Writer::compact();
+    writer.object_start()?;
+    writer.key("status")?;
+    json_write_string(&mut writer, &format!("{:?}", report.status).to_lowercase())?;
+    writer.key("formatId")?;
+    json_write_optional_string(&mut writer, report.format_id)?;
+    writer.key("objectCount")?;
+    json_write_optional_count(&mut writer, report.object_count)?;
+    writer.key("inventoryCount")?;
+    json_write_optional_count(&mut writer, report.inventory_count)?;
+    writer.key("findings")?;
+    json_write_findings(&mut writer, &report.findings)?;
+    writer.object_end()?;
+    finish_json(writer)
 }
 
-fn json_save_report(report: &sse_doctor::SaveDoctorReport) -> String {
-    format!(
-        "{{\"status\":{},\"formatId\":{},\"objectCount\":{},\"inventoryCount\":{},\"findings\":[{}]}}",
-        json_string(&format!("{:?}", report.status).to_lowercase()),
-        json_optional_str(report.format_id),
-        report
-            .object_count
-            .map_or_else(|| "null".to_owned(), |value| value.to_string()),
-        report
-            .inventory_count
-            .map_or_else(|| "null".to_owned(), |value| value.to_string()),
-        json_findings(&report.findings),
-    )
+fn json_quest_report(report: &sse_doctor::QuestDoctorReport) -> sse_core::Result<String> {
+    let mut writer = sse_codecs::json::Writer::compact();
+    writer.object_start()?;
+    writer.key("status")?;
+    json_write_string(&mut writer, &format!("{:?}", report.status).to_lowercase())?;
+    writer.key("formatId")?;
+    json_write_optional_string(&mut writer, report.format_id)?;
+    writer.key("questStatesAvailable")?;
+    writer.bool(report.quest_states_available)?;
+    writer.key("summary")?;
+    json_write_string(&mut writer, &report.summary)?;
+    writer.key("states")?;
+    writer.array_start()?;
+    for state in &report.states {
+        writer.object_start()?;
+        writer.key("id")?;
+        json_write_string(&mut writer, state.id)?;
+        writer.key("title")?;
+        json_write_string(&mut writer, state.title)?;
+        writer.key("status")?;
+        json_write_string(&mut writer, &format!("{:?}", state.status).to_lowercase())?;
+        writer.key("reason")?;
+        json_write_string(&mut writer, state.reason)?;
+        writer.key("missingInfo")?;
+        json_write_optional_string(&mut writer, state.missing_info)?;
+        writer.key("preventingFixId")?;
+        json_write_optional_string(&mut writer, state.preventing_fix_id)?;
+        writer.key("needsPreventingFix")?;
+        writer.bool(state.needs_preventing_fix)?;
+        writer.key("detail")?;
+        json_write_string(&mut writer, state.detail)?;
+        writer.key("references")?;
+        writer.array_start()?;
+        for reference in state.references {
+            json_write_string(&mut writer, reference)?;
+        }
+        writer.array_end()?;
+        writer.object_end()?;
+    }
+    writer.array_end()?;
+    writer.object_end()?;
+    finish_json(writer)
 }
 
-fn json_quest_report(report: &sse_doctor::QuestDoctorReport) -> String {
-    let states = report
-        .states
-        .iter()
-        .map(|state| {
-            let references = state.references.iter().map(|value| json_string(value)).collect::<Vec<_>>().join(",");
-            format!(
-                "{{\"id\":{},\"title\":{},\"status\":{},\"reason\":{},\"missingInfo\":{},\"preventingFixId\":{},\"needsPreventingFix\":{},\"detail\":{},\"references\":[{}]}}",
-                json_string(state.id), json_string(state.title),
-                json_string(&format!("{:?}", state.status).to_lowercase()),
-                json_string(state.reason), json_optional_str(state.missing_info),
-                json_optional_str(state.preventing_fix_id), state.needs_preventing_fix,
-                json_string(state.detail), references,
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(",");
-    format!(
-        "{{\"status\":{},\"formatId\":{},\"questStatesAvailable\":{},\"summary\":{},\"states\":[{states}]}}",
-        json_string(&format!("{:?}", report.status).to_lowercase()),
-        json_optional_str(report.format_id),
-        report.quest_states_available,
-        json_string(&report.summary),
-    )
+fn json_game_report(report: &sse_doctor::GameDoctorReport) -> sse_core::Result<String> {
+    let mut writer = sse_codecs::json::Writer::compact();
+    writer.object_start()?;
+    writer.key("status")?;
+    json_write_string(&mut writer, &format!("{:?}", report.status).to_lowercase())?;
+    writer.key("target")?;
+    json_write_string(&mut writer, report.target.id())?;
+    writer.key("directory")?;
+    json_write_string(&mut writer, &report.directory.display().to_string())?;
+    writer.key("markerFound")?;
+    writer.bool(report.marker_found)?;
+    writer.key("build")?;
+    writer.object_start()?;
+    writer.key("buildId")?;
+    json_write_optional_string(&mut writer, report.build.build_id.as_deref())?;
+    writer.key("status")?;
+    json_write_string(&mut writer, &format!("{:?}", report.build.status).to_lowercase())?;
+    writer.object_end()?;
+    writer.key("findings")?;
+    json_write_findings(&mut writer, &report.findings)?;
+    writer.object_end()?;
+    finish_json(writer)
 }
 
-fn json_game_report(report: &sse_doctor::GameDoctorReport) -> String {
-    format!(
-        "{{\"status\":{},\"target\":{},\"directory\":{},\"markerFound\":{},\"build\":{{\"buildId\":{},\"status\":{}}},\"findings\":[{}]}}",
-        json_string(&format!("{:?}", report.status).to_lowercase()),
-        json_string(report.target.id()), json_string(&report.directory.display().to_string()),
-        report.marker_found, json_optional_str(report.build.build_id.as_deref()),
-        json_string(&format!("{:?}", report.build.status).to_lowercase()),
-        json_findings(&report.findings),
-    )
-}
-
-fn json_crash_analysis(analysis: &sse_doctor::CrashLogAnalysis) -> String {
-    let issue = analysis.known_issue.map_or_else(
-        || "null".to_owned(),
-        |issue| {
-            format!(
-                "{{\"id\":{},\"title\":{},\"game\":{},\"advice\":{}}}",
-                json_string(issue.id),
-                json_string(issue.title),
-                json_string(issue.game),
-                json_string(&format!("{:?}", issue.advice).to_lowercase()),
-            )
-        },
-    );
-    format!(
-        "{{\"kind\":{},\"summary\":{},\"knownIssue\":{issue},\"faultingModuleOffset\":{}}}",
-        json_string(&format!("{:?}", analysis.kind).to_lowercase()),
-        json_string(&analysis.summary),
-        json_optional_str(analysis.faulting_module_offset.as_deref()),
-    )
+fn json_crash_analysis(analysis: &sse_doctor::CrashLogAnalysis) -> sse_core::Result<String> {
+    let mut writer = sse_codecs::json::Writer::compact();
+    writer.object_start()?;
+    writer.key("kind")?;
+    json_write_string(&mut writer, &format!("{:?}", analysis.kind).to_lowercase())?;
+    writer.key("summary")?;
+    json_write_string(&mut writer, &analysis.summary)?;
+    writer.key("knownIssue")?;
+    if let Some(issue) = analysis.known_issue {
+        writer.object_start()?;
+        writer.key("id")?;
+        json_write_string(&mut writer, issue.id)?;
+        writer.key("title")?;
+        json_write_string(&mut writer, issue.title)?;
+        writer.key("game")?;
+        json_write_string(&mut writer, issue.game)?;
+        writer.key("advice")?;
+        json_write_string(&mut writer, &format!("{:?}", issue.advice).to_lowercase())?;
+        writer.object_end()?;
+    } else {
+        writer.null()?;
+    }
+    writer.key("faultingModuleOffset")?;
+    json_write_optional_string(&mut writer, analysis.faulting_module_offset.as_deref())?;
+    writer.object_end()?;
+    finish_json(writer)
 }
 
 #[cfg(test)]
@@ -1746,13 +1971,16 @@ mod doctor_tests {
 
     #[test]
     fn json_string_escapes_quotes_slashes_and_controls() {
-        assert_eq!(json_string("a\n\"b\\c\u{0001}"), "\"a\\n\\\"b\\\\c\\u0001\"");
+        assert_eq!(
+            json_string("a\n\"b\\c\u{0001}").expect("JSON string"),
+            "\"a\\n\\\"b\\\\c\\u0001\""
+        );
     }
 
     #[test]
     fn save_doctor_json_contains_status_counts_and_rule_evidence() {
         let report = sse_doctor::analyze_save(SYNTHETIC_XRAY_SAVE);
-        let output = super::json_save_report(&report);
+        let output = super::json_save_report(&report).expect("JSON report");
 
         assert!(output.starts_with('{'));
         assert!(output.ends_with('}'));

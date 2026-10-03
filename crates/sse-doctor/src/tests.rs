@@ -262,10 +262,14 @@ fn minidump_reader_refuses_a_hostile_length_before_allocating_the_dump() {
 }
 
 #[test]
-fn local_vdf_parser_rejects_truncations_duplicate_fields_and_fixed_seed_mutations() {
+fn shared_vdf_parser_handles_truncations_duplicate_fields_and_fixed_seed_mutations() {
     let source = "\"AppState\" { \"appid\" \"20510\" \"installdir\" \"Clear Sky\" \"buildid\" \"11450472\" }";
     assert!(parse_app_state(source).is_some());
-    assert!(parse_app_state("\"AppState\" { \"appid\" \"20510\" \"appid\" \"41700\" }").is_none());
+    let duplicate = parse_app_state("\"AppState\" { \"appid\" \"20510\" \"appid\" \"41700\" }");
+    assert_eq!(
+        duplicate.as_ref().and_then(|fields| fields.app_id.as_deref()),
+        Some("41700")
+    );
 
     for length in 0..source.len() {
         let Some(prefix) = source.get(..length) else {
