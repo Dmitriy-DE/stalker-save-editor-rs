@@ -7,6 +7,8 @@ use crate::glyphs::{Face, TextStyle};
 use crate::layout::{Align, Edges, NodeKind, Size, Style};
 use crate::raster::Color;
 use crate::theme;
+pub use crate::theme::{ACCENT, BG_PANEL, BORDER_SUBTLE, TEXT_SECONDARY};
+pub use crate::theme::TEXT_DISABLED as TEXT_MUTED;
 use crate::widget::{Content, Look, TextAlign, Tree, WidgetId};
 use sse_core::Result;
 
