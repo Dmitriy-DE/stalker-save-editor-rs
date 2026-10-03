@@ -392,6 +392,12 @@ fn report(result: sse_core::Result<()>) -> u8 {
 fn read_info(path: Option<&String>) -> sse_core::Result<()> {
     let path = path.ok_or_else(|| Error::damaged("missing save path"))?;
     let packed = SaveBuffer::read(Path::new(path))?;
+    if let Ok(save) = sse_s2::S2Save::from_bytes(packed.as_slice()) {
+        for line in s2_info_lines(packed.as_slice(), &save) {
+            println!("{line}");
+        }
+        return Ok(());
+    }
     let save = Save::read(packed.as_slice())?;
     println!("Integrity: X-Ray LZO/container OK");
     println!("Format: {}", save.format().id());
@@ -406,6 +412,12 @@ fn read_info(path: Option<&String>) -> sse_core::Result<()> {
 fn read_inventory(path: Option<&String>) -> sse_core::Result<()> {
     let path = path.ok_or_else(|| Error::damaged("missing save path"))?;
     let packed = SaveBuffer::read(Path::new(path))?;
+    if let Ok(save) = sse_s2::S2Save::from_bytes(packed.as_slice()) {
+        for line in s2_inventory_lines(&save) {
+            println!("{line}");
+        }
+        return Ok(());
+    }
     let save = Save::read(packed.as_slice())?;
     println!("Format: {}", save.format().id());
     println!("POS        TYPE                 KEY                       COUNT   HANDLE");
@@ -422,10 +434,95 @@ fn read_inventory(path: Option<&String>) -> sse_core::Result<()> {
     Ok(())
 }
 
+fn s2_info_lines(packed: &[u8], save: &sse_s2::S2Save) -> Vec<String> {
+    let items = save.items();
+    let container = save.container();
+    let mut lines = vec![
+        format!(
+            "CRC: {}",
+            if container.stored_crc32() == container.computed_crc32() {
+                "OK"
+            } else {
+                "BAD"
+            }
+        ),
+        "Format: stalker2".to_owned(),
+        format!("Packed: {}", container.packed_size()),
+        format!("Raw: {}", container.image().len()),
+        format!("SHA256: {}", sse_codecs::sha256::sha256_hex(packed)),
+        format!("Money: {}", save.money()),
+        format!("Owned handles: {}", save.index().owned_handles().len()),
+        format!("Grid handles parsed/total: {}", save.index().grid_handle_count()),
+        format!("Grid cells: {}", save.index().grid_cells().len()),
+        format!("Inventory objects: {}", items.len()),
+        format!("Orphans: {}", save.orphans().len()),
+    ];
+    lines.extend(save.warnings().iter().map(|warning| format!("Warning: {warning}")));
+    lines
+}
+
+fn s2_inventory_lines(save: &sse_s2::S2Save) -> Vec<String> {
+    let mut lines = vec!["Format: stalker2".to_owned()];
+    lines.push("POS        TYPE                 KEY                       COUNT   HANDLE".to_owned());
+    for item in save.items() {
+        let position = if item.x.is_some() {
+            "?"
+        } else if matches!(item.kind_code, 6 | 8 | 10 | 11) {
+            "у персонажа"
+        } else {
+            "экипировано"
+        };
+        let category = s2_category_name(item.kind_code, item.display_name.as_deref());
+        let type_key = format!(
+            "{:02x}{:02x}{:02x}",
+            item.type_key[0], item.type_key[1], item.type_key[2]
+        );
+        lines.push(format!(
+            "{position:<10} {category:<20} {type_key:<25} {:>7}  0x{:08X}",
+            item.count, item.handle
+        ));
+    }
+    lines
+}
+
+fn s2_category_name(kind: u8, display_name: Option<&str>) -> String {
+    let normalized = display_name.unwrap_or_default().trim().to_lowercase();
+    if normalized.starts_with("nvg_")
+        || normalized.starts_with("binocular")
+        || normalized.starts_with("пнв")
+        || normalized.starts_with("бинокль")
+        || normalized.starts_with("бинокл")
+    {
+        return "Устройство".to_owned();
+    }
+    if normalized.contains("_upgrade_") || normalized.contains("_attachment_") {
+        return "Модуль/улучшение".to_owned();
+    }
+    if normalized.ends_with("_armor") || normalized.ends_with("_helmet") {
+        return "Броня/экипировка".to_owned();
+    }
+    if normalized.contains("_armor_") || normalized.contains("_helmet_") || normalized.starts_with("gunbucket_") {
+        return "Разное".to_owned();
+    }
+    match kind {
+        0 => "Оружие".to_owned(),
+        1 => "Броня/экипировка".to_owned(),
+        2 => "Артефакт".to_owned(),
+        4 => "Расходник".to_owned(),
+        5 => "Патроны".to_owned(),
+        6 => "Детектор".to_owned(),
+        7 => "Гранаты".to_owned(),
+        8 => "Разное".to_owned(),
+        10 => "ПНВ".to_owned(),
+        11 => "Бинокль".to_owned(),
+        _ => format!("Тип {kind}"),
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::arithmetic_side_effects, clippy::expect_used, clippy::indexing_slicing)]
 mod write_tests {
-    use super::{run, Save};
+    use super::{run, s2_category_name, s2_info_lines, s2_inventory_lines, Save};
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -586,5 +683,91 @@ mod write_tests {
         assert_eq!(run(&add), 3);
         assert_eq!(run(&unsupported), 3);
         assert_eq!(run(&invalid_number), 4);
+    }
+
+    #[test]
+    fn info_and_inventory_accept_the_synthetic_s2_save() {
+        let temporary = TempDirectory::new();
+        let source = temporary.0.join("synthetic-s2.sav");
+        fs::write(&source, include_bytes!("../../../fixtures/synthetic/synthetic-s2.sav")).expect("write S2 fixture");
+
+        assert_eq!(run(&["info".to_owned(), source.display().to_string()]), 0);
+        assert_eq!(run(&["inventory".to_owned(), source.display().to_string()]), 0);
+    }
+
+    #[test]
+    fn s2_info_and_inventory_format_match_the_reference_columns() {
+        let packed = include_bytes!("../../../fixtures/synthetic/synthetic-s2.sav");
+        let save = sse_s2::S2Save::from_bytes(packed).expect("read S2 fixture");
+        let info = s2_info_lines(packed, &save);
+        assert_eq!(
+            info.get(..11),
+            Some(
+                [
+                    "CRC: OK".to_owned(),
+                    "Format: stalker2".to_owned(),
+                    "Packed: 360".to_owned(),
+                    "Raw: 350".to_owned(),
+                    "SHA256: 2fe435d0909e812c362c7577e5adaaef1390e22ea06a46571510530caae92408".to_owned(),
+                    "Money: 100".to_owned(),
+                    "Owned handles: 4".to_owned(),
+                    "Grid handles parsed/total: 2".to_owned(),
+                    "Grid cells: 2".to_owned(),
+                    "Inventory objects: 2".to_owned(),
+                    "Orphans: 2".to_owned(),
+                ]
+                .as_slice()
+            )
+        );
+
+        let inventory = s2_inventory_lines(&save);
+        assert_eq!(inventory.first().map(String::as_str), Some("Format: stalker2"));
+        assert_eq!(
+            inventory.get(1).map(String::as_str),
+            Some("POS        TYPE                 KEY                       COUNT   HANDLE")
+        );
+        assert_eq!(
+            inventory.get(2).map(String::as_str),
+            Some(
+                format!(
+                    "{:<10} {:<20} {:<25} {:>7}  0x{:08X}",
+                    "?", "Расходник", "010203", 2, 0x3000_0001
+                )
+                .as_str()
+            )
+        );
+        assert_eq!(
+            inventory.get(3).map(String::as_str),
+            Some(
+                format!(
+                    "{:<10} {:<20} {:<25} {:>7}  0x{:08X}",
+                    "?", "Патроны", "040506", 1, 0x3000_0002
+                )
+                .as_str()
+            )
+        );
+    }
+
+    #[test]
+    fn s2_category_names_follow_the_reference_kind_and_name_rules() {
+        for (kind, name, expected) in [
+            (0, None, "Оружие"),
+            (1, None, "Броня/экипировка"),
+            (2, None, "Артефакт"),
+            (4, None, "Расходник"),
+            (5, None, "Патроны"),
+            (6, None, "Детектор"),
+            (7, None, "Гранаты"),
+            (8, None, "Разное"),
+            (10, None, "ПНВ"),
+            (11, None, "Бинокль"),
+            (99, None, "Тип 99"),
+            (8, Some("nvg_PNV"), "Устройство"),
+            (8, Some("Scope_Upgrade_1"), "Модуль/улучшение"),
+            (8, Some("Exoskeleton_Armor"), "Броня/экипировка"),
+            (8, Some("Exoskeleton_Armor_Upgrade"), "Разное"),
+        ] {
+            assert_eq!(s2_category_name(kind, name), expected);
+        }
     }
 }
