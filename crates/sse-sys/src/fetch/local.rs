@@ -89,12 +89,7 @@ impl MemoryFetch {
 }
 
 impl Fetch for MemoryFetch {
-    fn get(
-        &mut self,
-        url: &str,
-        range_from: u64,
-        sink: &mut dyn FnMut(&[u8]) -> bool,
-    ) -> Result<Response> {
+    fn get(&mut self, url: &str, range_from: u64, sink: &mut dyn FnMut(&[u8]) -> bool) -> Result<Response> {
         let body = self
             .entries
             .get(url)
