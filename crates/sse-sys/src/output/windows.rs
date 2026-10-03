@@ -68,8 +68,7 @@ fn run(mut pcm: Vec<i16>, channels: u8, rate: u32, volume: f32) {
     };
     let mut handle: Hwaveout = ptr::null_mut();
     // SAFETY: pointers reference live stack values and WinMM copies the format during open.
-    if unsafe { waveOutOpen(&mut handle, WAVE_MAPPER, &format, 0, 0, 0) } != 0 || handle.is_null()
-    {
+    if unsafe { waveOutOpen(&mut handle, WAVE_MAPPER, &format, 0, 0, 0) } != 0 || handle.is_null() {
         return;
     }
     let mut header = WaveHdr {
