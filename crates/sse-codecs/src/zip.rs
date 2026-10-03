@@ -114,6 +114,9 @@ pub fn read(input: &[u8], maximum_output: usize) -> Result<Vec<Entry>> {
         }
         let flags = u16le(input, cd.saturating_add(8))?;
         let method = u16le(input, cd.saturating_add(10))?;
+        if flags & 1 != 0 {
+            return Err(Error::Refused("encrypted ZIP entries are unsupported".to_owned()));
+        }
         let crc = u32le(input, cd.saturating_add(16))?;
         let cs32 = u32le(input, cd.saturating_add(20))?;
         let us32 = u32le(input, cd.saturating_add(24))?;
@@ -172,12 +175,6 @@ pub fn read(input: &[u8], maximum_output: usize) -> Result<Vec<Entry>> {
             .ok_or_else(|| Error::damaged("ZIP central overflow"))?;
     }
     Ok(out)
-}
-fn put16(o: &mut Vec<u8>, v: u16) {
-    o.extend_from_slice(&v.to_le_bytes())
-}
-fn put32(o: &mut Vec<u8>, v: u32) {
-    o.extend_from_slice(&v.to_le_bytes())
 }
 #[derive(Clone)]
 struct Central {
