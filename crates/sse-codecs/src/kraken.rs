@@ -2987,12 +2987,13 @@ fn copy_match_distance(output: &mut [u8], mut dst: usize, end: usize, distance: 
             .fill(value);
         return Ok(());
     }
+    let source_start = dst
+        .checked_sub(distance)
+        .ok_or_else(|| Error::damaged("match source before output"))?;
+    let mut available = distance;
     while dst < end {
         let remaining = end.saturating_sub(dst);
-        let chunk = remaining.min(distance);
-        let source_start = dst
-            .checked_sub(distance)
-            .ok_or_else(|| Error::damaged("match source before output"))?;
+        let chunk = remaining.min(available);
         let source_end = source_start
             .checked_add(chunk)
             .ok_or_else(|| Error::damaged("match source end overflow"))?;
@@ -3000,6 +3001,9 @@ fn copy_match_distance(output: &mut [u8], mut dst: usize, end: usize, distance: 
         dst = dst
             .checked_add(chunk)
             .ok_or_else(|| Error::damaged("match destination overflow"))?;
+        available = available
+            .checked_add(chunk)
+            .ok_or_else(|| Error::damaged("match history growth overflow"))?;
     }
     Ok(())
 }
