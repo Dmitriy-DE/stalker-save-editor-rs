@@ -500,8 +500,7 @@ impl Interface {
             Self::WlDisplay | Self::WlRegistry | Self::WlCallback | Self::WlBuffer => 1,
             Self::WlCompositor => 6,
             Self::WlSurface => 6,
-            Self::WlShm => 1,
-            Self::WlShmPool => 2,
+            Self::WlShm | Self::WlShmPool => 2,
             Self::WlSeat => 9,
             Self::WlKeyboard => 9,
             Self::WlPointer => 9,
@@ -608,14 +607,28 @@ impl ObjectTable {
         Ok(())
     }
 
-    /// Releases a destroyed object and recycles client-side identifiers.
+    /// Removes local metadata for an object that has been destroyed.
+    ///
+    /// Client ids are deliberately not recycled here: Wayland permits reuse only after
+    /// `wl_display.delete_id` confirms that the server has dropped every reference.
     pub fn release(&mut self, id: ObjectId) {
-        if id == ObjectId::DISPLAY {
-            return;
+        if id != ObjectId::DISPLAY {
+            let _ = self.objects.remove(&id);
         }
-        if self.objects.remove(&id).is_some() && id.raw() < SERVER_ID_START {
-            self.recycled.insert(id.raw());
+    }
+
+    /// Handles `wl_display.delete_id` and makes a client id available for reuse.
+    ///
+    /// # Errors
+    /// Returns [`Error::Damaged`] when the server reports a reserved or server-side id.
+    pub fn confirm_delete_id(&mut self, raw: u32) -> Result<()> {
+        if raw <= ObjectId::DISPLAY.raw() || raw >= SERVER_ID_START {
+            return Err(Error::damaged("wl_display.delete_id contains an invalid client id"));
         }
+        let id = ObjectId::new(raw)?;
+        let _ = self.objects.remove(&id);
+        self.recycled.insert(raw);
+        Ok(())
     }
 
     /// Returns metadata for a live object.
@@ -712,8 +725,10 @@ impl<T: Transport> Client<T> {
 
     /// Creates a `wl_surface` from a compositor.
     pub fn create_surface(&mut self, compositor: ObjectId) -> Result<ObjectId> {
-        self.objects.require(compositor, Interface::WlCompositor)?;
-        let id = self.objects.allocate(Interface::WlSurface, 6)?;
+        let compositor_info = self.objects.require(compositor, Interface::WlCompositor)?;
+        let id = self
+            .objects
+            .allocate(Interface::WlSurface, compositor_info.version)?;
         let mut writer = WireWriter::new(compositor, 0);
         writer.new_id(id);
         self.send(writer.finish()?)?;
@@ -790,11 +805,11 @@ impl<T: Transport> Client<T> {
 
     /// Creates a `wl_shm_pool`; `fd` is an opaque descriptor handle understood by the transport.
     pub fn shm_create_pool(&mut self, shm: ObjectId, fd: u32, size: i32) -> Result<ObjectId> {
-        self.objects.require(shm, Interface::WlShm)?;
+        let shm_info = self.objects.require(shm, Interface::WlShm)?;
         if size <= 0 {
             return Err(Error::Refused("wl_shm pool size must be positive".to_owned()));
         }
-        let pool = self.objects.allocate(Interface::WlShmPool, 2)?;
+        let pool = self.objects.allocate(Interface::WlShmPool, shm_info.version)?;
         let mut writer = WireWriter::new(shm, 0);
         writer.new_id(pool);
         writer.fd(fd);
@@ -839,9 +854,9 @@ impl<T: Transport> Client<T> {
 
     /// Creates an `xdg_surface` for a `wl_surface`.
     pub fn xdg_get_surface(&mut self, wm_base: ObjectId, surface: ObjectId) -> Result<ObjectId> {
-        self.objects.require(wm_base, Interface::XdgWmBase)?;
+        let wm_info = self.objects.require(wm_base, Interface::XdgWmBase)?;
         self.objects.require(surface, Interface::WlSurface)?;
-        let id = self.objects.allocate(Interface::XdgSurface, 6)?;
+        let id = self.objects.allocate(Interface::XdgSurface, wm_info.version)?;
         let mut writer = WireWriter::new(wm_base, 2);
         writer.new_id(id);
         writer.object(Some(surface));
@@ -851,8 +866,10 @@ impl<T: Transport> Client<T> {
 
     /// Creates an `xdg_toplevel` role for an `xdg_surface`.
     pub fn xdg_get_toplevel(&mut self, xdg_surface: ObjectId) -> Result<ObjectId> {
-        self.objects.require(xdg_surface, Interface::XdgSurface)?;
-        let id = self.objects.allocate(Interface::XdgToplevel, 6)?;
+        let surface_info = self.objects.require(xdg_surface, Interface::XdgSurface)?;
+        let id = self
+            .objects
+            .allocate(Interface::XdgToplevel, surface_info.version)?;
         let mut writer = WireWriter::new(xdg_surface, 1);
         writer.new_id(id);
         self.send(writer.finish()?)?;
@@ -912,8 +929,8 @@ impl<T: Transport> Client<T> {
 
     /// Creates a keyboard for a seat.
     pub fn seat_get_keyboard(&mut self, seat: ObjectId) -> Result<ObjectId> {
-        self.objects.require(seat, Interface::WlSeat)?;
-        let id = self.objects.allocate(Interface::WlKeyboard, 9)?;
+        let seat_info = self.objects.require(seat, Interface::WlSeat)?;
+        let id = self.objects.allocate(Interface::WlKeyboard, seat_info.version)?;
         let mut writer = WireWriter::new(seat, 1);
         writer.new_id(id);
         self.send(writer.finish()?)?;
@@ -922,8 +939,8 @@ impl<T: Transport> Client<T> {
 
     /// Creates a pointer for a seat.
     pub fn seat_get_pointer(&mut self, seat: ObjectId) -> Result<ObjectId> {
-        self.objects.require(seat, Interface::WlSeat)?;
-        let id = self.objects.allocate(Interface::WlPointer, 9)?;
+        let seat_info = self.objects.require(seat, Interface::WlSeat)?;
+        let id = self.objects.allocate(Interface::WlPointer, seat_info.version)?;
         let mut writer = WireWriter::new(seat, 0);
         writer.new_id(id);
         self.send(writer.finish()?)?;
@@ -932,8 +949,12 @@ impl<T: Transport> Client<T> {
 
     /// Creates a `wl_data_source` used to own clipboard text.
     pub fn data_create_source(&mut self, manager: ObjectId) -> Result<ObjectId> {
-        self.objects.require(manager, Interface::WlDataDeviceManager)?;
-        let id = self.objects.allocate(Interface::WlDataSource, 3)?;
+        let manager_info = self
+            .objects
+            .require(manager, Interface::WlDataDeviceManager)?;
+        let id = self
+            .objects
+            .allocate(Interface::WlDataSource, manager_info.version)?;
         let mut writer = WireWriter::new(manager, 0);
         writer.new_id(id);
         self.send(writer.finish()?)?;
@@ -942,9 +963,13 @@ impl<T: Transport> Client<T> {
 
     /// Creates a seat-bound data device.
     pub fn data_get_device(&mut self, manager: ObjectId, seat: ObjectId) -> Result<ObjectId> {
-        self.objects.require(manager, Interface::WlDataDeviceManager)?;
+        let manager_info = self
+            .objects
+            .require(manager, Interface::WlDataDeviceManager)?;
         self.objects.require(seat, Interface::WlSeat)?;
-        let id = self.objects.allocate(Interface::WlDataDevice, 3)?;
+        let id = self
+            .objects
+            .allocate(Interface::WlDataDevice, manager_info.version)?;
         let mut writer = WireWriter::new(manager, 1);
         writer.new_id(id);
         writer.object(Some(seat));
@@ -990,11 +1015,17 @@ impl<T: Transport> Client<T> {
             .get(message.object)
             .ok_or_else(|| Error::damaged("event targets an unknown Wayland object"))?;
         let event = decode_event(info.interface, &message)?;
-        if let Event::DataOfferCreated { id } = event {
-            self.objects.register_server(id, Interface::WlDataOffer, 3)?;
-            Ok(Event::DataOfferCreated { id })
-        } else {
-            Ok(event)
+        match event {
+            Event::DisplayDeleteId(raw) => {
+                self.objects.confirm_delete_id(raw)?;
+                Ok(Event::DisplayDeleteId(raw))
+            }
+            Event::DataOfferCreated { id } => {
+                self.objects
+                    .register_server(id, Interface::WlDataOffer, info.version)?;
+                Ok(Event::DataOfferCreated { id })
+            }
+            other => Ok(other),
         }
     }
 
@@ -1006,6 +1037,17 @@ impl<T: Transport> Client<T> {
 /// Decoded events needed by the window/input/clipboard layers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
+    /// Fatal `wl_display.error` event.
+    DisplayError {
+        /// Object blamed by the compositor.
+        object: ObjectId,
+        /// Protocol-defined error code.
+        code: u32,
+        /// Human-readable compositor message.
+        message: String,
+    },
+    /// `wl_display.delete_id`; the id may now be recycled by the client.
+    DisplayDeleteId(u32),
     /// `wl_registry.global`.
     RegistryGlobal {
         /// Registry numeric global name.
@@ -1174,6 +1216,14 @@ pub enum Event {
 pub fn decode_event(interface: Interface, message: &Message) -> Result<Event> {
     let mut reader = message.arguments()?;
     let event = match (interface, message.opcode) {
+        (Interface::WlDisplay, 0) => Event::DisplayError {
+            object: reader
+                .object()?
+                .ok_or_else(|| Error::damaged("wl_display.error has a null object"))?,
+            code: reader.uint()?,
+            message: reader.string()?,
+        },
+        (Interface::WlDisplay, 1) => Event::DisplayDeleteId(reader.uint()?),
         (Interface::WlRegistry, 0) => Event::RegistryGlobal {
             name: reader.uint()?,
             interface: reader.string()?,
@@ -1300,6 +1350,23 @@ pub struct KeyModifiers {
     pub group: u32,
 }
 
+impl KeyModifiers {
+    /// Converts the conventional XKB core modifier masks carried by `wl_keyboard.modifiers`.
+    ///
+    /// `Shift` is core bit 0, `Lock` bit 1 and the usual `ISO_Level3_Shift` mapping is `Mod5`
+    /// (core bit 7). The effective group is supplied separately by Wayland.
+    #[must_use]
+    pub const fn from_xkb_masks(depressed: u32, latched: u32, locked: u32, group: u32) -> Self {
+        let active = depressed | latched | locked;
+        Self {
+            shift: active & 0x01 != 0,
+            lock: active & 0x02 != 0,
+            level3: active & 0x80 != 0,
+            group,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 struct XkbType {
     modifiers: u8,
@@ -1383,6 +1450,16 @@ impl XkbKeymap {
     #[must_use]
     pub fn character(&self, keycode: u32, modifiers: KeyModifiers) -> Option<char> {
         self.keysym(keycode, modifiers).and_then(keysym_to_char)
+    }
+
+    /// Resolves the evdev key number carried by `wl_keyboard.key` to Unicode.
+    ///
+    /// The Wayland keyboard protocol reports evdev numbers, while XKB text keymaps use keycodes that are eight
+    /// larger for the standard evdev keycode set.
+    #[must_use]
+    pub fn character_from_evdev(&self, key: u32, modifiers: KeyModifiers) -> Option<char> {
+        key.checked_add(8)
+            .and_then(|keycode| self.character(keycode, modifiers))
     }
 
     fn level_for_group(&self, group: &XkbGroup, modifiers: KeyModifiers) -> usize {
@@ -2381,4 +2458,33 @@ mod tests {
         assert_eq!(client.data_device_set_selection(device, Some(source), 77), Ok(()));
         assert!(client.transport_mut().sent.len() >= 7);
     }
+    #[test]
+    fn client_ids_are_reused_only_after_display_delete_id() {
+        let mut table = super::ObjectTable::default();
+        let first = table
+            .allocate(Interface::WlRegistry, 1)
+            .unwrap_or_else(|_| unreachable!());
+        table.release(first);
+        let second = table
+            .allocate(Interface::WlRegistry, 1)
+            .unwrap_or_else(|_| unreachable!());
+        assert_ne!(first, second);
+        assert_eq!(table.confirm_delete_id(first.raw()), Ok(()));
+        let recycled = table
+            .allocate(Interface::WlRegistry, 1)
+            .unwrap_or_else(|_| unreachable!());
+        assert_eq!(recycled, first);
+    }
+
+    #[test]
+    fn xkb_core_masks_and_evdev_offset_map_text() {
+        let map = XkbKeymap::parse(US_RU_KEYMAP).unwrap_or_else(|_| unreachable!());
+        let upper = KeyModifiers::from_xkb_masks(0x01, 0, 0, 0);
+        assert_eq!(map.character_from_evdev(16, upper), Some('Q'));
+        let russian = KeyModifiers::from_xkb_masks(0, 0, 0, 1);
+        assert_eq!(map.character_from_evdev(16, russian), Some('й'));
+        let level3 = KeyModifiers::from_xkb_masks(0x80, 0, 0, 0);
+        assert_eq!(map.character_from_evdev(41, level3), Some('`'));
+    }
+
 }
