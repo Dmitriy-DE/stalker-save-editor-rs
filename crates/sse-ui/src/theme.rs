@@ -51,7 +51,10 @@ pub const FOCUS_RING: Rgb = ACCENT;
 
 /// ApplyAppearance dark accent variants.
 pub const ACCENTS: [(&str, Rgb); 4] = [
-    ("amber", 0xD6A62D), ("teal", 0x70BCA6), ("blue", 0x78AFE0), ("rust", 0xE07A57),
+    ("amber", 0xD6A62D),
+    ("teal", 0x70BCA6),
+    ("blue", 0x78AFE0),
+    ("rust", 0xE07A57),
 ];
 
 /// Colour tokens.
@@ -165,12 +168,42 @@ impl Theme {
                 focus_ring: FOCUS_RING,
             },
             typography: Typography {
-                page_title: TextRole { family: "Oswald", size: 28.0, line_height: 34.0, weight: 600 },
-                section_title: TextRole { family: "Oswald", size: 18.0, line_height: 24.0, weight: 600 },
-                body: TextRole { family: "Liberation Sans Narrow", size: 13.0, line_height: 18.0, weight: 400 },
-                caption: TextRole { family: "Liberation Sans Narrow", size: 11.0, line_height: 15.0, weight: 400 },
-                table_cell: TextRole { family: "Liberation Sans Narrow", size: 12.0, line_height: 17.0, weight: 400 },
-                button: TextRole { family: "Liberation Sans Narrow", size: 12.0, line_height: 16.0, weight: 600 },
+                page_title: TextRole {
+                    family: "Oswald",
+                    size: 28.0,
+                    line_height: 34.0,
+                    weight: 600,
+                },
+                section_title: TextRole {
+                    family: "Oswald",
+                    size: 18.0,
+                    line_height: 24.0,
+                    weight: 600,
+                },
+                body: TextRole {
+                    family: "Liberation Sans Narrow",
+                    size: 13.0,
+                    line_height: 18.0,
+                    weight: 400,
+                },
+                caption: TextRole {
+                    family: "Liberation Sans Narrow",
+                    size: 11.0,
+                    line_height: 15.0,
+                    weight: 400,
+                },
+                table_cell: TextRole {
+                    family: "Liberation Sans Narrow",
+                    size: 12.0,
+                    line_height: 17.0,
+                    weight: 400,
+                },
+                button: TextRole {
+                    family: "Liberation Sans Narrow",
+                    size: 12.0,
+                    line_height: 16.0,
+                    weight: 600,
+                },
             },
             metrics: Metrics {
                 spacing: [2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 16.0, 20.0, 24.0],
@@ -193,7 +226,11 @@ impl Theme {
     pub fn scaled(self, scale: f32) -> Self {
         let factor = scale.clamp(1.0, 2.0);
         let px = |v: f32| (v * factor).round().max(1.0);
-        let role = |r: TextRole| TextRole { size: px(r.size), line_height: px(r.line_height), ..r };
+        let role = |r: TextRole| TextRole {
+            size: px(r.size),
+            line_height: px(r.line_height),
+            ..r
+        };
         let mut spacing = self.metrics.spacing;
         let mut radii = self.metrics.radii;
         let mut borders = self.metrics.borders;
@@ -203,15 +240,33 @@ impl Theme {
         let mut bars = self.metrics.bars;
         let mut animations_ms = self.metrics.animations_ms;
         let mut shadow = self.metrics.shadow;
-        for value in &mut spacing { *value = px(*value); }
-        for value in &mut radii { *value = px(*value); }
-        for value in &mut borders { *value = px(*value); }
-        for value in &mut controls { *value = px(*value); }
-        for value in &mut sidebar_widths { *value = px(*value); }
-        for value in &mut sidebar_items { *value = px(*value); }
-        for value in &mut bars { *value = px(*value); }
-        for value in &mut animations_ms { *value = px(*value); }
-        for value in &mut shadow { *value = px(*value); }
+        for value in &mut spacing {
+            *value = px(*value);
+        }
+        for value in &mut radii {
+            *value = px(*value);
+        }
+        for value in &mut borders {
+            *value = px(*value);
+        }
+        for value in &mut controls {
+            *value = px(*value);
+        }
+        for value in &mut sidebar_widths {
+            *value = px(*value);
+        }
+        for value in &mut sidebar_items {
+            *value = px(*value);
+        }
+        for value in &mut bars {
+            *value = px(*value);
+        }
+        for value in &mut animations_ms {
+            *value = px(*value);
+        }
+        for value in &mut shadow {
+            *value = px(*value);
+        }
         Self {
             colors: self.colors,
             typography: Typography {
@@ -223,8 +278,16 @@ impl Theme {
                 button: role(self.typography.button),
             },
             metrics: Metrics {
-                spacing, radii, borders, controls, sidebar_widths, sidebar_items, bars,
-                scrollbar: px(self.metrics.scrollbar), animations_ms, shadow,
+                spacing,
+                radii,
+                borders,
+                controls,
+                sidebar_widths,
+                sidebar_items,
+                bars,
+                scrollbar: px(self.metrics.scrollbar),
+                animations_ms,
+                shadow,
             },
         }
     }
