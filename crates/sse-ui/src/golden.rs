@@ -104,7 +104,7 @@ mod tests {
     #[test]
     fn tolerance_and_diff() {
         let r = [10, 20, 30, 255, 40, 50, 60, 255];
-        let png = sse_codecs::png_encode::encode_rgba8(2, 1, &r).unwrap();
+        let png = sse_codecs::png_encode::encode_rgba8(2, 1, &r).unwrap_or_else(|error| panic!("{error:?}"));
         let a = [12, 20, 30, 255, 50, 50, 60, 255];
         let c = compare(
             &a,
@@ -116,9 +116,9 @@ mod tests {
                 pixel_fraction: 0.5,
             },
         )
-        .unwrap();
+        .unwrap_or_else(|error| panic!("{error:?}"));
         assert!(c.accepted);
         assert_eq!(c.differing_pixels, 1);
-        assert!(sse_codecs::png::decode(&diff_png(&c).unwrap()).is_ok());
+        assert!(sse_codecs::png::decode(&diff_png(&c).unwrap_or_else(|error| panic!("{error:?}"))).is_ok());
     }
 }
