@@ -97,7 +97,8 @@ fn finds_windows_game_save_paths_from_steam_manifests_and_fsgame_override() {
 
     let candidates = SaveDirectoryLocator::find_candidate_directories(Some(&options));
 
-    let expected_custom = install.join("custom-user-data").join("saves");
+    let canonical_install = fs::canonicalize(&install).expect("canonical install path");
+    let expected_custom = canonical_install.join("custom-user-data").join("saves");
     assert!(
         candidates
             .iter()
@@ -105,7 +106,7 @@ fn finds_windows_game_save_paths_from_steam_manifests_and_fsgame_override() {
         "should find fsgame override path"
     );
 
-    let expected_appdata = install.join("_appdata_").join("savedgames");
+    let expected_appdata = canonical_install.join("_appdata_").join("savedgames");
     assert!(
         candidates
             .iter()
@@ -226,13 +227,20 @@ fn sorts_slots_newest_first_and_marks_unrecognized_files_without_guessing_from_f
 
     let candidates = vec![SaveDirectoryCandidate::new("stalker2", "stalker2", &saves)];
     let result = SaveSlotDiscovery::discover(&candidates);
+    let canonical_saves = fs::canonicalize(&saves).expect("canonical saves path");
 
     assert_eq!(result.slots.len(), 2);
-    assert_eq!(result.slots[0].path, newer);
-    assert_eq!(result.slots[1].path, older);
+    assert_eq!(
+        result.slots[0].path,
+        fs::canonicalize(&newer).expect("canonical newer save")
+    );
+    assert_eq!(
+        result.slots[1].path,
+        fs::canonicalize(&older).expect("canonical older save")
+    );
     assert!(result.slots[0].format_id.is_none());
     assert!(result.slots[0].detection_error.is_some());
-    assert_eq!(result.searched_paths, vec![saves]);
+    assert_eq!(result.searched_paths, vec![canonical_saves]);
 }
 
 #[test]
@@ -366,12 +374,9 @@ fn lists_a_save_once_when_its_folder_is_reachable_through_a_link() {
             ];
 
             let result = SaveSlotDiscovery::discover(&candidates);
+            let canonical_save = fs::canonicalize(&save_file).expect("canonical save path");
             assert_eq!(result.slots.len(), 1, "Should deduplicate symlinked save directory");
-            assert_eq!(
-                result.slots[0].path,
-                real.join("quick.scop"),
-                "Path should be canonical"
-            );
+            assert_eq!(result.slots[0].path, canonical_save, "Path should be canonical");
 
             let mut index = LibraryIndex::new();
             let index_slots = index.scan_with_index(&candidates);
@@ -382,7 +387,7 @@ fn lists_a_save_once_when_its_folder_is_reachable_through_a_link() {
             );
             assert_eq!(
                 index_slots[0].path,
-                real.join("quick.scop"),
+                fs::canonicalize(&save_file).expect("canonical indexed save path"),
                 "Indexed path should be canonical"
             );
         }
