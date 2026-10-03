@@ -1604,7 +1604,7 @@ fn to_i16(value: f32) -> i16 {
 ///
 /// Floor type 1, residue types 0/1/2, mapping type 0, channel coupling and
 /// both Vorbis block sizes are supported. Floor type 0 is explicitly refused.
-pub fn decode(input: &[u8]) -> Result<Pcm> {
+pub fn decode(input: &[u8], maximum_samples: usize) -> Result<Pcm> {
     let packets = ogg::packets(input)?;
     if packets.len() < 4 {
         return Err(Error::damaged("Vorbis stream has no audio packets"));
@@ -1639,6 +1639,16 @@ pub fn decode(input: &[u8]) -> Result<Pcm> {
             initial_center = Some(block.size.saturating_div(2));
         }
         if let Some(old) = previous.as_ref() {
+            let frames = old
+                .size
+                .saturating_div(4)
+                .saturating_add(block.size.saturating_div(4));
+            let added = frames
+                .checked_mul(usize::from(ident.channels))
+                .ok_or_else(|| Error::damaged("Vorbis PCM size overflow"))?;
+            if pcm.len().saturating_add(added) > maximum_samples {
+                return Err(Error::Refused("Vorbis PCM sample limit exceeded".to_owned()));
+            }
             overlap(old, &block, &mut pcm);
         }
         previous = Some(block);
@@ -1652,6 +1662,9 @@ pub fn decode(input: &[u8]) -> Result<Pcm> {
         let samples = frames
             .checked_mul(usize::from(ident.channels))
             .ok_or_else(|| Error::damaged("Vorbis PCM size overflow"))?;
+        if samples > maximum_samples {
+            return Err(Error::Refused("Vorbis PCM sample limit exceeded".to_owned()));
+        }
         pcm.truncate(samples);
     }
     Ok(Pcm {
@@ -1708,7 +1721,7 @@ mod tests {
     #[test]
     fn menu_decline_matches_reference_pcm() {
         let data = b64(include_str!("../tests/data/menu_decline.ogg.b64"));
-        let pcm = decode(&data).unwrap_or_else(|error| panic!("decode menu_decline: {error:?}"));
+        let pcm = decode(&data, 100_000).unwrap_or_else(|error| panic!("decode menu_decline: {error:?}"));
         assert_eq!(pcm.channels, 1);
         assert_eq!(pcm.rate, 48_000);
         assert_eq!(pcm.samples.len(), 23_348);
@@ -1734,7 +1747,7 @@ mod tests {
     #[test]
     fn menu_select_matches_reference_pcm() {
         let data = b64(include_str!("../tests/data/menu_select.ogg.b64"));
-        let pcm = decode(&data).unwrap_or_else(|error| panic!("decode menu_select: {error:?}"));
+        let pcm = decode(&data, 100_000).unwrap_or_else(|error| panic!("decode menu_select: {error:?}"));
         assert_eq!(pcm.channels, 1);
         assert_eq!(pcm.rate, 48_000);
         assert_eq!(pcm.samples.len(), 23_487);
@@ -1750,11 +1763,27 @@ mod tests {
     #[test]
     fn menu_switch_matches_reference_pcm() {
         let data = b64(include_str!("../tests/data/menu_switch.ogg.b64"));
-        let pcm = decode(&data).unwrap_or_else(|error| panic!("decode menu_switch: {error:?}"));
+        let pcm = decode(&data, 100_000).unwrap_or_else(|error| panic!("decode menu_switch: {error:?}"));
         assert_eq!(pcm.channels, 1);
         assert_eq!(pcm.rate, 48_000);
         assert_eq!(pcm.samples.len(), 23_348);
         assert_eq!(fnv64(&pcm.samples), 0x2d39_9db9_d105_17a4);
+    }
+
+    #[test]
+    fn one_hundred_truncations_are_rejected() {
+        let data = b64(include_str!("../tests/data/menu_select.ogg.b64"));
+        for point in 1_usize..=100 {
+            let cut = data.len().saturating_mul(point).saturating_div(101);
+            let prefix = data.get(..cut).unwrap_or(&[]);
+            assert!(decode(prefix, 100_000).is_err(), "truncation point {point} was accepted");
+        }
+    }
+
+    #[test]
+    fn maximum_sample_limit_is_enforced() {
+        let data = b64(include_str!("../tests/data/menu_select.ogg.b64"));
+        assert!(matches!(decode(&data, 1_000), Err(Error::Refused(_))));
     }
 
     #[test]
