@@ -18,12 +18,16 @@ pub mod inflate;
 pub mod json;
 /// Windows minidump reader for crash diagnostics.
 pub mod minidump;
+/// Ogg page and packet framing.
+pub mod ogg;
 /// ECDSA P-256 update-signature verification.
 pub mod p256;
 /// Valve text KeyValues reader used for Steam library discovery.
 pub mod vdf;
 /// ZIP reader and reproducible writer.
 pub mod zip;
+/// Vorbis-I audio decoder.
+pub mod vorbis;
 
 /// PNG decoder to RGBA8.
 pub mod png;
