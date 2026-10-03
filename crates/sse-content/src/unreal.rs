@@ -247,7 +247,7 @@ fn find_pak_footer(data:&[u8])->Result<PakFooter>{
         let mut r=Reader::new(data.get(data.len().saturating_sub(size)..).ok_or_else(|| Error::damaged("PAK footer"))?);
         if version>=7{r.skip(16)?;}
         let encrypted=if version>=4{r.u8()?!=0}else{false};
-        if r.u32()!=Ok(PAK_MAGIC){continue;}
+        if r.u32()? != PAK_MAGIC { continue; }
         let stored=r.u32()?; if stored!=version{continue;}
         let index_offset=r.u64()?;let index_size=r.u64()?;r.skip(20)?;
         if version==9{let frozen=r.u8()?!=0;if frozen{return Err(Error::Refused("frozen PAK index is unsupported".to_owned()));}}
@@ -315,7 +315,7 @@ fn normalize_path(path:&str)->String{path.replace('\\',"/").trim_start_matches('
 fn bounded_count(v:u32)->Result<usize>{let n=usize::try_from(v).map_err(|_| Error::damaged("container count conversion"))?;if n>MAX_ENTRY_COUNT{return Err(Error::Refused("container table is too large".to_owned()));}Ok(n)}
 fn be40(b:&[u8])->Result<u64>{if b.len()!=5{return Err(Error::damaged("be40 width"));}let mut a=[0_u8;8];a.get_mut(3..).ok_or_else(|| Error::damaged("be40 target"))?.copy_from_slice(b);Ok(u64::from_be_bytes(a))}
 fn le40(b:&[u8])->Result<u64>{if b.len()!=5{return Err(Error::damaged("le40 width"));}let mut a=[0_u8;8];a.get_mut(..5).ok_or_else(|| Error::damaged("le40 target"))?.copy_from_slice(b);Ok(u64::from_le_bytes(a))}
-fn le24(b:&[u8])->Result<u32>{if b.len()!=3{return Err(Error::damaged("le24 width"));}Ok(u32::from(*b.first().unwrap_or(&0))|u32::from(*b.get(1).unwrap_or(&0))<<8|u32::from(*b.get(2).unwrap_or(&0))<<16)}
+fn le24(b:&[u8])->Result<u32>{if b.len()!=3{return Err(Error::damaged("le24 width"));}Ok(u32::from(*b.first().unwrap_or(&0))|u32::from(*b.get(1).unwrap_or(&0)).checked_shl(8).unwrap_or_default()|u32::from(*b.get(2).unwrap_or(&0)).checked_shl(16).unwrap_or_default())}
 
 struct Reader<'a>{data:&'a[u8],at:usize}
 impl<'a> Reader<'a>{
@@ -335,11 +335,11 @@ mod tests{
     fn push_u32(v:&mut Vec<u8>,x:u32){v.extend_from_slice(&x.to_le_bytes());}
     fn push_u64(v:&mut Vec<u8>,x:u64){v.extend_from_slice(&x.to_le_bytes());}
     fn fstr(v:&mut Vec<u8>,s:&str){push_u32(v,u32::try_from(s.len().saturating_add(1)).unwrap_or_default());v.extend_from_slice(s.as_bytes());v.push(0);}
+    fn set_u32(v:&mut [u8],at:usize,x:u32){let end=at.saturating_add(4);if let Some(dst)=v.get_mut(at..end){dst.copy_from_slice(&x.to_le_bytes());}}
     #[test] fn synthetic_iostore_directory_and_read(){
         let mut dir=Vec::new();fstr(&mut dir,"../../../Game/Content/");push_u32(&mut dir,1);for x in [u32::MAX,u32::MAX,u32::MAX,0]{push_u32(&mut dir,x);}push_u32(&mut dir,1);for x in [0,u32::MAX,0]{push_u32(&mut dir,x);}push_u32(&mut dir,1);fstr(&mut dir,"hello.txt");
-        let mut toc=vec![0_u8;0x90];toc.get_mut(..16).unwrap_or(&mut[]).copy_from_slice(IOSTORE_MAGIC);*toc.get_mut(16).unwrap_or(&mut 0)=2;
-        let mut set=|at:usize,x:u32|toc.get_mut(at..at+4).unwrap_or(&mut[]).copy_from_slice(&x.to_le_bytes());
-        set(20,0x90);set(24,1);set(28,1);set(32,12);set(36,0);set(40,32);set(44,64*1024);set(48,u32::try_from(dir.len()).unwrap_or_default());set(52,1);*toc.get_mut(80).unwrap_or(&mut 0)=0x08;
+        let mut toc=vec![0_u8;0x90];if let Some(dst)=toc.get_mut(..16){dst.copy_from_slice(IOSTORE_MAGIC);}if let Some(v)=toc.get_mut(16){*v=2;}
+        set_u32(&mut toc,20,0x90);set_u32(&mut toc,24,1);set_u32(&mut toc,28,1);set_u32(&mut toc,32,12);set_u32(&mut toc,36,0);set_u32(&mut toc,40,32);set_u32(&mut toc,44,65_536);set_u32(&mut toc,48,u32::try_from(dir.len()).unwrap_or_default());set_u32(&mut toc,52,1);if let Some(v)=toc.get_mut(80){*v=0x08;}
         toc.extend_from_slice(&[0_u8;12]);toc.extend_from_slice(&[0,0,0,0,0,0,0,0,0,5]);toc.extend_from_slice(&[0,0,0,0,0,5,0,0,5,0,0,0]);toc.extend_from_slice(&dir);
         let store=IoStore::open(&toc,b"hello").unwrap_or_else(|e|panic!("{e:?}"));assert_eq!(store.read_file("hello.txt"),Ok(b"hello".to_vec()));
     }
