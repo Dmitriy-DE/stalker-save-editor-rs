@@ -280,9 +280,7 @@ pub(super) fn get(
             .checked_add(u64::from(read))
             .ok_or_else(|| Error::Refused("HTTPS response size overflow".to_owned()))?;
         if delivered > config.max_bytes {
-            return Err(Error::Refused(
-                "HTTPS response exceeds size limit".to_owned(),
-            ));
+            return Err(Error::Refused("HTTPS response exceeds size limit".to_owned()));
         }
         let read = usize::try_from(read).map_err(|_| Error::damaged("WinHTTP read size"))?;
         if !sink(buffer.get(..read).unwrap_or_default()) {
