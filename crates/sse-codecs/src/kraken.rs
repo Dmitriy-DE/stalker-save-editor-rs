@@ -2190,6 +2190,10 @@ fn init_tans_lut(weights: &[TansWeight], l_bits: u8) -> Result<Vec<TansEntry>> {
             .saturating_sub(1))
             .checked_shl(u32::try_from(weights_sum & 3).unwrap_or_default())
             .unwrap_or_default();
+            // The reference duplicates wrapped lane bits into the low nibble
+            // before BSF. The order matters because each slot advances ww and
+            // therefore changes the terminal-state transition value.
+            lane_bits |= lane_bits >> 4;
             while remaining != 0 {
                 let lane = usize::try_from(lane_bits.trailing_zeros())
                     .map_err(|_| Error::damaged("tANS lane index conversion failed"))?
@@ -3058,6 +3062,20 @@ mod tests {
         let decoded = decode_rle(&source, &mut output, 0);
         assert!(decoded.is_ok(), "hand-built RLE array failed: {decoded:?}");
         assert_eq!(output, expected);
+    }
+
+    #[test]
+    fn tans_small_weights_wrap_lanes_like_reference() {
+        let weights = [
+            TansWeight { symbol: 1, weight: 2 },
+            TansWeight { symbol: 2, weight: 3 },
+            TansWeight { symbol: 3, weight: 251 },
+        ];
+        let lut = init_tans_lut(&weights, 8).unwrap_or_else(|error| panic!("build tANS LUT: {error:?}"));
+        let wrapped = lut.get(1).copied().unwrap_or_default();
+        assert_eq!(wrapped.symbol, 2);
+        assert_eq!(wrapped.bits, 7);
+        assert_eq!(wrapped.w, 128);
     }
 
     #[test]
