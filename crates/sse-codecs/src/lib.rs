@@ -24,10 +24,10 @@ pub mod ogg;
 pub mod p256;
 /// Valve text KeyValues reader used for Steam library discovery.
 pub mod vdf;
-/// ZIP reader and reproducible writer.
-pub mod zip;
 /// Vorbis-I audio decoder.
 pub mod vorbis;
+/// ZIP reader and reproducible writer.
+pub mod zip;
 
 /// PNG decoder to RGBA8.
 pub mod png;

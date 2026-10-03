@@ -79,6 +79,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "sse-sys"
+version = "2.0.0-dev"
+dependencies = [
+ "sse-core",
+]
+
+[[package]]
 name = "sse-ui"
 version = "2.0.0-dev"
 dependencies = [
