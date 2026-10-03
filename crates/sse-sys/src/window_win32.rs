@@ -45,6 +45,7 @@ const MOD_NOREPEAT: u32 = 0x4000;
 
 /// Rectangle in physical framebuffer pixels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Windows client rectangle in pixels.
 pub struct Rect {
     /// Left pixel.
     pub x: u32,

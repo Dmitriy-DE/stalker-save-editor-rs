@@ -3,6 +3,7 @@
 pub mod container;
 pub mod level_changer;
 pub mod save;
+pub mod writer;
 
 pub use level_changer::{LevelChangerDestination, Vector3};
 pub use save::{Format, InventoryItem, RegistryObject, Save};

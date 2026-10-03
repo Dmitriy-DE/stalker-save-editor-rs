@@ -20,6 +20,7 @@ dependencies = [
  "sse-core",
  "sse-fixes",
  "sse-lint",
+ "sse-storage",
  "sse-update",
  "sse-xray",
 ]
@@ -106,6 +107,7 @@ dependencies = [
 name = "sse-xray"
 version = "2.0.0-dev"
 dependencies = [
+ "sse-catalog",
  "sse-codecs",
  "sse-core",
 ]

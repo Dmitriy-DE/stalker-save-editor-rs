@@ -1,0 +1,156 @@
+//! Backup listing, C# journal shape, and restore verification.
+
+#![allow(clippy::arithmetic_side_effects, clippy::expect_used, clippy::indexing_slicing)]
+
+use sse_storage::transaction::{export_transaction, list_backups, restore_backup, BackupStatus, EditSummary};
+use std::fs;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(1);
+
+struct TemporaryDirectory(PathBuf);
+
+impl TemporaryDirectory {
+    fn new() -> Self {
+        let id = NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!("sse-backup-test-{}-{id}", std::process::id()));
+        fs::create_dir_all(&path).expect("temporary directory should be created");
+        Self(path)
+    }
+}
+
+impl Drop for TemporaryDirectory {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+fn export_fixture(root: &std::path::Path) -> (Vec<u8>, Vec<u8>, std::path::PathBuf, std::path::PathBuf) {
+    let original = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-source.sav").to_vec();
+    let replacement = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-expected.sav").to_vec();
+    fs::create_dir_all(root.join("saves")).expect("save directory should be created");
+    fs::create_dir_all(root.join("exports")).expect("export directory should be created");
+    let source = root.join("saves/source.sav");
+    let output = root.join("exports/edited.sav");
+    fs::write(&source, &original).expect("source fixture should be written");
+    let summary = EditSummary {
+        money: Some(900_000),
+        stack_count: 2,
+        ..EditSummary::default()
+    };
+    export_transaction(
+        &source,
+        &sse_codecs::sha256::sha256_hex(&original),
+        &replacement,
+        &output,
+        &root.join("backups"),
+        summary,
+    )
+    .expect("fixture export should succeed");
+    (original, replacement, source, root.join("backups"))
+}
+
+#[test]
+fn exported_journal_lists_verified_and_restores_original_bytes_to_a_new_path() {
+    let directory = TemporaryDirectory::new();
+    let (original, replacement, source, backup_directory) = export_fixture(&directory.0);
+
+    let entries = list_backups(&backup_directory).expect("backup listing should succeed");
+
+    let entry = entries.first().expect("export should be listed");
+    assert_eq!(entry.status, BackupStatus::Verified);
+    assert_eq!(fs::read(&source).expect("source should still exist"), original);
+    assert_eq!(
+        fs::read(directory.0.join("exports/edited.sav")).expect("output should exist"),
+        replacement
+    );
+    let journal = fs::read_to_string(&entry.journal_path).expect("journal should be readable");
+    for field in [
+        "\"version\":1",
+        "\"status\":\"verified\"",
+        "\"source_path\"",
+        "\"source_sha256\"",
+        "\"output_path\"",
+        "\"output_sha256\"",
+        "\"backup_path\"",
+        "\"operation\"",
+        "\"mode\":\"export\"",
+        "\"money\":900000",
+        "\"stack_count\":2",
+    ] {
+        assert!(journal.contains(field), "journal must contain {field}");
+    }
+
+    let restored = directory.0.join("restored.sav");
+    restore_backup(&entry.journal_path, &restored).expect("verified backup should restore");
+    assert_eq!(fs::read(restored).expect("restored save should be readable"), original);
+}
+
+#[test]
+fn missing_and_corrupt_backup_journals_are_listed_but_never_restored() {
+    let directory = TemporaryDirectory::new();
+    let (_, _, _, backup_directory) = export_fixture(&directory.0);
+    let verified = list_backups(&backup_directory).expect("backup listing should succeed");
+    let entry = verified.first().expect("export should be listed").clone();
+    fs::remove_file(&entry.backup_path).expect("backup should be removable for this test");
+
+    let missing = list_backups(&backup_directory).expect("missing backup should be listable");
+    assert_eq!(missing[0].status, BackupStatus::Missing);
+    assert!(restore_backup(&entry.journal_path, &directory.0.join("missing.sav")).is_err());
+
+    fs::write(&entry.backup_path, b"tampered backup").expect("corrupt backup should be written");
+    let corrupt = list_backups(&backup_directory).expect("corrupt backup should be listable");
+    assert_eq!(corrupt[0].status, BackupStatus::Corrupt);
+    assert!(restore_backup(&entry.journal_path, &directory.0.join("corrupt.sav")).is_err());
+}
+
+#[test]
+fn an_unjournaled_backup_is_reported_as_corrupt() {
+    let directory = TemporaryDirectory::new();
+    let backup_directory = directory.0.join("backups");
+    fs::create_dir_all(&backup_directory).expect("backup directory should be created");
+    fs::write(backup_directory.join("orphan_ORIGINAL.sav"), b"synthetic orphan")
+        .expect("orphan backup should be written");
+
+    let entries = list_backups(&backup_directory).expect("orphan should be listable");
+
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].status, BackupStatus::Corrupt);
+    assert!(entries[0].error.as_deref().unwrap_or_default().contains("journal"));
+}
+
+#[test]
+fn truncated_hostile_and_mutated_journals_fail_closed() {
+    let directory = TemporaryDirectory::new();
+    let (_, _, _, backup_directory) = export_fixture(&directory.0);
+    let entries = list_backups(&backup_directory).expect("journal should list");
+    let journal_path = entries
+        .first()
+        .expect("export should have a journal")
+        .journal_path
+        .clone();
+    let original = fs::read(&journal_path).expect("journal should be readable");
+
+    for end in 0..original.len() {
+        fs::write(&journal_path, &original[..end]).expect("truncated journal should be written");
+        let listed = list_backups(&backup_directory).expect("truncated journal should fail closed");
+        assert_eq!(listed[0].status, BackupStatus::Corrupt);
+    }
+
+    let mut seed = 0x85eb_ca6b_u32;
+    for _ in 0..256 {
+        let mut mutated = original.clone();
+        seed ^= seed.wrapping_shl(13);
+        seed ^= seed.wrapping_shr(17);
+        seed ^= seed.wrapping_shl(5);
+        let index = (seed as usize) % mutated.len();
+        mutated[index] ^= 1 << (seed % 8);
+        fs::write(&journal_path, mutated).expect("mutated journal should be written");
+        assert!(list_backups(&backup_directory).is_ok());
+    }
+
+    fs::write(&journal_path, vec![b' '; 2 * 1024 * 1024 + 1]).expect("oversized journal should be written");
+    let listed = list_backups(&backup_directory).expect("oversized journal should fail closed");
+    assert_eq!(listed[0].status, BackupStatus::Corrupt);
+}

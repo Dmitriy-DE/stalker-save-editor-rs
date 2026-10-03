@@ -2,3 +2,7 @@
 //! Save discovery module. Owner: Gemini (G4).
 
 pub mod discovery;
+
+pub mod drafts;
+
+pub mod transaction;
