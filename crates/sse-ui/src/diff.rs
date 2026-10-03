@@ -583,6 +583,38 @@ mod tests {
         assert_eq!(r.as_ref().map(|x| x.bytes.as_slice()), Some(b"A\nb\nC\n".as_slice()));
     }
     #[test]
+    fn sixty_generated_patch_cases_round_trip() {
+        for case in 0_u8..60 {
+            let next = case.saturating_add(1);
+            let old = format!("head\\r\\nvalue={case}\\r\\ntail");
+            let new = format!("head\\r\\nvalue={next}\\r\\ntail");
+            let hunks = unified_hunks(old.as_bytes(), new.as_bytes(), 1).unwrap_or_default();
+            assert_eq!(
+                apply_hunks(old.as_bytes(), &hunks).ok().as_deref(),
+                Some(new.as_bytes())
+            );
+        }
+    }
+
+    #[test]
+    fn one_mib_line_diff_respects_cutoff_time_bound() {
+        let target = 1_048_576_usize;
+        let mut old = Vec::with_capacity(target);
+        while old.len() < target {
+            old.extend_from_slice(b"0123456789abcdef0123456789abcdef\\r\\n");
+        }
+        old.truncate(target);
+        let mut new = old.clone();
+        if let Some(byte) = new.get_mut(524_288) {
+            *byte = b'X';
+        }
+        let started = std::time::Instant::now();
+        let ops = line_diff(&old, &new, 1_000_000).unwrap_or_default();
+        assert!(!ops.is_empty());
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
+    }
+
+    #[test]
     fn no_trailing_newline() {
         let d = line_diff(b"a\nlast", b"a\nLAST", 10000).unwrap_or_default();
         assert!(d.iter().any(|x| matches!(x, LineOp::Delete(_))));
