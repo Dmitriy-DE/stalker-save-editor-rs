@@ -288,7 +288,6 @@ impl<'a> IoStore<'a> {
 #[derive(Debug, Clone)]
 struct PakEntry {
     offset: u64,
-    compressed: usize,
     uncompressed: usize,
     compression: Option<usize>,
     blocks: Vec<(u64, u64)>,
@@ -522,7 +521,7 @@ fn pak_footer_size(version: u32) -> usize {
 fn read_pak_entry(r: &mut Reader<'_>, version: u32) -> Result<PakEntry> {
     let start = r.position();
     let offset = r.u64()?;
-    let compressed = usize::try_from(r.u64()?).map_err(|_| Error::damaged("PAK compressed size"))?;
+    let _compressed = usize::try_from(r.u64()?).map_err(|_| Error::damaged("PAK compressed size"))?;
     let uncompressed = usize::try_from(r.u64()?).map_err(|_| Error::damaged("PAK uncompressed size"))?;
     let slot = r.u32()?;
     let compression = if slot == 0 {
@@ -547,7 +546,6 @@ fn read_pak_entry(r: &mut Reader<'_>, version: u32) -> Result<PakEntry> {
     let header_size = r.position().saturating_sub(start);
     Ok(PakEntry {
         offset,
-        compressed,
         uncompressed,
         compression,
         blocks,
