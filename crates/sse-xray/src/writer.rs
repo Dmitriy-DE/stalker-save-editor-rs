@@ -211,6 +211,31 @@ impl ChangeSet {
     }
 }
 
+/// Exact inverse data for one successfully applied change set.
+///
+/// The token stores only the changed byte ranges for fixed-size edits and the affected chunk payloads when
+/// their lengths change. It never retains a second complete save image.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UndoToken {
+    format: crate::Format,
+    source_image_sha256: [u8; 32],
+    applied_image_sha256: [u8; 32],
+    patches: Vec<UndoPatch>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum UndoPatch {
+    Chunk {
+        kind: u32,
+        original: Vec<u8>,
+    },
+    Range {
+        kind: u32,
+        offset: usize,
+        original: Vec<u8>,
+    },
+}
+
 /// Applies a supported change set, repacks once, and verifies the unpacked result.
 pub fn apply(save: &Save, changes: &ChangeSet) -> Result<SaveBuffer> {
     let bundle = CatalogBundleReader::load_embedded().get(save.format().id());
@@ -222,6 +247,69 @@ pub fn apply(save: &Save, changes: &ChangeSet) -> Result<SaveBuffer> {
     )
 }
 
+/// Applies changes and returns bounded raw-byte data that can restore the exact source image.
+pub fn apply_with_undo(save: &Save, changes: &ChangeSet) -> Result<(SaveBuffer, UndoToken)> {
+    let bundle = CatalogBundleReader::load_embedded().get(save.format().id());
+    let (packed, undo) = apply_with_catalog_internal(
+        save,
+        changes,
+        bundle.and_then(|bundle| bundle.factions.as_ref()),
+        bundle.and_then(|bundle| bundle.upgrades.as_ref()),
+        true,
+    )?;
+    let undo = undo.ok_or_else(|| Error::damaged("X-Ray writer did not produce its requested inverse"))?;
+    Ok((packed, undo))
+}
+
+/// Restores a save using the inverse returned by [`apply_with_undo`].
+pub fn apply_inverse(save: &Save, undo: &UndoToken) -> Result<SaveBuffer> {
+    if save.format() != undo.format || sse_codecs::sha256::sha256(save.raw_image()) != undo.applied_image_sha256 {
+        return Err(Error::Refused(
+            "X-Ray inverse does not match this exact written image".to_owned(),
+        ));
+    }
+    let mut working = save.raw_image().to_vec();
+    let mut chunk_replacements = Vec::new();
+    for patch in &undo.patches {
+        if let UndoPatch::Chunk { kind, original } = patch {
+            chunk_replacements.push((*kind, original.as_slice()));
+        }
+    }
+    if !chunk_replacements.is_empty() {
+        save.rebuild_chunks_in_place(&mut working, &chunk_replacements)?;
+    }
+    for patch in &undo.patches {
+        if let UndoPatch::Range {
+            kind,
+            offset: relative_offset,
+            original,
+        } = patch
+        {
+            let start = save.chunk_payload_offset(*kind)?;
+            let offset = start
+                .checked_add(*relative_offset)
+                .ok_or_else(|| Error::damaged("X-Ray inverse range offset overflow"))?;
+            let end = offset
+                .checked_add(original.len())
+                .ok_or_else(|| Error::damaged("X-Ray inverse range overflow"))?;
+            working
+                .get_mut(offset..end)
+                .ok_or_else(|| Error::damaged("X-Ray inverse range is outside the image"))?
+                .copy_from_slice(original);
+        }
+    }
+    let packed = save.repack(&working)?;
+    let verified = Save::read(packed.as_slice())?;
+    if verified.raw_image() != working.as_slice()
+        || sse_codecs::sha256::sha256(verified.raw_image()) != undo.source_image_sha256
+    {
+        return Err(Error::Refused(
+            "X-Ray inverse failed its exact image read-back check".to_owned(),
+        ));
+    }
+    Ok(packed)
+}
+
 /// Applies changes with explicitly supplied catalogs, or the embedded catalogs when using [`apply`].
 pub fn apply_with_catalog(
     save: &Save,
@@ -229,6 +317,16 @@ pub fn apply_with_catalog(
     faction_catalog: Option<&FactionCatalog>,
     upgrade_catalog: Option<&UpgradeCatalog>,
 ) -> Result<SaveBuffer> {
+    apply_with_catalog_internal(save, changes, faction_catalog, upgrade_catalog, false).map(|(packed, _)| packed)
+}
+
+fn apply_with_catalog_internal(
+    save: &Save,
+    changes: &ChangeSet,
+    faction_catalog: Option<&FactionCatalog>,
+    upgrade_catalog: Option<&UpgradeCatalog>,
+    capture_undo: bool,
+) -> Result<(SaveBuffer, Option<UndoToken>)> {
     if changes.changes.is_empty() {
         return Err(Error::Refused("X-Ray change set is empty".to_owned()));
     }
@@ -1135,7 +1233,71 @@ pub fn apply_with_catalog(
         }
     }
     verify_extended_changes(save, &verified, changes, faction_catalog)?;
-    Ok(packed)
+    let undo = if capture_undo {
+        Some(build_undo_token(save, &verified)?)
+    } else {
+        None
+    };
+    Ok((packed, undo))
+}
+
+fn build_undo_token(source: &Save, applied: &Save) -> Result<UndoToken> {
+    let mut changed = Vec::with_capacity(2);
+    for kind in [2_u32, 9_u32] {
+        let before = source.optional_chunk_bytes(source.raw_image(), kind)?;
+        let after = applied.optional_chunk_bytes(applied.raw_image(), kind)?;
+        match (before, after) {
+            (Some(before), Some(after)) if before != after => changed.push((kind, before, after)),
+            (None, None) | (Some(_), Some(_)) => {}
+            _ => {
+                return Err(Error::damaged(format!(
+                    "X-Ray chunk type {kind} changed its presence during writing"
+                )))
+            }
+        }
+    }
+
+    let has_length_change = changed.iter().any(|(_, before, after)| before.len() != after.len());
+    let mut patches = Vec::new();
+    if has_length_change {
+        patches.extend(changed.into_iter().map(|(kind, before, _)| UndoPatch::Chunk {
+            kind,
+            original: before.to_vec(),
+        }));
+    } else {
+        for (kind, before, after) in changed {
+            let mut offset = 0_usize;
+            while offset < before.len() {
+                if before.get(offset) == after.get(offset) {
+                    offset = offset
+                        .checked_add(1)
+                        .ok_or_else(|| Error::damaged("X-Ray inverse range offset overflow"))?;
+                    continue;
+                }
+                let start = offset;
+                while offset < before.len() && before.get(offset) != after.get(offset) {
+                    offset = offset
+                        .checked_add(1)
+                        .ok_or_else(|| Error::damaged("X-Ray inverse range offset overflow"))?;
+                }
+                let original = before
+                    .get(start..offset)
+                    .ok_or_else(|| Error::damaged("X-Ray inverse range is outside the source chunk"))?
+                    .to_vec();
+                patches.push(UndoPatch::Range {
+                    kind,
+                    offset: start,
+                    original,
+                });
+            }
+        }
+    }
+    Ok(UndoToken {
+        format: source.format(),
+        source_image_sha256: sse_codecs::sha256::sha256(source.raw_image()),
+        applied_image_sha256: sse_codecs::sha256::sha256(applied.raw_image()),
+        patches,
+    })
 }
 
 fn verify_extended_changes(
@@ -2107,8 +2269,8 @@ fn write_u16(bytes: &mut [u8], offset: usize, value: u16) -> Result<()> {
 )]
 mod tests {
     use super::{
-        actor_spawn_position_offset, apply, apply_with_catalog, capability, read_u16, read_u32, read_vector,
-        Capability, Change, ChangeKind, ChangeSet, Placement,
+        actor_spawn_position_offset, apply, apply_inverse, apply_with_catalog, apply_with_undo, capability, read_u16,
+        read_u32, read_vector, Capability, Change, ChangeKind, ChangeSet, Placement,
     };
     use crate::{Format, Save};
     use sse_catalog::{CatalogBundleReader, UpgradeCatalog, UpgradeDefinition};
@@ -2240,7 +2402,7 @@ mod tests {
                     info_portions: requested.clone(),
                 },
             ]);
-            let output = apply(&source, &changes)?;
+            let (output, undo) = apply_with_undo(&source, &changes)?;
             let verified = Save::read(output.as_slice())?;
             let registry = verified
                 .relation_registry
@@ -2307,6 +2469,7 @@ mod tests {
                     .ok_or("unmodified chunk should remain")?;
                 assert_eq!(output_container.chunk_bytes(*new)?, old);
             }
+            assert_eq!(apply_inverse(&verified, &undo)?.as_slice(), source_bytes);
         }
         Ok(())
     }
@@ -2393,7 +2556,7 @@ mod tests {
         let changes = ChangeSet::new(vec![Change::RelocateActor {
             destination_changer: destination_handle,
         }]);
-        let output = apply(&extended_save, &changes)?;
+        let (output, undo) = apply_with_undo(&extended_save, &changes)?;
         let verified = Save::read(output.as_slice())?;
         let verified_actor = verified
             .registry_objects()
@@ -2423,6 +2586,7 @@ mod tests {
             }])
         )
         .is_err());
+        assert_eq!(apply_inverse(&verified, &undo)?.as_slice(), extended_packed.as_slice());
         Ok(())
     }
 
@@ -2802,10 +2966,11 @@ mod tests {
                 old_value: 0.25,
                 new_value: 0.75,
             }]);
-            let output = apply(&source, &changes)?;
+            let (output, undo) = apply_with_undo(&source, &changes)?;
             assert_eq!(output.as_slice(), expected_bytes);
             let verified = Save::read(output.as_slice())?;
             assert_eq!(verified.raw_image(), expected_raw);
+            assert_eq!(apply_inverse(&verified, &undo)?.as_slice(), source_bytes);
             let condition = verified
                 .inventory()?
                 .into_iter()
@@ -2886,10 +3051,11 @@ mod tests {
                 target_object: 13398,
                 destination,
             }]);
-            let output = apply(&source, &changes)?;
+            let (output, undo) = apply_with_undo(&source, &changes)?;
             assert_eq!(output.as_slice(), expected_bytes);
             let verified = Save::read(output.as_slice())?;
             assert_eq!(verified.raw_image(), expected_raw);
+            assert_eq!(apply_inverse(&verified, &undo)?.as_slice(), source_bytes);
         }
         Ok(())
     }
@@ -2920,10 +3086,11 @@ mod tests {
                 old_parent: 16,
                 new_parent: source.actor_id(),
             }]);
-            let output = apply(&source, &changes)?;
+            let (output, undo) = apply_with_undo(&source, &changes)?;
             assert_eq!(output.as_slice(), expected_bytes);
             let verified = Save::read(output.as_slice())?;
             assert_eq!(verified.raw_image(), expected_raw);
+            assert_eq!(apply_inverse(&verified, &undo)?.as_slice(), source_bytes);
         }
         Ok(())
     }
@@ -2989,6 +3156,37 @@ mod tests {
     }
 
     #[test]
+    fn undo_token_restores_a_removed_item_fixture() -> TestResult {
+        let source_bytes = include_bytes!("../../../fixtures/synthetic/writer-delete/xray-delete-soc-source.sav");
+        let expected_bytes = include_bytes!("../../../fixtures/synthetic/writer-delete/xray-delete-soc-expected.sav");
+        let source = Save::read(source_bytes)?;
+        let changes = ChangeSet::new(vec![Change::RemoveItem { target_object: 4660 }]);
+
+        let (output, undo) = apply_with_undo(&source, &changes)?;
+        assert_eq!(output.as_slice(), expected_bytes);
+        let written = Save::read(output.as_slice())?;
+        assert_eq!(apply_inverse(&written, &undo)?.as_slice(), source_bytes);
+
+        let current_money = written.money()?;
+        let different_money = if current_money < 2_000_000_000 {
+            current_money + 1
+        } else {
+            current_money - 1
+        };
+        let altered = apply(
+            &written,
+            &ChangeSet::new(vec![Change::SetMoney {
+                target_object: written.actor_id(),
+                old_value: current_money,
+                new_value: different_money,
+            }]),
+        )?;
+        let altered = Save::read(altered.as_slice())?;
+        assert!(apply_inverse(&altered, &undo).is_err());
+        Ok(())
+    }
+
+    #[test]
     fn item_removal_matches_all_six_reference_fixtures() -> TestResult {
         let pairs: [(&[u8], &[u8], &[u8]); 6] = [
             (
@@ -3025,9 +3223,11 @@ mod tests {
         for (source_bytes, expected_bytes, expected_raw) in pairs {
             let source = Save::read(source_bytes)?;
             let changes = ChangeSet::new(vec![Change::RemoveItem { target_object: 4660 }]);
-            let output = apply(&source, &changes)?;
+            let (output, undo) = apply_with_undo(&source, &changes)?;
             assert_eq!(output.as_slice(), expected_bytes);
-            assert_eq!(Save::read(output.as_slice())?.raw_image(), expected_raw);
+            let verified = Save::read(output.as_slice())?;
+            assert_eq!(verified.raw_image(), expected_raw);
+            assert_eq!(apply_inverse(&verified, &undo)?.as_slice(), source_bytes);
         }
         Ok(())
     }

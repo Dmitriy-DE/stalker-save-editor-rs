@@ -355,6 +355,39 @@ impl Save {
         found.ok_or_else(|| Error::damaged("missing X-Ray relation chunk"))
     }
 
+    pub(crate) fn optional_chunk_bytes<'a>(&self, raw: &'a [u8], kind: u32) -> Result<Option<&'a [u8]>> {
+        let mut found = None;
+        for chunk in self.container.chunks() {
+            if chunk.kind == kind {
+                if found.is_some() {
+                    return Err(Error::damaged(format!("duplicate X-Ray chunk type {kind}")));
+                }
+                let end = chunk
+                    .offset
+                    .checked_add(chunk.length)
+                    .ok_or_else(|| Error::damaged(format!("X-Ray chunk type {kind} range overflow")))?;
+                found = Some(
+                    raw.get(chunk.offset..end)
+                        .ok_or_else(|| Error::damaged(format!("X-Ray chunk type {kind} is outside the image")))?,
+                );
+            }
+        }
+        Ok(found)
+    }
+
+    pub(crate) fn chunk_payload_offset(&self, kind: u32) -> Result<usize> {
+        let mut found = None;
+        for chunk in self.container.chunks() {
+            if chunk.kind == kind {
+                if found.is_some() {
+                    return Err(Error::damaged(format!("duplicate X-Ray chunk type {kind}")));
+                }
+                found = Some(chunk.offset);
+            }
+        }
+        found.ok_or_else(|| Error::damaged(format!("missing X-Ray chunk type {kind}")))
+    }
+
     pub(crate) const fn relation_has_timestamps(&self) -> bool {
         matches!(self.format, Format::Soc | Format::Cs)
     }
