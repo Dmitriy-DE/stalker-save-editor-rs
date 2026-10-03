@@ -681,3 +681,397 @@ fn setup(packet: &[u8], ident: Ident) -> Result<Setup> {
         modes,
     })
 }
+
+
+fn low_neighbor(values: &[usize], index: usize) -> Result<usize> {
+    let target = values.get(index).copied().ok_or_else(|| Error::damaged("Vorbis floor X"))?;
+    let mut best = None;
+    for prior in 0..index {
+        let value = values.get(prior).copied().unwrap_or(0);
+        if value < target && best.is_none_or(|old| value > values.get(old).copied().unwrap_or(0)) {
+            best = Some(prior);
+        }
+    }
+    best.ok_or_else(|| Error::damaged("Vorbis floor low neighbor"))
+}
+
+fn high_neighbor(values: &[usize], index: usize) -> Result<usize> {
+    let target = values.get(index).copied().ok_or_else(|| Error::damaged("Vorbis floor X"))?;
+    let mut best = None;
+    for prior in 0..index {
+        let value = values.get(prior).copied().unwrap_or(usize::MAX);
+        if value > target && best.is_none_or(|old| value < values.get(old).copied().unwrap_or(usize::MAX)) {
+            best = Some(prior);
+        }
+    }
+    best.ok_or_else(|| Error::damaged("Vorbis floor high neighbor"))
+}
+
+fn render_point(x0: usize, y0: i32, x1: usize, y1: i32, x: usize) -> i32 {
+    let dy = i64::from(y1).saturating_sub(i64::from(y0));
+    let adx = i64::try_from(x1.saturating_sub(x0)).unwrap_or(i64::MAX).max(1);
+    let ady = dy.abs();
+    let dx = i64::try_from(x.saturating_sub(x0)).unwrap_or(i64::MAX);
+    let offset = ady.saturating_mul(dx).saturating_div(adx);
+    let base = i64::from(y0);
+    i32::try_from(if dy < 0 { base.saturating_sub(offset) } else { base.saturating_add(offset) })
+        .unwrap_or(if dy < 0 { i32::MIN } else { i32::MAX })
+}
+
+struct FloorPacket {
+    y: Vec<i32>,
+    active: Vec<bool>,
+}
+
+fn decode_floor(floor: &Floor1, books: &[Codebook], bits: &mut Bits<'_>) -> Result<Option<FloorPacket>> {
+    if !bits.flag()? {
+        return Ok(None);
+    }
+    let range = match floor.multiplier {
+        1 => 256_i32,
+        2 => 128_i32,
+        3 => 86_i32,
+        4 => 64_i32,
+        _ => return Err(Error::damaged("Vorbis floor multiplier")),
+    };
+    let width = ilog(usize::try_from(range.saturating_sub(1)).unwrap_or(0));
+    let mut y = vec![
+        i32::try_from(bits.read(width)?).unwrap_or(0),
+        i32::try_from(bits.read(width)?).unwrap_or(0),
+    ];
+    for class in &floor.partitions {
+        let dimensions = floor.class_dimensions.get(*class).copied().unwrap_or(0);
+        let subclasses = floor.class_subclasses.get(*class).copied().unwrap_or(0);
+        let mut selector = if subclasses == 0 {
+            0_usize
+        } else {
+            let master = floor
+                .class_masterbooks
+                .get(*class)
+                .copied()
+                .flatten()
+                .ok_or_else(|| Error::damaged("Vorbis floor masterbook"))?;
+            books.get(master).ok_or_else(|| Error::damaged("Vorbis floor masterbook"))?.scalar(bits)?
+        };
+        let mask = 1_usize
+            .checked_shl(u32::from(subclasses))
+            .unwrap_or(0)
+            .saturating_sub(1);
+        for _ in 0..dimensions {
+            let book = floor
+                .subclass_books
+                .get(*class)
+                .and_then(|row| row.get(selector & mask))
+                .copied()
+                .flatten();
+            let value = if let Some(index) = book {
+                i32::try_from(
+                    books
+                        .get(index)
+                        .ok_or_else(|| Error::damaged("Vorbis floor subclass book"))?
+                        .scalar(bits)?,
+                )
+                .unwrap_or(i32::MAX)
+            } else {
+                0
+            };
+            y.push(value);
+            selector = selector.wrapping_shr(u32::from(subclasses));
+        }
+    }
+    if y.len() != floor.x.len() {
+        return Err(Error::damaged("Vorbis floor value count mismatch"));
+    }
+    let mut active = vec![true; y.len()];
+    for index in 2..y.len() {
+        let low = low_neighbor(&floor.x, index)?;
+        let high = high_neighbor(&floor.x, index)?;
+        let predicted = render_point(
+            floor.x.get(low).copied().unwrap_or(0),
+            y.get(low).copied().unwrap_or(0),
+            floor.x.get(high).copied().unwrap_or(0),
+            y.get(high).copied().unwrap_or(0),
+            floor.x.get(index).copied().unwrap_or(0),
+        );
+        let value = y.get(index).copied().unwrap_or(0);
+        let high_room = range.saturating_sub(predicted);
+        let low_room = predicted;
+        let room = 2_i32.saturating_mul(high_room.min(low_room));
+        let final_value = if value == 0 {
+            if let Some(slot) = active.get_mut(index) {
+                *slot = false;
+            }
+            predicted
+        } else if value >= room {
+            if high_room > low_room {
+                value.saturating_sub(low_room).saturating_add(predicted)
+            } else {
+                predicted
+                    .saturating_sub(value)
+                    .saturating_add(high_room)
+                    .saturating_sub(1)
+            }
+        } else if value & 1 != 0 {
+            predicted.saturating_sub(value.saturating_add(1).saturating_div(2))
+        } else {
+            predicted.saturating_add(value.saturating_div(2))
+        };
+        if let Some(slot) = y.get_mut(index) {
+            *slot = final_value;
+        }
+    }
+    Ok(Some(FloorPacket { y, active }))
+}
+
+fn floor_amplitude(value: i32) -> f32 {
+    let exponent = (value.saturating_sub(255) as f32) * (std::f32::consts::LN_10 / 20.0) * (140.0 / 256.0);
+    exponent.exp()
+}
+
+fn render_line(x0: usize, y0: i32, x1: usize, y1: i32, curve: &mut [f32]) {
+    if x1 <= x0 {
+        return;
+    }
+    let dy = y1.saturating_sub(y0);
+    let adx = i32::try_from(x1.saturating_sub(x0)).unwrap_or(i32::MAX).max(1);
+    let mut ady = dy.abs();
+    let base = dy.saturating_div(adx);
+    let sy = if dy < 0 { base.saturating_sub(1) } else { base.saturating_add(1) };
+    ady = ady.saturating_sub(base.abs().saturating_mul(adx));
+    let mut error = 0_i32;
+    let mut y = y0;
+    if let Some(slot) = curve.get_mut(x0) {
+        *slot = floor_amplitude(y);
+    }
+    for x in x0.saturating_add(1)..x1.min(curve.len()) {
+        error = error.saturating_add(ady);
+        if error >= adx {
+            error = error.saturating_sub(adx);
+            y = y.saturating_add(sy);
+        } else {
+            y = y.saturating_add(base);
+        }
+        if let Some(slot) = curve.get_mut(x) {
+            *slot = floor_amplitude(y);
+        }
+    }
+}
+
+fn floor_curve(floor: &Floor1, packet: &FloorPacket, n: usize) -> Vec<f32> {
+    let mut curve = vec![0_f32; n];
+    let mut order: Vec<usize> = (0..floor.x.len()).collect();
+    order.sort_by_key(|index| floor.x.get(*index).copied().unwrap_or(usize::MAX));
+    let mut lx = 0_usize;
+    let mut ly = packet.y.first().copied().unwrap_or(0).saturating_mul(i32::try_from(floor.multiplier).unwrap_or(1));
+    let mut hx = 0_usize;
+    let mut hy = ly;
+    for index in order.into_iter().skip(1) {
+        if packet.active.get(index).copied().unwrap_or(false) {
+            hx = floor.x.get(index).copied().unwrap_or(n);
+            hy = packet
+                .y
+                .get(index)
+                .copied()
+                .unwrap_or(0)
+                .saturating_mul(i32::try_from(floor.multiplier).unwrap_or(1));
+            render_line(lx, ly, hx.min(n), hy, &mut curve);
+            lx = hx;
+            ly = hy;
+        }
+    }
+    if hx < n {
+        for slot in curve.iter_mut().skip(hx) {
+            *slot = floor_amplitude(hy);
+        }
+    }
+    curve
+}
+
+fn decode_partition(
+    output: &mut [f32],
+    offset: usize,
+    size: usize,
+    kind: u16,
+    book: &Codebook,
+    bits: &mut Bits<'_>,
+) -> Result<()> {
+    let dimensions = book.dimensions;
+    if dimensions == 0 {
+        return Err(Error::damaged("zero-dimensional Vorbis residue book"));
+    }
+    if kind == 0 {
+        let step = size.saturating_div(dimensions);
+        for i in 0..step {
+            let vector = book.vector(bits)?;
+            for (dimension, value) in vector.iter().copied().enumerate() {
+                let index = offset
+                    .saturating_add(i)
+                    .saturating_add(dimension.saturating_mul(step));
+                if let Some(slot) = output.get_mut(index) {
+                    *slot += value;
+                }
+            }
+        }
+    } else {
+        let mut written = 0_usize;
+        while written < size {
+            let vector = book.vector(bits)?;
+            for value in vector {
+                if written >= size {
+                    break;
+                }
+                if let Some(slot) = output.get_mut(offset.saturating_add(written)) {
+                    *slot += *value;
+                }
+                written = written.saturating_add(1);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn residue_classifications(
+    residue: &Residue,
+    books: &[Codebook],
+    bits: &mut Bits<'_>,
+    partitions: usize,
+) -> Result<Vec<usize>> {
+    let classbook = books
+        .get(residue.classbook)
+        .ok_or_else(|| Error::damaged("Vorbis residue classbook"))?;
+    let words = classbook.dimensions;
+    if words == 0 {
+        return Err(Error::damaged("zero-dimensional Vorbis residue classbook"));
+    }
+    let mut result = vec![0_usize; partitions];
+    let mut partition = 0_usize;
+    while partition < partitions {
+        let mut value = classbook.scalar(bits)?;
+        let count = words.min(partitions.saturating_sub(partition));
+        for reverse in (0..count).rev() {
+            let index = partition.saturating_add(reverse);
+            if let Some(slot) = result.get_mut(index) {
+                *slot = value % residue.classifications;
+            }
+            value = value.saturating_div(residue.classifications);
+        }
+        partition = partition.saturating_add(count);
+    }
+    Ok(result)
+}
+
+fn decode_residue_channels(
+    residue: &Residue,
+    books: &[Codebook],
+    bits: &mut Bits<'_>,
+    channels: &mut [Vec<f32>],
+    skip: &[bool],
+    n: usize,
+) -> Result<()> {
+    let begin = residue.begin.min(n);
+    let end = residue.end.min(n);
+    if begin >= end || residue.partition == 0 {
+        return Ok(());
+    }
+    let partitions = end.saturating_sub(begin).saturating_div(residue.partition);
+    let mut classes = vec![Vec::<usize>::new(); channels.len()];
+    for pass in 0..8_usize {
+        if pass == 0 {
+            for (channel, class) in classes.iter_mut().enumerate() {
+                if !skip.get(channel).copied().unwrap_or(true) {
+                    *class = residue_classifications(residue, books, bits, partitions)?;
+                }
+            }
+        }
+        for partition in 0..partitions {
+            for channel in 0..channels.len() {
+                if skip.get(channel).copied().unwrap_or(true) {
+                    continue;
+                }
+                let class = classes
+                    .get(channel)
+                    .and_then(|items| items.get(partition))
+                    .copied()
+                    .unwrap_or(0);
+                let book_index = residue
+                    .books
+                    .get(class)
+                    .and_then(|row| row.get(pass))
+                    .copied()
+                    .flatten();
+                if let Some(book_index) = book_index {
+                    let offset = begin.saturating_add(partition.saturating_mul(residue.partition));
+                    let output = channels
+                        .get_mut(channel)
+                        .ok_or_else(|| Error::damaged("Vorbis residue channel"))?;
+                    decode_partition(
+                        output,
+                        offset,
+                        residue.partition,
+                        residue.kind,
+                        books.get(book_index).ok_or_else(|| Error::damaged("Vorbis residue book"))?,
+                        bits,
+                    )?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn decode_residue_type2(
+    residue: &Residue,
+    books: &[Codebook],
+    bits: &mut Bits<'_>,
+    channels: &mut [Vec<f32>],
+    skip: &[bool],
+    n: usize,
+) -> Result<()> {
+    if skip.iter().all(|value| *value) || channels.is_empty() {
+        return Ok(());
+    }
+    let channel_count = channels.len();
+    let actual = n
+        .checked_mul(channel_count)
+        .ok_or_else(|| Error::damaged("Vorbis residue-2 size overflow"))?;
+    let begin = residue.begin.min(actual);
+    let end = residue.end.min(actual);
+    if begin >= end || residue.partition == 0 {
+        return Ok(());
+    }
+    let partitions = end.saturating_sub(begin).saturating_div(residue.partition);
+    let classes = residue_classifications(residue, books, bits, partitions)?;
+    let mut interleaved = vec![0_f32; actual];
+    for pass in 0..8_usize {
+        for partition in 0..partitions {
+            let class = classes.get(partition).copied().unwrap_or(0);
+            let book_index = residue
+                .books
+                .get(class)
+                .and_then(|row| row.get(pass))
+                .copied()
+                .flatten();
+            if let Some(book_index) = book_index {
+                let offset = begin.saturating_add(partition.saturating_mul(residue.partition));
+                decode_partition(
+                    &mut interleaved,
+                    offset,
+                    residue.partition,
+                    1,
+                    books.get(book_index).ok_or_else(|| Error::damaged("Vorbis residue-2 book"))?,
+                    bits,
+                )?;
+            }
+        }
+    }
+    for sample in 0..n {
+        for channel in 0..channel_count {
+            let source = sample.saturating_mul(channel_count).saturating_add(channel);
+            let value = interleaved.get(source).copied().unwrap_or(0.0);
+            if let Some(slot) = channels.get_mut(channel).and_then(|items| items.get_mut(sample)) {
+                *slot = value;
+            }
+        }
+    }
+    Ok(())
+}
