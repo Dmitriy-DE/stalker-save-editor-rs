@@ -13,15 +13,21 @@ use sse_fixes::*;
 use std::fs;
 use std::path::PathBuf;
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static FIXTURE_COUNTER: AtomicU64 = AtomicU64::new(1);
+
 struct TestFixture {
     root: PathBuf,
 }
 
 impl TestFixture {
     fn new(game: GameTarget, build_id: &str) -> Self {
+        let counter = FIXTURE_COUNTER.fetch_add(1, Ordering::Relaxed);
         let temp_dir = std::env::temp_dir().join(format!(
-            "sse-test-fixture-{}-{}",
+            "sse-test-fixture-{}-{}-{}",
             std::process::id(),
+            counter,
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
