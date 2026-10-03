@@ -59,11 +59,11 @@ fn ilog(value: usize) -> u8 {
     if value == 0 {
         0
     } else {
-        u8::try_from(usize::BITS.saturating_sub(value.leading_zeros())).unwrap_or(usize::BITS as u8)
+        u8::try_from(usize::BITS.saturating_sub(value.leading_zeros())).unwrap_or(u8::MAX)
     }
 }
 
-fn header<'a>(packet: &'a [u8], kind: u8) -> Result<&'a [u8]> {
+fn header(packet: &[u8], kind: u8) -> Result<&[u8]> {
     if packet.first() != Some(&kind) || packet.get(1..7) != Some(b"vorbis") {
         return Err(Error::damaged("invalid Vorbis header"));
     }
@@ -399,7 +399,7 @@ fn read_codebook(bits: &mut Bits<'_>) -> Result<Codebook> {
             let mut divisor = 1_usize;
             for dimension in 0..dimensions {
                 let index = if lookup == 1 {
-                    entry.saturating_div(divisor) % lookup_values.max(1)
+                    entry.checked_div(divisor).unwrap_or(0).checked_rem(lookup_values.max(1)).unwrap_or(0)
                 } else {
                     entry.saturating_mul(dimensions).saturating_add(dimension)
                 };
@@ -729,7 +729,7 @@ fn render_point(x0: usize, y0: i32, x1: usize, y1: i32, x: usize) -> i32 {
     let adx = i64::try_from(x1.saturating_sub(x0)).unwrap_or(i64::MAX).max(1);
     let ady = dy.abs();
     let dx = i64::try_from(x.saturating_sub(x0)).unwrap_or(i64::MAX);
-    let offset = ady.saturating_mul(dx).saturating_div(adx);
+    let offset = ady.saturating_mul(dx).checked_div(adx).unwrap_or(0);
     let base = i64::from(y0);
     i32::try_from(if dy < 0 {
         base.saturating_sub(offset)
@@ -859,7 +859,7 @@ fn render_line(x0: usize, y0: i32, x1: usize, y1: i32, curve: &mut [f32]) {
     let dy = y1.saturating_sub(y0);
     let adx = i32::try_from(x1.saturating_sub(x0)).unwrap_or(i32::MAX).max(1);
     let mut ady = dy.abs();
-    let base = dy.saturating_div(adx);
+    let base = dy.checked_div(adx).unwrap_or(0);
     let sy = if dy < 0 {
         base.saturating_sub(1)
     } else {
@@ -933,7 +933,7 @@ fn decode_partition(
         return Err(Error::damaged("zero-dimensional Vorbis residue book"));
     }
     if kind == 0 {
-        let step = size.saturating_div(dimensions);
+        let step = size.checked_div(dimensions).unwrap_or(0);
         for i in 0..step {
             let vector = book.vector(bits)?;
             for (dimension, value) in vector.iter().copied().enumerate() {
@@ -982,9 +982,9 @@ fn residue_classifications(
         for reverse in (0..count).rev() {
             let index = partition.saturating_add(reverse);
             if let Some(slot) = result.get_mut(index) {
-                *slot = value % residue.classifications;
+                *slot = value.checked_rem(residue.classifications).unwrap_or(0);
             }
-            value = value.saturating_div(residue.classifications);
+            value = value.checked_div(residue.classifications).unwrap_or(0);
         }
         partition = partition.saturating_add(count);
     }
@@ -1004,7 +1004,7 @@ fn decode_residue_channels(
     if begin >= end || residue.partition == 0 {
         return Ok(());
     }
-    let partitions = end.saturating_sub(begin).saturating_div(residue.partition);
+    let partitions = end.saturating_sub(begin).checked_div(residue.partition).unwrap_or(0);
     let mut classes = vec![Vec::<usize>::new(); channels.len()];
     for pass in 0..8_usize {
         if pass == 0 {
@@ -1072,7 +1072,7 @@ fn decode_residue_type2(
     if begin >= end || residue.partition == 0 {
         return Ok(());
     }
-    let partitions = end.saturating_sub(begin).saturating_div(residue.partition);
+    let partitions = end.saturating_sub(begin).checked_div(residue.partition).unwrap_or(0);
     let classes = residue_classifications(residue, books, bits, partitions)?;
     let mut interleaved = vec![0_f32; actual];
     for pass in 0..8_usize {
