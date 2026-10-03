@@ -128,6 +128,17 @@ pub struct Metrics {
     pub shadow: [f32; 2],
 }
 
+/// Common card padding from StalkerTheme.Card / views.
+pub const CARD_PADDING: f32 = 20.0;
+/// Common card/row gap.
+pub const CONTROL_GAP: f32 = 10.0;
+/// Common card radius used by Rust screen helpers, matching C# view cards.
+pub const CARD_RADIUS: f32 = 4.0;
+/// StalkerTheme.StalkerButton / view minimum control height.
+pub const BUTTON_HEIGHT: f32 = 34.0;
+/// Common button radius used by view buttons.
+pub const BUTTON_RADIUS: f32 = 3.0;
+
 /// Complete theme.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Theme {
