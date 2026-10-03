@@ -11,8 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Pull requests: Linux only (macOS minutes cost 10x, Windows 2x). main: all three systems.
-        os: ${{ github.event_name == 'push' && fromJSON('["ubuntu-24.04","windows-latest","macos-14"]') || fromJSON('["ubuntu-24.04"]') }}
+        os: [ubuntu-24.04, windows-latest, macos-14]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

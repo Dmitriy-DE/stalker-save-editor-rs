@@ -1529,7 +1529,7 @@ impl Icon {
             Self::Book => "M4 5a3 3 0 0 1 3-2h5v17H7a3 3 0 0 0-3 2z M20 5a3 3 0 0 0-3-2h-5v17h5a3 3 0 0 1 3 2z",
             Self::ShieldCapabilities => "M12 3l8 3v5c0 5-3 8-8 10-5-2-8-5-8-10V6z M8 12l3 3 5-6",
             Self::Update => "M20 7v5h-5 M4 17v-5h5 M6 9a7 7 0 0 1 12-3l2 2 M18 15a7 7 0 0 1-12 3l-2-2",
-            Self::Settings => "M10 2h4l.7 2.4 2 .8 2.2 -1.2 2.8 2.8 -1.2 2.2 .8 2 2.4 .7v4l-2.4 .7-.8 2 1.2 2.2 -2.8 2.8 -2.2 -1.2 -2 .8L14 22h-4l-.7-2.4-2-.8L5.1 20l-2.8 -2.8L3.5 15l-.8-2L2 12.3v-.6L2.7 11l.8-2 -1.2 -2.2L5.1 4l2.2 1.2 2-.8z M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z",
+            Self::Settings => "M18.31 10.05 L20.89 10.57 L20.89 13.43 L18.31 13.95 L17.84 15.08 L19.30 17.27 L17.27 19.30 L15.08 17.84 L13.95 18.31 L13.43 20.89 L10.57 20.89 L10.05 18.31 L8.92 17.84 L6.73 19.30 L4.70 17.27 L6.16 15.08 L5.69 13.95 L3.11 13.43 L3.11 10.57 L5.69 10.05 L6.16 8.92 L4.70 6.73 L6.73 4.70 L8.92 6.16 L10.05 5.69 L10.57 3.11 L13.43 3.11 L13.95 5.69 L15.08 6.16 L17.27 4.70 L19.30 6.73 L17.84 8.92z M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z",
             Self::Search => "M10 4a6 6 0 1 0 0 12 6 6 0 0 0 0-12z M14.5 14.5L20 20",
             Self::Add => "M12 5v14 M5 12h14",
             Self::Delete => "M5 7h14 M9 7V4h6v3 M7 7l1 13h8l1-13 M10 10v7 M14 10v7",
@@ -1776,15 +1776,12 @@ mod tests {
                 .and_then(|value| value.stroke_to_fill(Transform::identity(), 0.1, StrokeStyle::icon()));
             let inside = stroke.as_ref().is_ok_and(|value| {
                 value.segments.iter().all(|segment| {
-                    [segment.from, segment.to].into_iter().all(|point| {
-                        (0.0..=24.0).contains(&point.x) && (0.0..=24.0).contains(&point.y)
-                    })
+                    [segment.from, segment.to]
+                        .into_iter()
+                        .all(|point| (0.0..=24.0).contains(&point.x) && (0.0..=24.0).contains(&point.y))
                 })
             });
-            assert!(
-                inside,
-                "{icon:?}: stroke extends outside the 24x24 box: {stroke:?}"
-            );
+            assert!(inside, "{icon:?}: stroke extends outside the 24x24 box: {stroke:?}");
         }
     }
 
