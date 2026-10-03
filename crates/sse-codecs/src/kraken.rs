@@ -2719,18 +2719,23 @@ fn process_lz_runs(
         let chosen = *recent
             .get(recent_index)
             .ok_or_else(|| Error::damaged("LZ recent-offset index outside table"))?;
-        for index in (1_usize..=3).rev() {
-            let from = index.saturating_sub(1);
-            let value = *recent
-                .get(from.saturating_add(3))
-                .ok_or_else(|| Error::damaged("LZ recent-offset source missing"))?;
-            if let Some(slot) = recent.get_mut(index.saturating_add(3)) {
-                *slot = value;
+        let recent_end = offset_index
+            .checked_add(3)
+            .ok_or_else(|| Error::damaged("LZ recent-offset rotation overflow"))?;
+        if recent_end >= 4 {
+            for slot_index in (4_usize..=recent_end).rev() {
+                let source_index = slot_index.saturating_sub(1);
+                let value = *recent
+                    .get(source_index)
+                    .ok_or_else(|| Error::damaged("LZ recent-offset source missing"))?;
+                *recent
+                    .get_mut(slot_index)
+                    .ok_or_else(|| Error::damaged("LZ recent-offset destination missing"))? = value;
             }
         }
-        if let Some(slot) = recent.get_mut(3) {
-            *slot = chosen;
-        }
+        *recent
+            .get_mut(3)
+            .ok_or_else(|| Error::damaged("LZ most-recent offset slot missing"))? = chosen;
         last_offset = chosen;
         if offset_index == 3 {
             offset_at = offset_at.saturating_add(1);
