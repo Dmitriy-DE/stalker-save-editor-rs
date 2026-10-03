@@ -6,9 +6,13 @@ use sse_core::{Error, Result};
 const MAX_CACHE: usize = 128;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+/// Rasterised icon mask plus the colour used as its cache key.
 pub struct IconBitmap {
+    /// Square side in pixels.
     pub size: u16,
+    /// RGB foreground colour.
     pub color: u32,
+    /// Row-major 8-bit coverage mask.
     pub alpha: Vec<u8>,
 }
 
@@ -19,12 +23,14 @@ struct Entry {
 }
 
 /// Bounded LRU-ish cache. Path rasterisation happens once per icon/size/colour tuple.
+/// Bounded cache of rasterised path icons.
 pub struct IconCache {
     entries: Vec<Entry>,
     clock: u64,
 }
 
 impl IconCache {
+    /// Create an empty cache.
     #[must_use]
     pub const fn new() -> Self {
         Self {
@@ -33,6 +39,7 @@ impl IconCache {
         }
     }
 
+    /// Get or rasterise an icon for this size/colour tuple.
     pub fn get(&mut self, icon: Icon, size: u16, color: u32) -> Result<&IconBitmap> {
         self.clock = self.clock.saturating_add(1);
         if let Some(i) = self
@@ -74,6 +81,7 @@ impl IconCache {
             .ok_or_else(|| Error::damaged("icon cache insert"))
     }
 
+    /// Number of cached variants.
     #[must_use]
     pub fn len(&self) -> usize {
         self.entries.len()
@@ -130,19 +138,28 @@ fn rasterize(icon: Icon, size: u16, color: u32) -> Result<IconBitmap> {
 /// C# button visual role.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IconButtonKind {
+    /// Filled accent action.
     Primary,
+    /// Neutral elevated action.
     Secondary,
+    /// Destructive outlined action.
     Danger,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Palette resolved for an icon-button role.
 pub struct IconButtonLook {
+    /// Normal fill RGB.
     pub fill: u32,
+    /// Hover fill RGB.
     pub hover: u32,
+    /// Border RGB.
     pub border: u32,
+    /// Icon/text RGB.
     pub foreground: u32,
 }
 
+/// Resolve a C#-style button role to colours.
 #[must_use]
 pub const fn button_look(kind: IconButtonKind) -> IconButtonLook {
     match kind {
