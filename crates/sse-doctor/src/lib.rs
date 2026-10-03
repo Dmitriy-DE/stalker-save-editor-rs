@@ -945,7 +945,7 @@ pub struct CrashDumpFacts {
     pub faulting_module_offset: Option<String>,
 }
 
-/// Boundary for the minidump reader supplied by `sse-codecs` when it lands.
+/// Boundary for checked minidump readers used by crash analysis.
 pub trait CrashDumpReader: Sync {
     /// Reads a bounded minidump and returns only checked textual crash facts.
     ///
@@ -954,17 +954,37 @@ pub trait CrashDumpReader: Sync {
     fn read_minidump(&self, bytes: &[u8]) -> Result<CrashDumpFacts>;
 }
 
+/// Default adapter over the bounded minidump reader in `sse-codecs`.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct CodecMinidumpReader;
+
+impl CrashDumpReader for CodecMinidumpReader {
+    fn read_minidump(&self, bytes: &[u8]) -> Result<CrashDumpFacts> {
+        let dump = sse_codecs::minidump::Minidump::parse(bytes)?;
+        let exception = dump
+            .exception()?
+            .ok_or_else(|| Error::Refused("minidump has no exception record".to_owned()))?;
+        let faulting_module_offset = dump
+            .faulting_stack(1)?
+            .into_iter()
+            .next()
+            .map(|frame| format!("{}+0x{:X}", frame.module, frame.offset));
+        Ok(CrashDumpFacts {
+            message: format!("Windows exception 0x{:08X}", exception.code),
+            faulting_module_offset,
+        })
+    }
+}
+
 const CRASH_LOG_TAIL_BYTES: u64 = 256 * 1024;
 const MAXIMUM_DISCOVERED_CRASH_LOGS: usize = 500;
 
-/// Reads at most the last 256 KiB of one explicit text log and analyzes that tail.
-///
-/// Minidump files are detected by their content and refused until a checked dump reader is available.
+/// Reads at most the last 256 KiB of one explicit text log or parses a minidump with `sse-codecs`.
 ///
 /// # Errors
 /// Returns an I/O error for an unreadable file, or `Refused` for a minidump that this crate cannot parse.
 pub fn analyze_crash_file(path: &Path, game: Option<&str>) -> Result<CrashLogAnalysis> {
-    analyze_crash_file_with_dump_reader(path, game, None)
+    analyze_crash_file_with_dump_reader(path, game, Some(&CodecMinidumpReader))
 }
 
 /// Reads a crash log or delegates a recognized dump to an injected checked parser.
@@ -1001,6 +1021,9 @@ pub fn analyze_crash_file_with_dump_reader(
         }
         let facts = dump_reader.read_minidump(&dump)?;
         let mut analysis = analyze_crash_log(&facts.message, game);
+        if analysis.summary == "No recognized crash marker was found." {
+            analysis.summary = facts.message.clone();
+        }
         analysis.faulting_module_offset = facts.faulting_module_offset;
         return Ok(analysis);
     }

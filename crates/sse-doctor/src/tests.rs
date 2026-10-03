@@ -162,7 +162,7 @@ fn crash_file_reader_refuses_minidump_bytes_until_a_dump_reader_is_connected() {
         return;
     }
 
-    let result = analyze_crash_file(&path, Some("cs"));
+    let result = analyze_crash_file_with_dump_reader(&path, Some("cs"), None);
 
     let _ = std::fs::remove_file(path);
     assert!(matches!(result, Err(sse_core::Error::Refused(_))));
@@ -477,4 +477,63 @@ fn quest_doctor_keeps_save_states_unknown_when_the_reader_exposes_no_quest_field
         .iter()
         .all(|state| state.status == QuestTaskStatus::Unknown));
     assert!(report.states.iter().all(|state| state.missing_info.is_none()));
+}
+
+#[test]
+fn default_crash_reader_extracts_exception_and_faulting_module_from_a_minidump() {
+    fn put_u32(bytes: &mut [u8], offset: usize, value: u32) {
+        if let Some(target) = bytes.get_mut(offset..offset.saturating_add(4)) {
+            target.copy_from_slice(&value.to_le_bytes());
+        }
+    }
+    fn put_u64(bytes: &mut [u8], offset: usize, value: u64) {
+        if let Some(target) = bytes.get_mut(offset..offset.saturating_add(8)) {
+            target.copy_from_slice(&value.to_le_bytes());
+        }
+    }
+    fn write_entry(bytes: &mut [u8], offset: usize, stream: u32, size: u32, rva: u32) {
+        put_u32(bytes, offset, stream);
+        put_u32(bytes, offset.saturating_add(4), size);
+        put_u32(bytes, offset.saturating_add(8), rva);
+    }
+
+    let module_name = r"S:\game\bin\xrCore.dll".encode_utf16().collect::<Vec<_>>();
+    let module_bytes = module_name
+        .iter()
+        .flat_map(|character| character.to_le_bytes())
+        .collect::<Vec<_>>();
+    let name_offset = 32 + 24 + 112 + 168;
+    let mut dump = vec![0_u8; name_offset + 4 + module_bytes.len()];
+    put_u32(&mut dump, 0, 0x504D_444D);
+    put_u32(&mut dump, 8, 2);
+    put_u32(&mut dump, 12, 32);
+    write_entry(&mut dump, 32, 4, 112, 56);
+    write_entry(&mut dump, 44, 6, 168, 168);
+    put_u32(&mut dump, 56, 1);
+    put_u64(&mut dump, 60, 0x1_0000_0000);
+    put_u32(&mut dump, 68, 0x20_0000);
+    put_u32(&mut dump, 80, u32::try_from(name_offset).unwrap_or_default());
+    put_u32(&mut dump, 176, 0x8000_0003);
+    put_u64(&mut dump, 192, 0x1_0001_B944);
+    put_u32(
+        &mut dump,
+        name_offset,
+        u32::try_from(module_bytes.len()).unwrap_or_default(),
+    );
+    if let Some(target) = dump.get_mut(name_offset.saturating_add(4)..) {
+        target.copy_from_slice(&module_bytes);
+    }
+
+    let path = std::env::temp_dir().join(format!("sse-doctor-default-dump-{}.mdmp", std::process::id()));
+    if let Err(error) = std::fs::write(&path, dump) {
+        panic!("write synthetic dump: {error}");
+    }
+    let analysis = analyze_crash_file(&path, Some("cs"));
+    let _ = std::fs::remove_file(&path);
+    let analysis = match analysis {
+        Ok(value) => value,
+        Err(error) => panic!("default minidump reader should parse the fixture: {error}"),
+    };
+    assert_eq!(analysis.faulting_module_offset.as_deref(), Some("xrCore.dll+0x1B944"));
+    assert!(analysis.summary.contains("0x80000003"));
 }
