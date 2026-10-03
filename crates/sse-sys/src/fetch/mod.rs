@@ -28,12 +28,7 @@ pub struct Response {
 /// Streaming fetch interface. Returning `false` from `sink` cancels the transfer.
 pub trait Fetch {
     /// Fetches `url`, optionally starting at `range_from`, without buffering the whole body.
-    fn get(
-        &mut self,
-        url: &str,
-        range_from: u64,
-        sink: &mut dyn FnMut(&[u8]) -> bool,
-    ) -> Result<Response>;
+    fn get(&mut self, url: &str, range_from: u64, sink: &mut dyn FnMut(&[u8]) -> bool) -> Result<Response>;
 }
 
 /// Native HTTPS implementation with bounded body size and timeouts.
@@ -58,12 +53,7 @@ impl Default for SystemFetch {
 }
 
 impl Fetch for SystemFetch {
-    fn get(
-        &mut self,
-        url: &str,
-        range_from: u64,
-        sink: &mut dyn FnMut(&[u8]) -> bool,
-    ) -> Result<Response> {
+    fn get(&mut self, url: &str, range_from: u64, sink: &mut dyn FnMut(&[u8]) -> bool) -> Result<Response> {
         if url.starts_with("file://") {
             return FileFetch {
                 max_bytes: self.max_bytes,
@@ -71,9 +61,7 @@ impl Fetch for SystemFetch {
             .get(url, range_from, sink);
         }
         if !url.starts_with("https://") {
-            return Err(Error::Refused(
-                "only https:// and file:// URLs are allowed".to_owned(),
-            ));
+            return Err(Error::Refused("only https:// and file:// URLs are allowed".to_owned()));
         }
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         {
