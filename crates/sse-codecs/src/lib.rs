@@ -14,8 +14,6 @@ pub mod deflate;
 pub mod font;
 /// Zlib/DEFLATE decoder used by PNG and package tooling.
 pub mod inflate;
-/// ZIP reader and reproducible writer.
-pub mod zip;
 /// Strict streaming RFC 8259 JSON reader and writer.
 pub mod json;
 /// Windows minidump reader for crash diagnostics.
@@ -24,6 +22,8 @@ pub mod minidump;
 pub mod p256;
 /// Valve text KeyValues reader used for Steam library discovery.
 pub mod vdf;
+/// ZIP reader and reproducible writer.
+pub mod zip;
 
 /// PNG decoder to RGBA8.
 pub mod png;
