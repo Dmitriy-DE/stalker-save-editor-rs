@@ -72,15 +72,15 @@ pub enum Button {
 /// Returns an error from the widget tree.
 pub fn card(tree: &mut Tree, parent: WidgetId) -> Result<WidgetId> {
     let style = Style {
-        padding: Edges::all(theme::Theme::dark().metrics.spacing[7]),
-        gap: Size::new(0.0, theme::Theme::dark().metrics.spacing[4]),
+        padding: Edges::all(theme::CARD_PADDING),
+        gap: Size::new(0.0, theme::CONTROL_GAP),
         align_items: Align::Stretch,
         ..Style::default()
     };
     let look = Look {
         fill: Some(rgb(theme::BG_ELEVATED)),
         border: Some((rgb(theme::BORDER_SUBTLE), 1.0)),
-        radius: theme::Theme::dark().metrics.radii[3],
+        radius: theme::CARD_RADIUS,
         ..Look::default()
     };
     tree.add(Some(parent), NodeKind::Column, style, Content::Panel, look)
@@ -92,7 +92,7 @@ pub fn card(tree: &mut Tree, parent: WidgetId) -> Result<WidgetId> {
 /// Returns an error from the widget tree.
 pub fn row(tree: &mut Tree, parent: WidgetId) -> Result<WidgetId> {
     let style = Style {
-        gap: Size::new(theme::Theme::dark().metrics.spacing[4], 0.0),
+        gap: Size::new(theme::CONTROL_GAP, 0.0),
         align_items: Align::Center,
         ..Style::default()
     };
@@ -121,7 +121,7 @@ pub fn label(tree: &mut Tree, parent: WidgetId, text: &str, role: Text) -> Resul
 /// Returns an error from the widget tree.
 pub fn button(tree: &mut Tree, parent: WidgetId, text: &str, role: Button) -> Result<WidgetId> {
     let style = Style {
-        min: Size::new(96.0, theme::Theme::dark().metrics.controls[0]),
+        min: Size::new(96.0, theme::BUTTON_HEIGHT),
         padding: Edges {
             left: 16.0,
             top: 0.0,
@@ -139,7 +139,7 @@ pub fn button(tree: &mut Tree, parent: WidgetId, text: &str, role: Button) -> Re
         fill: fill.map(rgb),
         hover_fill: Some(rgb(hover)),
         border: border.map(|color| (rgb(color), 1.0)),
-        radius: theme::Theme::dark().metrics.radii[2],
+        radius: theme::BUTTON_RADIUS,
         text: rgb(foreground),
         align: TextAlign::Center,
         ..Look::default()
