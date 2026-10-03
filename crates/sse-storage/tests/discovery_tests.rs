@@ -351,6 +351,148 @@ fn lists_a_save_once_when_its_folder_is_reachable_through_a_link() {
 
             let result = SaveSlotDiscovery::discover(&candidates);
             assert_eq!(result.slots.len(), 1, "Should deduplicate symlinked save directory");
+            assert_eq!(
+                result.slots[0].path,
+                real.join("quick.scop"),
+                "Path should be canonical"
+            );
+
+            let mut index = LibraryIndex::new();
+            let index_slots = index.scan_with_index(&candidates);
+            assert_eq!(
+                index_slots.len(),
+                1,
+                "scan_with_index should deduplicate symlinked save directory"
+            );
+            assert_eq!(
+                index_slots[0].path,
+                real.join("quick.scop"),
+                "Indexed path should be canonical"
+            );
         }
+    }
+}
+
+#[test]
+fn cold_scan_performance_333_saves_under_200ms() {
+    let temp = TempDir::new("cold-perf");
+    let saves_dir = temp.path.join("saves");
+    fs::create_dir_all(&saves_dir).expect("mkdir saves");
+
+    for i in 0..333 {
+        let path = saves_dir.join(format!("save_{i:04}.scop"));
+        let mut file = File::create(&path).expect("create file");
+        file.write_all(b"dummy save content").expect("write");
+    }
+
+    let candidates = vec![SaveDirectoryCandidate::new("cop", "stalker-cop-ee", &saves_dir)];
+
+    let start_discover = Instant::now();
+    let result = SaveSlotDiscovery::discover(&candidates);
+    let discover_elapsed = start_discover.elapsed();
+
+    assert_eq!(result.slots.len(), 333);
+    assert!(
+        discover_elapsed < Duration::from_millis(200),
+        "Cold discover took {:?}, must be <= 200ms",
+        discover_elapsed
+    );
+
+    let mut index = LibraryIndex::new();
+    let start_index = Instant::now();
+    let index_slots = index.scan_with_index(&candidates);
+    let index_elapsed = start_index.elapsed();
+
+    assert_eq!(index_slots.len(), 333);
+    assert!(
+        index_elapsed < Duration::from_millis(200),
+        "Cold index scan took {:?}, must be <= 200ms",
+        index_elapsed
+    );
+}
+
+#[test]
+fn cop_ee_scop_detected_as_cop_ee_from_header() {
+    let temp = TempDir::new("cop-ee-test");
+    let save_path = temp.path.join("test_save.scop");
+
+    // X-Ray header: magic=0xFFFFFFFF, container_version=6, unpacked_size=1024
+    let mut data = Vec::new();
+    data.extend_from_slice(&0xFFFF_FFFF_u32.to_le_bytes());
+    data.extend_from_slice(&6_u32.to_le_bytes());
+    data.extend_from_slice(&1024_u32.to_le_bytes());
+    // LZO literal run: command=14, then ALIFE chunk (type=0, size=4, alife_version=54)
+    data.push(14);
+    data.extend_from_slice(&0_u32.to_le_bytes());
+    data.extend_from_slice(&4_u32.to_le_bytes());
+    data.extend_from_slice(&54_u32.to_le_bytes());
+    data.extend_from_slice(&[0_u8; 100]); // padding
+
+    fs::write(&save_path, &data).expect("write test scop");
+
+    let candidates = vec![SaveDirectoryCandidate::new("cop", "stalker-cop-ee", &temp.path)];
+    let result = SaveSlotDiscovery::discover(&candidates);
+
+    assert_eq!(result.slots.len(), 1);
+    let slot = &result.slots[0];
+    assert_eq!(slot.format_id.as_deref(), Some("stalker-cop-ee"));
+    assert_eq!(slot.game_id.as_deref(), Some("cop"));
+    assert!(slot.detection_error.is_none());
+}
+
+#[test]
+fn real_system_discovery_verifies_g4b_fixes_if_present() {
+    let s7_path = PathBuf::from("/home/dmytro/.local/share/Steam/steamapps/compatdata/2427430/pfx/drive_c/users/steamuser/Saved Games/STALKER Call of Prypiat - EE/STEAM/savedgames/s7.scop");
+    if s7_path.exists() {
+        let candidates = SaveDirectoryLocator::find_candidate_directories(None);
+        let start_cold = Instant::now();
+        let result = SaveSlotDiscovery::discover(&candidates);
+        let cold_time = start_cold.elapsed();
+
+        println!(
+            "Real system cold discover: {} slots in {:?}",
+            result.slots.len(),
+            cold_time
+        );
+        assert!(
+            cold_time < Duration::from_millis(500),
+            "Cold discover must be fast (< 500ms)"
+        );
+
+        let s7_slot = result.slots.iter().find(|s| s.path == s7_path);
+        assert!(s7_slot.is_some(), "s7.scop must be discovered under its canonical path");
+        let s7 = s7_slot.unwrap();
+        assert_eq!(s7.format_id.as_deref(), Some("stalker-cop-ee"));
+
+        // Verify none of the discovered slots use the symlink ~/.steam/steam prefix
+        assert!(
+            result
+                .slots
+                .iter()
+                .all(|s| !s.path.to_string_lossy().contains("/.steam/steam/")),
+            "No saves should be listed under ~/.steam/steam symlink"
+        );
+
+        let mut index = LibraryIndex::new();
+        let start_index = Instant::now();
+        let index_slots = index.scan_with_index(&candidates);
+        let index_time = start_index.elapsed();
+
+        println!(
+            "Real system cold index: {} slots in {:?}",
+            index_slots.len(),
+            index_time
+        );
+        assert!(
+            index_time < Duration::from_millis(500),
+            "Cold index must be fast (< 500ms)"
+        );
+
+        // Verify index does not duplicate saves (exact count match with discover)
+        assert_eq!(
+            index_slots.len(),
+            result.slots.len(),
+            "LibraryIndex should have no duplicates (not 2x)"
+        );
     }
 }

@@ -16,8 +16,8 @@
 //!   - `game_id`: optional length-prefixed string (`0xFFFF` if `None`)
 //!   - `detection_error`: optional length-prefixed string (`0xFFFF` if `None`)
 
-use crate::discovery::locator::{normalize_full_path, SaveDirectoryCandidate};
-use crate::discovery::slot::{detect_format, SaveSlot};
+use crate::discovery::locator::{normalize_full_path, resolve_links, SaveDirectoryCandidate};
+use crate::discovery::slot::SaveSlot;
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{self, Write};
@@ -240,11 +240,21 @@ impl LibraryIndex {
     /// Discovers save slots using warm index revalidation when possible.
     #[must_use]
     pub fn scan_with_index(&mut self, candidates: &[SaveDirectoryCandidate]) -> Vec<SaveSlot> {
-        let mut slots = Vec::new();
+        let mut searched_identities = std::collections::HashSet::new();
         let mut seen = std::collections::HashSet::new();
+        let mut found_files = Vec::new();
 
         for candidate in candidates {
+            if candidate.directory_path.as_os_str().is_empty() {
+                continue;
+            }
             let directory = normalize_full_path(&candidate.directory_path);
+            let identity = resolve_links(&directory);
+            let identity_key = identity.to_string_lossy().to_string();
+            if !searched_identities.insert(identity_key) {
+                continue;
+            }
+
             let Ok(entries) = fs::read_dir(&directory) else {
                 continue;
             };
@@ -264,50 +274,94 @@ impl LibraryIndex {
                 }
 
                 let full_path = normalize_full_path(&path);
-                if !seen.insert(full_path.clone()) {
+                let resolved_path = resolve_links(&full_path);
+                if !seen.insert(resolved_path.clone()) {
                     continue;
                 }
 
-                let Ok(metadata) = fs::metadata(&full_path) else {
-                    continue;
-                };
+                found_files.push((resolved_path, candidate.game_id.clone(), candidate.release_id.clone()));
+            }
+        }
 
-                if !metadata.is_file() {
-                    continue;
-                }
+        let mut slots = Vec::with_capacity(found_files.len());
+        let mut cold_targets = Vec::new();
 
-                let size = metadata.len();
-                let mtime = metadata.modified().unwrap_or(UNIX_EPOCH);
+        for (path, cand_game, cand_rel) in &found_files {
+            let Ok(metadata) = fs::metadata(path) else {
+                continue;
+            };
+            if !metadata.is_file() {
+                continue;
+            }
+            let size = metadata.len();
+            let mtime = metadata.modified().unwrap_or(UNIX_EPOCH);
 
-                if let Some(cached) = self.lookup(&full_path, size, mtime) {
-                    slots.push(cached.to_save_slot());
-                    continue;
-                }
-
-                // Cold read: read file header/bytes, detect format, record hash, update index
-                let (format_id, game_id, detection_error, header_hash) = match fs::read(&full_path) {
-                    Ok(bytes) => {
-                        let (fid, gid, err) = detect_format(&bytes);
-                        let hash = Self::compute_header_hash(&bytes);
-                        (fid, gid, err, hash)
-                    }
-                    Err(err) => (None, None, Some(format!("IOException: {err}")), 0),
-                };
-
-                let (mtime_secs, mtime_nanos) = split_system_time(mtime);
-                let entry = LibraryIndexEntry {
-                    path: full_path.clone(),
-                    candidate_game_id: candidate.game_id.clone(),
-                    candidate_release_id: candidate.release_id.clone(),
+            if let Some(cached) = self.lookup(path, size, mtime) {
+                slots.push(cached.to_save_slot());
+            } else {
+                cold_targets.push(ColdTarget {
+                    path: path.clone(),
+                    candidate_game_id: cand_game.clone(),
+                    candidate_release_id: cand_rel.clone(),
                     size,
-                    mtime_secs,
-                    mtime_nanos,
-                    header_hash,
-                    format_id: format_id.clone(),
-                    game_id: game_id.clone(),
-                    detection_error: detection_error.clone(),
-                };
+                    mtime,
+                });
+            }
+        }
 
+        if !cold_targets.is_empty() {
+            let max_workers = std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(4)
+                .clamp(1, 8);
+            let num_workers = max_workers.min(cold_targets.len());
+            let chunk_size = cold_targets
+                .len()
+                .checked_add(num_workers.saturating_sub(1))
+                .and_then(|sum| sum.checked_div(num_workers))
+                .unwrap_or(1)
+                .max(1);
+
+            let mut new_entries = Vec::with_capacity(cold_targets.len());
+
+            if num_workers <= 1 {
+                for target in &cold_targets {
+                    new_entries.push(scan_single_index_entry(
+                        &target.path,
+                        &target.candidate_game_id,
+                        &target.candidate_release_id,
+                        target.size,
+                        target.mtime,
+                    ));
+                }
+            } else {
+                let chunks: Vec<&[ColdTarget]> = cold_targets.chunks(chunk_size).collect();
+                std::thread::scope(|s| {
+                    let mut handles = Vec::with_capacity(chunks.len());
+                    for chunk in chunks {
+                        handles.push(s.spawn(move || {
+                            let mut local = Vec::with_capacity(chunk.len());
+                            for target in chunk {
+                                local.push(scan_single_index_entry(
+                                    &target.path,
+                                    &target.candidate_game_id,
+                                    &target.candidate_release_id,
+                                    target.size,
+                                    target.mtime,
+                                ));
+                            }
+                            local
+                        }));
+                    }
+                    for handle in handles {
+                        if let Ok(mut batch) = handle.join() {
+                            new_entries.append(&mut batch);
+                        }
+                    }
+                });
+            }
+
+            for entry in new_entries {
                 slots.push(entry.to_save_slot());
                 self.insert(entry);
             }
@@ -323,6 +377,47 @@ impl LibraryIndex {
         });
 
         slots
+    }
+}
+
+struct ColdTarget {
+    path: PathBuf,
+    candidate_game_id: String,
+    candidate_release_id: String,
+    size: u64,
+    mtime: SystemTime,
+}
+
+fn scan_single_index_entry(
+    path: &Path,
+    candidate_game_id: &str,
+    candidate_release_id: &str,
+    size: u64,
+    mtime: SystemTime,
+) -> LibraryIndexEntry {
+    let (format_id, game_id, detection_error, header_hash) =
+        match crate::discovery::slot::read_file_header(path, HEADER_SAMPLE_BYTES) {
+            Ok(header) => {
+                let (fid, gid, err) =
+                    crate::discovery::slot::detect_format_with_context(&header, Some(path), Some(candidate_release_id));
+                let hash = LibraryIndex::compute_header_hash(&header);
+                (fid, gid, err, hash)
+            }
+            Err(err) => (None, None, Some(format!("IOException: {err}")), 0),
+        };
+
+    let (mtime_secs, mtime_nanos) = split_system_time(mtime);
+    LibraryIndexEntry {
+        path: path.to_path_buf(),
+        candidate_game_id: candidate_game_id.to_string(),
+        candidate_release_id: candidate_release_id.to_string(),
+        size,
+        mtime_secs,
+        mtime_nanos,
+        header_hash,
+        format_id,
+        game_id,
+        detection_error,
     }
 }
 

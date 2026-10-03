@@ -457,10 +457,9 @@ fn get_proton_user_directories(drive_c: &Path) -> Vec<PathBuf> {
     let mut users = Vec::new();
     if let Ok(entries) = fs::read_dir(&users_root) {
         for entry in entries.flatten() {
-            if let Ok(ft) = entry.file_type() {
-                if ft.is_dir() {
-                    users.push(entry.path());
-                }
+            let path = entry.path();
+            if path.is_dir() {
+                users.push(path);
             }
         }
     }
@@ -549,22 +548,24 @@ fn get_steam_libraries(steam_roots: &[PathBuf]) -> Vec<PathBuf> {
             continue;
         }
         let full_root = normalize_full_path(root);
-        if !full_root.is_dir() {
+        let resolved_root = resolve_links(&full_root);
+        if !resolved_root.is_dir() {
             continue;
         }
-        let key = full_root.to_string_lossy().to_string();
+        let key = resolved_root.to_string_lossy().to_string();
         if seen.insert(key) {
-            libraries.push(full_root.clone());
+            libraries.push(resolved_root.clone());
         }
 
-        let vdf_file = full_root.join("steamapps").join("libraryfolders.vdf");
+        let vdf_file = resolved_root.join("steamapps").join("libraryfolders.vdf");
         if let Ok(vdf_text) = fs::read_to_string(&vdf_file) {
             for path_str in parse_vdf_library_paths(&vdf_text) {
                 let full_path = normalize_full_path(Path::new(&path_str));
-                if full_path.is_dir() {
-                    let path_key = full_path.to_string_lossy().to_string();
+                let resolved_path = resolve_links(&full_path);
+                if resolved_path.is_dir() {
+                    let path_key = resolved_path.to_string_lossy().to_string();
                     if seen.insert(path_key) {
-                        libraries.push(full_path);
+                        libraries.push(resolved_path);
                     }
                 }
             }
@@ -783,9 +784,10 @@ fn add_candidate(
     path: PathBuf,
 ) {
     let full_path = normalize_full_path(&path);
-    let key = format!("{}\0{}", release.id, full_path.to_string_lossy());
+    let resolved_path = resolve_links(&full_path);
+    let key = format!("{}\0{}", release.id, resolved_path.to_string_lossy());
     if seen.insert(key) {
-        candidates.push(SaveDirectoryCandidate::new(release.family, release.id, full_path));
+        candidates.push(SaveDirectoryCandidate::new(release.family, release.id, resolved_path));
     }
 }
 
@@ -813,8 +815,8 @@ fn get_default_steam_roots(
         }
         SaveDiscoveryPlatform::Linux | SaveDiscoveryPlatform::Current => {
             vec![
-                home.join(".steam").join("steam"),
                 home.join(".local").join("share").join("Steam"),
+                home.join(".steam").join("steam"),
                 home.join(".var")
                     .join("app")
                     .join("com.valvesoftware.Steam")
