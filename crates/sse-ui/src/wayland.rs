@@ -2885,14 +2885,18 @@ mod tests {
         );
         assert_eq!(client.viewport_set_destination(viewport, 10, 5), Ok(()));
 
-        let pool = client.shm_create_pool(shm, 91, 16_384).unwrap_or_else(|_| unreachable!());
+        let pool = client
+            .shm_create_pool(shm, 91, 16_384)
+            .unwrap_or_else(|_| unreachable!());
         let buffer = client
             .shm_pool_create_buffer(pool, 0, 64, 64, 256, 0)
             .unwrap_or_else(|_| unreachable!());
         assert_eq!(client.shm_pool_resize(pool, 32_768), Ok(()));
         assert_eq!(client.surface_attach(surface, Some(buffer), 0, 0), Ok(()));
 
-        let xdg_surface = client.xdg_get_surface(wm_base, surface).unwrap_or_else(|_| unreachable!());
+        let xdg_surface = client
+            .xdg_get_surface(wm_base, surface)
+            .unwrap_or_else(|_| unreachable!());
         let toplevel = client.xdg_get_toplevel(xdg_surface).unwrap_or_else(|_| unreachable!());
         assert_eq!(client.xdg_ack_configure(xdg_surface, 77), Ok(()));
         assert_eq!(client.xdg_toplevel_set_title(toplevel, "SSE"), Ok(()));
@@ -2907,19 +2911,26 @@ mod tests {
 
         let sent = &client.transport_mut().sent;
         assert!(sent.iter().any(|(bytes, _)| {
-            Message::decode(bytes, &[])
-                .is_ok_and(|message| message.object == ObjectId::DISPLAY && message.opcode == 0)
+            Message::decode(bytes, &[]).is_ok_and(|message| message.object == ObjectId::DISPLAY && message.opcode == 0)
         }));
-        assert!(sent.iter().any(|(bytes, fds)| fds.as_slice() == [91] && Message::decode(bytes, fds).is_ok()));
+        assert!(sent
+            .iter()
+            .any(|(bytes, fds)| fds.as_slice() == [91] && Message::decode(bytes, fds).is_ok()));
     }
 
     #[test]
     fn hand_built_extended_events_decode() {
         let buffer_release = Message::decode(&framed(30, 0, &[]), &[]).unwrap_or_else(|_| unreachable!());
-        assert_eq!(decode_event(Interface::WlBuffer, &buffer_release), Ok(Event::BufferRelease));
+        assert_eq!(
+            decode_event(Interface::WlBuffer, &buffer_release),
+            Ok(Event::BufferRelease)
+        );
 
         let pointer_frame = Message::decode(&framed(31, 5, &[]), &[]).unwrap_or_else(|_| unreachable!());
-        assert_eq!(decode_event(Interface::WlPointer, &pointer_frame), Ok(Event::PointerFrame));
+        assert_eq!(
+            decode_event(Interface::WlPointer, &pointer_frame),
+            Ok(Event::PointerFrame)
+        );
 
         let scale_payload = 150_u32.to_ne_bytes();
         let scale = Message::decode(&framed(32, 0, &scale_payload), &[]).unwrap_or_else(|_| unreachable!());
@@ -2929,7 +2940,10 @@ mod tests {
         );
 
         let close = Message::decode(&framed(33, 1, &[]), &[]).unwrap_or_else(|_| unreachable!());
-        assert_eq!(decode_event(Interface::XdgToplevel, &close), Ok(Event::XdgToplevelClose));
+        assert_eq!(
+            decode_event(Interface::XdgToplevel, &close),
+            Ok(Event::XdgToplevelClose)
+        );
     }
 
     #[test]
@@ -2941,5 +2955,4 @@ mod tests {
         assert_eq!(keysym_to_char(0xffab), Some('+'));
         assert_eq!(keysym_to_char(0xff8d), Some('\n'));
     }
-
 }
