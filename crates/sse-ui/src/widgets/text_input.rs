@@ -3,11 +3,15 @@
 use crate::edit::{Clipboard, EditConfig, EditModel, Key, Modifiers, MouseSelect, Selection};
 use sse_core::Result;
 
+/// C# TextBox background RGB.
 pub const BACKGROUND: u32 = 0x1A1D17;
+/// C# TextBox normal border RGB.
 pub const BORDER: u32 = 0x33382F;
+/// C# TextBox focus/caret RGB.
 pub const FOCUS: u32 = 0xD6A62D;
 const BLINK_MS: u64 = 530;
 
+/// Stateful controller around the edit model; retained painting is handled by the widget tree.
 pub struct TextInput {
     model: EditModel,
     focused: bool,
@@ -16,6 +20,7 @@ pub struct TextInput {
 }
 
 impl TextInput {
+    /// Create a text input with the supplied edit policy.
     pub fn new(text: &str, config: EditConfig) -> Result<Self> {
         Ok(Self {
             model: EditModel::new(text, config)?,
@@ -25,26 +30,31 @@ impl TextInput {
         })
     }
 
+    /// Current text.
     #[must_use]
     pub fn text(&self) -> String {
         self.model.text()
     }
 
+    /// Current scalar selection.
     #[must_use]
     pub const fn selection(&self) -> Selection {
         self.model.selection()
     }
 
+    /// Whether the field owns keyboard focus.
     #[must_use]
     pub const fn focused(&self) -> bool {
         self.focused
     }
 
+    /// Whether the blinking caret is currently visible.
     #[must_use]
     pub const fn caret_visible(&self) -> bool {
         self.focused && self.caret_visible
     }
 
+    /// Change focus and restart the caret blink timer.
     pub fn focus(&mut self, focused: bool, now_ms: u64) -> bool {
         let changed = self.focused != focused;
         self.focused = focused;
@@ -53,6 +63,7 @@ impl TextInput {
         changed
     }
 
+    /// Advance the caret timer; true when the caret needs repaint.
     pub fn tick(&mut self, now_ms: u64) -> bool {
         if !self.focused {
             return false;
@@ -65,6 +76,7 @@ impl TextInput {
         true
     }
 
+    /// Apply single/double/triple-click selection at a grapheme hit.
     pub fn mouse(&mut self, grapheme: usize, clicks: u8, shift: bool) {
         let kind = match clicks {
             2 => MouseSelect::Word,
@@ -94,18 +106,22 @@ impl TextInput {
         self.model.key(key, modifiers, clipboard)
     }
 
+    /// Paste through the platform clipboard.
     pub fn paste<C: Clipboard>(&mut self, c: &mut C) -> Result<bool> {
         self.model.paste(c)
     }
 
+    /// Cut the current selection through the platform clipboard.
     pub fn cut<C: Clipboard>(&mut self, c: &mut C) -> Result<bool> {
         self.model.cut(c)
     }
 
+    /// Copy the current selection through the platform clipboard.
     pub fn copy<C: Clipboard>(&self, c: &mut C) -> Result<bool> {
         self.model.copy(c)
     }
 
+    /// Undo the latest edit-model transaction.
     pub fn undo(&mut self) -> Result<bool> {
         self.model.undo()
     }
