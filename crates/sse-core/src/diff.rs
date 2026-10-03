@@ -1,5 +1,5 @@
 //! Deterministic byte and line differences with conservative patch/merge semantics.
-use sse_core::{Error, Result};
+use crate::{Error, Result};
 use std::cmp::{max, min};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
