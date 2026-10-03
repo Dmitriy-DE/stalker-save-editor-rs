@@ -1328,17 +1328,16 @@ fn imdct(spectrum: &[f32]) -> Result<Vec<f32>> {
         return Err(Error::damaged("Vorbis IMDCT spectrum size"));
     }
     let transformed = dct4(spectrum)?;
-    let scale = 2.0 / (m as f32);
     let quarter = m.saturating_div(2);
     let mut output = Vec::with_capacity(m.saturating_mul(2));
     for index in quarter..m {
-        output.push(transformed.get(index).copied().unwrap_or(0.0) * scale);
+        output.push(transformed.get(index).copied().unwrap_or(0.0));
     }
     for index in (0..m).rev() {
-        output.push(-transformed.get(index).copied().unwrap_or(0.0) * scale);
+        output.push(-transformed.get(index).copied().unwrap_or(0.0));
     }
     for index in 0..quarter {
-        output.push(-transformed.get(index).copied().unwrap_or(0.0) * scale);
+        output.push(-transformed.get(index).copied().unwrap_or(0.0));
     }
     Ok(output)
 }
