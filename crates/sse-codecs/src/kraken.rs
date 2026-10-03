@@ -3069,10 +3069,7 @@ mod tests {
         let weights = [
             TansWeight { symbol: 1, weight: 2 },
             TansWeight { symbol: 2, weight: 3 },
-            TansWeight {
-                symbol: 3,
-                weight: 251,
-            },
+            TansWeight { symbol: 3, weight: 251 },
         ];
         let lut = init_tans_lut(&weights, 8).unwrap_or_else(|error| panic!("build tANS LUT: {error:?}"));
         let wrapped = lut.get(1).copied().unwrap_or_default();
