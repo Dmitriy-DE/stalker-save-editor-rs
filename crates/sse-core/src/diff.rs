@@ -3,36 +3,59 @@ use crate::{Error, Result};
 use std::cmp::{max, min};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+/// One line-level edit operation.
 pub enum LineOp {
+    /// Unchanged line bytes.
     Equal(Vec<u8>),
+    /// Line removed from the old image.
     Delete(Vec<u8>),
+    /// Line inserted into the new image.
     Insert(Vec<u8>),
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
+/// Unified-diff hunk with exact line bytes.
 pub struct Hunk {
+    /// One-based old-file start line.
+    /// Old-image inclusive start byte.
     pub old_start: usize,
+    /// Number of old-file lines covered.
     pub old_len: usize,
+    /// One-based new-file start line.
+    /// New-image inclusive start byte.
     pub new_start: usize,
+    /// Number of new-file lines covered.
     pub new_len: usize,
+    /// Ordered operations in the hunk.
     pub ops: Vec<LineOp>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// One changed byte interval in the old and new images.
 pub struct ByteRange {
     pub old_start: usize,
+    /// Old-image exclusive end byte.
     pub old_end: usize,
     pub new_start: usize,
+    /// New-image exclusive end byte.
     pub new_end: usize,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
+/// Overlapping unequal edits encountered by three-way merge.
 pub struct MergeConflict {
+    /// First base line touched by either side.
     pub base_start: usize,
+    /// Exclusive base-line end.
     pub base_end: usize,
+    /// Replacement bytes proposed by the left side.
     pub left: Vec<u8>,
+    /// Replacement bytes proposed by the right side.
     pub right: Vec<u8>,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
+/// Result of a conservative three-way line merge.
 pub struct MergeResult {
+    /// Merged bytes, or the unchanged base when conflicts exist.
     pub bytes: Vec<u8>,
+    /// Explicit conflicts; empty means the merge succeeded.
     pub conflicts: Vec<MergeConflict>,
 }
 
@@ -237,6 +260,7 @@ fn linear_fallback(a: &[&[u8]], b: &[&[u8]]) -> Result<Vec<LineOp>> {
     Ok(out)
 }
 
+/// Builds unified hunks with the requested number of context lines.
 pub fn unified_hunks(old: &[u8], new: &[u8], context: usize) -> Result<Vec<Hunk>> {
     let ops = line_diff(old, new, 8_000_000)?;
     let mut hunks = Vec::new();
@@ -368,6 +392,7 @@ fn find_all(h: &[u8], n: &[u8]) -> Vec<usize> {
         .collect()
 }
 
+/// Returns changed byte ranges, coalescing gaps no larger than `merge_gap`.
 pub fn byte_ranges(a: &[u8], b: &[u8], merge_gap: usize) -> Vec<ByteRange> {
     let common = min(a.len(), b.len());
     let mut out = Vec::new();
