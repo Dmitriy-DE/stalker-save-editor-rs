@@ -1821,7 +1821,7 @@ pub fn decode(input: &[u8], maximum_samples: usize) -> Result<Pcm> {
         ident,
     )?;
 
-    let mut previous = None;
+    let mut previous: Option<AudioBlock> = None;
     let mut pcm = Vec::<f32>::new();
     let mut initial_center = None;
     let mut final_granule = None;
