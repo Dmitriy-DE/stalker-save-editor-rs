@@ -892,13 +892,13 @@ mod tests {
     fn rle_encoder_is_smaller_than_the_stored_fallback_on_s2_fixtures() {
         let fixtures: &[&[u8]] = &[
             EXPECTED,
-            include_bytes!("../../../../fixtures/synthetic/synthetic-s2-stash.raw"),
-            include_bytes!("../../../../fixtures/synthetic/writer-s2-money/s2-money-expected.raw"),
-            include_bytes!("../../../../fixtures/synthetic/writer-s2-stacks/s2-stacks-expected.raw"),
-            include_bytes!("../../../../fixtures/synthetic/writer-s2-stash/s2-stash-source.raw"),
-            include_bytes!("../../../../fixtures/synthetic/writer-s2-stash/s2-stash-expected.raw"),
-            include_bytes!("../../../../fixtures/synthetic/writer-s2-equipment/s2-equipment-armor-expected.raw"),
-            include_bytes!("../../../../fixtures/synthetic/writer-s2-equipment/s2-equipment-weapon-expected.raw"),
+            include_bytes!("../../../fixtures/synthetic/synthetic-s2-stash.raw"),
+            include_bytes!("../../../fixtures/synthetic/writer-s2-money/s2-money-expected.raw"),
+            include_bytes!("../../../fixtures/synthetic/writer-s2-stacks/s2-stacks-expected.raw"),
+            include_bytes!("../../../fixtures/synthetic/writer-s2-stash/s2-stash-source.raw"),
+            include_bytes!("../../../fixtures/synthetic/writer-s2-stash/s2-stash-expected.raw"),
+            include_bytes!("../../../fixtures/synthetic/writer-s2-equipment/s2-equipment-armor-expected.raw"),
+            include_bytes!("../../../fixtures/synthetic/writer-s2-equipment/s2-equipment-weapon-expected.raw"),
         ];
 
         for payload in fixtures {
@@ -915,13 +915,13 @@ mod tests {
     fn encoder_round_trips_s2_writer_fixtures_byte_for_byte() {
         let fixtures: &[&[u8]] = &[
             EXPECTED,
-            include_bytes!("../../../../fixtures/synthetic/synthetic-s2-stash.raw"),
-            include_bytes!("../../../../fixtures/synthetic/writer-s2-money/s2-money-expected.raw"),
-            include_bytes!("../../../../fixtures/synthetic/writer-s2-stacks/s2-stacks-expected.raw"),
-            include_bytes!("../../../../fixtures/synthetic/writer-s2-stash/s2-stash-source.raw"),
-            include_bytes!("../../../../fixtures/synthetic/writer-s2-stash/s2-stash-expected.raw"),
-            include_bytes!("../../../../fixtures/synthetic/writer-s2-equipment/s2-equipment-armor-expected.raw"),
-            include_bytes!("../../../../fixtures/synthetic/writer-s2-equipment/s2-equipment-weapon-expected.raw"),
+            include_bytes!("../../../fixtures/synthetic/synthetic-s2-stash.raw"),
+            include_bytes!("../../../fixtures/synthetic/writer-s2-money/s2-money-expected.raw"),
+            include_bytes!("../../../fixtures/synthetic/writer-s2-stacks/s2-stacks-expected.raw"),
+            include_bytes!("../../../fixtures/synthetic/writer-s2-stash/s2-stash-source.raw"),
+            include_bytes!("../../../fixtures/synthetic/writer-s2-stash/s2-stash-expected.raw"),
+            include_bytes!("../../../fixtures/synthetic/writer-s2-equipment/s2-equipment-armor-expected.raw"),
+            include_bytes!("../../../fixtures/synthetic/writer-s2-equipment/s2-equipment-weapon-expected.raw"),
         ];
 
         for payload in fixtures {
