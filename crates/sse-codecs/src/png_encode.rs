@@ -6,6 +6,7 @@ use sse_core::{Error, Result};
 const SIG: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
 
 /// Encode an RGBA8 image as a non-interlaced PNG.
+#[allow(clippy::arithmetic_side_effects)]
 pub fn encode_rgba8(width: u32, height: u32, pixels: &[u8]) -> Result<Vec<u8>> {
     if width == 0 || height == 0 {
         return Err(Error::Refused("PNG dimensions must be non-zero".to_owned()));
@@ -79,6 +80,7 @@ fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::arithmetic_side_effects)]
 fn adler32(data: &[u8]) -> u32 {
     let (mut a, mut b) = (1u32, 0u32);
     for x in data {
@@ -96,8 +98,8 @@ mod tests {
     #[test]
     fn round_trip() {
         let p = [255, 0, 0, 255, 0, 255, 0, 128];
-        let e = encode_rgba8(2, 1, &p).unwrap();
-        let d = png::decode(&e).unwrap();
+        let e = encode_rgba8(2, 1, &p).unwrap_or_else(|error| panic!("{error:?}"));
+        let d = png::decode(&e).unwrap_or_else(|error| panic!("{error:?}"));
         assert_eq!((d.width, d.height, d.pixels), (2, 1, p.to_vec()));
     }
 
