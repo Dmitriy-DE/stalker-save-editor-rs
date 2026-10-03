@@ -9,6 +9,7 @@
 mod buffer;
 mod cursor;
 mod error;
+pub mod diff;
 
 pub use buffer::SaveBuffer;
 pub use cursor::Cursor;
