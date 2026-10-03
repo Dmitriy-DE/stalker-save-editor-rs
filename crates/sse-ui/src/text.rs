@@ -847,6 +847,7 @@ fn is_kinsoku_start(character: char) -> bool {
     )
 }
 
+#[cfg(test)]
 fn is_cjk_character(character: char) -> bool {
     matches!(
         line_break_class(character),
