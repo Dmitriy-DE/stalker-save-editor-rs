@@ -415,6 +415,83 @@ pub fn write(entries: &[Entry], level: Level) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn put16(out: &mut Vec<u8>, value: u16) {
+        out.extend_from_slice(&value.to_le_bytes());
+    }
+
+    fn put32(out: &mut Vec<u8>, value: u32) {
+        out.extend_from_slice(&value.to_le_bytes());
+    }
+
+    fn manual_stored(name: &[u8], flags: u16, made_by: u16, attrs: u32, data: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        let crc = crc32(data);
+        let size = u32::try_from(data.len()).unwrap_or(u32::MAX);
+        let name_len = u16::try_from(name.len()).unwrap_or(u16::MAX);
+        put32(&mut out, 0x0403_4b50);
+        put16(&mut out, 20);
+        put16(&mut out, flags);
+        put16(&mut out, 0);
+        put16(&mut out, 0);
+        put16(&mut out, 0x0021);
+        put32(&mut out, crc);
+        put32(&mut out, size);
+        put32(&mut out, size);
+        put16(&mut out, name_len);
+        put16(&mut out, 0);
+        out.extend_from_slice(name);
+        out.extend_from_slice(data);
+        let central = u32::try_from(out.len()).unwrap_or(u32::MAX);
+        put32(&mut out, 0x0201_4b50);
+        put16(&mut out, made_by);
+        put16(&mut out, 20);
+        put16(&mut out, flags);
+        put16(&mut out, 0);
+        put16(&mut out, 0);
+        put16(&mut out, 0x0021);
+        put32(&mut out, crc);
+        put32(&mut out, size);
+        put32(&mut out, size);
+        put16(&mut out, name_len);
+        put16(&mut out, 0);
+        put16(&mut out, 0);
+        put16(&mut out, 0);
+        put16(&mut out, 0);
+        put32(&mut out, attrs);
+        put32(&mut out, 0);
+        out.extend_from_slice(name);
+        let directory_size = u32::try_from(out.len())
+            .unwrap_or(u32::MAX)
+            .saturating_sub(central);
+        put32(&mut out, 0x0605_4b50);
+        put16(&mut out, 0);
+        put16(&mut out, 0);
+        put16(&mut out, 1);
+        put16(&mut out, 1);
+        put32(&mut out, directory_size);
+        put32(&mut out, central);
+        put16(&mut out, 0);
+        out
+    }
+
+    #[test]
+    fn hand_made_stored_archive_decodes_cp437_name() {
+        let archive = manual_stored(&[0x82, b'.', b't', b'x', b't'], 0, 20, 0, b"ok");
+        let files = read(&archive, 16).unwrap_or_default();
+        assert_eq!(files.first().map(|entry| entry.name.as_str()), Some("é.txt"));
+        assert_eq!(files.first().map(|entry| entry.data.as_slice()), Some(b"ok".as_slice()));
+    }
+
+    #[test]
+    fn hand_made_symlink_and_traversal_entries_are_refused() {
+        let symlink = manual_stored(b"link", 0, 0x0314, 0o120777_u32.wrapping_shl(16), b"target");
+        assert!(matches!(read(&symlink, 64), Err(Error::Refused(_))));
+        for name in [b"../x".as_slice(), b"/absolute".as_slice(), b"C:\\evil".as_slice()] {
+            let archive = manual_stored(name, 0, 20, 0, b"x");
+            assert!(matches!(read(&archive, 64), Err(Error::Refused(_))));
+        }
+    }
+
     #[test]
     fn round_trip_and_stable() {
         let e = vec![
