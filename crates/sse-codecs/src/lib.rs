@@ -3,6 +3,9 @@
 /// LZO1X as the X-Ray engine uses it for saves.
 pub mod lzo1x;
 
+/// Safe Rust decoder for Kraken streams used by S.T.A.L.K.E.R. 2 saves.
+pub mod kraken;
+
 /// X-Ray archive LZHUF decoding and header descrambling.
 pub mod lzhuf;
 
