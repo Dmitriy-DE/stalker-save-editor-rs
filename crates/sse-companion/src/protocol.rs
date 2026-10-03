@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::{Error, ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -172,6 +172,13 @@ fn fresh_id() -> String {
 }
 
 fn read_reply_bytes(path: &Path) -> Result<Vec<u8>, std::io::Error> {
+    let metadata = fs::symlink_metadata(path)?;
+    if !metadata.file_type().is_file() {
+        return Err(Error::new(
+            ErrorKind::InvalidData,
+            "companion reply is not a regular file",
+        ));
+    }
     let file = File::open(path)?;
     let mut bytes = Vec::new();
     file.take(
@@ -322,6 +329,7 @@ mod reader_tests {
     use super::{parse_reply, read_reply_bytes, reply_id};
     use crate::MAX_COMPANION_FILE_BYTES;
     use std::fs;
+    use std::io::ErrorKind;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -372,5 +380,14 @@ mod reader_tests {
         fs::write(&path, hostile).expect("write oversized reply fixture");
         assert!(read_reply_bytes(&path).expect("read bounded reply").is_empty());
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn reply_reader_rejects_non_regular_paths_before_opening() {
+        let path = temporary_file();
+        fs::create_dir_all(&path).expect("create directory reply path");
+        let error = read_reply_bytes(&path).expect_err("directory is not a reply file");
+        assert_eq!(error.kind(), ErrorKind::InvalidData);
+        let _ = fs::remove_dir_all(path);
     }
 }

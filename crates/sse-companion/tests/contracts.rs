@@ -6,7 +6,7 @@ use sse_companion::hook::{
     remove_main_menu, remove_quest_include,
 };
 use sse_companion::hotkeys::{HotkeyAction, HotkeyLayout, HotkeyMatcher};
-use sse_companion::installer::{install_files, install_stalker2, uninstall, PayloadFile};
+use sse_companion::installer::{install_bundled, install_files, install_stalker2, uninstall, PayloadFile};
 use sse_companion::protocol::{CompanionClient, ReplyStatus};
 use std::fs;
 use std::path::PathBuf;
@@ -104,6 +104,55 @@ fn menu_hook_tracks_the_unique_quit_block_and_ignores_comment_and_string_tokens(
 }
 
 #[test]
+fn menu_hook_ignores_levelled_lua_long_strings_and_comments() -> Result<(), Box<dyn std::error::Error>> {
+    let original = b"function main_menu:OnKeyboard(dik, keyboard_action)\n\tlocal text = [==[\n\t\tif keyboard_action == ui_events.WINDOW_KEY_PRESSED then\n\t\t\tend\n\t\t]=]\n\t\tif keyboard_action == ui_events.WINDOW_KEY_PRESSED then\n\t\t\tend\n\t]==]\n\t--[=[\n\tif keyboard_action == ui_events.WINDOW_KEY_PRESSED then\n\t\tend\n\t]=]\n\tif keyboard_action == ui_events.WINDOW_KEY_PRESSED then\n\t\treturn true\n\tend\n\treturn false\nend\n";
+    let patched = patch_main_menu(original)?;
+
+    assert_eq!(remove_main_menu(&patched)?, original);
+    Ok(())
+}
+
+#[test]
+fn bundled_install_applies_hooks_and_uninstall_restores_source_bytes() -> Result<(), Box<dyn std::error::Error>> {
+    let bind_soc_cs = b"function bind:update()\r\n\tobject_binder.update(self, delta)\r\nend\r\nself.object:set_callback(callback.on_item_drop, self.on_item_drop, self)\r\n";
+    let bind_cop = b"function bind:update()\r\n\tobject_binder.update(self, delta)\r\nend\r\nfunction actor_binder:use_inventory_item(obj)\r\n\treturn true\r\nend\r\n";
+    let menu = b"function main_menu:OnKeyboard(dik, keyboard_action)\r\n\tif keyboard_action == ui_events.WINDOW_KEY_PRESSED then\r\n\t\treturn true\r\n\tend\r\nend\r\n";
+    let games = [
+        (
+            sse_companion::bundled::Game::ShadowOfChernobyl,
+            "soc",
+            bind_soc_cs.as_slice(),
+        ),
+        (sse_companion::bundled::Game::ClearSky, "cs", bind_soc_cs.as_slice()),
+        (sse_companion::bundled::Game::CallOfPripyat, "cop", bind_cop.as_slice()),
+    ];
+    for (game, game_id, bind_source) in games {
+        let root = temp_dir("sse-companion-bundled-hooks");
+        let bind_path = root.join("gamedata/scripts/bind_stalker.script");
+        let menu_path = root.join("gamedata/scripts/ui_main_menu.script");
+        fs::create_dir_all(bind_path.parent().ok_or("bind parent is missing")?)?;
+        fs::write(&bind_path, bind_source)?;
+        fs::write(&menu_path, menu)?;
+
+        install_bundled(&root, game)?;
+
+        let installed_bind = fs::read(&bind_path)?;
+        let installed_menu = fs::read(&menu_path)?;
+        assert!(installed_bind
+            .windows(b"save_editor_companion then save_editor_companion.update()".len())
+            .any(|window| window == b"save_editor_companion then save_editor_companion.update()"));
+        assert!(installed_menu
+            .windows(b"save_editor_companion_ui then save_editor_companion_ui.on_menu_key".len())
+            .any(|window| window == b"save_editor_companion_ui then save_editor_companion_ui.on_menu_key"));
+        assert!(uninstall(&root, game_id)?);
+        assert_eq!(fs::read(&bind_path)?, bind_source);
+        assert_eq!(fs::read(&menu_path)?, menu);
+        fs::remove_dir_all(root)?;
+    }
+    Ok(())
+}
+
+#[test]
 fn hotkey_layout_roundtrips_and_rejects_duplicate_gestures() -> Result<(), Box<dyn std::error::Error>> {
     let layout = HotkeyLayout::parse("heal=Ctrl+H\nmark=Alt+M\n")?;
     assert_eq!(layout.to_text(), "heal=Ctrl+H\nmark=Alt+M\n");
@@ -152,6 +201,27 @@ fn installer_keeps_original_file_and_uninstall_restores_exact_bytes() -> Result<
     assert_eq!(fs::read(root.join("gamedata/scripts/bind_stalker.script"))?, original);
     assert!(!root.join("gamedata/scripts/menu.script").exists());
     let _ = fs::remove_dir_all(root);
+    Ok(())
+}
+
+#[test]
+fn installer_refuses_to_back_up_an_existing_file_over_the_configured_limit() -> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("sse-companion-large-original");
+    let target = root.join("gamedata/oversized.bin");
+    fs::create_dir_all(target.parent().ok_or("target parent is missing")?)?;
+    let original = vec![0x5a; sse_companion::MAX_COMPANION_FILE_BYTES.saturating_add(1)];
+    fs::write(&target, &original)?;
+
+    assert!(install_files(
+        &root,
+        "soc",
+        "v1",
+        &[PayloadFile::new("gamedata/oversized.bin", b"new".to_vec())]
+    )
+    .is_err());
+    assert_eq!(fs::read(&target)?, original);
+    assert!(!root.join(".save-editor-companion").exists());
+    fs::remove_dir_all(root)?;
     Ok(())
 }
 

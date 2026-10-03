@@ -18,18 +18,23 @@ pub fn patch_exact_line(source: &[u8], anchor: &[u8], hook: &[u8]) -> Result<Vec
         .iter()
         .position(|(start, content_end, _)| source.get(*start..*content_end) == Some(anchor))
         .ok_or_else(|| HookError::new("anchor disappeared while patching"))?;
-    if source.windows(hook.len()).filter(|window| *window == hook).count() != 0 {
+    insert_after_selected_line(source, anchor_line, hook)
+}
+
+fn insert_after_selected_line(source: &[u8], anchor_line: usize, hook: &[u8]) -> Result<Vec<u8>, HookError> {
+    let lines = line_offsets(source);
+    let hook_count = source.windows(hook.len()).filter(|window| *window == hook).count();
+    if hook_count != 0 {
         if anchor_line
             .checked_add(1)
             .and_then(|next| lines.get(next))
             .is_some_and(|(start, content_end, _)| source.get(*start..*content_end) == Some(hook))
-            && source.windows(hook.len()).filter(|window| *window == hook).count() == 1
+            && hook_count == 1
         {
             return Ok(source.to_vec());
         }
         return Err(HookError::new("hook already exists outside the unique anchor location"));
     }
-
     let (_, content_end, line_end) = lines
         .get(anchor_line)
         .copied()
@@ -441,28 +446,13 @@ fn patch_after_statement(
     indent_from_following_line: bool,
 ) -> Result<Vec<u8>, HookError> {
     validate_tokens(statement, hook)?;
-    let occurrences = source
-        .windows(statement.len())
-        .filter(|window| *window == statement)
-        .count();
-    if occurrences != 1 {
-        return Err(HookError::new("source anchor must occur exactly once"));
-    }
-    let line = line_offsets(source)
-        .into_iter()
-        .find(|(start, end, _)| {
-            source
-                .get(*start..*end)
-                .is_some_and(|bytes| bytes.windows(statement.len()).any(|window| window == statement))
-        })
+    let lines = line_offsets(source);
+    let (line_index, relative) = unique_lua_statement_line(source, statement, &lines)?;
+    let (line_start, content_end, line_end) = *lines
+        .get(line_index)
         .ok_or_else(|| HookError::new("source anchor line is missing"))?;
-    let (line_start, content_end, _) = line;
     let content = source
         .get(line_start..content_end)
-        .ok_or_else(|| HookError::new("source anchor range is invalid"))?;
-    let relative = content
-        .windows(statement.len())
-        .position(|window| window == statement)
         .ok_or_else(|| HookError::new("source anchor range is invalid"))?;
     let prefix = content
         .get(..relative)
@@ -475,16 +465,13 @@ fn patch_after_statement(
         return Err(HookError::new("source anchor is not a standalone statement line"));
     }
     let indentation = if indent_from_following_line {
-        following_indentation(source, line.2)?
+        following_indentation(source, line_end)?
     } else {
         prefix.to_vec()
     };
-    let anchor_line = source
-        .get(line_start..content_end)
-        .ok_or_else(|| HookError::new("source anchor line range is invalid"))?;
     let mut hook_line = indentation;
     hook_line.extend_from_slice(hook);
-    patch_exact_line(source, anchor_line, &hook_line)
+    insert_after_selected_line(source, line_index, &hook_line)
 }
 
 fn remove_after_statement(
@@ -495,21 +482,13 @@ fn remove_after_statement(
 ) -> Result<Vec<u8>, HookError> {
     validate_tokens(statement, hook)?;
     let lines = line_offsets(source);
+    let (anchor_index, relative) = unique_lua_statement_line(source, statement, &lines)?;
     let anchor = lines
-        .iter()
-        .find(|(start, end, _)| {
-            source
-                .get(*start..*end)
-                .is_some_and(|line| line.windows(statement.len()).any(|window| window == statement))
-        })
+        .get(anchor_index)
         .ok_or_else(|| HookError::new("source anchor line is missing"))?;
     let line = source
         .get(anchor.0..anchor.1)
         .ok_or_else(|| HookError::new("source anchor line range is invalid"))?;
-    let relative = line
-        .windows(statement.len())
-        .position(|window| window == statement)
-        .ok_or_else(|| HookError::new("source anchor range is invalid"))?;
     let indentation = if indent_from_following_line {
         following_indentation(source, anchor.2)?
     } else {
@@ -519,7 +498,77 @@ fn remove_after_statement(
     };
     let mut hook_line = indentation;
     hook_line.extend_from_slice(hook);
-    remove_exact_line(source, line, &hook_line)
+    remove_after_selected_line(source, anchor_index, &hook_line)
+}
+
+fn unique_lua_statement_line(
+    source: &[u8],
+    statement: &[u8],
+    lines: &[(usize, usize, usize)],
+) -> Result<(usize, usize), HookError> {
+    let tokens = lua_tokens(source);
+    let mut matched = None;
+    let mut match_count = 0_usize;
+    for (line_index, (line_start, content_end, _)) in lines.iter().copied().enumerate() {
+        let Some(line) = source.get(line_start..content_end) else {
+            continue;
+        };
+        for (relative, window) in line.windows(statement.len()).enumerate() {
+            if window != statement {
+                continue;
+            }
+            let Some(prefix) = line.get(..relative) else { continue };
+            let suffix_start = relative.saturating_add(statement.len());
+            let Some(suffix) = line.get(suffix_start..) else {
+                continue;
+            };
+            let absolute = line_start.saturating_add(relative);
+            if !prefix.iter().all(u8::is_ascii_whitespace)
+                || !suffix.iter().all(u8::is_ascii_whitespace)
+                || tokens.binary_search_by_key(&absolute, |token| token.start).is_err()
+            {
+                continue;
+            }
+            match_count = match_count.saturating_add(1);
+            matched = Some((line_index, relative));
+        }
+    }
+    if match_count != 1 {
+        return Err(HookError::new(
+            "source anchor must occur exactly once as a Lua statement",
+        ));
+    }
+    matched.ok_or_else(|| HookError::new("source anchor line is missing"))
+}
+
+fn remove_after_selected_line(source: &[u8], anchor_index: usize, hook: &[u8]) -> Result<Vec<u8>, HookError> {
+    let lines = line_offsets(source);
+    let anchor = lines
+        .get(anchor_index)
+        .ok_or_else(|| HookError::new("source anchor line is missing"))?;
+    let (hook_start, hook_content_end, _) = lines
+        .get(anchor_index.saturating_add(1))
+        .copied()
+        .ok_or_else(|| HookError::new("installed hook line is missing"))?;
+    if source.get(hook_start..hook_content_end) != Some(hook) {
+        return Err(HookError::new("installed hook is not adjacent to its source anchor"));
+    }
+    if source.windows(hook.len()).filter(|window| *window == hook).count() != 1 {
+        return Err(HookError::new("installed hook is missing or ambiguous"));
+    }
+    let remove_start = anchor.1;
+    let mut restored = Vec::with_capacity(source.len());
+    restored.extend_from_slice(
+        source
+            .get(..remove_start)
+            .ok_or_else(|| HookError::new("source prefix range is invalid"))?,
+    );
+    restored.extend_from_slice(
+        source
+            .get(hook_content_end..)
+            .ok_or_else(|| HookError::new("source suffix range is invalid"))?,
+    );
+    Ok(restored)
 }
 
 fn following_indentation(source: &[u8], line_end: usize) -> Result<Vec<u8>, HookError> {
@@ -555,6 +604,12 @@ fn lua_tokens(source: &[u8]) -> Vec<LuaToken> {
         let Some(byte) = source.get(index).copied() else {
             break;
         };
+        if byte == b'[' {
+            if let Some(end) = skip_lua_long_bracket(source, index) {
+                index = end;
+                continue;
+            }
+        }
         if matches!(byte, b'\'' | b'"') {
             index = skip_lua_string(source, index);
             continue;
@@ -591,18 +646,45 @@ fn lua_tokens(source: &[u8]) -> Vec<LuaToken> {
 }
 
 fn skip_lua_comment(source: &[u8], start: usize) -> usize {
-    if source.get(start..start.saturating_add(2)) == Some(b"[[") {
-        return source
-            .get(start.saturating_add(2)..)
-            .and_then(|rest| rest.windows(2).position(|window| window == b"]]"))
-            .map_or(source.len(), |relative| {
-                start.saturating_add(2).saturating_add(relative).saturating_add(2)
-            });
+    if let Some(end) = skip_lua_long_bracket(source, start) {
+        return end;
     }
     source
         .get(start..)
         .and_then(|rest| rest.iter().position(|byte| matches!(byte, b'\r' | b'\n')))
         .map_or(source.len(), |relative| start.saturating_add(relative))
+}
+
+fn skip_lua_long_bracket(source: &[u8], start: usize) -> Option<usize> {
+    if source.get(start) != Some(&b'[') {
+        return None;
+    }
+    let mut delimiter = start.saturating_add(1);
+    while source.get(delimiter) == Some(&b'=') {
+        delimiter = delimiter.saturating_add(1);
+    }
+    if source.get(delimiter) != Some(&b'[') {
+        return None;
+    }
+    let equals = delimiter.saturating_sub(start).saturating_sub(1);
+    let mut search = delimiter.saturating_add(1);
+    while let Some(relative) = source
+        .get(search..)
+        .and_then(|remaining| remaining.iter().position(|byte| *byte == b']'))
+    {
+        let close = search.saturating_add(relative);
+        let mut close_delimiter = close.saturating_add(1);
+        while source.get(close_delimiter) == Some(&b'=') {
+            close_delimiter = close_delimiter.saturating_add(1);
+        }
+        if close_delimiter.saturating_sub(close).saturating_sub(1) == equals
+            && source.get(close_delimiter) == Some(&b']')
+        {
+            return Some(close_delimiter.saturating_add(1));
+        }
+        search = close.saturating_add(1);
+    }
+    Some(source.len())
 }
 
 fn skip_lua_string(source: &[u8], start: usize) -> usize {

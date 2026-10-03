@@ -1,8 +1,8 @@
 //! Explicit, manifest-backed companion install and exact removal.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -179,7 +179,7 @@ pub fn install_files(root: &Path, game: &str, version: &str, payloads: &[Payload
                 was_present: old.was_present,
             });
         } else if target.is_file() {
-            let before = fs::read(&target)?;
+            let before = read_companion_file(&target)?;
             let backup_path = format!("backups/{relative}.original");
             backup_writes.push((backup_path.clone(), before.clone()));
             new_files.push(ManifestFile {
@@ -211,7 +211,7 @@ pub fn install_files(root: &Path, game: &str, version: &str, payloads: &[Payload
             let original = match (&entry.before_sha256, &entry.backup_path) {
                 (Some(expected), Some(relative)) => {
                     let backup = safe_state_path(&root, relative)?;
-                    let bytes = read_limited(&backup)?;
+                    let bytes = read_companion_file(&backup)?;
                     if sha256::sha256_hex(&bytes) != *expected {
                         return Err(InstallError::new("companion backup hash does not match the manifest"));
                     }
@@ -284,13 +284,26 @@ pub fn install_files(root: &Path, game: &str, version: &str, payloads: &[Payload
 
 /// Installs the statically bundled X-Ray mod for one retail game.
 pub fn install_bundled(root: &Path, game: crate::bundled::Game) -> Result<(), InstallError> {
+    let root = fs::canonicalize(root)?;
+    recover_install_transaction(&root)?;
     let game_id = match game {
         crate::bundled::Game::ShadowOfChernobyl => "soc",
         crate::bundled::Game::ClearSky => "cs",
         crate::bundled::Game::CallOfPripyat => "cop",
     };
-    let payloads = crate::bundled::payloads(game)?;
-    install_files(root, game_id, "v1", &payloads)
+    let mut payloads = crate::bundled::payloads(game)?;
+    let bind_path = "gamedata/scripts/bind_stalker.script";
+    let bind_bytes = read_companion_file(&safe_game_path(&root, bind_path)?)?;
+    let hooked_bind =
+        crate::hook::patch_bind_stalker(&bind_bytes, game).map_err(|error| InstallError::new(error.to_string()))?;
+    payloads.push(PayloadFile::new(bind_path, hooked_bind));
+
+    let menu_path = "gamedata/scripts/ui_main_menu.script";
+    let menu_bytes = read_companion_file(&safe_game_path(&root, menu_path)?)?;
+    let hooked_menu =
+        crate::hook::patch_main_menu(&menu_bytes).map_err(|error| InstallError::new(error.to_string()))?;
+    payloads.push(PayloadFile::new(menu_path, hooked_menu));
+    install_files(&root, game_id, "v1", &payloads)
 }
 
 /// Installs the S.T.A.L.K.E.R. 2 mod into a UE4SS `Mods` directory.
@@ -329,7 +342,7 @@ pub fn uninstall(root: &Path, game: &str) -> Result<bool, InstallError> {
         let original = match (&entry.before_sha256, &entry.backup_path) {
             (Some(expected), Some(relative)) => {
                 let backup = safe_state_path(&root, relative)?;
-                let bytes = read_limited(&backup)?;
+                let bytes = read_companion_file(&backup)?;
                 if sha256::sha256_hex(&bytes) != *expected {
                     return Err(InstallError::new("companion backup hash does not match the manifest"));
                 }
@@ -393,7 +406,7 @@ fn begin_uninstall_transaction(
     };
     let mut files = Vec::with_capacity(restores.len());
     for (relative, target, after) in restores {
-        let current = fs::read(target)?;
+        let current = read_companion_file(target)?;
         let index = next_index;
         next_index = next_index
             .checked_add(1)
@@ -456,7 +469,7 @@ fn begin_install_transaction(
         let relative = normalize_relative(&change.path)?;
         let target = safe_game_path(root, &relative)?;
         let before = if target.is_file() {
-            Some(fs::read(&target)?)
+            Some(read_companion_file(&target)?)
         } else if target.exists() {
             return Err(InstallError::new("payload path already exists as a non-file"));
         } else {
@@ -677,7 +690,7 @@ fn recover_install_transaction(root: &Path) -> Result<(), InstallError> {
     let journal = parse_transaction(&read_limited(&journal_path)?)?;
     let manifest_path = safe_game_path(root, &journal.manifest.path)?;
     let current_manifest = if manifest_path.is_file() {
-        Some(fs::read(&manifest_path)?)
+        Some(read_limited(&manifest_path)?)
     } else if manifest_path.exists() {
         return Err(InstallError::new("transaction manifest path is not a regular file"));
     } else {
@@ -705,7 +718,7 @@ fn recover_install_transaction(root: &Path) -> Result<(), InstallError> {
     for (relative, expected_hash) in &journal.new_backups {
         let path = safe_state_path(root, relative)?;
         if path.is_file() {
-            if sha256::sha256_hex(&read_limited(&path)?) != *expected_hash {
+            if sha256::sha256_hex(&read_companion_file(&path)?) != *expected_hash {
                 return Err(InstallError::new(
                     "new companion backup changed during interrupted install",
                 ));
@@ -726,12 +739,28 @@ fn recover_install_transaction(root: &Path) -> Result<(), InstallError> {
 fn restore_transaction_target(root: &Path, entry: &TransactionTarget) -> Result<(), InstallError> {
     let target = safe_game_path(root, &entry.path)?;
     let actual = if target.is_file() {
-        Some(sha256::sha256_hex(&read_limited(&target)?))
+        Some(sha256::sha256_hex(&read_companion_file(&target)?))
     } else if target.exists() {
         return Err(InstallError::new("transaction target is not a regular file"));
     } else {
         None
     };
+    if actual.is_none() && entry.after_sha256.is_some() {
+        if let Some(expected) = entry.before_sha256.as_deref() {
+            if let Some(previous) = matching_previous_sibling(&target, expected)? {
+                if target.exists() {
+                    return Err(InstallError::new(
+                        "atomic replacement target appeared during transaction recovery",
+                    ));
+                }
+                fs::rename(previous, &target)?;
+                if sha256::sha256_hex(&read_companion_file(&target)?) == expected {
+                    return Ok(());
+                }
+                return Err(InstallError::new("atomic replacement sibling changed during recovery"));
+            }
+        }
+    }
     if actual == entry.before_sha256 {
         return Ok(());
     }
@@ -753,6 +782,37 @@ fn restore_transaction_target(root: &Path, entry: &TransactionTarget) -> Result<
     Ok(())
 }
 
+fn matching_previous_sibling(target: &Path, expected_sha256: &str) -> Result<Option<PathBuf>, InstallError> {
+    let Some(parent) = target.parent() else {
+        return Ok(None);
+    };
+    if !parent.is_dir() {
+        return Ok(None);
+    }
+    let Some(file_name) = target.file_name() else {
+        return Ok(None);
+    };
+    let prefix = format!(".{}.previous-", file_name.to_string_lossy());
+    let mut matching = None;
+    for entry in fs::read_dir(parent)? {
+        let entry = entry?;
+        if !entry.file_name().to_string_lossy().starts_with(&prefix) || !entry.file_type()?.is_file() {
+            continue;
+        }
+        let candidate = entry.path();
+        if sha256::sha256_hex(&read_companion_file(&candidate)?) != expected_sha256 {
+            continue;
+        }
+        if matching.is_some() {
+            return Err(InstallError::new(
+                "multiple atomic replacement siblings match the transaction preimage",
+            ));
+        }
+        matching = Some(candidate);
+    }
+    Ok(matching)
+}
+
 fn finish_install_transaction(root: &Path) -> Result<(), InstallError> {
     let journal = safe_state_path(root, JOURNAL_FILE)?;
     let transaction_dir = safe_state_path(root, TRANSACTION_DIRECTORY)?;
@@ -770,7 +830,8 @@ fn cleanup_obsolete_backups(root: &Path, backups: &[(String, String)]) -> Result
         let Ok(path) = safe_state_path(root, relative) else {
             continue;
         };
-        if path.is_file() && read_limited(&path).is_ok_and(|bytes| sha256::sha256_hex(&bytes) == *expected_hash) {
+        if path.is_file() && read_companion_file(&path).is_ok_and(|bytes| sha256::sha256_hex(&bytes) == *expected_hash)
+        {
             fs::remove_file(path)?;
         }
     }
@@ -823,7 +884,8 @@ fn hex_value(byte: u8) -> Option<u8> {
 fn verify_managed_files(root: &Path, manifest: &Manifest) -> Result<(), InstallError> {
     for entry in &manifest.files {
         let path = safe_game_path(root, &entry.path)?;
-        let bytes = fs::read(path).map_err(|_| InstallError::new("a manifest-owned companion file is missing"))?;
+        let bytes = read_companion_file(&path)
+            .map_err(|_| InstallError::new("a manifest-owned companion file is missing or exceeds the size limit"))?;
         if sha256::sha256_hex(&bytes) != entry.after_sha256 {
             return Err(InstallError::new(
                 "a manifest-owned companion file changed after installation",
@@ -925,13 +987,28 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), InstallError> {
 }
 
 fn read_limited(path: &Path) -> Result<Vec<u8>, InstallError> {
-    let metadata = fs::metadata(path)?;
-    if metadata.len() > u64::try_from(MANIFEST_LIMIT).unwrap_or(u64::MAX) {
-        return Err(InstallError::new("companion state file exceeds the size limit"));
+    read_bounded_file(path, MANIFEST_LIMIT, "companion state file")
+}
+
+fn read_companion_file(path: &Path) -> Result<Vec<u8>, InstallError> {
+    read_bounded_file(path, crate::MAX_COMPANION_FILE_BYTES, "companion game file")
+}
+
+fn read_bounded_file(path: &Path, limit: usize, description: &str) -> Result<Vec<u8>, InstallError> {
+    let metadata = fs::symlink_metadata(path)?;
+    if !metadata.file_type().is_file() {
+        return Err(InstallError::new(format!("{description} is not a regular file")));
     }
-    let bytes = fs::read(path)?;
-    if bytes.len() > MANIFEST_LIMIT {
-        return Err(InstallError::new("companion state file exceeds the size limit"));
+    let limit_u64 = u64::try_from(limit).unwrap_or(u64::MAX);
+    if metadata.len() > limit_u64 {
+        return Err(InstallError::new(format!("{description} exceeds the size limit")));
+    }
+    let mut bytes = Vec::new();
+    File::open(path)?
+        .take(limit_u64.saturating_add(1))
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > limit {
+        return Err(InstallError::new(format!("{description} exceeds the size limit")));
     }
     Ok(bytes)
 }
@@ -1156,8 +1233,8 @@ fn is_hash(value: &str) -> bool {
 #[allow(clippy::expect_used)] // These tests use expect only to fail fast on temporary-fixture setup errors.
 mod transaction_tests {
     use super::{
-        begin_install_transaction, begin_uninstall_transaction, recover_install_transaction, PayloadFile,
-        PlannedFileChange, JOURNAL_FILE, STATE_DIRECTORY,
+        begin_install_transaction, begin_uninstall_transaction, install_bundled, read_limited,
+        recover_install_transaction, PayloadFile, PlannedFileChange, JOURNAL_FILE, STATE_DIRECTORY,
     };
     use std::fs;
     use std::path::PathBuf;
@@ -1205,6 +1282,81 @@ mod transaction_tests {
         );
         assert!(!root.join("gamedata/scripts/new.script").exists());
         assert!(!root.join(STATE_DIRECTORY).exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn interrupted_atomic_replace_restores_matching_previous_sibling() {
+        let root = root();
+        let target = root.join("gamedata/scripts/user.script");
+        fs::create_dir_all(target.parent().expect("target parent")).expect("create target directory");
+        fs::write(&target, b"original").expect("write original");
+        let change = PlannedFileChange {
+            path: "gamedata/scripts/user.script".to_owned(),
+            after: Some(b"installed".to_vec()),
+        };
+        begin_install_transaction(&root, false, true, None, b"new manifest", &[change], &[], &[])
+            .expect("write transaction journal");
+        let previous = target
+            .parent()
+            .expect("target parent")
+            .join(".user.script.previous-simulated");
+        fs::rename(&target, &previous).expect("simulate crash after moving old target");
+
+        recover_install_transaction(&root).expect("recover old target from its atomic sibling");
+
+        assert_eq!(fs::read(&target).expect("read restored file"), b"original");
+        assert!(!previous.exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn bundled_install_recovers_before_reading_a_target_moved_to_previous() {
+        let root = root();
+        let bind_path = root.join("gamedata/scripts/bind_stalker.script");
+        let menu_path = root.join("gamedata/scripts/ui_main_menu.script");
+        fs::create_dir_all(bind_path.parent().expect("bind parent")).expect("create game scripts directory");
+        fs::write(
+            &bind_path,
+            b"function bind:update()\n\tobject_binder.update(self, delta)\nend\nself.object:set_callback(callback.on_item_drop, self.on_item_drop, self)\n",
+        )
+        .expect("write bind source");
+        fs::write(
+            &menu_path,
+            b"function main_menu:OnKeyboard(dik, keyboard_action)\n\tif keyboard_action == ui_events.WINDOW_KEY_PRESSED then\n\t\treturn true\n\tend\n\treturn false\nend\n",
+        )
+        .expect("write menu source");
+        let game = crate::bundled::Game::ClearSky;
+        install_bundled(&root, game).expect("initial bundled install");
+        let manifest_path = root.join(STATE_DIRECTORY).join("manifest.json");
+        let manifest = read_limited(&manifest_path).expect("read existing manifest");
+        let change = PlannedFileChange {
+            path: "gamedata/scripts/bind_stalker.script".to_owned(),
+            after: Some(b"replacement".to_vec()),
+        };
+        begin_install_transaction(
+            &root,
+            true,
+            true,
+            Some(&manifest),
+            b"next manifest",
+            &[change],
+            &[],
+            &[],
+        )
+        .expect("begin interrupted update");
+        let previous = bind_path
+            .parent()
+            .expect("bind parent")
+            .join(".bind_stalker.script.previous-simulated");
+        fs::rename(&bind_path, &previous).expect("simulate interruption during replace");
+
+        install_bundled(&root, game).expect("recover and retry bundle install");
+
+        assert!(fs::read(&bind_path)
+            .expect("read installed script")
+            .windows(b"save_editor_companion then save_editor_companion.update()".len())
+            .any(|window| window == b"save_editor_companion then save_editor_companion.update()"));
         let _ = fs::remove_dir_all(root);
     }
 
