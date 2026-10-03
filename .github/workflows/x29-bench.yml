@@ -1,0 +1,14 @@
+name: x29-bench
+on:
+  push:
+    branches: ["wp/X29-regex"]
+permissions:
+  contents: read
+jobs:
+  bench:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --release -p sse-lint regex::tests::prefiltered_catalogue_scan_is_linear_and_reports_throughput -- --nocapture
