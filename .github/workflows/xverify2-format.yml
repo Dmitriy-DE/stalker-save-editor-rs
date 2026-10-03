@@ -1,0 +1,22 @@
+name: xverify2-format
+on:
+  push:
+    branches: ["verify/x12-x23-x25"]
+permissions:
+  contents: read
+jobs:
+  format:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xverify2-formatted
+          path: |
+            crates/xverify2/src/wayland.rs
+            crates/xverify2/src/locale.rs
+            crates/xverify2/src/path.rs
