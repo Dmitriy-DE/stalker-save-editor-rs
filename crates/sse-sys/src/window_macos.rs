@@ -621,7 +621,7 @@ fn decode_event(event: o::Id, view: o::Id, shared: &Arc<Shared>) {
                 down: matches!(ty, 1 | 3 | 25),
             });
         }
-        5 | 6 | 7 => {
+        5..=7 => {
             let p = unsafe { o::point(event, o::sel(c"locationInWindow")) };
             emit(Event::PointerMoved { x: p.x, y: p.y });
         }

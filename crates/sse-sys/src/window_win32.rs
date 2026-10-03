@@ -44,6 +44,7 @@ const GMEM_MOVEABLE: u32 = 2;
 const MOD_NOREPEAT: u32 = 0x4000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Windows client rectangle in pixels.
 pub struct Rect {
     /// Left pixel.
     pub x: u32,
