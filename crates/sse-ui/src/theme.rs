@@ -203,10 +203,15 @@ impl Theme {
         let mut bars = self.metrics.bars;
         let mut animations_ms = self.metrics.animations_ms;
         let mut shadow = self.metrics.shadow;
-        for values in [&mut spacing[..], &mut radii[..], &mut borders[..], &mut controls[..],
-            &mut sidebar_widths[..], &mut sidebar_items[..], &mut bars[..], &mut animations_ms[..], &mut shadow[..]] {
-            for value in values { *value = px(*value); }
-        }
+        for value in &mut spacing { *value = px(*value); }
+        for value in &mut radii { *value = px(*value); }
+        for value in &mut borders { *value = px(*value); }
+        for value in &mut controls { *value = px(*value); }
+        for value in &mut sidebar_widths { *value = px(*value); }
+        for value in &mut sidebar_items { *value = px(*value); }
+        for value in &mut bars { *value = px(*value); }
+        for value in &mut animations_ms { *value = px(*value); }
+        for value in &mut shadow { *value = px(*value); }
         Self {
             colors: self.colors,
             typography: Typography {
