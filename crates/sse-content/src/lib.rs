@@ -12,6 +12,8 @@ pub mod icon;
 pub mod ltx;
 pub mod preview;
 pub mod string_tables;
+/// Read-only Unreal IoStore and legacy PAK containers.
+pub mod unreal;
 
 pub use archive::{EntryDecoder, HeaderDecoder, ReadAt, XRayArchive, XRayArchiveEntry};
 pub use atlas::{AtlasBuilder, AtlasEntry, IconAtlas, PageFormat};
