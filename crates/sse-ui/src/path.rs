@@ -121,26 +121,54 @@ impl Transform {
     /// Identity transform.
     #[must_use]
     pub const fn identity() -> Self {
-        Self { a: 1.0, b: 0.0, c: 0.0, d: 1.0, e: 0.0, f: 0.0 }
+        Self {
+            a: 1.0,
+            b: 0.0,
+            c: 0.0,
+            d: 1.0,
+            e: 0.0,
+            f: 0.0,
+        }
     }
 
     /// Translation.
     #[must_use]
     pub const fn translate(x: f64, y: f64) -> Self {
-        Self { a: 1.0, b: 0.0, c: 0.0, d: 1.0, e: x, f: y }
+        Self {
+            a: 1.0,
+            b: 0.0,
+            c: 0.0,
+            d: 1.0,
+            e: x,
+            f: y,
+        }
     }
 
     /// Non-uniform scale.
     #[must_use]
     pub const fn scale(x: f64, y: f64) -> Self {
-        Self { a: x, b: 0.0, c: 0.0, d: y, e: 0.0, f: 0.0 }
+        Self {
+            a: x,
+            b: 0.0,
+            c: 0.0,
+            d: y,
+            e: 0.0,
+            f: 0.0,
+        }
     }
 
     /// Counter-clockwise rotation in radians.
     #[must_use]
     pub fn rotate(radians: f64) -> Self {
         let (sine, cosine) = radians.sin_cos();
-        Self { a: cosine, b: sine, c: -sine, d: cosine, e: 0.0, f: 0.0 }
+        Self {
+            a: cosine,
+            b: sine,
+            c: -sine,
+            d: cosine,
+            e: 0.0,
+            f: 0.0,
+        }
     }
 
     /// Applies the transform to one point.
@@ -166,8 +194,12 @@ impl Transform {
     }
 
     fn finite(self) -> Result<Self> {
-        if self.a.is_finite() && self.b.is_finite() && self.c.is_finite() && self.d.is_finite()
-            && self.e.is_finite() && self.f.is_finite()
+        if self.a.is_finite()
+            && self.b.is_finite()
+            && self.c.is_finite()
+            && self.d.is_finite()
+            && self.e.is_finite()
+            && self.f.is_finite()
         {
             Ok(self)
         } else {
@@ -215,7 +247,12 @@ impl StrokeStyle {
     /// The common interface-icon style: two-unit round stroke.
     #[must_use]
     pub const fn icon() -> Self {
-        Self { width: 2.0, cap: LineCap::Round, join: LineJoin::Round, miter_limit: 4.0 }
+        Self {
+            width: 2.0,
+            cap: LineCap::Round,
+            join: LineJoin::Round,
+            miter_limit: 4.0,
+        }
     }
 }
 
@@ -263,11 +300,7 @@ impl Path {
             let mapped = match *command {
                 Command::Move(point) => Command::Move(transform.apply(point)),
                 Command::Line(point) => Command::Line(transform.apply(point)),
-                Command::Cubic(a, b, c) => Command::Cubic(
-                    transform.apply(a),
-                    transform.apply(b),
-                    transform.apply(c),
-                ),
+                Command::Cubic(a, b, c) => Command::Cubic(transform.apply(a), transform.apply(b), transform.apply(c)),
                 Command::Close => Command::Close,
             };
             commands.push(mapped);
@@ -283,12 +316,7 @@ impl Path {
     /// # Errors
     /// Returns [`Error::Damaged`] for non-positive tolerance, non-finite
     /// geometry or an expansion above the hard segment limit.
-    pub fn flatten(
-        &self,
-        transform: Transform,
-        tolerance: f64,
-        fill_rule: FillRule,
-    ) -> Result<FlattenedPath> {
+    pub fn flatten(&self, transform: Transform, tolerance: f64, fill_rule: FillRule) -> Result<FlattenedPath> {
         let polylines = self.flatten_subpaths(transform, tolerance)?;
         let mut segments = Vec::new();
         for polyline in polylines {
@@ -307,12 +335,7 @@ impl Path {
     /// # Errors
     /// Returns [`Error::Damaged`] for invalid style/tolerance/transform or
     /// excessive expanded geometry.
-    pub fn stroke_to_fill(
-        &self,
-        transform: Transform,
-        tolerance: f64,
-        style: StrokeStyle,
-    ) -> Result<FlattenedPath> {
+    pub fn stroke_to_fill(&self, transform: Transform, tolerance: f64, style: StrokeStyle) -> Result<FlattenedPath> {
         validate_tolerance(tolerance)?;
         if !style.width.is_finite() || style.width <= 0.0 {
             return Err(Error::damaged("stroke width must be finite and positive"));
@@ -327,7 +350,10 @@ impl Path {
         for polyline in polylines {
             stroke_polyline(&polyline, half, tolerance, style, &mut segments)?;
         }
-        Ok(FlattenedPath { segments, fill_rule: FillRule::NonZero })
+        Ok(FlattenedPath {
+            segments,
+            fill_rule: FillRule::NonZero,
+        })
     }
 
     fn flatten_subpaths(&self, transform: Transform, tolerance: f64) -> Result<Vec<Polyline>> {
@@ -406,8 +432,7 @@ impl FlattenedPath {
         for segment in &self.segments {
             let from = segment.from;
             let to = segment.to;
-            let crosses = (from.y <= point.y && to.y > point.y)
-                || (to.y <= point.y && from.y > point.y);
+            let crosses = (from.y <= point.y && to.y > point.y) || (to.y <= point.y && from.y > point.y);
             if !crosses {
                 continue;
             }
@@ -463,7 +488,10 @@ fn finish_polyline(result: &mut Vec<Polyline>, points: &mut Vec<Point>, closed: 
         if result.len() >= MAX_COMMANDS {
             return Err(Error::Refused("too many flattened subpaths".to_owned()));
         }
-        result.push(Polyline { points: std::mem::take(points), closed });
+        result.push(Polyline {
+            points: std::mem::take(points),
+            closed,
+        });
     } else {
         points.clear();
     }
@@ -514,7 +542,10 @@ fn flatten_cubic(cubic: Cubic, tolerance: f64, points: &mut Vec<Point>) -> Resul
             push_distinct(points, curve.p3)?;
             continue;
         }
-        let next_depth = curve.depth.checked_add(1).ok_or_else(|| Error::damaged("curve depth overflow"))?;
+        let next_depth = curve
+            .depth
+            .checked_add(1)
+            .ok_or_else(|| Error::damaged("curve depth overflow"))?;
         let p01 = midpoint(curve.p0, curve.p1);
         let p12 = midpoint(curve.p1, curve.p2);
         let p23 = midpoint(curve.p2, curve.p3);
@@ -524,8 +555,20 @@ fn flatten_cubic(cubic: Cubic, tolerance: f64, points: &mut Vec<Point>) -> Resul
         if stack.len() >= MAX_SEGMENTS {
             return Err(Error::Refused("cubic subdivision limit exceeded".to_owned()));
         }
-        stack.push(Cubic { p0: p0123, p1: p123, p2: p23, p3: curve.p3, depth: next_depth });
-        stack.push(Cubic { p0: curve.p0, p1: p01, p2: p012, p3: p0123, depth: next_depth });
+        stack.push(Cubic {
+            p0: p0123,
+            p1: p123,
+            p2: p23,
+            p3: curve.p3,
+            depth: next_depth,
+        });
+        stack.push(Cubic {
+            p0: curve.p0,
+            p1: p01,
+            p2: p012,
+            p3: p0123,
+            depth: next_depth,
+        });
     }
     Ok(())
 }
@@ -557,7 +600,11 @@ fn stroke_polyline(
         return Ok(());
     }
 
-    let segment_count = if polyline.closed { points.len() } else { points.len().saturating_sub(1) };
+    let segment_count = if polyline.closed {
+        points.len()
+    } else {
+        points.len().saturating_sub(1)
+    };
     for index in 0..segment_count {
         let Some((from, to)) = segment_points(&points, index, polyline.closed) else {
             continue;
@@ -567,21 +614,48 @@ fn stroke_polyline(
         }
     }
 
-    let join_count = if polyline.closed { points.len() } else { points.len().saturating_sub(2) };
+    let join_count = if polyline.closed {
+        points.len()
+    } else {
+        points.len().saturating_sub(2)
+    };
     let join_start = if polyline.closed { 0 } else { 1 };
     for offset in 0..join_count {
-        let index = join_start.checked_add(offset).ok_or_else(|| Error::damaged("join index overflow"))?;
+        let index = join_start
+            .checked_add(offset)
+            .ok_or_else(|| Error::damaged("join index overflow"))?;
         append_join(&points, index, polyline.closed, half, tolerance, style, out)?;
     }
 
     if !polyline.closed {
-        let first = points.first().copied().ok_or_else(|| Error::damaged("stroke start missing"))?;
-        let second = points.get(1).copied().ok_or_else(|| Error::damaged("stroke second point missing"))?;
-        let last = points.last().copied().ok_or_else(|| Error::damaged("stroke end missing"))?;
-        let before_last_index = points.len().checked_sub(2).ok_or_else(|| Error::damaged("stroke endpoint index underflow"))?;
-        let before_last = points.get(before_last_index).copied().ok_or_else(|| Error::damaged("stroke penultimate point missing"))?;
-        let start_tangent = second.sub(first).normalised().ok_or_else(|| Error::damaged("zero-length stroke start"))?;
-        let end_tangent = last.sub(before_last).normalised().ok_or_else(|| Error::damaged("zero-length stroke end"))?;
+        let first = points
+            .first()
+            .copied()
+            .ok_or_else(|| Error::damaged("stroke start missing"))?;
+        let second = points
+            .get(1)
+            .copied()
+            .ok_or_else(|| Error::damaged("stroke second point missing"))?;
+        let last = points
+            .last()
+            .copied()
+            .ok_or_else(|| Error::damaged("stroke end missing"))?;
+        let before_last_index = points
+            .len()
+            .checked_sub(2)
+            .ok_or_else(|| Error::damaged("stroke endpoint index underflow"))?;
+        let before_last = points
+            .get(before_last_index)
+            .copied()
+            .ok_or_else(|| Error::damaged("stroke penultimate point missing"))?;
+        let start_tangent = second
+            .sub(first)
+            .normalised()
+            .ok_or_else(|| Error::damaged("zero-length stroke start"))?;
+        let end_tangent = last
+            .sub(before_last)
+            .normalised()
+            .ok_or_else(|| Error::damaged("zero-length stroke end"))?;
         append_cap(first, start_tangent.scale(-1.0), half, tolerance, style.cap, out)?;
         append_cap(last, end_tangent, half, tolerance, style.cap, out)?;
     }
@@ -652,15 +726,24 @@ fn append_join(
     style: StrokeStyle,
     out: &mut Vec<Segment>,
 ) -> Result<()> {
-    let current = points.get(index).copied().ok_or_else(|| Error::damaged("join point missing"))?;
+    let current = points
+        .get(index)
+        .copied()
+        .ok_or_else(|| Error::damaged("join point missing"))?;
     let previous = if index == 0 {
-        if closed { points.last().copied() } else { None }
+        if closed {
+            points.last().copied()
+        } else {
+            None
+        }
     } else {
         points.get(index.saturating_sub(1)).copied()
     }
     .ok_or_else(|| Error::damaged("join previous point missing"))?;
 
-    let next_index = index.checked_add(1).ok_or_else(|| Error::damaged("join next index overflow"))?;
+    let next_index = index
+        .checked_add(1)
+        .ok_or_else(|| Error::damaged("join next index overflow"))?;
     let next = if next_index < points.len() {
         points.get(next_index).copied()
     } else if closed {
@@ -670,8 +753,14 @@ fn append_join(
     }
     .ok_or_else(|| Error::damaged("join next point missing"))?;
 
-    let incoming = current.sub(previous).normalised().ok_or_else(|| Error::damaged("zero-length incoming join segment"))?;
-    let outgoing = next.sub(current).normalised().ok_or_else(|| Error::damaged("zero-length outgoing join segment"))?;
+    let incoming = current
+        .sub(previous)
+        .normalised()
+        .ok_or_else(|| Error::damaged("zero-length incoming join segment"))?;
+    let outgoing = next
+        .sub(current)
+        .normalised()
+        .ok_or_else(|| Error::damaged("zero-length outgoing join segment"))?;
     let turn = incoming.cross(outgoing);
     if turn.abs() <= EPSILON {
         return Ok(());
@@ -842,7 +931,10 @@ impl<'a> Parser<'a> {
     fn read_or_repeat_command(&mut self) -> Result<u8> {
         let byte = self.peek().ok_or_else(|| self.error("missing SVG command"))?;
         if byte.is_ascii_alphabetic() {
-            self.position = self.position.checked_add(1).ok_or_else(|| self.error("SVG parser position overflow"))?;
+            self.position = self
+                .position
+                .checked_add(1)
+                .ok_or_else(|| self.error("SVG parser position overflow"))?;
             if !matches!(
                 byte.to_ascii_uppercase(),
                 b'M' | b'L' | b'H' | b'V' | b'C' | b'S' | b'Q' | b'T' | b'A' | b'Z'
@@ -852,7 +944,9 @@ impl<'a> Parser<'a> {
             self.last_command = Some(byte);
             Ok(byte)
         } else {
-            let command = self.last_command.ok_or_else(|| self.error("path data starts without a command"))?;
+            let command = self
+                .last_command
+                .ok_or_else(|| self.error("path data starts without a command"))?;
             if command.to_ascii_uppercase() == b'Z' {
                 return Err(self.error("numbers cannot implicitly repeat close-path"));
             }
@@ -883,7 +977,11 @@ impl<'a> Parser<'a> {
             self.line_to(point)?;
             any = true;
         }
-        if any { Ok(()) } else { Err(self.error("line command needs coordinates")) }
+        if any {
+            Ok(())
+        } else {
+            Err(self.error("line command needs coordinates"))
+        }
     }
 
     fn parse_horizontal(&mut self, relative: bool) -> Result<()> {
@@ -895,7 +993,11 @@ impl<'a> Parser<'a> {
             self.line_to(Point::new(x, self.current.y).finite()?)?;
             any = true;
         }
-        if any { Ok(()) } else { Err(self.error("horizontal command needs a coordinate")) }
+        if any {
+            Ok(())
+        } else {
+            Err(self.error("horizontal command needs a coordinate"))
+        }
     }
 
     fn parse_vertical(&mut self, relative: bool) -> Result<()> {
@@ -907,7 +1009,11 @@ impl<'a> Parser<'a> {
             self.line_to(Point::new(self.current.x, y).finite()?)?;
             any = true;
         }
-        if any { Ok(()) } else { Err(self.error("vertical command needs a coordinate")) }
+        if any {
+            Ok(())
+        } else {
+            Err(self.error("vertical command needs a coordinate"))
+        }
     }
 
     fn parse_cubic(&mut self, relative: bool) -> Result<()> {
@@ -920,7 +1026,11 @@ impl<'a> Parser<'a> {
             self.cubic_to(c1, c2, end)?;
             any = true;
         }
-        if any { Ok(()) } else { Err(self.error("cubic command needs six coordinates")) }
+        if any {
+            Ok(())
+        } else {
+            Err(self.error("cubic command needs six coordinates"))
+        }
     }
 
     fn parse_smooth_cubic(&mut self, relative: bool) -> Result<()> {
@@ -937,7 +1047,11 @@ impl<'a> Parser<'a> {
             self.cubic_to(c1, c2, end)?;
             any = true;
         }
-        if any { Ok(()) } else { Err(self.error("smooth cubic command needs four coordinates")) }
+        if any {
+            Ok(())
+        } else {
+            Err(self.error("smooth cubic command needs four coordinates"))
+        }
     }
 
     fn parse_quadratic(&mut self, relative: bool) -> Result<()> {
@@ -949,7 +1063,11 @@ impl<'a> Parser<'a> {
             self.quadratic_to(control, end)?;
             any = true;
         }
-        if any { Ok(()) } else { Err(self.error("quadratic command needs four coordinates")) }
+        if any {
+            Ok(())
+        } else {
+            Err(self.error("quadratic command needs four coordinates"))
+        }
     }
 
     fn parse_smooth_quadratic(&mut self, relative: bool) -> Result<()> {
@@ -965,7 +1083,11 @@ impl<'a> Parser<'a> {
             self.quadratic_to(control, end)?;
             any = true;
         }
-        if any { Ok(()) } else { Err(self.error("smooth quadratic command needs two coordinates")) }
+        if any {
+            Ok(())
+        } else {
+            Err(self.error("smooth quadratic command needs two coordinates"))
+        }
     }
 
     fn parse_arc(&mut self, relative: bool) -> Result<()> {
@@ -981,7 +1103,11 @@ impl<'a> Parser<'a> {
             self.arc_to(rx, ry, rotation, large, sweep, end)?;
             any = true;
         }
-        if any { Ok(()) } else { Err(self.error("arc command needs seven parameters")) }
+        if any {
+            Ok(())
+        } else {
+            Err(self.error("arc command needs seven parameters"))
+        }
     }
 
     fn close(&mut self) -> Result<()> {
@@ -1058,7 +1184,11 @@ impl<'a> Parser<'a> {
         let x = self.number()?;
         let y = self.number()?;
         let point = Point::new(x, y);
-        if relative { self.current.add(point).finite() } else { point.finite() }
+        if relative {
+            self.current.add(point).finite()
+        } else {
+            point.finite()
+        }
     }
 
     fn flag(&mut self) -> Result<bool> {
@@ -1066,11 +1196,17 @@ impl<'a> Parser<'a> {
         let byte = self.peek().ok_or_else(|| self.error("missing arc flag"))?;
         match byte {
             b'0' => {
-                self.position = self.position.checked_add(1).ok_or_else(|| self.error("arc flag position overflow"))?;
+                self.position = self
+                    .position
+                    .checked_add(1)
+                    .ok_or_else(|| self.error("arc flag position overflow"))?;
                 Ok(false)
             }
             b'1' => {
-                self.position = self.position.checked_add(1).ok_or_else(|| self.error("arc flag position overflow"))?;
+                self.position = self
+                    .position
+                    .checked_add(1)
+                    .ok_or_else(|| self.error("arc flag position overflow"))?;
                 Ok(true)
             }
             _ => Err(self.error("arc flag must be 0 or 1")),
@@ -1112,10 +1248,17 @@ impl<'a> Parser<'a> {
                 return Err(self.error("SVG exponent has no digits"));
             }
         }
-        let slice = self.bytes.get(start..self.position).ok_or_else(|| self.error("SVG number slice invalid"))?;
+        let slice = self
+            .bytes
+            .get(start..self.position)
+            .ok_or_else(|| self.error("SVG number slice invalid"))?;
         let text = std::str::from_utf8(slice).map_err(|_| self.error("SVG path data is not UTF-8"))?;
         let value = text.parse::<f64>().map_err(|_| self.error("invalid SVG number"))?;
-        if value.is_finite() { Ok(value) } else { Err(self.error("non-finite SVG number")) }
+        if value.is_finite() {
+            Ok(value)
+        } else {
+            Err(self.error("non-finite SVG number"))
+        }
     }
 
     fn has_number(&mut self) -> bool {
@@ -1126,7 +1269,9 @@ impl<'a> Parser<'a> {
     fn skip_separators(&mut self) {
         loop {
             match self.peek() {
-                Some(byte) if byte.is_ascii_whitespace() || byte == b',' => self.position = self.position.saturating_add(1),
+                Some(byte) if byte.is_ascii_whitespace() || byte == b',' => {
+                    self.position = self.position.saturating_add(1)
+                }
                 _ => break,
             }
         }
@@ -1137,12 +1282,19 @@ impl<'a> Parser<'a> {
     }
 
     fn bump(&mut self) -> Result<()> {
-        self.position = self.position.checked_add(1).ok_or_else(|| self.error("SVG parser position overflow"))?;
+        self.position = self
+            .position
+            .checked_add(1)
+            .ok_or_else(|| self.error("SVG parser position overflow"))?;
         Ok(())
     }
 
     fn require_current(&self) -> Result<()> {
-        if self.has_current { Ok(()) } else { Err(self.error("drawing command before move")) }
+        if self.has_current {
+            Ok(())
+        } else {
+            Err(self.error("drawing command before move"))
+        }
     }
 
     fn reset_controls(&mut self) {
@@ -1198,7 +1350,11 @@ fn arc_to_cubics(
     let numerator = (rx_sq * ry_sq - rx_sq * y_sq - ry_sq * x_sq).max(0.0);
     let denominator = rx_sq.mul_add(y_sq, ry_sq * x_sq);
     let sign = if large_arc == sweep { -1.0 } else { 1.0 };
-    let coefficient = if denominator <= EPSILON { 0.0 } else { sign * (numerator / denominator).sqrt() };
+    let coefficient = if denominator <= EPSILON {
+        0.0
+    } else {
+        sign * (numerator / denominator).sqrt()
+    };
     let cxp = coefficient * (rx * y1p / ry);
     let cyp = coefficient * (-ry * x1p / rx);
     let midpoint = start.add(end).scale(0.5);
@@ -1246,8 +1402,18 @@ fn arc_to_cubics(
         let derivative1 = Point::new(-unit1.y, unit1.x);
         let c1 = ellipse_map(unit0.add(derivative0.scale(alpha)), center, rx, ry, cos_phi, sin_phi);
         let c2 = ellipse_map(unit1.sub(derivative1.scale(alpha)), center, rx, ry, cos_phi, sin_phi);
-        let curve_end = if last { end } else { ellipse_map(unit1, center, rx, ry, cos_phi, sin_phi) };
-        result.push(Cubic { p0: curve_start, p1: c1, p2: c2, p3: curve_end, depth: 0 });
+        let curve_end = if last {
+            end
+        } else {
+            ellipse_map(unit1, center, rx, ry, cos_phi, sin_phi)
+        };
+        result.push(Cubic {
+            p0: curve_start,
+            p1: c1,
+            p2: c2,
+            p3: curve_end,
+            depth: 0,
+        });
         curve_start = curve_end;
         angle = next_angle;
     }
@@ -1379,11 +1545,34 @@ impl Icon {
 
 /// All built-in icons in stable display order.
 pub const ALL_ICONS: [Icon; 28] = [
-    Icon::Saves, Icon::Inventory, Icon::Stash, Icon::MapTransitions, Icon::Factions, Icon::Backup,
-    Icon::Compare, Icon::Timeline, Icon::Doctor, Icon::Games, Icon::Fixes, Icon::Wrench,
-    Icon::Companion, Icon::Trophy, Icon::Cloud, Icon::Book, Icon::ShieldCapabilities, Icon::Update,
-    Icon::Settings, Icon::Search, Icon::Add, Icon::Delete, Icon::Undo, Icon::Redo, Icon::Save,
-    Icon::Folder, Icon::Warning, Icon::Info,
+    Icon::Saves,
+    Icon::Inventory,
+    Icon::Stash,
+    Icon::MapTransitions,
+    Icon::Factions,
+    Icon::Backup,
+    Icon::Compare,
+    Icon::Timeline,
+    Icon::Doctor,
+    Icon::Games,
+    Icon::Fixes,
+    Icon::Wrench,
+    Icon::Companion,
+    Icon::Trophy,
+    Icon::Cloud,
+    Icon::Book,
+    Icon::ShieldCapabilities,
+    Icon::Update,
+    Icon::Settings,
+    Icon::Search,
+    Icon::Add,
+    Icon::Delete,
+    Icon::Undo,
+    Icon::Redo,
+    Icon::Save,
+    Icon::Folder,
+    Icon::Warning,
+    Icon::Info,
 ];
 
 #[cfg(test)]
@@ -1462,7 +1651,15 @@ mod tests {
 
     #[test]
     fn arc_radii_are_scaled_when_endpoints_do_not_fit() {
-        let curves = arc_to_cubics(Point::new(0.0, 0.0), Point::new(100.0, 0.0), 10.0, 10.0, 0.0, false, true);
+        let curves = arc_to_cubics(
+            Point::new(0.0, 0.0),
+            Point::new(100.0, 0.0),
+            10.0,
+            10.0,
+            0.0,
+            false,
+            true,
+        );
         let end = curves.ok().and_then(|value| value.last().copied());
         assert!(end.is_some_and(|value| approx(value.p3.x, 100.0, 1.0e-9)));
         assert!(end.is_some_and(|value| approx(value.p3.y, 0.0, 1.0e-9)));
@@ -1471,41 +1668,78 @@ mod tests {
     #[test]
     fn transform_is_applied_before_flatness_test() {
         let path = Path::parse("M0 0 C0 1 1 1 1 0");
-        let small = path.as_ref().ok().and_then(|value| value.flatten(Transform::identity(), 0.1, FillRule::NonZero).ok());
-        let scaled = path.as_ref().ok().and_then(|value| value.flatten(Transform::scale(100.0, 100.0), 0.1, FillRule::NonZero).ok());
-        assert!(small.zip(scaled).is_some_and(|(a, b)| b.segments.len() > a.segments.len()));
+        let small = path
+            .as_ref()
+            .ok()
+            .and_then(|value| value.flatten(Transform::identity(), 0.1, FillRule::NonZero).ok());
+        let scaled = path.as_ref().ok().and_then(|value| {
+            value
+                .flatten(Transform::scale(100.0, 100.0), 0.1, FillRule::NonZero)
+                .ok()
+        });
+        assert!(small
+            .zip(scaled)
+            .is_some_and(|(a, b)| b.segments.len() > a.segments.len()));
     }
 
     #[test]
     fn fill_rules_differ_for_double_wound_shape() {
         let path = Path::parse("M0 0L10 0L10 10L0 10Z M0 0L10 0L10 10L0 10Z");
-        let non_zero = path.as_ref().ok().and_then(|value| value.flatten(Transform::identity(), 0.1, FillRule::NonZero).ok());
-        let even_odd = path.as_ref().ok().and_then(|value| value.flatten(Transform::identity(), 0.1, FillRule::EvenOdd).ok());
-        assert!(non_zero.as_ref().is_some_and(|value| value.contains(Point::new(5.0, 5.0))));
-        assert!(even_odd.as_ref().is_some_and(|value| !value.contains(Point::new(5.0, 5.0))));
+        let non_zero = path
+            .as_ref()
+            .ok()
+            .and_then(|value| value.flatten(Transform::identity(), 0.1, FillRule::NonZero).ok());
+        let even_odd = path
+            .as_ref()
+            .ok()
+            .and_then(|value| value.flatten(Transform::identity(), 0.1, FillRule::EvenOdd).ok());
+        assert!(non_zero
+            .as_ref()
+            .is_some_and(|value| value.contains(Point::new(5.0, 5.0))));
+        assert!(even_odd
+            .as_ref()
+            .is_some_and(|value| !value.contains(Point::new(5.0, 5.0))));
     }
 
     #[test]
     fn stroke_caps_have_expected_extent() {
         let round = Path::parse("M5 12L19 12").ok().and_then(|value| {
-            value.stroke_to_fill(
-                Transform::identity(),
-                0.05,
-                StrokeStyle { width: 2.0, cap: LineCap::Round, join: LineJoin::Round, miter_limit: 4.0 },
-            ).ok()
+            value
+                .stroke_to_fill(
+                    Transform::identity(),
+                    0.05,
+                    StrokeStyle {
+                        width: 2.0,
+                        cap: LineCap::Round,
+                        join: LineJoin::Round,
+                        miter_limit: 4.0,
+                    },
+                )
+                .ok()
         });
-        assert!(round.as_ref().is_some_and(|value| value.contains(Point::new(4.2, 12.0))));
-        assert!(round.as_ref().is_some_and(|value| !value.contains(Point::new(3.5, 12.0))));
+        assert!(round
+            .as_ref()
+            .is_some_and(|value| value.contains(Point::new(4.2, 12.0))));
+        assert!(round
+            .as_ref()
+            .is_some_and(|value| !value.contains(Point::new(3.5, 12.0))));
     }
 
     #[test]
     fn miter_join_expands_outside_corner() {
         let stroke = Path::parse("M4 18L12 6L20 18").ok().and_then(|value| {
-            value.stroke_to_fill(
-                Transform::identity(),
-                0.05,
-                StrokeStyle { width: 2.0, cap: LineCap::Butt, join: LineJoin::Miter, miter_limit: 8.0 },
-            ).ok()
+            value
+                .stroke_to_fill(
+                    Transform::identity(),
+                    0.05,
+                    StrokeStyle {
+                        width: 2.0,
+                        cap: LineCap::Butt,
+                        join: LineJoin::Miter,
+                        miter_limit: 8.0,
+                    },
+                )
+                .ok()
         });
         assert!(stroke.as_ref().is_some_and(|value| !value.segments.is_empty()));
     }
@@ -1517,15 +1751,22 @@ mod tests {
             let path = icon.path();
             assert!(path.is_ok(), "{icon:?}");
             let stroke = path.ok().and_then(|value| {
-                value.stroke_to_fill(Transform::identity(), 0.1, StrokeStyle::icon()).ok()
+                value
+                    .stroke_to_fill(Transform::identity(), 0.1, StrokeStyle::icon())
+                    .ok()
             });
-            assert!(stroke.as_ref().is_some_and(|value| !value.segments.is_empty()), "{icon:?}");
+            assert!(
+                stroke.as_ref().is_some_and(|value| !value.segments.is_empty()),
+                "{icon:?}"
+            );
         }
     }
 
     #[test]
     fn icon_path_strings_use_the_24_grid_convention() {
-        let flat = Icon::Add.path().and_then(|path| path.flatten(Transform::identity(), 0.1, FillRule::NonZero));
+        let flat = Icon::Add
+            .path()
+            .and_then(|path| path.flatten(Transform::identity(), 0.1, FillRule::NonZero));
         assert!(flat.as_ref().is_ok_and(|value| value.segments.len() == 2));
     }
 }
