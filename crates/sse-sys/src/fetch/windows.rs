@@ -15,19 +15,8 @@ const REDIRECT_POLICY_DISALLOW_HTTPS_TO_HTTP: u32 = 1;
 
 #[link(name = "winhttp")]
 unsafe extern "system" {
-    fn WinHttpOpen(
-        agent: *const u16,
-        access: u32,
-        proxy: *const u16,
-        bypass: *const u16,
-        flags: u32,
-    ) -> Hinternet;
-    fn WinHttpConnect(
-        session: Hinternet,
-        server: *const u16,
-        port: u16,
-        reserved: u32,
-    ) -> Hinternet;
+    fn WinHttpOpen(agent: *const u16, access: u32, proxy: *const u16, bypass: *const u16, flags: u32) -> Hinternet;
+    fn WinHttpConnect(session: Hinternet, server: *const u16, port: u16, reserved: u32) -> Hinternet;
     fn WinHttpOpenRequest(
         connect: Hinternet,
         verb: *const u16,
@@ -37,19 +26,8 @@ unsafe extern "system" {
         accept_types: *const *const u16,
         flags: u32,
     ) -> Hinternet;
-    fn WinHttpSetOption(
-        handle: Hinternet,
-        option: u32,
-        buffer: *const c_void,
-        length: u32,
-    ) -> i32;
-    fn WinHttpSetTimeouts(
-        handle: Hinternet,
-        resolve: i32,
-        connect: i32,
-        send: i32,
-        receive: i32,
-    ) -> i32;
+    fn WinHttpSetOption(handle: Hinternet, option: u32, buffer: *const c_void, length: u32) -> i32;
+    fn WinHttpSetTimeouts(handle: Hinternet, resolve: i32, connect: i32, send: i32, receive: i32) -> i32;
     fn WinHttpSendRequest(
         request: Hinternet,
         headers: *const u16,
@@ -68,18 +46,8 @@ unsafe extern "system" {
         buffer_length: *mut u32,
         index: *mut u32,
     ) -> i32;
-    fn WinHttpQueryOption(
-        handle: Hinternet,
-        option: u32,
-        buffer: *mut c_void,
-        buffer_length: *mut u32,
-    ) -> i32;
-    fn WinHttpReadData(
-        request: Hinternet,
-        buffer: *mut c_void,
-        bytes_to_read: u32,
-        bytes_read: *mut u32,
-    ) -> i32;
+    fn WinHttpQueryOption(handle: Hinternet, option: u32, buffer: *mut c_void, buffer_length: *mut u32) -> i32;
+    fn WinHttpReadData(request: Hinternet, buffer: *mut c_void, bytes_to_read: u32, bytes_read: *mut u32) -> i32;
     fn WinHttpCloseHandle(handle: Hinternet) -> i32;
 }
 
@@ -99,18 +67,18 @@ fn wide(value: &str) -> Vec<u16> {
 }
 
 fn milliseconds(value: std::time::Duration) -> Result<i32> {
-    i32::try_from(value.as_millis())
-        .map_err(|_| Error::Refused("timeout is too large".to_owned()))
+    i32::try_from(value.as_millis()).map_err(|_| Error::Refused("timeout is too large".to_owned()))
 }
 
 fn parse_https(url: &str) -> Result<(String, u16, String)> {
     let rest = url
         .strip_prefix("https://")
         .ok_or_else(|| Error::Refused("only HTTPS is allowed".to_owned()))?;
-    let (authority, path) = rest.split_once('/').map_or(
-        (rest, "/".to_owned()),
-        |(authority, tail)| (authority, format!("/{tail}")),
-    );
+    let (authority, path) = rest
+        .split_once('/')
+        .map_or((rest, "/".to_owned()), |(authority, tail)| {
+            (authority, format!("/{tail}"))
+        });
     if authority.is_empty() || authority.contains('@') {
         return Err(Error::Refused("invalid HTTPS authority".to_owned()));
     }
@@ -196,21 +164,10 @@ fn effective_url(request: Hinternet, fallback: &str) -> String {
     let units = usize::try_from(length / 2).unwrap_or_default();
     let mut buffer = vec![0u16; units];
     // SAFETY: buffer has exactly the byte capacity reported by WinHTTP.
-    if unsafe {
-        WinHttpQueryOption(
-            request,
-            OPTION_URL,
-            buffer.as_mut_ptr().cast(),
-            &mut length,
-        )
-    } == 0
-    {
+    if unsafe { WinHttpQueryOption(request, OPTION_URL, buffer.as_mut_ptr().cast(), &mut length) } == 0 {
         return fallback.to_owned();
     }
-    let end = buffer
-        .iter()
-        .position(|unit| *unit == 0)
-        .unwrap_or(buffer.len());
+    let end = buffer.iter().position(|unit| *unit == 0).unwrap_or(buffer.len());
     String::from_utf16_lossy(buffer.get(..end).unwrap_or_default())
 }
 
@@ -223,24 +180,15 @@ pub(super) fn get(
     let (host, port, path) = parse_https(url)?;
     let agent = wide("S.T.A.L.K.E.R. Save Editor/2");
     // SAFETY: NUL-terminated agent is valid and automatic proxy asks WinHTTP to use OS proxy configuration.
-    let session = Handle(unsafe {
-        WinHttpOpen(
-            agent.as_ptr(),
-            ACCESS_TYPE_AUTOMATIC_PROXY,
-            ptr::null(),
-            ptr::null(),
-            0,
-        )
-    });
+    let session =
+        Handle(unsafe { WinHttpOpen(agent.as_ptr(), ACCESS_TYPE_AUTOMATIC_PROXY, ptr::null(), ptr::null(), 0) });
     if session.0.is_null() {
         return Err(Error::System("WinHttpOpen failed".to_owned()));
     }
     let connect_ms = milliseconds(config.connect_timeout)?;
     let total_ms = milliseconds(config.total_timeout)?;
     // SAFETY: session is live; timeout integers are milliseconds.
-    let _ = unsafe {
-        WinHttpSetTimeouts(session.0, connect_ms, connect_ms, total_ms, total_ms)
-    };
+    let _ = unsafe { WinHttpSetTimeouts(session.0, connect_ms, connect_ms, total_ms, total_ms) };
     let host_w = wide(&host);
     // SAFETY: session and NUL-terminated host are live for the call.
     let connect = Handle(unsafe { WinHttpConnect(session.0, host_w.as_ptr(), port, 0) });
@@ -275,9 +223,7 @@ pub(super) fn get(
         )
     } == 0
     {
-        return Err(Error::System(
-            "WinHTTP redirect policy failed".to_owned(),
-        ));
+        return Err(Error::System("WinHTTP redirect policy failed".to_owned()));
     }
     let range = if range_from == 0 {
         None
@@ -291,32 +237,17 @@ pub(super) fn get(
         )
     });
     // SAFETY: request and optional header storage remain live through SendRequest.
-    if unsafe {
-        WinHttpSendRequest(
-            request.0,
-            headers,
-            headers_len,
-            ptr::null_mut(),
-            0,
-            0,
-            0,
-        )
-    } == 0
-    {
+    if unsafe { WinHttpSendRequest(request.0, headers, headers_len, ptr::null_mut(), 0, 0, 0) } == 0 {
         return Err(Error::System("WinHttpSendRequest failed".to_owned()));
     }
     // SAFETY: request is live and no reserved argument is supplied.
     if unsafe { WinHttpReceiveResponse(request.0, ptr::null_mut()) } == 0 {
-        return Err(Error::System(
-            "WinHttpReceiveResponse failed".to_owned(),
-        ));
+        return Err(Error::System("WinHttpReceiveResponse failed".to_owned()));
     }
     let status = status(request.0)?;
     let content_length = content_length(request.0);
     if content_length.is_some_and(|length| length > config.max_bytes) {
-        return Err(Error::Refused(
-            "HTTPS response exceeds size limit".to_owned(),
-        ));
+        return Err(Error::Refused("HTTPS response exceeds size limit".to_owned()));
     }
     let final_url = effective_url(request.0, url);
     if !final_url.starts_with("https://") {
