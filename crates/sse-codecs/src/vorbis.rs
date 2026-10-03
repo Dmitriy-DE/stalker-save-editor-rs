@@ -1638,6 +1638,25 @@ mod tests {
     }
 
     #[test]
+    fn menu_select_stages_are_decodable() {
+        let data = b64(include_str!("../tests/data/menu_select.ogg.b64"));
+        let packets = ogg::packets(&data).unwrap_or_else(|error| panic!("ogg: {error:?}"));
+        let ident = identification(&packets.first().unwrap_or_else(|| panic!("ident packet")).data)
+            .unwrap_or_else(|error| panic!("ident: {error:?}"));
+        validate_comment(&packets.get(1).unwrap_or_else(|| panic!("comment packet")).data)
+            .unwrap_or_else(|error| panic!("comment: {error:?}"));
+        let setup = setup(
+            &packets.get(2).unwrap_or_else(|| panic!("setup packet")).data,
+            ident,
+        )
+        .unwrap_or_else(|error| panic!("setup: {error:?}"));
+        for (index, packet) in packets.iter().skip(3).enumerate() {
+            let _ = decode_audio(&packet.data, ident, &setup)
+                .unwrap_or_else(|error| panic!("audio packet {index}: {error:?}"));
+        }
+    }
+
+    #[test]
     fn menu_select_matches_reference_pcm() {
         let data = b64(include_str!("../tests/data/menu_select.ogg.b64"));
         let pcm = decode(&data).unwrap_or_else(|error| panic!("decode menu_select: {error:?}"));
