@@ -37,6 +37,7 @@ pub struct Save {
     actor_id: u16,
     actor_version: u16,
     money: u32,
+    money_offset: usize,
     game_time: u64,
     time_factor: f32,
     normal_time_factor: f32,
@@ -53,6 +54,8 @@ pub struct InventoryItem {
     pub category: String,
     /// Stack size, when the object layout proves one.
     pub count: Option<u16>,
+    pub(crate) state_count_offset: Option<usize>,
+    pub(crate) update_count_offset: Option<usize>,
     /// Placement name; `None` means the reader did not prove placement.
     pub placement: Option<String>,
 }
@@ -151,7 +154,7 @@ impl Save {
                 format.id()
             )));
         }
-        let money = read_actor_money(container.image(), &actor)?;
+        let (money, money_offset) = read_actor_money(container.image(), &actor)?;
 
         Ok(Self {
             format,
@@ -160,6 +163,7 @@ impl Save {
             actor_id: actor.object_id,
             actor_version: actor.version,
             money,
+            money_offset,
             game_time,
             time_factor,
             normal_time_factor,
@@ -219,6 +223,22 @@ impl Save {
         Ok(self.money)
     }
 
+    pub(crate) const fn actor_id(&self) -> u16 {
+        self.actor_id
+    }
+
+    pub(crate) fn raw_image(&self) -> &[u8] {
+        self.container.image()
+    }
+
+    pub(crate) const fn money_offset(&self) -> usize {
+        self.money_offset
+    }
+
+    pub(crate) fn repack(&self, raw: &[u8]) -> Result<sse_core::SaveBuffer> {
+        self.container.repack(raw)
+    }
+
     /// Actor-owned inventory entries.
     pub fn inventory(&self) -> Result<Vec<InventoryItem>> {
         let mut items = Vec::new();
@@ -227,11 +247,14 @@ impl Save {
                 continue;
             }
             let placement = read_placement(self.container.image(), record)?;
+            let stack = read_ammo_count(self.container.image(), record);
             items.push(InventoryItem {
                 handle: record.object_id,
                 section: record.name.clone(),
                 category: category_for_name(&record.name).to_owned(),
-                count: read_ammo_count(self.container.image(), record),
+                count: stack.map(|value| value.0),
+                state_count_offset: stack.map(|value| value.1),
+                update_count_offset: stack.map(|value| value.2),
                 placement,
             });
         }
@@ -450,7 +473,7 @@ fn parse_spawn(packet: &[u8], packet_offset: usize) -> Result<ObjectRecord> {
     })
 }
 
-fn read_actor_money(raw: &[u8], actor: &ObjectRecord) -> Result<u32> {
+fn read_actor_money(raw: &[u8], actor: &ObjectRecord) -> Result<(u32, usize)> {
     let state_end = actor
         .state_offset
         .checked_add(actor.state_length)
@@ -483,7 +506,11 @@ fn read_actor_money(raw: &[u8], actor: &ObjectRecord) -> Result<u32> {
     if actor.version <= 62 {
         return Err(Error::damaged("X-Ray actor version has no supported wallet field"));
     }
-    reader.u32()
+    let offset = actor
+        .state_offset
+        .checked_add(reader.position())
+        .ok_or_else(|| Error::damaged("X-Ray actor money offset overflow"))?;
+    Ok((reader.u32()?, offset))
 }
 
 fn skip_dynamic_visual(reader: &mut Cursor<'_>, version: u16) -> Result<()> {
@@ -558,7 +585,7 @@ fn skip_string_vector(reader: &mut Cursor<'_>) -> Result<()> {
     Ok(())
 }
 
-fn read_ammo_count(raw: &[u8], record: &ObjectRecord) -> Option<u16> {
+fn read_ammo_count(raw: &[u8], record: &ObjectRecord) -> Option<(u16, usize, usize)> {
     if !record.name.starts_with("ammo_") && !record.name.to_ascii_lowercase().starts_with("ammo_") {
         return None;
     }
@@ -572,7 +599,16 @@ fn read_ammo_count(raw: &[u8], record: &ObjectRecord) -> Option<u16> {
     if record.version > 123 {
         skip_string_vector(&mut reader).ok()?;
     }
-    reader.u16().ok()
+    let state_count_offset = record.state_offset.checked_add(reader.position())?;
+    let count = reader.u16().ok()?;
+    if record.update_length < 5 {
+        return None;
+    }
+    let update_end = record.update_offset.checked_add(record.update_length)?;
+    let update_count_offset = update_end.checked_sub(std::mem::size_of::<u16>())?;
+    let update_count = raw.get(update_count_offset..update_end)?;
+    <[u8; 2]>::try_from(update_count).ok()?;
+    Some((count, state_count_offset, update_count_offset))
 }
 
 fn read_placement(raw: &[u8], record: &ObjectRecord) -> Result<Option<String>> {

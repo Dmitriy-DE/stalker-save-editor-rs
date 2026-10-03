@@ -20,6 +20,7 @@ dependencies = [
  "sse-core",
  "sse-fixes",
  "sse-lint",
+ "sse-storage",
  "sse-update",
  "sse-xray",
 ]

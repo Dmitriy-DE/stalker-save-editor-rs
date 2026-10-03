@@ -82,6 +82,24 @@ impl Container {
             .get(chunk.offset..end)
             .ok_or_else(|| Error::damaged("X-Ray chunk range is outside the image"))
     }
+
+    pub(crate) fn repack(&self, raw: &[u8]) -> Result<SaveBuffer> {
+        if raw.is_empty() || raw.len() > MAXIMUM_UNPACKED_SIZE {
+            return Err(Error::Refused(format!("invalid X-Ray image size {}", raw.len())));
+        }
+        let unpacked_size = u32::try_from(raw.len())
+            .map_err(|_| Error::Refused("X-Ray image size does not fit the container header".to_owned()))?;
+        let compressed = sse_codecs::lzo1x::compress(raw);
+        let packed_size = 12_usize
+            .checked_add(compressed.len())
+            .ok_or_else(|| Error::Refused("packed X-Ray size overflow".to_owned()))?;
+        let mut packed = Vec::with_capacity(packed_size);
+        packed.extend_from_slice(&SIGNATURE.to_le_bytes());
+        packed.extend_from_slice(&self.version.to_le_bytes());
+        packed.extend_from_slice(&unpacked_size.to_le_bytes());
+        packed.extend_from_slice(&compressed);
+        Ok(SaveBuffer::from_vec(packed))
+    }
 }
 
 fn parse_chunks(raw: &[u8]) -> Result<Vec<Chunk>> {
