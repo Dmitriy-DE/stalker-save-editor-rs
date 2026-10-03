@@ -452,10 +452,7 @@ impl Parser {
 
     fn parse_repeated(&mut self) -> Result<Ast> {
         let mut node = self.parse_atom()?;
-        loop {
-            let Some(character) = self.peek() else {
-                break;
-            };
+        while let Some(character) = self.peek() {
             let quantifier = match character {
                 '*' => {
                     self.bump()?;
