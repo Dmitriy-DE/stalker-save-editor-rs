@@ -89,11 +89,7 @@ impl std::fmt::Display for WorkerProcessError {
 impl std::error::Error for WorkerProcessError {}
 
 /// Runs the same executable as a worker and kills it when its deadline expires.
-pub fn run_worker_process(
-    executable: &Path,
-    request: &Request,
-    timeout: Duration,
-) -> Result<Response, WorkerProcessError> {
+fn run_worker_process(executable: &Path, request: &Request, timeout: Duration) -> Result<Response, WorkerProcessError> {
     if timeout.is_zero() {
         return Err(WorkerProcessError::Io(
             "Steam worker timeout must be positive".to_owned(),
@@ -221,4 +217,74 @@ fn poll_child(child: &mut std::process::Child) -> Result<Option<std::process::Ex
 
 fn protocol_error(error: ProtocolError) -> WorkerProcessError {
     WorkerProcessError::Protocol(error.message)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[cfg(unix)]
+    use crate::protocol::Request;
+    #[cfg(unix)]
+    use std::time::Instant;
+
+    #[cfg(unix)]
+    fn temp_dir(label: &str) -> std::path::PathBuf {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        let path = std::env::temp_dir().join(format!("sse-worker-{label}-{}-{nanos}", std::process::id()));
+        assert!(std::fs::create_dir_all(&path).is_ok());
+        path
+    }
+
+    #[cfg(unix)]
+    fn worker_script(directory: &std::path::Path, script: &str) -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = directory.join("worker");
+        assert!(std::fs::write(&path, script).is_ok());
+        let permissions = std::fs::metadata(&path).map(|metadata| metadata.permissions());
+        assert!(permissions.is_ok_and(|mut value| {
+            value.set_mode(0o755);
+            std::fs::set_permissions(&path, value).is_ok()
+        }));
+        path
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn timed_out_worker_returns_uncertain_for_a_write() {
+        let directory = temp_dir("timeout");
+        let worker = worker_script(&directory, "#!/bin/sh\nexec sleep 2\n");
+        let request = Request::Write {
+            app_id: 4500,
+            remote_name: "_appdata_/savedgames/slot.sav".into(),
+            expected_source_sha256: [0_u8; 32],
+            artifact_directory: directory.clone(),
+            output: b"save".to_vec(),
+        };
+        let started = Instant::now();
+        let result = run_worker_process(&worker, &request, Duration::from_millis(40));
+        assert!(matches!(
+            result,
+            Err(WorkerProcessError::Timeout {
+                write_outcome_uncertain: true
+            })
+        ));
+        assert!(started.elapsed() < Duration::from_secs(1));
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn timeout_does_not_join_reader_while_descendant_keeps_stdout_open() {
+        let directory = temp_dir("timeout-descendant");
+        let worker = worker_script(&directory, "#!/bin/sh\nsleep 2 &\nwait\n");
+        let request = Request::List { app_id: 4500 };
+        let started = Instant::now();
+        let result = run_worker_process(&worker, &request, Duration::from_millis(40));
+        assert!(matches!(result, Err(WorkerProcessError::Timeout { .. })));
+        assert!(started.elapsed() < Duration::from_millis(500));
+        let _ = std::fs::remove_dir_all(directory);
+    }
 }

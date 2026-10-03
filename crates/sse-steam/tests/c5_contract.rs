@@ -25,64 +25,6 @@ fn temp_dir(label: &str) -> PathBuf {
     path
 }
 
-#[cfg(unix)]
-#[test]
-fn timed_out_worker_is_killed_and_write_result_is_uncertain() {
-    use std::os::unix::fs::PermissionsExt;
-    use std::time::{Duration, Instant};
-
-    let directory = temp_dir("timeout");
-    let worker = directory.join("slow-worker");
-    assert!(fs::write(&worker, "#!/bin/sh\nexec sleep 2\n").is_ok());
-    let permissions = fs::metadata(&worker).map(|metadata| metadata.permissions());
-    assert!(permissions.is_ok_and(|mut value| {
-        value.set_mode(0o755);
-        fs::set_permissions(&worker, value).is_ok()
-    }));
-    let request = Request::Write {
-        app_id: 4500,
-        remote_name: "_appdata_/savedgames/slot.sav".into(),
-        expected_source_sha256: [0_u8; 32],
-        artifact_directory: directory.clone(),
-        output: b"save".to_vec(),
-    };
-    let started = Instant::now();
-    let result = sse_steam::worker::run_worker_process(&worker, &request, Duration::from_millis(40));
-    assert!(matches!(
-        result,
-        Err(sse_steam::worker::WorkerProcessError::Timeout {
-            write_outcome_uncertain: true
-        })
-    ));
-    assert!(started.elapsed() < Duration::from_secs(1));
-    let _ = fs::remove_dir_all(directory);
-}
-
-#[cfg(unix)]
-#[test]
-fn timeout_does_not_wait_for_a_descendant_holding_inherited_stdout() {
-    use std::os::unix::fs::PermissionsExt;
-    use std::time::{Duration, Instant};
-
-    let directory = temp_dir("timeout-descendant");
-    let worker = directory.join("slow-worker");
-    assert!(fs::write(&worker, "#!/bin/sh\nsleep 2 &\nwait\n").is_ok());
-    let permissions = fs::metadata(&worker).map(|metadata| metadata.permissions());
-    assert!(permissions.is_ok_and(|mut value| {
-        value.set_mode(0o755);
-        fs::set_permissions(&worker, value).is_ok()
-    }));
-    let request = Request::List { app_id: 4500 };
-    let started = Instant::now();
-    let result = sse_steam::worker::run_worker_process(&worker, &request, Duration::from_millis(40));
-    assert!(matches!(
-        result,
-        Err(sse_steam::worker::WorkerProcessError::Timeout { .. })
-    ));
-    assert!(started.elapsed() < Duration::from_millis(500));
-    let _ = fs::remove_dir_all(directory);
-}
-
 #[test]
 fn parses_current_and_legacy_steam_library_vdf_paths() {
     let parsed = parse_library_paths(include_str!("../../../fixtures/synthetic/steam-vdf/libraryfolders.vdf"));
