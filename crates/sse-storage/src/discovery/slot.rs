@@ -40,6 +40,32 @@ pub struct SaveDiscoveryResult {
     pub searched_paths: Vec<PathBuf>,
 }
 
+pub(crate) const HEADER_SAMPLE_BYTES: usize = 4096;
+
+pub(crate) fn read_file_header(path: &std::path::Path, max_bytes: usize) -> io::Result<Vec<u8>> {
+    use std::io::Read;
+    let mut file = fs::File::open(path)?;
+    let mut buffer = vec![0_u8; max_bytes];
+    let mut bytes_read = 0_usize;
+    while bytes_read < max_bytes {
+        let chunk = match file.read(buffer.get_mut(bytes_read..).unwrap_or(&mut [])) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        };
+        bytes_read = bytes_read.saturating_add(chunk);
+    }
+    buffer.truncate(bytes_read);
+    Ok(buffer)
+}
+
+struct SlotTarget {
+    path: PathBuf,
+    candidate_game_id: String,
+    candidate_release_id: String,
+}
+
 /// Service that discovers and identifies save slots in candidate directories.
 pub struct SaveSlotDiscovery;
 
@@ -49,8 +75,8 @@ impl SaveSlotDiscovery {
     pub fn discover(candidates: &[SaveDirectoryCandidate]) -> SaveDiscoveryResult {
         let mut searched_paths = Vec::new();
         let mut searched_identities = HashSet::new();
-        let mut slots = Vec::new();
         let mut seen_slots = HashSet::new();
+        let mut found_files = Vec::new();
 
         for candidate in candidates {
             if candidate.directory_path.as_os_str().is_empty() {
@@ -65,7 +91,7 @@ impl SaveSlotDiscovery {
                 continue;
             }
 
-            searched_paths.push(directory.clone());
+            searched_paths.push(identity.clone());
 
             let Ok(entries) = fs::read_dir(&directory) else {
                 continue;
@@ -82,64 +108,72 @@ impl SaveSlotDiscovery {
                 }
 
                 let full_path = normalize_full_path(&file_path);
-                let path_key = full_path.to_string_lossy().to_string();
+                let resolved_path = resolve_links(&full_path);
+                let path_key = resolved_path.to_string_lossy().to_string();
                 if !seen_slots.insert(path_key) {
                     continue;
                 }
 
-                let Ok(metadata) = fs::metadata(&full_path) else {
-                    continue;
-                };
-
-                if !metadata.is_file() {
-                    continue;
-                }
-
-                let size = metadata.len();
-                let mtime = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-
-                if size > MAXIMUM_UNPACKED_SIZE {
-                    slots.push(SaveSlot {
-                        path: full_path,
-                        candidate_game_id: candidate.game_id.clone(),
-                        candidate_release_id: candidate.release_id.clone(),
-                        size,
-                        last_write_time_utc: mtime,
-                        format_id: None,
-                        game_id: None,
-                        detection_error: Some("The file is larger than any save this version can read.".to_string()),
-                    });
-                    continue;
-                }
-
-                match fs::read(&full_path) {
-                    Ok(bytes) => {
-                        let (format_id, game_id, detection_error) = detect_format(&bytes);
-                        slots.push(SaveSlot {
-                            path: full_path,
-                            candidate_game_id: candidate.game_id.clone(),
-                            candidate_release_id: candidate.release_id.clone(),
-                            size,
-                            last_write_time_utc: mtime,
-                            format_id,
-                            game_id,
-                            detection_error,
-                        });
-                    }
-                    Err(err) => {
-                        slots.push(SaveSlot {
-                            path: full_path,
-                            candidate_game_id: candidate.game_id.clone(),
-                            candidate_release_id: candidate.release_id.clone(),
-                            size,
-                            last_write_time_utc: mtime,
-                            format_id: None,
-                            game_id: None,
-                            detection_error: Some(format_io_error(&err)),
-                        });
-                    }
-                }
+                found_files.push(SlotTarget {
+                    path: resolved_path,
+                    candidate_game_id: candidate.game_id.clone(),
+                    candidate_release_id: candidate.release_id.clone(),
+                });
             }
+        }
+
+        if found_files.is_empty() {
+            return SaveDiscoveryResult {
+                slots: Vec::new(),
+                searched_paths,
+            };
+        }
+
+        let max_workers = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4)
+            .clamp(1, 8);
+        let num_workers = max_workers.min(found_files.len());
+        let chunk_size = found_files
+            .len()
+            .checked_add(num_workers.saturating_sub(1))
+            .and_then(|sum| sum.checked_div(num_workers))
+            .unwrap_or(1)
+            .max(1);
+
+        let mut slots = Vec::with_capacity(found_files.len());
+
+        if num_workers <= 1 {
+            for target in &found_files {
+                slots.push(scan_single_slot(
+                    &target.path,
+                    &target.candidate_game_id,
+                    &target.candidate_release_id,
+                ));
+            }
+        } else {
+            let chunks: Vec<&[SlotTarget]> = found_files.chunks(chunk_size).collect();
+            std::thread::scope(|s| {
+                let mut handles = Vec::with_capacity(chunks.len());
+                for chunk in chunks {
+                    handles.push(s.spawn(move || {
+                        let mut local_slots = Vec::with_capacity(chunk.len());
+                        for target in chunk {
+                            local_slots.push(scan_single_slot(
+                                &target.path,
+                                &target.candidate_game_id,
+                                &target.candidate_release_id,
+                            ));
+                        }
+                        local_slots
+                    }));
+                }
+                for handle in handles {
+                    if let Ok(mut batch) = handle.join() {
+                        slots.append(&mut batch);
+                    }
+                }
+            });
         }
 
         slots.sort_by(|left, right| {
@@ -152,6 +186,64 @@ impl SaveSlotDiscovery {
         });
 
         SaveDiscoveryResult { slots, searched_paths }
+    }
+}
+
+fn scan_single_slot(path: &std::path::Path, candidate_game_id: &str, candidate_release_id: &str) -> SaveSlot {
+    let Ok(metadata) = fs::metadata(path) else {
+        return SaveSlot {
+            path: path.to_path_buf(),
+            candidate_game_id: candidate_game_id.to_string(),
+            candidate_release_id: candidate_release_id.to_string(),
+            size: 0,
+            last_write_time_utc: SystemTime::UNIX_EPOCH,
+            format_id: None,
+            game_id: None,
+            detection_error: Some("Unable to read file metadata".to_string()),
+        };
+    };
+
+    let size = metadata.len();
+    let mtime = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+
+    if size > MAXIMUM_UNPACKED_SIZE {
+        return SaveSlot {
+            path: path.to_path_buf(),
+            candidate_game_id: candidate_game_id.to_string(),
+            candidate_release_id: candidate_release_id.to_string(),
+            size,
+            last_write_time_utc: mtime,
+            format_id: None,
+            game_id: None,
+            detection_error: Some("The file is larger than any save this version can read.".to_string()),
+        };
+    }
+
+    match read_file_header(path, HEADER_SAMPLE_BYTES) {
+        Ok(header_bytes) => {
+            let (format_id, game_id, detection_error) =
+                detect_format_with_context(&header_bytes, Some(path), Some(candidate_release_id));
+            SaveSlot {
+                path: path.to_path_buf(),
+                candidate_game_id: candidate_game_id.to_string(),
+                candidate_release_id: candidate_release_id.to_string(),
+                size,
+                last_write_time_utc: mtime,
+                format_id,
+                game_id,
+                detection_error,
+            }
+        }
+        Err(err) => SaveSlot {
+            path: path.to_path_buf(),
+            candidate_game_id: candidate_game_id.to_string(),
+            candidate_release_id: candidate_release_id.to_string(),
+            size,
+            last_write_time_utc: mtime,
+            format_id: None,
+            game_id: None,
+            detection_error: Some(format_io_error(&err)),
+        },
     }
 }
 
@@ -172,12 +264,20 @@ fn format_io_error(err: &io::Error) -> String {
 /// Detects the format and game family of save file bytes.
 #[must_use]
 pub fn detect_format(bytes: &[u8]) -> (Option<String>, Option<String>, Option<String>) {
-    if let Some(format_id) = detect_xray(bytes) {
+    detect_format_with_context(bytes, None, None)
+}
+
+pub(crate) fn detect_format_with_context(
+    bytes: &[u8],
+    path: Option<&std::path::Path>,
+    candidate_release_id: Option<&str>,
+) -> (Option<String>, Option<String>, Option<String>) {
+    if let Some(format_id) = detect_xray(bytes, path, candidate_release_id) {
         let game_id = family_for_format(&format_id);
         return (Some(format_id), game_id, None);
     }
 
-    if detect_stalker2(bytes) {
+    if detect_stalker2(bytes, path, candidate_release_id) {
         return (Some("stalker2".to_string()), Some("stalker2".to_string()), None);
     }
 
@@ -188,7 +288,7 @@ pub fn detect_format(bytes: &[u8]) -> (Option<String>, Option<String>, Option<St
     )
 }
 
-fn detect_xray(bytes: &[u8]) -> Option<String> {
+fn detect_xray(bytes: &[u8], path: Option<&std::path::Path>, candidate_release_id: Option<&str>) -> Option<String> {
     if bytes.len() < 12 {
         return None;
     }
@@ -209,11 +309,17 @@ fn detect_xray(bytes: &[u8]) -> Option<String> {
         return None;
     }
 
-    let unpacked_size = usize::try_from(unpacked_size_u32).ok()?;
     let payload = bytes.get(12..)?;
-    let raw = sse_codecs::lzo1x::decompress(payload, unpacked_size).ok()?;
+    let fast_alife = extract_alife_version(payload);
 
-    let (alife_version, object_data) = parse_xray_chunks(&raw)?;
+    let alife_version = if let Some(av) = fast_alife {
+        av
+    } else {
+        let unpacked_size = usize::try_from(unpacked_size_u32).ok()?;
+        let raw = sse_codecs::lzo1x::decompress(payload, unpacked_size).ok()?;
+        let (av, _) = parse_xray_chunks(&raw)?;
+        av
+    };
 
     // Check Original formats
     if container_version == 3 && alife_version == 3 {
@@ -231,17 +337,74 @@ fn detect_xray(bytes: &[u8]) -> Option<String> {
         return Some("stalker-soc-ee".to_string());
     }
     if container_version == 6 && alife_version == 54 {
-        let has_marsh = contains_subslice(object_data, b"marsh");
-        let has_zaton = contains_subslice(object_data, b"zaton");
-        if has_marsh && !has_zaton {
-            return Some("stalker-cs-ee".to_string());
-        }
-        if has_zaton && !has_marsh {
+        let file_name = path.and_then(|p| p.file_name()).and_then(|n| n.to_str()).unwrap_or("");
+        let lower = file_name.to_ascii_lowercase();
+
+        if lower.ends_with(".scop") || candidate_release_id == Some("stalker-cop-ee") {
             return Some("stalker-cop-ee".to_string());
         }
+        if lower.ends_with(".scs") || candidate_release_id == Some("stalker-cs-ee") {
+            return Some("stalker-cs-ee".to_string());
+        }
+
+        // If whole file is available and decompresses, check object chunk
+        if let Ok(unpacked_size) = usize::try_from(unpacked_size_u32) {
+            if let Ok(raw) = sse_codecs::lzo1x::decompress(payload, unpacked_size) {
+                if let Some((_, object_data)) = parse_xray_chunks(&raw) {
+                    let has_marsh = contains_subslice(object_data, b"marsh");
+                    let has_zaton = contains_subslice(object_data, b"zaton");
+                    if has_marsh && !has_zaton {
+                        return Some("stalker-cs-ee".to_string());
+                    }
+                    if has_zaton && !has_marsh {
+                        return Some("stalker-cop-ee".to_string());
+                    }
+                }
+            }
+        }
+
+        // Default to stalker-cop-ee for Enhanced Edition version 6/54
+        return Some("stalker-cop-ee".to_string());
     }
 
     None
+}
+
+fn extract_alife_version(payload: &[u8]) -> Option<u32> {
+    let mut pos = 0_usize;
+    if payload.len() >= 5 && payload.first().copied() == Some(17) {
+        pos = pos.saturating_add(2);
+    }
+    let cmd = *payload.get(pos)?;
+    pos = pos.saturating_add(1);
+    let lit_len = if cmd > 17 {
+        usize::from(cmd.saturating_sub(17))
+    } else if cmd < 16 {
+        if cmd == 0 {
+            while payload.get(pos).copied() == Some(0) {
+                pos = pos.saturating_add(1);
+            }
+            let next_byte = *payload.get(pos)?;
+            pos = pos.saturating_add(1);
+            15_usize.saturating_add(usize::from(next_byte))
+        } else {
+            usize::from(cmd)
+        }
+    } else {
+        return None;
+    };
+
+    let literals = payload.get(pos..pos.checked_add(lit_len)?)?;
+    if literals.len() < 12 {
+        return None;
+    }
+    let chunk_type = read_u32_le(literals, 0)?;
+    let chunk_size = read_u32_le(literals, 4)?;
+    if chunk_type == 0 && chunk_size == 4 {
+        read_u32_le(literals, 8)
+    } else {
+        None
+    }
 }
 
 fn parse_xray_chunks(raw: &[u8]) -> Option<(u32, &[u8])> {
@@ -275,37 +438,48 @@ fn parse_xray_chunks(raw: &[u8]) -> Option<(u32, &[u8])> {
     }
 }
 
-fn detect_stalker2(bytes: &[u8]) -> bool {
+fn detect_stalker2(bytes: &[u8], path: Option<&std::path::Path>, candidate_release_id: Option<&str>) -> bool {
     if bytes.len() < 8 {
         return false;
     }
 
-    let unpacked_size = match read_u32_le(bytes, 0) {
-        Some(v) => v,
+    let magic = match read_u32_le(bytes, 0) {
+        Some(m) => m,
         None => return false,
     };
+    if magic == XRAY_MAGIC {
+        return false;
+    }
 
+    let unpacked_size = magic;
     if unpacked_size == 0 || u64::from(unpacked_size) > MAXIMUM_UNPACKED_SIZE {
         return false;
     }
 
-    let checksum_offset = match bytes.len().checked_sub(4) {
-        Some(pos) => pos,
-        None => return false,
-    };
+    if bytes.len() >= 8 {
+        if let Some(pos) = bytes.len().checked_sub(4) {
+            if let Some(stored_crc) = read_u32_le(bytes, pos) {
+                if let Some(body) = bytes.get(..pos) {
+                    if sse_codecs::crc32::crc32(body) == stored_crc {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
 
-    let stored_crc = match read_u32_le(bytes, checksum_offset) {
-        Some(v) => v,
-        None => return false,
-    };
+    let file_name = path.and_then(|p| p.file_name()).and_then(|n| n.to_str()).unwrap_or("");
+    let lower = file_name.to_ascii_lowercase();
 
-    let body = match bytes.get(..checksum_offset) {
-        Some(slice) => slice,
-        None => return false,
-    };
+    if candidate_release_id == Some("stalker2") || lower.ends_with(".sav") {
+        if let Some(first_stream_byte) = bytes.get(4) {
+            if *first_stream_byte != 0 {
+                return true;
+            }
+        }
+    }
 
-    let computed_crc = sse_codecs::crc32::crc32(body);
-    stored_crc == computed_crc
+    false
 }
 
 fn family_for_format(format_id: &str) -> Option<String> {
