@@ -158,13 +158,12 @@ mod tests {
         )
         .unwrap_or_else(|error| panic!("{error:?}"));
         let mut c = Clip(String::new());
-        assert!(
-            t.key(Key::Character('x'), Modifiers::default(), Some("Ж"), &mut c)
-                .unwrap_or_else(|error| panic!("{error:?}"))
-        );
+        assert!(t
+            .key(Key::Character('x'), Modifiers::default(), Some("Ж"), &mut c)
+            .unwrap_or_else(|error| panic!("{error:?}")));
         assert_eq!(t.text(), "Ж");
-        assert!(
-            t.key(
+        assert!(t
+            .key(
                 Key::A,
                 Modifiers {
                     ctrl: true,
@@ -173,10 +172,9 @@ mod tests {
                 None,
                 &mut c,
             )
-            .unwrap()
-        );
-        assert!(
-            t.key(
+            .unwrap_or_else(|error| panic!("{error:?}")));
+        assert!(t
+            .key(
                 Key::C,
                 Modifiers {
                     ctrl: true,
@@ -185,15 +183,13 @@ mod tests {
                 None,
                 &mut c,
             )
-            .unwrap()
-        );
+            .unwrap_or_else(|error| panic!("{error:?}")));
         assert_eq!(c.0, "Ж");
     }
 
     #[test]
     fn caret_blinks_only_when_focused() {
-        let mut t = TextInput::new("", EditConfig::default())
-            .unwrap_or_else(|error| panic!("{error:?}"));
+        let mut t = TextInput::new("", EditConfig::default()).unwrap_or_else(|error| panic!("{error:?}"));
         assert!(t.focus(true, 10));
         assert!(!t.tick(100));
         assert!(t.tick(600));
