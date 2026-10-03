@@ -107,12 +107,12 @@ impl Message {
         if decoded.object != self.object || decoded.opcode != self.opcode {
             return Err(Error::damaged("Wayland message metadata disagrees with its header"));
         }
-        WireReader::new(
+        Ok(WireReader::new(
             self.bytes
                 .get(HEADER_BYTES..)
                 .ok_or_else(|| Error::damaged("Wayland argument slice missing"))?,
             &self.fds,
-        )
+        ))
     }
 }
 
@@ -290,7 +290,7 @@ impl<'a> WireReader<'a> {
     /// # Errors
     /// Returns [`Error::Damaged`] on truncated input.
     pub fn int(&mut self) -> Result<i32> {
-        Ok(i32::from_ne_bytes(self.array()?))
+        Ok(i32::from_ne_bytes(self.fixed_array()?))
     }
 
     /// Reads an unsigned integer.
@@ -408,7 +408,7 @@ impl<'a> WireReader<'a> {
         self.take(length).map(|_| ())
     }
 
-    fn array<const N: usize>(&mut self) -> Result<[u8; N]> {
+    fn fixed_array<const N: usize>(&mut self) -> Result<[u8; N]> {
         let raw = self.take(N)?;
         <[u8; N]>::try_from(raw).map_err(|_| Error::damaged("Wayland integer is truncated"))
     }
