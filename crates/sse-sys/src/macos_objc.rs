@@ -43,9 +43,6 @@ unsafe extern "C" {
     pub fn objc_allocateClassPair(s: Class, n: *const c_char, e: usize) -> Class;
     pub fn objc_registerClassPair(c: Class);
     pub fn class_addMethod(c: Class, s: Sel, i: *const c_void, t: *const c_char) -> Bool;
-    pub fn class_addIvar(c: Class, n: *const c_char, size: usize, align: u8, t: *const c_char) -> Bool;
-    pub fn object_getInstanceVariable(o: Id, n: *const c_char, out: *mut *mut c_void) -> *mut c_void;
-    pub fn object_setInstanceVariable(o: Id, n: *const c_char, v: *mut c_void) -> *mut c_void;
     fn objc_msgSend();
 }
 #[link(name = "CoreGraphics", kind = "framework")]
