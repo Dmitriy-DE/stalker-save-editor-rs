@@ -156,11 +156,11 @@ mod tests {
                 filter: InputFilter::Any,
             },
         )
-        .unwrap();
+        .unwrap_or_else(|error| panic!("{error:?}"));
         let mut c = Clip(String::new());
         assert!(
             t.key(Key::Character('x'), Modifiers::default(), Some("Ж"), &mut c)
-                .unwrap()
+                .unwrap_or_else(|error| panic!("{error:?}"))
         );
         assert_eq!(t.text(), "Ж");
         assert!(
@@ -192,7 +192,8 @@ mod tests {
 
     #[test]
     fn caret_blinks_only_when_focused() {
-        let mut t = TextInput::new("", EditConfig::default()).unwrap();
+        let mut t = TextInput::new("", EditConfig::default())
+            .unwrap_or_else(|error| panic!("{error:?}"));
         assert!(t.focus(true, 10));
         assert!(!t.tick(100));
         assert!(t.tick(600));
