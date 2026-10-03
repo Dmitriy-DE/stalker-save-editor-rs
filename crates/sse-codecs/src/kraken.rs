@@ -1051,8 +1051,7 @@ impl<'a> LsbForward<'a> {
         let shift = u32::try_from(self.bit_position.checked_rem(8).unwrap_or_default())
             .map_err(|_| Error::damaged("forward bit shift conversion failed"))?;
         let word = load_forward_word(self.data, byte)?;
-        Ok(u32::try_from(word.checked_shr(shift).unwrap_or_default() & u64::from(u32::MAX))
-            .unwrap_or_default())
+        Ok(u32::try_from(word.checked_shr(shift).unwrap_or_default() & u64::from(u32::MAX)).unwrap_or_default())
     }
     fn consume(&mut self, count: u8) -> Result<()> {
         let end = self
@@ -1092,8 +1091,7 @@ impl<'a> LsbBackward<'a> {
         let shift = u32::try_from(self.bit_position.checked_rem(8).unwrap_or_default())
             .map_err(|_| Error::damaged("backward bit shift conversion failed"))?;
         let word = load_backward_word(self.data, byte_from_end)?;
-        Ok(u32::try_from(word.checked_shr(shift).unwrap_or_default() & u64::from(u32::MAX))
-            .unwrap_or_default())
+        Ok(u32::try_from(word.checked_shr(shift).unwrap_or_default() & u64::from(u32::MAX)).unwrap_or_default())
     }
     fn consume(&mut self, count: u8) -> Result<()> {
         let end = self
@@ -1122,15 +1120,20 @@ fn load_forward_word(data: &[u8], byte: usize) -> Result<u64> {
     }
     let remaining = data.len().saturating_sub(byte);
     if remaining >= 8 {
-        let end = byte.checked_add(8).ok_or_else(|| Error::damaged("forward word range overflow"))?;
+        let end = byte
+            .checked_add(8)
+            .ok_or_else(|| Error::damaged("forward word range overflow"))?;
         let bytes = <[u8; 8]>::try_from(
-            data.get(byte..end).ok_or_else(|| Error::damaged("forward word outside source"))?,
+            data.get(byte..end)
+                .ok_or_else(|| Error::damaged("forward word outside source"))?,
         )
         .map_err(|_| Error::damaged("forward word width"))?;
         return Ok(u64::from_le_bytes(bytes));
     }
     let mut bytes = [0_u8; 8];
-    let tail = data.get(byte..).ok_or_else(|| Error::damaged("forward tail outside source"))?;
+    let tail = data
+        .get(byte..)
+        .ok_or_else(|| Error::damaged("forward tail outside source"))?;
     bytes
         .get_mut(..tail.len())
         .ok_or_else(|| Error::damaged("forward tail destination"))?
