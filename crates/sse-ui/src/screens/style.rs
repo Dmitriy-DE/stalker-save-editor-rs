@@ -159,7 +159,11 @@ pub fn nav(selected: bool) -> Look {
         hover_fill: Some(rgb(theme::BG_HOVER)),
         pressed_fill: Some(rgb(theme::BG_ELEVATED)),
         accent_bar: selected.then(|| (rgb(theme::ACCENT), 3.0)),
-        text: rgb(if selected { theme::TEXT_PRIMARY } else { theme::TEXT_SECONDARY }),
+        text: rgb(if selected {
+            theme::TEXT_PRIMARY
+        } else {
+            theme::TEXT_SECONDARY
+        }),
         hover_text: Some(rgb(theme::TEXT_PRIMARY)),
         ..Look::default()
     }
