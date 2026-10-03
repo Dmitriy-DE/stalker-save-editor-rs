@@ -23,12 +23,7 @@ impl Default for FileFetch {
 }
 
 impl Fetch for FileFetch {
-    fn get(
-        &mut self,
-        url: &str,
-        range_from: u64,
-        sink: &mut dyn FnMut(&[u8]) -> bool,
-    ) -> Result<Response> {
+    fn get(&mut self, url: &str, range_from: u64, sink: &mut dyn FnMut(&[u8]) -> bool) -> Result<Response> {
         let path = file_path(url)?;
         let mut file = File::open(&path)?;
         let size = file.metadata()?.len();
@@ -41,9 +36,7 @@ impl Fetch for FileFetch {
         }
         let remaining = size.saturating_sub(range_from);
         if remaining > self.max_bytes {
-            return Err(Error::Refused(
-                "file response exceeds size limit".to_owned(),
-            ));
+            return Err(Error::Refused("file response exceeds size limit".to_owned()));
         }
         file.seek(SeekFrom::Start(range_from))?;
         let mut buffer = [0u8; 64 * 1024];
@@ -54,15 +47,10 @@ impl Fetch for FileFetch {
                 break;
             }
             delivered = delivered
-                .checked_add(
-                    u64::try_from(read)
-                        .map_err(|_| Error::Refused("file chunk too large".to_owned()))?,
-                )
+                .checked_add(u64::try_from(read).map_err(|_| Error::Refused("file chunk too large".to_owned()))?)
                 .ok_or_else(|| Error::Refused("file response size overflow".to_owned()))?;
             if delivered > self.max_bytes {
-                return Err(Error::Refused(
-                    "file response exceeds size limit".to_owned(),
-                ));
+                return Err(Error::Refused("file response exceeds size limit".to_owned()));
             }
             if !sink(buffer.get(..read).unwrap_or_default()) {
                 return Err(Error::Refused("fetch cancelled by sink".to_owned()));
@@ -111,8 +99,7 @@ impl Fetch for MemoryFetch {
             .entries
             .get(url)
             .ok_or_else(|| Error::System("memory URL not found".to_owned()))?;
-        let start = usize::try_from(range_from)
-            .map_err(|_| Error::Refused("range is too large".to_owned()))?;
+        let start = usize::try_from(range_from).map_err(|_| Error::Refused("range is too large".to_owned()))?;
         if start > body.len() {
             return Ok(Response {
                 status: 416,
@@ -121,12 +108,9 @@ impl Fetch for MemoryFetch {
             });
         }
         let data = body.get(start..).unwrap_or_default();
-        let length = u64::try_from(data.len())
-            .map_err(|_| Error::Refused("memory response too large".to_owned()))?;
+        let length = u64::try_from(data.len()).map_err(|_| Error::Refused("memory response too large".to_owned()))?;
         if length > self.max_bytes {
-            return Err(Error::Refused(
-                "memory response exceeds size limit".to_owned(),
-            ));
+            return Err(Error::Refused("memory response exceeds size limit".to_owned()));
         }
         for chunk in data.chunks(64 * 1024) {
             if !sink(chunk) {
@@ -170,8 +154,7 @@ fn file_path(url: &str) -> Result<PathBuf> {
             position = position.saturating_add(1);
         }
     }
-    let text = String::from_utf8(bytes)
-        .map_err(|_| Error::Refused("file URL is not UTF-8".to_owned()))?;
+    let text = String::from_utf8(bytes).map_err(|_| Error::Refused("file URL is not UTF-8".to_owned()))?;
     #[cfg(target_os = "windows")]
     let text = if text.starts_with('/') && text.as_bytes().get(2) == Some(&b':') {
         text.get(1..).unwrap_or_default().to_owned()
@@ -225,14 +208,11 @@ mod tests {
             .unwrap_or_default()
             .as_nanos();
         let path = std::env::temp_dir().join(format!("sse fetch {stamp}.bin"));
-        fs::write(&path, b"0123456789")
-            .unwrap_or_else(|error| panic!("write fixture: {error}"));
+        fs::write(&path, b"0123456789").unwrap_or_else(|error| panic!("write fixture: {error}"));
         #[cfg(target_os = "windows")]
         let url = format!(
             "file:///{}",
-            path.to_string_lossy()
-                .replace('\\', "/")
-                .replace(' ', "%20")
+            path.to_string_lossy().replace('\\', "/").replace(' ', "%20")
         );
         #[cfg(not(target_os = "windows"))]
         let url = format!("file://{}", path.to_string_lossy().replace(' ', "%20"));
