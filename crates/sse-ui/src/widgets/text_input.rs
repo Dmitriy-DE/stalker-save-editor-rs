@@ -17,7 +17,7 @@ impl TextInput{
  #[must_use] pub const fn caret_visible(&self)->bool{self.focused&&self.caret_visible}
  pub fn focus(&mut self,focused:bool,now_ms:u64)->bool{let changed=self.focused!=focused;self.focused=focused;self.caret_visible=focused;self.last_blink_ms=now_ms;changed}
  pub fn tick(&mut self,now_ms:u64)->bool{if !self.focused{return false;}if now_ms.saturating_sub(self.last_blink_ms)<BLINK_MS{return false;}self.last_blink_ms=now_ms;self.caret_visible=!self.caret_visible;true}
- pub fn mouse(&mut self,grapheme:usize,clicks:u8,shift:bool){let kind=match clicks{2=>MouseSelect::Word,3..=>MouseSelect::Line,_=>MouseSelect::Caret};self.model.mouse_select(grapheme,kind,shift);self.caret_visible=true;}
+ pub fn mouse(&mut self,grapheme:usize,clicks:u8,shift:bool){let kind=match clicks{2=>MouseSelect::Word,3..=u8::MAX=>MouseSelect::Line,_=>MouseSelect::Caret};self.model.mouse_select(grapheme,kind,shift);self.caret_visible=true;}
  /// text is the platform WindowEvent::Key.text payload, preserving keyboard layout and composed text.
  pub fn key<C:Clipboard>(&mut self,key:Key,modifiers:Modifiers,text:Option<&str>,clipboard:&mut C)->Result<bool>{
    self.caret_visible=true;
