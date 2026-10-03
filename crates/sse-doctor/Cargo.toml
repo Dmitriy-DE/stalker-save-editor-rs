@@ -1,0 +1,13 @@
+[package]
+name = "sse-doctor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+sse-core = { path = "../sse-core" }
+sse-xray = { path = "../sse-xray" }
+
+[lints]
+workspace = true

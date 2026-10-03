@@ -3,6 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -15,7 +16,7 @@ mod fixes;
 mod lint;
 mod update;
 
-const USAGE: &str = "Usage: stalker-save <version|info|inventory|set-money|set-stack|edit|backups|fixes|update|lint|audit> ...\n\
+const USAGE: &str = "Usage: stalker-save <version|info|inventory|set-money|set-stack|edit|doctor|backups|fixes|update|lint|audit> ...\n\
 Exit codes: 0 done, 2 wrong arguments, 3 refused (unsupported or unsafe), 4 unreadable or damaged input, 5 file or system error.";
 
 fn main() -> ExitCode {
@@ -43,6 +44,33 @@ fn run(arguments: &[String]) -> u8 {
         Some("audit") => {
             eprintln!("Error: audit requires a file containing one save path per line. {USAGE}");
             sse_core::ExitCode::Usage as u8
+        }
+        Some("doctor")
+            if (arguments.len() == 3 || (arguments.len() == 4 && is_json(arguments)))
+                && arguments.get(1).map(String::as_str) == Some("save") =>
+        {
+            report(doctor_save(arguments.get(2), is_json(arguments)))
+        }
+        Some("doctor")
+            if (arguments.len() == 3
+                || (arguments.len() == 4 && (is_json(arguments) || arguments.get(3).is_some()))
+                || (arguments.len() == 5 && is_json(arguments)))
+                && arguments.get(1).map(String::as_str) == Some("crash") =>
+        {
+            let game = arguments.get(3).filter(|value| value.as_str() != "--json");
+            report(doctor_crash(arguments.get(2), game, is_json(arguments)))
+        }
+        Some("doctor")
+            if (arguments.len() == 4 || (arguments.len() == 5 && is_json(arguments)))
+                && arguments.get(1).map(String::as_str) == Some("game") =>
+        {
+            report(doctor_game(arguments.get(2), arguments.get(3), is_json(arguments)))
+        }
+        Some("doctor")
+            if (arguments.len() == 3 || (arguments.len() == 4 && is_json(arguments)))
+                && arguments.get(1).map(String::as_str) == Some("quests") =>
+        {
+            report(doctor_quests(arguments.get(2), is_json(arguments)))
         }
         Some("set-money" | "set-stack" | "edit") => run_write(arguments),
         Some("backups") => run_backups(arguments.get(1..).unwrap_or_default()),
@@ -1323,5 +1351,378 @@ mod write_tests {
             fs::read(&output).expect("removal output"),
             include_bytes!("../../../fixtures/synthetic/writer-delete/xray-delete-soc-expected.sav")
         );
+    }
+}
+
+fn is_json(arguments: &[String]) -> bool {
+    arguments.last().map(String::as_str) == Some("--json")
+}
+
+fn doctor_save(path: Option<&String>, json: bool) -> sse_core::Result<()> {
+    let path = path.ok_or_else(|| Error::damaged("missing save path"))?;
+    let packed = SaveBuffer::read(Path::new(path))?;
+    let report = sse_doctor::analyze_save(packed.as_slice());
+    if json {
+        println!("{}", json_save_report(&report));
+        if report.status == sse_doctor::SaveDoctorStatus::Error {
+            return Err(Error::damaged("save structure could not be validated"));
+        }
+        return Ok(());
+    }
+    println!("Save Doctor: {:?}", report.status);
+    println!("Format: {}", report.format_id.unwrap_or("unknown"));
+    println!(
+        "Objects: {}",
+        report
+            .object_count
+            .map_or_else(|| "unknown".to_owned(), |count| count.to_string())
+    );
+    println!(
+        "Inventory objects: {}",
+        report
+            .inventory_count
+            .map_or_else(|| "unknown".to_owned(), |count| count.to_string())
+    );
+    for finding in &report.findings {
+        println!(
+            "{:?} [{}] {}: {}",
+            finding.severity, finding.id, finding.looked_at, finding.found
+        );
+    }
+    if report.status == sse_doctor::SaveDoctorStatus::Error {
+        let detail = report.findings.first().map_or_else(
+            || "save structure could not be validated".to_owned(),
+            |finding| finding.found.clone(),
+        );
+        return Err(Error::damaged(detail));
+    }
+    Ok(())
+}
+
+fn doctor_crash(path: Option<&String>, game: Option<&String>, json: bool) -> sse_core::Result<()> {
+    let path = path.ok_or_else(|| Error::damaged("missing crash-log path"))?;
+    let game = game.map(String::as_str);
+    let analysis = sse_doctor::analyze_crash_file(Path::new(path), game)?;
+    if json {
+        println!("{}", json_crash_analysis(&analysis));
+        return Ok(());
+    }
+    println!("Crash kind: {:?}", analysis.kind);
+    println!("Summary: {}", analysis.summary);
+    if let Some(issue) = analysis.known_issue {
+        println!("Known issue: {} — {}", issue.id, issue.title);
+        println!("Advice: {:?}", issue.advice);
+    } else {
+        println!("Known issue: none");
+    }
+    Ok(())
+}
+
+fn doctor_game(target: Option<&String>, directory: Option<&String>, json: bool) -> sse_core::Result<()> {
+    let target = target
+        .and_then(|id| sse_doctor::GameTarget::parse(id))
+        .ok_or_else(|| Error::Refused("unknown game target".to_owned()))?;
+    let directory = directory.ok_or_else(|| Error::damaged("missing game directory"))?;
+    let report = sse_doctor::analyze_game_install_from_steam(target, Path::new(directory));
+    if json {
+        println!("{}", json_game_report(&report));
+        if report.status == sse_doctor::SaveDoctorStatus::Error {
+            return Err(Error::damaged(
+                "selected directory does not match the requested game target",
+            ));
+        }
+        return Ok(());
+    }
+    println!("Game Doctor: {:?}", report.status);
+    println!("Target: {}", target.id());
+    println!("Directory: {}", report.directory.display());
+    println!("Game marker: {}", report.marker_found);
+    println!("Build fingerprint: {:?}", report.build.status);
+    for finding in &report.findings {
+        println!(
+            "{:?} [{}] {}: {}",
+            finding.severity, finding.id, finding.looked_at, finding.found
+        );
+    }
+    if report.status == sse_doctor::SaveDoctorStatus::Error {
+        return Err(Error::damaged(
+            "selected directory does not match the requested game target",
+        ));
+    }
+    Ok(())
+}
+
+fn doctor_quests(path: Option<&String>, json: bool) -> sse_core::Result<()> {
+    let path = path.ok_or_else(|| Error::damaged("missing save path"))?;
+    let packed = SaveBuffer::read(Path::new(path))?;
+    let report = sse_doctor::analyze_quests(packed.as_slice());
+    if json {
+        println!("{}", json_quest_report(&report));
+        if report.status == sse_doctor::SaveDoctorStatus::Error {
+            return Err(Error::damaged(report.summary));
+        }
+        return Ok(());
+    }
+    println!("Quest Doctor: {:?}", report.status);
+    println!("Format: {}", report.format_id.unwrap_or("unknown"));
+    println!("Summary: {}", report.summary);
+    for state in &report.states {
+        println!("{:?} [{}] {}: {}", state.status, state.id, state.title, state.detail);
+    }
+    if report.status == sse_doctor::SaveDoctorStatus::Error {
+        return Err(Error::damaged(report.summary));
+    }
+    Ok(())
+}
+
+// Temporary local JSON string escaping; replace with sse_codecs::json once that codec lands.
+fn json_string(value: &str) -> String {
+    let mut output = String::with_capacity(value.len().saturating_add(2));
+    output.push('"');
+    for character in value.chars() {
+        match character {
+            '"' => output.push_str("\\\""),
+            '\\' => output.push_str("\\\\"),
+            '\n' => output.push_str("\\n"),
+            '\r' => output.push_str("\\r"),
+            '\t' => output.push_str("\\t"),
+            '\u{0008}' => output.push_str("\\b"),
+            '\u{000c}' => output.push_str("\\f"),
+            control if control.is_control() => {
+                let _ = write!(output, "\\u{:04x}", control as u32);
+            }
+            character => output.push(character),
+        }
+    }
+    output.push('"');
+    output
+}
+
+fn json_optional_str(value: Option<&str>) -> String {
+    value.map_or_else(|| "null".to_owned(), json_string)
+}
+
+fn json_findings(findings: &[sse_doctor::RuleFinding]) -> String {
+    findings
+        .iter()
+        .map(|finding| {
+            let repairs = finding.repair.as_ref().map_or_else(
+                || "null".to_owned(),
+                |change_set| {
+                    let changes = change_set
+                        .changes()
+                        .iter()
+                        .map(json_change)
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    format!("[{changes}]")
+                },
+            );
+            format!(
+                "{{\"id\":{},\"severity\":{},\"lookedAt\":{},\"found\":{},\"repair\":{repairs}}}",
+                json_string(finding.id),
+                json_string(&format!("{:?}", finding.severity).to_lowercase()),
+                json_string(finding.looked_at),
+                json_string(&finding.found),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn json_save_report(report: &sse_doctor::SaveDoctorReport) -> String {
+    format!(
+        "{{\"status\":{},\"formatId\":{},\"objectCount\":{},\"inventoryCount\":{},\"findings\":[{}]}}",
+        json_string(&format!("{:?}", report.status).to_lowercase()),
+        json_optional_str(report.format_id),
+        report
+            .object_count
+            .map_or_else(|| "null".to_owned(), |value| value.to_string()),
+        report
+            .inventory_count
+            .map_or_else(|| "null".to_owned(), |value| value.to_string()),
+        json_findings(&report.findings),
+    )
+}
+
+fn json_quest_report(report: &sse_doctor::QuestDoctorReport) -> String {
+    let states = report
+        .states
+        .iter()
+        .map(|state| {
+            let references = state.references.iter().map(|value| json_string(value)).collect::<Vec<_>>().join(",");
+            format!(
+                "{{\"id\":{},\"title\":{},\"status\":{},\"reason\":{},\"missingInfo\":{},\"preventingFixId\":{},\"needsPreventingFix\":{},\"detail\":{},\"references\":[{}]}}",
+                json_string(state.id), json_string(state.title),
+                json_string(&format!("{:?}", state.status).to_lowercase()),
+                json_string(state.reason), json_optional_str(state.missing_info),
+                json_optional_str(state.preventing_fix_id), state.needs_preventing_fix,
+                json_string(state.detail), references,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        "{{\"status\":{},\"formatId\":{},\"questStatesAvailable\":{},\"summary\":{},\"states\":[{states}]}}",
+        json_string(&format!("{:?}", report.status).to_lowercase()),
+        json_optional_str(report.format_id),
+        report.quest_states_available,
+        json_string(&report.summary),
+    )
+}
+
+fn json_game_report(report: &sse_doctor::GameDoctorReport) -> String {
+    format!(
+        "{{\"status\":{},\"target\":{},\"directory\":{},\"markerFound\":{},\"build\":{{\"buildId\":{},\"status\":{}}},\"findings\":[{}]}}",
+        json_string(&format!("{:?}", report.status).to_lowercase()),
+        json_string(report.target.id()), json_string(&report.directory.display().to_string()),
+        report.marker_found, json_optional_str(report.build.build_id.as_deref()),
+        json_string(&format!("{:?}", report.build.status).to_lowercase()),
+        json_findings(&report.findings),
+    )
+}
+
+fn json_crash_analysis(analysis: &sse_doctor::CrashLogAnalysis) -> String {
+    let issue = analysis.known_issue.map_or_else(
+        || "null".to_owned(),
+        |issue| {
+            format!(
+                "{{\"id\":{},\"title\":{},\"game\":{},\"advice\":{}}}",
+                json_string(issue.id),
+                json_string(issue.title),
+                json_string(issue.game),
+                json_string(&format!("{:?}", issue.advice).to_lowercase()),
+            )
+        },
+    );
+    format!(
+        "{{\"kind\":{},\"summary\":{},\"knownIssue\":{issue},\"faultingModuleOffset\":{}}}",
+        json_string(&format!("{:?}", analysis.kind).to_lowercase()),
+        json_string(&analysis.summary),
+        json_optional_str(analysis.faulting_module_offset.as_deref()),
+    )
+}
+
+#[cfg(test)]
+mod doctor_tests {
+    use super::{json_string, run};
+
+    const SYNTHETIC_XRAY_SAVE: &[u8] = include_bytes!("../../../fixtures/synthetic/xray-soc.sav");
+
+    #[test]
+    fn doctor_save_accepts_a_supported_synthetic_save() {
+        let path = std::env::temp_dir().join(format!("sse-cli-doctor-{}.sav", std::process::id()));
+        let write = std::fs::write(&path, SYNTHETIC_XRAY_SAVE);
+        assert!(write.is_ok());
+        if write.is_err() {
+            return;
+        }
+        let arguments = vec![
+            "doctor".to_owned(),
+            "save".to_owned(),
+            path.to_string_lossy().into_owned(),
+        ];
+
+        let exit_code = run(&arguments);
+
+        let mut json_arguments = arguments.clone();
+        json_arguments.push("--json".to_owned());
+        let json_exit_code = run(&json_arguments);
+
+        let _ = std::fs::remove_file(path);
+        assert_eq!(exit_code, sse_core::ExitCode::Done as u8);
+        assert_eq!(json_exit_code, sse_core::ExitCode::Done as u8);
+    }
+
+    #[test]
+    fn doctor_crash_accepts_an_explicit_synthetic_log() {
+        let path = std::env::temp_dir().join(format!("sse-cli-doctor-{}.log", std::process::id()));
+        let write = std::fs::write(
+            &path,
+            "! [LUA][ERROR] ERROR: wrong target for storyline quest: logic@work5,gar_smart_terrain_6_3",
+        );
+        assert!(write.is_ok());
+        if write.is_err() {
+            return;
+        }
+        let arguments = vec![
+            "doctor".to_owned(),
+            "crash".to_owned(),
+            path.to_string_lossy().into_owned(),
+            "cs".to_owned(),
+        ];
+
+        let exit_code = run(&arguments);
+
+        let mut json_arguments = arguments.clone();
+        json_arguments.push("--json".to_owned());
+        let json_exit_code = run(&json_arguments);
+
+        let _ = std::fs::remove_file(path);
+        assert_eq!(exit_code, sse_core::ExitCode::Done as u8);
+        assert_eq!(json_exit_code, sse_core::ExitCode::Done as u8);
+    }
+
+    #[test]
+    fn doctor_game_checks_the_explicit_target_and_directory() {
+        let directory = std::env::temp_dir().join(format!("sse-cli-doctor-game-{}", std::process::id()));
+        let setup = (|| -> std::io::Result<()> {
+            std::fs::create_dir_all(&directory)?;
+            std::fs::write(directory.join("fsgame_cs.ltx"), b"$game_data$ = true")
+        })();
+        assert!(setup.is_ok());
+        if setup.is_err() {
+            let _ = std::fs::remove_dir_all(&directory);
+            return;
+        }
+        let arguments = vec![
+            "doctor".to_owned(),
+            "game".to_owned(),
+            "cs".to_owned(),
+            directory.to_string_lossy().into_owned(),
+        ];
+
+        let exit_code = run(&arguments);
+
+        let _ = std::fs::remove_dir_all(&directory);
+        assert_eq!(exit_code, sse_core::ExitCode::Done as u8);
+    }
+
+    #[test]
+    fn doctor_quests_keeps_unreadable_quest_state_unknown() {
+        let path = std::env::temp_dir().join(format!("sse-cli-doctor-quests-{}.sav", std::process::id()));
+        let write = std::fs::write(&path, SYNTHETIC_XRAY_SAVE);
+        assert!(write.is_ok());
+        if write.is_err() {
+            return;
+        }
+        let arguments = vec![
+            "doctor".to_owned(),
+            "quests".to_owned(),
+            path.to_string_lossy().into_owned(),
+        ];
+
+        let exit_code = run(&arguments);
+
+        let _ = std::fs::remove_file(path);
+        assert_eq!(exit_code, sse_core::ExitCode::Done as u8);
+    }
+
+    #[test]
+    fn json_string_escapes_quotes_slashes_and_controls() {
+        assert_eq!(json_string("a\n\"b\\c\u{0001}"), "\"a\\n\\\"b\\\\c\\u0001\"");
+    }
+
+    #[test]
+    fn save_doctor_json_contains_status_counts_and_rule_evidence() {
+        let report = sse_doctor::analyze_save(SYNTHETIC_XRAY_SAVE);
+        let output = super::json_save_report(&report);
+
+        assert!(output.starts_with('{'));
+        assert!(output.ends_with('}'));
+        assert!(output.contains("\"status\":\"ok\""));
+        assert!(output.contains("\"formatId\":\"stalker-soc\""));
+        assert!(output.contains("\"id\":\"semantic-state\""));
+        assert!(output.contains("\"repair\":null"));
     }
 }
