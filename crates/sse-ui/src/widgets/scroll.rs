@@ -119,7 +119,7 @@ mod tests {
         s.set_extent(1000.0, 200.0);
         assert!(s.scroll_to(900.0));
         assert_eq!(s.offset_y(), 800.0);
-        let (y, h) = s.thumb().unwrap();
+        let (y, h) = s.thumb().unwrap_or((0.0, 0.0));
         assert_eq!(y + h, 200.0);
         assert!(!s.scroll_to(900.0));
     }
