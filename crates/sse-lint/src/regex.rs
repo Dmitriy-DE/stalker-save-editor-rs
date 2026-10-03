@@ -259,12 +259,7 @@ impl Compiler {
             }
             Ast::Concat(nodes) => self.compile_concat(nodes),
             Ast::Alternation(nodes) => self.compile_alternation(nodes),
-            Ast::Repeat {
-                node,
-                min,
-                max,
-                greedy,
-            } => self.compile_repeat(node, *min, *max, *greedy),
+            Ast::Repeat { node, min, max, greedy } => self.compile_repeat(node, *min, *max, *greedy),
             Ast::Capture { group, node } => self.compile_capture(*group, node),
         }
     }
@@ -447,7 +442,9 @@ impl Parser {
         if nodes.is_empty() {
             Ok(Ast::Empty)
         } else if nodes.len() == 1 {
-            nodes.pop().ok_or_else(|| self.error("regex concatenation unexpectedly empty"))
+            nodes
+                .pop()
+                .ok_or_else(|| self.error("regex concatenation unexpectedly empty"))
         } else {
             Ok(Ast::Concat(nodes))
         }
@@ -609,9 +606,7 @@ impl Parser {
 
     fn parse_escape(&mut self, in_class: bool) -> Result<Ast> {
         self.expect('\\')?;
-        let escaped = self
-            .peek()
-            .ok_or_else(|| self.error("regex escape is truncated"))?;
+        let escaped = self.peek().ok_or_else(|| self.error("regex escape is truncated"))?;
         self.bump()?;
         let class = |term: ClassTerm, negated: bool| {
             Ast::Atom(Matcher::Class(CharClass {
@@ -1199,8 +1194,8 @@ impl AhoCorasick {
                     return Err(Error::Refused("Aho-Corasick prefilter exceeds node limit".to_owned()));
                 }
                 let next = self.nodes.len();
-                let next_u32 = u32::try_from(next)
-                    .map_err(|_| Error::Refused("Aho-Corasick node id exceeds u32".to_owned()))?;
+                let next_u32 =
+                    u32::try_from(next).map_err(|_| Error::Refused("Aho-Corasick node id exceeds u32".to_owned()))?;
                 self.nodes.push(AcNode::new());
                 let transition = self
                     .nodes
@@ -1210,8 +1205,8 @@ impl AhoCorasick {
                 *transition = next_u32;
                 state = next;
             } else {
-                state = usize::try_from(next_raw)
-                    .map_err(|_| Error::damaged("Aho-Corasick node id does not fit usize"))?;
+                state =
+                    usize::try_from(next_raw).map_err(|_| Error::damaged("Aho-Corasick node id does not fit usize"))?;
             }
         }
         let outputs = self
@@ -1242,7 +1237,8 @@ impl AhoCorasick {
                 .get(state)
                 .map(|node| node.fail)
                 .ok_or_else(|| Error::damaged("Aho-Corasick failure state missing"))?;
-            let failure_index = usize::try_from(failure).map_err(|_| Error::damaged("Aho failure id conversion failed"))?;
+            let failure_index =
+                usize::try_from(failure).map_err(|_| Error::damaged("Aho failure id conversion failed"))?;
             for column in 0..ASCII_TRANSITIONS {
                 let child = self
                     .nodes
@@ -1266,7 +1262,8 @@ impl AhoCorasick {
                     continue;
                 }
 
-                let child_index = usize::try_from(child).map_err(|_| Error::damaged("Aho child id conversion failed"))?;
+                let child_index =
+                    usize::try_from(child).map_err(|_| Error::damaged("Aho child id conversion failed"))?;
                 let fallback = self
                     .nodes
                     .get(failure_index)
@@ -1278,8 +1275,8 @@ impl AhoCorasick {
                 } else {
                     return Err(Error::damaged("Aho child node missing"));
                 }
-                let fallback_index = usize::try_from(fallback)
-                    .map_err(|_| Error::damaged("Aho fallback id conversion failed"))?;
+                let fallback_index =
+                    usize::try_from(fallback).map_err(|_| Error::damaged("Aho fallback id conversion failed"))?;
                 let inherited_outputs = self
                     .nodes
                     .get(fallback_index)
@@ -1355,7 +1352,10 @@ impl Set {
         for pattern in patterns {
             let regex = Regex::with_options(pattern, options)?;
             let index = regexes.len();
-            if let Some(literal) = regex.required_literal().filter(|value| value.is_ascii() && !value.is_empty()) {
+            if let Some(literal) = regex
+                .required_literal()
+                .filter(|value| value.is_ascii() && !value.is_empty())
+            {
                 literals.push((index, literal.to_owned()));
             } else {
                 unfiltered.push(index);
@@ -1490,48 +1490,156 @@ mod tests {
     use std::time::Instant;
 
     const CATALOGUE: [(&str, &str); 47] = [
-        (r"wrong target for storyline quest:\s*logic@work5,\s*gar_smart_terrain_6_3", "wrong target for storyline quest: logic@work5, gar_smart_terrain_6_3"),
+        (
+            r"wrong target for storyline quest:\s*logic@work5,\s*gar_smart_terrain_6_3",
+            "wrong target for storyline quest: logic@work5, gar_smart_terrain_6_3",
+        ),
         (r"Insufficient smart_terrain jobs", "Insufficient smart_terrain jobs"),
         (r"cant find animation for slot", "cant find animation for slot"),
-        (r"sim_squad_generic\.script:\d+:\s*attempt to index field '\?' \(a nil value\)", "sim_squad_generic.script:123: attempt to index field '?' (a nil value)"),
-        (r"pstor_load_all: not registered type N \d+ encountered", "pstor_load_all: not registered type N 123 encountered"),
-        (r"sim_combat\.script:\d+:\s*attempt to index field 'actor' \(a nil value\)", "sim_combat.script:123: attempt to index field 'actor' (a nil value)"),
-        (r"sim_combat\.script:\d+:\s*attempt to index local 'attack_squad_obj'", "sim_combat.script:123: attempt to index local 'attack_squad_obj'"),
-        (r"sim_squad_generic\.script:\d+:\s*attempt to index field 'current_action'", "sim_squad_generic.script:123: attempt to index field 'current_action'"),
-        (r"sim_squad_generic\.script:\d+:\s*attempt to index local 'task' \(a nil value\)", "sim_squad_generic.script:123: attempt to index local 'task' (a nil value)"),
-        (r"se_monster\.script:\d+:\s*attempt to index local 'squad' \(a nil value\)", "se_monster.script:123: attempt to index local 'squad' (a nil value)"),
-        (r"heli_combat\.script:\d+:\s*attempt to perform arithmetic on field 'change_(?:dir|pos)_time'", "heli_combat.script:123: attempt to perform arithmetic on field 'change_dir_time'"),
-        (r"sr_bloodsucker\.script:\d+:\s*attempt to index field 'npc_squad'", "sr_bloodsucker.script:123: attempt to index field 'npc_squad'"),
-        (r"patrol path \[agr_stalker_leader_walk\] is inaccessible", "patrol path [agr_stalker_leader_walk] is inaccessible"),
-        (r"esc_smart_terrain_3_7_walker_1_walk", "esc_smart_terrain_3_7_walker_1_walk"),
+        (
+            r"sim_squad_generic\.script:\d+:\s*attempt to index field '\?' \(a nil value\)",
+            "sim_squad_generic.script:123: attempt to index field '?' (a nil value)",
+        ),
+        (
+            r"pstor_load_all: not registered type N \d+ encountered",
+            "pstor_load_all: not registered type N 123 encountered",
+        ),
+        (
+            r"sim_combat\.script:\d+:\s*attempt to index field 'actor' \(a nil value\)",
+            "sim_combat.script:123: attempt to index field 'actor' (a nil value)",
+        ),
+        (
+            r"sim_combat\.script:\d+:\s*attempt to index local 'attack_squad_obj'",
+            "sim_combat.script:123: attempt to index local 'attack_squad_obj'",
+        ),
+        (
+            r"sim_squad_generic\.script:\d+:\s*attempt to index field 'current_action'",
+            "sim_squad_generic.script:123: attempt to index field 'current_action'",
+        ),
+        (
+            r"sim_squad_generic\.script:\d+:\s*attempt to index local 'task' \(a nil value\)",
+            "sim_squad_generic.script:123: attempt to index local 'task' (a nil value)",
+        ),
+        (
+            r"se_monster\.script:\d+:\s*attempt to index local 'squad' \(a nil value\)",
+            "se_monster.script:123: attempt to index local 'squad' (a nil value)",
+        ),
+        (
+            r"heli_combat\.script:\d+:\s*attempt to perform arithmetic on field 'change_(?:dir|pos)_time'",
+            "heli_combat.script:123: attempt to perform arithmetic on field 'change_dir_time'",
+        ),
+        (
+            r"sr_bloodsucker\.script:\d+:\s*attempt to index field 'npc_squad'",
+            "sr_bloodsucker.script:123: attempt to index field 'npc_squad'",
+        ),
+        (
+            r"patrol path \[agr_stalker_leader_walk\] is inaccessible",
+            "patrol path [agr_stalker_leader_walk] is inaccessible",
+        ),
+        (
+            r"esc_smart_terrain_3_7_walker_1_walk",
+            "esc_smart_terrain_3_7_walker_1_walk",
+        ),
         (r"wrong target for storyline quest", "wrong target for storyline quest"),
-        (r"Insufficient smart_terrain jobs mil_smart_terrain_2_1", "Insufficient smart_terrain jobs mil_smart_terrain_2_1"),
-        (r"Path between \[mil_smart_terrain_7_11\] and \[mil_smart_terrain_7_10\] doesnt exist", "Path between [mil_smart_terrain_7_11] and [mil_smart_terrain_7_10] doesnt exist"),
-        (r"Can't find model file 'dynamics\\equipments\\item_rukzak\.ogf'", "Can't find model file 'dynamics\\equipments\\item_rukzak.ogf'"),
-        (r"xr_kamp\.script:\d+:\s*bad argument #1 to 'random' \(interval is empty\)", "xr_kamp.script:123: bad argument #1 to 'random' (interval is empty)"),
-        (r"sr_robbery\.script:\d+:\s*attempt to index field '\?' \(a nil value\)", "sr_robbery.script:123: attempt to index field '?' (a nil value)"),
-        (r"actor_reaction\.script:\d+:\s*attempt to index local 'manager'", "actor_reaction.script:123: attempt to index local 'manager'"),
-        (r"task_objects\.script:\d+:\s*attempt to index field '\?' \(a nil value\)", "task_objects.script:123: attempt to index field '?' (a nil value)"),
-        (r"bind_anomaly_zone\.script:\d+:\s*attempt to index local 'art'", "bind_anomaly_zone.script:123: attempt to index local 'art'"),
+        (
+            r"Insufficient smart_terrain jobs mil_smart_terrain_2_1",
+            "Insufficient smart_terrain jobs mil_smart_terrain_2_1",
+        ),
+        (
+            r"Path between \[mil_smart_terrain_7_11\] and \[mil_smart_terrain_7_10\] doesnt exist",
+            "Path between [mil_smart_terrain_7_11] and [mil_smart_terrain_7_10] doesnt exist",
+        ),
+        (
+            r"Can't find model file 'dynamics\\equipments\\item_rukzak\.ogf'",
+            "Can't find model file 'dynamics\\equipments\\item_rukzak.ogf'",
+        ),
+        (
+            r"xr_kamp\.script:\d+:\s*bad argument #1 to 'random' \(interval is empty\)",
+            "xr_kamp.script:123: bad argument #1 to 'random' (interval is empty)",
+        ),
+        (
+            r"sr_robbery\.script:\d+:\s*attempt to index field '\?' \(a nil value\)",
+            "sr_robbery.script:123: attempt to index field '?' (a nil value)",
+        ),
+        (
+            r"actor_reaction\.script:\d+:\s*attempt to index local 'manager'",
+            "actor_reaction.script:123: attempt to index local 'manager'",
+        ),
+        (
+            r"task_objects\.script:\d+:\s*attempt to index field '\?' \(a nil value\)",
+            "task_objects.script:123: attempt to index field '?' (a nil value)",
+        ),
+        (
+            r"bind_anomaly_zone\.script:\d+:\s*attempt to index local 'art'",
+            "bind_anomaly_zone.script:123: attempt to index local 'art'",
+        ),
         (r"You are saving too much", "You are saving too much"),
-        (r"patrol path\s*\[esc_smart_terrain_3_7_walker_1_walk\]", "patrol path [esc_smart_terrain_3_7_walker_1_walk]"),
-        (r"patrol path\s*\[red_smart_terrain_3_2_patrol_1_walk\] is inaccessible", "patrol path [red_smart_terrain_3_2_patrol_1_walk] is inaccessible"),
-        (r"patrol path\s*\[agr_stalker_leader_walk\] is inaccessible", "patrol path [agr_stalker_leader_walk] is inaccessible"),
-        (r"Can't find model file 'dynamics\\equipments\\item_rukzak\.ogf'", "Can't find model file 'dynamics\\equipments\\item_rukzak.ogf'"),
-        (r"Unable to give treasure \[gar_treasure_quest_smuggler_weapons\]", "Unable to give treasure [gar_treasure_quest_smuggler_weapons]"),
-        (r"There is no squad \[red_pursuit_bounty_hunters_squad_\d+\] in sim_board", "There is no squad [red_pursuit_bounty_hunters_squad_123] in sim_board"),
-        (r"Path between \[mil_smart_terrain_7_11\] and \[mil_smart_terrain_7_10\] doesnt exist", "Path between [mil_smart_terrain_7_11] and [mil_smart_terrain_7_10] doesnt exist"),
-        (r"xr_gulag\.script:\d+:\s*attempt to index local 'job' \(a nil value\)", "xr_gulag.script:123: attempt to index local 'job' (a nil value)"),
-        (r"heli_combat\.script:\d+:\s*attempt to perform arithmetic on field 'change_(?:dir|pos)_time'", "heli_combat.script:123: attempt to perform arithmetic on field 'change_dir_time'"),
-        (r"xr_kamp\.script:\d+:\s*attempt to index field '\?' \(a nil value\)|get dest Vertex: nil", "xr_kamp.script:123: attempt to index field '?' (a nil value)"),
-        (r"xr_danger\.script:\d+:\s*attempt to index field 'ignore_types' \(a nil value\)", "xr_danger.script:123: attempt to index field 'ignore_types' (a nil value)"),
-        (r"xr_effects\.script:\d+:\s*attempt to index local 'bandit1' \(a nil value\)", "xr_effects.script:123: attempt to index local 'bandit1' (a nil value)"),
+        (
+            r"patrol path\s*\[esc_smart_terrain_3_7_walker_1_walk\]",
+            "patrol path [esc_smart_terrain_3_7_walker_1_walk]",
+        ),
+        (
+            r"patrol path\s*\[red_smart_terrain_3_2_patrol_1_walk\] is inaccessible",
+            "patrol path [red_smart_terrain_3_2_patrol_1_walk] is inaccessible",
+        ),
+        (
+            r"patrol path\s*\[agr_stalker_leader_walk\] is inaccessible",
+            "patrol path [agr_stalker_leader_walk] is inaccessible",
+        ),
+        (
+            r"Can't find model file 'dynamics\\equipments\\item_rukzak\.ogf'",
+            "Can't find model file 'dynamics\\equipments\\item_rukzak.ogf'",
+        ),
+        (
+            r"Unable to give treasure \[gar_treasure_quest_smuggler_weapons\]",
+            "Unable to give treasure [gar_treasure_quest_smuggler_weapons]",
+        ),
+        (
+            r"There is no squad \[red_pursuit_bounty_hunters_squad_\d+\] in sim_board",
+            "There is no squad [red_pursuit_bounty_hunters_squad_123] in sim_board",
+        ),
+        (
+            r"Path between \[mil_smart_terrain_7_11\] and \[mil_smart_terrain_7_10\] doesnt exist",
+            "Path between [mil_smart_terrain_7_11] and [mil_smart_terrain_7_10] doesnt exist",
+        ),
+        (
+            r"xr_gulag\.script:\d+:\s*attempt to index local 'job' \(a nil value\)",
+            "xr_gulag.script:123: attempt to index local 'job' (a nil value)",
+        ),
+        (
+            r"heli_combat\.script:\d+:\s*attempt to perform arithmetic on field 'change_(?:dir|pos)_time'",
+            "heli_combat.script:123: attempt to perform arithmetic on field 'change_dir_time'",
+        ),
+        (
+            r"xr_kamp\.script:\d+:\s*attempt to index field '\?' \(a nil value\)|get dest Vertex: nil",
+            "xr_kamp.script:123: attempt to index field '?' (a nil value)",
+        ),
+        (
+            r"xr_danger\.script:\d+:\s*attempt to index field 'ignore_types' \(a nil value\)",
+            "xr_danger.script:123: attempt to index field 'ignore_types' (a nil value)",
+        ),
+        (
+            r"xr_effects\.script:\d+:\s*attempt to index local 'bandit1' \(a nil value\)",
+            "xr_effects.script:123: attempt to index local 'bandit1' (a nil value)",
+        ),
         (r"dBodyStateValide\(b\)", "dBodyStateValide(b)"),
-        (r"entity not found\.\s*id_parent=\d+\s*id_entity=\d+", "entity not found. id_parent=123 id_entity=123"),
-        (r"(?:SMapLocation|CMapLocation::UpdateSpot) binded to non-existent object", "SMapLocation binded to non-existent object"),
-        (r"there is no specified level in the game graph|There is no proper graph point neighbour", "there is no specified level in the game graph"),
+        (
+            r"entity not found\.\s*id_parent=\d+\s*id_entity=\d+",
+            "entity not found. id_parent=123 id_entity=123",
+        ),
+        (
+            r"(?:SMapLocation|CMapLocation::UpdateSpot) binded to non-existent object",
+            "SMapLocation binded to non-existent object",
+        ),
+        (
+            r"there is no specified level in the game graph|There is no proper graph point neighbour",
+            "there is no specified level in the game graph",
+        ),
         (r"cannot find rank for", "cannot find rank for"),
-        (r"bad argument #2 to 'format' \(string expected, got no value\)", "bad argument #2 to 'format' (string expected, got no value)"),
+        (
+            r"bad argument #2 to 'format' \(string expected, got no value\)",
+            "bad argument #2 to 'format' (string expected, got no value)",
+        ),
         (r"Can't find model file '", "Can't find model file '"),
         (r"Can't open section '", "Can't open section '"),
         (r"Can't find variable \S+ in \[", "Can't find variable token in ["),
@@ -1540,9 +1648,7 @@ mod tests {
     ];
 
     fn ignore_case() -> RegexOptions {
-        RegexOptions {
-            case_insensitive: true,
-        }
+        RegexOptions { case_insensitive: true }
     }
 
     #[test]
@@ -1551,8 +1657,14 @@ mod tests {
             let regex = Regex::with_options(pattern, ignore_case());
             assert!(regex.is_ok(), "compile {pattern}: {regex:?}");
             let regex = regex.unwrap_or_else(|_| unreachable!());
-            assert!(regex.is_match(positive), "positive did not match: {pattern} / {positive}");
-            assert!(!regex.is_match("unrelated diagnostic line that cannot be a catalogue crash"), "negative matched: {pattern}");
+            assert!(
+                regex.is_match(positive),
+                "positive did not match: {pattern} / {positive}"
+            );
+            assert!(
+                !regex.is_match("unrelated diagnostic line that cannot be a catalogue crash"),
+                "negative matched: {pattern}"
+            );
         }
     }
 
@@ -1588,8 +1700,11 @@ mod tests {
     fn set_prefilter_and_chunk_scanner_preserve_cross_chunk_lines() {
         let patterns: Vec<&str> = CATALOGUE.iter().map(|entry| entry.0).collect();
         let set = Set::new(&patterns, ignore_case()).unwrap_or_else(|_| unreachable!());
-        let direct = set.matches("noise HELI_COMBAT.script:77: attempt to perform arithmetic on field 'change_pos_time' tail");
-        assert!(direct.as_ref().is_ok_and(|matches| matches.contains(&10) && matches.contains(&32)));
+        let direct =
+            set.matches("noise HELI_COMBAT.script:77: attempt to perform arithmetic on field 'change_pos_time' tail");
+        assert!(direct
+            .as_ref()
+            .is_ok_and(|matches| matches.contains(&10) && matches.contains(&32)));
 
         let mut scanner = set.scanner();
         let mut hits = Vec::new();
