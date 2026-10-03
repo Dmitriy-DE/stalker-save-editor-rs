@@ -22,6 +22,7 @@ pub struct ScrollView {
 }
 
 impl ScrollView {
+    /// Create a viewport at offset zero.
     #[must_use]
     pub const fn new() -> Self {
         Self {
@@ -33,17 +34,20 @@ impl ScrollView {
         }
     }
 
+    /// Update virtual content and viewport heights, clamping the current offset.
     pub fn set_extent(&mut self, content_height: f32, viewport_height: f32) {
         self.content_height = content_height.max(0.0);
         self.viewport_height = viewport_height.max(0.0);
         self.offset_y = self.offset_y.min(self.max_offset());
     }
 
+    /// Current vertical content offset.
     #[must_use]
     pub const fn offset_y(self) -> f32 {
         self.offset_y
     }
 
+    /// Largest legal vertical offset.
     #[must_use]
     pub fn max_offset(self) -> f32 {
         (self.content_height - self.viewport_height).max(0.0)
@@ -56,18 +60,21 @@ impl ScrollView {
         old != self.offset_y
     }
 
+    /// Scroll to an absolute content offset; true when it changed.
     pub fn scroll_to(&mut self, y: f32) -> bool {
         let old = self.offset_y;
         self.offset_y = y.clamp(0.0, self.max_offset());
         old != self.offset_y
     }
 
+    /// Update scrollbar-thumb hover state; true when it changed.
     pub fn set_thumb_hover(&mut self, hover: bool) -> bool {
         let changed = self.hover_thumb != hover;
         self.hover_thumb = hover;
         changed
     }
 
+    /// Current scrollbar thumb RGB colour.
     #[must_use]
     pub const fn thumb_color(self) -> u32 {
         if self.hover_thumb {
