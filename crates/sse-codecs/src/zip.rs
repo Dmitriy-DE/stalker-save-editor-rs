@@ -105,7 +105,8 @@ pub fn read(input: &[u8], maximum_output: usize) -> Result<Vec<Entry>> {
         .find(|p| input.get(*p..p.saturating_add(4)) == Some(&[0x50, 0x4b, 0x05, 0x06]))
         .ok_or_else(|| Error::damaged("ZIP EOCD not found"))?;
     let count = usize::from(u16le(input, eocd.saturating_add(10))?);
-    let mut cd = usize::try_from(u32le(input, eocd.saturating_add(16))?).map_err(|_| Error::damaged("ZIP central offset"))?;
+    let mut cd =
+        usize::try_from(u32le(input, eocd.saturating_add(16))?).map_err(|_| Error::damaged("ZIP central offset"))?;
     let mut out = Vec::new();
     let mut total = 0usize;
     for _ in 0..count {
@@ -214,7 +215,9 @@ impl<W: Write> Writer<W> {
 
     fn bytes(&mut self, bytes: &[u8]) -> Result<()> {
         self.sink.write_all(bytes)?;
-        self.offset = self.offset.saturating_add(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
+        self.offset = self
+            .offset
+            .saturating_add(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
         Ok(())
     }
 
@@ -244,10 +247,10 @@ impl<W: Write> Writer<W> {
         };
         let offset = u32::try_from(self.offset)
             .map_err(|_| Error::Refused("ZIP64 writer is not needed by this package writer".to_owned()))?;
-        let compressed_len = u32::try_from(payload.len())
-            .map_err(|_| Error::Refused("ZIP entry too large".to_owned()))?;
-        let uncompressed_len = u32::try_from(entry.data.len())
-            .map_err(|_| Error::Refused("ZIP entry too large".to_owned()))?;
+        let compressed_len =
+            u32::try_from(payload.len()).map_err(|_| Error::Refused("ZIP entry too large".to_owned()))?;
+        let uncompressed_len =
+            u32::try_from(entry.data.len()).map_err(|_| Error::Refused("ZIP entry too large".to_owned()))?;
         let crc = crc32(&entry.data);
 
         self.u32(0x0403_4b50)?;
@@ -280,12 +283,12 @@ impl<W: Write> Writer<W> {
             return Err(Error::Refused("ZIP writer already finished".to_owned()));
         }
         self.finished = true;
-        let directory_offset = u32::try_from(self.offset)
-            .map_err(|_| Error::Refused("ZIP archive too large".to_owned()))?;
+        let directory_offset =
+            u32::try_from(self.offset).map_err(|_| Error::Refused("ZIP archive too large".to_owned()))?;
         let central = std::mem::take(&mut self.central);
         for item in &central {
-            let name_len = u16::try_from(item.name.len())
-                .map_err(|_| Error::Refused("ZIP name too long".to_owned()))?;
+            let name_len =
+                u16::try_from(item.name.len()).map_err(|_| Error::Refused("ZIP name too long".to_owned()))?;
             self.u32(0x0201_4b50)?;
             self.u16(0x0314)?;
             self.u16(20)?;
@@ -357,7 +360,12 @@ mod tests {
     #[test]
     fn streaming_writer_round_trips() {
         let mut writer = Writer::new(Vec::new(), Level::Fast);
-        assert!(writer.add(&Entry { name: "a.bin".to_owned(), data: vec![7; 512] }).is_ok());
+        assert!(writer
+            .add(&Entry {
+                name: "a.bin".to_owned(),
+                data: vec![7; 512]
+            })
+            .is_ok());
         let archive = writer.finish().unwrap_or_default();
         let files = read(&archive, 512).unwrap_or_default();
         assert_eq!(files.first().map(|entry| entry.data.len()), Some(512));
@@ -365,8 +373,14 @@ mod tests {
 
     #[test]
     fn output_limit_stops_zip_bomb_shape() {
-        let archive = write(&[Entry { name: "large".to_owned(), data: vec![0; 65_536] }], Level::Default)
-            .unwrap_or_default();
+        let archive = write(
+            &[Entry {
+                name: "large".to_owned(),
+                data: vec![0; 65_536],
+            }],
+            Level::Default,
+        )
+        .unwrap_or_default();
         assert!(matches!(read(&archive, 1024), Err(Error::Refused(_))));
     }
     #[test]
