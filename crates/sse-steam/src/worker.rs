@@ -221,6 +221,7 @@ fn protocol_error(error: ProtocolError) -> WorkerProcessError {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
     use super::*;
     #[cfg(unix)]
     use crate::protocol::Request;

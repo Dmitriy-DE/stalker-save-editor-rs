@@ -99,8 +99,10 @@ fn discovers_only_the_injected_proton_autocloud_root() {
     let library = temp_dir("proton");
     let root = library.join("steamapps/compatdata/1643320/pfx/drive_c/users/tester/AppData/Local");
     assert!(fs::create_dir_all(root.join("Stalker2")).is_ok());
+    let expected_root = root.canonicalize();
+    assert!(expected_root.is_ok());
     let found = find_auto_cloud_root(STALKER_2_APP_ID, None, [library.clone()]);
-    assert!(found.is_some_and(|path| path == root));
+    assert_eq!(found, expected_root.ok());
     assert!(find_auto_cloud_root(4500, None, [library.clone()]).is_none());
     let _ = fs::remove_dir_all(library);
 }
