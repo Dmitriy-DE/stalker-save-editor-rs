@@ -29,7 +29,6 @@ struct IoChunk {
 #[derive(Debug, Clone)]
 struct IoBlock {
     offset: u64,
-    compressed: usize,
     uncompressed: usize,
     method: u8,
 }
@@ -300,7 +299,6 @@ struct PakEntry {
 /// Read-only legacy Unreal .pak reader (versions 3 through 9).
 pub struct Pak<'a> {
     data: &'a [u8],
-    version: u32,
     relative_blocks: bool,
     methods: Vec<String>,
     files: BTreeMap<String, PakEntry>,
@@ -344,7 +342,6 @@ impl<'a> Pak<'a> {
         }
         Ok(Self {
             data,
-            version: footer.version,
             relative_blocks: footer.version >= 5,
             methods: footer.methods,
             files,
@@ -549,7 +546,6 @@ fn read_pak_entry(r: &mut Reader<'_>, version: u32) -> Result<PakEntry> {
     let header_size = r.position().saturating_sub(start);
     Ok(PakEntry {
         offset,
-        compressed,
         uncompressed,
         compression,
         blocks,
