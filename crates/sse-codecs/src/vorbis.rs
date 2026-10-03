@@ -1563,6 +1563,56 @@ pub fn decode(input: &[u8]) -> Result<Pcm> {
 mod tests {
     use super::*;
 
+    fn b64(text: &str) -> Vec<u8> {
+        fn value(byte: u8) -> Option<u8> {
+            match byte {
+                b'A'..=b'Z' => Some(byte.saturating_sub(b'A')),
+                b'a'..=b'z' => Some(byte.saturating_sub(b'a').saturating_add(26)),
+                b'0'..=b'9' => Some(byte.saturating_sub(b'0').saturating_add(52)),
+                b'+' => Some(62),
+                b'/' => Some(63),
+                _ => None,
+            }
+        }
+        let clean: Vec<u8> = text.bytes().filter(|byte| !byte.is_ascii_whitespace()).collect();
+        let mut out = Vec::new();
+        for chunk in clean.chunks(4) {
+            let a = chunk.first().copied().and_then(value).unwrap_or(0);
+            let b = chunk.get(1).copied().and_then(value).unwrap_or(0);
+            let c = chunk.get(2).copied().and_then(value);
+            let d = chunk.get(3).copied().and_then(value);
+            out.push(a.wrapping_shl(2) | b.wrapping_shr(4));
+            if let Some(c) = c {
+                out.push(b.wrapping_shl(4) | c.wrapping_shr(2));
+                if let Some(d) = d {
+                    out.push(c.wrapping_shl(6) | d);
+                }
+            }
+        }
+        out
+    }
+
+    fn fnv64(samples: &[i16]) -> u64 {
+        let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+        for sample in samples {
+            for byte in sample.to_le_bytes() {
+                hash ^= u64::from(byte);
+                hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        }
+        hash
+    }
+
+    #[test]
+    fn menu_decline_matches_reference_pcm() {
+        let data = b64(include_str!("../tests/data/menu_decline.ogg.b64"));
+        let pcm = decode(&data).unwrap_or_else(|error| panic!("decode menu_decline: {error:?}"));
+        assert_eq!(pcm.channels, 1);
+        assert_eq!(pcm.rate, 48_000);
+        assert_eq!(pcm.samples.len(), 23_348);
+        assert_eq!(fnv64(&pcm.samples), 0x2528_3d14_5393_c466);
+    }
+
     #[test]
     fn lookup1_examples() {
         assert_eq!(lookup1_values(625, 4), 5);
