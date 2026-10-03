@@ -1,4 +1,8 @@
-//! Deterministic MaxRects atlas packing and incremental glyph shelf cache.\n\nuse std::collections::HashMap;\n\n/// Rectangle supplied to the deterministic atlas packer.
+//! Deterministic MaxRects atlas packing and incremental glyph shelf cache.
+
+use std::collections::HashMap;
+
+/// Rectangle supplied to the deterministic atlas packer.
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// Input rectangle and caller-provided duplicate hash.
 pub struct PackRect<T> {
