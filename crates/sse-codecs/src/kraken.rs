@@ -2334,12 +2334,6 @@ impl<'a> OffsetBits<'a> {
             .read_zero(total)?
             .checked_sub(64)
             .ok_or_else(|| Error::damaged("length code below bias"))?;
-        // The C++ reference is intentionally asymmetric here: the forward
-        // length reader shifts the bit accumulator twice, while the backward
-        // reader shifts it once. The second shift does not advance bitpos.
-        if !self.backward {
-            self.bits = self.bits.checked_shl(total).unwrap_or_default();
-        }
         self.refill()?;
         Ok(value)
     }
