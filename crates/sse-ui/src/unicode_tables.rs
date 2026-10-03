@@ -11,6 +11,7 @@ struct Range {
 }
 
 /// Grapheme_Cluster_Break value.
+#[allow(missing_docs)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GraphemeClass {
     Other = 0,
@@ -30,6 +31,7 @@ pub enum GraphemeClass {
 }
 
 /// Line_Break value before LB1 resolution.
+#[allow(missing_docs)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LineBreakClass {
     Xx = 0,
@@ -84,6 +86,7 @@ pub enum LineBreakClass {
 }
 
 /// Indic_Conjunct_Break value used by UAX #29 GB9c.
+#[allow(missing_docs)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IndicConjunct {
     None = 0,
@@ -28639,6 +28642,7 @@ pub fn grapheme_boundaries(text: &str) -> Vec<usize> {
     out.push(text.len());
     out
 }
+#[allow(clippy::while_let_loop)]
 fn grapheme_break_at(chars: &[(usize, char)], i: usize) -> bool {
     let Some((_, prev)) = chars.get(i.saturating_sub(1)).copied() else {
         return true;
