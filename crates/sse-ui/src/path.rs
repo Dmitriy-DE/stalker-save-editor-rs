@@ -619,7 +619,7 @@ fn stroke_polyline(
     } else {
         points.len().saturating_sub(2)
     };
-    let join_start = if polyline.closed { 0 } else { 1 };
+    let join_start = if polyline.closed { 0_usize } else { 1_usize };
     for offset in 0..join_count {
         let index = join_start
             .checked_add(offset)
