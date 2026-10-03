@@ -1539,3 +1539,88 @@ mod tests {
         (r"string table xml file not found", "string table xml file not found"),
         (r"Expression\s*:\s*hFile>0", "Expression : hFile>0"),
     ];
+
+    fn ignore_case() -> RegexOptions {
+        RegexOptions {
+            case_insensitive: true,
+        }
+    }
+
+    #[test]
+    fn every_catalogue_pattern_has_positive_and_negative_case() {
+        for (pattern, positive) in CATALOGUE {
+            let regex = Regex::with_options(pattern, ignore_case());
+            assert!(regex.is_ok(), "compile {pattern}: {regex:?}");
+            let regex = regex.unwrap_or_else(|_| unreachable!());
+            assert!(regex.is_match(positive), "positive did not match: {pattern} / {positive}");
+            assert!(!regex.is_match("unrelated diagnostic line that cannot be a catalogue crash"), "negative matched: {pattern}");
+        }
+    }
+
+    #[test]
+    fn captures_quantifiers_classes_boundaries_and_anchors_work() {
+        let regex = Regex::new(r"^(foo|bar)\b\s+([A-Z]{2,3}?)-\d{2,4}$").unwrap_or_else(|_| unreachable!());
+        let captures = regex.captures("foo ABC-123").unwrap_or_else(|| unreachable!());
+        assert_eq!(captures.get(0), Some(Match { start: 0, end: 11 }));
+        assert_eq!(captures.get(1), Some(Match { start: 0, end: 3 }));
+        assert_eq!(captures.get(2), Some(Match { start: 4, end: 7 }));
+        assert_eq!(captures.len(), 3);
+        assert!(!captures.is_empty());
+    }
+
+    #[test]
+    fn case_insensitive_ascii_and_cyrillic_are_explicitly_supported() {
+        let regex = Regex::with_options("ПРИВЕТ-[a-z]+", ignore_case()).unwrap_or_else(|_| unreachable!());
+        assert!(regex.is_match("prefix привет-AbCd suffix"));
+        let inline = Regex::new("(?i)ЁЖИК").unwrap_or_else(|_| unreachable!());
+        assert!(inline.is_match("ёжик"));
+    }
+
+    #[test]
+    fn classic_backtracking_pathologies_use_bounded_nfa_states() {
+        let nested = Regex::new("(a+)+b").unwrap_or_else(|_| unreachable!());
+        let alternative = Regex::new("(a|aa)*b").unwrap_or_else(|_| unreachable!());
+        let text = "a".repeat(200_000);
+        assert!(!nested.is_match(&text));
+        assert!(!alternative.is_match(&text));
+    }
+
+    #[test]
+    fn set_prefilter_and_chunk_scanner_preserve_cross_chunk_lines() {
+        let patterns: Vec<&str> = CATALOGUE.iter().map(|entry| entry.0).collect();
+        let set = Set::new(&patterns, ignore_case()).unwrap_or_else(|_| unreachable!());
+        let direct = set.matches("noise HELI_COMBAT.script:77: attempt to perform arithmetic on field 'change_pos_time' tail");
+        assert!(direct.as_ref().is_ok_and(|matches| matches.contains(&10) && matches.contains(&32)));
+
+        let mut scanner = set.scanner();
+        let mut hits = Vec::new();
+        assert_eq!(scanner.push(b"noise\nCan't find varia", &mut hits), Ok(()));
+        assert_eq!(scanner.push(b"ble bad_name in [section]\r", &mut hits), Ok(()));
+        assert_eq!(scanner.push(b"\nmore noise", &mut hits), Ok(()));
+        assert_eq!(scanner.finish(&mut hits), Ok(()));
+        assert!(hits.contains(&StreamMatch {
+            pattern_index: 44,
+            line_number: 2,
+        }));
+    }
+
+    #[test]
+    fn prefiltered_catalogue_scan_is_linear_and_reports_throughput() {
+        let patterns: Vec<&str> = CATALOGUE.iter().map(|entry| entry.0).collect();
+        let set = Set::new(&patterns, ignore_case()).unwrap_or_else(|_| unreachable!());
+        let block = b"ordinary engine log line with no crash signature\n";
+        let target_bytes = 8_usize.saturating_mul(1_048_576);
+        let mut data = Vec::with_capacity(target_bytes);
+        while data.len() < target_bytes {
+            data.extend_from_slice(block);
+        }
+        let text = std::str::from_utf8(&data).unwrap_or_else(|_| unreachable!());
+        let started = Instant::now();
+        let matches = set.matches(text).unwrap_or_else(|_| unreachable!());
+        let elapsed = started.elapsed();
+        assert!(matches.is_empty());
+        let seconds = elapsed.as_secs_f64().max(f64::EPSILON);
+        let mib = (data.len() as f64) / 1_048_576.0;
+        eprintln!("X29 prefiltered scan: {:.1} MiB/s", mib / seconds);
+    }
+}
