@@ -168,15 +168,22 @@ struct HuffNode {
     zero: Option<usize>,
     one: Option<usize>,
     symbol: Option<usize>,
+    full: bool,
 }
 
 fn insert_code(nodes: &mut Vec<HuffNode>, node: usize, depth: u8, target: u8, symbol: usize) -> bool {
+    if nodes.get(node).is_none_or(|item| item.full) {
+        return false;
+    }
     if depth == target {
-        let Some(slot) = nodes.get_mut(node) else { return false };
+        let Some(slot) = nodes.get_mut(node) else {
+            return false;
+        };
         if slot.symbol.is_some() || slot.zero.is_some() || slot.one.is_some() {
             return false;
         }
         slot.symbol = Some(symbol);
+        slot.full = true;
         return true;
     }
     if nodes.get(node).is_some_and(|item| item.symbol.is_some()) {
@@ -203,6 +210,19 @@ fn insert_code(nodes: &mut Vec<HuffNode>, node: usize, depth: u8, target: u8, sy
             index
         };
         if insert_code(nodes, child, depth.saturating_add(1), target, symbol) {
+            let zero_full = nodes
+                .get(node)
+                .and_then(|item| item.zero)
+                .and_then(|index| nodes.get(index))
+                .is_some_and(|item| item.full);
+            let one_full = nodes
+                .get(node)
+                .and_then(|item| item.one)
+                .and_then(|index| nodes.get(index))
+                .is_some_and(|item| item.full);
+            if let Some(parent) = nodes.get_mut(node) {
+                parent.full = zero_full && one_full;
+            }
             return true;
         }
     }
