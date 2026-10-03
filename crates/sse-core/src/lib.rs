@@ -9,7 +9,6 @@
 mod buffer;
 mod cursor;
 mod error;
-pub mod regex;
 
 pub use buffer::SaveBuffer;
 pub use cursor::Cursor;
