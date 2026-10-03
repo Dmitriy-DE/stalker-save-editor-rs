@@ -18,9 +18,7 @@ pub fn encode_rgba8(width: u32, height: u32, pixels: &[u8]) -> Result<Vec<u8>> {
         .checked_mul(usize::try_from(height).map_err(|_| Error::damaged("PNG height"))?)
         .ok_or_else(|| Error::damaged("PNG image overflow"))?;
     if pixels.len() != expected {
-        return Err(Error::Refused(
-            "RGBA buffer size does not match dimensions".to_owned(),
-        ));
+        return Err(Error::Refused("RGBA buffer size does not match dimensions".to_owned()));
     }
     let scan_cap = expected
         .checked_add(usize::try_from(height).unwrap_or(0))
@@ -28,17 +26,9 @@ pub fn encode_rgba8(width: u32, height: u32, pixels: &[u8]) -> Result<Vec<u8>> {
     let mut scan = Vec::with_capacity(scan_cap);
     for y in 0..usize::try_from(height).map_err(|_| Error::damaged("PNG height"))? {
         scan.push(0);
-        let start = y
-            .checked_mul(row)
-            .ok_or_else(|| Error::damaged("PNG row offset"))?;
-        let end = start
-            .checked_add(row)
-            .ok_or_else(|| Error::damaged("PNG row end"))?;
-        scan.extend_from_slice(
-            pixels
-                .get(start..end)
-                .ok_or_else(|| Error::damaged("PNG pixels"))?,
-        );
+        let start = y.checked_mul(row).ok_or_else(|| Error::damaged("PNG row offset"))?;
+        let end = start.checked_add(row).ok_or_else(|| Error::damaged("PNG row end"))?;
+        scan.extend_from_slice(pixels.get(start..end).ok_or_else(|| Error::damaged("PNG pixels"))?);
     }
 
     let mut z = Vec::with_capacity(
@@ -61,9 +51,7 @@ pub fn encode_rgba8(width: u32, height: u32, pixels: &[u8]) -> Result<Vec<u8>> {
             scan.get(pos..pos + n)
                 .ok_or_else(|| Error::damaged("PNG stored data"))?,
         );
-        pos = pos
-            .checked_add(n)
-            .ok_or_else(|| Error::damaged("PNG stored offset"))?;
+        pos = pos.checked_add(n).ok_or_else(|| Error::damaged("PNG stored offset"))?;
     }
     z.extend_from_slice(&adler32(&scan).to_be_bytes());
 
