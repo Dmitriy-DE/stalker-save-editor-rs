@@ -104,15 +104,47 @@ pub fn read(input: &[u8], maximum_output: usize) -> Result<Vec<Entry>> {
         .rev()
         .find(|p| input.get(*p..p.saturating_add(4)) == Some(&[0x50, 0x4b, 0x05, 0x06]))
         .ok_or_else(|| Error::damaged("ZIP EOCD not found"))?;
-    let count = usize::from(u16le(input, eocd.saturating_add(10))?);
-    let mut cd =
-        usize::try_from(u32le(input, eocd.saturating_add(16))?).map_err(|_| Error::damaged("ZIP central offset"))?;
+    if u16le(input, eocd.saturating_add(4))? != 0 || u16le(input, eocd.saturating_add(6))? != 0 {
+        return Err(Error::Refused("multi-disk ZIP archives are unsupported".to_owned()));
+    }
+    let count16 = u16le(input, eocd.saturating_add(10))?;
+    let cd32 = u32le(input, eocd.saturating_add(16))?;
+    let (count, mut cd) = if count16 == u16::MAX || cd32 == u32::MAX {
+        let locator = eocd
+            .checked_sub(20)
+            .ok_or_else(|| Error::damaged("ZIP64 locator missing"))?;
+        if input.get(locator..locator.saturating_add(4)) != Some(&[0x50, 0x4b, 0x06, 0x07]) {
+            return Err(Error::damaged("ZIP64 locator missing"));
+        }
+        if u32le(input, locator.saturating_add(4))? != 0 || u32le(input, locator.saturating_add(16))? != 1 {
+            return Err(Error::Refused("multi-disk ZIP64 archives are unsupported".to_owned()));
+        }
+        let record = usize::try_from(u64le(input, locator.saturating_add(8))?)
+            .map_err(|_| Error::damaged("ZIP64 EOCD offset"))?;
+        if input.get(record..record.saturating_add(4)) != Some(&[0x50, 0x4b, 0x06, 0x06]) {
+            return Err(Error::damaged("ZIP64 EOCD signature"));
+        }
+        let count = usize::try_from(u64le(input, record.saturating_add(32))?)
+            .map_err(|_| Error::Refused("ZIP64 entry count exceeds platform limits".to_owned()))?;
+        let offset = usize::try_from(u64le(input, record.saturating_add(48))?)
+            .map_err(|_| Error::damaged("ZIP64 central offset"))?;
+        (count, offset)
+    } else {
+        (
+            usize::from(count16),
+            usize::try_from(cd32).map_err(|_| Error::damaged("ZIP central offset"))?,
+        )
+    };
+    if count > 1_000_000 {
+        return Err(Error::Refused("ZIP entry count limit exceeded".to_owned()));
+    }
     let mut out = Vec::new();
     let mut total = 0usize;
     for _ in 0..count {
         if input.get(cd..cd.saturating_add(4)) != Some(&[0x50, 0x4b, 0x01, 0x02]) {
             return Err(Error::damaged("ZIP central signature"));
         }
+        let made_by = u16le(input, cd.saturating_add(4))?;
         let flags = u16le(input, cd.saturating_add(8))?;
         let method = u16le(input, cd.saturating_add(10))?;
         if flags & 1 != 0 {
@@ -137,7 +169,7 @@ pub fn read(input: &[u8], maximum_output: usize) -> Result<Vec<Entry>> {
         let cs = usize::try_from(zc.unwrap_or(u64::from(cs32))).map_err(|_| Error::damaged("ZIP size"))?;
         let off = usize::try_from(zo.unwrap_or(u64::from(off32))).map_err(|_| Error::damaged("ZIP offset"))?;
         let unix_mode = attrs.wrapping_shr(16) & 0xffff;
-        if unix_mode & 0xf000 == 0xa000 {
+        if made_by.wrapping_shr(8) == 3 && unix_mode & 0xf000 == 0xa000 {
             return Err(Error::Refused("ZIP symlink refused".to_owned()));
         }
         let n = name(nb, flags & 0x800 != 0)?;
