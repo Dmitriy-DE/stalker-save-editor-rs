@@ -870,7 +870,7 @@ impl Regex {
                             .add_thread(
                                 &mut next_threads,
                                 &mut seen,
-                                next_pc,
+                                *next_pc,
                                 thread.slots,
                                 next_position,
                                 Some(character),
