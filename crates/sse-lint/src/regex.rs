@@ -1119,3 +1119,143 @@ fn exact_literal(ast: &Ast) -> Option<String> {
             node,
             min,
             max: Some(max),
+            ..
+        } if min == max => {
+            let literal = exact_literal(node)?;
+            let mut result = String::new();
+            for _ in 0..*min {
+                result.push_str(&literal);
+            }
+            Some(result)
+        }
+        _ => None,
+    }
+}
+
+fn choose_longer(best: &mut Option<String>, candidate: String) {
+    if candidate.is_empty() {
+        return;
+    }
+    if best.as_ref().is_none_or(|current| candidate.len() > current.len()) {
+        *best = Some(candidate);
+    }
+}
+
+#[derive(Debug, Clone)]
+struct AcNode {
+    transitions: [u32; ASCII_TRANSITIONS],
+    fail: u32,
+    outputs: Vec<usize>,
+}
+
+impl AcNode {
+    fn new() -> Self {
+        Self {
+            transitions: [0; ASCII_TRANSITIONS],
+            fail: 0,
+            outputs: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct AhoCorasick {
+    nodes: Vec<AcNode>,
+    case_insensitive: bool,
+}
+
+impl AhoCorasick {
+    fn build(entries: &[(usize, String)], case_insensitive: bool) -> Result<Self> {
+        let mut automaton = Self {
+            nodes: vec![AcNode::new()],
+            case_insensitive,
+        };
+        for (pattern_index, literal) in entries {
+            automaton.insert(*pattern_index, literal)?;
+        }
+        automaton.complete_failures()?;
+        Ok(automaton)
+    }
+
+    fn insert(&mut self, pattern_index: usize, literal: &str) -> Result<()> {
+        let mut state = 0_usize;
+        for byte in literal.as_bytes().iter().copied() {
+            if !byte.is_ascii() {
+                return Err(Error::damaged("Aho-Corasick literal is not ASCII"));
+            }
+            let folded = if self.case_insensitive {
+                byte.to_ascii_lowercase()
+            } else {
+                byte
+            };
+            let column = usize::from(folded);
+            let next_raw = self
+                .nodes
+                .get(state)
+                .and_then(|node| node.transitions.get(column))
+                .copied()
+                .ok_or_else(|| Error::damaged("Aho-Corasick state outside table"))?;
+            if next_raw == 0 {
+                if self.nodes.len() >= MAX_AC_NODES {
+                    return Err(Error::Refused("Aho-Corasick prefilter exceeds node limit".to_owned()));
+                }
+                let next = self.nodes.len();
+                let next_u32 = u32::try_from(next)
+                    .map_err(|_| Error::Refused("Aho-Corasick node id exceeds u32".to_owned()))?;
+                self.nodes.push(AcNode::new());
+                let transition = self
+                    .nodes
+                    .get_mut(state)
+                    .and_then(|node| node.transitions.get_mut(column))
+                    .ok_or_else(|| Error::damaged("Aho-Corasick transition outside table"))?;
+                *transition = next_u32;
+                state = next;
+            } else {
+                state = usize::try_from(next_raw)
+                    .map_err(|_| Error::damaged("Aho-Corasick node id does not fit usize"))?;
+            }
+        }
+        let outputs = self
+            .nodes
+            .get_mut(state)
+            .ok_or_else(|| Error::damaged("Aho-Corasick terminal state missing"))?;
+        outputs.outputs.push(pattern_index);
+        Ok(())
+    }
+
+    fn complete_failures(&mut self) -> Result<()> {
+        let mut queue = VecDeque::new();
+        for column in 0..ASCII_TRANSITIONS {
+            let child = self
+                .nodes
+                .first()
+                .and_then(|node| node.transitions.get(column))
+                .copied()
+                .ok_or_else(|| Error::damaged("Aho-Corasick root transition missing"))?;
+            if child != 0 {
+                queue.push_back(usize::try_from(child).map_err(|_| Error::damaged("Aho node id conversion failed"))?);
+            }
+        }
+
+        while let Some(state) = queue.pop_front() {
+            let failure = self
+                .nodes
+                .get(state)
+                .map(|node| node.fail)
+                .ok_or_else(|| Error::damaged("Aho-Corasick failure state missing"))?;
+            let failure_index = usize::try_from(failure).map_err(|_| Error::damaged("Aho failure id conversion failed"))?;
+            for column in 0..ASCII_TRANSITIONS {
+                let child = self
+                    .nodes
+                    .get(state)
+                    .and_then(|node| node.transitions.get(column))
+                    .copied()
+                    .ok_or_else(|| Error::damaged("Aho-Corasick transition missing"))?;
+                if child == 0 {
+                    let inherited = self
+                        .nodes
+                        .get(failure_index)
+                        .and_then(|node| node.transitions.get(column))
+                        .copied()
+                        .ok_or_else(|| Error::damaged("Aho-Corasick inherited transition missing"))?;
+                    let slot = self
