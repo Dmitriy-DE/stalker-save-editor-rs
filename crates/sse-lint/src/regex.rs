@@ -114,8 +114,7 @@ impl Matcher {
                     *expected == character
                 }
             }
-            Self::Dot => character != '
-' && character != '',
+            Self::Dot => character != '\\n' && character != '\\r',
             Self::Class(class) => class.matches(character, case_insensitive),
         }
     }
