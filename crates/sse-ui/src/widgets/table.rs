@@ -7,8 +7,11 @@ use std::cmp::Ordering;
 /// Header state for one sortable column.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Header {
+    /// Header label.
     pub label: String,
+    /// Whether clicking this header sorts.
     pub sortable: bool,
+    /// Active direction, or none when this column is not a sort key.
     pub direction: Option<SortDirection>,
 }
 
@@ -21,6 +24,7 @@ pub struct Table {
 }
 
 impl Table {
+    /// Create a virtual table over stable row identifiers.
     pub fn new(rows: Vec<RowId>, row_height: f32, headers: Vec<Header>) -> Result<Self> {
         Ok(Self {
             model: ListModel::new(rows, RowHeight::Fixed(row_height))?,
@@ -30,11 +34,13 @@ impl Table {
         })
     }
 
+    /// Range that must be realised for the current viewport.
     #[must_use]
     pub fn visible_range(&self, scroll_y: f32, viewport_height: f32) -> VisibleRange {
         self.model.visible_range(scroll_y, viewport_height, 80.0)
     }
 
+    /// Resolve one virtual-view index to a data row.
     #[must_use]
     pub fn visible_row(&self, index: usize) -> Option<RowId> {
         match self.model.view_item(index) {
@@ -43,6 +49,7 @@ impl Table {
         }
     }
 
+    /// Change the hovered virtual row.
     pub fn hover_view(&mut self, index: Option<usize>) -> bool {
         let next = index.and_then(|i| self.visible_row(i));
         let changed = next != self.hover;
@@ -50,15 +57,18 @@ impl Table {
         changed
     }
 
+    /// Stable id of the hovered row.
     #[must_use]
     pub const fn hovered(&self) -> Option<RowId> {
         self.hover
     }
 
+    /// Apply single/Ctrl/Shift selection to a virtual row.
     pub fn select_view(&mut self, index: usize, ctrl: bool, shift: bool) -> bool {
         self.model.select_view(index, ctrl, shift)
     }
 
+    /// Whether a stable row id is selected.
     #[must_use]
     pub fn selected(&self, row: RowId) -> bool {
         self.model.is_selected(row)
@@ -100,11 +110,13 @@ impl Table {
         Ok(true)
     }
 
+    /// Header states in display order.
     #[must_use]
     pub fn headers(&self) -> &[Header] {
         &self.headers
     }
 
+    /// Number of items in the current sorted/filtered view.
     #[must_use]
     pub fn view_len(&self) -> usize {
         self.model.view_len()
