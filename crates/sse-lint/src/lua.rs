@@ -1,3 +1,4 @@
+//! X15 implementation.
 //! Lua 5.1 parser for X-Ray scripts.
 //!
 //! Parsing is bounded to 200 nested constructs and stores syntax in one node arena. Source spans always refer to
