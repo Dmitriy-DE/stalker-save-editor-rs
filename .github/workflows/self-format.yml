@@ -1,0 +1,25 @@
+name: self-format-wp-X15-lua51
+on:
+  push:
+    branches: ["wp/X15-lua51"]
+permissions:
+  contents: write
+jobs:
+  format:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: "wp/X15-lua51"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: |
+          cargo fmt --all
+          rm .github/workflows/self-format.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Apply rustfmt" || exit 0
+          git push origin HEAD:wp/X15-lua51
