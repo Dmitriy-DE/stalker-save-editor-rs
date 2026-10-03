@@ -143,7 +143,10 @@ pub fn break_lines<M: Metrics>(text: &str, max_width: f32, metrics: &M) -> Vec<L
             if at > line_start {
                 let previous_index = at.saturating_sub(1);
                 if let Some(previous) = clusters.get(previous_index).copied() {
-                    if cjk_break_between(previous, cluster) {
+                    if line_break_pair(previous.last_char, cluster.first_char)
+                        && !previous.whitespace
+                        && !cluster.whitespace
+                    {
                         candidate = Some(BreakCandidate {
                             next_cluster: at,
                             end_byte: cluster.start,
@@ -824,265 +827,91 @@ fn candidate_starts_legally(clusters: &[Cluster], candidate: BreakCandidate) -> 
     true
 }
 
-fn cjk_break_between(previous: Cluster, current: Cluster) -> bool {
-    (previous.cjk || current.cjk)
-        && !is_kinsoku_end(previous.last_char)
-        && !is_kinsoku_start(current.first_char)
-        && !previous.whitespace
-        && !current.whitespace
-}
-
 fn is_break_after(character: char) -> bool {
     matches!(
-        character,
-        '-' | '/' | '\\' | '‐' | '‑' | '–' | '—' | '、' | '。' | '，' | '．' | '！' | '？'
+        line_break_class(character),
+        LineBreakClass::Ba | LineBreakClass::Hy | LineBreakClass::Hh | LineBreakClass::B2 | LineBreakClass::Sy
     )
 }
 
 fn is_kinsoku_start(character: char) -> bool {
     matches!(
-        character,
-        '、' | '。'
-            | '，'
-            | '．'
-            | '・'
-            | '：'
-            | '；'
-            | '？'
-            | '！'
-            | '」'
-            | '』'
-            | '】'
-            | '〕'
-            | '〉'
-            | '》'
-            | '）'
-            | ')'
-            | ']'
-            | '}'
-            | 'ー'
-            | 'ぁ'
-            | 'ぃ'
-            | 'ぅ'
-            | 'ぇ'
-            | 'ぉ'
-            | 'っ'
-            | 'ゃ'
-            | 'ゅ'
-            | 'ょ'
-            | 'ァ'
-            | 'ィ'
-            | 'ゥ'
-            | 'ェ'
-            | 'ォ'
-            | 'ッ'
-            | 'ャ'
-            | 'ュ'
-            | 'ョ'
+        line_break_class(character),
+        LineBreakClass::Cl
+            | LineBreakClass::Cp
+            | LineBreakClass::Ex
+            | LineBreakClass::Is
+            | LineBreakClass::Ns
+            | LineBreakClass::Po
     )
 }
 
 fn is_kinsoku_end(character: char) -> bool {
-    matches!(
-        character,
-        '「' | '『' | '【' | '〔' | '〈' | '《' | '（' | '(' | '[' | '{'
-    )
+    matches!(line_break_class(character), LineBreakClass::Op)
 }
 
 fn is_cjk_character(character: char) -> bool {
-    let value = u32::from(character);
-    (0x2e80..=0x2fff).contains(&value)
-        || (0x3000..=0x303f).contains(&value)
-        || (0x3040..=0x30ff).contains(&value)
-        || (0x31f0..=0x31ff).contains(&value)
-        || (0x3400..=0x4dbf).contains(&value)
-        || (0x4e00..=0x9fff).contains(&value)
-        || (0xf900..=0xfaff).contains(&value)
-        || (0x20000..=0x2fa1f).contains(&value)
+    matches!(
+        line_break_class(character),
+        LineBreakClass::Id
+            | LineBreakClass::Cj
+            | LineBreakClass::H2
+            | LineBreakClass::H3
+            | LineBreakClass::Jl
+            | LineBreakClass::Jv
+            | LineBreakClass::Jt
+    )
 }
 
 fn visit_grapheme_ranges(text: &str, mut visit: impl FnMut(usize, usize)) {
-    let mut chars = text.char_indices();
-    let Some((_, first)) = chars.next() else {
-        return;
-    };
-    let mut start = 0_usize;
-    let mut previous = first;
-    let mut ri_count = if is_regional_indicator(first) { 1_usize } else { 0_usize };
-    let mut ep_extend_chain = is_extended_pictographic(first);
-    let mut zwj_has_ep_before = false;
-
-    for (offset, current) in chars {
-        let should_break = grapheme_break(previous, current, ri_count, zwj_has_ep_before);
-        if should_break {
-            visit(start, offset);
-            start = offset;
-            ri_count = 0;
-            ep_extend_chain = false;
-            zwj_has_ep_before = false;
+    let boundaries = grapheme_boundaries(text);
+    for pair in boundaries.windows(2) {
+        if let (Some(start), Some(end)) = (pair.first(), pair.get(1)) {
+            visit(*start, *end);
         }
-
-        if is_regional_indicator(current) {
-            ri_count = ri_count.saturating_add(1);
-        } else if !is_extend(current) && current != '\u{200d}' {
-            ri_count = 0;
-        }
-
-        if current == '\u{200d}' {
-            zwj_has_ep_before = ep_extend_chain;
-            ep_extend_chain = false;
-        } else if is_extend(current) {
-            // Keep the current EP + Extend* chain alive.
-        } else {
-            ep_extend_chain = is_extended_pictographic(current);
-            zwj_has_ep_before = false;
-        }
-        previous = current;
     }
-    visit(start, text.len());
-}
-
-fn grapheme_break(previous: char, current: char, ri_count: usize, zwj_has_ep_before: bool) -> bool {
-    if previous == '\r' && current == '\n' {
-        return false;
-    }
-    if is_control(previous) || is_control(current) {
-        return true;
-    }
-
-    let previous_hangul = hangul_class(previous);
-    let current_hangul = hangul_class(current);
-    if matches!(previous_hangul, Hangul::L)
-        && matches!(current_hangul, Hangul::L | Hangul::V | Hangul::Lv | Hangul::Lvt)
-    {
-        return false;
-    }
-    if matches!(previous_hangul, Hangul::Lv | Hangul::V) && matches!(current_hangul, Hangul::V | Hangul::T) {
-        return false;
-    }
-    if matches!(previous_hangul, Hangul::Lvt | Hangul::T) && matches!(current_hangul, Hangul::T) {
-        return false;
-    }
-
-    if is_extend(current) || current == '\u{200d}' || is_spacing_mark(current) {
-        return false;
-    }
-    if is_prepend(previous) {
-        return false;
-    }
-    if previous == '\u{200d}' && zwj_has_ep_before && is_extended_pictographic(current) {
-        return false;
-    }
-    if is_regional_indicator(previous) && is_regional_indicator(current) && ri_count % 2 == 1 {
-        return false;
-    }
-    true
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Hangul {
-    Other,
-    L,
-    V,
-    T,
-    Lv,
-    Lvt,
-}
-
-fn hangul_class(character: char) -> Hangul {
-    let value = u32::from(character);
-    if (0x1100..=0x115f).contains(&value) || (0xa960..=0xa97c).contains(&value) {
-        return Hangul::L;
-    }
-    if (0x1160..=0x11a7).contains(&value) || (0xd7b0..=0xd7c6).contains(&value) {
-        return Hangul::V;
-    }
-    if (0x11a8..=0x11ff).contains(&value) || (0xd7cb..=0xd7fb).contains(&value) {
-        return Hangul::T;
-    }
-    if (0xac00..=0xd7a3).contains(&value) {
-        let Some(relative) = value.checked_sub(0xac00) else {
-            return Hangul::Other;
-        };
-        return if relative % 28 == 0 { Hangul::Lv } else { Hangul::Lvt };
-    }
-    Hangul::Other
 }
 
 fn is_hard_break_char(character: char) -> bool {
-    matches!(character, '\r' | '\n' | '\u{0085}' | '\u{2028}' | '\u{2029}')
+    matches!(
+        line_break_class(character),
+        LineBreakClass::Bk | LineBreakClass::Cr | LineBreakClass::Lf | LineBreakClass::Nl
+    )
 }
 
 fn is_control(character: char) -> bool {
-    is_hard_break_char(character) || matches!(u32::from(character), 0x0000..=0x001f | 0x007f..=0x009f)
+    matches!(
+        grapheme_class(character),
+        GraphemeClass::Cr | GraphemeClass::Lf | GraphemeClass::Control
+    )
 }
 
 fn is_extend(character: char) -> bool {
-    is_combining_mark(character)
-        || is_variation_selector(character)
-        || is_emoji_modifier(character)
-        || matches!(u32::from(character), 0xe0020..=0xe007f)
+    grapheme_class(character) == GraphemeClass::Extend
 }
 
 fn is_combining_mark(character: char) -> bool {
-    matches!(
-        u32::from(character),
-        0x0300..=0x036f
-            | 0x0483..=0x0489
-            | 0x0591..=0x05bd
-            | 0x05bf
-            | 0x05c1..=0x05c2
-            | 0x05c4..=0x05c5
-            | 0x0610..=0x061a
-            | 0x064b..=0x065f
-            | 0x0670
-            | 0x06d6..=0x06ed
-            | 0x1ab0..=0x1aff
-            | 0x1dc0..=0x1dff
-            | 0x20d0..=0x20ff
-            | 0xfe20..=0xfe2f
-    )
+    grapheme_class(character) == GraphemeClass::Extend
 }
 
 fn is_variation_selector(character: char) -> bool {
     matches!(u32::from(character), 0xfe00..=0xfe0f | 0xe0100..=0xe01ef)
 }
 
-fn is_emoji_modifier(character: char) -> bool {
-    (0x1f3fb..=0x1f3ff).contains(&u32::from(character))
-}
-
 fn is_regional_indicator(character: char) -> bool {
-    (0x1f1e6..=0x1f1ff).contains(&u32::from(character))
+    grapheme_class(character) == GraphemeClass::RegionalIndicator
 }
 
 fn is_extended_pictographic(character: char) -> bool {
-    let value = u32::from(character);
-    (0x1f000..=0x1faff).contains(&value)
-        || (0x2600..=0x27bf).contains(&value)
-        || matches!(character, '©' | '®' | '™' | '❤')
+    unicode_extended_pictographic(character)
 }
 
 fn is_spacing_mark(character: char) -> bool {
-    matches!(
-        u32::from(character),
-        0x0903
-            | 0x093b
-            | 0x093e..=0x0940
-            | 0x0949..=0x094c
-            | 0x0982..=0x0983
-            | 0x09be..=0x09c0
-            | 0x0bbe..=0x0bc2
-            | 0x0bc6..=0x0bc8
-            | 0x0bca..=0x0bcc
-    )
+    grapheme_class(character) == GraphemeClass::SpacingMark
 }
 
 fn is_prepend(character: char) -> bool {
-    matches!(
-        u32::from(character),
-        0x0600..=0x0605 | 0x06dd | 0x070f | 0x0890..=0x0891 | 0x110bd | 0x110cd
-    )
+    grapheme_class(character) == GraphemeClass::Prepend
 }
 
 #[cfg(test)]
