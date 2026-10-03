@@ -279,3 +279,143 @@ impl Compiler {
             let next = self.compile(node)?;
             self.patch(&fragment.outs, next.start)?;
             fragment = Fragment {
+                start: fragment.start,
+                outs: next.outs,
+            };
+        }
+        Ok(fragment)
+    }
+
+    fn compile_alternation(&mut self, nodes: &[Ast]) -> Result<Fragment> {
+        let Some(first) = nodes.first() else {
+            return self.compile(&Ast::Empty);
+        };
+        let mut fragment = self.compile(first)?;
+        for node in nodes.iter().skip(1) {
+            let right = self.compile(node)?;
+            let split = self.emit(Instruction::Split(Some(fragment.start), Some(right.start)))?;
+            let mut outs = fragment.outs;
+            outs.extend(right.outs);
+            fragment = Fragment { start: split, outs };
+        }
+        Ok(fragment)
+    }
+
+    fn compile_capture(&mut self, group: usize, node: &Ast) -> Result<Fragment> {
+        let start_slot = group
+            .checked_mul(2)
+            .ok_or_else(|| Error::Refused("regex capture slot overflow".to_owned()))?;
+        let end_slot = start_slot
+            .checked_add(1)
+            .ok_or_else(|| Error::Refused("regex capture slot overflow".to_owned()))?;
+        let inner = self.compile(node)?;
+        let end = self.emit(Instruction::Save(end_slot, None))?;
+        self.patch(&inner.outs, end)?;
+        let start = self.emit(Instruction::Save(start_slot, Some(inner.start)))?;
+        Ok(Fragment {
+            start,
+            outs: vec![Patch {
+                instruction: end,
+                arm: PatchArm::Next,
+            }],
+        })
+    }
+
+    fn compile_repeat(&mut self, node: &Ast, min: usize, max: Option<usize>, greedy: bool) -> Result<Fragment> {
+        if min > MAX_REPEAT || max.is_some_and(|value| value > MAX_REPEAT) {
+            return Err(Error::Refused("regex repeat exceeds the configured limit".to_owned()));
+        }
+        if max.is_some_and(|value| value < min) {
+            return Err(Error::damaged("regex repeat maximum is smaller than minimum"));
+        }
+
+        let mut result: Option<Fragment> = None;
+        for _ in 0..min {
+            let part = self.compile(node)?;
+            result = Some(self.concatenate_optional(result, part)?);
+        }
+
+        match max {
+            Some(limit) => {
+                let optional = limit.saturating_sub(min);
+                for _ in 0..optional {
+                    let part = self.compile(node)?;
+                    let split = if greedy {
+                        self.emit(Instruction::Split(Some(part.start), None))?
+                    } else {
+                        self.emit(Instruction::Split(None, Some(part.start)))?
+                    };
+                    let exit_arm = if greedy { PatchArm::Second } else { PatchArm::First };
+                    let mut outs = part.outs;
+                    outs.push(Patch {
+                        instruction: split,
+                        arm: exit_arm,
+                    });
+                    let optional_fragment = Fragment { start: split, outs };
+                    result = Some(self.concatenate_optional(result, optional_fragment)?);
+                }
+            }
+            None => {
+                let part = self.compile(node)?;
+                let split = if greedy {
+                    self.emit(Instruction::Split(Some(part.start), None))?
+                } else {
+                    self.emit(Instruction::Split(None, Some(part.start)))?
+                };
+                self.patch(&part.outs, split)?;
+                let exit_arm = if greedy { PatchArm::Second } else { PatchArm::First };
+                let star = Fragment {
+                    start: split,
+                    outs: vec![Patch {
+                        instruction: split,
+                        arm: exit_arm,
+                    }],
+                };
+                result = Some(self.concatenate_optional(result, star)?);
+            }
+        }
+
+        match result {
+            Some(fragment) => Ok(fragment),
+            None => self.compile(&Ast::Empty),
+        }
+    }
+
+    fn concatenate_optional(&mut self, left: Option<Fragment>, right: Fragment) -> Result<Fragment> {
+        if let Some(left_fragment) = left {
+            self.patch(&left_fragment.outs, right.start)?;
+            Ok(Fragment {
+                start: left_fragment.start,
+                outs: right.outs,
+            })
+        } else {
+            Ok(right)
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct Parser {
+    chars: Vec<char>,
+    position: usize,
+    capture_count: usize,
+}
+
+impl Parser {
+    fn new(pattern: &str) -> Result<Self> {
+        let chars: Vec<char> = pattern.chars().collect();
+        if chars.len() > MAX_PATTERN_CHARS {
+            return Err(Error::Refused("regex pattern exceeds the character limit".to_owned()));
+        }
+        Ok(Self {
+            chars,
+            position: 0,
+            capture_count: 0,
+        })
+    }
+
+    fn parse(mut self) -> Result<(Ast, usize)> {
+        let ast = self.parse_alternation()?;
+        if self.peek().is_some() {
+            return Err(self.error("unexpected trailing regex token"));
+        }
