@@ -1,12 +1,14 @@
 //! One-copy X-Ray edit preparation. Unknown fields remain untouched.
 
-use sse_catalog::{CatalogBundleReader, FactionCatalog, UpgradeCatalog};
+use sse_catalog::{CatalogBundleReader, FactionCatalog, ItemCatalog, ItemDefinition, UpgradeCatalog};
 use sse_core::{Cursor, Error, Result, SaveBuffer};
 use std::collections::{HashMap, HashSet};
 
 use crate::Save;
 
 const MAXIMUM_MONEY: u32 = 2_000_000_000;
+const MAXIMUM_ADDED_OBJECTS: usize = 100_000;
+const MAXIMUM_REGISTRY_OBJECTS: usize = 1_000_000;
 
 /// Reference capability maturity from the C# 1.3.1 capability registry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -209,6 +211,209 @@ impl ChangeSet {
     pub fn changes(&self) -> &[Change] {
         &self.changes
     }
+}
+
+/// Reads the current upgrade vector for one directly actor-owned object.
+pub fn current_upgrades(save: &Save, target_object: u16) -> Result<Vec<String>> {
+    let record = save
+        .registry_objects()
+        .iter()
+        .find(|record| record.object_id == target_object)
+        .ok_or_else(|| Error::Refused(format!("upgrade target 0x{target_object:04X} is missing")))?;
+    if record.parent_id != save.actor_id() {
+        return Err(Error::Refused(format!(
+            "upgrade target 0x{target_object:04X} is not actor-owned"
+        )));
+    }
+    read_upgrade_vector(save.raw_image(), record).map(|(upgrades, _, _)| upgrades)
+}
+
+/// Resolves add requests to existing, family-matched object templates from the embedded release catalog.
+/// Non-ammunition quantity creates that many records; ammunition quantity creates one stack.
+pub fn prepare_add_item_changes(save: &Save, additions: &[(String, u32)]) -> Result<Vec<Change>> {
+    if additions.is_empty() {
+        return Ok(Vec::new());
+    }
+    let catalog = CatalogBundleReader::load_embedded()
+        .get(save.format().id())
+        .map(|bundle| &bundle.items)
+        .ok_or_else(|| Error::Refused(format!("item catalog is missing for {}", save.format().id())))?;
+    let mut used_ids = save
+        .registry_objects()
+        .iter()
+        .map(|record| record.object_id)
+        .collect::<HashSet<_>>();
+    let mut prepared = Vec::new();
+    for (item_key, quantity) in additions {
+        if item_key.is_empty()
+            || !item_key
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+        {
+            return Err(Error::Refused(
+                "item key must be a non-empty ASCII identifier".to_owned(),
+            ));
+        }
+        if *quantity == 0 {
+            return Err(Error::Refused("item quantity must be positive".to_owned()));
+        }
+        let definition = catalog
+            .resolve(item_key)
+            .ok_or_else(|| Error::Refused(format!("item key '{item_key}' is absent from the catalog")))?;
+        let family = definition_family(definition)
+            .ok_or_else(|| Error::Refused(format!("item key '{item_key}' has no confirmed serializer family")))?;
+        if !matches!(
+            family,
+            "ammo"
+                | "base"
+                | "detector"
+                | "outfit"
+                | "pda"
+                | "document"
+                | "torch"
+                | "weapon"
+                | "weapon_magazined"
+                | "weapon_shotgun"
+                | "weapon_wgl"
+        ) {
+            return Err(Error::Refused(format!("serializer family '{family}' is not confirmed")));
+        }
+        let is_ammunition = family == "ammo";
+        if is_ammunition && definition.max_stack.is_some_and(|maximum| *quantity > maximum) {
+            return Err(Error::Refused(format!(
+                "ammo quantity {quantity} exceeds catalog max_stack {}",
+                definition.max_stack.unwrap_or_default()
+            )));
+        }
+        let template = find_add_template(save, catalog, family)
+            .ok_or_else(|| Error::Refused(format!("no registry template exists for serializer family '{family}'")))?;
+        let copy_count = if is_ammunition { 1 } else { *quantity };
+        let copy_count = usize::try_from(copy_count)
+            .map_err(|_| Error::Refused("item addition count exceeds this platform".to_owned()))?;
+        if prepared
+            .len()
+            .checked_add(copy_count)
+            .is_none_or(|count| count > MAXIMUM_ADDED_OBJECTS)
+            || save
+                .registry_objects()
+                .len()
+                .checked_add(prepared.len())
+                .and_then(|count| count.checked_add(copy_count))
+                .is_none_or(|count| count > MAXIMUM_REGISTRY_OBJECTS)
+        {
+            return Err(Error::Refused(
+                "item additions exceed the supported object limit".to_owned(),
+            ));
+        }
+        let stack_quantity = if is_ammunition {
+            u16::try_from(*quantity).map_err(|_| Error::Refused("ammo quantity must be in 1..65535".to_owned()))?
+        } else {
+            1
+        };
+        for _ in 0..copy_count {
+            let object_id = allocate_object_id(&mut used_ids)?;
+            prepared.push(Change::AddItem {
+                template_object: template,
+                item_key: item_key.clone(),
+                object_id,
+                quantity: stack_quantity,
+            });
+        }
+    }
+    Ok(prepared)
+}
+
+fn definition_family(definition: &ItemDefinition) -> Option<&str> {
+    definition
+        .serialization_family
+        .as_deref()
+        .or_else(|| infer_known_family(&definition.key))
+}
+
+fn registry_family<'a>(record: &'a crate::RegistryObject, catalog: &'a ItemCatalog) -> Option<&'a str> {
+    catalog
+        .resolve(&record.name)
+        .and_then(definition_family)
+        .or_else(|| infer_known_family(&record.name))
+}
+
+fn find_add_template(save: &Save, catalog: &ItemCatalog, family: &str) -> Option<u16> {
+    let records = save
+        .registry_objects()
+        .iter()
+        .filter(|record| record.object_id != save.actor_id());
+    records
+        .clone()
+        .find(|record| record.parent_id == save.actor_id() && registry_family(record, catalog) == Some(family))
+        .or_else(|| {
+            records
+                .clone()
+                .find(|record| record.parent_id != save.actor_id() && registry_family(record, catalog) == Some(family))
+        })
+        .map(|record| record.object_id)
+}
+
+fn infer_known_family(item_key: &str) -> Option<&'static str> {
+    let key = item_key.to_ascii_lowercase();
+    if key.starts_with("ammo_") {
+        return Some("ammo");
+    }
+    if key == "device_torch" {
+        return Some("torch");
+    }
+    if key == "device_pda" {
+        return Some("pda");
+    }
+    if key.starts_with("detector_") || key.starts_with("device_detector") {
+        return Some("detector");
+    }
+    if key.starts_with("outfit_")
+        || key.starts_with("scientific_")
+        || key.starts_with("helm_")
+        || key.starts_with("armor_")
+        || key.ends_with("_outfit")
+        || key.ends_with("_helmet")
+        || key.ends_with("_helm")
+        || key.ends_with("_armor")
+    {
+        return Some("outfit");
+    }
+    if key.starts_with("wpn_") || key.starts_with("weapon_") {
+        if key.ends_with("_knife") {
+            return Some("weapon");
+        }
+        if matches!(
+            key.as_str(),
+            "wpn_bm16" | "wpn_rg6" | "wpn_shotgun" | "wpn_spas12" | "wpn_toz34"
+        ) {
+            return Some("weapon_shotgun");
+        }
+        if matches!(key.as_str(), "wpn_ak74" | "wpn_fn2000" | "wpn_groza") {
+            return Some("weapon_wgl");
+        }
+        return Some("weapon_magazined");
+    }
+    None
+}
+
+fn allocate_object_id(used: &mut HashSet<u16>) -> Result<u16> {
+    let highest = used.iter().copied().max().unwrap_or_default();
+    let first = u32::from(highest).saturating_add(1);
+    for candidate in first..=u32::from(u16::MAX) {
+        let object_id = u16::try_from(candidate).map_err(|_| Error::Refused("object id overflow".to_owned()))?;
+        if used.insert(object_id) {
+            return Ok(object_id);
+        }
+    }
+    for candidate in 1..=u32::from(highest) {
+        let object_id = u16::try_from(candidate).map_err(|_| Error::Refused("object id overflow".to_owned()))?;
+        if used.insert(object_id) {
+            return Ok(object_id);
+        }
+    }
+    Err(Error::Refused(
+        "no free object id remains in the u16 registry".to_owned(),
+    ))
 }
 
 /// Exact inverse data for one successfully applied change set.
@@ -512,7 +717,7 @@ fn apply_with_catalog_internal(
                     Placement::Belt => {
                         return Err(Error::Refused(
                             "only artifact sections may be moved to the belt".to_owned(),
-                        ))
+                        ));
                     }
                     Placement::Slot(slot) => {
                         let maximum_slot = if save.format() == crate::Format::Cop { 12 } else { 10 };
@@ -1252,7 +1457,7 @@ fn build_undo_token(source: &Save, applied: &Save) -> Result<UndoToken> {
             _ => {
                 return Err(Error::damaged(format!(
                     "X-Ray chunk type {kind} changed its presence during writing"
-                )))
+                )));
             }
         }
     }
