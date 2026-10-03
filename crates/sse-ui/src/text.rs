@@ -147,6 +147,7 @@ pub fn break_lines<M: Metrics>(text: &str, max_width: f32, metrics: &M) -> Vec<L
                 let previous_index = at.saturating_sub(1);
                 if let Some(previous) = clusters.get(previous_index).copied() {
                     if line_break_pair(previous.last_char, cluster.first_char)
+                        && !previous.soft_hyphen
                         && !previous.whitespace
                         && !cluster.whitespace
                     {
