@@ -1748,16 +1748,13 @@ mod tests {
     fn all_twenty_eight_icons_parse_and_stroke() {
         assert_eq!(ALL_ICONS.len(), 28);
         for icon in ALL_ICONS {
-            let path = icon.path();
-            assert!(path.is_ok(), "{icon:?}");
-            let stroke = path.ok().and_then(|value| {
-                value
-                    .stroke_to_fill(Transform::identity(), 0.1, StrokeStyle::icon())
-                    .ok()
+            let stroke = icon.path().and_then(|value| {
+                value.stroke_to_fill(Transform::identity(), 0.1, StrokeStyle::icon())
             });
+            assert!(stroke.is_ok(), "{icon:?}: {stroke:?}");
             assert!(
-                stroke.as_ref().is_some_and(|value| !value.segments.is_empty()),
-                "{icon:?}"
+                stroke.as_ref().is_ok_and(|value| !value.segments.is_empty()),
+                "{icon:?}: empty stroke"
             );
         }
     }
