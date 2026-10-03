@@ -2955,7 +2955,7 @@ mod tests {
     #[test]
     fn manifest_vectors_match_reference_byte_for_byte() {
         let root = fixture_root();
-        let manifest = fs::read_to_string(root.join("manifest.json")).unwrap_or_else(|error| panic!("read Kraken manifest: {error}"));
+        let manifest = fs::read_to_string(root.join("manifest.json"))\n            .unwrap_or_else(|error| panic!("read Kraken manifest: {error}"));
         let fixtures = parse_manifest(&manifest);
         assert_eq!(fixtures.len(), 23, "manifest must contain the 23 C++ reference vectors");
 
