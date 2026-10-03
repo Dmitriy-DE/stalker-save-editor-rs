@@ -39,6 +39,11 @@ pub trait ProcessRunner {
     /// # Errors
     /// Returns an error if the process could not be launched.
     fn run(&mut self, program: &str, args: &[&str]) -> Result<i32>;
+
+    /// Checks if a command or binary is available to execute.
+    fn has_command(&self, program: &str) -> bool {
+        find_in_path(program).is_some()
+    }
 }
 
 /// Default system command runner.
@@ -65,6 +70,8 @@ pub struct MockProcessRunner {
     pub last_args: Vec<String>,
     /// Number of executions.
     pub call_count: usize,
+    /// Explicit list of supported commands if mocked.
+    pub available_commands: Option<Vec<String>>,
 }
 
 impl MockProcessRunner {
@@ -76,6 +83,7 @@ impl MockProcessRunner {
             last_program: None,
             last_args: Vec::new(),
             call_count: 0,
+            available_commands: None,
         }
     }
 }
@@ -86,6 +94,13 @@ impl ProcessRunner for MockProcessRunner {
         self.last_program = Some(program.to_string());
         self.last_args = args.iter().map(|s| (*s).to_string()).collect();
         Ok(self.exit_code)
+    }
+
+    fn has_command(&self, program: &str) -> bool {
+        match &self.available_commands {
+            Some(cmds) => cmds.iter().any(|c| c == program),
+            None => true,
+        }
     }
 }
 
@@ -118,8 +133,8 @@ pub fn install_artifact(
             ));
         }
 
-        let has_pkexec = find_in_path("pkexec").is_some();
-        let has_apt = find_in_path("apt-get").is_some();
+        let has_pkexec = runner.has_command("pkexec");
+        let has_apt = runner.has_command("apt-get");
 
         if has_pkexec && has_apt {
             let exit_code = runner.run("pkexec", &["apt-get", "install", "-y", "--", archive_str])?;
@@ -142,9 +157,8 @@ pub fn install_artifact(
             };
         }
 
-        if let Some(xdg) = find_in_path("xdg-open") {
-            let xdg_str = xdg.to_str().unwrap_or("xdg-open");
-            let exit_code = runner.run(xdg_str, &[archive_str])?;
+        if runner.has_command("xdg-open") {
+            let exit_code = runner.run("xdg-open", &[archive_str])?;
             return Ok(UpdateInstallResult {
                 state: UpdateInstallState::OpenedExternally,
                 exit_code: Some(exit_code),

@@ -44,6 +44,10 @@ fn fixture_path(relative: &str) -> PathBuf {
     manifest_dir.join("../../").join(relative)
 }
 
+fn canonical_path(p: &Path) -> std::path::PathBuf {
+    fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf())
+}
+
 #[test]
 fn detects_windows_portable_install_from_build_manifest() {
     let temp = TempDir::new("win-portable");
@@ -59,7 +63,7 @@ fn detects_windows_portable_install_from_build_manifest() {
     assert_eq!(inst.target, "windows");
     assert_eq!(inst.architecture, "x86_64");
     assert_eq!(inst.kind, "portable");
-    assert_eq!(inst.root, temp.path);
+    assert_eq!(inst.root, canonical_path(&temp.path));
 }
 
 #[test]
@@ -89,7 +93,7 @@ fn detects_linux_package_install_root() {
 
     assert_eq!(inst.target, "linux");
     assert_eq!(inst.kind, "package");
-    assert_eq!(inst.root, temp.path);
+    assert_eq!(inst.root, canonical_path(&temp.path));
 }
 
 #[test]
@@ -113,7 +117,7 @@ fn detects_macos_app_bundle() {
     assert_eq!(inst.target, "macos");
     assert_eq!(inst.architecture, "arm64");
     assert_eq!(inst.kind, "app-bundle");
-    assert_eq!(inst.root, bundle);
+    assert_eq!(inst.root, canonical_path(&bundle));
 }
 
 #[test]
