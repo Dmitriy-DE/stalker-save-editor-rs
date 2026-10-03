@@ -214,17 +214,16 @@ struct Central {
     name: Vec<u8>,
     method: u16,
     crc: u32,
-    compressed: u32,
-    uncompressed: u32,
-    offset: u32,
+    compressed: u64,
+    uncompressed: u64,
+    offset: u64,
 }
 
 /// Streaming reproducible ZIP writer.
 ///
 /// Local headers and payloads are written to the sink as entries arrive; only
-/// compact central-directory metadata is retained until finish. Callers that
-/// need name-order-independent reproducibility should use [write], which sorts
-/// entries before feeding this writer.
+/// compact central-directory metadata is retained until finish. ZIP64 records
+/// are emitted automatically when a size, offset, or entry count requires them.
 pub struct Writer<W: Write> {
     sink: W,
     level: Level,
@@ -261,6 +260,10 @@ impl<W: Write> Writer<W> {
         self.bytes(&value.to_le_bytes())
     }
 
+    fn u64(&mut self, value: u64) -> Result<()> {
+        self.bytes(&value.to_le_bytes())
+    }
+
     /// Adds one regular file and immediately writes its local record.
     pub fn add(&mut self, entry: &Entry) -> Result<()> {
         if self.finished {
@@ -277,26 +280,31 @@ impl<W: Write> Writer<W> {
         } else {
             (0_u16, entry.data.as_slice())
         };
-        let offset = u32::try_from(self.offset)
-            .map_err(|_| Error::Refused("ZIP64 writer is not needed by this package writer".to_owned()))?;
-        let compressed_len =
-            u32::try_from(payload.len()).map_err(|_| Error::Refused("ZIP entry too large".to_owned()))?;
-        let uncompressed_len =
-            u32::try_from(entry.data.len()).map_err(|_| Error::Refused("ZIP entry too large".to_owned()))?;
+        let offset = self.offset;
+        let compressed_len = u64::try_from(payload.len()).unwrap_or(u64::MAX);
+        let uncompressed_len = u64::try_from(entry.data.len()).unwrap_or(u64::MAX);
+        let zip64_sizes = compressed_len > u64::from(u32::MAX) || uncompressed_len > u64::from(u32::MAX);
+        let extra_len = if zip64_sizes { 20_u16 } else { 0_u16 };
         let crc = crc32(&entry.data);
 
         self.u32(0x0403_4b50)?;
-        self.u16(20)?;
+        self.u16(if zip64_sizes { 45 } else { 20 })?;
         self.u16(0x0800)?;
         self.u16(method)?;
         self.u16(0)?;
         self.u16(0x0021)?;
         self.u32(crc)?;
-        self.u32(compressed_len)?;
-        self.u32(uncompressed_len)?;
+        self.u32(u32::try_from(compressed_len).unwrap_or(u32::MAX))?;
+        self.u32(u32::try_from(uncompressed_len).unwrap_or(u32::MAX))?;
         self.u16(name_len)?;
-        self.u16(0)?;
+        self.u16(extra_len)?;
         self.bytes(name)?;
+        if zip64_sizes {
+            self.u16(0x0001)?;
+            self.u16(16)?;
+            self.u64(uncompressed_len)?;
+            self.u64(compressed_len)?;
+        }
         self.bytes(payload)?;
         self.central.push(Central {
             name: name.to_vec(),
@@ -315,41 +323,80 @@ impl<W: Write> Writer<W> {
             return Err(Error::Refused("ZIP writer already finished".to_owned()));
         }
         self.finished = true;
-        let directory_offset =
-            u32::try_from(self.offset).map_err(|_| Error::Refused("ZIP archive too large".to_owned()))?;
+        let directory_offset = self.offset;
         let central = std::mem::take(&mut self.central);
         for item in &central {
             let name_len =
                 u16::try_from(item.name.len()).map_err(|_| Error::Refused("ZIP name too long".to_owned()))?;
+            let size64 = item.compressed > u64::from(u32::MAX) || item.uncompressed > u64::from(u32::MAX);
+            let offset64 = item.offset > u64::from(u32::MAX);
+            let payload_len = (if size64 { 16_usize } else { 0 }).saturating_add(if offset64 { 8 } else { 0 });
+            let extra_len = if payload_len == 0 {
+                0_u16
+            } else {
+                u16::try_from(payload_len.saturating_add(4))
+                    .map_err(|_| Error::damaged("ZIP64 central extra length"))?
+            };
             self.u32(0x0201_4b50)?;
-            self.u16(0x0314)?;
-            self.u16(20)?;
+            self.u16(0x032d)?;
+            self.u16(if payload_len == 0 { 20 } else { 45 })?;
             self.u16(0x0800)?;
             self.u16(item.method)?;
             self.u16(0)?;
             self.u16(0x0021)?;
             self.u32(item.crc)?;
-            self.u32(item.compressed)?;
-            self.u32(item.uncompressed)?;
+            self.u32(u32::try_from(item.compressed).unwrap_or(u32::MAX))?;
+            self.u32(u32::try_from(item.uncompressed).unwrap_or(u32::MAX))?;
             self.u16(name_len)?;
-            self.u16(0)?;
+            self.u16(extra_len)?;
             self.u16(0)?;
             self.u16(0)?;
             self.u16(0)?;
             self.u32(0o100644_u32.wrapping_shl(16))?;
-            self.u32(item.offset)?;
+            self.u32(u32::try_from(item.offset).unwrap_or(u32::MAX))?;
             self.bytes(&item.name)?;
+            if payload_len != 0 {
+                self.u16(0x0001)?;
+                self.u16(u16::try_from(payload_len).map_err(|_| Error::damaged("ZIP64 extra length"))?)?;
+                if size64 {
+                    self.u64(item.uncompressed)?;
+                    self.u64(item.compressed)?;
+                }
+                if offset64 {
+                    self.u64(item.offset)?;
+                }
+            }
         }
-        let directory_size = u32::try_from(self.offset.saturating_sub(u64::from(directory_offset)))
-            .map_err(|_| Error::Refused("ZIP central directory too large".to_owned()))?;
-        let count = u16::try_from(central.len()).map_err(|_| Error::Refused("too many ZIP entries".to_owned()))?;
+        let directory_size = self.offset.saturating_sub(directory_offset);
+        let zip64 = central.len() > usize::from(u16::MAX)
+            || directory_size > u64::from(u32::MAX)
+            || directory_offset > u64::from(u32::MAX);
+        if zip64 {
+            let zip64_offset = self.offset;
+            self.u32(0x0606_4b50)?;
+            self.u64(44)?;
+            self.u16(45)?;
+            self.u16(45)?;
+            self.u32(0)?;
+            self.u32(0)?;
+            let count = u64::try_from(central.len()).unwrap_or(u64::MAX);
+            self.u64(count)?;
+            self.u64(count)?;
+            self.u64(directory_size)?;
+            self.u64(directory_offset)?;
+            self.u32(0x0706_4b50)?;
+            self.u32(0)?;
+            self.u64(zip64_offset)?;
+            self.u32(1)?;
+        }
         self.u32(0x0605_4b50)?;
         self.u16(0)?;
         self.u16(0)?;
-        self.u16(count)?;
-        self.u16(count)?;
-        self.u32(directory_size)?;
-        self.u32(directory_offset)?;
+        let count16 = u16::try_from(central.len()).unwrap_or(u16::MAX);
+        self.u16(count16)?;
+        self.u16(count16)?;
+        self.u32(u32::try_from(directory_size).unwrap_or(u32::MAX))?;
+        self.u32(u32::try_from(directory_offset).unwrap_or(u32::MAX))?;
         self.u16(0)?;
         Ok(self.sink)
     }
