@@ -49,7 +49,9 @@ impl Bits {
             .ok_or_else(|| Error::damaged("Kraken length overflow"))?;
         let log = 31_u32.saturating_sub(biased.leading_zeros());
         if log < 6 || log > 18 {
-            return Err(Error::Refused("Kraken extended length outside encoder range".to_owned()));
+            return Err(Error::Refused(
+                "Kraken extended length outside encoder range".to_owned(),
+            ));
         }
         let n = log.saturating_sub(6);
         for _ in 0..n {
@@ -87,13 +89,7 @@ fn hash4(data: &[u8], at: usize) -> Option<usize> {
     usize::try_from(h >> (32 - HASH_BITS)).ok()
 }
 
-fn best_match(
-    data: &[u8],
-    at: usize,
-    end: usize,
-    head: &[Option<usize>],
-    prev: &[Option<usize>],
-) -> Match {
+fn best_match(data: &[u8], at: usize, end: usize, head: &[Option<usize>], prev: &[Option<usize>]) -> Match {
     let Some(hash) = hash4(data, at) else {
         return Match { len: 0, distance: 0 };
     };
@@ -283,10 +279,7 @@ fn encode_subblock(data: &[u8], start: usize, end: usize) -> Result<Vec<u8>> {
 
     let mut payload = Vec::new();
     if start == 0 {
-        payload.extend_from_slice(
-            data.get(..8)
-                .ok_or_else(|| Error::damaged("Kraken first literals"))?,
-        );
+        payload.extend_from_slice(data.get(..8).ok_or_else(|| Error::damaged("Kraken first literals"))?);
     }
     payload.extend_from_slice(&raw_entropy(&literals)?);
     payload.extend_from_slice(&raw_entropy(&commands)?);
@@ -361,8 +354,8 @@ pub fn compress(input: &[u8]) -> Result<Vec<u8>> {
                     .ok_or_else(|| Error::damaged("Kraken raw block"))?,
             );
         } else {
-            let q = u32::try_from(payload.len().saturating_sub(1))
-                .map_err(|_| Error::damaged("Kraken quantum size"))?;
+            let q =
+                u32::try_from(payload.len().saturating_sub(1)).map_err(|_| Error::damaged("Kraken quantum size"))?;
             put_u24(&mut out, q);
             out.extend_from_slice(&payload);
         }
