@@ -636,6 +636,25 @@ mod tests {
     }
 
     #[test]
+    fn default_is_within_five_percent_of_zlib_6_on_text_fixture() {
+        const PARAGRAPH: &[u8] =
+            b"Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.\\n";
+        let mut data = Vec::with_capacity(PARAGRAPH.len().saturating_mul(10_000));
+        for _ in 0..10_000 {
+            data.extend_from_slice(PARAGRAPH);
+        }
+        // Python zlib 1.2.x, level 6, raw RFC 1951 (wbits=-15) produces
+        // 4,322 bytes for this exact 1,240,000-byte fixture.
+        const ZLIB_6_RAW: usize = 4_322;
+        let encoded = compress_raw(&data, Level::Default).unwrap_or_default();
+        assert!(
+            encoded.len().saturating_mul(100) <= ZLIB_6_RAW.saturating_mul(105),
+            "ours={} zlib6={ZLIB_6_RAW}",
+            encoded.len()
+        );
+        assert_eq!(inflate_raw(&encoded, data.len()).unwrap_or_default(), data);
+    }
+    #[test]
     fn default_writes_dynamic_huffman() {
         let d = b"dynamic huffman repeated repeated repeated repeated text";
         let v = compress_raw(d, Level::Default).unwrap_or_default();
