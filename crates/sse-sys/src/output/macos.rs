@@ -41,11 +41,7 @@ unsafe extern "C" {
         flags: u32,
         out: *mut AudioQueueRef,
     ) -> i32;
-    fn AudioQueueAllocateBuffer(
-        queue: AudioQueueRef,
-        capacity: u32,
-        out: *mut AudioQueueBufferRef,
-    ) -> i32;
+    fn AudioQueueAllocateBuffer(queue: AudioQueueRef, capacity: u32, out: *mut AudioQueueBufferRef) -> i32;
     fn AudioQueueEnqueueBuffer(
         queue: AudioQueueRef,
         buffer: AudioQueueBufferRef,
@@ -57,12 +53,7 @@ unsafe extern "C" {
     fn AudioQueueDispose(queue: AudioQueueRef, immediate: u8) -> i32;
 }
 
-unsafe extern "C" fn finished(
-    _user: *mut c_void,
-    _queue: AudioQueueRef,
-    _buffer: AudioQueueBufferRef,
-) {
-}
+unsafe extern "C" fn finished(_user: *mut c_void, _queue: AudioQueueRef, _buffer: AudioQueueBufferRef) {}
 
 fn fourcc(bytes: [u8; 4]) -> u32 {
     u32::from_be_bytes(bytes)
@@ -125,8 +116,7 @@ fn run(mut pcm: Vec<i16>, channels: u8, rate: u32, volume: f32) {
         && unsafe { AudioQueueStart(queue, ptr::null()) } == 0
     {
         let frames = pcm.len() / usize::from(channels);
-        let millis =
-            u64::try_from(frames).unwrap_or(u64::MAX).saturating_mul(1000) / u64::from(rate);
+        let millis = u64::try_from(frames).unwrap_or(u64::MAX).saturating_mul(1000) / u64::from(rate);
         thread::sleep(Duration::from_millis(millis.saturating_add(50)));
         // SAFETY: queue is live; immediate stop is appropriate for one-shot teardown after duration elapsed.
         let _ = unsafe { AudioQueueStop(queue, 1) };
