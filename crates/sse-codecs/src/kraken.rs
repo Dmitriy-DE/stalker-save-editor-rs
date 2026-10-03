@@ -2502,6 +2502,11 @@ fn unpack_offsets(
     scale: u8,
     packed_lengths: &[u8],
 ) -> Result<(Vec<i32>, Vec<u32>)> {
+    #[cfg(test)]
+    if bits_source.len() == 852 && packed_offsets.len() == 1177 {
+        eprintln!("X16B_DEBUG packed_offsets={packed_offsets:02x?}");
+    }
+
     let mut forward = OffsetBits::forward(bits_source)?;
     let mut backward = OffsetBits::backward(bits_source)?;
     if backward.bits < 0x2000 {
