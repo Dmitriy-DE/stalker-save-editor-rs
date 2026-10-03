@@ -929,6 +929,10 @@ mod tests {
             let mut decoded = vec![0_u8; payload.len()];
             assert_eq!(decompress_into(&encoded, &mut decoded), Ok(()));
             assert_eq!(&decoded, payload);
+
+            let mut main_decoded = vec![0_u8; payload.len()];
+            assert_eq!(crate::kraken::decompress_into(&encoded, &mut main_decoded), Ok(()));
+            assert_eq!(&main_decoded, payload);
         }
     }
 
