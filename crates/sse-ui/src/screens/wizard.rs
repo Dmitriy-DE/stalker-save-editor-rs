@@ -25,6 +25,22 @@ const LANGUAGE_NAMES: [&str; 15] = [
     "繁體中文",
 ];
 
+fn language_code(index: usize) -> &'static str {
+    crate::strings::LANGUAGES
+        .get(index)
+        .copied()
+        .or_else(|| crate::strings::LANGUAGES.first().copied())
+        .unwrap_or("ru")
+}
+
+fn language_name(index: usize) -> &'static str {
+    LANGUAGE_NAMES
+        .get(index)
+        .copied()
+        .or_else(|| LANGUAGE_NAMES.first().copied())
+        .unwrap_or("Русский")
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum Step {
     #[default]
@@ -72,7 +88,7 @@ impl Wizard {
         self.language_value = Some(style::label(
             cx.tree,
             language,
-            LANGUAGE_NAMES[self.language],
+            language_name(self.language),
             Text::Value,
         )?);
         self.language_button = Some(style::button(cx.tree, language, "Изменить", Button::Secondary)?);
@@ -190,7 +206,7 @@ impl Wizard {
         if clicked.is_some() && clicked == self.next {
             match self.step {
                 Step::Language => {
-                    let code = crate::strings::LANGUAGES[self.language];
+                    let code = language_code(self.language);
                     crate::strings::set_language(Some(code));
                     self.settings.language = Some(code.to_owned());
                     self.settings.save(&sse_app::default_settings_path())?;
