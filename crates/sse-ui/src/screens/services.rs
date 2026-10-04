@@ -196,14 +196,11 @@ enum CompanionReply {
     Changed(std::result::Result<String, String>),
 }
 
-fn confirm_twice(armed: &mut Option<WidgetId>, clicked: Option<WidgetId>, status: &mut Option<String>) -> bool {
-    if *armed == clicked {
-        *armed = None;
-        return true;
-    }
-    *armed = clicked;
-    *status = Some("Подтвердите действие повторным нажатием".to_owned());
-    false
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CompanionIntent {
+    install: bool,
+    game: String,
+    directory: PathBuf,
 }
 
 #[derive(Default)]
@@ -217,8 +214,10 @@ struct Companion {
     inspect: Option<WidgetId>,
     save_hotkeys: Option<WidgetId>,
     default_hotkeys: Option<WidgetId>,
-    /// Destructive button pressed once and waiting for the second press.
-    armed: Option<WidgetId>,
+    confirm_card: Option<WidgetId>,
+    confirm_write: Option<WidgetId>,
+    confirm_cancel: Option<WidgetId>,
+    intent: Option<CompanionIntent>,
 }
 
 impl Companion {
@@ -334,9 +333,26 @@ impl Screen for Companion {
         style::label(cx.tree, hot, &format!("Файл: {}", hotkey_path.display()), Text::Note)?;
         self.save_hotkeys = Some(style::button(cx.tree, hot, "СОХРАНИТЬ КЛАВИШИ", Button::Primary)?);
         self.default_hotkeys = Some(style::button(cx.tree, hot, "ПО УМОЛЧАНИЮ", Button::Secondary)?);
+        let confirm = style::card(cx.tree, host)?;
+        self.confirm_card = Some(confirm);
+        style::label(cx.tree, confirm, "ПОДТВЕРЖДЕНИЕ ИЗМЕНЕНИЯ ИГРЫ", Text::Heading)?;
+        style::label(
+            cx.tree,
+            confirm,
+            "Будут изменены файлы выбранной игры. Проверьте игру и папку перед продолжением.",
+            Text::Note,
+        )?;
+        let confirm_row = style::row(cx.tree, confirm)?;
+        self.confirm_write = Some(style::button(cx.tree, confirm_row, "ПОДТВЕРДИТЬ", Button::Primary)?);
+        self.confirm_cancel = Some(style::button(cx.tree, confirm_row, "ОТМЕНА", Button::Secondary)?);
+        cx.tree.set_visible(confirm, false)?;
         Ok(())
     }
     fn shown(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        self.intent = None;
+        if let Some(card) = self.confirm_card {
+            cx.tree.set_visible(card, false)?;
+        }
         self.refresh(cx);
         Ok(())
     }
@@ -375,13 +391,51 @@ impl Screen for Companion {
             return Ok(());
         }
         if clicked.is_some() && (clicked == self.install || clicked == self.remove) {
-            if !confirm_twice(&mut self.armed, clicked, &mut cx.status) {
+            let Some(game) = cx.app.selected_game().map(str::to_owned) else {
+                cx.status = Some("Игра не выбрана".to_owned());
+                return Ok(());
+            };
+            let Some(directory) = cx.app.game_dir().map(Path::to_path_buf) else {
+                cx.status = Some("Папка игры не выбрана".to_owned());
+                return Ok(());
+            };
+            self.intent = Some(CompanionIntent {
+                install: clicked == self.install,
+                game,
+                directory,
+            });
+            if let Some(card) = self.confirm_card {
+                cx.tree.open_dialog(card)?;
+            }
+            return Ok(());
+        }
+        if clicked.is_some() && clicked == self.confirm_cancel {
+            self.intent = None;
+            if self.confirm_card.is_some() {
+                cx.tree.close_dialog()?;
+            }
+            return Ok(());
+        }
+        if clicked.is_some() && clicked == self.confirm_write {
+            let Some(intent) = self.intent.take() else {
+                return Ok(());
+            };
+            let current_game = cx.app.selected_game();
+            let current_dir = cx.app.game_dir();
+            if current_game != Some(intent.game.as_str()) || current_dir != Some(intent.directory.as_path()) {
+                if self.confirm_card.is_some() {
+                    cx.tree.close_dialog()?;
+                }
+                cx.status = Some("Выбор игры изменился; подтверждение отменено.".to_owned());
                 return Ok(());
             }
-            let install = clicked == self.install;
+            if self.confirm_card.is_some() {
+                cx.tree.close_dialog()?;
+            }
+            let install = intent.install;
+            let game = Some(intent.game);
+            let dir = Some(intent.directory);
             let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
-            let game = cx.app.selected_game().map(str::to_owned);
-            let dir = cx.app.game_dir().map(Path::to_path_buf);
             std::thread::spawn(move || {
                 let result = (|| {
                     let game = game.ok_or_else(|| "Игра не выбрана".to_owned())?;
@@ -459,17 +513,26 @@ enum AchReply {
     List(std::result::Result<Vec<Achievement>, String>),
     Changed(std::result::Result<(), String>),
 }
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct AchievementIntent {
+    app_id: u32,
+    name: String,
+    set: bool,
+}
 #[derive(Default)]
 struct Achievements {
     status: Option<WidgetId>,
     rows: Vec<WidgetId>,
     items: Vec<Achievement>,
-    selected: Option<usize>,
+    selected: Option<String>,
     set: Option<WidgetId>,
     clear: Option<WidgetId>,
     refresh: Option<WidgetId>,
     progress: Option<WidgetId>,
-    confirm: Option<bool>,
+    confirm_card: Option<WidgetId>,
+    confirm_write: Option<WidgetId>,
+    confirm_cancel: Option<WidgetId>,
+    intent: Option<AchievementIntent>,
     pending_set: Option<bool>,
 }
 
@@ -545,6 +608,19 @@ impl Screen for Achievements {
         let row = style::row(cx.tree, card)?;
         self.set = Some(style::button(cx.tree, row, "Разблокировать", Button::Primary)?);
         self.clear = Some(style::button(cx.tree, row, "Сбросить", Button::Secondary)?);
+        let confirm = style::card(cx.tree, host)?;
+        self.confirm_card = Some(confirm);
+        style::label(cx.tree, confirm, "ПОДТВЕРЖДЕНИЕ ДОСТИЖЕНИЯ", Text::Heading)?;
+        style::label(
+            cx.tree,
+            confirm,
+            "Изменение будет отправлено в Steam для выбранной игры и достижения.",
+            Text::Note,
+        )?;
+        let actions = style::row(cx.tree, confirm)?;
+        self.confirm_write = Some(style::button(cx.tree, actions, "ПОДТВЕРДИТЬ", Button::Primary)?);
+        self.confirm_cancel = Some(style::button(cx.tree, actions, "ОТМЕНА", Button::Secondary)?);
+        cx.tree.set_visible(confirm, false)?;
         Ok(())
     }
     fn shown(&mut self, cx: &mut Context<'_>) -> Result<()> {
@@ -563,8 +639,11 @@ impl Screen for Achievements {
         }
         for (i, row) in self.rows.iter().copied().enumerate() {
             if clicked == Some(row) && self.items.get(i).is_some() {
-                self.selected = Some(i);
-                self.confirm = None;
+                self.selected = self.items.get(i).map(|a| a.name.clone());
+                self.intent = None;
+                if self.confirm_card.is_some_and(|card| cx.tree.dialog() == Some(card)) {
+                    let _ = cx.tree.close_dialog()?;
+                }
                 cx.status = self.items.get(i).map(|a| a.description.clone());
             }
         }
@@ -578,31 +657,47 @@ impl Screen for Achievements {
             None
         };
         if let Some(set) = change {
-            let Some(i) = self.selected else {
+            let Some(selected_id) = self.selected.as_deref() else {
                 cx.status = Some("Сначала выберите достижение".to_owned());
                 return Ok(());
             };
-            if self.confirm != Some(set) {
-                self.confirm = Some(set);
-                cx.status = self.items.get(i).map(|a| {
-                    if set {
-                        format!(
-                            "РАЗБЛОКИРОВАТЬ ДОСТИЖЕНИЕ: подтвердите «{}» повторным нажатием.",
-                            a.display_name
-                        )
-                    } else {
-                        format!("СНЯТЬ ДОСТИЖЕНИЕ: подтвердите «{}» повторным нажатием.", a.display_name)
-                    }
-                });
+            let Some(item) = self.items.iter().find(|item| item.name == selected_id) else {
+                self.selected = None;
+                cx.status = Some("Выбранное достижение исчезло после обновления списка".to_owned());
                 return Ok(());
-            }
-            self.confirm = None;
-            self.pending_set = Some(set);
-            let Some(item) = self.items.get(i) else { return Ok(()) };
+            };
             let Some(app_id) = cx.app.selected_game().and_then(app_id) else {
                 return Ok(());
             };
-            let name = item.name.clone();
+            self.intent = Some(AchievementIntent {
+                app_id,
+                name: item.name.clone(),
+                set,
+            });
+            if let Some(card) = self.confirm_card {
+                cx.tree.open_dialog(card)?;
+            }
+            return Ok(());
+        }
+        if clicked.is_some() && clicked == self.confirm_cancel {
+            self.intent = None;
+            let _ = cx.tree.close_dialog()?;
+            return Ok(());
+        }
+        if clicked.is_some() && clicked == self.confirm_write {
+            let Some(intent) = self.intent.take() else {
+                return Ok(());
+            };
+            if cx.app.selected_game().and_then(app_id) != Some(intent.app_id) {
+                let _ = cx.tree.close_dialog()?;
+                cx.status = Some("Выбранная игра изменилась; подтверждение отменено.".to_owned());
+                return Ok(());
+            }
+            self.pending_set = Some(intent.set);
+            let app_id = intent.app_id;
+            let name = intent.name;
+            let set = intent.set;
+            let _ = cx.tree.close_dialog()?;
             let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
             std::thread::spawn(move || {
                 let req = if set {
@@ -629,6 +724,10 @@ impl Screen for Achievements {
             if let Some(reply) = payload.downcast_ref::<AchReply>() {
                 match reply {
                     AchReply::List(Ok(items)) => {
+                        self.intent = None;
+                        if self.confirm_card.is_some_and(|card| cx.tree.dialog() == Some(card)) {
+                            let _ = cx.tree.close_dialog()?;
+                        }
                         self.items.clone_from(items);
                         self.render(cx)?
                     }
@@ -638,8 +737,8 @@ impl Screen for Achievements {
                         }
                     }
                     AchReply::Changed(Ok(())) => {
-                        if let Some(index) = self.selected {
-                            if let Some(item) = self.items.get_mut(index) {
+                        if let Some(selected_id) = self.selected.as_deref() {
+                            if let Some(item) = self.items.iter_mut().find(|item| item.name == selected_id) {
                                 item.achieved = self.pending_set.take().unwrap_or(item.achieved);
                                 cx.status = Some(if item.achieved {
                                     format!("Достижение «{}» получено в Steam.", item.display_name)
@@ -679,7 +778,7 @@ struct Cloud {
     status: Option<WidgetId>,
     rows: Vec<WidgetId>,
     items: Vec<CloudFile>,
-    selected: Option<usize>,
+    selected: Option<String>,
     download: Option<WidgetId>,
     upload: Option<WidgetId>,
     confirm_card: Option<WidgetId>,
@@ -736,11 +835,14 @@ impl Cloud {
     }
 
     fn prepare_upload(&self, cx: &mut Context<'_>) {
-        let Some(i) = self.selected else {
+        let Some(selected_id) = self.selected.as_deref() else {
             cx.status = Some("Сначала выберите файл Steam Cloud".to_owned());
             return;
         };
-        let Some(item) = self.items.get(i) else { return };
+        let Some(item) = self.items.iter().find(|item| item.name == selected_id) else {
+            cx.status = Some("Выбранный облачный файл исчез после обновления списка".to_owned());
+            return;
+        };
         let Some(game) = cx.app.selected_game() else { return };
         let Some(app_id) = app_id(game) else { return };
         if app_id == sse_steam::discovery::STALKER_2_APP_ID {
@@ -918,7 +1020,7 @@ impl Screen for Cloud {
             clicked.and_then(|clicked_id| self.rows.iter().copied().skip(1).position(|row| row == clicked_id));
         if let Some(row_index) = selected_row.filter(|index| self.items.get(*index).is_some()) {
             self.clear_intent(cx)?;
-            self.selected = Some(row_index);
+            self.selected = self.items.get(row_index).map(|file| file.name.clone());
             cx.status = self.items.get(row_index).map(|file| format!("Выбран {}", file.name));
         }
 
@@ -964,11 +1066,15 @@ impl Screen for Cloud {
         }
 
         if clicked.is_some() && clicked == self.download {
-            let Some(i) = self.selected else {
+            let Some(selected_id) = self.selected.as_deref() else {
                 cx.status = Some("Сначала выберите файл Steam Cloud".to_owned());
                 return Ok(());
             };
-            let Some(item) = self.items.get(i) else { return Ok(()) };
+            let Some(item) = self.items.iter().find(|item| item.name == selected_id) else {
+                self.selected = None;
+                cx.status = Some("Выбранный облачный файл исчез после обновления списка".to_owned());
+                return Ok(());
+            };
             let Some(app_id) = cx.app.selected_game().and_then(app_id) else {
                 return Ok(());
             };
@@ -1025,6 +1131,14 @@ impl Screen for Cloud {
             if let Some(reply) = payload.downcast_ref::<CloudReply>() {
                 match reply {
                     CloudReply::List(Ok(items)) => {
+                        if self
+                            .selected
+                            .as_ref()
+                            .is_some_and(|id| !items.iter().any(|item| &item.name == id))
+                        {
+                            self.selected = None;
+                            self.clear_intent(cx)?;
+                        }
                         self.items.clone_from(items);
                         self.render(cx)?;
                     }
