@@ -242,7 +242,11 @@ impl Settings {
     }
 
     fn scale_choice(&self) -> u32 {
-        SCALES.get(self.scale).copied().or_else(|| SCALES.first().copied()).unwrap_or(100)
+        SCALES
+            .get(self.scale)
+            .copied()
+            .or_else(|| SCALES.first().copied())
+            .unwrap_or(100)
     }
 }
 
@@ -279,22 +283,12 @@ impl Screen for Settings {
 
         let theme_line = style::row(cx.tree, view)?;
         style::label(cx.tree, theme_line, "Тема:", Text::Body)?;
-        self.theme_value = Some(style::label(
-            cx.tree,
-            theme_line,
-            self.theme_choice().1,
-            Text::Value,
-        )?);
+        self.theme_value = Some(style::label(cx.tree, theme_line, self.theme_choice().1, Text::Value)?);
         self.theme_button = Some(style::button(cx.tree, theme_line, "Изменить", Button::Secondary)?);
 
         let accent_line = style::row(cx.tree, view)?;
         style::label(cx.tree, accent_line, "Акцент:", Text::Body)?;
-        self.accent_value = Some(style::label(
-            cx.tree,
-            accent_line,
-            self.accent_choice(),
-            Text::Value,
-        )?);
+        self.accent_value = Some(style::label(cx.tree, accent_line, self.accent_choice(), Text::Value)?);
         self.accent_button = Some(style::button(cx.tree, accent_line, "Изменить", Button::Secondary)?);
 
         let line = style::row(cx.tree, view)?;
