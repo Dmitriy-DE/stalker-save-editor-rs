@@ -1442,15 +1442,29 @@ struct FixRow {
 enum FixReply {
     List(std::result::Result<Vec<FixRow>, String>),
     Changed(std::result::Result<String, String>),
-    Compatibility(std::result::Result<String, String>),
+    Compatibility(std::result::Result<(String, String, PathBuf, String), String>),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum FixOperation {
+    Install,
+    Remove,
+    Preset(sse_fixes::GameFixPreset),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct FixIntent {
-    fix_id: String,
-    install: bool,
+    fix_id: Option<String>,
+    operation: FixOperation,
     game: String,
     directory: PathBuf,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct FixCompatibility {
+    game: String,
+    directory: PathBuf,
+    build: String,
 }
 
 #[derive(Default)]
@@ -1458,6 +1472,8 @@ struct GameFixes {
     status: Option<WidgetId>,
     detail: Option<WidgetId>,
     rows: Vec<WidgetId>,
+    list_scroll: Option<WidgetId>,
+    scroll_y: i32,
     items: Vec<FixRow>,
     selected: Option<String>,
     install: Option<WidgetId>,
@@ -1471,6 +1487,8 @@ struct GameFixes {
     confirm_write: Option<WidgetId>,
     confirm_cancel: Option<WidgetId>,
     intent: Option<FixIntent>,
+    verified: Option<FixCompatibility>,
+    busy: bool,
 }
 
 fn fix_target(game: &str) -> Option<sse_fixes::GameTarget> {
