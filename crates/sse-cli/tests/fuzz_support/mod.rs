@@ -6,6 +6,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const MAX_MUTATED_INPUT: usize = 1024 * 1024;
+#[cfg(target_os = "linux")]
 const MAX_PEAK_RSS_KIB: u64 = 256 * 1024;
 const PER_INPUT_LIMIT: Duration = Duration::from_secs(1);
 
