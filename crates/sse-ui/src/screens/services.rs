@@ -741,12 +741,17 @@ impl Screen for Cloud {
             self.load(cx);
         }
 
-        for (row_index, row) in self.rows.iter().copied().skip(1).enumerate() {
-            if clicked.is_some() && clicked == Some(row) && self.items.get(row_index).is_some() {
-                self.clear_intent(cx)?;
-                self.selected = Some(row_index);
-                cx.status = self.items.get(row_index).map(|file| format!("Выбран {}", file.name));
-            }
+        let selected_row = clicked.and_then(|clicked_id| {
+            self.rows
+                .iter()
+                .copied()
+                .skip(1)
+                .position(|row| row == clicked_id)
+        });
+        if let Some(row_index) = selected_row.filter(|index| self.items.get(*index).is_some()) {
+            self.clear_intent(cx)?;
+            self.selected = Some(row_index);
+            cx.status = self.items.get(row_index).map(|file| format!("Выбран {}", file.name));
         }
 
         if clicked.is_some() && clicked == self.upload {
