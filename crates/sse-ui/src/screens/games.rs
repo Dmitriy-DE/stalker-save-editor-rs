@@ -1130,6 +1130,12 @@ fn encyclopedia_game(game: &str) -> Option<sse_content::CompanionGame> {
     }
 }
 
+struct EncyclopediaClipboard;
+impl crate::edit::Clipboard for EncyclopediaClipboard {
+    fn read_text(&mut self) -> Result<String> { Ok(String::new()) }
+    fn write_text(&mut self, _text: &str) -> Result<()> { Ok(()) }
+}
+
 #[derive(Clone, Debug)]
 struct EncyclopediaEntry {
     kind: String,
@@ -1300,7 +1306,7 @@ impl Screen for Encyclopedia {
                 filter: crate::edit::InputFilter::Any,
             },
         )?);
-        self.search_label = Some(style::label(cx.tree, card, "Поиск: все", Text::Value)?);
+        self.search_label = Some(style::button(cx.tree, card, "Поиск: все · нажмите и печатайте", Button::Secondary)?);
         style::label(cx.tree, card, "ТИП · НАЗВАНИЕ · КЛЮЧ", Text::Note)?;
         for _ in 0..10 {
             let row = style::button(cx.tree, card, "", Button::Secondary)?;
@@ -1322,6 +1328,44 @@ impl Screen for Encyclopedia {
         message: &Message<AppMessage>,
         clicked: Option<WidgetId>,
     ) -> Result<()> {
+        if clicked.is_some() && clicked == self.search_label {
+            if let Some(search) = self.search.as_mut() {
+                search.focus(true, 0);
+                cx.status = Some("Поиск активен: вводите текст с клавиатуры".to_owned());
+            }
+        }
+        if let Message::Window(crate::event_loop::WindowEvent::Key { pressed: true, keysym, text, ctrl, shift }) = message {
+            if self.search.as_ref().is_some_and(crate::widgets::text_input::TextInput::focused) {
+                let key = match *keysym {
+                    0xff08 => crate::edit::Key::Backspace,
+                    0xffff => crate::edit::Key::Delete,
+                    0xff51 => crate::edit::Key::Left,
+                    0xff53 => crate::edit::Key::Right,
+                    0xff50 => crate::edit::Key::Home,
+                    0xff57 => crate::edit::Key::End,
+                    value if *ctrl && matches!(value, 0x61 | 0x41) => crate::edit::Key::A,
+                    value if *ctrl && matches!(value, 0x7a | 0x5a) => crate::edit::Key::Z,
+                    _ => crate::edit::Key::Character(text.unwrap_or('\0')),
+                };
+                let typed = text.map(|character| character.to_string());
+                let mut clipboard = EncyclopediaClipboard;
+                if let Some(search) = self.search.as_mut() {
+                    let changed = search.key(
+                        key,
+                        crate::edit::Modifiers { ctrl: *ctrl, shift: *shift },
+                        typed.as_deref(),
+                        &mut clipboard,
+                    )?;
+                    if changed { self.apply_search(cx)?; }
+                }
+            }
+        }
+        if let Message::User(AppMessage::Tick(seconds)) = message {
+            if let Some(search) = self.search.as_mut() {
+                let _ = search.tick(seconds.saturating_mul(1_000));
+            }
+        }
+
         if clicked.is_some() {
             for (row_index, widget) in self.rows.iter().copied().enumerate() {
                 if clicked == Some(widget) {
