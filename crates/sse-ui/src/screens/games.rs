@@ -1134,8 +1134,15 @@ struct Environment {
 
 impl Environment {
     fn inspect(cx: &Context<'_>) -> std::result::Result<(sse_content::CompanionGame, PathBuf), String> {
-        let game = cx.app.selected_game().ok_or_else(|| "Сначала выберите игру в «Обзоре игр»".to_owned())?;
-        let directory = cx.app.game_dir().map(Path::to_path_buf).ok_or_else(|| "Папка игры не выбрана".to_owned())?;
+        let game = cx
+            .app
+            .selected_game()
+            .ok_or_else(|| "Сначала выберите игру в «Обзоре игр»".to_owned())?;
+        let directory = cx
+            .app
+            .game_dir()
+            .map(Path::to_path_buf)
+            .ok_or_else(|| "Папка игры не выбрана".to_owned())?;
         let target = match game {
             "soc" | "stalker-soc" | "soc-ee" | "stalker-soc-ee" => sse_content::CompanionGame::ShadowOfChernobyl,
             "cs" | "clear_sky" | "stalker-cs" | "cs-ee" | "stalker-cs-ee" => sse_content::CompanionGame::ClearSky,
@@ -1161,21 +1168,41 @@ impl Environment {
                 std::fs::read_dir(root).map_or(0, |entries| entries.flatten().count())
             });
             let mut lines = vec![
-                format!("fsgame.ltx: {}", search.fsgame_path.as_ref().map_or("не найден".to_owned(), |p| p.display().to_string())),
+                format!(
+                    "fsgame.ltx: {}",
+                    search
+                        .fsgame_path
+                        .as_ref()
+                        .map_or("не найден".to_owned(), |p| p.display().to_string())
+                ),
                 format!("gamedata: {}", if gamedata { "найдена" } else { "нет" }),
-                format!("mods: {}", if mods.is_dir() { mods.display().to_string() } else { "нет".to_owned() }),
+                format!(
+                    "mods: {}",
+                    if mods.is_dir() {
+                        mods.display().to_string()
+                    } else {
+                        "нет".to_owned()
+                    }
+                ),
                 format!("распакованные файлы/папки в gamedata: {unpacked}"),
                 format!("архивов обнаружено: {}", search.archive_paths.len()),
             ];
             lines.extend(search.issues.into_iter().map(|issue| format!("⚠ {issue}")));
-            proxy.send(AppMessage::ToScreen(ScreenId::Environment, Box::new(EnvironmentResult { lines })));
+            proxy.send(AppMessage::ToScreen(
+                ScreenId::Environment,
+                Box::new(EnvironmentResult { lines }),
+            ));
         });
     }
 }
 
 impl Screen for Environment {
-    fn id(&self) -> ScreenId { ScreenId::Environment }
-    fn subtitle(&self) -> &str { "Что найдено в установке; экран ничего не изменяет" }
+    fn id(&self) -> ScreenId {
+        ScreenId::Environment
+    }
+    fn subtitle(&self) -> &str {
+        "Что найдено в установке; экран ничего не изменяет"
+    }
 
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
         let card = style::card(cx.tree, host)?;
@@ -1194,7 +1221,12 @@ impl Screen for Environment {
         Ok(())
     }
 
-    fn message(&mut self, cx: &mut Context<'_>, message: &Message<AppMessage>, _clicked: Option<WidgetId>) -> Result<()> {
+    fn message(
+        &mut self,
+        cx: &mut Context<'_>,
+        message: &Message<AppMessage>,
+        _clicked: Option<WidgetId>,
+    ) -> Result<()> {
         if let Message::User(AppMessage::ToScreen(ScreenId::Environment, payload)) = message {
             if let Some(result) = payload.downcast_ref::<EnvironmentResult>() {
                 if let Some(status) = self.status {
