@@ -1613,8 +1613,38 @@ impl Screen for GameFixes {
             Text::Note,
         )?;
         self.status = Some(style::label(cx.tree, card, "Выберите игру", Text::Note)?);
-        for _ in 0..8 {
-            let row = style::button(cx.tree, card, "", Button::Secondary)?;
+        let scroll = cx.tree.add(
+            Some(card),
+            crate::layout::NodeKind::Scroll {
+                horizontal: false,
+                vertical: true,
+                offset_x: 0.0,
+                offset_y: 0.0,
+            },
+            crate::layout::Style {
+                preferred: crate::layout::Size::new(0.0, 340.0),
+                max: crate::layout::Size::new(f32::INFINITY, 340.0),
+                grow: 1.0,
+                ..crate::layout::Style::default()
+            },
+            crate::widget::Content::Panel,
+            crate::widget::Look::default(),
+        )?;
+        cx.tree.set_clip_children(scroll, true)?;
+        self.list_scroll = Some(scroll);
+        let list = cx.tree.add(
+            Some(scroll),
+            crate::layout::NodeKind::Column,
+            crate::layout::Style {
+                gap: crate::layout::Size::new(0.0, 4.0),
+                align_items: crate::layout::Align::Stretch,
+                ..crate::layout::Style::default()
+            },
+            crate::widget::Content::Panel,
+            crate::widget::Look::default(),
+        )?;
+        for _ in 0..sse_fixes::GameFixCatalog::all().len().max(1) {
+            let row = style::button(cx.tree, list, "", Button::Secondary)?;
             cx.tree.set_visible(row, false)?;
             self.rows.push(row);
         }
@@ -1642,7 +1672,7 @@ impl Screen for GameFixes {
         self.install = Some(style::button(
             cx.tree,
             actions,
-            "Установить / обновить",
+            "УСТАНОВИТЬ ВЫБРАННОЕ",
             Button::Primary,
         )?);
         self.remove = Some(style::button(
