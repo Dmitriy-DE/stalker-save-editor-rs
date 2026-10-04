@@ -1633,7 +1633,9 @@ impl Screen for GameFixes {
                 if clicked == Some(row) && self.items.get(index).is_some() {
                     self.selected = Some(index);
                     self.intent = None;
-                    if self.confirm_card.is_some_and(|card| cx.tree.dialog() == Some(card)) { let _ = cx.tree.close_dialog()?; }
+                    if self.confirm_card.is_some_and(|card| cx.tree.dialog() == Some(card)) {
+                        let _ = cx.tree.close_dialog()?;
+                    }
                     if let (Some(detail), Some(item)) = (self.detail, self.items.get(index)) {
                         cx.tree
                             .set_text(detail, &format!("{} · {} · {} / {}\nПРОБЛЕМА: {}\nИЗМЕНЕНИЕ: {}\nПОДДЕРЖИВАЕМЫЕ STEAM-СБОРКИ: {}\nЗАТРАГИВАЕМЫЕ ФАЙЛЫ: {}\nИСТОЧНИК: {}", item.id, item.status, item.category, item.maturity, item.problem, item.description, item.builds, item.files, item.source))?;
@@ -1713,11 +1715,24 @@ impl Screen for GameFixes {
                 cx.status = Some("Сначала выберите исправление".to_owned());
                 return Ok(());
             };
-            let Some(item) = self.items.get(index) else { return Ok(()) };
-            let Some(game) = cx.app.selected_game().map(str::to_owned) else { return Ok(()) };
-            let Some(directory) = cx.app.game_dir().map(Path::to_path_buf) else { return Ok(()) };
-            self.intent = Some(FixIntent { fix_id: item.id.clone(), install, game, directory });
-            if let Some(card) = self.confirm_card { cx.tree.open_dialog(card)?; }
+            let Some(item) = self.items.get(index) else {
+                return Ok(());
+            };
+            let Some(game) = cx.app.selected_game().map(str::to_owned) else {
+                return Ok(());
+            };
+            let Some(directory) = cx.app.game_dir().map(Path::to_path_buf) else {
+                return Ok(());
+            };
+            self.intent = Some(FixIntent {
+                fix_id: item.id.clone(),
+                install,
+                game,
+                directory,
+            });
+            if let Some(card) = self.confirm_card {
+                cx.tree.open_dialog(card)?;
+            }
             return Ok(());
         }
         if clicked.is_some() && clicked == self.confirm_cancel {
@@ -1726,8 +1741,12 @@ impl Screen for GameFixes {
             return Ok(());
         }
         if clicked.is_some() && clicked == self.confirm_write {
-            let Some(intent) = self.intent.take() else { return Ok(()) };
-            if cx.app.selected_game() != Some(intent.game.as_str()) || cx.app.game_dir() != Some(intent.directory.as_path()) {
+            let Some(intent) = self.intent.take() else {
+                return Ok(());
+            };
+            if cx.app.selected_game() != Some(intent.game.as_str())
+                || cx.app.game_dir() != Some(intent.directory.as_path())
+            {
                 let _ = cx.tree.close_dialog()?;
                 cx.status = Some("Выбор игры изменился; подтверждение отменено.".to_owned());
                 return Ok(());
@@ -1785,7 +1804,9 @@ impl Screen for GameFixes {
                 match reply {
                     FixReply::List(Ok(items)) => {
                         self.intent = None;
-                        if self.confirm_card.is_some_and(|card| cx.tree.dialog() == Some(card)) { let _ = cx.tree.close_dialog()?; }
+                        if self.confirm_card.is_some_and(|card| cx.tree.dialog() == Some(card)) {
+                            let _ = cx.tree.close_dialog()?;
+                        }
                         self.items.clone_from(items);
                         self.render(cx)?;
                     }
