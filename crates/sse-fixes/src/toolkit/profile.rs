@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -82,7 +82,12 @@ impl ToolkitProfileService {
             let Some(id) = file_name.strip_suffix(".json") else {
                 continue;
             };
-            if !valid_profile_id(id) || !entry.file_type().map_err(|error| Error::System(error.to_string()))?.is_file() {
+            if !valid_profile_id(id)
+                || !entry
+                    .file_type()
+                    .map_err(|error| Error::System(error.to_string()))?
+                    .is_file()
+            {
                 continue;
             }
             let bytes = fs::read(&path).map_err(|error| Error::System(error.to_string()))?;
@@ -218,7 +223,10 @@ impl ToolkitProfileService {
         let mut out = String::with_capacity(512);
         out.push_str("{\n");
         out.push_str(&format!("  \"name\": \"{}\",\n", json_escape(&profile.name)));
-        out.push_str(&format!("  \"description\": \"{}\",\n", json_escape(&profile.description)));
+        out.push_str(&format!(
+            "  \"description\": \"{}\",\n",
+            json_escape(&profile.description)
+        ));
         out.push_str(&format!("  \"game\": \"{}\",\n", game_target_str(profile.game)));
         out.push_str("  \"target_fix_ids\": [\n");
         for (i, id) in profile.target_fix_ids.iter().enumerate() {
@@ -239,7 +247,12 @@ impl ToolkitProfileService {
             } else {
                 ","
             };
-            out.push_str(&format!("    \"{}\": \"{}\"{}\n", json_escape(k), json_escape(v), comma));
+            out.push_str(&format!(
+                "    \"{}\": \"{}\"{}\n",
+                json_escape(k),
+                json_escape(v),
+                comma
+            ));
         }
         out.push_str("  }");
         if let Some(s2_mods) = profile.s2_mods_enabled {
@@ -340,7 +353,10 @@ fn ensure_xray_profile(game: GameTarget) -> Result<()> {
 }
 
 fn valid_profile_id(id: &str) -> bool {
-    id.len() == PROFILE_ID_HEX_LEN && id.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    id.len() == PROFILE_ID_HEX_LEN
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
 }
 
 fn fresh_profile_id() -> String {
@@ -363,7 +379,9 @@ fn prepare_private_profile_directory(directory: &Path) -> Result<()> {
 }
 
 fn write_private_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
-    let parent = path.parent().ok_or_else(|| Error::damaged("Profile path has no parent"))?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| Error::damaged("Profile path has no parent"))?;
     let temp = parent.join(format!(
         ".profile-{}-{}.tmp",
         std::process::id(),
@@ -444,12 +462,7 @@ mod storage_tests {
         let game = root.join("game");
         fs::create_dir_all(&game).map_err(sse_core::Error::from)?;
         let engine = GameFixEngine::new();
-        let id = ToolkitProfileService::save_profile(
-            &root,
-            &game,
-            &profile(GameTarget::CallOfPripyat),
-            &engine,
-        )?;
+        let id = ToolkitProfileService::save_profile(&root, &game, &profile(GameTarget::CallOfPripyat), &engine)?;
         let stored = ToolkitProfileService::list_profiles(&root)?;
         assert_eq!(stored.len(), 1);
         assert_eq!(stored.first().map(|item| item.id.as_str()), Some(id.as_str()));
@@ -457,8 +470,22 @@ mod storage_tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            assert_eq!(fs::metadata(root.join("profiles")).map_err(sse_core::Error::from)?.permissions().mode() & 0o777, 0o700);
-            assert_eq!(fs::metadata(root.join("profiles").join(format!("{id}.json"))).map_err(sse_core::Error::from)?.permissions().mode() & 0o777, 0o600);
+            assert_eq!(
+                fs::metadata(root.join("profiles"))
+                    .map_err(sse_core::Error::from)?
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o700
+            );
+            assert_eq!(
+                fs::metadata(root.join("profiles").join(format!("{id}.json")))
+                    .map_err(sse_core::Error::from)?
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
         }
         ToolkitProfileService::delete_profile(&root, &id)?;
         assert!(ToolkitProfileService::list_profiles(&root)?.is_empty());
@@ -471,12 +498,8 @@ mod storage_tests {
         let root = temp_root();
         let game = root.join("game");
         let _ = fs::create_dir_all(&game);
-        let result = ToolkitProfileService::save_profile(
-            &root,
-            &game,
-            &profile(GameTarget::Stalker2),
-            &GameFixEngine::new(),
-        );
+        let result =
+            ToolkitProfileService::save_profile(&root, &game, &profile(GameTarget::Stalker2), &GameFixEngine::new());
         assert_eq!(
             result.err().map(|error| error.to_string()).as_deref(),
             Some("Toolkit profiles currently support X-Ray managed providers only.")
