@@ -197,6 +197,18 @@ const LANGUAGE_NAMES: [&str; 15] = [
     "繁體中文",
 ];
 
+fn language_code(index: usize) -> &'static str {
+    crate::strings::LANGUAGES
+        .get(index)
+        .copied()
+        .or_else(|| crate::strings::LANGUAGES.first().copied())
+        .unwrap_or("ru")
+}
+
+fn language_name(index: usize) -> &'static str {
+    LANGUAGE_NAMES.get(index).copied().or_else(|| LANGUAGE_NAMES.first().copied()).unwrap_or("Русский")
+}
+
 /// Result of the background check started by the settings screen.
 struct Checked(String);
 
@@ -235,7 +247,7 @@ impl Screen for Settings {
         self.language_value = Some(style::label(
             cx.tree,
             language_line,
-            LANGUAGE_NAMES[self.language],
+            language_name(self.language),
             Text::Value,
         )?);
         self.language_button = Some(style::button(
@@ -284,7 +296,7 @@ impl Screen for Settings {
                 .saturating_add(1)
                 .checked_rem(crate::strings::LANGUAGES.len())
                 .unwrap_or(0);
-            let code = crate::strings::LANGUAGES[self.language];
+            let code = language_code(self.language);
             crate::strings::set_language(Some(code));
             self.settings.language = Some(code.to_owned());
             self.settings.save(&sse_app::default_settings_path())?;
