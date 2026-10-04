@@ -3,24 +3,44 @@
 use super::style::{self, Button, Text};
 use super::{AppMessage, Context, Screen, ScreenId};
 use crate::event_loop::Message;
-use crate::widget::WidgetId;
+use crate::layout::{NodeKind, Style};
+use crate::widget::{Content, Look, WidgetId};
+use crate::widgets::table::{Header, Table};
 use sse_core::{Error, Result, SaveBuffer};
-use sse_s2::{S2InventoryItem, S2Save, S2StashLayout};
+use sse_s2::{S2Change, S2InventoryItem, S2Save, S2StashLayout};
 use sse_storage::discovery::{SaveDirectoryLocator, SaveSlot, SaveSlotDiscovery};
 use sse_storage::transaction::{self, EditSummary};
 use sse_xray::{save::InventoryItem, writer, Save};
 use std::collections::BTreeMap;
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 const SAVE_PAGE_SIZE: usize = 10;
 const INVENTORY_PAGE_SIZE: usize = 8;
 
+fn paragraph(tree: &mut crate::widget::Tree, parent: WidgetId, text: &str, role: Text) -> Result<WidgetId> {
+    tree.add(
+        Some(parent),
+        NodeKind::Leaf,
+        Style::default(),
+        Content::Paragraph {
+            text: text.to_owned(),
+            style: role.style(),
+        },
+        Look {
+            text: role.color(),
+            ..Look::default()
+        },
+    )
+}
+
 /// Screens of this package.
 #[must_use]
 pub fn screens() -> Vec<Box<dyn Screen>> {
-    let workspace = Workspace::default();
+    screens_with_workspace(Workspace::default())
+}
+
+pub(crate) fn screens_with_workspace(workspace: Workspace) -> Vec<Box<dyn Screen>> {
     vec![
         Box::new(Overview::new(workspace.clone())),
         Box::new(Inventory::new(workspace.clone())),
@@ -31,16 +51,31 @@ pub fn screens() -> Vec<Box<dyn Screen>> {
 }
 
 #[derive(Clone, Default)]
-struct Workspace(Arc<Mutex<WorkspaceState>>);
+pub(crate) struct Workspace(Arc<Mutex<WorkspaceState>>);
 
 impl Workspace {
     fn lock(&self) -> MutexGuard<'_, WorkspaceState> {
         self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
+
+    pub(crate) fn spawn<F>(&self, name: &'static str, work: F)
+    where
+        F: FnOnce(sse_app::tasks::TaskContext) + Send + 'static,
+    {
+        let _handle = self.lock().tasks.spawn(name, move |context| {
+            work(context);
+            Ok(())
+        });
+    }
+
+    pub(crate) fn poll_tasks(&self) {
+        let _ = self.lock().tasks.poll_events();
+    }
 }
 
 #[derive(Default)]
 struct WorkspaceState {
+    tasks: sse_app::TaskManager,
     scanning: bool,
     discovery: Option<sse_storage::discovery::SaveDiscoveryResult>,
     loading: bool,
@@ -48,7 +83,13 @@ struct WorkspaceState {
     load_error: Option<String>,
     selected: Option<Arc<LoadedSave>>,
     pending_money: Option<u32>,
-    pending_stacks: BTreeMap<u16, u16>,
+    pending_stacks: BTreeMap<ItemHandle, u32>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum ItemHandle {
+    Xray(u16),
+    Stalker2(u32),
 }
 
 struct LoadedSave {
@@ -96,7 +137,7 @@ impl LoadedSave {
     }
 
     fn from_xray(
-        slot: SaveSlot,
+        mut slot: SaveSlot,
         packed: SaveBuffer,
         source_sha256: String,
         save: Save,
@@ -104,8 +145,18 @@ impl LoadedSave {
     ) -> Result<Self> {
         let money = save.money()?;
         let format = save.format().id();
+        let game = match save.format() {
+            sse_xray::Format::Soc | sse_xray::Format::SocEe => "soc",
+            sse_xray::Format::Cs | sse_xray::Format::CsEe => "clear_sky",
+            sse_xray::Format::Cop | sse_xray::Format::CopEe => "cop",
+        };
+        slot.game_id = Some(game.to_owned());
+        slot.candidate_game_id = game.to_owned();
+        slot.candidate_release_id = format.to_owned();
+        slot.format_id = Some(format.to_owned());
         let summary = format!(
-            "Формат: {format}\nРазмер: {} байт\nВремя игры: {}\nДеньги: {money}\nПредметов в инвентаре: {}",
+            "Игра: {format}\nЛокация: не подтверждена текущим индексатором\nИзменён (Unix UTC): {}\nРазмер: {} байт\nФормат: {format}\nCRC: контейнер X-Ray не хранит CRC\nВремя игры: {}\nДеньги: {money}\nПредметов в инвентаре: {}",
+            unix_time(slot.last_write_time_utc),
             packed.len(),
             save.game_time(),
             inventory.len()
@@ -128,16 +179,22 @@ impl LoadedSave {
     }
 
     fn from_s2(
-        slot: SaveSlot,
+        mut slot: SaveSlot,
         packed: SaveBuffer,
         source_sha256: String,
         save: S2Save,
         inventory: Vec<S2InventoryItem>,
         stash: Option<S2StashLayout>,
     ) -> Self {
+        slot.game_id = Some("stalker2".to_owned());
+        slot.candidate_game_id = "stalker2".to_owned();
+        slot.candidate_release_id = "stalker2".to_owned();
+        slot.format_id = Some("stalker2".to_owned());
         let summary = format!(
-            "Формат: S.T.A.L.K.E.R. 2\nРазмер: {} байт\nДеньги: {}\nПредметов в рюкзаке: {}\nНеопознанных ссылок: {}",
+            "Игра: S.T.A.L.K.E.R. 2\nЛокация: не подтверждена текущим индексатором\nИзменён (Unix UTC): {}\nРазмер: {} байт\nФормат: S2\nCRC32: {:08X} — проверен\nДеньги: {}\nПредметов в рюкзаке: {}\nНеопознанных ссылок: {}",
+            unix_time(slot.last_write_time_utc),
             packed.len(),
+            save.container().stored_crc32(),
             save.money(),
             inventory.len(),
             save.unresolved_handles().len()
@@ -154,6 +211,21 @@ impl LoadedSave {
             transitions,
             data: SaveData::Stalker2 { save, inventory },
         }
+    }
+}
+
+fn unix_time(time: std::time::SystemTime) -> u64 {
+    time.duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs())
+}
+
+fn display_size(bytes: u64) -> String {
+    if bytes >= 1_048_576 {
+        format!("{} MiB", bytes / 1_048_576)
+    } else if bytes >= 1_024 {
+        format!("{} KiB", bytes / 1_024)
+    } else {
+        format!("{bytes} B")
     }
 }
 
@@ -251,17 +323,39 @@ fn start_discovery(workspace: &Workspace, cx: &mut Context<'_>) {
         state.scanning = true;
     }
     let workspace = workspace.clone();
-    std::thread::spawn(move || {
+    workspace.clone().spawn("save-discovery", move |context| {
+        if context.is_cancelled() {
+            return;
+        }
         let candidates = SaveDirectoryLocator::find_candidate_directories(None);
-        let result = SaveSlotDiscovery::discover(&candidates);
-        workspace.lock().discovery = Some(result);
-        workspace.lock().scanning = false;
+        let mut result = SaveSlotDiscovery::discover(&candidates);
+        result.slots.sort_by(|left, right| {
+            save_game_key(left)
+                .cmp(save_game_key(right))
+                .then_with(|| right.last_write_time_utc.cmp(&left.last_write_time_utc))
+        });
+        let mut state = workspace.lock();
+        state.discovery = Some(result);
+        state.scanning = false;
+        drop(state);
         let _ = proxy.send(AppMessage::ToScreen(ScreenId::Overview, Box::new(())));
     });
     cx.status = Some("Ищу сейвы в обнаруженных каталогах…".to_owned());
 }
 
 fn start_load(workspace: &Workspace, slot: SaveSlot, cx: &mut Context<'_>) {
+    start_load_from(workspace, move || Ok(slot), false, cx);
+}
+
+fn start_load_path(workspace: &Workspace, path: &Path, cx: &mut Context<'_>) {
+    let path = path.to_path_buf();
+    start_load_from(workspace, move || slot_for_path(&path), true, cx);
+}
+
+fn start_load_from<F>(workspace: &Workspace, slot: F, include_discovery: bool, cx: &mut Context<'_>)
+where
+    F: FnOnce() -> Result<SaveSlot> + Send + 'static,
+{
     let Some(proxy) = cx.proxy.cloned() else {
         cx.status = Some("Загрузка сейва доступна в работающем окне редактора.".to_owned());
         return;
@@ -276,28 +370,75 @@ fn start_load(workspace: &Workspace, slot: SaveSlot, cx: &mut Context<'_>) {
         state.pending_stacks.clear();
         state.load_request
     };
+    cx.app.set_current_save(None);
     let workspace = workspace.clone();
-    std::thread::spawn(move || {
-        let result = LoadedSave::read(slot);
+    workspace.clone().spawn("save-load", move |context| {
+        if context.is_cancelled() {
+            return;
+        }
+        let result = slot().and_then(LoadedSave::read);
         let mut state = workspace.lock();
         if state.load_request != request {
             return;
         }
         state.loading = false;
-        match result {
+        let completion = match result {
             Ok(save) => {
                 state.load_error = None;
+                if include_discovery {
+                    let searched_paths = save.slot.path.parent().map(Path::to_path_buf).into_iter().collect();
+                    state.discovery = Some(sse_storage::discovery::SaveDiscoveryResult {
+                        slots: vec![save.slot.clone()],
+                        searched_paths,
+                    });
+                }
+                let path = save.slot.path.clone();
                 state.selected = Some(Arc::new(save));
+                LoadFinished {
+                    request,
+                    selected_path: Some(path),
+                    error: None,
+                }
             }
             Err(error) => {
                 state.selected = None;
-                state.load_error = Some(error.to_string());
+                let error = error.to_string();
+                state.load_error = Some(error.clone());
+                LoadFinished {
+                    request,
+                    selected_path: None,
+                    error: Some(error),
+                }
             }
-        }
+        };
         drop(state);
-        let _ = proxy.send(AppMessage::ToScreen(ScreenId::Overview, Box::new(())));
+        let _ = proxy.send(AppMessage::ToScreen(ScreenId::Overview, Box::new(completion)));
     });
     cx.status = Some("Загружаю и проверяю выбранный сейв…".to_owned());
+}
+
+struct LoadFinished {
+    request: u64,
+    selected_path: Option<PathBuf>,
+    error: Option<String>,
+}
+
+fn save_game_key(slot: &SaveSlot) -> &str {
+    slot.game_id.as_deref().unwrap_or(slot.candidate_game_id.as_str())
+}
+
+fn slot_for_path(path: &Path) -> Result<SaveSlot> {
+    let metadata = std::fs::metadata(path)?;
+    Ok(SaveSlot {
+        path: path.to_path_buf(),
+        candidate_game_id: "unknown".to_owned(),
+        candidate_release_id: "unknown".to_owned(),
+        size: metadata.len(),
+        last_write_time_utc: metadata.modified().unwrap_or(std::time::UNIX_EPOCH),
+        format_id: None,
+        game_id: None,
+        detection_error: None,
+    })
 }
 
 /// Save list and selected-save overview.
@@ -310,6 +451,10 @@ struct Overview {
     rows: Vec<WidgetId>,
     list_status: Option<WidgetId>,
     selected_summary: Option<WidgetId>,
+    search_button: Option<WidgetId>,
+    search_text: Option<WidgetId>,
+    search_query: String,
+    search_focused: bool,
 }
 
 impl Overview {
@@ -323,12 +468,65 @@ impl Overview {
             rows: Vec::new(),
             list_status: None,
             selected_summary: None,
+            search_button: None,
+            search_text: None,
+            search_query: String::new(),
+            search_focused: false,
         }
     }
 
     fn render(&mut self, cx: &mut Context<'_>) -> Result<()> {
         let state = self.workspace.lock();
-        let slot_count = state.discovery.as_ref().map_or(0, |result| result.slots.len());
+        let query = self.search_query.to_lowercase();
+        let slots = state
+            .discovery
+            .as_ref()
+            .map_or(&[][..], |result| result.slots.as_slice());
+        let row_ids = slots
+            .iter()
+            .enumerate()
+            .filter(|(_, slot)| {
+                slot.path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().to_lowercase().contains(&query))
+                    .unwrap_or(query.is_empty())
+            })
+            .map(|(index, _)| u64::try_from(index).unwrap_or(u64::MAX))
+            .collect::<Vec<_>>();
+        let mut table = Table::new(
+            row_ids,
+            40.0,
+            vec![
+                Header {
+                    label: "Игра".to_owned(),
+                    sortable: true,
+                    direction: None,
+                },
+                Header {
+                    label: "Дата".to_owned(),
+                    sortable: true,
+                    direction: None,
+                },
+            ],
+        )?;
+        table.header_click(0, false, |left, right, _| {
+            let left = usize::try_from(left).ok().and_then(|index| slots.get(index));
+            let right = usize::try_from(right).ok().and_then(|index| slots.get(index));
+            left.map(save_game_key).cmp(&right.map(save_game_key))
+        })?;
+        table.header_click(1, true, |left, right, _| {
+            let left = usize::try_from(left).ok().and_then(|index| slots.get(index));
+            let right = usize::try_from(right).ok().and_then(|index| slots.get(index));
+            left.map(|slot| slot.last_write_time_utc)
+                .cmp(&right.map(|slot| slot.last_write_time_utc))
+        })?;
+        table.header_click(1, true, |left, right, _| {
+            let left = usize::try_from(left).ok().and_then(|index| slots.get(index));
+            let right = usize::try_from(right).ok().and_then(|index| slots.get(index));
+            left.map(|slot| slot.last_write_time_utc)
+                .cmp(&right.map(|slot| slot.last_write_time_utc))
+        })?;
+        let slot_count = table.view_len();
         let pages = slot_count.saturating_add(SAVE_PAGE_SIZE.saturating_sub(1)) / SAVE_PAGE_SIZE;
         self.page = self.page.min(pages.saturating_sub(1));
         let start = self.page.saturating_mul(SAVE_PAGE_SIZE);
@@ -352,11 +550,25 @@ impl Overview {
             };
             cx.tree.set_text(status, &text)?;
         }
+        if let Some(id) = self.search_text {
+            cx.tree.set_text(
+                id,
+                &format!(
+                    "Поиск: {}{}",
+                    if self.search_query.is_empty() {
+                        "имя файла"
+                    } else {
+                        &self.search_query
+                    },
+                    if self.search_focused { " · ввод" } else { "" }
+                ),
+            )?;
+        }
         for (offset, id) in self.rows.iter().enumerate() {
-            let slot = state
-                .discovery
-                .as_ref()
-                .and_then(|result| result.slots.get(start.saturating_add(offset)));
+            let slot = table
+                .visible_row(start.saturating_add(offset))
+                .and_then(|row| usize::try_from(row).ok())
+                .and_then(|index| slots.get(index));
             if let Some(slot) = slot {
                 let file_name = slot
                     .path
@@ -369,8 +581,14 @@ impl Overview {
                     .as_deref()
                     .or(Some(slot.candidate_release_id.as_str()))
                     .unwrap_or("неизвестный формат");
-                cx.tree
-                    .set_text(*id, &format!("{shortened} · {game} · {} MiB", slot.size / 1_048_576))?;
+                let modified = slot
+                    .last_write_time_utc
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |duration| duration.as_secs());
+                cx.tree.set_text(
+                    *id,
+                    &format!("{game} · {shortened} · {} · {modified}", display_size(slot.size)),
+                )?;
                 cx.tree.set_visible(*id, true)?;
             } else {
                 cx.tree.set_visible(*id, false)?;
@@ -409,8 +627,11 @@ impl Screen for Overview {
         style::label(cx.tree, list, "СОХРАНЕНИЯ", Text::Heading)?;
         let actions = style::row(cx.tree, list)?;
         self.refresh = Some(style::button(cx.tree, actions, "Найти сейвы", Button::Primary)?);
+        self.search_button = Some(style::button(cx.tree, actions, "Поиск по имени", Button::Secondary)?);
+        self.search_text = Some(style::label(cx.tree, actions, "Поиск: имя файла", Text::Note)?);
         self.previous = Some(style::button(cx.tree, actions, "Назад", Button::Secondary)?);
         self.next = Some(style::button(cx.tree, actions, "Дальше", Button::Secondary)?);
+        style::label(cx.tree, list, "ИГРА · СОХРАНЕНИЕ · РАЗМЕР · ДАТА ИЗМЕНЕНИЯ", Text::Note)?;
         self.list_status = Some(style::label(cx.tree, list, "Сейвы ещё не искали.", Text::Note)?);
         for _ in 0..SAVE_PAGE_SIZE {
             let row = style::button(cx.tree, list, "", Button::Secondary)?;
@@ -419,15 +640,26 @@ impl Screen for Overview {
         }
         let overview = style::card(cx.tree, host)?;
         style::label(cx.tree, overview, "ОБЗОР ВЫБРАННОГО СЕЙВА", Text::Heading)?;
-        self.selected_summary = Some(style::label(cx.tree, overview, "Выберите сейв из списка.", Text::Body)?);
+        self.selected_summary = Some(paragraph(cx.tree, overview, "Выберите сейв из списка.", Text::Body)?);
         Ok(())
     }
 
     fn shown(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        self.workspace.poll_tasks();
         if self.workspace.lock().discovery.is_none() {
             start_discovery(&self.workspace, cx);
         }
         self.render(cx)
+    }
+
+    fn open_save(&mut self, cx: &mut Context<'_>, path: &Path) -> Result<bool> {
+        if cx.proxy.is_none() {
+            cx.status = Some("Открытие сейва требует фонового канала приложения.".to_owned());
+            return Ok(false);
+        }
+        self.page = 0;
+        start_load_path(&self.workspace, path, cx);
+        Ok(true)
     }
 
     fn message(
@@ -436,6 +668,35 @@ impl Screen for Overview {
         message: &Message<AppMessage>,
         clicked: Option<WidgetId>,
     ) -> Result<()> {
+        self.workspace.poll_tasks();
+        if let Message::Window(crate::event_loop::WindowEvent::Key {
+            pressed: true,
+            keysym,
+            text,
+            ctrl,
+            ..
+        }) = message
+        {
+            if *ctrl && matches!(*keysym, 0x46 | 0x66) {
+                self.search_focused = true;
+                return self.render(cx);
+            }
+            if self.search_focused {
+                match *keysym {
+                    0xff08 => {
+                        self.search_query.pop();
+                    }
+                    0xff0d | 0xff1b => self.search_focused = false,
+                    _ => {
+                        if let Some(character) = text.filter(|character| !character.is_control()) {
+                            self.search_query.push(character);
+                        }
+                    }
+                }
+                self.page = 0;
+                return self.render(cx);
+            }
+        }
         if clicked == self.refresh {
             start_discovery(&self.workspace, cx);
             return Ok(());
@@ -448,21 +709,49 @@ impl Screen for Overview {
             self.page = self.page.saturating_add(1);
             return self.render(cx);
         }
+        if clicked == self.search_button {
+            self.search_focused = !self.search_focused;
+            return self.render(cx);
+        }
         if let Some(offset) = clicked.and_then(|id| self.rows.iter().position(|row| *row == id)) {
             let state = self.workspace.lock();
             let index = self.page.saturating_mul(SAVE_PAGE_SIZE).saturating_add(offset);
-            if let Some(slot) = state
-                .discovery
-                .as_ref()
-                .and_then(|result| result.slots.get(index))
-                .cloned()
-            {
+            let query = self.search_query.to_lowercase();
+            let slot = state.discovery.as_ref().and_then(|result| {
+                result
+                    .slots
+                    .iter()
+                    .filter(|slot| {
+                        slot.path
+                            .file_name()
+                            .map(|name| name.to_string_lossy().to_lowercase().contains(&query))
+                            .unwrap_or(query.is_empty())
+                    })
+                    .nth(index)
+                    .cloned()
+            });
+            if let Some(slot) = slot {
                 drop(state);
                 start_load(&self.workspace, slot, cx);
                 return Ok(());
             }
         }
-        if matches!(message, Message::User(AppMessage::ToScreen(ScreenId::Overview, _))) {
+        if let Message::User(AppMessage::ToScreen(ScreenId::Overview, payload)) = message {
+            if let Some(LoadFinished {
+                request,
+                selected_path,
+                error,
+            }) = payload.downcast_ref::<LoadFinished>()
+            {
+                if self.workspace.lock().load_request == *request {
+                    cx.app.set_current_save(selected_path.clone());
+                    if let Some(error) = error {
+                        cx.status = Some(format!("Сейв не загружен: {error}"));
+                    } else {
+                        cx.status = Some("Сейв прочитан и проверен.".to_owned());
+                    }
+                }
+            }
             self.render(cx)?;
         }
         Ok(())
@@ -473,10 +762,10 @@ struct ItemControls {
     label: WidgetId,
     decrease: WidgetId,
     increase: WidgetId,
-    handle: Option<u16>,
+    handle: Option<ItemHandle>,
 }
 
-/// Inventory screen with guarded X-Ray edits and safe copy export.
+/// Inventory screen with guarded X-Ray and S2 edits.
 struct Inventory {
     workspace: Workspace,
     page: usize,
@@ -516,10 +805,7 @@ impl Inventory {
             }
             self.set_edit_controls(cx, false)?;
             if let Some(status) = self.status {
-                cx.tree.set_text(
-                    status,
-                    "Для S2 пока доступно только чтение; X-Ray правки появятся после выбора сейва.",
-                )?;
+                cx.tree.set_text(status, "Выберите сейв для просмотра и правки.")?;
             }
             return Ok(());
         };
@@ -562,9 +848,9 @@ impl Inventory {
                             |original| {
                                 state
                                     .pending_stacks
-                                    .get(&item.handle)
+                                    .get(&ItemHandle::Xray(item.handle))
                                     .copied()
-                                    .unwrap_or(original)
+                                    .unwrap_or(u32::from(original))
                                     .to_string()
                             },
                         );
@@ -579,7 +865,7 @@ impl Inventory {
                         let editable = stack_editable && item.count.is_some();
                         cx.tree.set_visible(row.decrease, editable)?;
                         cx.tree.set_visible(row.increase, editable)?;
-                        row.handle = Some(item.handle);
+                        row.handle = Some(ItemHandle::Xray(item.handle));
                     } else {
                         row.handle = None;
                         cx.tree.set_visible(row.label, false)?;
@@ -598,11 +884,15 @@ impl Inventory {
                 }
                 let has_changes = pending_money != money
                     || state.pending_stacks.iter().any(|(handle, count)| {
-                        inventory
-                            .iter()
-                            .find(|item| item.handle == *handle)
-                            .and_then(|item| item.count)
-                            .is_some_and(|old| old != *count)
+                        if let ItemHandle::Xray(handle) = handle {
+                            inventory
+                                .iter()
+                                .find(|item| item.handle == *handle)
+                                .and_then(|item| item.count)
+                                .is_some_and(|old| u32::from(old) != *count)
+                        } else {
+                            false
+                        }
                     });
                 if let Some(id) = self.export {
                     cx.tree.set_visible(id, has_changes)?;
@@ -610,35 +900,57 @@ impl Inventory {
                 if let Some(id) = self.status {
                     cx.tree.set_text(
                         id,
-                        "Изменения пока только подготовлены. Экспорт создаёт новый файл и отдельный проверяемый бэкап.",
+                        "Изменения подготовлены. Сохранение создаст бэкап, запишет файл и повторно его прочитает.",
                     )?;
                 }
             }
             SaveData::Stalker2 { save, inventory } => {
+                let writable = !save.index().is_legacy();
+                let money = save.money();
+                let pending_money = state.pending_money.unwrap_or(money);
                 if let Some(id) = self.money_label {
-                    cx.tree
-                        .set_text(id, &format!("Деньги: {} · S2 открыт только для чтения", save.money()))?;
+                    cx.tree.set_text(
+                        id,
+                        &format!(
+                            "Деньги: {pending_money}{}",
+                            if writable {
+                                " · S2"
+                            } else {
+                                " · S2 1.0.x открыт только для чтения"
+                            }
+                        ),
+                    )?;
                 }
-                self.set_edit_controls(cx, false)?;
+                for id in [self.money_decrease, self.money_increase].into_iter().flatten() {
+                    cx.tree.set_visible(id, writable)?;
+                }
+                let start = self.page.saturating_mul(INVENTORY_PAGE_SIZE);
                 for (offset, row) in self.rows.iter_mut().enumerate() {
-                    if let Some(item) =
-                        inventory.get(self.page.saturating_mul(INVENTORY_PAGE_SIZE).saturating_add(offset))
-                    {
+                    if let Some(item) = inventory.get(start.saturating_add(offset)) {
                         let name = item.display_name.as_deref().unwrap_or("Неизвестный предмет");
+                        let count = state
+                            .pending_stacks
+                            .get(&ItemHandle::Stalker2(item.handle))
+                            .copied()
+                            .unwrap_or(item.count);
                         cx.tree.set_text(
                             row.label,
                             &format!(
-                                "{name} · кол-во {} · тип {:02X}{:02X}{:02X} · 0x{:08X}",
-                                item.count, item.type_key[0], item.type_key[1], item.type_key[2], item.handle
+                                "{name} · кол-во {count} · тип {:02X}{:02X}{:02X} · 0x{:08X}",
+                                item.type_key[0], item.type_key[1], item.type_key[2], item.handle
                             ),
                         )?;
                         cx.tree.set_visible(row.label, true)?;
+                        let editable = writable && item.editable_count;
+                        cx.tree.set_visible(row.decrease, editable)?;
+                        cx.tree.set_visible(row.increase, editable)?;
+                        row.handle = editable.then_some(ItemHandle::Stalker2(item.handle));
                     } else {
                         cx.tree.set_visible(row.label, false)?;
+                        cx.tree.set_visible(row.decrease, false)?;
+                        cx.tree.set_visible(row.increase, false)?;
+                        row.handle = None;
                     }
-                    cx.tree.set_visible(row.decrease, false)?;
-                    cx.tree.set_visible(row.increase, false)?;
-                    row.handle = None;
                 }
                 let pages = inventory.len().saturating_add(INVENTORY_PAGE_SIZE.saturating_sub(1)) / INVENTORY_PAGE_SIZE;
                 self.page = self.page.min(pages.saturating_sub(1));
@@ -649,10 +961,26 @@ impl Inventory {
                     cx.tree
                         .set_visible(id, pages > 1 && self.page.saturating_add(1) < pages)?;
                 }
+                let has_changes = pending_money != money
+                    || state.pending_stacks.iter().any(|(handle, count)| {
+                        matches!(handle, ItemHandle::Stalker2(_))
+                            && inventory
+                                .iter()
+                                .find(|item| *handle == ItemHandle::Stalker2(item.handle))
+                                .is_some_and(|item| item.count != *count)
+                    });
+                if let Some(id) = self.export {
+                    cx.tree.set_visible(id, writable && has_changes)?;
+                    cx.tree.set_text(id, "Сохранить")?;
+                }
                 if let Some(id) = self.status {
                     cx.tree.set_text(
                         id,
-                        "Правка S2 отключена: writer ещё не прошёл проверку по эталонным сейвам.",
+                        if writable {
+                            "Изменения сохраняются с резервной копией и проверкой повторным чтением."
+                        } else {
+                            "Сейв S2 1.0.x открыт только для чтения."
+                        },
                     )?;
                 }
             }
@@ -686,10 +1014,15 @@ impl Inventory {
         let Some(selected) = state.selected.as_ref() else {
             return;
         };
-        let SaveData::Xray { save, .. } = &selected.data else {
+        let current_money = match &selected.data {
+            SaveData::Xray { save, .. } => save.money().ok(),
+            SaveData::Stalker2 { save, .. } if !save.index().is_legacy() => Some(save.money()),
+            SaveData::Stalker2 { .. } => None,
+        };
+        let Some(current_money) = current_money else {
             return;
         };
-        let current = state.pending_money.unwrap_or_else(|| save.money().unwrap_or_default());
+        let current = state.pending_money.unwrap_or(current_money);
         state.pending_money = Some(if increase {
             current.saturating_add(1_000).min(2_000_000_000)
         } else {
@@ -697,32 +1030,42 @@ impl Inventory {
         });
     }
 
-    fn stage_stack(&self, handle: u16, increase: bool) {
+    fn stage_stack(&self, handle: ItemHandle, increase: bool) {
         let mut state = self.workspace.lock();
         let Some(selected) = state.selected.as_ref() else {
             return;
         };
-        let SaveData::Xray { inventory, .. } = &selected.data else {
-            return;
+        let original = match (&selected.data, handle) {
+            (SaveData::Xray { inventory, .. }, ItemHandle::Xray(handle)) => inventory
+                .iter()
+                .find(|item| item.handle == handle)
+                .and_then(|item| item.count)
+                .map(u32::from),
+            (SaveData::Stalker2 { inventory, .. }, ItemHandle::Stalker2(handle)) => inventory
+                .iter()
+                .find(|item| item.handle == handle && item.editable_count)
+                .map(|item| item.count),
+            _ => None,
         };
-        let Some(item) = inventory.iter().find(|item| item.handle == handle) else {
-            return;
-        };
-        let Some(original) = item.count else {
+        let Some(original) = original else {
             return;
         };
         let current = state.pending_stacks.get(&handle).copied().unwrap_or(original);
         let next = if increase {
-            current.saturating_add(1)
+            let maximum = match handle {
+                ItemHandle::Xray(_) => u32::from(u16::MAX),
+                ItemHandle::Stalker2(_) => 10_000_000,
+            };
+            current.saturating_add(1).min(maximum)
         } else {
             current.saturating_sub(1).max(1)
         };
         state.pending_stacks.insert(handle, next);
     }
 
-    fn export(&self, cx: &mut Context<'_>) -> Result<()> {
+    fn save(&self, cx: &mut Context<'_>) -> Result<()> {
         let Some(proxy) = cx.proxy.cloned() else {
-            cx.status = Some("Экспорт доступен в работающем окне редактора.".to_owned());
+            cx.status = Some("Сохранение доступно в работающем окне редактора.".to_owned());
             return Ok(());
         };
         let (selected, money, stacks) = {
@@ -738,106 +1081,201 @@ impl Inventory {
             return Ok(());
         };
         if let Some(status) = self.status {
-            cx.tree.set_text(status, "Подготавливаю проверяемый экспорт…")?;
+            cx.tree.set_text(status, "Создаю резервную копию и сохраняю…")?;
         }
-        std::thread::spawn(move || {
-            let result = export_xray_edits(&selected, money, &stacks)
-                .map(|receipt| {
-                    format!(
-                        "Экспортирован {} · SHA-256 {}",
-                        receipt.output_path.display(),
-                        receipt.output_sha256
-                    )
-                })
-                .unwrap_or_else(|error| format!("Экспорт не выполнен: {error}"));
+        self.workspace.spawn("save-write", move |context| {
+            if context.is_cancelled() {
+                return;
+            }
+            let result = commit_save_edits(&selected, money, &stacks).map_err(|error| error.to_string());
             let _ = proxy.send(AppMessage::ToScreen(
                 ScreenId::Inventory,
-                Box::new(ExportFinished(result)),
+                Box::new(SaveFinished(result)),
             ));
         });
         Ok(())
     }
 }
 
-struct ExportFinished(String);
+struct SaveFinished(std::result::Result<(Arc<LoadedSave>, String), String>);
 
-fn export_xray_edits(
+fn commit_save_edits(
     selected: &LoadedSave,
     money: Option<u32>,
-    stacks: &BTreeMap<u16, u16>,
-) -> Result<transaction::ExportReceipt> {
-    let (packed, summary) = prepare_xray_edits(selected, money, stacks)?;
-    let output_path = edited_output_path(&selected.slot.path);
-    transaction::export_transaction(
+    stacks: &BTreeMap<ItemHandle, u32>,
+) -> Result<(Arc<LoadedSave>, String)> {
+    commit_save_edits_to(selected, money, stacks, &default_backup_directory())
+}
+
+fn commit_save_edits_to(
+    selected: &LoadedSave,
+    money: Option<u32>,
+    stacks: &BTreeMap<ItemHandle, u32>,
+    backup_directory: &Path,
+) -> Result<(Arc<LoadedSave>, String)> {
+    let (packed, _summary) = prepare_save_edits(selected, money, stacks)?;
+    let receipt = transaction::replace_transaction(
         &selected.slot.path,
         &selected.source_sha256,
         packed.as_slice(),
-        &output_path,
-        &default_backup_directory(),
-        summary,
-    )
+        backup_directory,
+    )?;
+    let mut slot = selected.slot.clone();
+    let metadata = std::fs::metadata(&slot.path)?;
+    slot.size = metadata.len();
+    slot.last_write_time_utc = metadata.modified().unwrap_or(slot.last_write_time_utc);
+    let reloaded = LoadedSave::read(slot)?;
+    verify_requested_values(&reloaded, money, stacks)?;
+    Ok((
+        Arc::new(reloaded),
+        format!(
+            "Сохранено и повторно прочитано · бэкап {} · SHA-256 {}",
+            receipt.backup_path.display(),
+            receipt.output_sha256
+        ),
+    ))
 }
 
+#[cfg(test)]
 fn prepare_xray_edits(
     selected: &LoadedSave,
     money: Option<u32>,
     stacks: &BTreeMap<u16, u16>,
 ) -> Result<(SaveBuffer, EditSummary)> {
-    let SaveData::Xray { save, inventory } = &selected.data else {
-        return Err(Error::Refused("S2 inventory writes are not enabled".to_owned()));
-    };
-    let current_money = save.money()?;
-    let mut changes = Vec::new();
-    let money_change = money.filter(|value| *value != current_money);
-    if let Some(new_value) = money_change {
-        changes.push(writer::Change::SetMoney {
-            target_object: save.actor_id(),
-            old_value: current_money,
-            new_value,
-        });
-    }
-    let mut stack_count = 0_usize;
-    for (handle, new_value) in stacks {
-        let Some(item) = inventory.iter().find(|item| item.handle == *handle) else {
-            continue;
-        };
-        let Some(old_value) = item.count else {
-            continue;
-        };
-        if old_value != *new_value {
-            changes.push(writer::Change::SetStack {
-                target_object: *handle,
-                old_value,
-                new_value: *new_value,
-            });
-            stack_count = stack_count.saturating_add(1);
-        }
-    }
-    if changes.is_empty() {
-        return Err(Error::Refused("there are no inventory changes to export".to_owned()));
-    }
-    let packed = writer::apply(save, &writer::ChangeSet::new(changes))?;
-    Ok((
-        packed,
-        EditSummary {
-            money: money_change,
-            stack_count,
-            ..EditSummary::default()
-        },
-    ))
+    let stacks = stacks
+        .iter()
+        .map(|(handle, count)| (ItemHandle::Xray(*handle), u32::from(*count)))
+        .collect::<BTreeMap<_, _>>();
+    prepare_save_edits(selected, money, &stacks)
 }
 
-fn edited_output_path(source: &Path) -> PathBuf {
-    let mut name = source
-        .file_stem()
-        .map(OsString::from)
-        .unwrap_or_else(|| OsString::from("save"));
-    name.push("_edited");
-    if let Some(extension) = source.extension() {
-        name.push(".");
-        name.push(extension);
+fn prepare_save_edits(
+    selected: &LoadedSave,
+    money: Option<u32>,
+    stacks: &BTreeMap<ItemHandle, u32>,
+) -> Result<(SaveBuffer, EditSummary)> {
+    match &selected.data {
+        SaveData::Xray { save, inventory } => {
+            let current_money = save.money()?;
+            let money_change = money.filter(|value| *value != current_money);
+            let mut changes = Vec::new();
+            if let Some(new_value) = money_change {
+                changes.push(writer::Change::SetMoney {
+                    target_object: save.actor_id(),
+                    old_value: current_money,
+                    new_value,
+                });
+            }
+            let mut stack_count = 0_usize;
+            for (handle, new_value) in stacks {
+                let ItemHandle::Xray(handle) = handle else {
+                    continue;
+                };
+                let Some(item) = inventory.iter().find(|item| item.handle == *handle) else {
+                    return Err(Error::Refused("selected X-Ray stack no longer exists".to_owned()));
+                };
+                let Some(old_value) = item.count else {
+                    return Err(Error::Refused("selected X-Ray stack has no confirmed count".to_owned()));
+                };
+                let new_value = u16::try_from(*new_value)
+                    .map_err(|_| Error::Refused("X-Ray stack count exceeds its supported range".to_owned()))?;
+                if old_value != new_value {
+                    changes.push(writer::Change::SetStack {
+                        target_object: *handle,
+                        old_value,
+                        new_value,
+                    });
+                    stack_count = stack_count.saturating_add(1);
+                }
+            }
+            if changes.is_empty() {
+                return Err(Error::Refused("there are no inventory changes to save".to_owned()));
+            }
+            let packed = writer::apply(save, &writer::ChangeSet::new(changes))?;
+            Ok((
+                packed,
+                EditSummary {
+                    money: money_change,
+                    stack_count,
+                    ..EditSummary::default()
+                },
+            ))
+        }
+        SaveData::Stalker2 { save, inventory } => {
+            if save.index().is_legacy() {
+                return Err(Error::Refused("legacy S2 layouts are read-only".to_owned()));
+            }
+            let current_money = save.money();
+            let money_change = money.filter(|value| *value != current_money);
+            let mut changes = Vec::new();
+            if let Some(new_value) = money_change {
+                changes.push(S2Change::SetMoney(new_value));
+            }
+            let mut stack_count = 0_usize;
+            for (handle, new_value) in stacks {
+                let ItemHandle::Stalker2(handle) = handle else {
+                    continue;
+                };
+                let Some(item) = inventory
+                    .iter()
+                    .find(|item| item.handle == *handle && item.editable_count)
+                else {
+                    return Err(Error::Refused("selected S2 stack is not confirmed editable".to_owned()));
+                };
+                if item.count != *new_value {
+                    changes.push(S2Change::SetStackCount {
+                        handle: *handle,
+                        count: *new_value,
+                    });
+                    stack_count = stack_count.saturating_add(1);
+                }
+            }
+            if changes.is_empty() {
+                return Err(Error::Refused("there are no inventory changes to save".to_owned()));
+            }
+            let packed = SaveBuffer::from_vec(save.write_changes(&changes)?);
+            Ok((
+                packed,
+                EditSummary {
+                    money: money_change,
+                    stack_count,
+                    ..EditSummary::default()
+                },
+            ))
+        }
     }
-    source.parent().unwrap_or_else(|| Path::new(".")).join(name)
+}
+
+fn verify_requested_values(
+    selected: &LoadedSave,
+    money: Option<u32>,
+    stacks: &BTreeMap<ItemHandle, u32>,
+) -> Result<()> {
+    let actual_money = match &selected.data {
+        SaveData::Xray { save, .. } => save.money()?,
+        SaveData::Stalker2 { save, .. } => save.money(),
+    };
+    if money.is_some_and(|expected| expected != actual_money) {
+        return Err(Error::damaged("saved wallet value differs after read-back"));
+    }
+    for (handle, expected) in stacks {
+        let actual = match (&selected.data, handle) {
+            (SaveData::Xray { inventory, .. }, ItemHandle::Xray(handle)) => inventory
+                .iter()
+                .find(|item| item.handle == *handle)
+                .and_then(|item| item.count)
+                .map(u32::from),
+            (SaveData::Stalker2 { inventory, .. }, ItemHandle::Stalker2(handle)) => inventory
+                .iter()
+                .find(|item| item.handle == *handle)
+                .map(|item| item.count),
+            _ => None,
+        };
+        if actual != Some(*expected) {
+            return Err(Error::damaged("saved stack count differs after read-back"));
+        }
+    }
+    Ok(())
 }
 
 fn default_backup_directory() -> PathBuf {
@@ -862,7 +1300,7 @@ impl Screen for Inventory {
     }
 
     fn subtitle(&self) -> &str {
-        "Состав рюкзака и подтверждённые изменения X-Ray"
+        "Состав рюкзака и подтверждённые изменения X-Ray / S2"
     }
 
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
@@ -892,12 +1330,7 @@ impl Screen for Inventory {
                 handle: None,
             });
         }
-        self.export = Some(style::button(
-            cx.tree,
-            inventory,
-            "Экспортировать копию",
-            Button::Primary,
-        )?);
+        self.export = Some(style::button(cx.tree, inventory, "Сохранить", Button::Primary)?);
         self.status = Some(style::label(
             cx.tree,
             inventory,
@@ -917,6 +1350,7 @@ impl Screen for Inventory {
         message: &Message<AppMessage>,
         clicked: Option<WidgetId>,
     ) -> Result<()> {
+        self.workspace.poll_tasks();
         if clicked == self.money_decrease {
             self.stage_money(false);
             return self.render(cx);
@@ -942,14 +1376,31 @@ impl Screen for Inventory {
             }
         }
         if clicked == self.export {
-            return self.export(cx);
+            return self.save(cx);
         }
         if let Message::User(AppMessage::ToScreen(ScreenId::Inventory, payload)) = message {
-            if let Some(ExportFinished(text)) = payload.downcast_ref::<ExportFinished>() {
-                if let Some(id) = self.status {
-                    cx.tree.set_text(id, text)?;
+            if let Some(SaveFinished(result)) = payload.downcast_ref::<SaveFinished>() {
+                match result {
+                    Ok((loaded, text)) => {
+                        let mut state = self.workspace.lock();
+                        state.selected = Some(Arc::clone(loaded));
+                        state.pending_money = None;
+                        state.pending_stacks.clear();
+                        drop(state);
+                        cx.app.set_current_save(Some(loaded.slot.path.clone()));
+                        if let Some(id) = self.status {
+                            cx.tree.set_text(id, text)?;
+                        }
+                        cx.status = Some(text.clone());
+                    }
+                    Err(error) => {
+                        let text = format!("Не сохранено: {error}");
+                        if let Some(id) = self.status {
+                            cx.tree.set_text(id, &text)?;
+                        }
+                        cx.status = Some(text);
+                    }
                 }
-                cx.status = Some(text.clone());
             }
             self.render(cx)?;
         }
@@ -1122,12 +1573,42 @@ fn short_text(text: &str, limit: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{prepare_xray_edits, LoadedSave, S2Save, SaveBuffer, SaveSlot};
+    use super::{
+        commit_save_edits_to, prepare_save_edits, prepare_xray_edits, LoadFinished, LoadedSave, Overview, S2Save,
+        SaveBuffer, SaveSlot, Workspace,
+    };
+    use crate::event_loop::{channel_pair, Message};
+    use crate::glyphs::Fonts;
+    use crate::layout::{NodeKind, Style};
+    use crate::raster::Color;
+    use crate::screens::{AppMessage, Context, Screen, ScreenId};
+    use crate::widget::{Content, Look, Tree};
     use sse_core::Error;
     use sse_xray::Save;
     use std::collections::BTreeMap;
+    use std::fs;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::UNIX_EPOCH;
+
+    static NEXT_TEMP_DIRECTORY: AtomicU64 = AtomicU64::new(1);
+
+    struct TempDirectory(PathBuf);
+
+    impl TempDirectory {
+        fn new() -> Self {
+            let id = NEXT_TEMP_DIRECTORY.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!("sse-save-ui-{}-{id}", std::process::id()));
+            fs::create_dir_all(&path).unwrap_or_else(|error| panic!("create test directory: {error}"));
+            Self(path)
+        }
+    }
+
+    impl Drop for TempDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
 
     fn fixture_slot(path: &str, format_id: &str, game_id: &str) -> SaveSlot {
         SaveSlot {
@@ -1176,7 +1657,7 @@ mod tests {
     }
 
     #[test]
-    fn s2_inventory_remains_read_only() -> sse_core::Result<()> {
+    fn s2_money_edit_uses_the_verified_writer() -> sse_core::Result<()> {
         let source = include_bytes!("../../../../fixtures/synthetic/writer-s2-stacks/s2-stacks-source.sav");
         let packed = SaveBuffer::from_vec(source.to_vec());
         let sha256 = sse_codecs::sha256::sha256_hex(packed.as_slice());
@@ -1192,10 +1673,109 @@ mod tests {
             stash,
         );
 
+        let (output, summary) = prepare_save_edits(&loaded, Some(1_000), &BTreeMap::new())?;
+        assert_eq!(S2Save::from_bytes(output.as_slice())?.money(), 1_000);
+        assert_eq!(summary.money, Some(1_000));
+        Ok(())
+    }
+
+    #[test]
+    fn headless_fixture_money_edit_creates_backup_writes_and_reads_back_xray_and_s2() -> sse_core::Result<()> {
+        let temp = TempDirectory::new();
+        let saves = temp.0.join("saves");
+        fs::create_dir_all(&saves)?;
+        let backup = temp.0.join("backups");
+        let xray_source = include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-source.sav");
+        let xray_path = saves.join("xray.sav");
+        fs::write(&xray_path, xray_source)?;
+        let xray_slot = fixture_slot(&xray_path.to_string_lossy(), "stalker-cop", "cop");
+        let xray = LoadedSave::read(xray_slot)?;
+        let xray_money = match &xray.data {
+            super::SaveData::Xray { save, .. } => save.money()?.saturating_add(321),
+            super::SaveData::Stalker2 { .. } => return Err(Error::damaged("X-Ray fixture parsed as S2")),
+        };
+        let (xray_after, _) = commit_save_edits_to(&xray, Some(xray_money), &BTreeMap::new(), &backup)?;
         assert!(matches!(
-            prepare_xray_edits(&loaded, Some(1_000), &BTreeMap::new()),
-            Err(Error::Refused(_))
+            &xray_after.data,
+            super::SaveData::Xray { save, .. } if save.money().ok() == Some(xray_money)
         ));
+
+        let s2_source = include_bytes!("../../../../fixtures/synthetic/writer-s2-stacks/s2-stacks-source.sav");
+        let s2_path = saves.join("s2.sav");
+        fs::write(&s2_path, s2_source)?;
+        let s2_slot = fixture_slot(&s2_path.to_string_lossy(), "stalker2", "stalker2");
+        let s2 = LoadedSave::read(s2_slot)?;
+        let s2_money = match &s2.data {
+            super::SaveData::Stalker2 { save, .. } => save.money().saturating_add(654),
+            super::SaveData::Xray { .. } => return Err(Error::damaged("S2 fixture parsed as X-Ray")),
+        };
+        let (s2_after, _) = commit_save_edits_to(&s2, Some(s2_money), &BTreeMap::new(), &temp.0.join("s2-backups"))?;
+        assert!(matches!(
+            &s2_after.data,
+            super::SaveData::Stalker2 { save, .. } if save.money() == s2_money
+        ));
+        assert_eq!(S2Save::from_bytes(&fs::read(s2_path)?)?.money(), s2_money);
+        assert!(sse_storage::transaction::list_backups(&backup)?
+            .iter()
+            .any(|entry| { entry.status == sse_storage::transaction::BackupStatus::Verified }));
+        assert!(sse_storage::transaction::list_backups(&temp.0.join("s2-backups"))?
+            .iter()
+            .any(|entry| entry.status == sse_storage::transaction::BackupStatus::Verified));
+        Ok(())
+    }
+
+    #[test]
+    fn background_fixture_load_updates_the_shared_app_state_via_to_screen() -> sse_core::Result<()> {
+        let temp = TempDirectory::new();
+        let path = temp.0.join("fixture.sav");
+        fs::write(
+            &path,
+            include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-source.sav"),
+        )?;
+        let (proxy, receiver) = channel_pair::<AppMessage>();
+        let mut overview = Overview::new(Workspace::default());
+        let mut app = sse_app::AppState::new();
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        {
+            let mut cx = Context {
+                tree: &mut tree,
+                proxy: Some(&proxy),
+                status: None,
+                app: &mut app,
+            };
+            overview.build(&mut cx, host)?;
+            assert!(overview.open_save(&mut cx, &path)?);
+        }
+        let message = receiver
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .map_err(|error| Error::System(error.to_string()))?;
+        let completion = match &message {
+            Message::User(AppMessage::ToScreen(ScreenId::Overview, payload)) => payload.downcast_ref::<LoadFinished>(),
+            _ => None,
+        };
+        assert!(completion.is_some(), "unexpected background message: {message:?}");
+        let completion = completion.ok_or_else(|| Error::damaged("missing save-load completion"))?;
+        assert_eq!(completion.request, overview.workspace.lock().load_request);
+        assert_eq!(
+            completion.selected_path.as_deref(),
+            Some(path.as_path()),
+            "background loader did not return the fixture path"
+        );
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: Some(&proxy),
+            status: None,
+            app: &mut app,
+        };
+        overview.message(&mut cx, &message, None)?;
+        assert_eq!(cx.app.current_save(), Some(path.as_path()));
         Ok(())
     }
 }

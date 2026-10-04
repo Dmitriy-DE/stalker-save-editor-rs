@@ -7,6 +7,7 @@ use crate::glyphs::{Face, TextStyle};
 use crate::layout::{Align, Edges, NodeKind, Size, Style};
 use crate::widget::{Content, Look, Tree, WidgetId};
 use sse_core::Result;
+use std::path::Path;
 
 const KEY_ESCAPE: u32 = 0xff1b;
 const KEY_UP: u32 = 0xff52;
@@ -254,6 +255,11 @@ impl Shell {
         &self.app
     }
 
+    /// Installs the event proxy after a headless shell has been built.
+    pub fn set_proxy(&mut self, proxy: Proxy<AppMessage>) {
+        self.proxy = Some(proxy);
+    }
+
     /// Currently shown screen.
     #[must_use]
     pub fn current(&self) -> Option<ScreenId> {
@@ -269,6 +275,33 @@ impl Shell {
             Some(index) => self.select(tree, index),
             None => Ok(()),
         }
+    }
+
+    /// Opens a save through the selected screen's background-aware save hook.
+    ///
+    /// # Errors
+    /// Returns an error if the screen cannot read or parse the save.
+    pub fn open_save(&mut self, tree: &mut Tree, path: &Path) -> Result<bool> {
+        self.open(tree, ScreenId::Overview)?;
+        let Some(index) = self.screens.iter().position(|screen| screen.id() == ScreenId::Overview) else {
+            return Ok(false);
+        };
+        let mut cx = Context {
+            tree,
+            proxy: self.proxy.as_ref(),
+            status: None,
+            app: &mut self.app,
+        };
+        let opened = self
+            .screens
+            .get_mut(index)
+            .map(|screen| screen.open_save(&mut cx, path))
+            .transpose()?
+            .unwrap_or(false);
+        if let Some(status) = cx.status {
+            cx.tree.set_text(self.status, &status)?;
+        }
+        Ok(opened)
     }
 
     fn select(&mut self, tree: &mut Tree, index: usize) -> Result<()> {
