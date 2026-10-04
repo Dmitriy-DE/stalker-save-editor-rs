@@ -178,7 +178,30 @@ impl Screen for Capabilities {
     }
 }
 
-const SCALES: [&str; 4] = ["100 %", "125 %", "150 %", "200 %"];
+const SCALES: [u32; 7] = [0, 100, 110, 125, 150, 175, 200];
+
+fn repaint_theme(tree: &mut crate::widget::Tree, old: crate::theme::Theme, new: crate::theme::Theme) {
+    let mut pairs = Vec::with_capacity(24);
+    pairs.extend(old.colors.background.into_iter().zip(new.colors.background));
+    pairs.extend(old.colors.borders.into_iter().zip(new.colors.borders));
+    pairs.extend(old.colors.text.into_iter().zip(new.colors.text));
+    pairs.extend(old.colors.accent.into_iter().zip(new.colors.accent));
+    pairs.extend(old.colors.state.into_iter().zip(new.colors.state));
+    pairs.push((old.colors.selection, new.colors.selection));
+    pairs.push((old.colors.focus_ring, new.colors.focus_ring));
+    for (from, to) in pairs {
+        tree.replace_color(style::rgb(from), style::rgb(to));
+    }
+    tree.damage_all();
+}
+
+fn load_settings() -> sse_app::AppSettings {
+    sse_app::AppSettings::load(&sse_app::default_settings_path())
+}
+
+fn save_settings(settings: &sse_app::AppSettings) -> Result<()> {
+    settings.save(&sse_app::default_settings_path())
+}
 
 /// Result of the background check started by the settings screen.
 struct Checked(String);
@@ -188,9 +211,42 @@ struct Checked(String);
 pub struct Settings {
     scale_value: Option<WidgetId>,
     scale_button: Option<WidgetId>,
+    theme_value: Option<WidgetId>,
+    theme_button: Option<WidgetId>,
+    accent_value: Option<WidgetId>,
+    accent_button: Option<WidgetId>,
     check_button: Option<WidgetId>,
     check_result: Option<WidgetId>,
     scale: usize,
+    theme: usize,
+    accent: usize,
+    settings: sse_app::AppSettings,
+}
+
+impl Settings {
+    fn theme_choice(&self) -> (&'static str, &'static str) {
+        crate::theme::THEMES
+            .get(self.theme)
+            .copied()
+            .or_else(|| crate::theme::THEMES.first().copied())
+            .unwrap_or(("zone", "Тёмная"))
+    }
+
+    fn accent_choice(&self) -> &'static str {
+        crate::theme::ACCENT_IDS
+            .get(self.accent)
+            .copied()
+            .or_else(|| crate::theme::ACCENT_IDS.first().copied())
+            .unwrap_or("amber")
+    }
+
+    fn scale_choice(&self) -> u32 {
+        SCALES
+            .get(self.scale)
+            .copied()
+            .or_else(|| SCALES.first().copied())
+            .unwrap_or(100)
+    }
 }
 
 impl Screen for Settings {
@@ -205,9 +261,43 @@ impl Screen for Settings {
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
         let view = style::card(cx.tree, host)?;
         style::label(cx.tree, view, "ВИД", Text::Heading)?;
+        self.settings = load_settings();
+        self.theme = crate::theme::THEMES
+            .iter()
+            .position(|(id, _)| *id == self.settings.theme_id)
+            .unwrap_or(0);
+        self.accent = crate::theme::ACCENT_IDS
+            .iter()
+            .position(|id| *id == self.settings.accent_id)
+            .unwrap_or(0);
+        self.scale = SCALES
+            .iter()
+            .position(|value| *value == self.settings.ui_scale_percent)
+            .unwrap_or(0);
+        let old_theme = crate::theme::current();
+        crate::theme::apply_appearance(&self.settings.theme_id, &self.settings.accent_id);
+        repaint_theme(cx.tree, old_theme, crate::theme::current());
+        let percent = self.scale_choice();
+        cx.tree.set_scale(percent as f32 / 100.0);
+
+        let theme_line = style::row(cx.tree, view)?;
+        style::label(cx.tree, theme_line, "Тема:", Text::Body)?;
+        self.theme_value = Some(style::label(cx.tree, theme_line, self.theme_choice().1, Text::Value)?);
+        self.theme_button = Some(style::button(cx.tree, theme_line, "Изменить", Button::Secondary)?);
+
+        let accent_line = style::row(cx.tree, view)?;
+        style::label(cx.tree, accent_line, "Акцент:", Text::Body)?;
+        self.accent_value = Some(style::label(cx.tree, accent_line, self.accent_choice(), Text::Value)?);
+        self.accent_button = Some(style::button(cx.tree, accent_line, "Изменить", Button::Secondary)?);
+
         let line = style::row(cx.tree, view)?;
         style::label(cx.tree, line, "Масштаб интерфейса:", Text::Body)?;
-        self.scale_value = Some(style::label(cx.tree, line, SCALES[0], Text::Value)?);
+        let scale_label = if percent == 0 {
+            "По размеру экрана".to_owned()
+        } else {
+            format!("{percent} %")
+        };
+        self.scale_value = Some(style::label(cx.tree, line, &scale_label, Text::Value)?);
         self.scale_button = Some(style::button(cx.tree, line, "Изменить", Button::Secondary)?);
 
         let updates = style::card(cx.tree, host)?;
@@ -224,13 +314,75 @@ impl Screen for Settings {
         message: &Message<AppMessage>,
         clicked: Option<WidgetId>,
     ) -> Result<()> {
+        if clicked.is_some() && clicked == self.theme_button {
+            self.theme = self
+                .theme
+                .saturating_add(1)
+                .checked_rem(crate::theme::THEMES.len())
+                .unwrap_or(0);
+            let old = crate::theme::current();
+            let (theme_id, theme_name) = crate::theme::THEMES
+                .get(self.theme)
+                .copied()
+                .unwrap_or(("zone", "Зона (тёмная)"));
+            let accent_id = crate::theme::ACCENT_IDS.get(self.accent).copied().unwrap_or("amber");
+            self.settings.theme_id = theme_id.to_owned();
+            crate::theme::apply_appearance(&self.settings.theme_id, accent_id);
+            repaint_theme(cx.tree, old, crate::theme::current());
+            if let Some(value) = self.theme_value {
+                cx.tree.set_text(value, theme_name)?;
+            }
+            match save_settings(&self.settings) {
+                Ok(()) => cx.status = Some("Настройки сохранены.".to_owned()),
+                Err(error) => cx.status = Some(format!("Не удалось сохранить настройки: {error}")),
+            }
+        }
+        if clicked.is_some() && clicked == self.accent_button {
+            self.accent = self
+                .accent
+                .saturating_add(1)
+                .checked_rem(crate::theme::ACCENT_IDS.len())
+                .unwrap_or(0);
+            let old = crate::theme::current();
+            let accent_id = crate::theme::ACCENT_IDS.get(self.accent).copied().unwrap_or("amber");
+            let theme_id = crate::theme::THEMES.get(self.theme).map_or("zone", |entry| entry.0);
+            self.settings.accent_id = accent_id.to_owned();
+            crate::theme::apply_appearance(theme_id, &self.settings.accent_id);
+            repaint_theme(cx.tree, old, crate::theme::current());
+            if let Some(value) = self.accent_value {
+                cx.tree.set_text(
+                    value,
+                    crate::theme::ACCENT_NAMES
+                        .get(self.accent)
+                        .copied()
+                        .unwrap_or("Янтарный"),
+                )?;
+            }
+            match save_settings(&self.settings) {
+                Ok(()) => cx.status = Some("Настройки сохранены.".to_owned()),
+                Err(error) => cx.status = Some(format!("Не удалось сохранить настройки: {error}")),
+            }
+        }
         if clicked.is_some() && clicked == self.scale_button {
             self.scale = self.scale.saturating_add(1).checked_rem(SCALES.len()).unwrap_or(0);
-            if let (Some(value), Some(text)) = (self.scale_value, SCALES.get(self.scale)) {
-                cx.tree.set_text(value, text)?;
+            let percent = SCALES.get(self.scale).copied().unwrap_or(100);
+            self.settings.ui_scale_percent = percent;
+            cx.tree
+                .set_scale(if percent == 0 { 1.0 } else { percent as f32 / 100.0 });
+            if let Some(value) = self.scale_value {
+                let label = if percent == 0 {
+                    "По размеру экрана".to_owned()
+                } else {
+                    format!("{percent} %")
+                };
+                cx.tree.set_text(value, &label)?;
             }
-            cx.status = Some("Масштаб применится после U2".to_owned());
+            match save_settings(&self.settings) {
+                Ok(()) => cx.status = Some("Настройки сохранены.".to_owned()),
+                Err(error) => cx.status = Some(format!("Не удалось сохранить настройки: {error}")),
+            }
         }
+
         if clicked.is_some() && clicked == self.check_button {
             if let Some(result) = self.check_result {
                 cx.tree.set_text(result, "Проверяю…")?;

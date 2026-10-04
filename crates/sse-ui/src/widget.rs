@@ -240,6 +240,45 @@ impl Tree {
         Ok(())
     }
 
+    /// Replaces one resolved colour across the retained tree.
+    ///
+    /// Theme changes use this to update widgets that were already built without rebuilding screen state.
+    pub fn replace_color(&mut self, from: Color, to: Color) {
+        if from == to {
+            return;
+        }
+        if self.background == from {
+            self.background = to;
+        }
+        for node in &mut self.nodes {
+            let look = &mut node.look;
+            for color in [
+                &mut look.fill,
+                &mut look.hover_fill,
+                &mut look.pressed_fill,
+                &mut look.hover_text,
+            ] {
+                if *color == Some(from) {
+                    *color = Some(to);
+                }
+            }
+            if look.text == from {
+                look.text = to;
+            }
+            if let Some((color, width)) = look.border {
+                if color == from {
+                    look.border = Some((to, width));
+                }
+            }
+            if let Some((color, width)) = look.accent_bar {
+                if color == from {
+                    look.accent_bar = Some((to, width));
+                }
+            }
+        }
+        self.damage_all();
+    }
+
     /// Shows or hides a widget and its subtree. A hidden widget takes no space.
     ///
     /// # Errors

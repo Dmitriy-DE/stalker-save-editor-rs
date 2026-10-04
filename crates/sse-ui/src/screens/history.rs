@@ -479,7 +479,7 @@ impl Screen for HistoryScreen {
         clicked: Option<WidgetId>,
     ) -> Result<()> {
         self.workspace.poll_tasks();
-        if clicked == self.refresh {
+        if clicked.is_some() && clicked == self.refresh {
             if cx.proxy.is_none() {
                 self.set_summary(cx.tree, "В режиме headless screenshot диски не сканируются.")?;
             } else {
@@ -487,11 +487,11 @@ impl Screen for HistoryScreen {
                 self.request_refresh(cx.proxy.cloned());
             }
         }
-        if clicked == self.previous_page && self.page > 0 {
+        if clicked.is_some() && clicked == self.previous_page && self.page > 0 {
             self.page = self.page.saturating_sub(1);
             self.render_current_page(cx)?;
         }
-        if clicked == self.next_page {
+        if clicked.is_some() && clicked == self.next_page {
             let total_pages = self.backup_entries.as_ref().map_or_else(
                 || {
                     self.save_entries

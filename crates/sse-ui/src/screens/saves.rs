@@ -697,19 +697,19 @@ impl Screen for Overview {
                 return self.render(cx);
             }
         }
-        if clicked == self.refresh {
+        if clicked.is_some() && clicked == self.refresh {
             start_discovery(&self.workspace, cx);
             return Ok(());
         }
-        if clicked == self.previous {
+        if clicked.is_some() && clicked == self.previous {
             self.page = self.page.saturating_sub(1);
             return self.render(cx);
         }
-        if clicked == self.next {
+        if clicked.is_some() && clicked == self.next {
             self.page = self.page.saturating_add(1);
             return self.render(cx);
         }
-        if clicked == self.search_button {
+        if clicked.is_some() && clicked == self.search_button {
             self.search_focused = !self.search_focused;
             return self.render(cx);
         }
@@ -1351,19 +1351,19 @@ impl Screen for Inventory {
         clicked: Option<WidgetId>,
     ) -> Result<()> {
         self.workspace.poll_tasks();
-        if clicked == self.money_decrease {
+        if clicked.is_some() && clicked == self.money_decrease {
             self.stage_money(false);
             return self.render(cx);
         }
-        if clicked == self.money_increase {
+        if clicked.is_some() && clicked == self.money_increase {
             self.stage_money(true);
             return self.render(cx);
         }
-        if clicked == self.previous {
+        if clicked.is_some() && clicked == self.previous {
             self.page = self.page.saturating_sub(1);
             return self.render(cx);
         }
-        if clicked == self.next {
+        if clicked.is_some() && clicked == self.next {
             self.page = self.page.saturating_add(1);
             return self.render(cx);
         }
@@ -1375,7 +1375,7 @@ impl Screen for Inventory {
                 return self.render(cx);
             }
         }
-        if clicked == self.export {
+        if clicked.is_some() && clicked == self.export {
             return self.save(cx);
         }
         if let Message::User(AppMessage::ToScreen(ScreenId::Inventory, payload)) = message {

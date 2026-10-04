@@ -386,7 +386,7 @@ impl Achievements {
         });
     }
     fn render(&mut self, cx: &mut Context<'_>) -> Result<()> {
-        for (i, row) in self.rows.iter().copied().enumerate() {
+        for (i, row) in self.rows.iter().copied().skip(1).enumerate() {
             if let Some(a) = self.items.get(i) {
                 cx.tree.set_visible(row, true)?;
                 cx.tree.set_text(
@@ -513,11 +513,21 @@ impl Screen for Achievements {
     }
 }
 
+#[derive(Clone, Debug)]
+struct CloudIntent {
+    app_id: u32,
+    remote: String,
+    local: PathBuf,
+    local_sha256: [u8; 32],
+}
+
 #[derive(Debug)]
 enum CloudReply {
     List(std::result::Result<Vec<CloudFile>, String>),
+    Prepared(std::result::Result<CloudIntent, String>),
     Done(std::result::Result<String, String>),
 }
+
 #[derive(Default)]
 struct Cloud {
     status: Option<WidgetId>,
@@ -526,11 +536,24 @@ struct Cloud {
     selected: Option<usize>,
     download: Option<WidgetId>,
     upload: Option<WidgetId>,
-    /// Destructive button pressed once and waiting for the second press.
-    armed: Option<WidgetId>,
+    confirm_card: Option<WidgetId>,
+    confirm_check: Option<WidgetId>,
+    confirm_write: Option<WidgetId>,
+    confirm_cancel: Option<WidgetId>,
+    intent: Option<CloudIntent>,
+    overwrite_confirmed: bool,
 }
 
 impl Cloud {
+    fn clear_intent(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        self.intent = None;
+        self.overwrite_confirmed = false;
+        if let Some(card) = self.confirm_card {
+            cx.tree.set_visible(card, false)?;
+        }
+        Ok(())
+    }
+
     fn load(&self, cx: &mut Context<'_>) {
         let Some(proxy) = cx.proxy.cloned() else { return };
         let id = cx.app.selected_game().and_then(app_id);
@@ -545,6 +568,7 @@ impl Cloud {
             ));
         });
     }
+
     fn render(&mut self, cx: &mut Context<'_>) -> Result<()> {
         for (i, row) in self.rows.iter().copied().enumerate() {
             if let Some(f) = self.items.get(i) {
@@ -560,55 +584,209 @@ impl Cloud {
         }
         Ok(())
     }
+
+    fn prepare_upload(&self, cx: &mut Context<'_>) {
+        let Some(i) = self.selected else {
+            cx.status = Some("Сначала выберите файл Steam Cloud".to_owned());
+            return;
+        };
+        let Some(item) = self.items.get(i) else { return };
+        let Some(game) = cx.app.selected_game() else { return };
+        let Some(app_id) = app_id(game) else { return };
+        if app_id == sse_steam::discovery::STALKER_2_APP_ID {
+            cx.status = Some("Запись S.T.A.L.K.E.R. 2 в Steam Cloud запрещена.".to_owned());
+            return;
+        }
+        let Some(local) = cx.app.current_save().map(Path::to_path_buf) else {
+            cx.status = Some("Сначала откройте локальный сейв".to_owned());
+            return;
+        };
+        let remote = item.name.clone();
+        let Some(proxy) = cx.proxy.cloned() else { return };
+        std::thread::spawn(move || {
+            let result = std::fs::read(&local)
+                .map_err(|error| format!("Ошибка записи: {error}"))
+                .map(|bytes| CloudIntent {
+                    app_id,
+                    remote,
+                    local,
+                    local_sha256: sse_codecs::sha256::sha256(&bytes),
+                });
+            proxy.send(AppMessage::ToScreen(
+                ScreenId::Cloud,
+                Box::new(CloudReply::Prepared(result)),
+            ));
+        });
+    }
+
+    fn upload(&self, cx: &mut Context<'_>, intent: CloudIntent) {
+        let Some(proxy) = cx.proxy.cloned() else { return };
+        std::thread::spawn(move || {
+            let result = (|| {
+                let output = std::fs::read(&intent.local).map_err(|error| format!("Ошибка записи: {error}"))?;
+                if sse_codecs::sha256::sha256(&output) != intent.local_sha256 {
+                    return Ok(
+                        "Aborted: Локальный файл изменился после запроса записи; подтвердите запись ещё раз."
+                            .to_owned(),
+                    );
+                }
+                let source = worker(&Request::Read {
+                    app_id: intent.app_id,
+                    remote_name: intent.remote.clone(),
+                })?;
+                let artifacts = intent
+                    .local
+                    .parent()
+                    .unwrap_or_else(|| Path::new("."))
+                    .join("steam-cloud-backups");
+                let request = Request::Write {
+                    app_id: intent.app_id,
+                    remote_name: intent.remote.clone(),
+                    expected_source_sha256: sse_codecs::sha256::sha256(&source),
+                    artifact_directory: artifacts,
+                    output,
+                };
+                match sse_steam::worker::run_sibling_worker(&request, TIMEOUT) {
+                    Ok(Response { ok: true, payload }) => match payload.first().copied() {
+                        Some(0) => Ok(format!("Verified: Записано и проверено: {}", intent.remote)),
+                        Some(1) => Ok(format!(
+                            "Uncertain: Результат записи не подтверждён (повтор не выполняется): {}",
+                            intent.remote
+                        )),
+                        _ => Ok(format!(
+                            "Uncertain: Результат записи не подтверждён (повтор не выполняется): {}",
+                            intent.remote
+                        )),
+                    },
+                    Ok(Response { ok: false, payload }) => Ok(format!(
+                        "Aborted: Запись отменена: {}",
+                        String::from_utf8(payload).unwrap_or_else(|_| "Steam отклонил запись".to_owned())
+                    )),
+                    Err(sse_steam::worker::WorkerProcessError::Timeout {
+                        write_outcome_uncertain: true,
+                    }) => Ok(format!(
+                        "Uncertain: Результат записи не подтверждён (повтор не выполняется): {}",
+                        intent.remote
+                    )),
+                    Err(error) => Err(format!("Ошибка записи: {error}")),
+                }
+            })();
+            proxy.send(AppMessage::ToScreen(
+                ScreenId::Cloud,
+                Box::new(CloudReply::Done(result)),
+            ));
+        });
+    }
 }
 
 impl Screen for Cloud {
     fn id(&self) -> ScreenId {
         ScreenId::Cloud
     }
+
     fn subtitle(&self) -> &str {
-        "Steam Cloud: список, локальная копия и транзакционная загрузка"
+        "Steam Cloud: список, локальная копия и защищённая запись"
     }
+
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
         let card = style::card(cx.tree, host)?;
         style::label(cx.tree, card, "STEAM CLOUD", Text::Heading)?;
-        self.status = Some(style::label(cx.tree, card, "Загрузка…", Text::Note)?);
-        for _ in 0..ROWS {
-            let r = style::button(cx.tree, card, "", Button::Secondary)?;
-            cx.tree.set_visible(r, false)?;
-            self.rows.push(r);
-        }
-        let row = style::row(cx.tree, card)?;
-        self.download = Some(style::button(
+        self.status = Some(style::label(
             cx.tree,
-            row,
-            "Скачать в текущий сейв",
+            card,
+            "Список не загружен. Нажмите «ОБНОВИТЬ СПИСОК».",
+            Text::Note,
+        )?);
+        let refresh = style::button(cx.tree, card, "ОБНОВИТЬ СПИСОК", Button::Secondary)?;
+        self.download = Some(style::button(cx.tree, card, "СКАЧАТЬ В ЛОКАЛЬНЫЕ", Button::Secondary)?);
+        self.upload = Some(style::button(cx.tree, card, "ЗАПИСАТЬ В ОБЛАКО...", Button::Primary)?);
+        self.rows.push(refresh);
+        for _ in 0..ROWS {
+            let row = style::button(cx.tree, card, "", Button::Secondary)?;
+            cx.tree.set_visible(row, false)?;
+            self.rows.push(row);
+        }
+
+        let confirm = style::card(cx.tree, host)?;
+        self.confirm_card = Some(confirm);
+        style::label(cx.tree, confirm, "ПОДТВЕРЖДЕНИЕ ЗАПИСИ", Text::Heading)?;
+        style::label(
+            cx.tree,
+            confirm,
+            "Внимание: локальный файл будет отправлен в Steam Cloud и перезапишет облачное сохранение. Резервная копия будет сохранена в бэкапы.",
+            Text::Body,
+        )?;
+        self.confirm_check = Some(style::button(
+            cx.tree,
+            confirm,
+            "[ ] Я подтверждаю перезапись",
             Button::Secondary,
         )?);
-        self.upload = Some(style::button(cx.tree, row, "Загрузить текущий сейв", Button::Primary)?);
+        let actions = style::row(cx.tree, confirm)?;
+        self.confirm_write = Some(style::button(cx.tree, actions, "ЗАПИСАТЬ", Button::Primary)?);
+        self.confirm_cancel = Some(style::button(cx.tree, actions, "ОТМЕНА", Button::Secondary)?);
+        cx.tree.set_visible(confirm, false)?;
         Ok(())
     }
-    fn shown(&mut self, cx: &mut Context<'_>) -> Result<()> {
-        self.load(cx);
-        Ok(())
-    }
+
     fn message(
         &mut self,
         cx: &mut Context<'_>,
         message: &Message<AppMessage>,
         clicked: Option<WidgetId>,
     ) -> Result<()> {
-        for (i, row) in self.rows.iter().copied().enumerate() {
-            if clicked == Some(row) && self.items.get(i).is_some() {
-                self.selected = Some(i);
-                cx.status = self.items.get(i).map(|f| format!("Выбран {}", f.name));
+        if clicked.is_some() && self.rows.first().copied() == clicked {
+            self.clear_intent(cx)?;
+            self.selected = None;
+            self.load(cx);
+        }
+
+        let selected_row =
+            clicked.and_then(|clicked_id| self.rows.iter().copied().skip(1).position(|row| row == clicked_id));
+        if let Some(row_index) = selected_row.filter(|index| self.items.get(*index).is_some()) {
+            self.clear_intent(cx)?;
+            self.selected = Some(row_index);
+            cx.status = self.items.get(row_index).map(|file| format!("Выбран {}", file.name));
+        }
+
+        if clicked.is_some() && clicked == self.upload {
+            self.clear_intent(cx)?;
+            self.prepare_upload(cx);
+        }
+
+        if clicked.is_some() && clicked == self.confirm_check && self.intent.is_some() {
+            self.overwrite_confirmed = !self.overwrite_confirmed;
+            if let Some(check) = self.confirm_check {
+                cx.tree.set_text(
+                    check,
+                    if self.overwrite_confirmed {
+                        "[✓] Я подтверждаю перезапись"
+                    } else {
+                        "[ ] Я подтверждаю перезапись"
+                    },
+                )?;
             }
         }
-        if clicked.is_some() && (clicked == self.download || clicked == self.upload) {
-            if !confirm_twice(&mut self.armed, clicked, &mut cx.status) {
-                return Ok(());
+
+        if clicked.is_some() && clicked == self.confirm_cancel {
+            self.clear_intent(cx)?;
+            cx.status = Some("Aborted: Запись отменена пользователем.".to_owned());
+        }
+
+        if clicked.is_some() && clicked == self.confirm_write {
+            if !self.overwrite_confirmed {
+                cx.status = Some("Установите флажок «Я подтверждаю перезапись».".to_owned());
+            } else if let Some(intent) = self.intent.take() {
+                self.overwrite_confirmed = false;
+                if let Some(card) = self.confirm_card {
+                    cx.tree.set_visible(card, false)?;
+                }
+                cx.status = Some(format!("Запись {} в Steam Cloud (RemoteStorage)...", intent.remote));
+                self.upload(cx, intent);
             }
-            let upload = clicked == self.upload;
+        }
+
+        if clicked.is_some() && clicked == self.download {
             let Some(i) = self.selected else {
                 cx.status = Some("Сначала выберите файл Steam Cloud".to_owned());
                 return Ok(());
@@ -627,33 +805,16 @@ impl Screen for Cloud {
                 let result = (|| {
                     let source = worker(&Request::Read {
                         app_id,
-                        remote_name: remote.clone(),
+                        remote_name: remote,
                     })?;
-                    if upload {
-                        let output = std::fs::read(&local).map_err(|e| e.to_string())?;
-                        let artifacts = local
-                            .parent()
-                            .unwrap_or_else(|| Path::new("."))
-                            .join("steam-cloud-backups");
-                        let expected = sse_codecs::sha256::sha256(&source);
-                        worker(&Request::Write {
-                            app_id,
-                            remote_name: remote,
-                            expected_source_sha256: expected,
-                            artifact_directory: artifacts,
-                            output,
-                        })?;
-                        Ok("Steam Cloud обновлён транзакционно; бэкап сохранён".to_owned())
-                    } else {
-                        let backup = local.with_extension("cloud-backup");
-                        if local.is_file() {
-                            std::fs::copy(&local, &backup).map_err(|e| e.to_string())?;
-                        }
-                        let temp = local.with_extension("cloud-download.tmp");
-                        std::fs::write(&temp, &source).map_err(|e| e.to_string())?;
-                        std::fs::rename(&temp, &local).map_err(|e| e.to_string())?;
-                        Ok(format!("Скачано; локальный бэкап: {}", backup.display()))
+                    let backup = local.with_extension("cloud-backup");
+                    if local.is_file() {
+                        std::fs::copy(&local, &backup).map_err(|error| error.to_string())?;
                     }
+                    let temp = local.with_extension("cloud-download.tmp");
+                    std::fs::write(&temp, &source).map_err(|error| error.to_string())?;
+                    std::fs::rename(&temp, &local).map_err(|error| error.to_string())?;
+                    Ok(format!("Файл успешно скачан: {}", local.display()))
                 })();
                 proxy.send(AppMessage::ToScreen(
                     ScreenId::Cloud,
@@ -661,23 +822,39 @@ impl Screen for Cloud {
                 ));
             });
         }
+
         if let Message::User(AppMessage::ToScreen(ScreenId::Cloud, payload)) = message {
             if let Some(reply) = payload.downcast_ref::<CloudReply>() {
                 match reply {
                     CloudReply::List(Ok(items)) => {
                         self.items.clone_from(items);
-                        self.render(cx)?
+                        self.render(cx)?;
                     }
-                    CloudReply::List(Err(e)) => {
-                        if let Some(id) = self.status {
-                            cx.tree.set_text(id, &clip(e))?;
+                    CloudReply::List(Err(error)) => {
+                        if let Some(status) = self.status {
+                            cx.tree.set_text(status, &format!("Ошибка загрузки списка: {error}"))?;
                         }
                     }
+                    CloudReply::Prepared(Ok(intent)) => {
+                        self.intent = Some(intent.clone());
+                        self.overwrite_confirmed = false;
+                        if let Some(check) = self.confirm_check {
+                            cx.tree.set_text(check, "[ ] Я подтверждаю перезапись")?;
+                        }
+                        if let Some(card) = self.confirm_card {
+                            cx.tree.set_visible(card, true)?;
+                        }
+                    }
+                    CloudReply::Prepared(Err(error)) => cx.status = Some(error.clone()),
                     CloudReply::Done(Ok(text)) => {
                         cx.status = Some(text.clone());
-                        self.load(cx)
+                        self.clear_intent(cx)?;
+                        self.load(cx);
                     }
-                    CloudReply::Done(Err(e)) => cx.status = Some(format!("Steam Cloud: {e}")),
+                    CloudReply::Done(Err(error)) => {
+                        cx.status = Some(error.clone());
+                        self.clear_intent(cx)?;
+                    }
                 }
             }
         }

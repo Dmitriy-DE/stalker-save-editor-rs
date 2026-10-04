@@ -25,6 +25,7 @@ pub struct Shell {
     selected: usize,
     proxy: Option<Proxy<AppMessage>>,
     app: sse_app::state::AppState,
+    wizard: super::wizard::Wizard,
 }
 
 fn padded(left: f32, top: f32, right: f32, bottom: f32) -> Edges {
@@ -213,6 +214,7 @@ impl Shell {
             Content::Panel,
             Look::default(),
         )?;
+        let wizard = super::wizard::Wizard::build(tree, content)?;
         let status = tree.add(
             Some(main),
             NodeKind::Leaf,
@@ -244,6 +246,7 @@ impl Shell {
             selected: 0,
             proxy,
             app: sse_app::state::AppState::new(),
+            wizard,
         };
         shell.show(tree, 0)?;
         Ok(shell)
@@ -354,7 +357,10 @@ impl Shell {
             }
         }
         screen.shown(&mut cx)?;
+        let screen_id = screen.id();
+        let screen_host = *slot;
         let status = cx.status.take();
+        self.wizard.sync(tree, &self.app, screen_id, screen_host)?;
         if let Some(text) = status {
             tree.set_text(self.status, &text)?;
         }
@@ -390,6 +396,14 @@ impl Shell {
     }
 
     fn handle(&mut self, tree: &mut Tree, message: &Message<AppMessage>, clicked: Option<WidgetId>) -> Result<Flow> {
+        let mut wizard_status = None;
+        if let Some(target) = self.wizard.message(tree, message, clicked, &mut wizard_status)? {
+            self.open(tree, target)?;
+            return Ok(Flow::Continue);
+        }
+        if let Some(text) = wizard_status {
+            tree.set_text(self.status, &text)?;
+        }
         if let Some(index) = clicked.and_then(|id| self.nav.iter().position(|nav| *nav == id)) {
             self.select(tree, index)?;
             return Ok(Flow::Continue);
@@ -413,6 +427,10 @@ impl Shell {
             }
         }
         self.route(tree, message, clicked)?;
+        if let Some(screen) = self.screens.get(self.selected) {
+            let host = self.hosts.get(self.selected).copied().flatten();
+            self.wizard.sync(tree, &self.app, screen.id(), host)?;
+        }
         Ok(Flow::Continue)
     }
 }
