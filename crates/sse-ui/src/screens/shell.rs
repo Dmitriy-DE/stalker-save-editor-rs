@@ -418,7 +418,14 @@ impl Shell {
         };
         tree.set_text(self.title, crate::strings::t(screen.id().title()))?;
         tree.set_text(self.subtitle, crate::strings::t(screen.subtitle()))?;
-        tree.set_text(self.breadcrumb, &format!("{} / {}", crate::strings::t(screen.id().group().caption()), crate::strings::t(screen.id().title())))?;
+        tree.set_text(
+            self.breadcrumb,
+            &format!(
+                "{} / {}",
+                crate::strings::t(screen.id().group().caption()),
+                crate::strings::t(screen.id().title())
+            ),
+        )?;
         tree.set_text(self.edition, self.app.selected_game().unwrap_or("X-Ray / S2"))?;
         let mut cx = Context {
             tree,
@@ -512,15 +519,24 @@ impl Shell {
             return Ok(Flow::Continue);
         }
         if clicked.is_some() && [self.undo, self.redo, self.reset, self.save].contains(&clicked.unwrap_or(self.undo)) {
-            tree.set_text(self.status, "Действие недоступно: AppState ещё не предоставляет журнал черновика и транзакционный save API.")?;
+            tree.set_text(
+                self.status,
+                "Действие недоступно: AppState ещё не предоставляет журнал черновика и транзакционный save API.",
+            )?;
             return Ok(Flow::Continue);
         }
         if clicked.is_some() && clicked == Some(self.open_button) {
-            tree.set_text(self.status, "Открыть… недоступно: системный file-picker ещё не подключён к Shell.")?;
+            tree.set_text(
+                self.status,
+                "Открыть… недоступно: системный file-picker ещё не подключён к Shell.",
+            )?;
             return Ok(Flow::Continue);
         }
         if clicked.is_some() && clicked == Some(self.refresh) {
-            tree.set_text(self.status, "Обновление библиотеки недоступно: AppState ещё не предоставляет refresh/cancel API.")?;
+            tree.set_text(
+                self.status,
+                "Обновление библиотеки недоступно: AppState ещё не предоставляет refresh/cancel API.",
+            )?;
             return Ok(Flow::Continue);
         }
         if let Some(index) = clicked.and_then(|id| self.nav.iter().position(|nav| *nav == id)) {
