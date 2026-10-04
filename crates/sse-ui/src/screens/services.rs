@@ -467,7 +467,10 @@ struct Achievements {
     selected: Option<usize>,
     set: Option<WidgetId>,
     clear: Option<WidgetId>,
+    refresh: Option<WidgetId>,
+    progress: Option<WidgetId>,
     confirm: Option<bool>,
+    pending_set: Option<bool>,
 }
 
 impl Achievements {
@@ -498,7 +501,18 @@ impl Achievements {
             }
         }
         if let Some(id) = self.status {
-            cx.tree.set_text(id, &format!("Достижений: {}", self.items.len()))?;
+            cx.tree
+                .set_text(id, &format!("Загружено {} достижений.", self.items.len()))?;
+        }
+        if let Some(id) = self.progress {
+            let got = self.items.iter().filter(|item| item.achieved).count();
+            let percent = if self.items.is_empty() {
+                0.0
+            } else {
+                (got as f64 * 100.0) / self.items.len() as f64
+            };
+            cx.tree
+                .set_text(id, &format!("{got} из {} получено ({percent:.0}%)", self.items.len()))?;
         }
         Ok(())
     }
@@ -513,8 +527,16 @@ impl Screen for Achievements {
     }
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
         let card = style::card(cx.tree, host)?;
-        style::label(cx.tree, card, "ДОСТИЖЕНИЯ", Text::Heading)?;
-        self.status = Some(style::label(cx.tree, card, "Загрузка…", Text::Note)?);
+        style::label(cx.tree, card, "ДОСТИЖЕНИЯ STEAM", Text::Heading)?;
+        style::label(
+            cx.tree,
+            card,
+            "Steam доступен / недоступен определяется рабочим процессом Steam.",
+            Text::Note,
+        )?;
+        self.status = Some(style::label(cx.tree, card, "Запрос достижений...", Text::Note)?);
+        self.progress = Some(style::label(cx.tree, card, "0 из 0 получено (0%)", Text::Value)?);
+        self.refresh = Some(style::button(cx.tree, card, "ОБНОВИТЬ", Button::Secondary)?);
         for _ in 0..ROWS {
             let r = style::button(cx.tree, card, "", Button::Secondary)?;
             cx.tree.set_visible(r, false)?;
@@ -535,6 +557,10 @@ impl Screen for Achievements {
         message: &Message<AppMessage>,
         clicked: Option<WidgetId>,
     ) -> Result<()> {
+        if clicked.is_some() && clicked == self.refresh {
+            self.load(cx);
+            return Ok(());
+        }
         for (i, row) in self.rows.iter().copied().enumerate() {
             if clicked == Some(row) && self.items.get(i).is_some() {
                 self.selected = Some(i);
@@ -558,10 +584,20 @@ impl Screen for Achievements {
             };
             if self.confirm != Some(set) {
                 self.confirm = Some(set);
-                cx.status = Some("Подтвердите действие повторным нажатием".to_owned());
+                cx.status = self.items.get(i).map(|a| {
+                    if set {
+                        format!(
+                            "РАЗБЛОКИРОВАТЬ ДОСТИЖЕНИЕ: подтвердите «{}» повторным нажатием.",
+                            a.display_name
+                        )
+                    } else {
+                        format!("СНЯТЬ ДОСТИЖЕНИЕ: подтвердите «{}» повторным нажатием.", a.display_name)
+                    }
+                });
                 return Ok(());
             }
             self.confirm = None;
+            self.pending_set = Some(set);
             let Some(item) = self.items.get(i) else { return Ok(()) };
             let Some(app_id) = cx.app.selected_game().and_then(app_id) else {
                 return Ok(());
@@ -602,7 +638,17 @@ impl Screen for Achievements {
                         }
                     }
                     AchReply::Changed(Ok(())) => {
-                        cx.status = Some("Steam подтвердил изменение достижения".to_owned());
+                        if let Some(index) = self.selected {
+                            if let Some(item) = self.items.get_mut(index) {
+                                item.achieved = self.pending_set.take().unwrap_or(item.achieved);
+                                cx.status = Some(if item.achieved {
+                                    format!("Достижение «{}» получено в Steam.", item.display_name)
+                                } else {
+                                    format!("Достижение «{}» снято в Steam.", item.display_name)
+                                });
+                            }
+                        }
+                        self.render(cx)?;
                         self.load(cx)
                     }
                     AchReply::Changed(Err(e)) => cx.status = Some(format!("Steam: {e}")),
@@ -996,14 +1042,131 @@ impl Screen for Cloud {
 }
 
 #[derive(Debug)]
-struct UpdateReply(std::result::Result<String, String>);
+enum UpdateReply {
+    Checked(std::result::Result<(sse_update::UpdateState, String, Option<sse_update::UpdateArtifact>), String>),
+    Downloaded(std::result::Result<(sse_update::UpdateArtifact, PathBuf), String>),
+    Installed(std::result::Result<String, String>),
+}
+
 #[derive(Default)]
 struct Updates {
     status: Option<WidgetId>,
+    badge: Option<WidgetId>,
+    latest: Option<WidgetId>,
     check: Option<WidgetId>,
+    download: Option<WidgetId>,
     install: Option<WidgetId>,
-    /// Destructive button pressed once and waiting for the second press.
-    armed: Option<WidgetId>,
+    artifact: Option<sse_update::UpdateArtifact>,
+    downloaded: Option<PathBuf>,
+    busy: bool,
+}
+
+impl Updates {
+    fn check(&mut self, cx: &mut Context<'_>) {
+        if self.busy {
+            return;
+        }
+        self.busy = true;
+        if let Some(id) = self.status {
+            let _ = cx.tree.set_text(id, "Проверка наличия обновлений...");
+        }
+        let Some(proxy) = cx.proxy.cloned() else {
+            self.busy = false;
+            return;
+        };
+        std::thread::spawn(move || {
+            let result = (|| {
+                let detected = sse_update::UpdateInstallationDetector::detect(None, None, None)
+                    .map_err(|e| format!("Updates are not available: {e}"))?;
+                let service = sse_update::UpdateService::new(env!("CARGO_PKG_VERSION"), detected);
+                let mut fetch = sse_update::DefaultFetch;
+                let check = service.check(&mut fetch);
+                if matches!(check.state, sse_update::UpdateState::Unavailable) {
+                    return Ok((check.state, String::new(), None));
+                }
+                if let Some(error) = check.error {
+                    return Err(error);
+                }
+                let version = check.manifest.as_ref().map_or_else(String::new, |m| m.version.clone());
+                Ok((check.state, version, check.artifact))
+            })();
+            proxy.send(AppMessage::ToScreen(
+                ScreenId::Updates,
+                Box::new(UpdateReply::Checked(result)),
+            ));
+        });
+    }
+
+    fn download(&mut self, cx: &mut Context<'_>) {
+        if self.busy {
+            return;
+        }
+        let Some(artifact) = self.artifact.clone() else {
+            cx.status = Some("Нет пакета для этой установки".to_owned());
+            return;
+        };
+        self.busy = true;
+        if let Some(id) = self.status {
+            let _ = cx.tree.set_text(id, "Скачивание пакета обновления...");
+        }
+        let Some(proxy) = cx.proxy.cloned() else {
+            self.busy = false;
+            return;
+        };
+        std::thread::spawn(move || {
+            let result = (|| {
+                let detected =
+                    sse_update::UpdateInstallationDetector::detect(None, None, None).map_err(|e| e.to_string())?;
+                let service = sse_update::UpdateService::new(env!("CARGO_PKG_VERSION"), detected);
+                let mut fetch = sse_update::DefaultFetch;
+                let directory = std::env::temp_dir().join("stalker-save-editor-updates");
+                std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
+                let path = directory.join(&artifact.file);
+                service
+                    .download(&mut fetch, &artifact, &path, None)
+                    .map_err(|e| e.to_string())?;
+                Ok((artifact, path))
+            })();
+            proxy.send(AppMessage::ToScreen(
+                ScreenId::Updates,
+                Box::new(UpdateReply::Downloaded(result)),
+            ));
+        });
+    }
+
+    fn install(&mut self, cx: &mut Context<'_>) {
+        if self.busy {
+            return;
+        }
+        let (Some(artifact), Some(path)) = (self.artifact.clone(), self.downloaded.clone()) else {
+            cx.status = Some("Сначала скачайте обновление.".to_owned());
+            return;
+        };
+        self.busy = true;
+        if let Some(id) = self.status {
+            let _ = cx.tree.set_text(id, "Установка обновления...");
+        }
+        let Some(proxy) = cx.proxy.cloned() else {
+            self.busy = false;
+            return;
+        };
+        std::thread::spawn(move || {
+            let result = (|| {
+                let detected =
+                    sse_update::UpdateInstallationDetector::detect(None, None, None).map_err(|e| e.to_string())?;
+                let service = sse_update::UpdateService::new(env!("CARGO_PKG_VERSION"), detected);
+                let mut runner = sse_update::SystemProcessRunner;
+                let done = service
+                    .install(&artifact, &path, &mut runner)
+                    .map_err(|e| e.to_string())?;
+                Ok(format!("Обновление запущено: {}", done.message))
+            })();
+            proxy.send(AppMessage::ToScreen(
+                ScreenId::Updates,
+                Box::new(UpdateReply::Installed(result)),
+            ));
+        });
+    }
 }
 
 impl Screen for Updates {
@@ -1011,77 +1174,119 @@ impl Screen for Updates {
         ScreenId::Updates
     }
     fn subtitle(&self) -> &str {
-        "Подписанные обновления редактора"
+        "Проверка, загрузка и установка новой версии приложения"
     }
+
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
         let card = style::card(cx.tree, host)?;
-        style::label(cx.tree, card, "ОБНОВЛЕНИЯ РЕДАКТОРА", Text::Heading)?;
-        self.status = Some(style::label(
+        style::label(cx.tree, card, "ОБНОВЛЕНИЕ ПРИЛОЖЕНИЯ", Text::Heading)?;
+        style::label(
             cx.tree,
             card,
-            &format!("Установлена {}", env!("CARGO_PKG_VERSION")),
+            &format!("ТЕКУЩАЯ ВЕРСИЯ: {}", env!("CARGO_PKG_VERSION")),
             Text::Value,
-        )?);
+        )?;
+        self.latest = Some(style::label(cx.tree, card, "ПОСЛЕДНЯЯ ВЕРСИЯ: —", Text::Value)?);
+        self.badge = Some(style::label(cx.tree, card, "Статус неизвестен", Text::Body)?);
+        self.status = Some(style::label(cx.tree, card, "", Text::Note)?);
         let row = style::row(cx.tree, card)?;
-        self.check = Some(style::button(cx.tree, row, "Проверить", Button::Secondary)?);
-        self.install = Some(style::button(cx.tree, row, "Скачать и установить", Button::Primary)?);
+        self.check = Some(style::button(cx.tree, row, "ПРОВЕРИТЬ ОБНОВЛЕНИЯ", Button::Secondary)?);
+        self.download = Some(style::button(cx.tree, row, "СКАЧАТЬ ОБНОВЛЕНИЕ", Button::Secondary)?);
+        self.install = Some(style::button(cx.tree, row, "УСТАНОВИТЬ ОБНОВЛЕНИЕ", Button::Primary)?);
         Ok(())
     }
+
     fn message(
         &mut self,
         cx: &mut Context<'_>,
         message: &Message<AppMessage>,
         clicked: Option<WidgetId>,
     ) -> Result<()> {
-        let install = clicked.is_some() && clicked == self.install;
-        if install && !confirm_twice(&mut self.armed, clicked, &mut cx.status) {
-            return Ok(());
+        if clicked.is_some() && clicked == self.check {
+            self.check(cx);
         }
-        if (clicked.is_some() && clicked == self.check) || install {
-            let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
-            std::thread::spawn(move || {
-                let result = (|| {
-                    let detected =
-                        sse_update::UpdateInstallationDetector::detect(None, None, None).map_err(|e| e.to_string())?;
-                    let service = sse_update::UpdateService::new(env!("CARGO_PKG_VERSION"), detected);
-                    let mut fetch = sse_update::DefaultFetch;
-                    let check = service.check(&mut fetch);
-                    if let Some(error) = check.error {
-                        return Err(error);
-                    }
-                    let manifest = check.manifest.ok_or_else(|| "Нет манифеста обновления".to_owned())?;
-                    if !install {
-                        return Ok(format!("Последняя версия: {} ({:?})", manifest.version, check.state));
-                    }
-                    if !matches!(check.state, sse_update::UpdateState::Available) {
-                        return Ok(format!("Обновление не требуется: {}", manifest.version));
-                    }
-                    let artifact = check
-                        .artifact
-                        .ok_or_else(|| "Нет пакета для этой установки".to_owned())?;
-                    let path = std::env::temp_dir().join(&artifact.file);
-                    service
-                        .download(&mut fetch, &artifact, &path, None)
-                        .map_err(|e| e.to_string())?;
-                    let mut runner = sse_update::SystemProcessRunner;
-                    let done = service
-                        .install(&artifact, &path, &mut runner)
-                        .map_err(|e| e.to_string())?;
-                    Ok(format!("{:?}: {}", done.state, done.message))
-                })();
-                proxy.send(AppMessage::ToScreen(ScreenId::Updates, Box::new(UpdateReply(result))));
-            });
+        if clicked.is_some() && clicked == self.download {
+            self.download(cx);
         }
+        if clicked.is_some() && clicked == self.install {
+            self.install(cx);
+        }
+
         if let Message::User(AppMessage::ToScreen(ScreenId::Updates, payload)) = message {
-            if let Some(UpdateReply(result)) = payload.downcast_ref::<UpdateReply>() {
-                let text = match result {
-                    Ok(v) => v.clone(),
-                    Err(e) => format!("Ошибка обновления: {e}"),
-                };
-                if let Some(id) = self.status {
-                    cx.tree.set_text(id, &clip(&text))?;
+            if let Some(reply) = payload.downcast_ref::<UpdateReply>() {
+                self.busy = false;
+                match reply {
+                    UpdateReply::Checked(Ok((state, version, artifact))) => {
+                        self.artifact.clone_from(artifact);
+                        self.downloaded = None;
+                        if let Some(id) = self.latest {
+                            cx.tree.set_text(
+                                id,
+                                &format!("ПОСЛЕДНЯЯ ВЕРСИЯ: {}", if version.is_empty() { "—" } else { version }),
+                            )?;
+                        }
+                        let (badge, status) = match state {
+                            sse_update::UpdateState::Current => (
+                                "У вас актуальная версия",
+                                "Установлена последняя версия приложения.".to_owned(),
+                            ),
+                            sse_update::UpdateState::Available => {
+                                ("Доступно обновление", format!("Доступна новая версия {version}!"))
+                            }
+                            sse_update::UpdateState::Unavailable => {
+                                ("Обновление недоступно", "Не удалось проверить обновления.".to_owned())
+                            }
+                            sse_update::UpdateState::Invalid | sse_update::UpdateState::DowngradeRefused => (
+                                "Ошибка проверки манифеста",
+                                "Проверка завершилась с ошибкой.".to_owned(),
+                            ),
+                        };
+                        if let Some(id) = self.badge {
+                            cx.tree.set_text(id, badge)?;
+                        }
+                        if let Some(id) = self.status {
+                            cx.tree.set_text(id, &status)?;
+                        }
+                        cx.status = Some(status);
+                    }
+                    UpdateReply::Checked(Err(error)) => {
+                        self.artifact = None;
+                        if let Some(id) = self.badge {
+                            cx.tree.set_text(id, "Обновление недоступно")?;
+                        }
+                        if let Some(id) = self.status {
+                            cx.tree.set_text(id, error)?;
+                        }
+                        cx.status = Some("Ошибка подключения к серверу обновлений.".to_owned());
+                    }
+                    UpdateReply::Downloaded(Ok((artifact, path))) => {
+                        self.artifact = Some(artifact.clone());
+                        self.downloaded = Some(path.clone());
+                        let text = format!("Пакет обновления скачан: {}", path.display());
+                        if let Some(id) = self.status {
+                            cx.tree.set_text(id, &text)?;
+                        }
+                        cx.status = Some(text);
+                    }
+                    UpdateReply::Downloaded(Err(error)) => {
+                        if let Some(id) = self.status {
+                            cx.tree.set_text(id, &format!("Ошибка скачивания: {error}"))?;
+                        }
+                        cx.status = Some("Не удалось завершить скачивание.".to_owned());
+                    }
+                    UpdateReply::Installed(Ok(text)) => {
+                        if let Some(id) = self.status {
+                            cx.tree.set_text(id, text)?;
+                        }
+                        cx.status = Some(text.clone());
+                    }
+                    UpdateReply::Installed(Err(error)) => {
+                        if let Some(id) = self.status {
+                            cx.tree.set_text(id, &format!("Ошибка запуска установки: {error}"))?;
+                        }
+                        cx.status = Some("Не удалось запустить установку.".to_owned());
+                    }
                 }
-                cx.status = Some(text);
             }
         }
         Ok(())
