@@ -11,6 +11,7 @@ use sse_core::{Error, Result};
 
 /// Damage rectangles kept separately before they are merged into one bounding box.
 const MAX_DAMAGE_RECTS: usize = 16;
+const DIALOG_DIM_ALPHA: u8 = 144;
 
 /// Handle of a widget in a [`Tree`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -87,6 +88,13 @@ pub enum Content {
         /// Font face and size.
         style: TextStyle,
     },
+    /// One-line editable field rendered with the widget's fill, border and focus ring.
+    Input {
+        /// Current edit text.
+        text: String,
+        /// Font face and size.
+        style: TextStyle,
+    },
     /// Multi-line text wrapped to the arranged width.
     Paragraph {
         /// Text.
@@ -107,14 +115,15 @@ impl Content {
     fn text(&self) -> Option<(&str, TextStyle)> {
         match self {
             Self::Panel => None,
-            Self::Label { text, style } | Self::Paragraph { text, style } | Self::Button { text, style } => {
-                Some((text.as_str(), *style))
-            }
+            Self::Label { text, style }
+            | Self::Input { text, style }
+            | Self::Paragraph { text, style }
+            | Self::Button { text, style } => Some((text.as_str(), *style)),
         }
     }
 
     const fn interactive(&self) -> bool {
-        matches!(self, Self::Button { .. })
+        matches!(self, Self::Button { .. } | Self::Input { .. })
     }
 }
 
@@ -141,6 +150,10 @@ pub struct Tree {
     damage: Vec<Rect>,
     hover: Option<WidgetId>,
     pressed: Option<WidgetId>,
+    focused: Option<WidgetId>,
+    previous_dialog_focus: Option<WidgetId>,
+    modal_dialog: Option<WidgetId>,
+    overlay_host: Option<WidgetId>,
 }
 
 impl Tree {
@@ -159,12 +172,138 @@ impl Tree {
             damage: Vec::new(),
             hover: None,
             pressed: None,
+            focused: None,
+            previous_dialog_focus: None,
+            modal_dialog: None,
+            overlay_host: None,
         }
     }
 
     /// Fonts used for measuring and drawing.
     pub fn fonts(&mut self) -> &mut Fonts {
         &mut self.fonts
+    }
+
+    /// Registers the transparent host where screens can build non-blocking dialog widgets.
+    ///
+    /// # Errors
+    /// Returns an error for an unknown widget.
+    pub fn set_overlay_host(&mut self, id: WidgetId) -> Result<()> {
+        self.node(id)?;
+        self.overlay_host = Some(id);
+        Ok(())
+    }
+
+    /// Host where a screen can place a dialog overlay.
+    #[must_use]
+    pub const fn overlay_host(&self) -> Option<WidgetId> {
+        self.overlay_host
+    }
+
+    /// Currently focused visible interactive widget.
+    #[must_use]
+    pub const fn focused(&self) -> Option<WidgetId> {
+        self.focused
+    }
+
+    /// Moves focus to a visible button or input, or clears keyboard focus.
+    ///
+    /// # Errors
+    /// Returns an error if `id` does not identify an eligible interactive widget.
+    pub fn set_focus(&mut self, id: Option<WidgetId>) -> Result<()> {
+        if let Some(id) = id {
+            if !self.is_focusable(id) {
+                return Err(Error::Refused("widget cannot receive keyboard focus".to_owned()));
+            }
+        }
+        self.change_focus(id);
+        Ok(())
+    }
+
+    /// Focuses the next visible button, wrapping at either end. When a dialog is open, only its buttons participate.
+    pub fn focus_next(&mut self, reverse: bool) -> Option<WidgetId> {
+        let count = self.nodes.len();
+        if count == 0 {
+            return None;
+        }
+        let mut index = self
+            .focused
+            .map_or(if reverse { 0 } else { count.saturating_sub(1) }, |id| id.0);
+        for _step in 0..count {
+            index = if reverse {
+                index.checked_sub(1).unwrap_or_else(|| count.saturating_sub(1))
+            } else {
+                index.checked_add(1).filter(|next| *next < count).unwrap_or(0)
+            };
+            let id = WidgetId(index);
+            if self.is_focusable(id) {
+                let _ = self.set_focus(Some(id));
+                return Some(id);
+            }
+        }
+        None
+    }
+
+    /// First visible button inside a widget subtree.
+    #[must_use]
+    pub fn first_focusable_in(&self, root: WidgetId) -> Option<WidgetId> {
+        (0..self.nodes.len())
+            .map(WidgetId)
+            .find(|id| self.is_focusable(*id) && self.within_subtree(*id, root))
+    }
+
+    /// Shows a widget subtree above the rest of the frame, dims the background, and confines pointer/focus input to it.
+    ///
+    /// # Errors
+    /// Returns an error for an unknown widget.
+    pub fn open_dialog(&mut self, id: WidgetId) -> Result<()> {
+        self.node(id)?;
+        if self.modal_dialog.is_some() {
+            let _ = self.close_dialog()?;
+        }
+        self.previous_dialog_focus = self.focused;
+        self.modal_dialog = Some(id);
+        self.set_visible(id, true)?;
+        self.focused = None;
+        if let Some(focus) = self.first_focusable_in(id) {
+            self.set_focus(Some(focus))?;
+        }
+        self.damage_all();
+        Ok(())
+    }
+
+    /// Whether a widget dialog currently owns pointer and keyboard input.
+    #[must_use]
+    pub const fn dialog_open(&self) -> bool {
+        self.modal_dialog.is_some()
+    }
+
+    /// Active dialog root, when a widget overlay owns input.
+    #[must_use]
+    pub const fn dialog(&self) -> Option<WidgetId> {
+        self.modal_dialog
+    }
+
+    /// Whether a widget and each of its ancestors are visible.
+    #[must_use]
+    pub fn is_visible(&self, id: WidgetId) -> bool {
+        self.shown(id)
+    }
+
+    /// Hides the active dialog and restores focus to the widget that opened it.
+    ///
+    /// # Errors
+    /// Returns an error from the widget tree when the dialog is hidden.
+    pub fn close_dialog(&mut self) -> Result<bool> {
+        let Some(dialog) = self.modal_dialog.take() else {
+            return Ok(false);
+        };
+        let previous_focus = self.previous_dialog_focus.take();
+        self.set_visible(dialog, false)?;
+        let restore = previous_focus.filter(|id| self.is_focusable(*id));
+        self.set_focus(restore)?;
+        self.damage_all();
+        Ok(true)
     }
 
     /// Adds a widget. `kind` is the layout container kind (`Row`, `Column`, `Stack`, `Leaf`...). The first widget
@@ -215,6 +354,7 @@ impl Tree {
         let node = self.node_mut(id)?;
         match &mut node.content {
             Content::Label { text: old, .. }
+            | Content::Input { text: old, .. }
             | Content::Paragraph { text: old, .. }
             | Content::Button { text: old, .. }
                 if old != text =>
@@ -289,6 +429,15 @@ impl Tree {
             return Ok(());
         }
         node.visible = visible;
+        if !visible {
+            if self.focused.is_some_and(|focused| self.within_subtree(focused, id)) {
+                self.change_focus(None);
+            }
+            if self.modal_dialog.is_some_and(|dialog| self.within_subtree(dialog, id)) {
+                self.modal_dialog = None;
+                self.previous_dialog_focus = None;
+            }
+        }
         self.restyle(id)
     }
 
@@ -422,30 +571,12 @@ impl Tree {
         for area in &damage {
             let mut surface = Surface::new(frame, width, height, stride, *area)?;
             surface.fill_rect(*area, Radii::ZERO, self.background);
-            for index in 0..self.nodes.len() {
-                let id = WidgetId(index);
-                if !self.shown(id) {
-                    continue;
-                }
-                let Some(node) = self.nodes.get(index) else { continue };
-                if node.rect.width == 0 || node.rect.height == 0 || !touches(node.rect, *area) {
-                    continue;
-                }
-                let hovered = self.hover == Some(id);
-                let pressed = self.pressed == Some(id) && hovered;
-                let rect = node.rect;
-                let look = node.look;
-                let padding = node.style.padding;
-                let content = node.content.clone();
-                paint_node(
-                    &mut surface,
-                    &mut self.fonts,
-                    rect,
-                    padding,
-                    &look,
-                    &content,
-                    (hovered, pressed),
-                );
+            if self.modal_dialog.is_some() {
+                self.paint_nodes(&mut surface, *area, false);
+                surface.dim(DIALOG_DIM_ALPHA);
+                self.paint_nodes(&mut surface, *area, true);
+            } else {
+                self.paint_nodes(&mut surface, *area, false);
             }
         }
         Ok(damage)
@@ -459,6 +590,7 @@ impl Tree {
                 .get(id.0)
                 .is_some_and(|node| node.content.interactive() && contains(node.rect, x, y))
                 && self.shown(*id)
+                && self.modal_dialog.is_none_or(|dialog| self.within_subtree(*id, dialog))
         })
     }
 
@@ -517,6 +649,71 @@ impl Tree {
             }
         }
         true
+    }
+
+    fn is_focusable(&self, id: WidgetId) -> bool {
+        self.nodes.get(id.0).is_some_and(|node| node.content.interactive())
+            && self.shown(id)
+            && self.modal_dialog.is_none_or(|dialog| self.within_subtree(id, dialog))
+    }
+
+    fn within_subtree(&self, id: WidgetId, root: WidgetId) -> bool {
+        let mut current = Some(id);
+        while let Some(at) = current {
+            if at == root {
+                return true;
+            }
+            current = self.nodes.get(at.0).and_then(|node| node.parent);
+        }
+        false
+    }
+
+    fn change_focus(&mut self, focus: Option<WidgetId>) {
+        if self.focused == focus {
+            return;
+        }
+        let old = self.focused.and_then(|id| self.nodes.get(id.0)).map(|node| node.rect);
+        self.focused = focus;
+        let new = self.focused.and_then(|id| self.nodes.get(id.0)).map(|node| node.rect);
+        for rect in [old, new].into_iter().flatten() {
+            self.add_damage(rect);
+        }
+    }
+
+    fn paint_nodes(&mut self, surface: &mut Surface<'_>, area: Rect, dialog_only: bool) {
+        let modal_dialog = self.modal_dialog;
+        for index in 0..self.nodes.len() {
+            let id = WidgetId(index);
+            let in_dialog = modal_dialog.is_some_and(|dialog| self.within_subtree(id, dialog));
+            if modal_dialog.is_some() && in_dialog != dialog_only {
+                continue;
+            }
+            if !self.shown(id) {
+                continue;
+            }
+            let Some(node) = self.nodes.get(index) else { continue };
+            if node.rect.width == 0 || node.rect.height == 0 || !touches(node.rect, area) {
+                continue;
+            }
+            let hovered = self.hover == Some(id);
+            let pressed = self.pressed == Some(id) && hovered;
+            let rect = node.rect;
+            let mut look = node.look;
+            if self.focused == Some(id) {
+                look.border = Some((Color::rgba(214, 166, 45, 255), 2.0));
+            }
+            let padding = node.style.padding;
+            let content = node.content.clone();
+            paint_node(
+                surface,
+                &mut self.fonts,
+                rect,
+                padding,
+                &look,
+                &content,
+                (hovered, pressed),
+            );
+        }
     }
 
     fn restyle(&mut self, id: WidgetId) -> Result<()> {
@@ -716,4 +913,94 @@ fn u32_to_f32(value: u32) -> f32 {
 
 fn i32_to_f32(value: i32) -> f32 {
     i16::try_from(value).map_or(if value < 0 { -32_768.0 } else { 32_767.0 }, f32::from)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Content, Look, Tree, WidgetId};
+    use crate::glyphs::{Face, Fonts, TextStyle};
+    use crate::layout::{Align, NodeKind, Size, Style};
+    use crate::raster::Color;
+
+    fn dialog_tree() -> sse_core::Result<(Tree, WidgetId, WidgetId, WidgetId)> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let root = tree.add(None, NodeKind::Stack, Style::default(), Content::Panel, Look::default())?;
+        let background = tree.add(
+            Some(root),
+            NodeKind::Leaf,
+            Style {
+                align_self: Some(Align::Stretch),
+                ..Style::default()
+            },
+            Content::Button {
+                text: "Содержимое".to_owned(),
+                style: TextStyle::new(Face::Body, 14.0),
+            },
+            Look {
+                fill: Some(Color::rgba(120, 120, 120, 255)),
+                ..Look::default()
+            },
+        )?;
+        let overlay = tree.add(
+            Some(root),
+            NodeKind::Stack,
+            Style {
+                align_items: Align::Center,
+                align_self: Some(Align::Stretch),
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        tree.set_overlay_host(overlay)?;
+        let dialog = tree.add(
+            Some(overlay),
+            NodeKind::Column,
+            Style {
+                preferred: Size::new(180.0, 100.0),
+                ..Style::default()
+            },
+            Content::Panel,
+            Look {
+                fill: Some(Color::rgba(32, 32, 32, 255)),
+                ..Look::default()
+            },
+        )?;
+        let action = tree.add(
+            Some(dialog),
+            NodeKind::Leaf,
+            Style::default(),
+            Content::Button {
+                text: "Подтвердить".to_owned(),
+                style: TextStyle::new(Face::Body, 14.0),
+            },
+            Look::default(),
+        )?;
+        tree.set_visible(dialog, false)?;
+        tree.resize(400, 300);
+        Ok((tree, background, dialog, action))
+    }
+
+    #[test]
+    fn dialog_dims_background_and_confines_pointer_and_focus() -> sse_core::Result<()> {
+        let (mut tree, background, dialog, action) = dialog_tree()?;
+        tree.set_focus(Some(background))?;
+        let mut frame = vec![0_u32; 400 * 300];
+        tree.paint(&mut frame, 400)?;
+        let before = frame.get(4_010).copied().unwrap_or_default();
+
+        tree.open_dialog(dialog)?;
+        tree.paint(&mut frame, 400)?;
+        let after = frame.get(4_010).copied().unwrap_or_default();
+        assert!(after < before, "the backdrop should be dimmed");
+        assert_eq!(tree.focused(), Some(action));
+        assert_eq!(tree.hit(10, 10), None, "background controls must not receive clicks");
+
+        let rect = tree.rect(action)?;
+        assert_eq!(tree.hit(rect.x + 1, rect.y + 1), Some(action));
+        assert!(tree.close_dialog()?);
+        assert_eq!(tree.focused(), Some(background));
+        assert_eq!(tree.hit(10, 10), Some(background));
+        Ok(())
+    }
 }

@@ -10,6 +10,8 @@ use sse_core::Result;
 use std::path::Path;
 
 const KEY_ESCAPE: u32 = 0xff1b;
+const KEY_TAB: u32 = 0xff09;
+const KEY_RETURN: u32 = 0xff0d;
 const KEY_UP: u32 = 0xff52;
 const KEY_DOWN: u32 = 0xff54;
 
@@ -21,6 +23,17 @@ pub struct Shell {
     content: WidgetId,
     title: WidgetId,
     subtitle: WidgetId,
+    breadcrumb: WidgetId,
+    edition: WidgetId,
+    undo: WidgetId,
+    redo: WidgetId,
+    reset: WidgetId,
+    open_button: WidgetId,
+    refresh: WidgetId,
+    save: WidgetId,
+    reports_banner: WidgetId,
+    reports_ok: WidgetId,
+    reports_off: WidgetId,
     status: WidgetId,
     selected: usize,
     proxy: Option<Proxy<AppMessage>>,
@@ -77,7 +90,19 @@ impl Shell {
             align_items: Align::Stretch,
             ..Style::default()
         };
-        let root = tree.add(None, NodeKind::Row, root_style, Content::Panel, Look::default())?;
+        let root = tree.add(None, NodeKind::Stack, root_style, Content::Panel, Look::default())?;
+        let frame = tree.add(
+            Some(root),
+            NodeKind::Row,
+            Style {
+                grow: 1.0,
+                align_self: Some(Align::Stretch),
+                align_items: Align::Stretch,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
 
         let sidebar_style = Style {
             preferred: Size::new(232.0, 0.0),
@@ -93,7 +118,7 @@ impl Shell {
             ..Look::default()
         };
         let sidebar = tree.add(
-            Some(root),
+            Some(frame),
             NodeKind::Column,
             sidebar_style,
             Content::Panel,
@@ -199,7 +224,7 @@ impl Shell {
             ..Style::default()
         };
         let main = tree.add(
-            Some(root),
+            Some(frame),
             NodeKind::Column,
             main_style,
             Content::Panel,
@@ -217,6 +242,16 @@ impl Shell {
             Content::Panel,
             Look::default(),
         )?;
+        let top = style::row(tree, header)?;
+        style::label(tree, top, "S.T.A.L.K.E.R. SAVE EDITOR", Text::Title)?;
+        let edition = style::label(tree, top, "X-Ray / S2", Text::Value)?;
+        let undo = style::button(tree, top, "Отменить", style::Button::Secondary)?;
+        let redo = style::button(tree, top, "Вернуть", style::Button::Secondary)?;
+        let reset = style::button(tree, top, "Сбросить", style::Button::Secondary)?;
+        let open_button = style::button(tree, top, "Открыть…", style::Button::Secondary)?;
+        let refresh = style::button(tree, top, "Обновить", style::Button::Secondary)?;
+        let save = style::button(tree, top, "СОХРАНИТЬ", style::Button::Primary)?;
+        let breadcrumb = style::label(tree, header, "", Text::Note)?;
         let title = style::label(tree, header, "", Text::Title)?;
         let subtitle = tree.add(
             Some(header),
@@ -231,6 +266,32 @@ impl Shell {
                 ..Look::default()
             },
         )?;
+        let reports_banner = tree.add(
+            Some(main),
+            NodeKind::Row,
+            Style {
+                min: Size::new(0.0, 44.0),
+                padding: padded(16.0, 6.0, 16.0, 6.0),
+                align_items: Align::Center,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look {
+                fill: Some(rgb(style::BG_PANEL)),
+                border: Some((rgb(style::BORDER_SUBTLE), 1.0)),
+                ..Look::default()
+            },
+        )?;
+        style::label(
+            tree,
+            reports_banner,
+            "Редактор раз в сутки и после сбоя отправляет разработчику журнал работы, чтобы находить ошибки. Пути, имена и Steam ID из него вырезаются, сейвы не отправляются.",
+            Text::Note,
+        )?;
+        let reports_ok = style::button(tree, reports_banner, "Понятно", style::Button::Secondary)?;
+        let reports_off = style::button(tree, reports_banner, "Не отправлять", style::Button::Secondary)?;
+        tree.set_visible(reports_banner, !settings.reports_notice_shown)?;
+
         let content_style = Style {
             grow: 1.0,
             margin: padded(32.0, 0.0, 32.0, 20.0),
@@ -264,6 +325,19 @@ impl Shell {
             },
         )?;
 
+        let overlay_host = tree.add(
+            Some(root),
+            NodeKind::Stack,
+            Style {
+                align_items: Align::Center,
+                align_self: Some(Align::Stretch),
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        tree.set_overlay_host(overlay_host)?;
+
         let hosts = vec![None; screens.len()];
         let mut shell = Self {
             screens,
@@ -272,6 +346,17 @@ impl Shell {
             content,
             title,
             subtitle,
+            breadcrumb,
+            edition,
+            undo,
+            redo,
+            reset,
+            open_button,
+            refresh,
+            save,
+            reports_banner,
+            reports_ok,
+            reports_off,
             status,
             selected: 0,
             proxy,
@@ -341,6 +426,9 @@ impl Shell {
         if index == self.selected || index >= self.screens.len() {
             return Ok(());
         }
+        if tree.dialog_open() {
+            let _ = tree.close_dialog()?;
+        }
         if let Some(old) = self.nav.get(self.selected) {
             tree.set_look(*old, style::nav(false))?;
         }
@@ -360,6 +448,15 @@ impl Shell {
         };
         tree.set_text(self.title, crate::strings::t(screen.id().title()))?;
         tree.set_text(self.subtitle, crate::strings::t(screen.subtitle()))?;
+        tree.set_text(
+            self.breadcrumb,
+            &format!(
+                "{} / {}",
+                crate::strings::t(screen.id().group().caption()),
+                crate::strings::t(screen.id().title())
+            ),
+        )?;
+        tree.set_text(self.edition, self.app.selected_game().unwrap_or("X-Ray / S2"))?;
         let mut cx = Context {
             tree,
             proxy: self.proxy.as_ref(),
@@ -390,9 +487,17 @@ impl Shell {
         let screen_id = screen.id();
         let screen_host = *slot;
         let status = cx.status.take();
+        drop(cx);
         self.wizard.sync(tree, &self.app, screen_id, screen_host)?;
         if let Some(text) = status {
             tree.set_text(self.status, &text)?;
+        }
+        if !tree.dialog_open() {
+            if let Some(host) = screen_host {
+                if let Some(focus) = tree.first_focusable_in(host) {
+                    tree.set_focus(Some(focus))?;
+                }
+            }
         }
         Ok(())
     }
@@ -434,9 +539,115 @@ impl Shell {
         if let Some(text) = wizard_status {
             tree.set_text(self.status, &text)?;
         }
+        if clicked.is_some() && clicked == Some(self.reports_ok) {
+            let mut settings = sse_app::AppSettings::load(&sse_app::default_settings_path());
+            settings.reports_notice_shown = true;
+            settings.save(&sse_app::default_settings_path())?;
+            tree.set_visible(self.reports_banner, false)?;
+            tree.set_text(self.status, "Настройки отчётов сохранены.")?;
+            return Ok(Flow::Continue);
+        }
+        if clicked.is_some() && clicked == Some(self.reports_off) {
+            let mut settings = sse_app::AppSettings::load(&sse_app::default_settings_path());
+            settings.reports_notice_shown = true;
+            settings.send_reports = false;
+            settings.save(&sse_app::default_settings_path())?;
+            tree.set_visible(self.reports_banner, false)?;
+            tree.set_text(self.status, "Отправка отчётов отключена.")?;
+            return Ok(Flow::Continue);
+        }
+        if clicked.is_some() && [self.undo, self.redo, self.reset, self.save].contains(&clicked.unwrap_or(self.undo)) {
+            tree.set_text(
+                self.status,
+                "Действие недоступно: AppState ещё не предоставляет журнал черновика и транзакционный save API.",
+            )?;
+            return Ok(Flow::Continue);
+        }
+        if clicked.is_some() && clicked == Some(self.open_button) {
+            tree.set_text(
+                self.status,
+                "Открыть… недоступно: системный file-picker ещё не подключён к Shell.",
+            )?;
+            return Ok(Flow::Continue);
+        }
+        if clicked.is_some() && clicked == Some(self.refresh) {
+            tree.set_text(
+                self.status,
+                "Обновление библиотеки недоступно: AppState ещё не предоставляет refresh/cancel API.",
+            )?;
+            return Ok(Flow::Continue);
+        }
         if let Some(index) = clicked.and_then(|id| self.nav.iter().position(|nav| *nav == id)) {
+            if let Some(nav) = self.nav.get(index).copied() {
+                tree.set_focus(Some(nav))?;
+            }
             self.select(tree, index)?;
             return Ok(Flow::Continue);
+        }
+        if let Some(clicked) = clicked {
+            tree.set_focus(Some(clicked))?;
+        }
+        if let Message::Window(WindowEvent::Key {
+            pressed: true,
+            keysym,
+            ctrl,
+            shift,
+            ..
+        }) = message
+        {
+            if *keysym == KEY_ESCAPE {
+                self.route(tree, message, None)?;
+                if tree.dialog_open() {
+                    let _ = tree.close_dialog()?;
+                } else {
+                    tree.set_focus(None)?;
+                }
+                return Ok(Flow::Continue);
+            }
+            if *keysym == KEY_TAB {
+                let _ = tree.focus_next(*shift);
+                self.route(tree, message, None)?;
+                return Ok(Flow::Continue);
+            }
+            if *keysym == KEY_RETURN {
+                if let Some(index) = tree
+                    .focused()
+                    .and_then(|focus| self.nav.iter().position(|nav| *nav == focus))
+                {
+                    self.select(tree, index)?;
+                    return Ok(Flow::Continue);
+                }
+                let target = tree.focused().or_else(|| {
+                    self.hosts
+                        .get(self.selected)
+                        .copied()
+                        .flatten()
+                        .and_then(|host| tree.first_focusable_in(host))
+                });
+                if let Some(target) = target {
+                    tree.set_focus(Some(target))?;
+                }
+                self.route(tree, message, target)?;
+                return Ok(Flow::Continue);
+            }
+            if !tree.dialog_open() && *ctrl && matches!(*keysym, 0x46 | 0x66) {
+                if let Some(index) = self.screens.iter().position(|screen| screen.id() == ScreenId::Overview) {
+                    self.select(tree, index)?;
+                }
+                self.route(tree, message, None)?;
+                return Ok(Flow::Continue);
+            }
+            if !tree.dialog_open() && *ctrl && matches!(*keysym, 0x53 | 0x73) {
+                if let Some(index) = self
+                    .screens
+                    .iter()
+                    .position(|screen| screen.id() == ScreenId::Inventory)
+                {
+                    self.select(tree, index)?;
+                }
+                self.route(tree, message, None)?;
+                return Ok(Flow::Continue);
+            }
         }
         if let Message::Window(WindowEvent::Key {
             pressed: true,
@@ -445,15 +656,16 @@ impl Shell {
             ..
         }) = message
         {
-            let count = self.nav.len();
-            match *keysym {
-                KEY_ESCAPE => return Ok(Flow::Exit),
-                KEY_UP => self.select(tree, self.selected.checked_sub(1).unwrap_or(count.saturating_sub(1)))?,
-                KEY_DOWN => {
-                    let next = self.selected.saturating_add(1);
-                    self.select(tree, if next >= count { 0 } else { next })?;
+            if !tree.dialog_open() {
+                let count = self.nav.len();
+                match *keysym {
+                    KEY_UP => self.select(tree, self.selected.checked_sub(1).unwrap_or(count.saturating_sub(1)))?,
+                    KEY_DOWN => {
+                        let next = self.selected.saturating_add(1);
+                        self.select(tree, if next >= count { 0 } else { next })?;
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
         }
         self.route(tree, message, clicked)?;
@@ -474,5 +686,140 @@ impl App<AppMessage> for Shell {
                 Flow::Continue
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Shell;
+    use crate::event_loop::{Flow, Message, WindowEvent};
+    use crate::glyphs::Fonts;
+    use crate::raster::Color;
+    use crate::widget::Tree;
+
+    #[test]
+    fn escape_does_not_close_the_application() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut shell = Shell::build(&mut tree, None)?;
+        let message = Message::Window(WindowEvent::Key {
+            pressed: true,
+            keysym: 0xff1b,
+            text: None,
+            ctrl: false,
+            shift: false,
+        });
+        assert!(matches!(shell.handle(&mut tree, &message, None)?, Flow::Continue));
+        Ok(())
+    }
+
+    #[test]
+    fn tab_moves_visible_keyboard_focus_and_repaints_its_ring() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut shell = Shell::build(&mut tree, None)?;
+        tree.resize(940, 700);
+        let mut frame = vec![0_u32; 940 * 700];
+        tree.paint(&mut frame, 940)?;
+        let before = frame.clone();
+        let message = Message::Window(WindowEvent::Key {
+            pressed: true,
+            keysym: 0xff09,
+            text: None,
+            ctrl: false,
+            shift: false,
+        });
+        shell.handle(&mut tree, &message, None)?;
+        tree.paint(&mut frame, 940)?;
+        assert!(
+            frame.iter().zip(&before).any(|(after, before)| after != before),
+            "Tab must show a keyboard focus ring"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ctrl_s_opens_inventory_and_keeps_the_shell_running() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut shell = Shell::build(&mut tree, None)?;
+        let message = Message::Window(WindowEvent::Key {
+            pressed: true,
+            keysym: u32::from('s'),
+            text: None,
+            ctrl: true,
+            shift: false,
+        });
+        assert!(matches!(shell.handle(&mut tree, &message, None)?, Flow::Continue));
+        assert_eq!(shell.current(), Some(super::super::ScreenId::Inventory));
+        Ok(())
+    }
+
+    #[test]
+    fn ctrl_f_does_not_focus_search_hidden_by_the_first_run_wizard() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut shell = Shell::build(&mut tree, None)?;
+        let search = Message::Window(WindowEvent::Key {
+            pressed: true,
+            keysym: u32::from('f'),
+            text: None,
+            ctrl: true,
+            shift: false,
+        });
+        shell.handle(&mut tree, &search, None)?;
+        assert_eq!(tree.focused(), None);
+        Ok(())
+    }
+
+    #[test]
+    fn escape_closes_a_widget_dialog_without_exiting() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut shell = Shell::build(&mut tree, None)?;
+        let overlay = tree
+            .overlay_host()
+            .ok_or_else(|| sse_core::Error::damaged("missing dialog overlay"))?;
+        let dialog = tree.add(
+            Some(overlay),
+            crate::layout::NodeKind::Column,
+            crate::layout::Style::default(),
+            crate::widget::Content::Panel,
+            crate::widget::Look::default(),
+        )?;
+        tree.open_dialog(dialog)?;
+        let message = Message::Window(WindowEvent::Key {
+            pressed: true,
+            keysym: 0xff1b,
+            text: None,
+            ctrl: false,
+            shift: false,
+        });
+        assert!(matches!(shell.handle(&mut tree, &message, None)?, Flow::Continue));
+        assert!(!tree.dialog_open());
+        Ok(())
+    }
+
+    #[test]
+    fn shift_tab_returns_to_the_previous_visible_control() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut shell = Shell::build(&mut tree, None)?;
+        let forward = Message::Window(WindowEvent::Key {
+            pressed: true,
+            keysym: 0xff09,
+            text: None,
+            ctrl: false,
+            shift: false,
+        });
+        shell.handle(&mut tree, &forward, None)?;
+        let first = tree.focused();
+        shell.handle(&mut tree, &forward, None)?;
+        let second = tree.focused();
+        let backwards = Message::Window(WindowEvent::Key {
+            pressed: true,
+            keysym: 0xff09,
+            text: None,
+            ctrl: false,
+            shift: true,
+        });
+        shell.handle(&mut tree, &backwards, None)?;
+        assert_ne!(first, second);
+        assert_eq!(tree.focused(), first);
+        Ok(())
     }
 }

@@ -7,16 +7,17 @@ use crate::layout::{NodeKind, Style};
 use crate::widget::{Content, Look, WidgetId};
 use crate::widgets::table::{Header, Table};
 use sse_core::{Error, Result, SaveBuffer};
-use sse_s2::{S2Change, S2InventoryItem, S2Save, S2StashLayout};
+use sse_s2::{S2Change, S2InventoryItem, S2Save, S2StashItem, S2StashLayout};
 use sse_storage::discovery::{SaveDirectoryLocator, SaveSlot, SaveSlotDiscovery};
 use sse_storage::transaction::{self, EditSummary};
 use sse_xray::{save::InventoryItem, writer, Save};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 const SAVE_PAGE_SIZE: usize = 10;
 const INVENTORY_PAGE_SIZE: usize = 8;
+const MAXIMUM_STASH_ROWS: usize = 10;
 
 fn paragraph(tree: &mut crate::widget::Tree, parent: WidgetId, text: &str, role: Text) -> Result<WidgetId> {
     tree.add(
@@ -84,6 +85,7 @@ struct WorkspaceState {
     selected: Option<Arc<LoadedSave>>,
     pending_money: Option<u32>,
     pending_stacks: BTreeMap<ItemHandle, u32>,
+    pending_stash_moves: BTreeSet<u32>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -110,6 +112,7 @@ enum SaveData {
     Stalker2 {
         save: S2Save,
         inventory: Vec<S2InventoryItem>,
+        stash_items: Option<std::result::Result<Vec<S2StashItem>, String>>,
     },
 }
 
@@ -199,9 +202,13 @@ impl LoadedSave {
             inventory.len(),
             save.unresolved_handles().len()
         );
-        let factions = "Сведения о фракциях для S2 не входят в подтверждённый индекс.".to_owned();
+        let factions =
+            "Фракции S2 доступны только для чтения; отношения и принадлежность пока не индексируются.".to_owned();
         let stashes = describe_s2_stash(stash.as_ref());
-        let transitions = "Переходы между локациями для S2 пока не индексируются.".to_owned();
+        let transitions = "Переходы S2 доступны только для чтения, но их формат пока не индексируется.".to_owned();
+        let stash_items = stash
+            .as_ref()
+            .map(|_| save.stash_items().map_err(|error| error.to_string()));
         Self {
             slot,
             source_sha256,
@@ -209,7 +216,11 @@ impl LoadedSave {
             factions,
             stashes,
             transitions,
-            data: SaveData::Stalker2 { save, inventory },
+            data: SaveData::Stalker2 {
+                save,
+                inventory,
+                stash_items,
+            },
         }
     }
 }
@@ -368,6 +379,7 @@ where
         state.selected = None;
         state.pending_money = None;
         state.pending_stacks.clear();
+        state.pending_stash_moves.clear();
         state.load_request
     };
     cx.app.set_current_save(None);
@@ -669,6 +681,9 @@ impl Screen for Overview {
         clicked: Option<WidgetId>,
     ) -> Result<()> {
         self.workspace.poll_tasks();
+        if let Some(search_button) = self.search_button {
+            self.search_focused = cx.tree.focused() == Some(search_button);
+        }
         if let Message::Window(crate::event_loop::WindowEvent::Key {
             pressed: true,
             keysym,
@@ -678,7 +693,15 @@ impl Screen for Overview {
         }) = message
         {
             if *ctrl && matches!(*keysym, 0x46 | 0x66) {
-                self.search_focused = true;
+                if let Some(search_button) = self.search_button {
+                    self.search_focused = cx.tree.is_visible(search_button);
+                    if self.search_focused {
+                        cx.tree.set_focus(Some(search_button))?;
+                    }
+                }
+                return self.render(cx);
+            }
+            if *keysym == 0xff09 {
                 return self.render(cx);
             }
             if self.search_focused {
@@ -686,7 +709,11 @@ impl Screen for Overview {
                     0xff08 => {
                         self.search_query.pop();
                     }
-                    0xff0d | 0xff1b => self.search_focused = false,
+                    0xff0d | 0xff1b => {
+                        self.search_focused = false;
+                        cx.tree.set_focus(None)?;
+                        return self.render(cx);
+                    }
                     _ => {
                         if let Some(character) = text.filter(|character| !character.is_control()) {
                             self.search_query.push(character);
@@ -710,7 +737,7 @@ impl Screen for Overview {
             return self.render(cx);
         }
         if clicked.is_some() && clicked == self.search_button {
-            self.search_focused = !self.search_focused;
+            self.search_focused = true;
             return self.render(cx);
         }
         if let Some(offset) = clicked.and_then(|id| self.rows.iter().position(|row| *row == id)) {
@@ -904,7 +931,7 @@ impl Inventory {
                     )?;
                 }
             }
-            SaveData::Stalker2 { save, inventory } => {
+            SaveData::Stalker2 { save, inventory, .. } => {
                 let writable = !save.index().is_legacy();
                 let money = save.money();
                 let pending_money = state.pending_money.unwrap_or(money);
@@ -968,7 +995,8 @@ impl Inventory {
                                 .iter()
                                 .find(|item| *handle == ItemHandle::Stalker2(item.handle))
                                 .is_some_and(|item| item.count != *count)
-                    });
+                    })
+                    || !state.pending_stash_moves.is_empty();
                 if let Some(id) = self.export {
                     cx.tree.set_visible(id, writable && has_changes)?;
                     cx.tree.set_text(id, "Сохранить")?;
@@ -1068,12 +1096,13 @@ impl Inventory {
             cx.status = Some("Сохранение доступно в работающем окне редактора.".to_owned());
             return Ok(());
         };
-        let (selected, money, stacks) = {
+        let (selected, money, stacks, stash_moves) = {
             let state = self.workspace.lock();
             (
                 state.selected.clone(),
                 state.pending_money,
                 state.pending_stacks.clone(),
+                state.pending_stash_moves.clone(),
             )
         };
         let Some(selected) = selected else {
@@ -1087,7 +1116,7 @@ impl Inventory {
             if context.is_cancelled() {
                 return;
             }
-            let result = commit_save_edits(&selected, money, &stacks).map_err(|error| error.to_string());
+            let result = commit_save_edits(&selected, money, &stacks, &stash_moves).map_err(|error| error.to_string());
             let _ = proxy.send(AppMessage::ToScreen(
                 ScreenId::Inventory,
                 Box::new(SaveFinished(result)),
@@ -1103,17 +1132,19 @@ fn commit_save_edits(
     selected: &LoadedSave,
     money: Option<u32>,
     stacks: &BTreeMap<ItemHandle, u32>,
+    stash_moves: &BTreeSet<u32>,
 ) -> Result<(Arc<LoadedSave>, String)> {
-    commit_save_edits_to(selected, money, stacks, &default_backup_directory())
+    commit_save_edits_to(selected, money, stacks, stash_moves, &default_backup_directory())
 }
 
 fn commit_save_edits_to(
     selected: &LoadedSave,
     money: Option<u32>,
     stacks: &BTreeMap<ItemHandle, u32>,
+    stash_moves: &BTreeSet<u32>,
     backup_directory: &Path,
 ) -> Result<(Arc<LoadedSave>, String)> {
-    let (packed, _summary) = prepare_save_edits(selected, money, stacks)?;
+    let (packed, _summary) = prepare_save_edits(selected, money, stacks, stash_moves)?;
     let receipt = transaction::replace_transaction(
         &selected.slot.path,
         &selected.source_sha256,
@@ -1125,7 +1156,7 @@ fn commit_save_edits_to(
     slot.size = metadata.len();
     slot.last_write_time_utc = metadata.modified().unwrap_or(slot.last_write_time_utc);
     let reloaded = LoadedSave::read(slot)?;
-    verify_requested_values(&reloaded, money, stacks)?;
+    verify_requested_values(&reloaded, money, stacks, stash_moves)?;
     Ok((
         Arc::new(reloaded),
         format!(
@@ -1146,16 +1177,22 @@ fn prepare_xray_edits(
         .iter()
         .map(|(handle, count)| (ItemHandle::Xray(*handle), u32::from(*count)))
         .collect::<BTreeMap<_, _>>();
-    prepare_save_edits(selected, money, &stacks)
+    prepare_save_edits(selected, money, &stacks, &BTreeSet::new())
 }
 
 fn prepare_save_edits(
     selected: &LoadedSave,
     money: Option<u32>,
     stacks: &BTreeMap<ItemHandle, u32>,
+    stash_moves: &BTreeSet<u32>,
 ) -> Result<(SaveBuffer, EditSummary)> {
     match &selected.data {
         SaveData::Xray { save, inventory } => {
+            if !stash_moves.is_empty() {
+                return Err(Error::Refused(
+                    "S2 stash changes cannot be applied to an X-Ray save".to_owned(),
+                ));
+            }
             let current_money = save.money()?;
             let money_change = money.filter(|value| *value != current_money);
             let mut changes = Vec::new();
@@ -1201,9 +1238,32 @@ fn prepare_save_edits(
                 },
             ))
         }
-        SaveData::Stalker2 { save, inventory } => {
+        SaveData::Stalker2 {
+            save,
+            inventory,
+            stash_items,
+        } => {
             if save.index().is_legacy() {
                 return Err(Error::Refused("legacy S2 layouts are read-only".to_owned()));
+            }
+            if !stash_moves.is_empty() {
+                let items = stash_items
+                    .as_ref()
+                    .ok_or_else(|| Error::Refused("S2 save has no confirmed stash block".to_owned()))?
+                    .as_ref()
+                    .map_err(|error| Error::Refused(format!("S2 stash cannot be indexed: {error}")))?;
+                if !save.unresolved_handles().is_empty() {
+                    return Err(Error::Refused(
+                        "S2 stash move requires a fully resolved inventory".to_owned(),
+                    ));
+                }
+                for handle in stash_moves {
+                    if !items.iter().any(|item| item.handle == *handle) {
+                        return Err(Error::Refused(format!(
+                            "S2 stash item 0x{handle:08X} is missing or ambiguous"
+                        )));
+                    }
+                }
             }
             let current_money = save.money();
             let money_change = money.filter(|value| *value != current_money);
@@ -1230,6 +1290,9 @@ fn prepare_save_edits(
                     stack_count = stack_count.saturating_add(1);
                 }
             }
+            for handle in stash_moves {
+                changes.push(S2Change::MoveStashToBackpack { handle: *handle });
+            }
             if changes.is_empty() {
                 return Err(Error::Refused("there are no inventory changes to save".to_owned()));
             }
@@ -1239,6 +1302,7 @@ fn prepare_save_edits(
                 EditSummary {
                     money: money_change,
                     stack_count,
+                    move_count: stash_moves.len(),
                     ..EditSummary::default()
                 },
             ))
@@ -1250,6 +1314,7 @@ fn verify_requested_values(
     selected: &LoadedSave,
     money: Option<u32>,
     stacks: &BTreeMap<ItemHandle, u32>,
+    stash_moves: &BTreeSet<u32>,
 ) -> Result<()> {
     let actual_money = match &selected.data {
         SaveData::Xray { save, .. } => save.money()?,
@@ -1273,6 +1338,18 @@ fn verify_requested_values(
         };
         if actual != Some(*expected) {
             return Err(Error::damaged("saved stack count differs after read-back"));
+        }
+    }
+    for handle in stash_moves {
+        let moved = match &selected.data {
+            SaveData::Stalker2 { save, .. } => {
+                !save.stash_items()?.iter().any(|item| item.handle == *handle)
+                    && save.items().iter().any(|item| item.handle == *handle)
+            }
+            SaveData::Xray { .. } => false,
+        };
+        if !moved {
+            return Err(Error::damaged("saved stash transfer differs after read-back"));
         }
     }
     Ok(())
@@ -1351,6 +1428,17 @@ impl Screen for Inventory {
         clicked: Option<WidgetId>,
     ) -> Result<()> {
         self.workspace.poll_tasks();
+        if let Message::Window(crate::event_loop::WindowEvent::Key {
+            pressed: true,
+            ctrl: true,
+            keysym,
+            ..
+        }) = message
+        {
+            if matches!(*keysym, 0x53 | 0x73) {
+                return self.save(cx);
+            }
+        }
         if clicked.is_some() && clicked == self.money_decrease {
             self.stage_money(false);
             return self.render(cx);
@@ -1386,6 +1474,7 @@ impl Screen for Inventory {
                         state.selected = Some(Arc::clone(loaded));
                         state.pending_money = None;
                         state.pending_stacks.clear();
+                        state.pending_stash_moves.clear();
                         drop(state);
                         cx.app.set_current_save(Some(loaded.slot.path.clone()));
                         if let Some(id) = self.status {
@@ -1459,27 +1548,224 @@ impl Screen for Factions {
     }
 }
 
-/// Confirmed stash information for the selected save.
+#[derive(Clone, Copy)]
+struct StashRow {
+    row: WidgetId,
+    label: WidgetId,
+    move_button: WidgetId,
+    handle: Option<u32>,
+}
+
+/// Confirmed stash contents for the selected save.
 struct Stashes {
     workspace: Workspace,
     text: Option<WidgetId>,
+    status: Option<WidgetId>,
+    pager: Option<WidgetId>,
+    previous: Option<WidgetId>,
+    next: Option<WidgetId>,
+    rows: Vec<StashRow>,
+    page: usize,
+    last_path: Option<PathBuf>,
 }
 
 impl Stashes {
     fn new(workspace: Workspace) -> Self {
-        Self { workspace, text: None }
+        Self {
+            workspace,
+            text: None,
+            status: None,
+            pager: None,
+            previous: None,
+            next: None,
+            rows: Vec::new(),
+            page: 0,
+            last_path: None,
+        }
     }
 
-    fn render(&self, cx: &mut Context<'_>) -> Result<()> {
-        let state = self.workspace.lock();
-        let text = state
-            .selected
-            .as_ref()
-            .map(|save| save.stashes.as_str())
-            .unwrap_or("Сначала выберите сейв на экране «Обзор».");
+    fn render(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        let (selected, pending_moves) = {
+            let state = self.workspace.lock();
+            (state.selected.clone(), state.pending_stash_moves.clone())
+        };
+        for row in &mut self.rows {
+            row.handle = None;
+            cx.tree.set_visible(row.row, false)?;
+        }
+        if let Some(id) = self.previous {
+            cx.tree.set_visible(id, false)?;
+        }
+        if let Some(id) = self.next {
+            cx.tree.set_visible(id, false)?;
+        }
+        if let Some(id) = self.pager {
+            cx.tree.set_visible(id, false)?;
+        }
+        self.set_status(cx, "")?;
+        let Some(selected) = selected else {
+            self.set_text(cx, "Сначала выберите сейв на экране «Обзор».")?;
+            return Ok(());
+        };
+        if self.last_path.as_ref() != Some(&selected.slot.path) {
+            self.last_path = Some(selected.slot.path.clone());
+            self.page = 0;
+        }
+        let SaveData::Stalker2 { save, stash_items, .. } = &selected.data else {
+            self.set_text(cx, &selected.stashes)?;
+            return Ok(());
+        };
+        let items = match stash_items {
+            Some(Ok(items)) => items,
+            Some(Err(error)) => {
+                self.set_text(cx, &format!("Подтверждённые данные тайника недоступны: {error}"))?;
+                return Ok(());
+            }
+            None => {
+                self.set_text(cx, "Подтверждённый блок тайника в этом сохранении не найден.")?;
+                return Ok(());
+            }
+        };
+        if items.is_empty() {
+            self.set_text(cx, "Подтверждённый тайник найден, но живых предметов в нём нет.")?;
+        } else {
+            let pages = items.len().div_ceil(self.rows.len().max(1));
+            self.page = self.page.min(pages.saturating_sub(1));
+            let start = self.page.saturating_mul(self.rows.len());
+            self.set_text(
+                cx,
+                &format!(
+                    "S2: {} предметов в подтверждённом тайнике · страница {} из {}. Отметьте перенос и сохраните его в «Инвентаре».",
+                    items.len(),
+                    self.page.saturating_add(1),
+                    pages
+                ),
+            )?;
+            for (offset, row) in self.rows.iter_mut().enumerate() {
+                let Some(item) = items.get(start.saturating_add(offset)) else {
+                    continue;
+                };
+                let name = item.display_name.as_deref().map(str::to_owned).unwrap_or_else(|| {
+                    format!(
+                        "Предмет · ключ {:02X}{:02X}{:02X}",
+                        item.type_key[0], item.type_key[1], item.type_key[2]
+                    )
+                });
+                let weight = if item.total_weight.is_finite() {
+                    format!("{:.1}", item.total_weight)
+                } else {
+                    "неизвестен".to_owned()
+                };
+                cx.tree.set_text(
+                    row.label,
+                    &format!(
+                        "{name} · кол-во {} · вес {weight} · ячейки {} · {}×{} от {},{} · 0x{:08X}",
+                        item.count,
+                        item.cells.len(),
+                        item.width,
+                        item.height,
+                        item.x,
+                        item.y,
+                        item.handle
+                    ),
+                )?;
+                cx.tree.set_visible(row.row, true)?;
+                let can_move = !save.index().is_legacy() && save.unresolved_handles().is_empty();
+                cx.tree.set_text(
+                    row.move_button,
+                    if pending_moves.contains(&item.handle) {
+                        "Отменить перенос"
+                    } else {
+                        "В рюкзак"
+                    },
+                )?;
+                cx.tree.set_visible(row.move_button, can_move)?;
+                row.handle = Some(item.handle);
+            }
+            if let Some(id) = self.previous {
+                cx.tree.set_visible(id, pages > 1 && self.page > 0)?;
+            }
+            if let Some(id) = self.next {
+                cx.tree
+                    .set_visible(id, pages > 1 && self.page.saturating_add(1) < pages)?;
+            }
+            if let Some(id) = self.pager {
+                cx.tree.set_visible(id, pages > 1)?;
+            }
+            if !save.unresolved_handles().is_empty() {
+                self.set_status(cx, "Перенос отключён: индекс сейва содержит неразрешённые ссылки.")?;
+            } else if save.index().is_legacy() {
+                self.set_status(cx, "S2 1.0.x доступен только для чтения.")?;
+            } else if pending_moves.is_empty() {
+                self.set_status(
+                    cx,
+                    "Отметьте предметы и примените перенос кнопкой «Сохранить» в «Инвентаре».",
+                )?;
+            } else {
+                self.set_status(
+                    cx,
+                    &format!(
+                        "{} предмет(ов) будет перенесено при сохранении из «Инвентаря».",
+                        pending_moves.len()
+                    ),
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    fn set_text(&self, cx: &mut Context<'_>, text: &str) -> Result<()> {
         if let Some(id) = self.text {
             cx.tree.set_text(id, text)?;
         }
+        Ok(())
+    }
+
+    fn set_status(&self, cx: &mut Context<'_>, text: &str) -> Result<()> {
+        if let Some(id) = self.status {
+            cx.tree.set_text(id, text)?;
+        }
+        Ok(())
+    }
+
+    fn move_item(&mut self, cx: &mut Context<'_>, handle: u32) -> Result<()> {
+        let status = {
+            let mut state = self.workspace.lock();
+            let Some(selected) = state.selected.as_ref() else {
+                cx.status = Some("Сначала выберите сейв.".to_owned());
+                return Ok(());
+            };
+            let SaveData::Stalker2 { save, stash_items, .. } = &selected.data else {
+                cx.status = Some("Перенос тайника поддерживается только для S2.".to_owned());
+                return Ok(());
+            };
+            if save.index().is_legacy() || !save.unresolved_handles().is_empty() {
+                cx.status = Some("Перенос недоступен для этого S2-сейва.".to_owned());
+                return Ok(());
+            }
+            let Some(items) = stash_items.as_ref().and_then(|items| items.as_ref().ok()) else {
+                cx.status = Some("Содержимое тайника не подтверждено индексом.".to_owned());
+                return Ok(());
+            };
+            let Some(item) = items.iter().find(|item| item.handle == handle) else {
+                cx.status = Some("Предмет больше не найден в выбранном сейве.".to_owned());
+                return Ok(());
+            };
+            let name = item
+                .display_name
+                .as_deref()
+                .map(str::to_owned)
+                .unwrap_or_else(|| format!("предмет 0x{:08X}", item.handle));
+            if state.pending_stash_moves.remove(&handle) {
+                format!("Перенос {name} отменён.")
+            } else {
+                state.pending_stash_moves.insert(handle);
+                format!("{name} будет перенесён в рюкзак при сохранении.")
+            }
+        };
+        cx.status = Some(status.clone());
+        self.set_status(cx, &status)?;
+        self.render(cx)?;
         Ok(())
     }
 }
@@ -1502,11 +1788,56 @@ impl Screen for Stashes {
             "Выберите сейв на экране «Обзор».",
             Text::Body,
         )?);
+        self.status = Some(style::label(cx.tree, card, "", Text::Note)?);
+        let pager = style::row(cx.tree, card)?;
+        self.pager = Some(pager);
+        self.previous = Some(style::button(cx.tree, pager, "Предыдущая", Button::Secondary)?);
+        self.next = Some(style::button(cx.tree, pager, "Следующая", Button::Secondary)?);
+        cx.tree.set_visible(pager, false)?;
+        for _ in 0..MAXIMUM_STASH_ROWS {
+            let row = style::row(cx.tree, card)?;
+            let label = style::label(cx.tree, row, "", Text::Body)?;
+            let move_button = style::button(cx.tree, row, "В рюкзак", Button::Secondary)?;
+            cx.tree.set_visible(row, false)?;
+            self.rows.push(StashRow {
+                row,
+                label,
+                move_button,
+                handle: None,
+            });
+        }
         self.render(cx)
     }
 
     fn shown(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        self.workspace.poll_tasks();
         self.render(cx)
+    }
+
+    fn message(
+        &mut self,
+        cx: &mut Context<'_>,
+        _message: &Message<AppMessage>,
+        clicked: Option<WidgetId>,
+    ) -> Result<()> {
+        if clicked.is_some() && clicked == self.previous {
+            self.page = self.page.saturating_sub(1);
+            return self.render(cx);
+        }
+        if clicked.is_some() && clicked == self.next {
+            self.page = self.page.saturating_add(1);
+            return self.render(cx);
+        }
+        if let Some(handle) = self
+            .rows
+            .iter()
+            .find(|row| Some(row.move_button) == clicked)
+            .and_then(|row| row.handle)
+        {
+            self.move_item(cx, handle)?;
+        }
+        self.workspace.poll_tasks();
+        Ok(())
     }
 }
 
@@ -1585,7 +1916,7 @@ mod tests {
     use crate::widget::{Content, Look, Tree};
     use sse_core::Error;
     use sse_xray::Save;
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -1673,9 +2004,100 @@ mod tests {
             stash,
         );
 
-        let (output, summary) = prepare_save_edits(&loaded, Some(1_000), &BTreeMap::new())?;
+        let (output, summary) = prepare_save_edits(&loaded, Some(1_000), &BTreeMap::new(), &BTreeSet::new())?;
         assert_eq!(S2Save::from_bytes(output.as_slice())?.money(), 1_000);
         assert_eq!(summary.money, Some(1_000));
+        Ok(())
+    }
+
+    #[test]
+    fn s2_stash_transfer_creates_backup_and_passes_durable_read_back() -> sse_core::Result<()> {
+        let temp = TempDirectory::new();
+        let saves = temp.0.join("saves");
+        fs::create_dir_all(&saves)?;
+        let backup = temp.0.join("backups");
+        let path = saves.join("stash.sav");
+        fs::write(
+            &path,
+            include_bytes!("../../../../fixtures/synthetic/writer-s2-stash/s2-stash-source.sav"),
+        )?;
+        let path_string = path.to_string_lossy().into_owned();
+        let selected = LoadedSave::read(fixture_slot(&path_string, "stalker2", "stalker2"))?;
+        let handle = match &selected.data {
+            super::SaveData::Stalker2 { stash_items, .. } => stash_items
+                .as_ref()
+                .ok_or_else(|| Error::damaged("S2 stash fixture has no stash index"))?
+                .as_ref()
+                .map_err(|error| Error::damaged(error.clone()))?
+                .first()
+                .map(|item| item.handle)
+                .ok_or_else(|| Error::damaged("S2 stash fixture has no items"))?,
+            super::SaveData::Xray { .. } => return Err(Error::damaged("S2 fixture parsed as X-Ray")),
+        };
+
+        let pending_moves = BTreeSet::from([handle]);
+        let (updated, status) = commit_save_edits_to(&selected, None, &BTreeMap::new(), &pending_moves, &backup)?;
+        let super::SaveData::Stalker2 { save, .. } = &updated.data else {
+            return Err(Error::damaged("updated S2 fixture parsed as X-Ray"));
+        };
+        assert!(!save.stash_items()?.iter().any(|item| item.handle == handle));
+        assert!(save.items().iter().any(|item| item.handle == handle));
+        assert!(status.contains("прочитан"));
+
+        let durable = S2Save::from_bytes(&fs::read(&path)?)?;
+        assert!(!durable.stash_items()?.iter().any(|item| item.handle == handle));
+        assert!(durable.items().iter().any(|item| item.handle == handle));
+        assert!(sse_storage::transaction::list_backups(&backup)?
+            .iter()
+            .any(|entry| entry.status == sse_storage::transaction::BackupStatus::Verified));
+        Ok(())
+    }
+
+    #[test]
+    fn s2_stash_transfer_is_staged_and_can_be_toggled_off() -> sse_core::Result<()> {
+        let temp = TempDirectory::new();
+        let path = temp.0.join("stash.sav");
+        let original = include_bytes!("../../../../fixtures/synthetic/writer-s2-stash/s2-stash-source.sav");
+        fs::write(&path, original)?;
+        let selected = LoadedSave::read(fixture_slot(&path.to_string_lossy(), "stalker2", "stalker2"))?;
+        let handle = match &selected.data {
+            super::SaveData::Stalker2 { stash_items, .. } => stash_items
+                .as_ref()
+                .ok_or_else(|| Error::damaged("S2 stash fixture has no stash index"))?
+                .as_ref()
+                .map_err(|error| Error::damaged(error.clone()))?
+                .first()
+                .map(|item| item.handle)
+                .ok_or_else(|| Error::damaged("S2 stash fixture has no items"))?,
+            super::SaveData::Xray { .. } => return Err(Error::damaged("S2 fixture parsed as X-Ray")),
+        };
+        let workspace = Workspace::default();
+        workspace.lock().selected = Some(std::sync::Arc::new(selected));
+        let (proxy, _receiver) = channel_pair::<AppMessage>();
+        let mut app = sse_app::AppState::new();
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let mut screen = super::Stashes::new(workspace.clone());
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: Some(&proxy),
+            status: None,
+            app: &mut app,
+        };
+        screen.build(&mut cx, host)?;
+
+        screen.move_item(&mut cx, handle)?;
+        assert!(workspace.lock().pending_stash_moves.contains(&handle));
+        assert_eq!(fs::read(&path)?, original);
+        screen.move_item(&mut cx, handle)?;
+        assert!(!workspace.lock().pending_stash_moves.contains(&handle));
+        assert_eq!(fs::read(&path)?, original);
         Ok(())
     }
 
@@ -1694,7 +2116,8 @@ mod tests {
             super::SaveData::Xray { save, .. } => save.money()?.saturating_add(321),
             super::SaveData::Stalker2 { .. } => return Err(Error::damaged("X-Ray fixture parsed as S2")),
         };
-        let (xray_after, _) = commit_save_edits_to(&xray, Some(xray_money), &BTreeMap::new(), &backup)?;
+        let (xray_after, _) =
+            commit_save_edits_to(&xray, Some(xray_money), &BTreeMap::new(), &BTreeSet::new(), &backup)?;
         assert!(matches!(
             &xray_after.data,
             super::SaveData::Xray { save, .. } if save.money().ok() == Some(xray_money)
@@ -1709,7 +2132,13 @@ mod tests {
             super::SaveData::Stalker2 { save, .. } => save.money().saturating_add(654),
             super::SaveData::Xray { .. } => return Err(Error::damaged("S2 fixture parsed as X-Ray")),
         };
-        let (s2_after, _) = commit_save_edits_to(&s2, Some(s2_money), &BTreeMap::new(), &temp.0.join("s2-backups"))?;
+        let (s2_after, _) = commit_save_edits_to(
+            &s2,
+            Some(s2_money),
+            &BTreeMap::new(),
+            &BTreeSet::new(),
+            &temp.0.join("s2-backups"),
+        )?;
         assert!(matches!(
             &s2_after.data,
             super::SaveData::Stalker2 { save, .. } if save.money() == s2_money

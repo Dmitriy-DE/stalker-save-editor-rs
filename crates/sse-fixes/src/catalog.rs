@@ -97,9 +97,13 @@ impl GameFixCatalog {
         }
         match preset {
             GameFixPreset::EssentialOnly => definition.category == GameFixCategory::Essential,
-            GameFixPreset::Recommended | GameFixPreset::AllSafeFixes => matches!(
+            GameFixPreset::Recommended => matches!(
                 definition.category,
                 GameFixCategory::Essential | GameFixCategory::Recommended
+            ),
+            GameFixPreset::AllSafeFixes => matches!(
+                definition.category,
+                GameFixCategory::Essential | GameFixCategory::Recommended | GameFixCategory::Community
             ),
             GameFixPreset::Custom => false,
         }

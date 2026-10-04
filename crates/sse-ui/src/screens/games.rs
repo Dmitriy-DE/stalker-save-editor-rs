@@ -1136,6 +1136,10 @@ struct EnvironmentResult {
 struct Environment {
     status: Option<WidgetId>,
     lines: Vec<WidgetId>,
+    snapshot: Option<WidgetId>,
+    restore: Option<WidgetId>,
+    audit: Option<WidgetId>,
+    pending_restore: Option<String>,
 }
 
 impl Environment {
@@ -1213,7 +1217,39 @@ impl Screen for Environment {
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
         let card = style::card(cx.tree, host)?;
         style::label(cx.tree, card, "СРЕДА ИГРЫ", Text::Heading)?;
-        self.status = Some(style::label(cx.tree, card, "Выберите игру", Text::Note)?);
+        self.status = Some(style::label(
+            cx.tree,
+            card,
+            "Управляемая установка: не выбрана",
+            Text::Note,
+        )?);
+        style::label(cx.tree, card, "УПРАВЛЯЕМЫЕ СНИМКИ", Text::Heading)?;
+        style::label(
+            cx.tree,
+            card,
+            "Снимки включают только файлы и манифесты Game Fix, Companion и настроек, которыми владеет инструмент.",
+            Text::Note,
+        )?;
+        self.snapshot = Some(style::button(cx.tree, card, "СОЗДАТЬ СНИМОК", Button::Primary)?);
+        self.restore = Some(style::button(
+            cx.tree,
+            card,
+            "ВОССТАНОВИТЬ ПОСЛЕДНИЙ СНИМОК",
+            Button::Danger,
+        )?);
+        style::label(cx.tree, card, "ПРОФИЛИ ИГРЫ", Text::Heading)?;
+        style::label(
+            cx.tree,
+            card,
+            "Профили поддерживаются ядром; UI имени/списка будет подключён после text-input binding.",
+            Text::Note,
+        )?;
+        style::label(cx.tree, card, "НАСТРОЙКИ user.ltx", Text::Heading)?;
+        for setting in sse_fixes::toolkit::MANAGED_SETTINGS {
+            style::label(cx.tree, card, setting.key, Text::Body)?;
+        }
+        style::label(cx.tree, card, "АУДИТ УСТАНОВКИ", Text::Heading)?;
+        self.audit = Some(style::button(cx.tree, card, "ПРОВЕРИТЬ", Button::Secondary)?);
         for _ in 0..10 {
             let line = style::label(cx.tree, card, "", Text::Body)?;
             cx.tree.set_visible(line, false)?;
@@ -1231,8 +1267,116 @@ impl Screen for Environment {
         &mut self,
         cx: &mut Context<'_>,
         message: &Message<AppMessage>,
-        _clicked: Option<WidgetId>,
+        clicked: Option<WidgetId>,
     ) -> Result<()> {
+        if clicked.is_some() && clicked == self.restore {
+            let directory = cx.app.game_dir().map(Path::to_path_buf);
+            let game = cx.app.selected_game().and_then(fix_target);
+            let Some(directory) = directory else {
+                cx.status = Some("Управляемая установка: не выбрана".to_owned());
+                return Ok(());
+            };
+            let snapshots = sse_fixes::toolkit::ToolkitSnapshotService::list_snapshots(&directory)
+                .map_err(|e| sse_core::Error::Refused(e.to_string()))?;
+            let Some(snapshot) = snapshots.first() else {
+                cx.status = Some("Снимков пока нет.".to_owned());
+                return Ok(());
+            };
+            if self.pending_restore.as_deref() != Some(snapshot.id.as_str()) {
+                self.pending_restore = Some(snapshot.id.clone());
+                cx.status = Some(format!("ВОССТАНОВЛЕНИЕ ИЗМЕНИТ ФАЙЛЫ ИГРЫ. Нажмите «ВОССТАНОВИТЬ ПОСЛЕДНИЙ СНИМОК» ещё раз для подтверждения: {}", snapshot.label));
+                return Ok(());
+            }
+            self.pending_restore = None;
+            let Some(game) = game else {
+                cx.status = Some("Игра не поддерживается Toolkit.".to_owned());
+                return Ok(());
+            };
+            let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
+            let snapshot_id = snapshot.id.clone();
+            std::thread::spawn(move || {
+                let engine = sse_fixes::GameFixEngine::new();
+                let catalog = sse_fixes::GameFixCatalog;
+                let lines = sse_fixes::toolkit::ToolkitSnapshotService::restore_snapshot(
+                    &directory,
+                    &engine,
+                    &catalog,
+                    &snapshot_id,
+                )
+                .map(|r| {
+                    vec![format!(
+                        "Восстановлен снимок {} · установлено фиксов {} · удалено {} · user.ltx {}",
+                        r.snapshot_id,
+                        r.installed_fixes.len(),
+                        r.uninstalled_fixes.len(),
+                        r.user_ltx_updates_count
+                    )]
+                })
+                .unwrap_or_else(|e| vec![format!("Ошибка восстановления: {e}")]);
+                let _ = game;
+                proxy.send(AppMessage::ToScreen(
+                    ScreenId::Environment,
+                    Box::new(EnvironmentResult { lines }),
+                ));
+            });
+            return Ok(());
+        }
+        if clicked.is_some() && (clicked == self.snapshot || clicked == self.audit) {
+            let create_snapshot = clicked.is_some() && clicked == self.snapshot;
+            let game = cx.app.selected_game().and_then(fix_target);
+            let directory = cx.app.game_dir().map(Path::to_path_buf);
+            let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
+            std::thread::spawn(move || {
+                let result = (|| {
+                    let game = game.ok_or_else(|| "Выберите поддерживаемую игру".to_owned())?;
+                    let directory = directory.ok_or_else(|| "Управляемая установка: не выбрана".to_owned())?;
+                    let engine = sse_fixes::GameFixEngine::new();
+                    if create_snapshot {
+                        if !game.is_xray() {
+                            return Err("Снимки доступны только для X-Ray игр.".to_owned());
+                        }
+                        let snap = sse_fixes::toolkit::ToolkitSnapshotService::create_snapshot(
+                            &directory, game, &engine, None,
+                        )
+                        .map_err(|e| e.to_string())?;
+                        Ok(vec![
+                            format!("Создан снимок: {}", snap.id),
+                            format!(
+                                "исправлений: {} · Companion: {}",
+                                snap.installed_fixes.len(),
+                                if snap.companion_installed {
+                                    "включён"
+                                } else {
+                                    "выключен"
+                                }
+                            ),
+                        ])
+                    } else {
+                        let report =
+                            sse_fixes::toolkit::ToolkitInstallAudit::audit_installation(&directory, game, &engine)
+                                .map_err(|e| e.to_string())?;
+                        let mut lines = vec![format!(
+                            "Проверено файлов: {}. Управляемых: {}. Неизвестных/модов: {}. Требуют проверки: {}.",
+                            report.total_scanned,
+                            report.managed_count,
+                            report.custom_mod_count,
+                            report.needs_review_count
+                        )];
+                        lines.extend(report.items.into_iter().take(8).map(|item| {
+                            format!("{:?} · {} · {}", item.classification, item.relative_path, item.details)
+                        }));
+                        Ok(lines)
+                    }
+                })();
+                proxy.send(AppMessage::ToScreen(
+                    ScreenId::Environment,
+                    Box::new(EnvironmentResult {
+                        lines: result.unwrap_or_else(|e| vec![format!("Ошибка: {e}")]),
+                    }),
+                ));
+            });
+            return Ok(());
+        }
         if let Message::User(AppMessage::ToScreen(ScreenId::Environment, payload)) = message {
             if let Some(result) = payload.downcast_ref::<EnvironmentResult>() {
                 if let Some(status) = self.status {
@@ -1259,12 +1403,19 @@ struct FixRow {
     description: String,
     version: String,
     status: String,
+    category: String,
+    maturity: String,
+    problem: String,
+    source: String,
+    builds: String,
+    files: usize,
 }
 
 #[derive(Debug)]
 enum FixReply {
     List(std::result::Result<Vec<FixRow>, String>),
     Changed(std::result::Result<String, String>),
+    Compatibility(std::result::Result<String, String>),
 }
 
 #[derive(Default)]
@@ -1276,6 +1427,11 @@ struct GameFixes {
     selected: Option<usize>,
     install: Option<WidgetId>,
     remove: Option<WidgetId>,
+    check: Option<WidgetId>,
+    preset_recommended: Option<WidgetId>,
+    preset_essential: Option<WidgetId>,
+    preset_safe: Option<WidgetId>,
+    compatibility: Option<WidgetId>,
     confirm: Option<bool>,
 }
 
@@ -1330,6 +1486,16 @@ impl GameFixes {
                             description: definition.description.clone(),
                             version: definition.version.clone(),
                             status,
+                            category: definition.category.as_str().to_owned(),
+                            maturity: definition.maturity.as_str().to_owned(),
+                            problem: definition.problem.clone(),
+                            source: definition.source.clone(),
+                            builds: definition.supported_steam_build_ids.join(", "),
+                            files: definition
+                                .text_patches
+                                .len()
+                                .saturating_add(definition.overlays.len())
+                                .saturating_add(definition.spawn_edits.len()),
                         }
                     })
                     .collect();
@@ -1370,13 +1536,51 @@ impl Screen for GameFixes {
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
         let card = style::card(cx.tree, host)?;
         style::label(cx.tree, card, "ИСПРАВЛЕНИЯ ИГРЫ", Text::Heading)?;
+        self.compatibility = Some(style::label(
+            cx.tree,
+            card,
+            "СНАЧАЛА ПРОВЕРЬТЕ УСТАНОВКУ И ВЕРСИЮ.",
+            Text::Note,
+        )?);
+        self.check = Some(style::button(
+            cx.tree,
+            card,
+            "ПРОВЕРИТЬ СОВМЕСТИМОСТЬ",
+            Button::Secondary,
+        )?);
+        let counts = style::card(cx.tree, card)?;
+        style::label(
+            cx.tree,
+            counts,
+            "КАТЕГОРИИ: ОБЯЗАТЕЛЬНЫЕ · РЕКОМЕНДУЕМЫЕ · НЕОБЯЗАТЕЛЬНЫЕ · СООБЩЕСТВО · ЭКСПЕРИМЕНТАЛЬНЫЕ",
+            Text::Note,
+        )?;
         self.status = Some(style::label(cx.tree, card, "Выберите игру", Text::Note)?);
         for _ in 0..8 {
             let row = style::button(cx.tree, card, "", Button::Secondary)?;
             cx.tree.set_visible(row, false)?;
             self.rows.push(row);
         }
-        self.detail = Some(style::label(cx.tree, card, "Выберите исправление", Text::Body)?);
+        self.detail = Some(style::label(cx.tree, card, "ВЫБЕРИТЕ ИСПРАВЛЕНИЕ", Text::Body)?);
+        let presets = style::row(cx.tree, card)?;
+        self.preset_recommended = Some(style::button(
+            cx.tree,
+            presets,
+            "ПРИМЕНИТЬ: РЕКОМЕНДУЕМЫЕ",
+            Button::Primary,
+        )?);
+        self.preset_essential = Some(style::button(
+            cx.tree,
+            presets,
+            "ПРИМЕНИТЬ: ОБЯЗАТЕЛЬНЫЕ",
+            Button::Secondary,
+        )?);
+        self.preset_safe = Some(style::button(
+            cx.tree,
+            presets,
+            "ПРИМЕНИТЬ: ВСЕ БЕЗОПАСНЫЕ",
+            Button::Secondary,
+        )?);
         let actions = style::row(cx.tree, card)?;
         self.install = Some(style::button(
             cx.tree,
@@ -1384,7 +1588,13 @@ impl Screen for GameFixes {
             "Установить / обновить",
             Button::Primary,
         )?);
-        self.remove = Some(style::button(cx.tree, actions, "Удалить", Button::Secondary)?);
+        self.remove = Some(style::button(
+            cx.tree,
+            actions,
+            "УДАЛИТЬ И ВОССТАНОВИТЬ",
+            Button::Secondary,
+        )?);
+        style::label(cx.tree, card, "ИСПРАВЛЕНИЕ ЗАПИСЫВАЕТСЯ ТОЛЬКО ПО НАЖАТИЮ КНОПКИ. ПРИ ИЗМЕНЕНИИ УПРАВЛЯЕМОГО ФАЙЛА УДАЛЕНИЕ ОСТАНОВИТСЯ, НЕ ПЕРЕЗАПИСЫВАЯ ЕГО.", Text::Note)?;
         Ok(())
     }
 
@@ -1406,10 +1616,69 @@ impl Screen for GameFixes {
                     self.confirm = None;
                     if let (Some(detail), Some(item)) = (self.detail, self.items.get(index)) {
                         cx.tree
-                            .set_text(detail, &format!("{}\n{}", item.status, item.description))?;
+                            .set_text(detail, &format!("{} · {} · {} / {}\nПРОБЛЕМА: {}\nИЗМЕНЕНИЕ: {}\nПОДДЕРЖИВАЕМЫЕ STEAM-СБОРКИ: {}\nЗАТРАГИВАЕМЫЕ ФАЙЛЫ: {}\nИСТОЧНИК: {}", item.id, item.status, item.category, item.maturity, item.problem, item.description, item.builds, item.files, item.source))?;
                     }
                 }
             }
+        }
+
+        if clicked.is_some() && clicked == self.check {
+            let game = cx.app.selected_game().map(str::to_owned);
+            let directory = cx.app.game_dir().map(Path::to_path_buf);
+            let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
+            std::thread::spawn(move || {
+                let result = (|| {
+                    let target = game
+                        .as_deref()
+                        .and_then(fix_target)
+                        .ok_or_else(|| "Игра не поддерживается".to_owned())?;
+                    let directory = directory.ok_or_else(|| "Папка игры не выбрана".to_owned())?;
+                    let (matches, build) = sse_fixes::identify_game(target, &directory);
+                    if !matches {
+                        return Err("ПАПКА НЕ ПОХОЖА НА ВЫБРАННУЮ УСТАНОВКУ ИГРЫ.".to_owned());
+                    }
+                    build.map(|id| format!("НАЙДЕНА СБОРКА STEAM: {id}.")).ok_or_else(|| {
+                        "ВЕРСИЯ STEAM НЕ ОПРЕДЕЛЕНА; УСТАНОВКА ИСПРАВЛЕНИЙ С ЗАЩИТОЙ ПО СБОРКЕ НЕДОСТУПНА.".to_owned()
+                    })
+                })();
+                proxy.send(AppMessage::ToScreen(
+                    ScreenId::GameFixes,
+                    Box::new(FixReply::Compatibility(result)),
+                ));
+            });
+            return Ok(());
+        }
+        let preset = if clicked.is_some() && clicked == self.preset_recommended {
+            Some(sse_fixes::GameFixPreset::Recommended)
+        } else if clicked.is_some() && clicked == self.preset_essential {
+            Some(sse_fixes::GameFixPreset::EssentialOnly)
+        } else if clicked.is_some() && clicked == self.preset_safe {
+            Some(sse_fixes::GameFixPreset::AllSafeFixes)
+        } else {
+            None
+        };
+        if let Some(preset) = preset {
+            let game = cx.app.selected_game().map(str::to_owned);
+            let directory = cx.app.game_dir().map(Path::to_path_buf);
+            let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
+            std::thread::spawn(move || {
+                let result = (|| {
+                    let target = game
+                        .as_deref()
+                        .and_then(fix_target)
+                        .ok_or_else(|| "Игра не поддерживается".to_owned())?;
+                    let directory = directory.ok_or_else(|| "Папка игры не выбрана".to_owned())?;
+                    let result = sse_fixes::GameFixEngine::new()
+                        .apply_preset(target, preset, &directory)
+                        .map_err(|e| e.to_string())?;
+                    Ok(format!("ПРЕСЕТ {}: УСТАНОВЛЕНО {}; УЖЕ АКТУАЛЬНЫХ {}. РЕЗЕРВНАЯ ТОЧКА НЕДОСТУПНА: ядро apply_preset не создаёт Toolkit snapshot.", preset.as_str(), result.installed_fix_ids.len(), result.already_installed_fix_ids.len()))
+                })();
+                proxy.send(AppMessage::ToScreen(
+                    ScreenId::GameFixes,
+                    Box::new(FixReply::Changed(result)),
+                ));
+            });
+            return Ok(());
         }
 
         let action = if clicked.is_some() && clicked == self.install {
@@ -1492,6 +1761,16 @@ impl Screen for GameFixes {
                             cx.tree.set_text(status, error)?;
                         }
                     }
+                    FixReply::Compatibility(Ok(text)) => {
+                        if let Some(id) = self.compatibility {
+                            cx.tree.set_text(id, text)?;
+                        }
+                    }
+                    FixReply::Compatibility(Err(error)) => {
+                        if let Some(id) = self.compatibility {
+                            cx.tree.set_text(id, error)?;
+                        }
+                    }
                     FixReply::Changed(Ok(text)) => {
                         cx.status = Some(text.clone());
                         self.refresh(cx);
@@ -1522,6 +1801,7 @@ struct GameDoctor {
     status: Option<WidgetId>,
     start: Option<WidgetId>,
     cancel: Option<WidgetId>,
+    toggle_s2_mods: Option<WidgetId>,
     rows: Vec<WidgetId>,
     findings: Vec<DoctorFinding>,
     cancellation: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
@@ -1652,6 +1932,12 @@ impl Screen for GameDoctor {
         let actions = style::row(cx.tree, card)?;
         self.start = Some(style::button(cx.tree, actions, "Проверить", Button::Primary)?);
         self.cancel = Some(style::button(cx.tree, actions, "Отмена", Button::Secondary)?);
+        self.toggle_s2_mods = Some(style::button(
+            cx.tree,
+            actions,
+            "ВРЕМЕННО ОТКЛЮЧИТЬ / ВОССТАНОВИТЬ КАСТОМНЫЕ МОДЫ",
+            Button::Secondary,
+        )?);
         style::label(cx.tree, card, "ФАЙЛ · ТЯЖЕСТЬ · НАХОДКА", Text::Value)?;
         for _ in 0..10 {
             let row = style::label(cx.tree, card, "", Text::Body)?;
@@ -1669,6 +1955,20 @@ impl Screen for GameDoctor {
     ) -> Result<()> {
         if clicked.is_some() && clicked == self.start {
             self.run(cx);
+        }
+        if clicked.is_some() && clicked == self.toggle_s2_mods {
+            let is_s2 = cx.app.selected_game().is_some_and(|g| matches!(g, "s2" | "stalker2"));
+            let directory = cx.app.game_dir().map(Path::to_path_buf);
+            if !is_s2 {
+                cx.status = Some("Переключение модов доступно только для S.T.A.L.K.E.R. 2.".to_owned());
+            } else if let Some(directory) = directory {
+                match sse_fixes::toolkit::Stalker2ModToggle::toggle(&directory) {
+                    Ok(result) => cx.status = Some(format!("S2 mods: {result:?}")),
+                    Err(error) => cx.status = Some(error.to_string()),
+                }
+            } else {
+                cx.status = Some("ВЫБЕРИТЕ ИГРУ И ПАПКУ УСТАНОВКИ ДЛЯ ПРОВЕРКИ.".to_owned());
+            }
         }
         if clicked.is_some() && clicked == self.cancel {
             if let Some(cancelled) = &self.cancellation {
@@ -1936,6 +2236,9 @@ impl Screen for Encyclopedia {
         message: &Message<AppMessage>,
         clicked: Option<WidgetId>,
     ) -> Result<()> {
+        if let (Some(search), Some(search_label)) = (self.search.as_mut(), self.search_label) {
+            search.focus(cx.tree.focused() == Some(search_label), 0);
+        }
         if clicked.is_some() && clicked == self.search_label {
             if let Some(search) = self.search.as_mut() {
                 search.focus(true, 0);
@@ -1950,6 +2253,24 @@ impl Screen for Encyclopedia {
             shift,
         }) = message
         {
+            if *keysym == 0xff09 {
+                if let (Some(search), Some(search_label)) = (self.search.as_mut(), self.search_label) {
+                    search.focus(cx.tree.focused() == Some(search_label), 0);
+                }
+                return Ok(());
+            }
+            if matches!(*keysym, 0xff0d | 0xff1b)
+                && self
+                    .search
+                    .as_ref()
+                    .is_some_and(crate::widgets::text_input::TextInput::focused)
+            {
+                if let Some(search) = self.search.as_mut() {
+                    search.focus(false, 0);
+                }
+                cx.tree.set_focus(None)?;
+                return Ok(());
+            }
             if self
                 .search
                 .as_ref()
