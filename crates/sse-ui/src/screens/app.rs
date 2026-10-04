@@ -350,7 +350,13 @@ impl Screen for Settings {
             crate::theme::apply_appearance(theme_id, &self.settings.accent_id);
             repaint_theme(cx.tree, old, crate::theme::current());
             if let Some(value) = self.accent_value {
-                cx.tree.set_text(value, crate::theme::ACCENT_NAMES.get(self.accent).copied().unwrap_or("Янтарный"))?;
+                cx.tree.set_text(
+                    value,
+                    crate::theme::ACCENT_NAMES
+                        .get(self.accent)
+                        .copied()
+                        .unwrap_or("Янтарный"),
+                )?;
             }
             match save_settings(&self.settings) {
                 Ok(()) => cx.status = Some("Настройки сохранены.".to_owned()),
