@@ -10,9 +10,11 @@ use sse_ui::event_loop::Present;
 use sse_ui::glyphs::Fonts;
 use sse_ui::screens::shell::Shell;
 use sse_ui::screens::style::{rgb, BG_BASE};
-use sse_ui::screens::{AppMessage, ScreenId};
+use sse_ui::screens::AppMessage;
+use sse_ui::screens::ScreenId;
 use sse_ui::widget::Tree;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use std::time::Instant;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -188,11 +190,25 @@ fn window() -> Result<()> {
 
 #[cfg(target_os = "macos")]
 fn window() -> Result<()> {
-    let _ = (channel_pair::<AppMessage>, Duration::from_secs, BG_BASE, Instant::now);
-    Err(Error::Refused(
-        "window backend for this platform comes in U3/U4; use --screenshot".to_owned(),
-    ))
+    let (proxy, receiver) = channel_pair::<AppMessage>();
+    let mut tree = Tree::new(Fonts::bundled()?, rgb(BG_BASE));
+    let mut shell = Shell::build(&mut tree, Some(proxy.clone()))?;
+    let (width, height) = (1280_u32, 800_u32);
+    let mut backend =
+        sse_ui::macos_window::MacPresenter::open("S.T.A.L.K.E.R. Save Editor", width, height, proxy.clone())?;
+    tree.resize(width, height);
+    let started = Instant::now();
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_secs(1));
+        if !proxy.send(AppMessage::Tick(started.elapsed().as_secs())) {
+            return;
+        }
+    });
+    let stats = sse_ui::event_loop::run(&receiver, &mut tree, &mut shell, &mut backend)?;
+    eprintln!("wakes {} frames {} pixels {}", stats.wakes, stats.frames, stats.pixels);
+    Ok(())
 }
+
 
 /// Minimal PNG (RGBA, stored deflate) until X37 lands its encoder.
 fn encode_png(frame: &[u32], width: u32, height: u32) -> Vec<u8> {
