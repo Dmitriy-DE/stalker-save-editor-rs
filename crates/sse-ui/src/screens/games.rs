@@ -1222,7 +1222,7 @@ impl Screen for Environment {
         style::label(cx.tree, card, "ПРОФИЛИ ИГРЫ", Text::Heading)?;
         style::label(cx.tree, card, "Профили поддерживаются ядром; UI имени/списка будет подключён после text-input binding.", Text::Note)?;
         style::label(cx.tree, card, "НАСТРОЙКИ user.ltx", Text::Heading)?;
-        for setting in sse_fixes::toolkit::MANAGED_SETTINGS { style::label(cx.tree, card, setting.display_name, Text::Body)?; }
+        for setting in sse_fixes::toolkit::MANAGED_SETTINGS { style::label(cx.tree, card, setting.key, Text::Body)?; }
         style::label(cx.tree, card, "АУДИТ УСТАНОВКИ", Text::Heading)?;
         self.audit = Some(style::button(cx.tree, card, "ПРОВЕРИТЬ", Button::Secondary)?);
         for _ in 0..10 {
@@ -1242,7 +1242,7 @@ impl Screen for Environment {
         &mut self,
         cx: &mut Context<'_>,
         message: &Message<AppMessage>,
-        _clicked: Option<WidgetId>,
+        clicked: Option<WidgetId>,
     ) -> Result<()> {
         if clicked.is_some() && (clicked == self.snapshot || clicked == self.audit) {
             let create_snapshot = clicked == self.snapshot;
