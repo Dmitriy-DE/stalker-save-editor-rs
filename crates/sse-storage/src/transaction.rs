@@ -18,10 +18,14 @@ const MAXIMUM_JOURNAL_BYTES: u64 = 2 * 1024 * 1024;
 pub trait FileSystem {
     /// Reads a complete file.
     fn read_all(&self, path: &Path) -> Result<Vec<u8>>;
+    /// Reports whether a path itself is a symbolic link without following it.
+    fn is_symlink(&self, path: &Path) -> Result<bool>;
     /// Creates a directory and its parents.
     fn create_dir_all(&self, path: &Path) -> Result<()>;
     /// Creates a new file, writes all bytes, and flushes it durably.
     fn write_new(&self, path: &Path, bytes: &[u8]) -> Result<()>;
+    /// Copies the source file's permissions to a newly created replacement file.
+    fn copy_permissions(&self, source: &Path, destination: &Path) -> Result<()>;
     /// Atomically moves one file over another and flushes the destination directory where supported.
     fn replace(&self, source: &Path, destination: &Path) -> Result<()>;
     /// Publishes a new path atomically without overwriting an existing destination.
@@ -39,6 +43,10 @@ pub struct StdFileSystem;
 impl FileSystem for StdFileSystem {
     fn read_all(&self, path: &Path) -> Result<Vec<u8>> {
         Ok(fs::read(path)?)
+    }
+
+    fn is_symlink(&self, path: &Path) -> Result<bool> {
+        Ok(fs::symlink_metadata(path)?.file_type().is_symlink())
     }
 
     fn create_dir_all(&self, path: &Path) -> Result<()> {
@@ -68,6 +76,11 @@ impl FileSystem for StdFileSystem {
             let _ = fs::remove_file(path);
         }
         result
+    }
+
+    fn copy_permissions(&self, source: &Path, destination: &Path) -> Result<()> {
+        fs::set_permissions(destination, fs::metadata(source)?.permissions())?;
+        Ok(())
     }
 
     fn replace(&self, source: &Path, destination: &Path) -> Result<()> {
@@ -413,12 +426,31 @@ pub fn replace_transaction(
     replacement: &[u8],
     backup_directory: &Path,
 ) -> Result<ReplacementReceipt> {
-    replace_with_file_system(
+    replace_transaction_with_verifier(
+        source_path,
+        expected_source_sha256,
+        replacement,
+        backup_directory,
+        |_| Ok(()),
+    )
+    .map(|(receipt, ())| receipt)
+}
+
+/// Replaces a save and runs a format-aware check against durable read-back bytes before commit.
+pub fn replace_transaction_with_verifier<T>(
+    source_path: &Path,
+    expected_source_sha256: &str,
+    replacement: &[u8],
+    backup_directory: &Path,
+    verify_readback: impl FnOnce(&[u8]) -> Result<T>,
+) -> Result<(ReplacementReceipt, T)> {
+    replace_with_file_system_and_verifier(
         &StdFileSystem,
         source_path,
         expected_source_sha256,
         replacement,
         backup_directory,
+        verify_readback,
     )
 }
 
@@ -430,6 +462,26 @@ pub fn replace_with_file_system(
     replacement: &[u8],
     backup_directory: &Path,
 ) -> Result<ReplacementReceipt> {
+    replace_with_file_system_and_verifier(
+        files,
+        source_path,
+        expected_source_sha256,
+        replacement,
+        backup_directory,
+        |_| Ok(()),
+    )
+    .map(|(receipt, ())| receipt)
+}
+
+/// Testable replacement with a read-back verifier whose output is returned after commit.
+pub fn replace_with_file_system_and_verifier<T>(
+    files: &impl FileSystem,
+    source_path: &Path,
+    expected_source_sha256: &str,
+    replacement: &[u8],
+    backup_directory: &Path,
+    verify_readback: impl FnOnce(&[u8]) -> Result<T>,
+) -> Result<(ReplacementReceipt, T)> {
     if replacement.is_empty() {
         return Err(Error::Refused("replacement save is empty".to_owned()));
     }
@@ -446,6 +498,11 @@ pub fn replace_with_file_system(
             "backup directory must be outside the source directory".to_owned(),
         ));
     }
+    if files.is_symlink(&source_path)? {
+        return Err(Error::Refused(
+            "The save is a symbolic link; open the file it points to instead.".to_owned(),
+        ));
+    }
 
     let source_bytes = files.read_all(&source_path)?;
     let source_sha256 = sha256::sha256_hex(&source_bytes);
@@ -455,12 +512,14 @@ pub fn replace_with_file_system(
         )));
     }
     let output_sha256 = sha256::sha256_hex(replacement);
+    let created_at = timestamp_utc()?;
     let token = transaction_token();
     let stem = source_path
         .file_stem()
         .map(|value| value.to_string_lossy())
         .unwrap_or_else(|| "save".into());
-    let artifact_stem = format!("{stem}_{}", token);
+    let stem = stem.chars().take(64).collect::<String>();
+    let artifact_stem = format!("{stem}_{}_{}", file_timestamp(&created_at)?, token);
     let backup_path = backup_directory.join(format!("{artifact_stem}_ORIGINAL.sav"));
     let recovery_path = backup_directory.join(format!("{artifact_stem}_EDITED.sav"));
     let journal_path = backup_directory.join(format!("{artifact_stem}_ORIGINAL.json"));
@@ -474,15 +533,19 @@ pub fn replace_with_file_system(
     files.create_dir_all(&backup_directory)?;
 
     let mut source_replaced = false;
+    let mut backup_created = false;
+    let mut recovery_created = false;
+    let mut journal_created = false;
     let transaction = (|| {
         files.write_new(&backup_path, &source_bytes)?;
+        backup_created = true;
         files.write_new(&recovery_path, replacement)?;
-        let prepared_at = timestamp_utc()?;
+        recovery_created = true;
         files.write_new(
             &journal_path,
             &serialize_journal(&Journal {
                 status: "prepared",
-                created_at: &prepared_at,
+                created_at: &created_at,
                 source_path: &source_path,
                 source_sha256: &source_sha256,
                 output_path: &source_path,
@@ -491,6 +554,7 @@ pub fn replace_with_file_system(
                 recovery_path: &recovery_path,
             }),
         )?;
+        journal_created = true;
         files.write_new(&temporary_output, replacement)?;
 
         let current_source = files.read_all(&source_path)?;
@@ -501,8 +565,9 @@ pub fn replace_with_file_system(
             ));
         }
 
-        files.replace(&temporary_output, &source_path)?;
+        files.copy_permissions(&source_path, &temporary_output)?;
         source_replaced = true;
+        files.replace(&temporary_output, &source_path)?;
 
         let read_back = files.read_all(&source_path)?;
         let read_back_hash = sha256::sha256_hex(&read_back);
@@ -511,13 +576,13 @@ pub fn replace_with_file_system(
                 "replacement read-back did not match the prepared bytes".to_owned(),
             ));
         }
+        let verified_value = verify_readback(&read_back)?;
 
-        let verified_at = timestamp_utc()?;
         files.write_new(
             &temporary_journal,
             &serialize_journal(&Journal {
                 status: "verified",
-                created_at: &verified_at,
+                created_at: &created_at,
                 source_path: &source_path,
                 source_sha256: &source_sha256,
                 output_path: &source_path,
@@ -527,39 +592,74 @@ pub fn replace_with_file_system(
             }),
         )?;
         files.replace(&temporary_journal, &journal_path)?;
-        Ok(())
+        Ok(verified_value)
     })();
 
-    if let Err(error) = transaction {
-        if source_replaced {
-            let rollback = files
-                .write_new(&temporary_rollback, &source_bytes)
-                .and_then(|()| files.replace(&temporary_rollback, &source_path));
-            if let Err(rollback_error) = rollback {
-                cleanup(files, &temporary_output);
-                cleanup(files, &temporary_journal);
-                cleanup(files, &temporary_rollback);
-                return Err(Error::System(format!(
-                    "replacement failed ({error}); restoring the original also failed ({rollback_error})"
-                )));
+    let verified_value = match transaction {
+        Ok(value) => value,
+        Err(error) => {
+            if source_replaced {
+                let rollback = files
+                    .write_new(&temporary_rollback, &source_bytes)
+                    .and_then(|()| files.copy_permissions(&source_path, &temporary_rollback))
+                    .and_then(|()| files.replace(&temporary_rollback, &source_path));
+                if let Err(rollback_error) = rollback {
+                    cleanup(files, &temporary_output);
+                    cleanup(files, &temporary_journal);
+                    cleanup(files, &temporary_rollback);
+                    return Err(Error::System(format!(
+                        "replacement failed ({error}); restoring the original also failed ({rollback_error})"
+                    )));
+                }
+                match files.read_all(&source_path) {
+                    Ok(restored) if restored == source_bytes && sha256::sha256_hex(&restored) == source_sha256 => {}
+                    Ok(_) => {
+                        cleanup(files, &temporary_output);
+                        cleanup(files, &temporary_journal);
+                        cleanup(files, &temporary_rollback);
+                        return Err(Error::System(format!(
+                            "replacement failed ({error}); restoring the original did not pass read-back verification"
+                        )));
+                    }
+                    Err(rollback_error) => {
+                        cleanup(files, &temporary_output);
+                        cleanup(files, &temporary_journal);
+                        cleanup(files, &temporary_rollback);
+                        return Err(Error::System(format!(
+                        "replacement failed ({error}); restoring the original could not be verified ({rollback_error})"
+                    )));
+                    }
+                }
             }
+            cleanup(files, &temporary_output);
+            cleanup(files, &temporary_journal);
+            cleanup(files, &temporary_rollback);
+            if backup_created {
+                cleanup(files, &backup_path);
+            }
+            if recovery_created {
+                cleanup(files, &recovery_path);
+            }
+            if journal_created {
+                cleanup(files, &journal_path);
+            }
+            return Err(error);
         }
-        cleanup(files, &temporary_output);
-        cleanup(files, &temporary_journal);
-        cleanup(files, &temporary_rollback);
-        return Err(error);
-    }
+    };
 
     cleanup(files, &temporary_output);
     cleanup(files, &temporary_journal);
     cleanup(files, &temporary_rollback);
-    Ok(ReplacementReceipt {
-        source_path,
-        backup_path,
-        recovery_path,
-        journal_path,
-        output_sha256,
-    })
+    Ok((
+        ReplacementReceipt {
+            source_path,
+            backup_path,
+            recovery_path,
+            journal_path,
+            output_sha256,
+        },
+        verified_value,
+    ))
 }
 
 fn absolute_path(path: &Path) -> Result<PathBuf> {
@@ -573,10 +673,27 @@ fn absolute_path(path: &Path) -> Result<PathBuf> {
 fn transaction_token() -> String {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
+        .map(|duration| u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX))
         .unwrap_or_default();
     let counter = NEXT_TRANSACTION_ID.fetch_add(1, Ordering::Relaxed);
-    format!("{nanos:032x}-{:08x}-{counter:016x}", std::process::id())
+    let counter = u32::try_from(counter & u64::from(u32::MAX)).unwrap_or_default();
+    format!("{nanos:016x}{:08x}{counter:08x}", std::process::id())
+}
+
+fn file_timestamp(created_at: &str) -> Result<String> {
+    let utc = created_at
+        .split_once('+')
+        .map(|(timestamp, _)| timestamp)
+        .ok_or_else(|| Error::System("journal timestamp has no UTC offset".to_owned()))?;
+    let mut result = utc
+        .chars()
+        .filter(|character| character.is_ascii_digit() || *character == 'T')
+        .collect::<String>();
+    if result.len() != 22 {
+        return Err(Error::System("journal timestamp has an invalid format".to_owned()));
+    }
+    result.push('Z');
+    Ok(result)
 }
 
 struct Journal<'a> {
@@ -993,7 +1110,7 @@ mod tests {
         let journal = std::str::from_utf8(&journal)?;
         assert!(journal.contains("\"status\":\"verified\""));
         assert!(journal.contains(&format!("\"source_sha256\":\"{source_hash}\"")));
-        assert_eq!(fs.operation_count(), 11);
+        assert_eq!(fs.operation_count(), 13);
         Ok(())
     }
 
@@ -1007,7 +1124,7 @@ mod tests {
 
         assert!(replace_with_file_system(&fs, &source, &wrong_hash, output_bytes, &backup_directory).is_err());
         assert_eq!(fs.bytes(&source).as_deref(), Some(source_bytes.as_slice()));
-        assert_eq!(fs.operation_count(), 1);
+        assert_eq!(fs.operation_count(), 2);
         Ok(())
     }
 
@@ -1018,7 +1135,7 @@ mod tests {
         let source_hash = sse_codecs::sha256::sha256_hex(source_bytes);
         let (source, backup_directory) = fake_paths();
 
-        for failure_step in 1..=11 {
+        for failure_step in 1..=13 {
             let fs = MemoryFs::new(&source, source_bytes, Some(failure_step));
             assert!(replace_with_file_system(&fs, &source, &source_hash, output_bytes, &backup_directory).is_err());
             assert_eq!(
@@ -1026,7 +1143,101 @@ mod tests {
                 Some(source_bytes.as_slice()),
                 "step {failure_step}"
             );
+            assert_eq!(fs.files.borrow().len(), 1, "failed artifacts at step {failure_step}");
         }
+        Ok(())
+    }
+
+    #[test]
+    fn semantic_readback_failure_rolls_back_and_cleans_artifacts() -> TestResult {
+        let source_bytes = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-source.sav");
+        let output_bytes = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-expected.sav");
+        let source_hash = sse_codecs::sha256::sha256_hex(source_bytes);
+        let (source, backup_directory) = fake_paths();
+        let fs = MemoryFs::new(&source, source_bytes, None);
+
+        let result = super::replace_with_file_system_and_verifier(
+            &fs,
+            &source,
+            &source_hash,
+            output_bytes,
+            &backup_directory,
+            |read_back| {
+                assert_eq!(read_back, output_bytes);
+                Err::<(), Error>(Error::damaged("injected semantic verification failure"))
+            },
+        );
+
+        assert!(result.is_err());
+        assert_eq!(fs.bytes(&source).as_deref(), Some(source_bytes.as_slice()));
+        assert_eq!(fs.files.borrow().len(), 1);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replacement_preserves_unix_mode_bits() -> TestResult {
+        use std::os::unix::fs::PermissionsExt;
+
+        let unique = format!("sse-storage-permissions-{}", std::process::id());
+        let root = std::env::temp_dir().join(unique);
+        let saves = root.join("saves");
+        let backups = root.join("backups");
+        std::fs::create_dir_all(&saves)?;
+        std::fs::create_dir_all(&backups)?;
+        let source = saves.join("save.sav");
+        let source_bytes = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-source.sav");
+        let replacement = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-expected.sav");
+        std::fs::write(&source, source_bytes)?;
+        std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o640))?;
+        let source_hash = sse_codecs::sha256::sha256_hex(source_bytes);
+
+        let failed = super::replace_transaction_with_verifier(&source, &source_hash, replacement, &backups, |_| {
+            Err::<(), Error>(Error::damaged("injected semantic verification failure"))
+        });
+        assert!(failed.is_err());
+        assert_eq!(std::fs::read(&source)?, source_bytes);
+        let original_mode = std::fs::metadata(&source)?.permissions().mode() & 0o777;
+        assert_eq!(original_mode, 0o640);
+        assert!(std::fs::read_dir(&backups)?.next().is_none());
+        assert!(std::fs::read_dir(&saves)?.all(|entry| { entry.is_ok_and(|entry| entry.file_name() == "save.sav") }));
+
+        let receipt = super::replace_transaction(&source, &source_hash, replacement, &backups)?;
+
+        let mode = std::fs::metadata(&source)?.permissions().mode() & 0o777;
+        assert_eq!(mode, 0o640);
+        assert_eq!(std::fs::read(&source)?, replacement);
+        assert!(receipt
+            .backup_path
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy().contains("_ORIGINAL.sav")));
+        std::fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replacing_a_symbolic_link_is_refused_without_touching_its_target() -> TestResult {
+        let unique = format!("sse-storage-symlink-{}", std::process::id());
+        let root = std::env::temp_dir().join(unique);
+        let saves = root.join("saves");
+        let backups = root.join("backups");
+        std::fs::create_dir_all(&saves)?;
+        std::fs::create_dir_all(&backups)?;
+        let target = saves.join("real.sav");
+        let link = saves.join("linked.sav");
+        let source_bytes = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-source.sav");
+        let replacement = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-expected.sav");
+        std::fs::write(&target, source_bytes)?;
+        std::os::unix::fs::symlink(&target, &link)?;
+        let source_hash = sse_codecs::sha256::sha256_hex(source_bytes);
+
+        let result = super::replace_transaction(&link, &source_hash, replacement, &backups);
+
+        assert!(result.is_err());
+        assert_eq!(std::fs::read(&target)?, source_bytes);
+        assert!(std::fs::read_dir(&backups)?.next().is_none());
+        std::fs::remove_dir_all(root)?;
         Ok(())
     }
 
@@ -1080,6 +1291,11 @@ mod tests {
                 .ok_or_else(|| Error::System(format!("missing synthetic file {}", path.display())))
         }
 
+        fn is_symlink(&self, _path: &Path) -> Result<bool> {
+            self.tick()?;
+            Ok(false)
+        }
+
         fn create_dir_all(&self, _path: &Path) -> Result<()> {
             self.tick()
         }
@@ -1095,6 +1311,10 @@ mod tests {
             }
             files.insert(path.to_path_buf(), bytes.to_vec());
             Ok(())
+        }
+
+        fn copy_permissions(&self, _source: &Path, _destination: &Path) -> Result<()> {
+            self.tick()
         }
 
         fn replace(&self, source: &Path, destination: &Path) -> Result<()> {
