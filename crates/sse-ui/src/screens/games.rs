@@ -19,7 +19,7 @@ pub fn screens() -> Vec<Box<dyn Screen>> {
     let workspace = Workspace::default();
     vec![
         Box::new(GamesOverview::new(workspace)),
-        Box::new(Placeholder::new(ScreenId::GameFixes, "Исправления вылетов и ошибок")),
+        Box::new(GameFixes::default()),
         Box::new(Placeholder::new(ScreenId::GameDoctor, "Проверка установки игры")),
         Box::new(Placeholder::new(ScreenId::Environment, "Инструменты и среда игры")),
         Box::new(Placeholder::new(ScreenId::Encyclopedia, "Предметы, персонажи, локации")),
@@ -1119,4 +1119,184 @@ fn short_text(text: &str, max_chars: usize) -> String {
     let mut result = text.chars().take(keep).collect::<String>();
     result.push('…');
     result
+}
+
+#[derive(Clone, Debug)]
+struct FixRow {
+    id: String,
+    title: String,
+    description: String,
+    version: String,
+    status: String,
+}
+
+#[derive(Debug)]
+enum FixReply {
+    List(std::result::Result<Vec<FixRow>, String>),
+    Changed(std::result::Result<String, String>),
+}
+
+#[derive(Default)]
+struct GameFixes {
+    status: Option<WidgetId>,
+    detail: Option<WidgetId>,
+    rows: Vec<WidgetId>,
+    items: Vec<FixRow>,
+    selected: Option<usize>,
+    install: Option<WidgetId>,
+    remove: Option<WidgetId>,
+    confirm: Option<bool>,
+}
+
+fn fix_target(game: &str) -> Option<sse_fixes::GameTarget> {
+    sse_fixes::GameTarget::parse(game).or_else(|| match game {
+        "stalker-soc" => Some(sse_fixes::GameTarget::ShadowOfChernobyl),
+        "stalker-cs" | "clear_sky" => Some(sse_fixes::GameTarget::ClearSky),
+        "stalker-cop" => Some(sse_fixes::GameTarget::CallOfPripyat),
+        "stalker-soc-ee" => Some(sse_fixes::GameTarget::ShadowOfChernobylEnhancedEdition),
+        "stalker-cs-ee" => Some(sse_fixes::GameTarget::ClearSkyEnhancedEdition),
+        "stalker-cop-ee" => Some(sse_fixes::GameTarget::CallOfPripyatEnhancedEdition),
+        "stalker2" => Some(sse_fixes::GameTarget::Stalker2),
+        _ => None,
+    })
+}
+
+impl GameFixes {
+    fn refresh(&self, cx: &mut Context<'_>) {
+        let game = cx.app.selected_game().map(str::to_owned);
+        let directory = cx.app.game_dir().map(Path::to_path_buf);
+        let Some(proxy) = cx.proxy.cloned() else { return };
+        std::thread::spawn(move || {
+            let result = (|| {
+                let target = game.as_deref().and_then(fix_target).ok_or_else(|| "Выбранная игра не поддерживается каталогом фиксов".to_owned())?;
+                let directory = directory.ok_or_else(|| "Сначала выберите установленную игру".to_owned())?;
+                let engine = sse_fixes::GameFixEngine::new();
+                let installed = engine.list_installed(&directory).map_err(|e| e.to_string())?;
+                let rows = sse_fixes::GameFixCatalog::for_game(target).into_iter().map(|definition| {
+                    let current = installed.iter().find(|item| item.id == definition.id);
+                    let status = if let Some(item) = current {
+                        if item.version != definition.version {
+                            format!("устарел {} → {}", item.version, definition.version)
+                        } else {
+                            match engine.get_status(definition, &directory) {
+                                Ok(sse_fixes::GameFixState::Installed) => "установлен".to_owned(),
+                                Ok(sse_fixes::GameFixState::Modified) => "изменён".to_owned(),
+                                Ok(_) => "не установлен".to_owned(),
+                                Err(error) => format!("ошибка: {error}"),
+                            }
+                        }
+                    } else {
+                        "не установлен".to_owned()
+                    };
+                    FixRow { id: definition.id.clone(), title: definition.title.clone(), description: definition.description.clone(), version: definition.version.clone(), status }
+                }).collect();
+                Ok(rows)
+            })();
+            proxy.send(AppMessage::ToScreen(ScreenId::GameFixes, Box::new(FixReply::List(result))));
+        });
+    }
+
+    fn render(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        if let Some(status) = self.status {
+            cx.tree.set_text(status, &format!("Фиксов: {}", self.items.len()))?;
+        }
+        for (index, widget) in self.rows.iter().copied().enumerate() {
+            if let Some(item) = self.items.get(index) {
+                cx.tree.set_visible(widget, true)?;
+                cx.tree.set_text(widget, &format!("{} · v{} · {}", item.title, item.version, item.status))?;
+            } else {
+                cx.tree.set_visible(widget, false)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Screen for GameFixes {
+    fn id(&self) -> ScreenId { ScreenId::GameFixes }
+    fn subtitle(&self) -> &str { "Каталог исправлений выбранной игры с транзакционной установкой" }
+
+    fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
+        let card = style::card(cx.tree, host)?;
+        style::label(cx.tree, card, "ИСПРАВЛЕНИЯ ИГРЫ", Text::Heading)?;
+        self.status = Some(style::label(cx.tree, card, "Выберите игру", Text::Note)?);
+        for _ in 0..8 {
+            let row = style::button(cx.tree, card, "", Button::Secondary)?;
+            cx.tree.set_visible(row, false)?;
+            self.rows.push(row);
+        }
+        self.detail = Some(style::label(cx.tree, card, "Выберите исправление", Text::Body)?);
+        let actions = style::row(cx.tree, card)?;
+        self.install = Some(style::button(cx.tree, actions, "Установить / обновить", Button::Primary)?);
+        self.remove = Some(style::button(cx.tree, actions, "Удалить", Button::Secondary)?);
+        Ok(())
+    }
+
+    fn shown(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        self.refresh(cx);
+        Ok(())
+    }
+
+    fn message(&mut self, cx: &mut Context<'_>, message: &Message<AppMessage>, clicked: Option<WidgetId>) -> Result<()> {
+        if clicked.is_some() {
+            for (index, row) in self.rows.iter().copied().enumerate() {
+                if clicked == Some(row) && self.items.get(index).is_some() {
+                    self.selected = Some(index);
+                    self.confirm = None;
+                    if let (Some(detail), Some(item)) = (self.detail, self.items.get(index)) {
+                        cx.tree.set_text(detail, &format!("{}\n{}", item.status, item.description))?;
+                    }
+                }
+            }
+        }
+
+        let action = if clicked.is_some() && clicked == self.install { Some(true) } else if clicked.is_some() && clicked == self.remove { Some(false) } else { None };
+        if let Some(install) = action {
+            let Some(index) = self.selected else { cx.status = Some("Сначала выберите исправление".to_owned()); return Ok(()) };
+            if self.confirm != Some(install) {
+                self.confirm = Some(install);
+                cx.status = Some("Операция изменит файлы игры. Нажмите ту же кнопку ещё раз для подтверждения.".to_owned());
+                return Ok(());
+            }
+            self.confirm = None;
+            let Some(item) = self.items.get(index) else { return Ok(()) };
+            let fix_id = item.id.clone();
+            let game = cx.app.selected_game().map(str::to_owned);
+            let directory = cx.app.game_dir().map(Path::to_path_buf);
+            let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
+            std::thread::spawn(move || {
+                let result = (|| {
+                    let directory = directory.ok_or_else(|| "Папка игры не выбрана".to_owned())?;
+                    let target = game.as_deref().and_then(fix_target).ok_or_else(|| "Игра не поддерживается".to_owned())?;
+                    let definition = sse_fixes::GameFixCatalog::try_get(&fix_id).ok_or_else(|| "Фикс исчез из каталога".to_owned())?;
+                    if definition.game != target { return Err("Фикс не относится к выбранной игре".to_owned()); }
+                    let engine = sse_fixes::GameFixEngine::new();
+                    let result = if install {
+                        match engine.get_status(definition, &directory).map_err(|e| e.to_string())? {
+                            sse_fixes::GameFixState::Installed => engine.update(definition, &directory),
+                            _ => engine.install(definition, &directory),
+                        }
+                    } else {
+                        let check = engine.check_uninstall(&fix_id, &directory);
+                        if !check.can_uninstall { return Err(check.reason.unwrap_or_else(|| "Безопасное удаление запрещено".to_owned())); }
+                        engine.uninstall(&fix_id, &directory)
+                    }.map_err(|e| e.to_string())?;
+                    Ok(format!("{}: {:?}; файлов: {}", fix_id, result.state, result.files.len()))
+                })();
+                proxy.send(AppMessage::ToScreen(ScreenId::GameFixes, Box::new(FixReply::Changed(result))));
+            });
+        }
+
+        if let Message::User(AppMessage::ToScreen(ScreenId::GameFixes, payload)) = message {
+            if let Some(reply) = payload.downcast_ref::<FixReply>() {
+                match reply {
+                    FixReply::List(Ok(items)) => { self.items.clone_from(items); self.render(cx)?; }
+                    FixReply::List(Err(error)) => if let Some(status) = self.status { cx.tree.set_text(status, error)?; },
+                    FixReply::Changed(Ok(text)) => { cx.status = Some(text.clone()); self.refresh(cx); }
+                    FixReply::Changed(Err(error)) => cx.status = Some(format!("Исправления: {error}")),
+                }
+            }
+        }
+        Ok(())
+    }
 }
