@@ -298,7 +298,7 @@ impl Shell {
                 style: TextStyle::new(Face::Heading, 18.0),
             },
             Look {
-                text: rgb(style::TEXT_PRIMARY),
+                text: rgb(crate::theme::current().colors.text[0]),
                 ..Look::default()
             },
         )?;
