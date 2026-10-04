@@ -743,16 +743,16 @@ fn s2_info_lines(save: &sse_s2::S2Save, packed: &[u8]) -> Vec<String> {
 }
 
 fn s2_cli_warnings(is_legacy: bool, warnings: &[String]) -> Vec<String> {
-    if is_legacy {
-        return vec![S2_LEGACY_WARNING.to_owned()];
-    }
-    warnings
+    // C# prints every reader warning and puts the 1.0.x layout warning, in Russian, last.
+    let mut lines: Vec<String> = warnings
         .iter()
-        .filter(|warning| {
-            !(warning.contains("object kind=3") && (warning.contains("неизвестный") || warning.contains("unknown")))
-        })
+        .filter(|warning| !warning.contains("1.0.x"))
         .map(|warning| format!("Warning: {warning}"))
-        .collect()
+        .collect();
+    if is_legacy || warnings.iter().any(|warning| warning.contains("1.0.x")) {
+        lines.push(format!("Warning: {S2_LEGACY_WARNING}"));
+    }
+    lines
 }
 
 fn s2_inventory_lines(save: &sse_s2::S2Save) -> Vec<String> {
@@ -1060,21 +1060,19 @@ mod write_tests {
     }
 
     #[test]
-    fn s2_warning_lines_match_the_legacy_text_and_hide_kind_three() {
-        assert_eq!(
-            s2_cli_warnings(true, &["Save uses the game 1.0.x layout".to_owned()]),
-            vec!["Сохранение записано игрой версии 1.0.x: показаны деньги и предметы в сетке рюкзака; надетое снаряжение и состояние предметов не читаются, правка недоступна.".to_owned()]
-        );
+    fn s2_warning_lines_match_the_reference() {
         assert_eq!(
             s2_cli_warnings(
-                false,
+                true,
                 &[
                     "Handle 0x30000001: неизвестный object kind=3, только read-only".to_owned(),
-                    "Handle 0x30000002: неизвестный orphan object kind=3, только read-only".to_owned(),
-                    "Handle 0x30000003: неизвестный orphan object kind=99, только read-only".to_owned(),
+                    "Save uses the game 1.0.x layout".to_owned(),
                 ]
             ),
-            vec!["Warning: Handle 0x30000003: неизвестный orphan object kind=99, только read-only".to_owned()]
+            vec![
+                "Warning: Handle 0x30000001: неизвестный object kind=3, только read-only".to_owned(),
+                format!("Warning: {super::S2_LEGACY_WARNING}"),
+            ]
         );
     }
 
