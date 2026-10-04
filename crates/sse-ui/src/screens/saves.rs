@@ -301,6 +301,14 @@ enum SaveData {
 impl LoadedSave {
     fn read(slot: SaveSlot) -> Result<Self> {
         let packed = SaveBuffer::read(&slot.path)?;
+        Self::from_buffer(slot, packed)
+    }
+
+    fn from_bytes(slot: SaveSlot, bytes: &[u8]) -> Result<Self> {
+        Self::from_buffer(slot, SaveBuffer::from_vec(bytes.to_vec()))
+    }
+
+    fn from_buffer(slot: SaveSlot, packed: SaveBuffer) -> Result<Self> {
         let source_sha256 = sse_codecs::sha256::sha256_hex(packed.as_slice());
         let parsed = match S2Save::from_bytes(packed.as_slice()) {
             Ok(save) => {
@@ -1709,18 +1717,21 @@ fn commit_save_edits_to(
     backup_directory: &Path,
 ) -> Result<(Arc<LoadedSave>, String)> {
     let (packed, _summary) = prepare_save_edits(selected, money, stacks, stash_moves)?;
-    let receipt = transaction::replace_transaction(
+    let (receipt, reloaded) = transaction::replace_transaction_with_verifier(
         &selected.slot.path,
         &selected.source_sha256,
         packed.as_slice(),
         backup_directory,
+        |read_back| {
+            let mut slot = selected.slot.clone();
+            let metadata = std::fs::metadata(&slot.path)?;
+            slot.size = metadata.len();
+            slot.last_write_time_utc = metadata.modified().unwrap_or(slot.last_write_time_utc);
+            let reloaded = LoadedSave::from_bytes(slot, read_back)?;
+            verify_requested_values(&reloaded, money, stacks, stash_moves)?;
+            Ok(reloaded)
+        },
     )?;
-    let mut slot = selected.slot.clone();
-    let metadata = std::fs::metadata(&slot.path)?;
-    slot.size = metadata.len();
-    slot.last_write_time_utc = metadata.modified().unwrap_or(slot.last_write_time_utc);
-    let reloaded = LoadedSave::read(slot)?;
-    verify_requested_values(&reloaded, money, stacks, stash_moves)?;
     Ok((
         Arc::new(reloaded),
         format!(
