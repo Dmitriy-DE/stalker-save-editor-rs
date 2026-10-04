@@ -3,7 +3,7 @@
 use sse_core::{Cursor, Error, Result, SaveBuffer};
 
 const SIGNATURE: u32 = u32::MAX;
-const MAXIMUM_UNPACKED_SIZE: usize = 512 * 1024 * 1024;
+const MAXIMUM_UNPACKED_SIZE: usize = 256 * 1024 * 1024;
 const MAXIMUM_CHUNKS: usize = 65_536;
 
 /// The decompressed X-Ray image and its chunk offsets.

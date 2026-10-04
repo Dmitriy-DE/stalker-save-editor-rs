@@ -13,6 +13,7 @@ path = "src/main.rs"
 sse-codecs = { path = "../sse-codecs" }
 sse-core = { path = "../sse-core" }
 sse-storage = { path = "../sse-storage" }
+sse-s2 = { path = "../sse-s2" }
 sse-xray = { path = "../sse-xray" }
 sse-content = { path = "../sse-content" }
 sse-fixes = { path = "../sse-fixes" }
