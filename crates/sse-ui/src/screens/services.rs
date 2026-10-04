@@ -249,7 +249,12 @@ impl Screen for Companion {
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
         let card = style::card(cx.tree, host)?;
         style::label(cx.tree, card, "МОД-КОМПАНЬОН", Text::Heading)?;
-        style::label(cx.tree, card, "Меню в игре: Esc → F1 или КПК компаньона. Установка через приложение ниже.", Text::Note)?;
+        style::label(
+            cx.tree,
+            card,
+            "Меню в игре: Esc → F1 или КПК компаньона. Установка через приложение ниже.",
+            Text::Note,
+        )?;
         style::label(cx.tree, card, "Целевая игра: выбранная в «Обзоре игр»", Text::Body)?;
         style::label(cx.tree, card, "СТАТУС И СВЯЗЬ", Text::Heading)?;
         self.status = Some(style::label(cx.tree, card, "Выберите игру", Text::Value)?);
@@ -261,17 +266,56 @@ impl Screen for Companion {
         self.refresh_button = Some(style::button(cx.tree, row, "ОБНОВИТЬ СТАТУС", Button::Secondary)?);
         let live = style::card(cx.tree, host)?;
         style::label(cx.tree, live, "ЖИВОЙ ИНСПЕКТОР", Text::Heading)?;
-        style::label(cx.tree, live, "Показываются только ответы протокола Companion: info и list_inventory.", Text::Note)?;
+        style::label(
+            cx.tree,
+            live,
+            "Показываются только ответы протокола Companion: info и list_inventory.",
+            Text::Note,
+        )?;
         self.inspect = Some(style::button(cx.tree, live, "ПОЛУЧИТЬ ДАННЫЕ", Button::Secondary)?);
-        style::label(cx.tree, live, "Для живой проверки нужен установленный Companion-протокол.", Text::Note)?;
+        style::label(
+            cx.tree,
+            live,
+            "Для живой проверки нужен установленный Companion-протокол.",
+            Text::Note,
+        )?;
         let s2 = style::card(cx.tree, host)?;
-        style::label(cx.tree, s2, "S.T.A.L.K.E.R. 2 — команды игры (экспериментально)", Text::Heading)?;
+        style::label(
+            cx.tree,
+            s2,
+            "S.T.A.L.K.E.R. 2 — команды игры (экспериментально)",
+            Text::Heading,
+        )?;
         style::label(cx.tree, s2, "Нужны S2 на ПК, UE4SS и установленный мод. Команды выполняет сама игра (XSetGodMode, XSetNoClipGSC, XSetTimeSpeed).", Text::Note)?;
-        for command in ["Бессмертие: вкл", "Бессмертие: выкл", "Полёт: вкл", "Полёт: выкл", "Время ×5", "Время: норма"] { style::button(cx.tree, s2, command, Button::Secondary)?; }
+        for command in [
+            "Бессмертие: вкл",
+            "Бессмертие: выкл",
+            "Полёт: вкл",
+            "Полёт: выкл",
+            "Время ×5",
+            "Время: норма",
+        ] {
+            style::button(cx.tree, s2, command, Button::Secondary)?;
+        }
         let all = style::card(cx.tree, host)?;
         style::label(cx.tree, all, "ВСЕ ИГРЫ", Text::Heading)?;
-        for game in ["S.T.A.L.K.E.R. Зов Припяти", "S.T.A.L.K.E.R. Чистое Небо", "S.T.A.L.K.E.R. Тень Чернобыля", "Зов Припяти (Enhanced Edition)", "Чистое Небо (Enhanced Edition)", "Тень Чернобыля (Enhanced Edition)", "S.T.A.L.K.E.R. 2 (экспериментально, нужен UE4SS)"] { style::label(cx.tree, all, &format!("[ ] {game} · игра не найдена"), Text::Body)?; }
-        style::button(cx.tree, all, "УСТАНОВИТЬ / ОБНОВИТЬ ВО ВСЕ ОТМЕЧЕННЫЕ", Button::Secondary)?;
+        for game in [
+            "S.T.A.L.K.E.R. Зов Припяти",
+            "S.T.A.L.K.E.R. Чистое Небо",
+            "S.T.A.L.K.E.R. Тень Чернобыля",
+            "Зов Припяти (Enhanced Edition)",
+            "Чистое Небо (Enhanced Edition)",
+            "Тень Чернобыля (Enhanced Edition)",
+            "S.T.A.L.K.E.R. 2 (экспериментально, нужен UE4SS)",
+        ] {
+            style::label(cx.tree, all, &format!("[ ] {game} · игра не найдена"), Text::Body)?;
+        }
+        style::button(
+            cx.tree,
+            all,
+            "УСТАНОВИТЬ / ОБНОВИТЬ ВО ВСЕ ОТМЕЧЕННЫЕ",
+            Button::Secondary,
+        )?;
         let hot = style::card(cx.tree, host)?;
         style::label(cx.tree, hot, "ГОРЯЧИЕ КЛАВИШИ", Text::Heading)?;
         style::label(cx.tree, hot, "Приложение перехватывает сочетание и отправляет команду моду через файл-протокол. Игра должна быть запущена с установленным модом.", Text::Note)?;
@@ -307,7 +351,10 @@ impl Screen for Companion {
             return Ok(());
         }
         if clicked.is_some() && (clicked == self.ping || clicked == self.inspect) {
-            cx.status = Some("Для живой связи ядру нужен resolver каталога file-protocol для выбранной игры; UI не угадывает путь.".to_owned());
+            cx.status = Some(
+                "Для живой связи ядру нужен resolver каталога file-protocol для выбранной игры; UI не угадывает путь."
+                    .to_owned(),
+            );
             return Ok(());
         }
         if clicked.is_some() && clicked == self.default_hotkeys {
