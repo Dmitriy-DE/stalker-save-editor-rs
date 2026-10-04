@@ -1566,7 +1566,14 @@ impl GameFixes {
 
     fn render(&mut self, cx: &mut Context<'_>) -> Result<()> {
         if let Some(status) = self.status {
-            cx.tree.set_text(status, &if self.items.is_empty() { "НЕТ ПРОВЕРЕННЫХ ИСПРАВЛЕНИЙ ДЛЯ ЭТОЙ ВЕРСИИ.".to_owned() } else { format!("ИСПРАВЛЕНИЙ В КАТАЛОГЕ: {}", self.items.len()) })?;
+            cx.tree.set_text(
+                status,
+                &if self.items.is_empty() {
+                    "НЕТ ПРОВЕРЕННЫХ ИСПРАВЛЕНИЙ ДЛЯ ЭТОЙ ВЕРСИИ.".to_owned()
+                } else {
+                    format!("ИСПРАВЛЕНИЙ В КАТАЛОГЕ: {}", self.items.len())
+                },
+            )?;
         }
         for (index, widget) in self.rows.iter().copied().enumerate() {
             if let Some(item) = self.items.get(index) {
@@ -1773,18 +1780,28 @@ impl Screen for GameFixes {
             let Some(directory) = cx.app.game_dir().map(Path::to_path_buf) else {
                 return Ok(());
             };
-            let verified = self.verified.as_ref().is_some_and(|state| {
-                state.game == game && state.directory == directory
-            });
+            let verified = self
+                .verified
+                .as_ref()
+                .is_some_and(|state| state.game == game && state.directory == directory);
             if !verified {
                 cx.status = Some("СНАЧАЛА ПРОВЕРЬТЕ УСТАНОВКУ И ВЕРСИЮ.".to_owned());
                 return Ok(());
             }
             let target = fix_target(&game).ok_or_else(|| sse_core::Error::damaged("Игра не поддерживается"))?;
-            let build = self.verified.as_ref().map(|state| state.build.as_str()).unwrap_or_default();
+            let build = self
+                .verified
+                .as_ref()
+                .map(|state| state.build.as_str())
+                .unwrap_or_default();
             if sse_fixes::GameFixCatalog::for_preset(target, preset)
                 .iter()
-                .any(|definition| !definition.supported_steam_build_ids.iter().any(|id| id.as_str() == build))
+                .any(|definition| {
+                    !definition
+                        .supported_steam_build_ids
+                        .iter()
+                        .any(|id| id.as_str() == build)
+                })
             {
                 cx.status = Some(format!("СБОРКА STEAM {build} НЕ ПОДДЕРЖИВАЕТ ВЫБРАННЫЙ ПРЕСЕТ."));
                 return Ok(());
@@ -1825,9 +1842,11 @@ impl Screen for GameFixes {
                 return Ok(());
             };
             if install {
-                let Some(verified) = self.verified.as_ref().filter(|state| {
-                    state.game == game && state.directory == directory
-                }) else {
+                let Some(verified) = self
+                    .verified
+                    .as_ref()
+                    .filter(|state| state.game == game && state.directory == directory)
+                else {
                     cx.status = Some("СНАЧАЛА ПРОВЕРЬТЕ УСТАНОВКУ И ВЕРСИЮ.".to_owned());
                     return Ok(());
                 };
@@ -1841,7 +1860,11 @@ impl Screen for GameFixes {
             }
             self.intent = Some(FixIntent {
                 fix_id: Some(item.id.clone()),
-                operation: if install { FixOperation::Install } else { FixOperation::Remove },
+                operation: if install {
+                    FixOperation::Install
+                } else {
+                    FixOperation::Remove
+                },
                 game,
                 directory,
             });
@@ -1879,7 +1902,9 @@ impl Screen for GameFixes {
                     let engine = sse_fixes::GameFixEngine::new();
                     match operation {
                         FixOperation::Preset(preset) => {
-                            let result = engine.apply_preset(target, preset, &directory).map_err(|e| e.to_string())?;
+                            let result = engine
+                                .apply_preset(target, preset, &directory)
+                                .map_err(|e| e.to_string())?;
                             Ok(format!(
                                 "ПРЕСЕТ {}: УСТАНОВЛЕНО {}; УЖЕ АКТУАЛЬНЫХ {}.",
                                 preset.as_str(),
@@ -1895,26 +1920,30 @@ impl Screen for GameFixes {
                                 return Err("Фикс не относится к выбранной игре".to_owned());
                             }
                             let result = match operation {
-                                FixOperation::Install => match engine
-                                    .get_status(definition, &directory)
-                                    .map_err(|e| e.to_string())?
-                                {
-                                    sse_fixes::GameFixState::Installed => engine.update(definition, &directory),
-                                    _ => engine.install(definition, &directory),
-                                },
+                                FixOperation::Install => {
+                                    match engine.get_status(definition, &directory).map_err(|e| e.to_string())? {
+                                        sse_fixes::GameFixState::Installed => engine.update(definition, &directory),
+                                        _ => engine.install(definition, &directory),
+                                    }
+                                }
                                 FixOperation::Remove => {
                                     let check = engine.check_uninstall(&fix_id, &directory);
                                     if !check.can_uninstall {
-                                        return Err(check.reason.unwrap_or_else(|| {
-                                            "Безопасное удаление запрещено".to_owned()
-                                        }));
+                                        return Err(check
+                                            .reason
+                                            .unwrap_or_else(|| "Безопасное удаление запрещено".to_owned()));
                                     }
                                     engine.uninstall(&fix_id, &directory)
                                 }
                                 FixOperation::Preset(_) => unreachable!(),
                             }
                             .map_err(|e| e.to_string())?;
-                            Ok(format!("{}: {:?}; файлов: {}", fix_id, result.state, result.files.len()))
+                            Ok(format!(
+                                "{}: {:?}; файлов: {}",
+                                fix_id,
+                                result.state,
+                                result.files.len()
+                            ))
                         }
                     }
                 })();
