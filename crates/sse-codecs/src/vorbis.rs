@@ -351,7 +351,13 @@ fn read_codebook(bits: &mut Bits<'_>, budget: &mut HeaderBudget) -> Result<Codeb
             "Vorbis codebook dimensions/entry limit exceeded".to_owned(),
         ));
     }
+    let maximum_nodes = entries
+        .checked_mul(2)
+        .and_then(|value| value.checked_add(1))
+        .ok_or_else(|| Error::Refused("Vorbis Huffman tree size overflow".to_owned()))?;
     budget.reserve::<u8>(entries)?;
+    budget.reserve::<(usize, u8)>(entries)?;
+    budget.reserve::<HuffNode>(maximum_nodes)?;
     let mut lengths = vec![0_u8; entries];
     if bits.flag()? {
         let mut entry = 0_usize;
@@ -380,7 +386,6 @@ fn read_codebook(bits: &mut Bits<'_>, budget: &mut HeaderBudget) -> Result<Codeb
             }
         }
     }
-    budget.reserve::<(usize, u8)>(entries)?;
     let active: Vec<(usize, u8)> = lengths
         .iter()
         .copied()
@@ -399,13 +404,12 @@ fn read_codebook(bits: &mut Bits<'_>, budget: &mut HeaderBudget) -> Result<Codeb
     } else {
         None
     };
-    let maximum_nodes = active
+    let tree_capacity = active
         .len()
         .checked_mul(2)
         .and_then(|value| value.checked_add(1))
         .ok_or_else(|| Error::Refused("Vorbis Huffman tree size overflow".to_owned()))?;
-    budget.reserve::<HuffNode>(maximum_nodes)?;
-    let mut tree = Vec::with_capacity(maximum_nodes);
+    let mut tree = Vec::with_capacity(tree_capacity);
     tree.push(HuffNode::default());
     if single.is_none() {
         for (symbol, length) in active {
