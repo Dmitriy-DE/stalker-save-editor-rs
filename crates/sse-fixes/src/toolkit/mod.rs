@@ -10,7 +10,7 @@ pub mod snapshot;
 pub mod user_ltx;
 
 pub use audit::{AuditItem, FileClassification, ToolkitAuditReport, ToolkitInstallAudit};
-pub use profile::{ProfileApplyResult, ToolkitProfile, ToolkitProfileService};
+pub use profile::{ProfileApplyResult, StoredToolkitProfile, ToolkitProfile, ToolkitProfileService};
 pub use s2_mods::{ModToggleResult, ModToggleStatus, Stalker2ModToggle};
 pub use snapshot::{InstalledFixSnapshot, SnapshotRestoreReport, ToolkitSnapshot, ToolkitSnapshotService};
 pub use user_ltx::{
