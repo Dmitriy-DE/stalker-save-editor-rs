@@ -223,6 +223,9 @@ impl AppState {
         let source_sha256 = plan.source_sha256.clone();
         let has_changes = plan.money.is_some()
             || !plan.stack_counts.is_empty()
+            || !plan.durability.is_empty()
+            || !plan.placements.is_empty()
+            || !plan.upgrades.is_empty()
             || !plan.detach_handles.is_empty()
             || !plan.adds.is_empty()
             || !plan.stash_takes.is_empty()

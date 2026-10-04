@@ -156,6 +156,7 @@ pub struct Tree {
     previous_dialog_focus: Option<WidgetId>,
     modal_dialog: Option<WidgetId>,
     overlay_host: Option<WidgetId>,
+    changed_inputs: Vec<WidgetId>,
 }
 
 impl Tree {
@@ -178,6 +179,7 @@ impl Tree {
             previous_dialog_focus: None,
             modal_dialog: None,
             overlay_host: None,
+            changed_inputs: Vec::new(),
         }
     }
 
@@ -368,6 +370,84 @@ impl Tree {
             _ => return Ok(()),
         }
         self.restyle(id)
+    }
+
+    /// Returns the current value of an input widget.
+    ///
+    /// # Errors
+    /// Returns damage for an unknown widget or a widget that is not an input.
+    pub fn input_text(&self, id: WidgetId) -> Result<&str> {
+        match &self.node(id)?.content {
+            Content::Input { text, .. } => Ok(text.as_str()),
+            _ => Err(Error::damaged("widget is not an input")),
+        }
+    }
+
+    /// Replaces an input widget's value and records it as changed.
+    ///
+    /// # Errors
+    /// Returns damage for an unknown widget or a widget that is not an input.
+    pub fn set_input_text(&mut self, id: WidgetId, value: &str) -> Result<()> {
+        let changed = match &mut self.node_mut(id)?.content {
+            Content::Input { text, .. } if text != value => {
+                value.clone_into(text);
+                true
+            }
+            Content::Input { .. } => false,
+            _ => return Err(Error::damaged("widget is not an input")),
+        };
+        if changed {
+            self.mark_input_changed(id);
+            self.restyle(id)?;
+        }
+        Ok(())
+    }
+
+    /// Applies one portable keyboard edit to the focused input.
+    ///
+    /// Printable text is inserted at the end of the one-line value. Backspace
+    /// removes one Unicode scalar. Clipboard backends can pass pasted text via
+    /// `text`; control characters and line breaks are ignored.
+    pub fn edit_focused_input(&mut self, keysym: u32, text: Option<&str>) -> Result<bool> {
+        let Some(id) = self.focused else {
+            return Ok(false);
+        };
+        if !matches!(self.node(id)?.content, Content::Input { .. }) {
+            return Ok(false);
+        }
+        let mut value = self.input_text(id)?.to_owned();
+        let changed = if keysym == 0xff08 {
+            value.pop().is_some()
+        } else if let Some(inserted) = text {
+            let filtered: String = inserted
+                .chars()
+                .filter(|ch| !ch.is_control() && *ch != '\n' && *ch != '\r')
+                .collect();
+            if filtered.is_empty() {
+                false
+            } else {
+                value.push_str(&filtered);
+                true
+            }
+        } else {
+            false
+        };
+        if changed {
+            self.set_input_text(id, &value)?;
+        }
+        Ok(changed)
+    }
+
+    /// Drains input widgets whose values changed since the previous call.
+    #[must_use]
+    pub fn take_changed_inputs(&mut self) -> Vec<WidgetId> {
+        std::mem::take(&mut self.changed_inputs)
+    }
+
+    fn mark_input_changed(&mut self, id: WidgetId) {
+        if !self.changed_inputs.contains(&id) {
+            self.changed_inputs.push(id);
+        }
     }
 
     /// Replaces how a widget looks.
@@ -1105,6 +1185,51 @@ mod tests {
         assert!(tree.close_dialog()?);
         assert_eq!(tree.focused(), Some(background));
         assert_eq!(tree.hit(10, 10), Some(background));
+        Ok(())
+    }
+    #[test]
+    fn input_set_get_and_changed_queue() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let input = tree.add(
+            None,
+            NodeKind::Leaf,
+            Style::default(),
+            Content::Input {
+                text: String::new(),
+                style: TextStyle::new(Face::Body, 14.0),
+            },
+            Look::default(),
+        )?;
+        assert_eq!(tree.input_text(input)?, "");
+        tree.set_input_text(input, "profile")?;
+        assert_eq!(tree.input_text(input)?, "profile");
+        assert_eq!(tree.take_changed_inputs(), vec![input]);
+        assert!(tree.take_changed_inputs().is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn focused_input_accepts_characters_backspace_and_inserted_text() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let input = tree.add(
+            None,
+            NodeKind::Leaf,
+            Style::default(),
+            Content::Input {
+                text: String::new(),
+                style: TextStyle::new(Face::Body, 14.0),
+            },
+            Look::default(),
+        )?;
+        tree.set_focus(Some(input))?;
+        assert!(tree.edit_focused_input(u32::from('a'), Some("a"))?);
+        assert!(tree.edit_focused_input(u32::from('b'), Some("b"))?);
+        assert_eq!(tree.input_text(input)?, "ab");
+        assert!(tree.edit_focused_input(0xff08, None)?);
+        assert_eq!(tree.input_text(input)?, "a");
+        assert!(tree.edit_focused_input(0, Some(" вставка"))?);
+        assert_eq!(tree.input_text(input)?, "a вставка");
+        assert_eq!(tree.take_changed_inputs(), vec![input]);
         Ok(())
     }
 }
