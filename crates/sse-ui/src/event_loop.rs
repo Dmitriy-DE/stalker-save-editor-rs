@@ -10,8 +10,13 @@ use sse_core::Result;
 use std::sync::mpsc::{channel, Receiver, Sender};
 
 /// Platform-independent window input.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum WindowEvent {
+    /// The native backing scale changed (for example, after moving between DPI-scaled monitors).
+    DpiChanged {
+        /// Logical-to-framebuffer scale, where `1.0` is 96 DPI.
+        scale: f32,
+    },
     /// The window has a new size in pixels.
     Resized {
         /// Width.
@@ -196,6 +201,7 @@ fn handle<U, A: App<U>>(tree: &mut Tree, app: &mut A, message: &Message<U>) -> F
     let mut clicked = None;
     if let Message::Window(event) = message {
         match *event {
+            WindowEvent::DpiChanged { scale } => tree.set_scale(scale),
             WindowEvent::Resized { width, height } => tree.resize(width, height),
             WindowEvent::Exposed(rect) => tree.add_damage(rect),
             WindowEvent::PointerMoved { x, y } => {

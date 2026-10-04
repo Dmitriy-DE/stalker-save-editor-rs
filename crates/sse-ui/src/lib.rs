@@ -25,6 +25,9 @@ pub mod unicode_tables;
 pub mod wayland;
 /// Retained widget tree with damage tracking (U1).
 pub mod widget;
+/// Win32 window adapter over the safe `sse-sys` window API.
+#[cfg(any(windows, test))]
+pub mod win32_window;
 /// X11 core protocol, MIT-SHM, XKB and clipboard encoding over a transport trait (X11).
 pub mod x11;
 /// X11 window backend over a Unix socket (U1).
