@@ -389,7 +389,8 @@ impl Tree {
         let node = self.node_mut(id)?;
         node.style = style;
         let layout = node.layout;
-        self.layout.set_style(layout, self.text_style(&self.node(id)?.content, style))?;
+        self.layout
+            .set_style(layout, self.text_style(&self.node(id)?.content, style))?;
         self.needs_layout = true;
         self.damage_all();
         Ok(())
@@ -920,7 +921,9 @@ fn paint_node(
         if let Ok(bitmap) = icon_cache.get(*icon, size, look.text.to_u32()) {
             if let Ok(mask) = MaskRef::new(&bitmap.alpha, u32::from(size), u32::from(size), usize::from(size)) {
                 let x = rect.x.saturating_add(to_px(padding.left.max(8.0)));
-                let y = rect.y.saturating_add(i32::try_from(rect.height.saturating_sub(u32::from(size)) / 2).unwrap_or(0));
+                let y = rect
+                    .y
+                    .saturating_add(i32::try_from(rect.height.saturating_sub(u32::from(size)) / 2).unwrap_or(0));
                 surface.blit_mask(mask, x, y, Color::from_u32(bitmap.color));
             }
         }
@@ -934,7 +937,11 @@ fn paint_node(
         look.text
     };
     let line = fonts.line_height(style);
-    let icon_inset = if matches!(content, Content::IconButton { text, .. } if !text.is_empty()) { 24.0 } else { 0.0 };
+    let icon_inset = if matches!(content, Content::IconButton { text, .. } if !text.is_empty()) {
+        24.0
+    } else {
+        0.0
+    };
     let left = i32_to_f32(rect.x) + padding.left + icon_inset;
     if matches!(content, Content::Paragraph { .. }) {
         let inner_width = (u32_to_f32(rect.width) - padding.left - padding.right).max(1.0);
