@@ -404,10 +404,10 @@ impl Screen for HistoryScreen {
         self.subtitle
     }
 
-    fn shown(&mut self, _cx: &mut Context<'_>) -> Result<()> {
+    fn shown(&mut self, cx: &mut Context<'_>) -> Result<()> {
         self.workspace.poll_tasks();
         if self.id == ScreenId::Compare {
-            let selected = self.workspace.current_save_path();
+            let selected = cx.app.current_save().map(Path::to_path_buf);
             if self.compare_selection.first().cloned() != selected {
                 self.compare_selection = selected.into_iter().collect();
             }

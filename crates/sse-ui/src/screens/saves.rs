@@ -58,10 +58,6 @@ impl Workspace {
         self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    pub(crate) fn current_save_path(&self) -> Option<PathBuf> {
-        self.lock().app_state.current_save().map(Path::to_path_buf)
-    }
-
     pub(crate) fn spawn<F>(&self, name: &'static str, work: F)
     where
         F: FnOnce(sse_app::tasks::TaskContext) + Send + 'static,
@@ -79,7 +75,6 @@ impl Workspace {
 
 #[derive(Default)]
 struct WorkspaceState {
-    app_state: sse_app::AppState,
     tasks: sse_app::TaskManager,
     scanning: bool,
     discovery: Option<sse_storage::discovery::SaveDiscoveryResult>,
@@ -349,6 +344,18 @@ fn start_discovery(workspace: &Workspace, cx: &mut Context<'_>) {
 }
 
 fn start_load(workspace: &Workspace, slot: SaveSlot, cx: &mut Context<'_>) {
+    start_load_from(workspace, move || Ok(slot), false, cx);
+}
+
+fn start_load_path(workspace: &Workspace, path: &Path, cx: &mut Context<'_>) {
+    let path = path.to_path_buf();
+    start_load_from(workspace, move || slot_for_path(&path), true, cx);
+}
+
+fn start_load_from<F>(workspace: &Workspace, slot: F, include_discovery: bool, cx: &mut Context<'_>)
+where
+    F: FnOnce() -> Result<SaveSlot> + Send + 'static,
+{
     let Some(proxy) = cx.proxy.cloned() else {
         cx.status = Some("Загрузка сейва доступна в работающем окне редактора.".to_owned());
         return;
@@ -359,38 +366,61 @@ fn start_load(workspace: &Workspace, slot: SaveSlot, cx: &mut Context<'_>) {
         state.loading = true;
         state.load_error = None;
         state.selected = None;
-        state.app_state.set_current_save(None);
         state.pending_money = None;
         state.pending_stacks.clear();
         state.load_request
     };
+    cx.app.set_current_save(None);
     let workspace = workspace.clone();
     workspace.clone().spawn("save-load", move |context| {
         if context.is_cancelled() {
             return;
         }
-        let result = LoadedSave::read(slot);
+        let result = slot().and_then(LoadedSave::read);
         let mut state = workspace.lock();
         if state.load_request != request {
             return;
         }
         state.loading = false;
-        match result {
+        let completion = match result {
             Ok(save) => {
                 state.load_error = None;
-                state.app_state.set_current_save(Some(save.slot.path.clone()));
+                if include_discovery {
+                    let searched_paths = save.slot.path.parent().map(Path::to_path_buf).into_iter().collect();
+                    state.discovery = Some(sse_storage::discovery::SaveDiscoveryResult {
+                        slots: vec![save.slot.clone()],
+                        searched_paths,
+                    });
+                }
+                let path = save.slot.path.clone();
                 state.selected = Some(Arc::new(save));
+                LoadFinished {
+                    request,
+                    selected_path: Some(path),
+                    error: None,
+                }
             }
             Err(error) => {
                 state.selected = None;
-                state.app_state.set_current_save(None);
-                state.load_error = Some(error.to_string());
+                let error = error.to_string();
+                state.load_error = Some(error.clone());
+                LoadFinished {
+                    request,
+                    selected_path: None,
+                    error: Some(error),
+                }
             }
-        }
+        };
         drop(state);
-        let _ = proxy.send(AppMessage::ToScreen(ScreenId::Overview, Box::new(())));
+        let _ = proxy.send(AppMessage::ToScreen(ScreenId::Overview, Box::new(completion)));
     });
     cx.status = Some("Загружаю и проверяю выбранный сейв…".to_owned());
+}
+
+struct LoadFinished {
+    request: u64,
+    selected_path: Option<PathBuf>,
+    error: Option<String>,
 }
 
 fn save_game_key(slot: &SaveSlot) -> &str {
@@ -623,27 +653,12 @@ impl Screen for Overview {
     }
 
     fn open_save(&mut self, cx: &mut Context<'_>, path: &Path) -> Result<bool> {
-        let slot = slot_for_path(path)?;
-        if cx.proxy.is_some() {
-            start_load(&self.workspace, slot, cx);
-            return Ok(true);
-        }
-        let loaded = LoadedSave::read(slot.clone())?;
-        let parent = path.parent().map(Path::to_path_buf).into_iter().collect();
-        {
-            let mut state = self.workspace.lock();
-            state.discovery = Some(sse_storage::discovery::SaveDiscoveryResult {
-                slots: vec![loaded.slot.clone()],
-                searched_paths: parent,
-            });
-            state.loading = false;
-            state.load_error = None;
-            state.app_state.set_current_save(Some(path.to_path_buf()));
-            state.selected = Some(Arc::new(loaded));
+        if cx.proxy.is_none() {
+            cx.status = Some("Открытие сейва требует фонового канала приложения.".to_owned());
+            return Ok(false);
         }
         self.page = 0;
-        self.render(cx)?;
-        cx.status = Some(format!("Открыт fixture-сейв {}", path.display()));
+        start_load_path(&self.workspace, path, cx);
         Ok(true)
     }
 
@@ -721,7 +736,22 @@ impl Screen for Overview {
                 return Ok(());
             }
         }
-        if matches!(message, Message::User(AppMessage::ToScreen(ScreenId::Overview, _))) {
+        if let Message::User(AppMessage::ToScreen(ScreenId::Overview, payload)) = message {
+            if let Some(LoadFinished {
+                request,
+                selected_path,
+                error,
+            }) = payload.downcast_ref::<LoadFinished>()
+            {
+                if self.workspace.lock().load_request == *request {
+                    cx.app.set_current_save(selected_path.clone());
+                    if let Some(error) = error {
+                        cx.status = Some(format!("Сейв не загружен: {error}"));
+                    } else {
+                        cx.status = Some("Сейв прочитан и проверен.".to_owned());
+                    }
+                }
+            }
             self.render(cx)?;
         }
         Ok(())
@@ -1353,11 +1383,11 @@ impl Screen for Inventory {
                 match result {
                     Ok((loaded, text)) => {
                         let mut state = self.workspace.lock();
-                        state.app_state.set_current_save(Some(loaded.slot.path.clone()));
                         state.selected = Some(Arc::clone(loaded));
                         state.pending_money = None;
                         state.pending_stacks.clear();
                         drop(state);
+                        cx.app.set_current_save(Some(loaded.slot.path.clone()));
                         if let Some(id) = self.status {
                             cx.tree.set_text(id, text)?;
                         }
@@ -1544,8 +1574,15 @@ fn short_text(text: &str, limit: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        commit_save_edits_to, prepare_save_edits, prepare_xray_edits, LoadedSave, S2Save, SaveBuffer, SaveSlot,
+        commit_save_edits_to, prepare_save_edits, prepare_xray_edits, LoadFinished, LoadedSave, Overview, S2Save,
+        SaveBuffer, SaveSlot, Workspace,
     };
+    use crate::event_loop::{channel_pair, Message};
+    use crate::glyphs::Fonts;
+    use crate::layout::{NodeKind, Style};
+    use crate::raster::Color;
+    use crate::screens::{AppMessage, Context, Screen, ScreenId};
+    use crate::widget::{Content, Look, Tree};
     use sse_core::Error;
     use sse_xray::Save;
     use std::collections::BTreeMap;
@@ -1684,6 +1721,61 @@ mod tests {
         assert!(sse_storage::transaction::list_backups(&temp.0.join("s2-backups"))?
             .iter()
             .any(|entry| entry.status == sse_storage::transaction::BackupStatus::Verified));
+        Ok(())
+    }
+
+    #[test]
+    fn background_fixture_load_updates_the_shared_app_state_via_to_screen() -> sse_core::Result<()> {
+        let temp = TempDirectory::new();
+        let path = temp.0.join("fixture.sav");
+        fs::write(
+            &path,
+            include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-source.sav"),
+        )?;
+        let (proxy, receiver) = channel_pair::<AppMessage>();
+        let mut overview = Overview::new(Workspace::default());
+        let mut app = sse_app::AppState::new();
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        {
+            let mut cx = Context {
+                tree: &mut tree,
+                proxy: Some(&proxy),
+                status: None,
+                app: &mut app,
+            };
+            overview.build(&mut cx, host)?;
+            assert!(overview.open_save(&mut cx, &path)?);
+        }
+        let message = receiver
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .map_err(|error| Error::System(error.to_string()))?;
+        let completion = match &message {
+            Message::User(AppMessage::ToScreen(ScreenId::Overview, payload)) => payload.downcast_ref::<LoadFinished>(),
+            _ => None,
+        };
+        assert!(completion.is_some(), "unexpected background message: {message:?}");
+        let completion = completion.ok_or_else(|| Error::damaged("missing save-load completion"))?;
+        assert_eq!(completion.request, overview.workspace.lock().load_request);
+        assert_eq!(
+            completion.selected_path.as_deref(),
+            Some(path.as_path()),
+            "background loader did not return the fixture path"
+        );
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: Some(&proxy),
+            status: None,
+            app: &mut app,
+        };
+        overview.message(&mut cx, &message, None)?;
+        assert_eq!(cx.app.current_save(), Some(path.as_path()));
         Ok(())
     }
 }

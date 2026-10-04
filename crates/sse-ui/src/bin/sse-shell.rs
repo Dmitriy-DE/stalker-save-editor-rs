@@ -4,9 +4,9 @@
 //! headless and writes a PNG without opening a window or playing sounds; `--bench` reports paint timings.
 
 use sse_core::{Error, Result};
-use sse_ui::event_loop::channel_pair;
 #[cfg(all(unix, not(target_os = "macos")))]
 use sse_ui::event_loop::Present;
+use sse_ui::event_loop::{channel_pair, App, Message};
 use sse_ui::glyphs::Fonts;
 use sse_ui::screens::shell::Shell;
 use sse_ui::screens::style::rgb;
@@ -70,7 +70,31 @@ fn screenshot(args: &[String]) -> Result<()> {
     let mut tree = Tree::new(Fonts::bundled()?, rgb(BG_BASE));
     let mut shell = Shell::build(&mut tree, None)?;
     if let Some(save_path) = open_save {
-        shell.open_save(&mut tree, std::path::Path::new(save_path))?;
+        let (proxy, receiver) = channel_pair::<AppMessage>();
+        shell.set_proxy(proxy);
+        if !shell.open_save(&mut tree, std::path::Path::new(save_path))? {
+            return Err(Error::Refused("could not start background save loading".to_owned()));
+        }
+        let deadline = Instant::now()
+            .checked_add(Duration::from_secs(15))
+            .ok_or_else(|| Error::System("invalid screenshot save-load deadline".to_owned()))?;
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(Error::System("timed out loading screenshot save".to_owned()));
+            }
+            let message = receiver
+                .recv_timeout(remaining)
+                .map_err(|error| Error::System(format!("screenshot save load failed: {error}")))?;
+            let finished = matches!(&message, Message::User(AppMessage::ToScreen(ScreenId::Overview, _)));
+            shell.message(&mut tree, &message, None);
+            if finished {
+                if shell.app().current_save().is_none() {
+                    return Err(Error::Damaged("screenshot save could not be read".to_owned()));
+                }
+                break;
+            }
+        }
     }
     if let Some(id) = nav.and_then(|i| ScreenId::ALL.get(i)) {
         shell.open(&mut tree, *id)?;

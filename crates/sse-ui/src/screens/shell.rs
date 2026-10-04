@@ -255,6 +255,11 @@ impl Shell {
         &self.app
     }
 
+    /// Installs the event proxy after a headless shell has been built.
+    pub fn set_proxy(&mut self, proxy: Proxy<AppMessage>) {
+        self.proxy = Some(proxy);
+    }
+
     /// Currently shown screen.
     #[must_use]
     pub fn current(&self) -> Option<ScreenId> {
@@ -285,6 +290,7 @@ impl Shell {
             tree,
             proxy: self.proxy.as_ref(),
             status: None,
+            app: &mut self.app,
         };
         let opened = self
             .screens
