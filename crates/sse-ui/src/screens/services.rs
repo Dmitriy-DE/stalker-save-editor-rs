@@ -562,7 +562,10 @@ impl Cloud {
                 .ok_or_else(|| "Для выбранной игры нет Steam App ID".to_owned())
                 .and_then(|app_id| worker(&Request::List { app_id }))
                 .and_then(|b| cloud_files(&b));
-            proxy.send(AppMessage::ToScreen(ScreenId::Cloud, Box::new(CloudReply::List(result))));
+            proxy.send(AppMessage::ToScreen(
+                ScreenId::Cloud,
+                Box::new(CloudReply::List(result)),
+            ));
         });
     }
 
@@ -570,7 +573,8 @@ impl Cloud {
         for (i, row) in self.rows.iter().copied().enumerate() {
             if let Some(f) = self.items.get(i) {
                 cx.tree.set_visible(row, true)?;
-                cx.tree.set_text(row, &format!("{} · {} KiB", clip(&f.name), f.size / 1024))?;
+                cx.tree
+                    .set_text(row, &format!("{} · {} KiB", clip(&f.name), f.size / 1024))?;
             } else {
                 cx.tree.set_visible(row, false)?;
             }
@@ -608,7 +612,10 @@ impl Cloud {
                     local,
                     local_sha256: sse_codecs::sha256::sha256(&bytes),
                 });
-            proxy.send(AppMessage::ToScreen(ScreenId::Cloud, Box::new(CloudReply::Prepared(result))));
+            proxy.send(AppMessage::ToScreen(
+                ScreenId::Cloud,
+                Box::new(CloudReply::Prepared(result)),
+            ));
         });
     }
 
@@ -618,7 +625,10 @@ impl Cloud {
             let result = (|| {
                 let output = std::fs::read(&intent.local).map_err(|error| format!("Ошибка записи: {error}"))?;
                 if sse_codecs::sha256::sha256(&output) != intent.local_sha256 {
-                    return Ok("Aborted: Локальный файл изменился после запроса записи; подтвердите запись ещё раз.".to_owned());
+                    return Ok(
+                        "Aborted: Локальный файл изменился после запроса записи; подтвердите запись ещё раз."
+                            .to_owned(),
+                    );
                 }
                 let source = worker(&Request::Read {
                     app_id: intent.app_id,
@@ -661,13 +671,18 @@ impl Cloud {
                     Err(error) => Err(format!("Ошибка записи: {error}")),
                 }
             })();
-            proxy.send(AppMessage::ToScreen(ScreenId::Cloud, Box::new(CloudReply::Done(result))));
+            proxy.send(AppMessage::ToScreen(
+                ScreenId::Cloud,
+                Box::new(CloudReply::Done(result)),
+            ));
         });
     }
 }
 
 impl Screen for Cloud {
-    fn id(&self) -> ScreenId { ScreenId::Cloud }
+    fn id(&self) -> ScreenId {
+        ScreenId::Cloud
+    }
 
     fn subtitle(&self) -> &str {
         "Steam Cloud: список, локальная копия и защищённая запись"
@@ -676,7 +691,12 @@ impl Screen for Cloud {
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
         let card = style::card(cx.tree, host)?;
         style::label(cx.tree, card, "STEAM CLOUD", Text::Heading)?;
-        self.status = Some(style::label(cx.tree, card, "Список не загружен. Нажмите «ОБНОВИТЬ СПИСОК».", Text::Note)?);
+        self.status = Some(style::label(
+            cx.tree,
+            card,
+            "Список не загружен. Нажмите «ОБНОВИТЬ СПИСОК».",
+            Text::Note,
+        )?);
         let refresh = style::button(cx.tree, card, "ОБНОВИТЬ СПИСОК", Button::Secondary)?;
         self.download = Some(style::button(cx.tree, card, "СКАЧАТЬ В ЛОКАЛЬНЫЕ", Button::Secondary)?);
         self.upload = Some(style::button(cx.tree, card, "ЗАПИСАТЬ В ОБЛАКО...", Button::Primary)?);
@@ -696,7 +716,12 @@ impl Screen for Cloud {
             "Внимание: локальный файл будет отправлен в Steam Cloud и перезапишет облачное сохранение. Резервная копия будет сохранена в бэкапы.",
             Text::Body,
         )?;
-        self.confirm_check = Some(style::button(cx.tree, confirm, "[ ] Я подтверждаю перезапись", Button::Secondary)?);
+        self.confirm_check = Some(style::button(
+            cx.tree,
+            confirm,
+            "[ ] Я подтверждаю перезапись",
+            Button::Secondary,
+        )?);
         let actions = style::row(cx.tree, confirm)?;
         self.confirm_write = Some(style::button(cx.tree, actions, "ЗАПИСАТЬ", Button::Primary)?);
         self.confirm_cancel = Some(style::button(cx.tree, actions, "ОТМЕНА", Button::Secondary)?);
@@ -753,7 +778,9 @@ impl Screen for Cloud {
                 cx.status = Some("Установите флажок «Я подтверждаю перезапись».".to_owned());
             } else if let Some(intent) = self.intent.take() {
                 self.overwrite_confirmed = false;
-                if let Some(card) = self.confirm_card { cx.tree.set_visible(card, false)?; }
+                if let Some(card) = self.confirm_card {
+                    cx.tree.set_visible(card, false)?;
+                }
                 cx.status = Some(format!("Запись {} в Steam Cloud (RemoteStorage)...", intent.remote));
                 self.upload(cx, intent);
             }
@@ -765,7 +792,9 @@ impl Screen for Cloud {
                 return Ok(());
             };
             let Some(item) = self.items.get(i) else { return Ok(()) };
-            let Some(app_id) = cx.app.selected_game().and_then(app_id) else { return Ok(()) };
+            let Some(app_id) = cx.app.selected_game().and_then(app_id) else {
+                return Ok(());
+            };
             let Some(local) = cx.app.current_save().map(Path::to_path_buf) else {
                 cx.status = Some("Сначала откройте локальный сейв".to_owned());
                 return Ok(());
@@ -774,7 +803,10 @@ impl Screen for Cloud {
             let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
             std::thread::spawn(move || {
                 let result = (|| {
-                    let source = worker(&Request::Read { app_id, remote_name: remote })?;
+                    let source = worker(&Request::Read {
+                        app_id,
+                        remote_name: remote,
+                    })?;
                     let backup = local.with_extension("cloud-backup");
                     if local.is_file() {
                         std::fs::copy(&local, &backup).map_err(|error| error.to_string())?;
@@ -784,7 +816,10 @@ impl Screen for Cloud {
                     std::fs::rename(&temp, &local).map_err(|error| error.to_string())?;
                     Ok(format!("Файл успешно скачан: {}", local.display()))
                 })();
-                proxy.send(AppMessage::ToScreen(ScreenId::Cloud, Box::new(CloudReply::Done(result))));
+                proxy.send(AppMessage::ToScreen(
+                    ScreenId::Cloud,
+                    Box::new(CloudReply::Done(result)),
+                ));
             });
         }
 
@@ -796,13 +831,19 @@ impl Screen for Cloud {
                         self.render(cx)?;
                     }
                     CloudReply::List(Err(error)) => {
-                        if let Some(status) = self.status { cx.tree.set_text(status, &format!("Ошибка загрузки списка: {error}"))?; }
+                        if let Some(status) = self.status {
+                            cx.tree.set_text(status, &format!("Ошибка загрузки списка: {error}"))?;
+                        }
                     }
                     CloudReply::Prepared(Ok(intent)) => {
                         self.intent = Some(intent.clone());
                         self.overwrite_confirmed = false;
-                        if let Some(check) = self.confirm_check { cx.tree.set_text(check, "[ ] Я подтверждаю перезапись")?; }
-                        if let Some(card) = self.confirm_card { cx.tree.set_visible(card, true)?; }
+                        if let Some(check) = self.confirm_check {
+                            cx.tree.set_text(check, "[ ] Я подтверждаю перезапись")?;
+                        }
+                        if let Some(card) = self.confirm_card {
+                            cx.tree.set_visible(card, true)?;
+                        }
                     }
                     CloudReply::Prepared(Err(error)) => cx.status = Some(error.clone()),
                     CloudReply::Done(Ok(text)) => {
