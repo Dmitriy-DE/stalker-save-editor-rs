@@ -62,7 +62,7 @@ impl Wizard {
                 },
                 ..Style::default()
             },
-            Content::Label {
+            Content::Input {
                 text: "Путь к папке с сейвами…".to_owned(),
                 style: TextStyle::new(Face::Body, 16.0),
             },
@@ -159,6 +159,7 @@ impl Wizard {
         clicked: Option<WidgetId>,
         status: &mut Option<String>,
     ) -> Result<Option<ScreenId>> {
+        self.input.focus(tree.focused() == Some(self.path_input), 0);
         if clicked.is_some() && clicked == Some(self.path_input) {
             self.input.focus(true, 0);
         }
@@ -205,6 +206,14 @@ impl Wizard {
             shift,
         }) = message
         {
+            if *keysym == 0xff09 || (*ctrl && matches!(*keysym, 0x46 | 0x66 | 0x53 | 0x73)) {
+                return Ok(None);
+            }
+            if matches!(*keysym, 0xff0d | 0xff1b) && self.input.focused() {
+                self.input.focus(false, 0);
+                tree.set_focus(None)?;
+                return Ok(None);
+            }
             if self.input.focused() {
                 let key = match *keysym {
                     0xff08 => Key::Backspace,

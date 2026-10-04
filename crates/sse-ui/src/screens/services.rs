@@ -2,7 +2,7 @@
 
 use super::style::{self, Button, Text};
 use super::{AppMessage, Context, Screen, ScreenId};
-use crate::event_loop::Message;
+use crate::event_loop::{Message, WindowEvent};
 use crate::widget::WidgetId;
 use sse_core::Result;
 use sse_steam::api::{Achievement, CloudFile};
@@ -549,7 +549,11 @@ impl Cloud {
         self.intent = None;
         self.overwrite_confirmed = false;
         if let Some(card) = self.confirm_card {
-            cx.tree.set_visible(card, false)?;
+            if cx.tree.dialog() == Some(card) {
+                let _ = cx.tree.close_dialog()?;
+            } else {
+                cx.tree.set_visible(card, false)?;
+            }
         }
         Ok(())
     }
@@ -707,7 +711,8 @@ impl Screen for Cloud {
             self.rows.push(row);
         }
 
-        let confirm = style::card(cx.tree, host)?;
+        let overlay = cx.tree.overlay_host().unwrap_or(host);
+        let confirm = style::card(cx.tree, overlay)?;
         self.confirm_card = Some(confirm);
         style::label(cx.tree, confirm, "ПОДТВЕРЖДЕНИЕ ЗАПИСИ", Text::Heading)?;
         style::label(
@@ -729,12 +734,34 @@ impl Screen for Cloud {
         Ok(())
     }
 
+    fn shown(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        if self.intent.is_some() {
+            if let Some(card) = self.confirm_card {
+                cx.tree.open_dialog(card)?;
+            }
+        }
+        Ok(())
+    }
+
     fn message(
         &mut self,
         cx: &mut Context<'_>,
         message: &Message<AppMessage>,
         clicked: Option<WidgetId>,
     ) -> Result<()> {
+        if matches!(
+            message,
+            Message::Window(WindowEvent::Key {
+                pressed: true,
+                keysym: 0xff1b,
+                ..
+            })
+        ) && self.confirm_card.is_some_and(|card| cx.tree.dialog() == Some(card))
+        {
+            self.clear_intent(cx)?;
+            cx.status = Some("Aborted: Запись отменена пользователем.".to_owned());
+            return Ok(());
+        }
         if clicked.is_some() && self.rows.first().copied() == clicked {
             self.clear_intent(cx)?;
             self.selected = None;
@@ -779,7 +806,11 @@ impl Screen for Cloud {
             } else if let Some(intent) = self.intent.take() {
                 self.overwrite_confirmed = false;
                 if let Some(card) = self.confirm_card {
-                    cx.tree.set_visible(card, false)?;
+                    if cx.tree.dialog() == Some(card) {
+                        let _ = cx.tree.close_dialog()?;
+                    } else {
+                        cx.tree.set_visible(card, false)?;
+                    }
                 }
                 cx.status = Some(format!("Запись {} в Steam Cloud (RemoteStorage)...", intent.remote));
                 self.upload(cx, intent);
@@ -841,8 +872,10 @@ impl Screen for Cloud {
                         if let Some(check) = self.confirm_check {
                             cx.tree.set_text(check, "[ ] Я подтверждаю перезапись")?;
                         }
-                        if let Some(card) = self.confirm_card {
-                            cx.tree.set_visible(card, true)?;
+                        if self.upload.is_some_and(|upload| cx.tree.is_visible(upload)) {
+                            if let Some(card) = self.confirm_card {
+                                cx.tree.open_dialog(card)?;
+                            }
                         }
                     }
                     CloudReply::Prepared(Err(error)) => cx.status = Some(error.clone()),
