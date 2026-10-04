@@ -16,7 +16,7 @@
 //!   - `game_id`: optional length-prefixed string (`0xFFFF` if `None`)
 //!   - `detection_error`: optional length-prefixed string (`0xFFFF` if `None`)
 
-use crate::discovery::locator::{normalize_full_path, resolve_links, SaveDirectoryCandidate};
+use crate::discovery::locator::{normalize_full_path, resolve_entry_path, resolve_links, SaveDirectoryCandidate};
 use crate::discovery::slot::SaveSlot;
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -255,12 +255,12 @@ impl LibraryIndex {
                 continue;
             }
 
-            let Ok(entries) = fs::read_dir(&directory) else {
+            let Ok(entries) = fs::read_dir(&identity) else {
                 continue;
             };
 
             for entry in entries.flatten() {
-                let path = entry.path();
+                let path = resolve_entry_path(&identity, &entry);
                 let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
                     continue;
                 };
@@ -273,13 +273,11 @@ impl LibraryIndex {
                     continue;
                 }
 
-                let full_path = normalize_full_path(&path);
-                let resolved_path = resolve_links(&full_path);
-                if !seen.insert(resolved_path.clone()) {
+                if !seen.insert(path.clone()) {
                     continue;
                 }
 
-                found_files.push((resolved_path, candidate.game_id.clone(), candidate.release_id.clone()));
+                found_files.push((path, candidate.game_id.clone(), candidate.release_id.clone()));
             }
         }
 

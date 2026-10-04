@@ -1,6 +1,6 @@
 //! Save slot discovery, format identification, and sorting.
 
-use crate::discovery::locator::{normalize_full_path, resolve_links, SaveDirectoryCandidate};
+use crate::discovery::locator::{normalize_full_path, resolve_entry_path, resolve_links, SaveDirectoryCandidate};
 use std::collections::HashSet;
 use std::fs;
 use std::io;
@@ -93,12 +93,12 @@ impl SaveSlotDiscovery {
 
             searched_paths.push(identity.clone());
 
-            let Ok(entries) = fs::read_dir(&directory) else {
+            let Ok(entries) = fs::read_dir(&identity) else {
                 continue;
             };
 
             for entry in entries.flatten() {
-                let file_path = entry.path();
+                let file_path = resolve_entry_path(&identity, &entry);
                 let Some(file_name) = file_path.file_name().and_then(|n| n.to_str()) else {
                     continue;
                 };
@@ -107,15 +107,13 @@ impl SaveSlotDiscovery {
                     continue;
                 }
 
-                let full_path = normalize_full_path(&file_path);
-                let resolved_path = resolve_links(&full_path);
-                let path_key = resolved_path.to_string_lossy().to_string();
+                let path_key = file_path.to_string_lossy().to_string();
                 if !seen_slots.insert(path_key) {
                     continue;
                 }
 
                 found_files.push(SlotTarget {
-                    path: resolved_path,
+                    path: file_path,
                     candidate_game_id: candidate.game_id.clone(),
                     candidate_release_id: candidate.release_id.clone(),
                 });
