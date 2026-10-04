@@ -324,12 +324,12 @@ impl Screen for Settings {
                     .unwrap_or(0);
                 let old = crate::theme::current();
                 crate::theme::apply_appearance(
-                    crate::theme::THEMES[self.theme].0,
-                    crate::theme::ACCENT_IDS[self.accent],
+                    self.theme_choice().0,
+                    self.accent_choice(),
                 );
                 repaint_theme(cx.tree, old, crate::theme::current());
                 if let Some(value) = self.theme_value {
-                    cx.tree.set_text(value, crate::theme::THEMES[self.theme].1)?;
+                    cx.tree.set_text(value, self.theme_choice().1)?;
                 }
                 self.pending_save = clicked;
                 cx.status = Some("Тема применена. Нажмите «Изменить» ещё раз, чтобы сохранить настройку.".to_owned());
@@ -337,7 +337,7 @@ impl Screen for Settings {
         }
         if clicked.is_some() && clicked == self.accent_button {
             if self.pending_save == clicked {
-                self.settings.accent_id = crate::theme::ACCENT_IDS[self.accent].to_owned();
+                self.settings.accent_id = self.accent_choice().to_owned();
                 save_settings(&self.settings)?;
                 self.pending_save = None;
                 cx.status = Some("Акцент сохранён".to_owned());
@@ -349,12 +349,12 @@ impl Screen for Settings {
                     .unwrap_or(0);
                 let old = crate::theme::current();
                 crate::theme::apply_appearance(
-                    crate::theme::THEMES[self.theme].0,
-                    crate::theme::ACCENT_IDS[self.accent],
+                    self.theme_choice().0,
+                    self.accent_choice(),
                 );
                 repaint_theme(cx.tree, old, crate::theme::current());
                 if let Some(value) = self.accent_value {
-                    cx.tree.set_text(value, crate::theme::ACCENT_IDS[self.accent])?;
+                    cx.tree.set_text(value, self.accent_choice())?;
                 }
                 self.pending_save = clicked;
                 cx.status = Some("Акцент применён. Нажмите «Изменить» ещё раз, чтобы сохранить настройку.".to_owned());
@@ -368,7 +368,7 @@ impl Screen for Settings {
                 cx.status = Some("Масштаб сохранён".to_owned());
             } else {
                 self.scale = self.scale.saturating_add(1).checked_rem(SCALES.len()).unwrap_or(0);
-                let percent = SCALES[self.scale];
+                let percent = self.scale_choice();
                 cx.tree.set_scale(percent as f32 / 100.0);
                 if let Some(value) = self.scale_value {
                     cx.tree.set_text(value, &format!("{percent} %"))?;
