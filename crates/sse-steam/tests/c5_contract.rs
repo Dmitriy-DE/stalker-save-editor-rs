@@ -2,15 +2,19 @@
 
 use std::fs;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use sse_steam::achievements::{AchievementConfirmation, AchievementService};
 use sse_steam::api::{CloudFile, ScriptedSteamApi, SteamApi};
+use sse_steam::autocloud::AutoCloudSteamApi;
 use sse_steam::cloud::{
     validate_remote_save_path, write_auto_cloud, PreparedEdit, SteamCloudWriteTransaction,
-    UnavailableSaveFormatVerifier,
+    UnavailableSaveFormatVerifier, MAX_CLOUD_FILE_BYTES,
 };
-use sse_steam::discovery::{auto_cloud_path, find_auto_cloud_root, parse_library_paths, STALKER_2_APP_ID};
+use sse_steam::discovery::{
+    auto_cloud_path, find_auto_cloud_root, list_auto_cloud_files, parse_library_paths, read_auto_cloud_file,
+    STALKER_2_APP_ID,
+};
 use sse_steam::protocol::{
     decode_request, decode_response_body, encode_frame, handle_request, read_frame, serve_one, Request, MAX_FRAME_BYTES,
 };
@@ -23,6 +27,17 @@ fn temp_dir(label: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!("sse-steam-{label}-{}-{nanos}", std::process::id()));
     assert!(fs::create_dir_all(&path).is_ok());
     path
+}
+
+fn symlink_file(target: &std::path::Path, link: &std::path::Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(target, link)
+    }
+    #[cfg(windows)]
+    {
+        std::os::windows::fs::symlink_file(target, link)
+    }
 }
 
 #[test]
@@ -105,6 +120,107 @@ fn discovers_only_the_injected_proton_autocloud_root() {
     assert_eq!(found, expected_root.ok());
     assert!(find_auto_cloud_root(4500, None, [library.clone()]).is_none());
     let _ = fs::remove_dir_all(library);
+}
+
+#[test]
+fn local_autocloud_api_lists_and_reads_only_from_the_selected_steam_library() {
+    let library = temp_dir("autocloud-api");
+    let auto_cloud_root = library.join("steamapps/compatdata/1643320/pfx/drive_c/users/tester/AppData/Local");
+    let save_path = auto_cloud_root.join("Stalker2/Saved/STEAM/SaveGames/Data/slot.sav");
+    assert!(save_path
+        .parent()
+        .is_some_and(|parent| fs::create_dir_all(parent).is_ok()));
+    assert!(fs::write(&save_path, b"synthetic S2 Auto-Cloud save").is_ok());
+
+    let mut api = AutoCloudSteamApi::with_roots([library.clone()], None);
+    assert!(api.initialize(STALKER_2_APP_ID).is_ok());
+    assert!(api.run_callbacks().is_ok());
+    let listed = api.list_files();
+    assert!(listed.is_ok());
+    assert!(listed.is_ok_and(|files| {
+        files
+            .iter()
+            .any(|file| file.name == "Stalker2/Saved/STEAM/SaveGames/Data/slot.sav")
+    }));
+    assert_eq!(
+        api.read_file("Stalker2/Saved/STEAM/SaveGames/Data/slot.sav").ok(),
+        Some(b"synthetic S2 Auto-Cloud save".to_vec())
+    );
+    let response = handle_request(
+        &mut api,
+        Request::Read {
+            app_id: STALKER_2_APP_ID,
+            remote_name: "Stalker2/Saved/STEAM/SaveGames/Data/slot.sav".into(),
+        },
+    );
+    assert!(response.ok);
+    assert_eq!(response.payload, b"synthetic S2 Auto-Cloud save");
+    assert!(api.initialize(4500).is_err());
+
+    let _ = fs::remove_dir_all(library);
+}
+
+#[test]
+fn auto_cloud_reader_lists_and_reads_bounded_files_under_the_stalker2_tree() {
+    let root = temp_dir("autocloud-read");
+    let game_root = root.join("Stalker2/Saved/STEAM/SaveGames/Data");
+    assert!(fs::create_dir_all(&game_root).is_ok());
+    let save_path = game_root.join("slot.sav");
+    assert!(fs::write(&save_path, b"synthetic cloud save").is_ok());
+    let outside = root.join("outside.sav");
+    assert!(fs::write(&outside, b"outside synthetic file").is_ok());
+    let symlink = game_root.join("linked.sav");
+    let symlink_created = symlink_file(&outside, &symlink).is_ok();
+    let oversized_path = game_root.join("oversized.sav");
+    let oversized = fs::File::create(&oversized_path);
+    assert!(oversized.is_ok_and(|file| file
+        .set_len(u64::try_from(MAX_CLOUD_FILE_BYTES).unwrap_or(0) + 1)
+        .is_ok()));
+
+    let listed = list_auto_cloud_files(&root);
+    assert!(listed.is_ok());
+    let Ok(listed) = listed else { return };
+    assert_eq!(listed.len(), 2);
+    assert!(listed
+        .iter()
+        .any(|file| file.name == "Stalker2/Saved/STEAM/SaveGames/Data/slot.sav"));
+    assert_eq!(
+        read_auto_cloud_file(&root, "Stalker2/Saved/STEAM/SaveGames/Data/slot.sav").ok(),
+        Some(b"synthetic cloud save".to_vec())
+    );
+    assert!(read_auto_cloud_file(&root, "Stalker2/../outside.sav").is_err());
+    assert!(read_auto_cloud_file(&root, "Stalker2/Saved/STEAM/SaveGames/Data/oversized.sav").is_err());
+    if symlink_created {
+        assert!(list_auto_cloud_files(&root).is_ok_and(|files| files.len() == 2));
+        assert!(read_auto_cloud_file(&root, "Stalker2/Saved/STEAM/SaveGames/Data/linked.sav").is_err());
+    }
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+#[ignore = "manual Release Auto-Cloud read throughput measurement"]
+fn release_autocloud_read_1_mib_throughput_measurement() {
+    let root = temp_dir("autocloud-read-bench");
+    let game_root = root.join("Stalker2/Saved/STEAM/SaveGames/Data");
+    assert!(fs::create_dir_all(&game_root).is_ok());
+    let path = game_root.join("benchmark.sav");
+    let payload = vec![0x5a; 1024 * 1024];
+    assert!(fs::write(&path, &payload).is_ok());
+    drop(payload);
+
+    let iterations = 100_u32;
+    let started = Instant::now();
+    for _ in 0..iterations {
+        let result = read_auto_cloud_file(&root, "Stalker2/Saved/STEAM/SaveGames/Data/benchmark.sav");
+        assert!(result.is_ok_and(|bytes| bytes.len() == 1024 * 1024 && bytes.first() == Some(&0x5a)));
+    }
+    let elapsed = started.elapsed();
+    println!(
+        "Auto-Cloud synthetic 1 MiB read: {iterations} reads in {elapsed:?}; {:.3} us/read; one payload Vec/read, 1 MiB bound exercised",
+        elapsed.as_secs_f64() * 1_000_000.0 / f64::from(iterations)
+    );
+    let _ = fs::remove_dir_all(root);
 }
 
 #[test]

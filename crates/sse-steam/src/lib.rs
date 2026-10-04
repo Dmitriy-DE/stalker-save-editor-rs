@@ -3,6 +3,7 @@
 
 pub mod achievements;
 pub mod api;
+pub mod autocloud;
 pub mod cloud;
 pub mod discovery;
 pub mod protocol;

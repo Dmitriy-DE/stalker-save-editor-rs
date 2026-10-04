@@ -6,7 +6,7 @@ use std::process::{Command, ExitCode, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use crate::api::NativeSteamApiUnavailable;
+use crate::autocloud::AutoCloudSteamApi;
 use crate::protocol::{self, ProtocolError, Request, Response};
 
 /// Result of checking the first command-line argument.
@@ -43,7 +43,7 @@ pub fn run_if_worker(arguments: &[String]) -> Option<ExitCode> {
             let stdout = std::io::stdout();
             let mut input = stdin.lock();
             let mut output = stdout.lock();
-            let mut api = NativeSteamApiUnavailable;
+            let mut api = AutoCloudSteamApi::default();
             match protocol::serve_one(&mut api, &mut input, &mut output) {
                 Ok(()) => Some(ExitCode::SUCCESS),
                 Err(error) => {
