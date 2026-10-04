@@ -1631,3 +1631,1040 @@
 9. «Доктор сохранения» → отчёт без ошибок структуры.
 10. «Исправления игры» → `ПРОВЕРИТЬ СОВМЕСТИМОСТЬ` → установить и удалить одно исправление → файлы игры совпадают с исходными.
 11. «Настройки» → тема `День` → перезапуск → тема сохранилась.
+
+
+---
+
+# Часть II. Ядро
+
+## ACCEPTANCE-CORE.md — спецификация приёмки ядра S.T.A.L.K.E.R. Save Editor (C# 1.3.1 → Rust)
+
+Источник: `StalkerSaveEditor.Core`, `StalkerSaveEditor.Steam`, `StalkerSaveEditor.Updater` (C# 1.3.1). Документ дополняет `ACCEPTANCE.md` (интерфейс) и закрывает места, помеченные там как «не определено из исходников».
+
+В архиве **нет** хост-адаптеров, которые связывают UI с Steam и апдейтером: реализаций `ICloudServiceAdapter`, `ISteamAchievementsAdapter`, `IUpdateServiceAdapter` (их задаёт `HostPlatform.Create*` в приложении-хосте). Поэтому для части сценариев отображение «ядро → текст в UI» по-прежнему **не определено из исходников**. Такие места помечены отдельно (§16).
+
+---
+
+### 0. Соглашения
+
+1. **Тексты ошибок ядра — английские.** В UI они попадают внутрь шаблонов вида `Не удалось сохранить: {0}`, `Ошибка восстановления: {0}`, `ОШИБКА: {0}` и не переводятся. Эталон — строки ниже; их надо сохранить дословно или осознанно заменить вместе с этим документом.
+2. **SHA-256** везде — lowercase hex из 64 символов.
+3. **«Атомарно»** в документе означает: временный файл в той же папке, запись с `WriteThrough` и `flush(true)`, затем переименование поверх цели и fsync каталога (Linux/macOS, по возможности). Подробно — §2.
+4. **Права доступа.** Пометка «права владельца» означает режим `0600` на Unix; на Windows права не меняются.
+5. **Проверка на ссылки.** Почти все операции записи отказываются работать через символические ссылки и точки повторной обработки (reparse points). Точные тексты отказов приведены в разделах.
+
+---
+
+### 1. Пути данных (`AppPaths`, `Diagnostics/AppLog.cs`)
+
+| Назначение | Путь |
+|---|---|
+| Корень данных | `$STALKER_SAVE_EDITOR_DATA`, если задана и не пустая; иначе `<LocalApplicationData>/StalkerSaveEditor` (Linux: `~/.local/share/StalkerSaveEditor`, Windows: `%LOCALAPPDATA%\StalkerSaveEditor`) |
+| Журнал | `<данные>/logs/save-editor.log`: ротация при превышении 1 МиБ, хранятся 3 файла `.1`…`.3` |
+| Отчёт о сбое | `<данные>/logs/last-crash.txt`: обезличен, до 64 КБ символов |
+| Бэкапы сейвов | `<данные>/backups` (по умолчанию; в UI можно сменить) |
+| Черновики | `<данные>/drafts` |
+| Кэш контента игр | `<данные>/content` |
+| Снимки среды | `<данные>/snapshots/snapshots/<id>/snapshot.json` и `<данные>/snapshots/objects/<sha256>` (контент-адресуемое хранилище) |
+| Профили среды | `<данные>/profiles/<id>.json` |
+| Состояние user.ltx | `<данные>/toolkit-config` |
+| Настройки UI | `<данные>/settings.json` (см. `ACCEPTANCE.md` §23.4) |
+| Кэш звука UI | `<данные>/audio` |
+
+В папке игры:
+
+| Владелец | Путь |
+|---|---|
+| Исправления игры | `<игра>/.save-editor-game-fixes/<fixId>/manifest.json`, `transaction.json`, `backups/file-NNNN.before`, `RECOVERY.txt` |
+| Компаньон X-Ray | `<игра>/.save-editor-companion/manifest.json`, `transaction.json`, `transaction/`, `backups/<относительный путь>.original` |
+| Компаньон S2 | `<UE4SS Mods>/SaveEditorCompanion/` с маркером `save_editor_install.json` |
+| Моды S2 (отключённые) | `<игра>/Stalker2/Content/~mods.disabled` |
+
+**Чек-лист:**
+
+1. Запустить с `STALKER_SAVE_EDITOR_DATA=/tmp/sse` → журнал, бэкапы, черновики и настройки появляются в `/tmp/sse/...`.
+2. Без переменной на Linux → `~/.local/share/StalkerSaveEditor/logs/save-editor.log` существует после запуска.
+3. Довести журнал до размера > 1 МиБ → появляется `save-editor.log.1`. Файлов `.4` не бывает.
+
+---
+
+### 2. Атомарная запись (`Storage/AtomicFile.cs`, `Patching/GameFileSystem.cs`)
+
+**`DurableFile.WriteNew(path, bytes, ownerOnly)`**:
+
+- `CreateNew` — отказ, если файл уже есть;
+- `WriteThrough`, затем `Flush(flushToDisk: true)`;
+- при `ownerOnly` на Unix режим `0600`;
+- при ошибке созданный файл удаляется.
+
+**`DurableFile.Move(src, dst, overwrite)`**: `File.Move`, затем fsync каталога назначения. Делается только на Linux/macOS, ошибки fsync игнорируются; на Windows не выполняется.
+
+**`AtomicFile.WriteAllBytes`** — для собственных файлов приложения (кэши, настройки, профили):
+
+- временный файл `.<имя>.<guid>.tmp` в той же папке;
+- `WriteNew`, затем `Move(overwrite)`;
+- временный файл удаляется в любом случае.
+
+**`AtomicGameFileWriter.Write`** — для файлов игры:
+
+- временный файл `<путь>.tmp-<guid>`;
+- `WriteNew` **без** ограничения прав (файлы игры сохраняют обычные права);
+- `Move`.
+
+**Требования к Rust:**
+
+- После прерывания процесса на любом шаге целевой файл содержит либо старые, либо новые байты целиком.
+- Временные файлы при штатной ошибке не остаются.
+- На Unix файлы сейвов, бэкапов, журналов и черновиков создаются с правами `0600`.
+
+**Чек-лист:**
+
+1. Убить процесс в момент записи `settings.json` (например, точка останова между `WriteNew` и `Move`) → `settings.json` содержит прежнюю версию; рядом может остаться `.settings.json.<guid>.tmp`, только если процесс был именно убит.
+2. После любого успешного сохранения сейва на Linux → `stat -c %a` у бэкапа, `_EDITED.sav`, журнала и **самого сейва** = `600` (см. §15 п.1).
+
+---
+
+### 3. `EditService` — подготовка правки (`Editing/EditService.cs`)
+
+**Назначение:** проверяет, разрешена ли правка для формата; превращает план правки (`EditPlan`) в новые байты сейва (`PreparedEdit`); проверяет результат.
+
+#### 3.1 Разрешения (`CanEdit`)
+
+- `CanEdit(releaseId)` без видов правок равносильно «можно писать `edit_money`».
+- `CanEdit(releaseId, kinds)` — для каждого вида правки нужны **все** перечисленные возможности со зрелостью `experimental` или `verified`:
+
+| Вид правки (`EditKind`) | Когда входит в план | Нужные возможности |
+|---|---|---|
+| Money | `Money != null` | `edit_money` |
+| StackCounts | есть пачки | `edit_stacks` |
+| Delete | есть удаления | `remove_items` |
+| Add | есть добавления | `add_items` |
+| XRayStashTransfer | есть `StashTakes` или `StashPuts` | **`add_items`** |
+| Stalker2StashTransfer | задан `Stalker2StashTakeHandle` | `move_items` |
+| Upgrades | есть апгрейды | `edit_upgrades` |
+| Durability | есть прочность | `edit_durability` |
+| Placement | есть размещения | `edit_placement` |
+| Faction | есть отношения | `edit_relations` **и** `edit_player_faction` |
+
+**Матрица возможностей** — встроенный `Capabilities/Data/capability-snapshot.json` (v = verified, e = experimental, — = unsupported):
+
+| Возможность | ТЧ | ЧН | ЗП | ТЧ EE | ЧН EE | ЗП EE | S2 |
+|---|---|---|---|---|---|---|---|
+| edit_money | v | v | v | e | e | e | e |
+| edit_stacks | v | v | v | e | e | e | e |
+| edit_durability | e | e | e | — | — | — | e |
+| edit_placement | e | e | e | — | — | — | — |
+| edit_upgrades | — | e | e | — | — | — | — |
+| edit_relations | e | e | e | — | — | — | — |
+| edit_player_faction | e | e | e | — | — | — | — |
+| move_items | e | e | e | — | — | — | — |
+| add_items | v | v | v | e | e | e | — |
+| remove_items | v | v | v | e | e | e | — |
+
+**Следствия:**
+
+- **S2 доступен для записи по ядру** (деньги, пачки, прочность) — см. поправку к `ACCEPTANCE.md` в §14.
+- Сейв S2 версии 1.0.x всё равно не пишется: `Stalker2SaveReader.RequireWritableLayout` выдаёт `This save was written by game version 1.0.x. It can be read, but its layout is not supported for editing; load it in the current game and save again.`
+
+#### 3.2 `PrepareEdit(source, plan, releaseId, catalogs)`
+
+**Проверки до записи — по порядку, в каждом случае файл не меняется:**
+
+1. **`ValidatePlan`.** Один и тот же предмет и удаляется, и правится (пачка, прочность, апгрейд, размещение, тайник) → `The plan both edits and removes item 0x{h:X4}; remove the item or keep the edit, not both.`
+2. **Определение формата.**
+   - По `releaseId` с псевдонимами `soc`, `clear_sky`, `cop`, `s2`, иначе по байтам.
+   - Не удалось → `Could not detect save format for editing.`
+3. **Ветка X-Ray:**
+   - в плане есть передача из тайника S2 → `The plan holds a S.T.A.L.K.E.R. 2 stash transfer, which an X-Ray save cannot take.`;
+   - фактический формат байтов отличается от запрошенного → `The save is '{actual}', not the requested release '{requested}'.`;
+   - **стадии в фиксированном порядке:** правки на месте (деньги, пачки, тайники, апгрейды, отношения, прочность, размещение), затем удаления, затем добавления. Каждая стадия работает по результату предыдущей;
+   - для добавления нужен каталог: `X-Ray edit: adding items requires the release catalog.`;
+   - для апгрейдов нужен каталог апгрейдов: `X-Ray edit: upgrade edits require a release-matched upgrade catalog.`;
+   - **предварительная проверка до записи:** готовые байты проходят `VerifyReadBack`. Если не проходят → `The prepared save does not match the requested edits; nothing was written. ` + причина.
+4. **Ветка S2:**
+   - пустой план → `S.T.A.L.K.E.R. 2 edit: EditPlan must include at least one supported S2 edit.`;
+   - лишние виды правок → `S.T.A.L.K.E.R. 2 edit: EditPlan contains unsupported edit kinds for S.T.A.L.K.E.R. 2: {kinds}.`;
+   - разрешены только Money, StackCounts, Durability, Stalker2StashTransfer.
+5. **Прочие форматы** → `Unsupported release for editing: '{id}'.`
+
+#### 3.3 `VerifyReadBack(data, releaseId, plan)` — что проверяется после записи
+
+| Проверка | X-Ray | S2 |
+|---|---|---|
+| формат не изменился (`The replaced save changed its detected release.`) | да | да |
+| деньги (`The replaced save money does not match the requested value.`) | да | да |
+| пачки (`The replaced save stack 0x… does not match the requested value.`) | да | да |
+| положенное в тайник лежит в тайнике (`The replaced save does not hold item 0x… in stash 0x….`) | да | — |
+| взятое из тайника лежит в рюкзаке (`The replaced save does not hold item 0x… in the inventory.`) | да | — |
+| прочность, апгрейды, размещение, отношения, удаление, добавление | **нет** | **нет** |
+
+**Требование к Rust:** как минимум та же глубина проверки. Расширить её на остальные виды правок рекомендуется (§15 п.3).
+
+#### 3.4 Чек-лист
+
+1. План «удалить предмет 0x0042 и изменить его пачку» → исключение `The plan both edits and removes item 0x0042…`, файл не тронут.
+2. Сейв ЗП с `releaseId="stalker-cs"` → `The save is 'stalker-cop', not the requested release 'stalker-cs'.`
+3. План добавления без каталога → `X-Ray edit: adding items requires the release catalog.`
+4. Сейв S2 1.0.x + деньги → сообщение про 1.0.x, файл не тронут.
+5. `CanEdit("stalker-soc", Upgrades)` → `false`; `CanEdit("stalker-cop", Upgrades)` → `true`.
+6. `CanEdit("stalker2", Money)` → `true` (по снимку возможностей 1.3.1).
+7. `CanEdit("stalker-cop", XRayStashTransfer)` при `add_items = unsupported` (подменённый снимок) → `false`, даже если `move_items` доступна.
+
+---
+
+### 4. `LocalSaveReplacement` — замена сейва на диске (`Backups/LocalSaveReplacement.cs`)
+
+**Назначение:** единственный путь записи сейва на месте. Через него идут: `СОХРАНИТЬ`, перенос персонажа, ремонт квестов, скачивание из облака поверх локального файла (`ReplaceWithBytes`).
+
+#### 4.1 Шаги `ReplaceLocal(sourcePath, prepared, backupDir, verifyReadback)`
+
+1. **Проверка ссылки.** Если сейв — символическая ссылка → `The save is a symbolic link; open the file it points to instead.`
+2. **Сверка исходника.** Чтение сейва и сравнение SHA-256 с `prepared.SourceSha256`. Не совпало → `Source changed since analysis: expected {a}, found {b}.` (Обычно до этого не доходит: каждый писатель формата сам сверяет SHA исходника с планом и бросает `<формат> <вид> edit: Source SHA256 does not match the edit plan.`)
+3. **Сверка подготовленных байтов.** SHA-256 подготовленных байтов должен совпасть с записанным → иначе `Prepared output bytes do not match their recorded SHA256.`
+4. **Расположение папки бэкапов.** Если она совпадает с папкой сейва или вложена в неё → `Backup directory must be outside the selected save directory.` (тип `ArgumentException`). Папка бэкапов создаётся при необходимости.
+5. **Имена артефактов.** Префикс `<stem≤64>_<yyyyMMddTHHmmssfffffffZ>_<guid32>`:
+   - `<префикс>_ORIGINAL.sav` — исходные байты (бэкап);
+   - `<префикс>_EDITED.sav` — новые байты (копия для восстановления);
+   - `<префикс>_ORIGINAL.json` — журнал.
+6. **Запись артефактов.** `WriteNew` (права владельца, без перезаписи) в порядке: бэкап, затем копия для восстановления, затем журнал со статусом `prepared`.
+7. **Временный файл.** Новые байты пишутся во временный файл `.<имя>.<guid>.tmp` **в папке сейва**.
+8. **Повторная сверка исходника** прямо перед заменой. Не совпало → `Source changed before replacement: expected {a}, found {b}.`
+9. **Атомарная замена** сейва временным файлом.
+10. **Обратное чтение.** Байты и SHA-256 должны совпасть с подготовленными → иначе `Replaced save read-back did not match the prepared output bytes.`. Затем вызывается переданная проверка `verifyReadback` (для `СОХРАНИТЬ` — `EditService.VerifyReadBack`).
+11. **Фиксация.** Журнал переписывается со статусом `verified` (атомарно).
+12. **Квитанция** (`receipt`): `SourcePath`, `BackupPath`, `RecoveryPath`, `JournalPath`, `OutputSha256`.
+
+#### 4.2 Ошибки и откат
+
+- **Ошибка на шагах 1–5:** сейв не тронут, на диске ничего не создано.
+- **Ошибка на шагах 6–8:** сейв не тронут, исключение пробрасывается как есть. **Уже записанные** `_ORIGINAL.sav`, `_EDITED.sav` и журнал `prepared` **не удаляются**. В «Бэкапах» они видны как `Повреждён` с ошибкой `Journal status is not verified.` (§15 п.2).
+- **Ошибка после шага 9** (сейв уже заменён): `LocalSaveReplacementException`. Текст: `The save was replaced, but read-back verification did not complete. Original backup: {backup}; edited recovery: {recovery}; journal: {journal}.`. **Автоматического отката нет.** Сейв остаётся с новыми байтами, журнал — в статусе `prepared`, восстановление из UI невозможно (запись `Повреждён`). Вернуть файл можно только вручную, скопировав `_ORIGINAL.sav`.
+- Временные файлы (`*.tmp`) удаляются в любом случае; ошибка удаления не скрывает основную ошибку.
+- Журнал приложения: `save written {file}: {src12} -> {out12}, read-back ok` или `save write failed {file}` с исключением.
+
+#### 4.3 Формат журнала (JSON с отступами, ключи snake_case)
+
+```json
+{
+  "version": 1,
+  "status": "prepared | verified",
+  "created_at": "<ISO-8601 UTC, формат O>",
+  "source_path": "<полный путь сейва>",
+  "source_sha256": "<sha256 исходника>",
+  "output_path": "<тот же путь>",
+  "output_sha256": "<sha256 результата>",
+  "backup_path": "<…_ORIGINAL.sav>",
+  "recovery_path": "<…_EDITED.sav>",
+  "operation": { "mode": "replace", "money": <uint|null>, "stack_count": <int> }
+}
+```
+
+В `operation` попадают только деньги и **количество** изменённых пачек. Остальные виды правок в журнал не пишутся.
+
+#### 4.4 `ReplaceWithBytes(sourcePath, bytes, backupDir, verify)`
+
+Строит `PreparedEdit.Replacing(sha256(текущий файл), bytes)` с пустым планом и вызывает `ReplaceLocal`. Журнал получает `mode = "replace"`, `money = null`, `stack_count = 0`. Такой бэкап можно восстановить на место (см. §5).
+
+#### 4.5 Чек-лист
+
+1. Сохранить сейв → в папке бэкапов появилась тройка `*_ORIGINAL.sav`, `*_EDITED.sav`, `*_ORIGINAL.json`; в журнале `"status": "verified"`; SHA-256 бэкапа = `source_sha256`.
+2. В папке сейва после успеха нет файлов `.*.tmp`.
+3. Задать в настройках папку бэкапов внутри папки сейвов → `СОХРАНИТЬ` → `Не удалось сохранить: Backup directory must be outside the selected save directory. (Parameter 'backupDirectory')`.
+4. Сделать сейв символической ссылкой → `Не удалось сохранить: The save is a symbolic link; open the file it points to instead.`
+5. Между открытием и сохранением перезаписать сейв в игре → `СОХРАНИТЬ` → ошибка от писателя формата ещё на этапе `PrepareEdit`, например `Не удалось сохранить: X-Ray money edit: Source SHA256 does not match the edit plan.` (префикс зависит от первой стадии: `X-Ray stack edit:`, `S.T.A.L.K.E.R. 2 money edit:` и т. п.). Новых записей в «Бэкапах» нет. Сообщение `Source changed since analysis` появляется, только если файл изменился между `PrepareEdit` и `ReplaceLocal`.
+6. Подменить `verifyReadback` на бросающий исключение (тест) → сообщение `The save was replaced, but read-back verification did not complete…`; сейв содержит новые байты; журнал остался `prepared`; в «Бэкапах» запись `Повреждён`.
+7. Скачать сейв из облака поверх локального → журнал с `"mode": "replace"`, `"money": null`, `"stack_count": 0`; «Восстановить на место» доступно.
+
+---
+### 5. `LocalSaveStorage` — список и восстановление бэкапов (`Backups/LocalSaveStorage.cs`)
+
+#### 5.1 `ListBackups(dirs)` и `InspectBackup(journal)`
+
+**Что сканируется.** В каждой папке (без рекурсии):
+
+- все `*.json` как журналы;
+- все `*_ORIGINAL.sav`, у которых нет журнала, — они дают запись `Corrupt` с ошибкой `Journal for this backup is missing.`
+
+**Сортировка.** По `created_at` (новые сверху), затем по пути журнала в обратном порядке.
+
+**Хэш при обновлении списка** берётся из кэша сессии, если размер и mtime файла не изменились. Восстановление всегда хэширует заново.
+
+**Статусы:**
+
+| Статус | Причина (`Error`) |
+|---|---|
+| `Verified` | журнал корректен, бэкап на месте, его SHA-256 = `source_sha256` |
+| `Missing` | `Backup file is missing.` |
+| `Corrupt` | `Backup cannot be read: {msg}` / `Backup SHA256 does not match the journal.` |
+| `Corrupt` (ошибка журнала) | `Journal is missing.` / `Journal cannot be read: {msg}` / `Journal must contain a JSON object.` / `Journal is corrupt: {msg}`, где `{msg}` — одна из причин ниже |
+
+Возможные причины в `{msg}` для `Journal is corrupt`:
+
+- `Unsupported journal version.`
+- `Journal field {f} must be a non-empty string.`
+- `Journal field {f} is not a SHA256 value.`
+- `Journal status is not verified.`
+- `Journal operation must be an object.`
+
+**Обязательные поля журнала:** `version` = 1, `created_at`, `source_path`, `source_sha256`, `output_path`, `output_sha256`, `backup_path`, `status` = `verified`, `operation` (объект). Относительный `backup_path` считается от папки журнала.
+
+#### 5.2 `RestoreBackup(journal, outputPath)` — UI «Восстановить в копию»
+
+1. Бэкап обязан быть `Verified` → иначе `Backup is not restorable ({Status}): {Error}`.
+2. Цель — не сам файл бэкапа → иначе `Restore output cannot be the backup file.`
+3. Цель не должна существовать → иначе `Restore output already exists: {path}.`
+4. Папка цели должна существовать → иначе `Restore output directory does not exist: {dir}.`
+5. Бэкап читается и хэшируется ещё раз → при расхождении `Backup changed after its last verification.`
+6. Атомарная публикация: временный файл, затем `Move` **без перезаписи**.
+7. Обратное чтение → при расхождении `Restored output read-back did not match its expected bytes.`
+8. Квитанция: путь, бэкап, SHA. Новый журнал **не создаётся**, страхующий бэкап не нужен (новый файл).
+
+#### 5.3 `RestoreInPlace(journal)` — UI «Восстановить на место»
+
+Проверки по порядку:
+
+1. Статус `Verified` (как в §5.2 п.1).
+2. `operation.mode` равен `replace` или `restore` → иначе `Journal does not describe an in-place save replacement.`
+3. `output_path` совпадает с `source_path` → иначе `Journal output path does not match its source save.`
+4. Сейв — не символическая ссылка → иначе `Restoring a symbolic-link save is refused.`
+5. Папка сейва существует → иначе `Source save directory does not exist: {dir}.`
+6. Бэкап читается заново с проверкой SHA (`Backup changed after its last verification.`).
+7. **Сейва нет на месте** → выполняется `RestoreBackup` прямо в путь сейва. Страхующего бэкапа нет, в квитанции `SafetyBackupPath = null`.
+8. **Текущий сейв должен иметь SHA = `output_sha256` журнала**, то есть быть ровно тем, что записал редактор. Иначе — **отказ**: `Current save changed after the journaled replacement; refusing to overwrite it.` (см. §14 п.3).
+9. Папка журнала (папка бэкапов) — вне папки сейва → иначе `Backup directory must be outside the save directory. (Parameter 'backupDirectory')`.
+
+Запись:
+
+- страхующий бэкап текущего файла: новый `<stem>_<stamp>_<guid>_ORIGINAL.sav` и его журнал `prepared` с `operation = {mode: "restore", restore_from: <бэкап>}`;
+- байты бэкапа пишутся во временный файл в папке сейва;
+- повторная сверка текущего файла → при расхождении `Current save changed immediately before in-place restore.`;
+- атомарная замена, затем обратное чтение (`Restored save read-back did not match its expected bytes.`);
+- журнал страхующего бэкапа переписывается со статусом `verified`.
+
+После этого страхующий бэкап сам виден в списке и восстанавливается на место (`mode = restore`). Так можно отменить восстановление.
+
+**Отката нет:** если обратное чтение после замены не сошлось, журнал остаётся `prepared`. Страхующий `_ORIGINAL.sav` лежит на диске, но в UI показывается как `Повреждён`.
+
+#### 5.4 `ExportLocal` (в UI 1.3.1 не используется)
+
+Запись результата правки в **новый** файл, исходник не трогается.
+
+- Требования: цель не равна исходнику и не существует, папка цели существует, папка бэкапов — вне папки сейва.
+- Тексты отказов:
+  - `Export output cannot be the selected source save.`
+  - `Export output already exists: …`
+  - `Export output directory does not exist: …`
+  - `Writing through a symbolic-link save is refused.`
+  - `Source save does not exist.`
+  - `Source changed since the edit was prepared.`
+  - `Source changed immediately before export publication.`
+  - `Export output read-back did not match its expected bytes.`
+- В журнале `mode = "export"` и счётчики (`money`, `stack_count`, `detach_count`, `add_count`, остальные — 0).
+- Такой бэкап можно восстановить только в копию.
+
+#### 5.5 Чек-лист
+
+1. Сохранить сейв, затем сразу `Восстановить на место` → сейв побайтно равен `_ORIGINAL.sav`; появилась новая запись `Проверен` (страхующая, `mode = restore`).
+2. Сохранить сейв, **сохраниться в игре в тот же слот**, затем `Восстановить на место` → `Ошибка восстановления: Current save changed after the journaled replacement; refusing to overwrite it.`; файл не изменён.
+3. В том же случае `Восстановить в копию` → создан `<имя>_restored_<дата>.sav`, равный бэкапу.
+4. Удалить сейв, затем `Восстановить на место` → файл сейва появился, страхующей записи нет.
+5. Изменить 1 байт в `_ORIGINAL.sav` → `Обновить бэкапы` → `Повреждён`, `Backup SHA256 does not match the journal.`
+6. Удалить журнал у бэкапа → запись `Повреждён` с `Journal for this backup is missing.`
+7. Поменять `"status"` в журнале на `prepared` → `Journal is corrupt: Journal status is not verified.`
+8. Восстановить на место страхующую запись из п.1 → сейв вернулся к отредактированной версии.
+
+---
+
+### 6. `DraftStore` — черновики правок (`Editing/DraftStore.cs`)
+
+#### 6.1 Хранение
+
+- **Папка:** `<данные>/drafts` (или переданная явно).
+- **Файл:** `<sha256 исходного сейва>.json`. Ключ проверяется регулярным выражением `^[0-9a-f]{64}$`; иначе `Draft key must be a lowercase SHA256.`
+- **Лимит размера:** 2 МиБ. Если полная история не влезает, сохраняются только шаг 0 (нетронутый сейв) и текущий шаг. Если не влезает и это → `Current edit draft exceeds the storage limit.`
+- **Глубина истории:** шаг 0 и последние 100 шагов (`MaximumSteps`). Более старые шаги сливаются в шаг 0.
+- **Запись атомарная:** временный файл `.<sha>.<guid>.tmp`, права владельца, затем `Move`.
+- **Если текущий шаг пустой** (в терминах п. 6.2) и нет непонятых правок, файл **удаляется** вместо записи.
+
+#### 6.2 Формат (схема 2, ключи camelCase, лишние поля запрещены)
+
+```json
+{
+  "index": 3,
+  "plans": [ { "sourceSha256": "…", "money": 12345, "stackCounts": {"66": 30},
+               "detachHandles": [17], "adds": [ … ], "stashTakes": [ … ], "stashPuts": [ … ],
+               "unmappedLegacyPlan": null } ],
+  "schema": 2,
+  "source_sha256": "…"
+}
+```
+
+**В черновик на диске пишутся только:** деньги, пачки, удаления, добавления, взятие из тайника, перенос в тайник.
+
+**Не пишутся:** прочность, апгрейды, размещение, отношения группировок, группировка игрока, передача из тайника S2. В текущей сессии они живут в памяти, а **после перезапуска пропадают**. Черновик, в котором есть только они, на диск не попадает вовсе (§14 п.1, §15 п.4).
+
+#### 6.3 Чтение (`Load`)
+
+Возвращает `null`, то есть «черновика нет», **молча**, если:
+
+- файла нет или он больше 2 МиБ;
+- JSON повреждён;
+- нет поля `schema`, или схема не 1 и не 2;
+- набор полей корня отличается от ожидаемого;
+- `source_sha256` не совпадает с ключом;
+- текущий шаг пуст.
+
+**Схема 1** — черновики Python-версии:
+
+- читаются деньги, пачки, удаления, добавления;
+- если в плане непустые `attach`, `durability`, `faction_relations`, `moves`, `placements`, `raw`, `upgrades`, строковый `player_faction`, неизвестные поля или глубокие удаления, шаг помечается как «непонятые правки» (`unmappedLegacyPlan`);
+- в таком состоянии UI запрещает правку и запись (`ACCEPTANCE.md` §1.2 п.2).
+
+#### 6.4 Удаление и «отложить рядом»
+
+- `Remove(sha)` — `File.Delete` (если файла нет, ошибки нет).
+- `SetAside(sha)` — переименование в `<sha>.json.unsupported-<yyyyMMddHHmmssfff>` (UTC); возвращает новый путь или `null`, если файла нет.
+- После успешного `СОХРАНИТЬ` черновик старого SHA удаляется (`SaveEditSession`). Черновики, осиротевшие после переноса, ремонта квестов или восстановления, **не удаляются** и копятся в папке.
+
+#### 6.5 Чек-лист
+
+1. Изменить деньги → в `drafts/<sha>.json` поле `"money"` с новым значением; права файла `600`.
+2. Отменить правку до исходного состояния (Ctrl+Z) → файл черновика удалён.
+3. Изменить **только** прочность предмета, перезапустить приложение → правка прочности потеряна, файла черновика нет.
+4. Изменить деньги и прочность, перезапустить → деньги восстановлены, прочность — нет.
+5. Сделать 150 правок денег → в файле `plans.length` = 101; Ctrl+Z работает 100 раз.
+6. Положить черновик схемы 1 с `"upgrades": ["x"]` → при открытии сейва UI показывает текст о правках из другой версии. `Сбросить` → файл переименован в `….json.unsupported-<время>`.
+7. Записать в черновик битый JSON → сейв открывается без черновика, без сообщения об ошибке.
+
+---
+
+### 7. `GameFixEngine` — исправления игры (`Patching/GameFixEngine*.cs`)
+
+#### 7.1 Каталог
+
+- Встроенный `Patching/Data/game-fixes.json`: 148 определений, все со зрелостью `Validated`.
+  - ЗП: Essential 8, Recommended 14, Community 14.
+  - ЧН: Essential 28, Recommended 45, Community 2.
+  - ТЧ: Essential 12, Recommended 23.
+  - ТЧ EE: Essential 2.
+- **Пресеты** включают только `Validated` и не `Experimental`:
+  - `ОБЯЗАТЕЛЬНЫЕ` — только Essential;
+  - `РЕКОМЕНДУЕМЫЕ` — Essential + Recommended;
+  - **`ВСЕ БЕЗОПАСНЫЕ` — ровно то же, что `РЕКОМЕНДУЕМЫЕ`** (Community не входит) — см. §15 п.7.
+
+#### 7.2 Состояние в папке игры
+
+`<игра>/.save-editor-game-fixes/<fixId>/`:
+
+- **`manifest.json`** (camelCase, с отступами):
+  - `schemaVersion` = 2, `fixId`, `game`, `steamBuildId`, `version`;
+  - описательные поля из каталога;
+  - `installed` (true/false);
+  - `files[]`: `relativePath`, `beforeSha256`, `afterSha256`, `backupPath` (`backups/file-NNNN.before`), `targetExistedBefore`.
+- **`backups/file-NNNN.before`** — исходные байты каждого изменённого файла. При удалении исправления **не удаляются**: повторная установка той же версии использует их, сверив хэш.
+- **`transaction.json`** — журнал незавершённой операции: `schemaVersion`, `kind` (install/uninstall), `freshState`, `files`.
+- **`RECOVERY.txt`** — пишется, только если откат не удался. Содержит построчную инструкцию «какой `.before` → в какой файл игры».
+
+#### 7.3 `Install(definition, gameDir)` — UI «УСТАНОВИТЬ ВЫБРАННОЕ»
+
+**Проверки до записи:**
+
+1. Определение корректно, `fixId` соответствует `^[a-z0-9][a-z0-9.-]{0,127}$`.
+2. Путь к состоянию не идёт через ссылки.
+3. **`RecoverInterrupted`** — сначала завершаются транзакции, прерванные ранее (§7.6).
+4. Папка проходит структурную проверку игры → иначе `The selected directory does not pass the structural game check.`
+5. Найденная сборка Steam входит в `supportedSteamBuildIds` → иначе `This fix does not list the detected Steam build as supported.`
+6. Определение проверено на retail-файлах → иначе `Game Fix installation requires validation against the supported retail files; synthetic-test definitions are not installable.`
+7. Если манифест уже есть:
+   - установлена другая версия → `A different version of this fix is installed; remove it before updating.`;
+   - установлено, файлы совпадают → результат `Changed = false` (UI: `УЖЕ УСТАНОВЛЕНО: {id}`);
+   - установлено, файлы изменены → `A managed game file changed after the fix was installed; refusing to overwrite it.`;
+   - удалено, но версия другая → `Reinstalling a removed fix requires the same fix version so its original backup remains authoritative.`
+8. Папка состояния есть, а манифеста нет → `Fix state exists without a valid manifest; refusing to reuse it.`
+9. Зависимости и конфликты:
+   - `Required fix is not installed: {id}`;
+   - `This fix conflicts with installed fix: {id}`.
+10. Файл уже управляется другим активным исправлением → `Another active Game Fix manages {path}; layered transformations are not supported for this file.`
+11. Пересечение с файлами компаньона запрещено (`EnsureNoCompanionOverlap`).
+
+**Порядок записи:**
+
+1. Журнал `install` со списком файлов (**до** первого бэкапа).
+2. Для каждого файла — бэкап `.before` (атомарно, без перезаписи). Если бэкап уже есть от прежней установки, проверяется его хэш:
+   - `The stored recovery file no longer matches the original hash: {path}`;
+   - `The stored recovery file is missing: {path}`.
+3. Для каждого файла — повторная сверка с предварительной проверкой (`A managed game file changed after preflight; refusing to overwrite it: {path}`), затем атомарная запись нового содержимого.
+4. Манифест с `installed: true` пишется **последним**, затем журнал удаляется.
+
+**Откат при ошибке:**
+
+- Изменённые файлы возвращаются из памяти. Затем удаляются новые бэкапы и манифест (или восстанавливается прежний манифест) и журнал; пустые папки состояния удаляются.
+- Тексты:
+  - `Game Fix installation failed: {msg}`;
+  - `Game Fix installation failed: {msg}; rollback problems: {…}`.
+- Если файлы игры не удалось вернуть: состояние **не удаляется**, пишется `RECOVERY.txt`, текст `Game Fix installation failed: {msg}; the game files could not all be restored ({…}). The original files are kept in {backups}; see {RECOVERY.txt}.`
+
+#### 7.4 `Update` и `Uninstall`
+
+**`Update`** (UI «ОБНОВИТЬ ВЫБРАННОЕ»):
+
+- Манифеста нет → обычная установка. Не установлено или версия та же → обычная установка.
+- Версии сравниваются как числа:
+  - понижение или неоднозначность → `Fix updates must use an increasing numeric version; downgrade and ambiguous version transitions are blocked.`;
+  - набор файлов должен совпадать → `In-place updates that change the managed file set are not supported; the old fix must be removed and reviewed first.`;
+  - каждый управляемый файл на месте и не изменён:
+    - `A managed game file is missing; refusing to update: {path}`;
+    - `A managed game file changed after installation; refusing to update it: {path}`.
+- Бэкапы `.before` сохраняются от первой установки.
+- При ошибке откат к старой версии и старому манифесту. Если манифест за это время изменился посторонним образом — `manifest changed during update rollback`.
+
+**`Uninstall`** (UI «УДАЛИТЬ И ВОССТАНОВИТЬ»):
+
+- Сначала `RecoverInterrupted`.
+- Манифеста нет → `Changed = false`, `NotInstalled` (UI: `ИСПРАВЛЕНИЕ НЕ БЫЛО УСТАНОВЛЕНО`). Уже удалено → `Changed = false`, `Removed`.
+- Есть зависимые исправления → `Remove dependent fixes first: {ids}`.
+- Для каждого файла:
+  - текущий хэш = `afterSha256` → иначе **отказ** `A managed game file changed after installation; refusing to restore it: {path}`;
+  - бэкап совпадает с `beforeSha256` → иначе `A recovery file failed its hash check: {path}`.
+- Журнал `uninstall`, затем для каждого файла повторная проверка (`…changed after removal preflight; refusing to restore it: {path}`). Если файл существовал до установки, пишется `.before`; иначе файл **удаляется**.
+- Манифест переписывается с `installed: false`, журнал удаляется. **Папка состояния и бэкапы остаются.**
+- При ошибке файлы возвращаются в установленное состояние, манифест восстанавливается.
+  - Тексты: `Game Fix removal failed: {msg}` / `…; rollback problems: …`.
+
+**`CheckUninstall`** — те же проверки без записи. Возвращает причину:
+
+- `The provider manifest is missing.`
+- `The manifest does not record an active fix.`
+- `Remove dependent fixes first: …`
+- `A managed game file is missing: …`
+- `A managed game file changed after installation: …`
+- `A recovery file is missing: …`
+- `A recovery file failed its hash check: …`
+
+#### 7.5 Пресеты: `ApplyPreset` и снимок-страховка
+
+UI вызывает `ToolkitSnapshotService.ApplyFixPreset`:
+
+1. Если сборка совместима со всеми исправлениями пресета и хотя бы одно не установлено → **создаётся снимок среды** (§8). Его id показывается в UI как `РЕЗЕРВНАЯ ТОЧКА`.
+2. `GameFixEngine.ApplyPreset`:
+   - пресет `Custom` запрещён (`Custom selections must be installed explicitly from the Game Fixes screen.`);
+   - папки нет → `The selected directory does not exist.`;
+   - в пресете есть несовместимое исправление:
+     - `A preset can contain only safe fixes for the selected game.`
+     - `Preset application requires fixes validated against the supported retail files.`
+     - `A preset cannot contain the same fix more than once.`
+     - `The selected directory does not pass the structural game check.`
+     - `The detected Steam build is not supported by every selected Game Fix.`
+   - есть исправление в состоянии `Modified` → `A preset fix has an externally modified managed file; review it before applying the preset: {id}`;
+   - остальные устанавливаются по одному. При сбое уже поставленные в этом вызове **удаляются в обратном порядке**. Текст: `Preset application failed; newly installed fixes were rolled back: {msg}` или `Preset application failed: {msg}; rollback problems: …`.
+3. Если шаг 2 бросил исключение и снимок есть → восстанавливается снимок. Тексты:
+   - `Preset application failed and the previous managed state was restored: {msg}`;
+   - `Preset application failed: {msg}. {сообщение восстановления}`;
+   - `Preset application failed: {msg}. Automatic restore also failed: {msg2}. Safety snapshot {id} is retained.`
+
+#### 7.6 Восстановление после прерывания (`RecoverInterrupted`)
+
+Вызывается автоматически перед каждой установкой и удалением в этой папке игры. Для каждой папки `<fixId>` с `transaction.json`:
+
+- **Журнал не читается** → `The Game Fix transaction journal is unreadable; restore the game files manually: {path}`.
+- **Неизвестная схема или вид** → `The Game Fix transaction journal has an unknown format: {path}`.
+- **Операция уже зафиксирована** (для установки `installed: true`, для удаления `installed: false`) → журнал просто удаляется.
+- **Иначе** каждый файл возвращается в исходное состояние:
+  - файл совпадает с `before` → ничего не делать;
+  - файл совпадает с `after` → вернуть `.before` или удалить, если файла раньше не было;
+  - файл не совпадает ни с тем, ни с другим → ошибка, ручное восстановление.
+
+#### 7.7 Чек-лист
+
+1. Установить исправление → в `.save-editor-game-fixes/<id>/` есть `manifest.json` (`"installed": true`), `backups/file-0000.before` с SHA = `beforeSha256`, нет `transaction.json`.
+2. Удалить исправление → файлы игры побайтно равны `.before`; манифест `"installed": false`; бэкапы на месте.
+3. Повторно установить ту же версию → бэкапы переиспользованы (хэш проверен), новых файлов `.before` нет.
+4. Изменить управляемый файл вручную → `Удалить` → `ОШИБКА: Game Fix removal failed: …` или отказ `…refusing to restore it: <путь>`; файл не тронут.
+5. Убить процесс во время установки (после записи части файлов) → при следующей установке или удалении любого исправления в этой папке все файлы прерванной операции возвращены к исходным, журнал удалён.
+6. Испортить `transaction.json` → следующая операция: `ОШИБКА: The Game Fix transaction journal is unreadable; restore the game files manually: …`
+7. Установить исправление, у которого есть зависимое, затем удалить базовое → `Remove dependent fixes first: <id>`.
+8. Пресет `ВСЕ БЕЗОПАСНЫЕ` на ЗП → установлено столько же исправлений, сколько у `РЕКОМЕНДУЕМЫЕ` (22); Community не ставятся.
+9. Пресет, где третье исправление падает (подменённый файл) → первые два удалены, статус содержит `rolled back` или `previous managed state was restored`.
+
+---
+
+### 8. Снимки, профили, user.ltx (кратко; используются экраном «Среда игры» и пресетами)
+
+**Снимки** (`ToolkitSnapshotService`):
+
+- Хранилище:
+  - `<данные>/snapshots/snapshots/<id32hex>/snapshot.json` — метаданные;
+  - `<данные>/snapshots/objects/<sha256>` — содержимое, хранится по хэшу и общее для всех снимков.
+- **Только X-Ray**: для S2 — `Toolkit snapshots currently support X-Ray managed providers only.`
+- Создание отказывает при расхождении (дрейфе):
+  - `Game Fix {id} has drifted; resolve its conflict before creating a snapshot.`
+  - `Managed Game Fix file changed or is missing: …`
+  - `Managed user.ltx settings need review.`
+- **Восстановление:**
+  - сначала автоматически создаётся страховочный снимок;
+  - затем исправления, компаньон и user.ltx приводятся к снимку **через своих провайдеров** (файлы из хранилища в игру не копируются);
+  - после — сверка хэшей.
+  - Успех: `Snapshot restored. Automatic safety snapshot: {id}.`
+  - Сбой с успешным откатом: `Snapshot restore failed and the prior managed state was replayed: {msg}. Safety snapshot {id} is retained.`
+  - Сбой отката: исключение `Snapshot restore failed: {msg}; automatic rollback could not finish: {msg2}. Safety snapshot {id} is retained.`
+- **Удаление** — без подтверждения. Удаляется `snapshot.json`, затем объекты, на которые больше никто не ссылается (`PruneObjects`).
+
+**Профили** (`ToolkitProfileService`):
+
+- Хранятся в `<данные>/profiles/<id>.json`.
+- Сохранение: `Toolkit profiles currently support X-Ray managed providers only.` / `Game Fix {id} has drifted; resolve it before saving a profile.`
+- Применение — через `ApplyManagedState` со страховочным снимком. Успех: `Managed state applied. Automatic safety snapshot: {id}.`
+- Ошибки:
+  - `Choose the game this profile was created for.`
+  - `Select the game's existing user.ltx before applying this profile's config overrides.`
+  - `Profile change failed and the prior managed state was restored: …`
+- Удаление — `File.Delete` без подтверждения.
+
+**user.ltx** (`ManagedUserLtxSettings`):
+
+- Правка атомарная (`AtomicGameFileWriter`).
+- Исходные значения хранятся в манифесте в `<данные>/toolkit-config`.
+- При ошибке файл и манифест откатываются: `Settings change failed: {msg}; rollback failed: {msg2}` (текст только если не удался и откат).
+- Отказы:
+  - `Choose the game's existing user.ltx file.`
+  - `The selected user.ltx file does not exist.`
+  - `Refusing to edit a linked user.ltx file.`
+  - `The user.ltx contains more than one {key} command; no change was made.`
+  - `The managed setting {key} changed outside the toolkit; review the conflict before editing.`
+  - `'{key}' is not an editable, known user.ltx setting.`
+  - `The value for {key} must be one token.` / `… must be 'on' or 'off'.`
+
+**Чек-лист:**
+
+1. Создать снимок, установить исправление, восстановить снимок → исправление удалено, в списке есть ещё один (страховочный) снимок.
+2. Удалить снимок → неиспользуемые объекты из `objects/` удалены, общие с другими снимками остались.
+3. Выбрать S2 → `СОЗДАТЬ СНИМОК` неактивна; при прямом вызове — `Toolkit snapshots currently support X-Ray managed providers only.`
+4. Изменить `g_fov` в user.ltx вручную → применение через инструмент даёт отказ про изменение вне инструмента.
+
+---
+
+### 9. `CompanionInstaller` — мод-компаньон (`Companion/*.cs`)
+
+#### 9.1 X-Ray (ТЧ, ЧН, ЗП и EE): `Install`
+
+**Определение папки игры:** выбранная вручную, иначе поиск в библиотеках Steam.
+
+**Подготовка:**
+
+- Сначала завершается прерванная установка (`FinishInterruptedInstall` по `.save-editor-companion/transaction.json`).
+- Журнал не читается → `The companion installation journal is unreadable: {path}`; неизвестный формат → `The companion installation journal has an unknown format: {path}`.
+- Если манифеста нет, но файлы мода похожи на ручную установку, создаётся «ручной» манифест с бэкапами (`TryCreateManualManifest`).
+- Папка состояния есть, а манифеста нет → `Cannot install companion: state directory already exists without a valid manifest: {dir}`.
+
+**План установки:**
+
+- файлы мода из комплекта приложения;
+- хуки — правка существующих скриптов игры. Оригинал сохраняется в `.save-editor-companion/backups/<путь>.original`.
+
+**Отказы:**
+
+- `Cannot install Companion over an active Game Fix-managed file: {path}`
+- `Refusing to overwrite an unowned game file: {path}` — файл без бэкапа, не принадлежащий моду
+- `Mod asset conflicts with hook target: {path}`
+- `Mod asset collides with a backed-up game file: {path}`
+- `Managed hook file has no original backup: {path}`
+- `Cannot create a valid backup for {path}.`
+
+**Нет изменений** (тот же набор и хэши) → успех без записи (`Changed = false`).
+
+**Запись:**
+
+1. Журнал.
+2. Бэкапы оригиналов (атомарно, без перезаписи).
+3. Файлы мода (атомарно; совпадающие байты пропускаются).
+4. Удаление устаревших файлов прежней версии мода.
+5. `manifest.json` последним, затем журнал удаляется.
+
+**Откат:** записанные файлы возвращаются, удалённые — восстанавливаются, журнал удаляется. Если откат не удался, журнал **остаётся**, и следующая операция повторит откат. Текст: `Companion installation failed: {msg}` / `… Rollback also failed: …`.
+
+#### 9.2 X-Ray: `Uninstall`
+
+1. Завершение прерванной установки.
+2. Манифеста нет и ручной установки не найдено → успех, `Changed = false`.
+3. **Предварительная проверка** без записи. Конфликты возвращаются списком, ничего не удаляется:
+   - `Missing since install; left untouched: {path}`
+   - `Changed since install; left untouched: {path}`
+   - `Backup reference is missing; left untouched: {path}`
+   - `Backup is missing or corrupt; left untouched: {path}`
+
+   UI показывает только `Не удалось удалить компаньон.` — список конфликтов в UI **не выводится**.
+4. Запись: каждый файл восстанавливается из `.original` (атомарно) или удаляется, если его не было до установки. **Журнала удаления нет.** При обрыве повторный запуск идемпотентен: уже восстановленные файлы пропускаются (`IsAlreadyUninstalled`).
+5. Если `gamedata` был создан установкой и опустел, он удаляется. Иначе — сообщение `Unowned files remain under gamedata; the directory was left in place: {files}.`
+6. Манифест и бэкапы удаляются.
+
+#### 9.3 S2 (`Stalker2CompanionInstaller`)
+
+**Причины, по которым установка невозможна:**
+
+- `S.T.A.L.K.E.R. 2 not found in Steam libraries`
+- `UE4SS is not installed in Stalker2/Binaries/Win64`
+- `{target} exists but was not installed by the editor` — нет маркера `save_editor_install.json`
+
+**Установка:**
+
+1. Копия комплекта в `<Mods>/SaveEditorCompanion.installing`.
+2. Маркер с номером сборки.
+3. Старая папка переименовывается в `.previous`.
+4. `.installing` переименовывается в целевую; при ошибке возвращается `.previous`.
+5. `.previous` удаляется.
+
+Отсутствует комплект → `S2 companion source is missing: {dir}`.
+
+**Удаление** — рекурсивное удаление `<Mods>/SaveEditorCompanion` без бэкапа.
+
+#### 9.4 Чек-лист
+
+1. Установить на чистую ЗП → в `.save-editor-companion/` есть `manifest.json` и `backups/…original` для каждого изменённого скрипта; `transaction.json` нет.
+2. Удалить → изменённые скрипты побайтно равны оригиналам; добавленные файлы удалены; `.save-editor-companion` удалена.
+3. После установки вручную изменить файл мода → `УДАЛИТЬ` → `Не удалось удалить компаньон.`; ни один файл не тронут.
+4. Установить исправление игры на файл, который нужен моду → установка компаньона: `Ошибка установки: Companion installation failed: …` или `Cannot install Companion over an active Game Fix-managed file: …`
+5. Положить в `gamedata` посторонний файл, затем установить и удалить мод → посторонний файл остался.
+6. S2 без UE4SS → строка игры `нет UE4SS: установите его, затем мод`.
+
+---
+
+### 10. `Stalker2ModToggle` — отключение модов S2 (`Diagnostics/Stalker2ModToggle.cs`)
+
+**Что делает:**
+
+- `Отключить` — **переименовывает** `<игра>/Stalker2/Content/Paks/~mods` в `<игра>/Stalker2/Content/~mods.disabled`.
+- `Восстановить` — обратное переименование.
+- Файлы модов не копируются и не удаляются. Бэкап не нужен.
+
+**Состояния:**
+
+| Состояние | Условие |
+|---|---|
+| `InstallationMissing` | нет `Content/Paks` |
+| `NoCustomMods` | нет ни `~mods`, ни `~mods.disabled` |
+| `Enabled` | есть только `~mods` |
+| `Disabled` | есть только `~mods.disabled` |
+| `Conflict` | есть обе папки |
+
+**Тексты:**
+
+- Успех отключения: `Custom mods moved outside Content/Paks; files were preserved.`
+- Успех восстановления: `Custom mods restored to Content/Paks/~mods.`
+- Нечего делать: `Custom mods are already disabled.` / `No custom mods folder was found.` / `Custom mods are already enabled.` / `No disabled custom mods folder was found.`
+- Отказы:
+  - `The selected directory does not contain Stalker2/Content/Paks.`
+  - `Both the active and recovery ~mods folders exist; refusing to move either one.`
+  - `Both the active and recovery ~mods folders exist; remove or move one manually before restoring.`
+  - `The recovery path is occupied by a file; refusing to overwrite it.`
+  - `Refusing to move a mod directory through a link or reparse point: {dir}`
+  - `Required game directory is missing: {dir}`
+
+**Чек-лист:**
+
+1. S2 с `~mods` → отключить → `~mods` нет, `Content/~mods.disabled` содержит те же файлы. Восстановить → наоборот.
+2. Создать обе папки → «Доктор игры» не показывает кнопок модов (состояние `Conflict`).
+3. `~mods` — символическая ссылка → `Refusing to move a mod directory through a link or reparse point: …`
+
+---
+### 11. Steam: запись в облако и достижения (`StalkerSaveEditor.Steam`)
+
+Все вызовы Steam API идут через **отдельный рабочий процесс** (`SteamWorkerProcessRunner`). Таймаут одной операции 15 с (`SteamReadOnlyClient.DefaultTimeout`), запуск игровой сессии — 15–30 с. По истечении — `Steam worker exceeded the {N} second timeout.`
+
+#### 11.1 Транзакция записи (`SteamCloudWriteTransaction.UploadAsync`)
+
+Общая для обоих способов записи (RemoteStorage и Auto-Cloud).
+
+**Шаги, которые ничего не меняют в облаке.** Ошибка на любом из них — исключение (в UI это будет `Ошибка записи: …`):
+
+1. SHA-256 подготовленных байтов совпадает с записанным → иначе `Prepared output SHA256 does not match its bytes.`
+2. Способ записи доступен → иначе `Cloud write is disabled before any I/O: {reason}`.
+3. **Свежее чтение файла из облака** → при ошибке `Cloud read before write failed: {msg}`.
+4. SHA прочитанного = `prepared.SourceSha256` → иначе `Cloud source changed after analysis: expected {a}, found {b}.`
+5. **Бэкап** в переданную папку бэкапов:
+   - `<stem≤80>_<stamp>_<guid>_ORIGINAL.sav` — что было в облаке;
+   - `…_EDITED.sav` — что пишется.
+   - Запись с `WriteThrough`, без перезаписи. **Журнал JSON не создаётся.**
+   - Ошибка → `Could not create cloud backup and recovery files: {msg}`.
+
+**Запись и результат:**
+
+6. Запись в облако.
+   - `CloudWriteNotAttemptedException` (запись точно не начиналась) → исключение `Cloud write was not attempted: {msg}`.
+   - **Любая другая ошибка** → статус `Uncertain`: `WriteFile result is uncertain after request: {msg}`.
+7. Синхронизация (для RemoteStorage — пустая операция) → при ошибке `Uncertain`: `Cloud sync failed after WriteFile; result is uncertain: {msg}`.
+8. Ожидание флага `persisted` и совпадения размера: опрос раз в 2 с, до 120 с.
+   - Не дождались → `Uncertain`: `Steam did not confirm persisted=true after WriteFile; result is uncertain.`
+   - Ошибка опроса → `Uncertain`: `Persisted check failed after WriteFile; result is uncertain: {msg}`.
+9. Обратное чтение из облака:
+   - ошибка → `Uncertain`: `Cloud read-back failed after WriteFile; result is uncertain: {msg}`;
+   - SHA не совпал → `Uncertain`: `Cloud read-back SHA256 mismatch after WriteFile; result is uncertain.`
+10. Всё совпало → **`Verified`**.
+
+**Соответствие статусам UI** (`ACCEPTANCE.md` §18):
+
+| Ядро | UI |
+|---|---|
+| `Verified` | `Записано и проверено: {0}` |
+| `Uncertain` + `Reason` | `Результат записи не подтверждён (повтор не выполняется): {0}` |
+| исключение до шага 6 включительно (`…not attempted…`, `…changed after analysis…`, и т. п.) | в ядре статуса `Aborted` нет; перевод исключения в `Aborted` / `Запись отменена: {0}` делает хост-адаптер — **не определено из исходников** (§16) |
+
+**Повтора нет ни в одном случае.** При `Uncertain` в папке бэкапов остаются оба файла: прежняя облачная версия и записанная.
+
+#### 11.2 RemoteStorage (`SteamRemoteStorageCloudWriter`) — трилогия X-Ray
+
+**Список разрешённых путей** (`SteamCloudSaveProfiles`):
+
+| AppId | Релиз | Префикс в облаке | Расширения |
+|---|---|---|---|
+| 4500 | stalker-soc | `_appdata_/savedgames/` | `.sav` |
+| 20510 | stalker-cs | `_appdata_/savedgames/` | `.sav` |
+| 41700 | stalker-cop | `_appdata_/savedgames/` | `.sav`, `.scop` |
+| 2427410 | stalker-soc-ee | `STALKER Shadow of Chornobyl - EE/STEAM/savedgames/` | `.sav` |
+| 2427420 | stalker-cs-ee | `STALKER Clear Sky - EE/STEAM/savedgames/` | `.sav`, `.scop`, `.scs` |
+| 2427430 | stalker-cop-ee | `STALKER Call of Prypiat - EE/STEAM/savedgames/` | `.sav`, `.scop`, `.scs` |
+
+**Отказы до транзакции** (`SteamRemoteStorageWriteException`):
+
+- `RemoteStorage save writing is supported only for official X-Ray trilogy releases.` — в том числе для S2 (1643320)
+- `Steam libsteam_api was not found.` / `Could not locate Steam libsteam_api: {msg}`
+- `Remote path is outside this release's save-file allow-list.` — путь вне префикса, подкаталоги, `..`, `:`, управляющие символы, чужое расширение
+- `Prepared bytes are not a valid save for the selected Steam release.` — пусто, больше 64 МиБ или формат байтов не совпадает с релизом
+
+#### 11.3 Auto-Cloud для S2 (`SteamAutoCloudWriter`)
+
+**В UI 1.3.1 не используется:** запись для S2 там закрыта. Ядро умеет:
+
+- писать локальный файл в папку WinAppDataLocal, которую синхронизирует Steam, внутри запущенной игровой сессии Steam;
+- перед записью дважды сверять облачную копию и локальный файл с тем, что было прочитано изначально;
+- отказываться, если папка бэкапов лежит внутри синхронизируемой папки.
+
+Тексты:
+
+- `Auto-Cloud writing is supported only for S.T.A.L.K.E.R. 2.`
+- `The S.T.A.L.K.E.R. 2 WinAppDataLocal Auto-Cloud folder was not found.`
+- `The Auto-Cloud save directory is missing or the backup directory is inside the Steam-synced folder.`
+- `Steam Cloud source changed before the local Auto-Cloud write.`
+- `The local Auto-Cloud source changed after Steam game-session synchronization.`
+
+#### 11.4 Достижения (`SteamAchievementsClient`)
+
+Список и установка или снятие идут через рабочий процесс.
+
+- Ошибки:
+  - `Steam worker returned an invalid achievement list.`
+  - `Steam worker returned an invalid achievement result.`
+  - `Steam could not return achievement data.`
+  - `Steam achievement operation failed: {msg}`
+  - `Steam worker returned an unexpected achievement response.`
+  - `Achievement API names must not contain control characters.`
+- Бэкапа и журнала нет. Откат — обратное действие из UI.
+
+#### 11.5 Чек-лист
+
+1. Записать локальный сейв ЗП в облако → статус Verified; в папке бэкапов пара `*_ORIGINAL.sav` (= прежняя облачная копия по SHA) и `*_EDITED.sav` (= локальный файл).
+2. Изменить сейв в облаке с другого ПК между открытием экрана и записью → ошибка с `Cloud source changed after analysis`; облако не изменено; бэкапов нет.
+3. Отключить сеть сразу после начала записи → `Uncertain`, кнопка записи не повторяет операцию автоматически, оба файла бэкапа на месте.
+4. Подставить путь `_appdata_/savedgames/../x.sav` (тест) → `Remote path is outside this release's save-file allow-list.`
+5. Попытка записи для appId 1643320 через RemoteStorage (тест) → `RemoteStorage save writing is supported only…`
+6. Steam не запущен → установка достижения: ошибка `Steam achievement operation failed: …` или `Steam worker exceeded the 15 second timeout.`
+
+---
+
+### 12. Апдейтер (`StalkerSaveEditor.Updater/UpdateService.cs`)
+
+#### 12.1 Проверка (`CheckAsync`)
+
+**Источники:**
+
+- манифест `https://save-editor-downloads.save-editor.workers.dev/latest.json`, до 2 МиБ;
+- подпись `latest.json.sig` рядом: ECDSA P-256 / SHA-256, формат P1363 или DER, до 1 КиБ.
+- Публичный ключ встроен в `UpdateSignature.PublicKeyPem`.
+- **Без валидной подписи манифест отвергается.**
+
+**Доверенные адреса:**
+
+- только `https`, хост `save-editor-downloads.save-editor.workers.dev`;
+- без userinfo, query и fragment;
+- редиректы проверяются вручную, не больше 5;
+- таймаут 15 с.
+
+**Проверка манифеста:**
+
+- схема и канал;
+- `source_commit` — lowercase SHA коммита Git;
+- `published_at` — дата и время;
+- для каждого артефакта:
+  - `size` от 1 байта до 2 ГиБ;
+  - `sha256` — lowercase;
+  - `file` — простое имя без пути;
+  - `kind` и `target` из допустимых;
+  - URL заканчивается на `file`.
+
+**Результаты:**
+
+| Состояние | Когда | `Error` |
+|---|---|---|
+| `Current` | версия манифеста ≤ текущей | — |
+| `Available` | версия манифеста больше | — |
+| `Invalid` | `UpdateManifestException` | текст: `Update manifest signature is missing: …`, `Update manifest signature is invalid; the update was not trusted.`, `Unsupported update manifest schema.`, `Update URL is outside the trusted download policy.`, `No update artifact exists for {target}/{arch}/{kind}.`, … |
+| `Unavailable` | сеть, таймаут, JSON, кодировка | `Update request timed out.` или `{ExceptionType}: {msg}` (например, `HttpRequestException: …`) |
+
+**Сравнение версий** — по правилам SemVer с пререлизами. Ведущие нули в числовых идентификаторах пререлиза запрещены: `Numeric prerelease identifiers must not contain leading zeroes.`
+
+#### 12.2 Загрузка (`DownloadAsync(artifact, destination)`)
+
+1. Папка назначения задаётся **хостом** (§16). Если там уже лежит файл, он проверяется. Прошёл проверку → используется повторно (`Reused the verified update download.`). Не прошёл → удаляется.
+2. Скачивание во временный файл `.<имя>.<guid>.part`.
+   - Объявленный или фактический размер больше указанного в манифесте → `Update download is larger than the manifest size {size}.`
+   - Таймаут простоя → `Update server stopped sending data.`
+3. **Проверка:**
+   - размер = `size`, иначе `Update artifact size mismatch: expected {a}, got {b}.`;
+   - SHA-256 = `sha256` (сравнение за постоянное время), иначе `Update artifact SHA-256 mismatch.`
+4. Переименование в целевой файл.
+5. Любая ошибка → временный файл удаляется. Сетевые ошибки и ошибки ввода-вывода оборачиваются: `Update download failed: {msg}`.
+6. Прогресс: `Downloading update.` (байты / всего), затем `Update download verified.`
+
+#### 12.3 Установка (`InstallAsync`)
+
+1. Тип установки определяется `UpdateInstallationDetector`:
+   - Linux-пакет, если приложение лежит в `/usr/lib/stalker-save-editor`;
+   - Installer / AppBundle / Portable — по манифесту упакованной сборки;
+   - Development — сборка из исходников.
+2. **Отказы:**
+   - Development → `Update installation type is unsupported.`
+   - Артефакт не соответствует типу и архитектуре установки → `Update artifact does not match the current installation.`
+3. **Повторная проверка размера и SHA-256** скачанного файла непосредственно перед запуском.
+4. Запуск:
+
+| Платформа / тип | Действие | Итог |
+|---|---|---|
+| Windows / Installer, `.exe` | запуск `.exe`, ожидание выхода | `Succeeded` / `Failed` |
+| Linux / Package, `.deb` | `pkexec apt-get install -y -- <deb>`; если нет pkexec или apt-get — `xdg-open <deb>` | `Succeeded` или `OpenedExternally`; без xdg-open → `Linux package manager handoff is unavailable (pkexec/xdg-open missing).` |
+| macOS, `.dmg` | `open <dmg>` | `OpenedExternally`; без `open` → `macOS installer handoff is unavailable.` |
+| Portable `.zip` / `.tar.gz` | — | `Automatic replacement of portable .zip or .tar.gz installations is not supported by this installer handoff.` |
+
+5. **Коды выхода:**
+   - 126 или 127 → `Cancelled`, `The installer authorization was cancelled.`
+   - другой ненулевой → `Failed`, `Installer exited with code {n}.`
+   - отмена → `Update installation was cancelled.`
+   - успех → `Update installation completed.` или `The verified installer was opened.`
+6. Приложение перед установкой **не закрывается**. Что делает установщик с запущенным приложением, определяет сам установщик.
+
+**Очистка.** `CleanupStaleDownloads` удаляет во временной папке файлы, подходящие под `^SaveEditor-update-[0-9]+-.+`.
+
+#### 12.4 Чек-лист
+
+1. Подменить `latest.json` без `.sig` → бейдж `Ошибка проверки манифеста`, ошибка `Update manifest signature is missing: …`
+2. Подменить подпись → `Update manifest signature is invalid; the update was not trusted.`
+3. Артефакт с изменённым байтом → `Ошибка скачивания: Update artifact SHA-256 mismatch.`; `.part` удалён, целевого файла нет.
+4. Сервер отдаёт файл больше `size` → `Update download is larger than the manifest size …`
+5. Скачать, затем изменить файл на диске → `УСТАНОВИТЬ` → `Установка не удалась (Failed): Update artifact SHA-256 mismatch.`
+6. Portable-сборка → установка: `Automatic replacement of portable .zip or .tar.gz installations is not supported…`
+7. Linux-пакет, отмена окна pkexec → `Установка не удалась (Cancelled): The installer authorization was cancelled.`
+8. Без сети → тихая проверка ничего не показывает. Ручная: `Unavailable`, текст вида `HttpRequestException: …`
+
+---
+
+### 13. Диагностика: журнал, сбой, отправка (`Diagnostics/AppLog.cs`, `DiagnosticsUploader.cs`)
+
+**Журнал:**
+
+- файл `<данные>/logs/save-editor.log`, ротация при 1 МиБ, хранятся 3 копии;
+- в браузерной сборке журнал только в памяти.
+
+**Сбой:**
+
+- необработанное исключение или ненаблюдённая задача → запись в журнал и в `last-crash.txt` (обезличен, до 64 КБ);
+- при закрытии приложения отмены не считаются сбоем;
+- `Скрыть ошибку` удаляет `last-crash.txt`.
+
+**Пакет отчёта** (`DiagnosticsBundle.Create`), gzip до 2 МиБ:
+
+- заголовок с версией;
+- `last-crash.txt` (до 256 КБ);
+- отчёт окружения, если запускалась проверка;
+- журналы (у суточного отчёта — только строки после прошлой отправки);
+- хвосты логов мода S2 (до 256 КБ): `save_editor_companion.log`, `.log.old` из `%LOCALAPPDATA%/Stalker2/Saved` и из префиксов Proton.
+
+**Обезличивание** (`AppLog.Redact`) заменяет:
+
+- домашний каталог → `<home>`;
+- `/home/<x>`, `/Users/<x>`, `C:\Users\<x>` → `<home>`;
+- `drive_c/users/<x>` → `drive_c/users/<user>`;
+- SteamID64 (`7656119…`) → `<steamid>`;
+- `userdata/<число>` → `userdata/<id>`.
+
+Имена файлов сейвов и пути вне домашнего каталога **не вырезаются** (§15 п.9).
+
+**Отправка:**
+
+- POST `https://save-editor-downloads.save-editor.workers.dev/diagnostics`, `Content-Type: application/gzip`, таймаут 30 с;
+- ответ: JSON с `report_id`;
+- ошибка: `report rejected: {code} {body}`.
+- Суточный отчёт отправляется, если прошло ≥ 24 ч с прошлой отправки, отправок ещё не было или есть неотправленный сбой.
+
+**Чек-лист:**
+
+1. Вызвать сбой → после перезапуска баннер сбоя; в `last-crash.txt` нет домашнего пути.
+2. `Сохранить отчёт…` → `.txt.gz` открывается; в нём `<home>` вместо домашнего пути и `<steamid>` вместо SteamID64.
+3. Отправить вручную без сети → `Отчёт не отправлен: …`
+4. Сервер вернул 429 → `Отчёт не отправлен: report rejected: 429 …`
+
+---
+
+### 14. Поправки к ACCEPTANCE.md
+
+Найдены при чтении ядра. Внести в `ACCEPTANCE.md` или явно утвердить как известные расхождения.
+
+1. **Черновик и перезапуск** (`ACCEPTANCE.md` §1.2, §1.10 п.5, §3).
+   - На диске сохраняются только деньги, пачки, удаления, добавления и тайники X-Ray.
+   - Прочность, апгрейды, размещение и отношения после перезапуска **пропадают молча**.
+   - Чек-лист §1.10 п.5 (деньги) верен. Нужно добавить пункт «прочность после перезапуска не сохраняется» или исправить в Rust (§15 п.4).
+2. **S2 не заблокирован для записи** (§1.8, §3.6 п.10, §20 п.2).
+   - `CanEdit("stalker2")` = `true`; деньги, пачки и прочность S2 доступны для правки и записи (кроме 1.0.x).
+   - Текст `Запись S.T.A.L.K.E.R. 2 выключена в UI…` при снимке возможностей 1.3.1 не появляется; в «Возможностях» ячейки S2 — `Эксперим.`, а не `Блок UI`.
+   - Статичная подпись на экране «Возможности» `Запись сейвов S.T.A.L.K.E.R. 2 выключена…` противоречит поведению.
+3. **«Восстановить на место»** (§8, §23.1 #4).
+   - Работает, только пока сейв побайтно равен записанному редактором.
+   - После сохранения в игре — `Ошибка восстановления: Current save changed after the journaled replacement; refusing to overwrite it.`, хотя кнопка активна.
+   - Если сейва нет, восстанавливается без страховочного бэкапа.
+4. **§24 п.4 — не дефект.** Перенос в тайник и из тайника X-Ray требует `add_items` (`EditService.EditCapabilities`), поэтому привязка `В ТАЙНИК` к `CanAddItems` согласована с ядром.
+5. **Ошибка при изменённом файле** (§1.2, чек-лист §1.10 п.9). Если игра перезаписала сейв, ошибку даёт писатель формата: `Не удалось сохранить: X-Ray money edit: Source SHA256 does not match the edit plan.`, а не `Source changed since analysis`.
+6. **Папка бэкапов внутри папки сейвов** (§22). Любая запись падает с `Backup directory must be outside the selected save directory. (Parameter 'backupDirectory')`. UI это не проверяет при вводе.
+7. **Отключение модов S2** (§14, §23.3 #18) — переименование `Stalker2/Content/Paks/~mods` ↔ `Stalker2/Content/~mods.disabled`. Без копирования и удаления.
+8. **Удаление исправления** (§13) оставляет бэкапы и манифест с `installed: false`. Повторная установка той же версии использует старые бэкапы.
+9. **Облако** (§18):
+   - каждая запись оставляет в «Бэкапах» строку `Повреждён` (бэкап без журнала);
+   - EE-версии (2427410/20/30) поддерживаются ядром, но экран их не запрашивает.
+
+---
+
+### 15. Дефекты и риски ядра (решить явно при переписывании)
+
+1. **Права сейва после записи.** `ReplaceLocal` и `RestoreInPlace` подменяют сейв временным файлом с правами `0600`. Исходные права и владелец сейва не сохраняются. Для Proton с тем же пользователем это безопасно; при другом пользователе игра потеряет доступ.
+2. **Остатки неудачных записей.** Ошибка `ReplaceLocal` после создания артефактов и до замены оставляет `_ORIGINAL`, `_EDITED` и журнал `prepared`. В UI это строки `Повреждён`, очистки нет.
+3. **Неполная проверка после записи.** `VerifyReadBack` не проверяет прочность, апгрейды, размещение, отношения, удаление и добавление. Проверка до записи (`PrepareEdit`) использует ту же функцию, поэтому эти правки не проверяются вообще.
+4. **Черновик неполный** (§6.2). Также `HasChanges` не видит эти поля, поэтому черновик только из них удаляется.
+5. **Нет автоматического отката** после замены сейва, если обратное чтение не прошло. Журнал остаётся `prepared`, UI восстановить не может.
+6. **Журнал сейва** хранит только `money` и `stack_count`. Состав правки по нему не восстановить.
+7. **`ВСЕ БЕЗОПАСНЫЕ` = `РЕКОМЕНДУЕМЫЕ`.** Исправления Community недоступны через пресеты.
+8. **Удаление компаньона без журнала.** Корректность держится на идемпотентном повторе. Список конфликтов теряется в UI.
+9. **Обезличивание неполное.** Имена файлов сейвов (`save written quicksave.sav …`) и пути вне домашней папки уходят в отчёт.
+10. **Облачные бэкапы без журналов** — видны в UI как повреждённые, восстановить из UI нельзя.
+11. **Загрузка обновления** пишет `.part` без fsync, а финальное переименование — обычный `File.Move` без `DurableFile`.
+12. **S2 Auto-Cloud.** Готовый код не задействован. Решить: удалить или подключить.
+
+---
+
+### 16. Что не определено и после чтения ядра
+
+Хост-адаптеры (`HostPlatform.CreateCloudService`, `CreateAchievementsService`, `CreateUpdateService`) не входят ни в архив интерфейса, ни в архив ядра. Поэтому не определены:
+
+- как исключения ядра облака превращаются в статус `Aborted` и текст `Запись отменена: {0}`;
+- какой `PreparedEdit` хост строит для записи в облако (`SourceSha256` облачной копии ожидается, но не подтверждено);
+- папка, в которую хост скачивает обновления. По шаблону очистки это вероятно `<temp>/SaveEditor-update-<pid>-<файл>`, но не подтверждено;
+- откуда хост берёт список облачных файлов и сравнение с локальными (`ListCloudFilesAsync`, `CloudComparison`);
+- выбор `ISteamCloudWebReader` для S2 Auto-Cloud;
+- формат и путь файла раскладки горячих клавиш компаньона (`Core/Hotkeys/HotkeyLayout.cs` в архиве есть, но в этот документ не разобран).
+
+Для закрытия этих пунктов нужен проект приложения-хоста (desktop).
