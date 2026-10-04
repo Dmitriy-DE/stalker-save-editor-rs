@@ -164,22 +164,20 @@ impl HotkeyLayout {
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
-            let (name, value) = line.split_once('=').ok_or_else(|| {
-                HotkeyError::new(format!("Hotkey line {line_no} must use action=Ctrl+Key syntax."))
-            })?;
+            let (name, value) = line
+                .split_once('=')
+                .ok_or_else(|| HotkeyError::new(format!("Hotkey line {line_no} must use action=Ctrl+Key syntax.")))?;
             let action_name = name.trim();
-            let action = HotkeyAction::from_name(action_name).ok_or_else(|| {
-                HotkeyError::new(format!("Unknown hotkey action '{action_name}' on line {line_no}."))
-            })?;
+            let action = HotkeyAction::from_name(action_name)
+                .ok_or_else(|| HotkeyError::new(format!("Unknown hotkey action '{action_name}' on line {line_no}.")))?;
             if bindings.contains_key(&action) {
                 return Err(HotkeyError::new(format!(
                     "Hotkey action '{action_name}' is configured more than once."
                 )));
             }
             let gesture_text = value.trim();
-            let gesture = HotkeyGesture::parse(gesture_text).map_err(|error| {
-                HotkeyError::new(format!("Invalid hotkey on line {line_no}: {error}"))
-            })?;
+            let gesture = HotkeyGesture::parse(gesture_text)
+                .map_err(|error| HotkeyError::new(format!("Invalid hotkey on line {line_no}: {error}")))?;
             if !gestures.insert(gesture) {
                 return Err(HotkeyError::new(format!(
                     "Hotkey '{gesture}' is assigned more than once."
