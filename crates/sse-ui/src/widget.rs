@@ -1187,4 +1187,50 @@ mod tests {
         assert_eq!(tree.hit(10, 10), Some(background));
         Ok(())
     }
+    #[test]
+    fn input_set_get_and_changed_queue() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let input = tree.add(
+            None,
+            NodeKind::Leaf,
+            Style::default(),
+            Content::Input {
+                text: String::new(),
+                style: TextStyle::new(Face::Body, 14.0),
+            },
+            Look::default(),
+        )?;
+        assert_eq!(tree.input_text(input)?, "");
+        tree.set_input_text(input, "profile")?;
+        assert_eq!(tree.input_text(input)?, "profile");
+        assert_eq!(tree.take_changed_inputs(), vec![input]);
+        assert!(tree.take_changed_inputs().is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn focused_input_accepts_characters_backspace_and_inserted_text() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let input = tree.add(
+            None,
+            NodeKind::Leaf,
+            Style::default(),
+            Content::Input {
+                text: String::new(),
+                style: TextStyle::new(Face::Body, 14.0),
+            },
+            Look::default(),
+        )?;
+        tree.set_focus(Some(input))?;
+        assert!(tree.edit_focused_input(u32::from('a'), Some("a"))?);
+        assert!(tree.edit_focused_input(u32::from('b'), Some("b"))?);
+        assert_eq!(tree.input_text(input)?, "ab");
+        assert!(tree.edit_focused_input(0xff08, None)?);
+        assert_eq!(tree.input_text(input)?, "a");
+        assert!(tree.edit_focused_input(0, Some(" вставка"))?);
+        assert_eq!(tree.input_text(input)?, "a вставка");
+        assert_eq!(tree.take_changed_inputs(), vec![input]);
+        Ok(())
+    }
+
 }
