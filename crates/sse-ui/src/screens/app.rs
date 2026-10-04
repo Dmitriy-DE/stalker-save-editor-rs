@@ -14,7 +14,7 @@ use sse_core::Result;
 /// Screens of this package.
 #[must_use]
 pub fn screens() -> Vec<Box<dyn Screen>> {
-    vec![Box::new(Capabilities), Box::new(Settings::default())]
+    vec![Box::new(Capabilities::default()), Box::new(Settings::default())]
 }
 
 #[derive(Clone, Copy)]
