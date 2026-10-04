@@ -7,9 +7,7 @@ use super::{AppMessage, Context, Placeholder, Screen, ScreenId};
 use crate::event_loop::Message;
 use crate::widget::WidgetId;
 use sse_core::Result;
-use sse_storage::discovery::{
-    normalize_full_path, resolve_links, SaveDirectoryCandidate, SaveDirectoryLocator,
-};
+use sse_storage::discovery::{normalize_full_path, resolve_links, SaveDirectoryCandidate, SaveDirectoryLocator};
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -389,9 +387,7 @@ impl GamesOverview {
         }
 
         if let Some(id) = self.folder_value {
-            let text = selected_install.map_or("—".to_owned(), |inst| {
-                inst.directory.to_string_lossy().to_string()
-            });
+            let text = selected_install.map_or("—".to_owned(), |inst| inst.directory.to_string_lossy().to_string());
             let shortened = short_text(&text, 48);
             cx.tree.set_text(id, &shortened)?;
         }
@@ -530,42 +526,17 @@ impl Screen for GamesOverview {
         style::label(cx.tree, row5, "Число сейвов:  ", Text::Note)?;
         self.saves_value = Some(style::label(cx.tree, row5, "—", Text::Value)?);
 
-        self.open_folder_button = Some(style::button(
-            cx.tree,
-            right_card,
-            "Открыть папку",
-            Button::Secondary,
-        )?);
+        self.open_folder_button = Some(style::button(cx.tree, right_card, "Открыть папку", Button::Secondary)?);
 
         // --- BOTTOM ACTIONS: БЫСТРЫЕ ДЕЙСТВИЯ ---
         let bottom_card = style::card(cx.tree, host)?;
         style::label(cx.tree, bottom_card, "БЫСТРЫЕ ДЕЙСТВИЯ", Text::Heading)?;
         let actions_row = style::row(cx.tree, bottom_card)?;
 
-        self.action_fixes = Some(style::button(
-            cx.tree,
-            actions_row,
-            "Исправления",
-            Button::Secondary,
-        )?);
-        self.action_doctor = Some(style::button(
-            cx.tree,
-            actions_row,
-            "Доктор игры",
-            Button::Secondary,
-        )?);
-        self.action_environment = Some(style::button(
-            cx.tree,
-            actions_row,
-            "Среда игры",
-            Button::Secondary,
-        )?);
-        self.action_encyclopedia = Some(style::button(
-            cx.tree,
-            actions_row,
-            "Энциклопедия",
-            Button::Secondary,
-        )?);
+        self.action_fixes = Some(style::button(cx.tree, actions_row, "Исправления", Button::Secondary)?);
+        self.action_doctor = Some(style::button(cx.tree, actions_row, "Доктор игры", Button::Secondary)?);
+        self.action_environment = Some(style::button(cx.tree, actions_row, "Среда игры", Button::Secondary)?);
+        self.action_encyclopedia = Some(style::button(cx.tree, actions_row, "Энциклопедия", Button::Secondary)?);
 
         // --- MODS NOTICE: МОДЫ ---
         let mods_card = style::card(cx.tree, host)?;
@@ -637,7 +608,10 @@ impl Screen for GamesOverview {
             let current = state.selected_target.unwrap_or(GameTarget::ShadowOfChernobyl);
             let idx = GameTarget::ALL.iter().position(|&t| t == current).unwrap_or(0);
             let new_idx = idx.checked_sub(1).unwrap_or(GameTarget::ALL.len().saturating_sub(1));
-            let new_target = GameTarget::ALL.get(new_idx).copied().unwrap_or(GameTarget::ShadowOfChernobyl);
+            let new_target = GameTarget::ALL
+                .get(new_idx)
+                .copied()
+                .unwrap_or(GameTarget::ShadowOfChernobyl);
             state.selected_target = Some(new_target);
             // Also select matching installation if any
             state.selected_index = state.installations.iter().position(|inst| inst.target == new_target);
@@ -651,7 +625,10 @@ impl Screen for GamesOverview {
             let idx = GameTarget::ALL.iter().position(|&t| t == current).unwrap_or(0);
             let next_idx = idx.saturating_add(1);
             let new_idx = if next_idx >= GameTarget::ALL.len() { 0 } else { next_idx };
-            let new_target = GameTarget::ALL.get(new_idx).copied().unwrap_or(GameTarget::ShadowOfChernobyl);
+            let new_target = GameTarget::ALL
+                .get(new_idx)
+                .copied()
+                .unwrap_or(GameTarget::ShadowOfChernobyl);
             state.selected_target = Some(new_target);
             state.selected_index = state.installations.iter().position(|inst| inst.target == new_target);
             drop(state);
@@ -814,11 +791,7 @@ pub fn discover_all_installations() -> Vec<DiscoveredInstallation> {
     // 3. Count saves for each discovered installation
     count_saves_for_installations(&mut installations);
 
-    installations.sort_by(|a, b| {
-        a.target
-            .cmp(&b.target)
-            .then_with(|| a.directory.cmp(&b.directory))
-    });
+    installations.sort_by(|a, b| a.target.cmp(&b.target).then_with(|| a.directory.cmp(&b.directory)));
 
     installations
 }
@@ -847,16 +820,17 @@ fn add_installation(
     });
 }
 
-fn discover_non_steam_installations(
-    installations: &mut Vec<DiscoveredInstallation>,
-    seen_dirs: &mut HashSet<PathBuf>,
-) {
+fn discover_non_steam_installations(installations: &mut Vec<DiscoveredInstallation>, seen_dirs: &mut HashSet<PathBuf>) {
     let home = std::env::var("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("/"));
 
     // Heroic config path on Linux: ~/.config/heroic/gog_store/installed.json
-    let heroic_json = home.join(".config").join("heroic").join("gog_store").join("installed.json");
+    let heroic_json = home
+        .join(".config")
+        .join("heroic")
+        .join("gog_store")
+        .join("installed.json");
     if let Ok(content) = fs::read_to_string(&heroic_json) {
         parse_heroic_gog_installs(&content, installations, seen_dirs);
     }
@@ -935,22 +909,31 @@ fn folder_matches_target(name: &str, target: GameTarget) -> bool {
     let lower = name.to_ascii_lowercase();
     match target {
         GameTarget::ShadowOfChernobyl => {
-            !lower.contains("enhanced") && !lower.contains(" - ee") && (lower.contains("shadow of ch") || lower.contains("shoc"))
+            !lower.contains("enhanced")
+                && !lower.contains(" - ee")
+                && (lower.contains("shadow of ch") || lower.contains("shoc"))
         }
         GameTarget::ClearSky => {
-            !lower.contains("enhanced") && !lower.contains(" - ee") && (lower.contains("clear sky") || lower.contains("cs"))
+            !lower.contains("enhanced")
+                && !lower.contains(" - ee")
+                && (lower.contains("clear sky") || lower.contains("cs"))
         }
         GameTarget::CallOfPripyat => {
-            !lower.contains("enhanced") && !lower.contains(" - ee") && (lower.contains("call of pr") || lower.contains("cop"))
+            !lower.contains("enhanced")
+                && !lower.contains(" - ee")
+                && (lower.contains("call of pr") || lower.contains("cop"))
         }
         GameTarget::ShadowOfChernobylEnhancedEdition => {
-            (lower.contains("shadow of ch") || lower.contains("shoc")) && (lower.contains("enhanced") || lower.contains(" - ee"))
+            (lower.contains("shadow of ch") || lower.contains("shoc"))
+                && (lower.contains("enhanced") || lower.contains(" - ee"))
         }
         GameTarget::ClearSkyEnhancedEdition => {
-            (lower.contains("clear sky") || lower.contains("cs")) && (lower.contains("enhanced") || lower.contains(" - ee"))
+            (lower.contains("clear sky") || lower.contains("cs"))
+                && (lower.contains("enhanced") || lower.contains(" - ee"))
         }
         GameTarget::CallOfPripyatEnhancedEdition => {
-            (lower.contains("call of pr") || lower.contains("cop")) && (lower.contains("enhanced") || lower.contains(" - ee"))
+            (lower.contains("call of pr") || lower.contains("cop"))
+                && (lower.contains("enhanced") || lower.contains(" - ee"))
         }
         GameTarget::Stalker2 => {
             lower.contains("s.t.a.l.k.e.r. 2") || lower.contains("stalker 2") || lower.contains("heart of ch")
