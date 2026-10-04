@@ -1711,6 +1711,9 @@ impl Screen for GameFixes {
                 return Ok(());
             }
         }
+        if self.busy && clicked.is_some() {
+            return Ok(());
+        }
 
         if clicked.is_some() {
             for (index, row) in self.rows.iter().copied().enumerate() {
@@ -1729,23 +1732,24 @@ impl Screen for GameFixes {
         }
 
         if clicked.is_some() && clicked == self.check {
+            self.busy = true;
+            self.verified = None;
             let game = cx.app.selected_game().map(str::to_owned);
             let directory = cx.app.game_dir().map(Path::to_path_buf);
             let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
             std::thread::spawn(move || {
                 let result = (|| {
-                    let target = game
-                        .as_deref()
-                        .and_then(fix_target)
-                        .ok_or_else(|| "Игра не поддерживается".to_owned())?;
+                    let game = game.ok_or_else(|| "Игра не поддерживается".to_owned())?;
+                    let target = fix_target(&game).ok_or_else(|| "Игра не поддерживается".to_owned())?;
                     let directory = directory.ok_or_else(|| "Папка игры не выбрана".to_owned())?;
                     let (matches, build) = sse_fixes::identify_game(target, &directory);
                     if !matches {
                         return Err("ПАПКА НЕ ПОХОЖА НА ВЫБРАННУЮ УСТАНОВКУ ИГРЫ.".to_owned());
                     }
-                    build.map(|id| format!("НАЙДЕНА СБОРКА STEAM: {id}.")).ok_or_else(|| {
+                    let build = build.ok_or_else(|| {
                         "ВЕРСИЯ STEAM НЕ ОПРЕДЕЛЕНА; УСТАНОВКА ИСПРАВЛЕНИЙ С ЗАЩИТОЙ ПО СБОРКЕ НЕДОСТУПНА.".to_owned()
-                    })
+                    })?;
+                    Ok((format!("НАЙДЕНА СБОРКА STEAM: {build}."), game, directory, build))
                 })();
                 proxy.send(AppMessage::ToScreen(
                     ScreenId::GameFixes,
