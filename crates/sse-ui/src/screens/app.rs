@@ -232,14 +232,6 @@ impl Settings {
             .unwrap_or(("zone", "Тёмная"))
     }
 
-    fn accent_choice(&self) -> &'static str {
-        crate::theme::ACCENT_IDS
-            .get(self.accent)
-            .copied()
-            .or_else(|| crate::theme::ACCENT_IDS.first().copied())
-            .unwrap_or("amber")
-    }
-
     fn accent_name(&self) -> &'static str {
         crate::theme::ACCENT_NAMES
             .get(self.accent)
