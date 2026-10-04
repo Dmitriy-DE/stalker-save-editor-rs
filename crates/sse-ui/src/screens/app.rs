@@ -17,110 +17,196 @@ pub fn screens() -> Vec<Box<dyn Screen>> {
 
 #[derive(Clone, Copy)]
 enum Support {
-    Write,
-    Read,
-    No,
+    Verified,
+    Experimental,
+    Research,
+    Unsupported,
 }
 
 impl Support {
     const fn label(self) -> &'static str {
         match self {
-            Self::Write => "✓",
-            Self::Read => "чт.",
-            Self::No => "—",
+            Self::Verified => "Запись",
+            Self::Experimental => "Эксперим.",
+            Self::Research => "Чтение",
+            Self::Unsupported => "Нет",
+        }
+    }
+
+    const fn reason(self) -> &'static str {
+        match self {
+            Self::Verified => "Подтверждено и верифицировано в игре.",
+            Self::Experimental => "Экспериментальная поддержка (требуется проверка в игре).",
+            Self::Research => "Исследование / режим только для чтения.",
+            Self::Unsupported => "Не поддерживается движком или форматом сохранения.",
         }
     }
 }
 
+const GAMES: [&str; 7] = ["ТЧ", "ЧН", "ЗП", "ТЧ EE", "ЧН EE", "ЗП EE", "S2"];
+
 struct CapabilityRow {
-    game: &'static str,
-    read: Support,
-    money: Support,
-    items: Support,
-    s2: Support,
-    fixes: Support,
-    companion: Support,
-    cloud: Support,
-    reason: &'static str,
+    name: &'static str,
+    description: &'static str,
+    support: [Support; 7],
 }
 
-const CAPABILITY_ROWS: [CapabilityRow; 7] = [
+const CAPABILITY_ROWS: [CapabilityRow; 12] = [
     CapabilityRow {
-        game: "ТЧ",
-        read: Support::Write,
-        money: Support::Write,
-        items: Support::Write,
-        s2: Support::No,
-        fixes: Support::Write,
-        companion: Support::Write,
-        cloud: Support::Write,
-        reason: "X-Ray 1.0: чтение и проверенные мутации",
+        name: "Деньги",
+        description: "Изменение количества рублей у сталкера",
+        support: [
+            Support::Verified,
+            Support::Verified,
+            Support::Verified,
+            Support::Experimental,
+            Support::Experimental,
+            Support::Experimental,
+            Support::Experimental,
+        ],
     },
     CapabilityRow {
-        game: "ЧН",
-        read: Support::Write,
-        money: Support::Write,
-        items: Support::Write,
-        s2: Support::No,
-        fixes: Support::Write,
-        companion: Support::Write,
-        cloud: Support::Write,
-        reason: "X-Ray 1.5: чтение и проверенные мутации",
+        name: "Стаки предметов",
+        description: "Изменение количества в пачках патронов и расходников",
+        support: [
+            Support::Verified,
+            Support::Verified,
+            Support::Verified,
+            Support::Experimental,
+            Support::Experimental,
+            Support::Experimental,
+            Support::Experimental,
+        ],
     },
     CapabilityRow {
-        game: "ЗП",
-        read: Support::Write,
-        money: Support::Write,
-        items: Support::Write,
-        s2: Support::No,
-        fixes: Support::Write,
-        companion: Support::Write,
-        cloud: Support::Write,
-        reason: "X-Ray 1.6: чтение и проверенные мутации",
+        name: "Прочность снаряжения",
+        description: "Состояние и износ оружия, бронекостюмов и шлемов",
+        support: [
+            Support::Experimental,
+            Support::Experimental,
+            Support::Experimental,
+            Support::Unsupported,
+            Support::Unsupported,
+            Support::Unsupported,
+            Support::Experimental,
+        ],
     },
     CapabilityRow {
-        game: "ТЧ EE",
-        read: Support::Read,
-        money: Support::Read,
-        items: Support::Read,
-        s2: Support::No,
-        fixes: Support::Write,
-        companion: Support::No,
-        cloud: Support::Write,
-        reason: "Enhanced: сейвы доступны для чтения; запись ограничена до верификации",
+        name: "Размещение в слотах",
+        description: "Слоты оружия, пояс для артефактов и рюкзак",
+        support: [
+            Support::Experimental,
+            Support::Experimental,
+            Support::Experimental,
+            Support::Unsupported,
+            Support::Unsupported,
+            Support::Unsupported,
+            Support::Unsupported,
+        ],
     },
     CapabilityRow {
-        game: "ЧН EE",
-        read: Support::Read,
-        money: Support::Read,
-        items: Support::Read,
-        s2: Support::No,
-        fixes: Support::Write,
-        companion: Support::No,
-        cloud: Support::Write,
-        reason: "Enhanced: сейвы доступны для чтения; запись ограничена до верификации",
+        name: "Апгрейды и модификации",
+        description: "Установка и снятие веток улучшений оружия и брони",
+        support: [
+            Support::Unsupported,
+            Support::Experimental,
+            Support::Experimental,
+            Support::Unsupported,
+            Support::Unsupported,
+            Support::Unsupported,
+            Support::Unsupported,
+        ],
     },
     CapabilityRow {
-        game: "ЗП EE",
-        read: Support::Read,
-        money: Support::Read,
-        items: Support::Read,
-        s2: Support::No,
-        fixes: Support::Write,
-        companion: Support::No,
-        cloud: Support::Write,
-        reason: "Enhanced: сейвы доступны для чтения; запись ограничена до верификации",
+        name: "Отношения группировок",
+        description: "Редактирование очков репутации и враждебности фракций",
+        support: [
+            Support::Experimental,
+            Support::Experimental,
+            Support::Experimental,
+            Support::Unsupported,
+            Support::Unsupported,
+            Support::Unsupported,
+            Support::Unsupported,
+        ],
     },
     CapabilityRow {
-        game: "S2",
-        read: Support::Read,
-        money: Support::Read,
-        items: Support::Read,
-        s2: Support::Read,
-        fixes: Support::No,
-        companion: Support::Write,
-        cloud: Support::Write,
-        reason: "UE5: поддержка S2 есть, запись сейва остаётся safety-restricted",
+        name: "Фракция игрока",
+        description: "Смена принадлежности сталкера к группировке",
+        support: [
+            Support::Experimental,
+            Support::Experimental,
+            Support::Experimental,
+            Support::Unsupported,
+            Support::Unsupported,
+            Support::Unsupported,
+            Support::Unsupported,
+        ],
+    },
+    CapabilityRow {
+        name: "Тайники (перемещение)",
+        description: "Перемещение хабара из тайников в рюкзак и обратно",
+        support: [
+            Support::Verified,
+            Support::Verified,
+            Support::Verified,
+            Support::Experimental,
+            Support::Experimental,
+            Support::Experimental,
+            Support::Unsupported,
+        ],
+    },
+    CapabilityRow {
+        name: "Добавление предметов",
+        description: "Спавн новых предметов из каталога в инвентарь",
+        support: [
+            Support::Verified,
+            Support::Verified,
+            Support::Verified,
+            Support::Experimental,
+            Support::Experimental,
+            Support::Experimental,
+            Support::Unsupported,
+        ],
+    },
+    CapabilityRow {
+        name: "Удаление предметов",
+        description: "Безопасное удаление объектов из инвентаря",
+        support: [
+            Support::Verified,
+            Support::Verified,
+            Support::Verified,
+            Support::Experimental,
+            Support::Experimental,
+            Support::Experimental,
+            Support::Unsupported,
+        ],
+    },
+    CapabilityRow {
+        name: "Чтение инвентаря",
+        description: "Парсинг предметов, патронов и экипировки",
+        support: [
+            Support::Verified,
+            Support::Verified,
+            Support::Verified,
+            Support::Verified,
+            Support::Verified,
+            Support::Verified,
+            Support::Verified,
+        ],
+    },
+    CapabilityRow {
+        name: "Каталог предметов",
+        description: "Сопоставление идентификаторов с официальными именами",
+        support: [
+            Support::Verified,
+            Support::Verified,
+            Support::Verified,
+            Support::Verified,
+            Support::Verified,
+            Support::Verified,
+            Support::Research,
+        ],
     },
 ];
 
@@ -136,35 +222,69 @@ impl Screen for Capabilities {
     }
 
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
-        let card = style::card(cx.tree, host)?;
-        style::label(cx.tree, card, "МАТРИЦА ВОЗМОЖНОСТЕЙ", Text::Heading)?;
+        let help = style::card(cx.tree, host)?;
+        style::label(cx.tree, help, "СПРАВКА ПО ВОЗМОЖНОСТЯМ", Text::Heading)?;
+        style::label(cx.tree, help, "МАТРИЦА ВОЗМОЖНОСТЕЙ РЕДАКТОРА", Text::Value)?;
         style::label(
             cx.tree,
-            card,
-            "✓ — поддержано · чт. — только чтение · — — не поддерживается",
-            Text::Note,
+            help,
+            "Что редактор умеет делать с сейвами каждой игры.",
+            Text::Body,
         )?;
+
+        let matrix = style::card(cx.tree, host)?;
+        style::label(cx.tree, matrix, "МАТРИЦА ПОДДЕРЖИВАЕМЫХ ВОЗМОЖНОСТЕЙ", Text::Heading)?;
         style::label(
             cx.tree,
-            card,
-            "ИГРА     ЧТЕН.  ДЕНЬГИ  ПРЕДМ.  S2   ФИКСЫ  КОМП.  CLOUD",
+            matrix,
+            "ОПЕРАЦИЯ        ТЧ       ЧН       ЗП       ТЧ EE    ЧН EE    ЗП EE    S2",
             Text::Value,
         )?;
         for row in CAPABILITY_ROWS {
-            let line = format!(
-                "{:<8} {:<6} {:<7} {:<7} {:<4} {:<6} {:<6} {}",
-                row.game,
-                row.read.label(),
-                row.money.label(),
-                row.items.label(),
-                row.s2.label(),
-                row.fixes.label(),
-                row.companion.label(),
-                row.cloud.label()
-            );
-            style::label(cx.tree, card, &line, Text::Body)?;
-            style::label(cx.tree, card, row.reason, Text::Note)?;
+            let mut line = format!("{:<18}", row.name);
+            for support in row.support {
+                line.push_str(&format!(" {:<8}", support.label()));
+            }
+            style::label(cx.tree, matrix, &line, Text::Body)?;
+            style::label(cx.tree, matrix, row.description, Text::Note)?;
+            let mut reasons = String::new();
+            for (game, support) in GAMES.into_iter().zip(row.support) {
+                if !reasons.is_empty() {
+                    reasons.push_str(" · ");
+                }
+                reasons.push_str(game);
+                reasons.push_str(": ");
+                reasons.push_str(support.reason());
+            }
+            style::label(cx.tree, matrix, &reasons, Text::Note)?;
         }
+
+        let legend = style::card(cx.tree, host)?;
+        style::label(cx.tree, legend, "ОБОЗНАЧЕНИЯ", Text::Heading)?;
+        style::label(
+            cx.tree,
+            legend,
+            "Запись (Verified) — Полная поддержка чтения и записи, верифицировано тестами.",
+            Text::Body,
+        )?;
+        style::label(
+            cx.tree,
+            legend,
+            "Эксперим. (Experimental) — Поддержка в формате реализована, ожидается подтверждение в игре.",
+            Text::Body,
+        )?;
+        style::label(
+            cx.tree,
+            legend,
+            "Чтение (Research) — Режим только для чтения.",
+            Text::Body,
+        )?;
+        style::label(
+            cx.tree,
+            legend,
+            "Нет (Unsupported) — Механика отсутствует в игре или не поддерживается.",
+            Text::Body,
+        )?;
         Ok(())
     }
 
@@ -203,6 +323,24 @@ fn save_settings(settings: &sse_app::AppSettings) -> Result<()> {
     settings.save(&sse_app::default_settings_path())
 }
 
+const LANGUAGE_NAMES: [&str; 15] = [
+    "Русский",
+    "Українська",
+    "English",
+    "Deutsch",
+    "Français",
+    "Italiano",
+    "Español",
+    "Polski",
+    "Čeština",
+    "Português (Brasil)",
+    "Türkçe",
+    "日本語",
+    "한국어",
+    "简体中文",
+    "繁體中文",
+];
+
 /// Result of the background check started by the settings screen.
 struct Checked(String);
 
@@ -215,6 +353,10 @@ pub struct Settings {
     theme_button: Option<WidgetId>,
     accent_value: Option<WidgetId>,
     accent_button: Option<WidgetId>,
+    language_value: Option<WidgetId>,
+    language_button: Option<WidgetId>,
+    save_button: Option<WidgetId>,
+    language: usize,
     check_button: Option<WidgetId>,
     check_result: Option<WidgetId>,
     scale: usize,
@@ -232,12 +374,12 @@ impl Settings {
             .unwrap_or(("zone", "Тёмная"))
     }
 
-    fn accent_choice(&self) -> &'static str {
-        crate::theme::ACCENT_IDS
+    fn accent_name(&self) -> &'static str {
+        crate::theme::ACCENT_NAMES
             .get(self.accent)
             .copied()
-            .or_else(|| crate::theme::ACCENT_IDS.first().copied())
-            .unwrap_or("amber")
+            .or_else(|| crate::theme::ACCENT_NAMES.first().copied())
+            .unwrap_or("Янтарный")
     }
 
     fn scale_choice(&self) -> u32 {
@@ -259,6 +401,8 @@ impl Screen for Settings {
     }
 
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
+        self.settings = load_settings();
+        self.language = crate::strings::language_index(self.settings.language.as_deref().unwrap_or("ru"));
         let view = style::card(cx.tree, host)?;
         style::label(cx.tree, view, "ВИД", Text::Heading)?;
         self.settings = load_settings();
@@ -287,7 +431,7 @@ impl Screen for Settings {
 
         let accent_line = style::row(cx.tree, view)?;
         style::label(cx.tree, accent_line, "Акцент:", Text::Body)?;
-        self.accent_value = Some(style::label(cx.tree, accent_line, self.accent_choice(), Text::Value)?);
+        self.accent_value = Some(style::label(cx.tree, accent_line, self.accent_name(), Text::Value)?);
         self.accent_button = Some(style::button(cx.tree, accent_line, "Изменить", Button::Secondary)?);
 
         let line = style::row(cx.tree, view)?;
@@ -299,6 +443,34 @@ impl Screen for Settings {
         };
         self.scale_value = Some(style::label(cx.tree, line, &scale_label, Text::Value)?);
         self.scale_button = Some(style::button(cx.tree, line, "Изменить", Button::Secondary)?);
+
+        let language_line = style::row(cx.tree, view)?;
+        style::label(
+            cx.tree,
+            language_line,
+            crate::strings::t("Язык интерфейса:"),
+            Text::Body,
+        )?;
+        let language_name = LANGUAGE_NAMES.get(self.language).copied().unwrap_or("Русский");
+        self.language_value = Some(style::label(cx.tree, language_line, language_name, Text::Value)?);
+        self.language_button = Some(style::button(
+            cx.tree,
+            language_line,
+            crate::strings::t("Изменить"),
+            Button::Secondary,
+        )?);
+        style::label(
+            cx.tree,
+            view,
+            crate::strings::t("Язык применится после перезапуска приложения."),
+            Text::Note,
+        )?;
+        self.save_button = Some(style::button(
+            cx.tree,
+            view,
+            crate::strings::t("Сохранить настройки"),
+            Button::Primary,
+        )?);
 
         let updates = style::card(cx.tree, host)?;
         style::label(cx.tree, updates, "ОБНОВЛЕНИЯ", Text::Heading)?;
@@ -380,6 +552,34 @@ impl Screen for Settings {
             match save_settings(&self.settings) {
                 Ok(()) => cx.status = Some("Настройки сохранены.".to_owned()),
                 Err(error) => cx.status = Some(format!("Не удалось сохранить настройки: {error}")),
+            }
+        }
+
+        if clicked.is_some() && clicked == self.language_button {
+            self.language = self
+                .language
+                .saturating_add(1)
+                .checked_rem(crate::strings::LANGUAGES.len())
+                .unwrap_or(0);
+            if let Some(value) = self.language_value {
+                cx.tree
+                    .set_text(value, LANGUAGE_NAMES.get(self.language).copied().unwrap_or("Русский"))?;
+            }
+            cx.status = Some(crate::strings::t("Язык применится после перезапуска приложения.").to_owned());
+        }
+        if clicked.is_some() && clicked == self.save_button {
+            self.settings.language = crate::strings::LANGUAGES
+                .get(self.language)
+                .map(|code| (*code).to_owned());
+            match save_settings(&self.settings) {
+                Ok(()) => cx.status = Some(crate::strings::t("Настройки сохранены.").to_owned()),
+                Err(error) => {
+                    cx.status = Some(format!(
+                        "{}{}",
+                        crate::strings::t("Не удалось сохранить настройки: "),
+                        error
+                    ))
+                }
             }
         }
 
