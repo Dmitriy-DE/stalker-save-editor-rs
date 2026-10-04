@@ -211,7 +211,7 @@ struct WorkspaceState {
     idle: bool,
     installations: Vec<DiscoveredInstallation>,
     selected_target: Option<GameTarget>,
-    selected_index: Option<usize>,
+    selected_installation: Option<PathBuf>,
     status_message: Option<String>,
 }
 
@@ -291,14 +291,14 @@ impl GamesOverview {
     }
 
     fn render(&mut self, cx: &mut Context<'_>) -> Result<()> {
-        let (idle, discovering, installations, selected_target, selected_index, status_message) = {
+        let (idle, discovering, installations, selected_target, selected_installation, status_message) = {
             let state = self.workspace.lock();
             (
                 state.idle,
                 state.discovering,
                 state.installations.clone(),
                 state.selected_target.unwrap_or(GameTarget::ShadowOfChernobyl),
-                state.selected_index,
+                state.selected_installation.clone(),
                 state.status_message.clone(),
             )
         };
@@ -336,7 +336,7 @@ impl GamesOverview {
             if let Some(row_id) = self.rows.get(i).copied() {
                 if let Some(install) = installations.get(i) {
                     cx.tree.set_visible(row_id, true)?;
-                    let is_selected = selected_index == Some(i);
+                    let is_selected = selected_installation.as_ref() == Some(&install.directory);
                     let prefix = if is_selected { "> " } else { "  " };
                     let path_str = install.directory.to_string_lossy();
                     let shortened = text::ellipsize_middle(&path_str, 420.0, &PathMetrics);
@@ -355,7 +355,9 @@ impl GamesOverview {
         }
 
         // Selected installation details
-        let selected_install = selected_index.and_then(|idx| installations.get(idx));
+        let selected_install = selected_installation
+            .as_ref()
+            .and_then(|id| installations.iter().find(|install| &install.directory == id));
 
         if let Some(id) = self.target_title {
             let title = if let Some(install) = selected_install {
@@ -615,7 +617,11 @@ impl Screen for GamesOverview {
                 .unwrap_or(GameTarget::ShadowOfChernobyl);
             state.selected_target = Some(new_target);
             // Also select matching installation if any
-            state.selected_index = state.installations.iter().position(|inst| inst.target == new_target);
+            state.selected_installation = state
+                .installations
+                .iter()
+                .find(|inst| inst.target == new_target)
+                .map(|inst| inst.directory.clone());
             drop(state);
             return self.render(cx);
         }
@@ -631,7 +637,11 @@ impl Screen for GamesOverview {
                 .copied()
                 .unwrap_or(GameTarget::ShadowOfChernobyl);
             state.selected_target = Some(new_target);
-            state.selected_index = state.installations.iter().position(|inst| inst.target == new_target);
+            state.selected_installation = state
+                .installations
+                .iter()
+                .find(|inst| inst.target == new_target)
+                .map(|inst| inst.directory.clone());
             drop(state);
             return self.render(cx);
         }
@@ -640,9 +650,13 @@ impl Screen for GamesOverview {
         for (i, row_id) in self.rows.iter().enumerate() {
             if clicked.is_some() && clicked == Some(*row_id) {
                 let mut state = self.workspace.lock();
-                if let Some(inst) = state.installations.get(i) {
-                    state.selected_target = Some(inst.target);
-                    state.selected_index = Some(i);
+                if let Some((target, directory)) = state
+                    .installations
+                    .get(i)
+                    .map(|inst| (inst.target, inst.directory.clone()))
+                {
+                    state.selected_target = Some(target);
+                    state.selected_installation = Some(directory);
                 }
                 drop(state);
                 return self.render(cx);
@@ -652,7 +666,10 @@ impl Screen for GamesOverview {
         // 6. Click on "Открыть папку"
         if clicked.is_some() && clicked == self.open_folder_button {
             let state = self.workspace.lock();
-            let selected_install = state.selected_index.and_then(|idx| state.installations.get(idx));
+            let selected_install = state
+                .selected_installation
+                .as_ref()
+                .and_then(|id| state.installations.iter().find(|install| &install.directory == id));
             if let Some(install) = selected_install {
                 cx.status = Some(format!("Папка игры: {}", install.directory.display()));
             } else {
@@ -674,8 +691,13 @@ impl Screen for GamesOverview {
                 state.discovering = false;
                 state.installations.clone_from(&result.installations);
                 state.status_message = Some(result.status.clone());
-                if state.selected_index.is_none() && !state.installations.is_empty() {
-                    state.selected_index = Some(0);
+                if state
+                    .selected_installation
+                    .as_ref()
+                    .is_none_or(|id| !state.installations.iter().any(|install| &install.directory == id))
+                    && !state.installations.is_empty()
+                {
+                    state.selected_installation = state.installations.first().map(|install| install.directory.clone());
                     if let Some(first) = state.installations.first() {
                         state.selected_target = Some(first.target);
                     }
@@ -702,8 +724,13 @@ fn start_background_discovery(workspace: &Workspace, cx: &mut Context<'_>) {
         state.discovering = false;
         state.installations = found;
         state.status_message = Some(status);
-        if state.selected_index.is_none() && !state.installations.is_empty() {
-            state.selected_index = Some(0);
+        if state
+            .selected_installation
+            .as_ref()
+            .is_none_or(|id| !state.installations.iter().any(|install| &install.directory == id))
+            && !state.installations.is_empty()
+        {
+            state.selected_installation = state.installations.first().map(|install| install.directory.clone());
             if let Some(first) = state.installations.first() {
                 state.selected_target = Some(first.target);
             }
@@ -1432,7 +1459,7 @@ struct GameFixes {
     detail: Option<WidgetId>,
     rows: Vec<WidgetId>,
     items: Vec<FixRow>,
-    selected: Option<usize>,
+    selected: Option<String>,
     install: Option<WidgetId>,
     remove: Option<WidgetId>,
     check: Option<WidgetId>,
@@ -1631,7 +1658,7 @@ impl Screen for GameFixes {
         if clicked.is_some() {
             for (index, row) in self.rows.iter().copied().enumerate() {
                 if clicked == Some(row) && self.items.get(index).is_some() {
-                    self.selected = Some(index);
+                    self.selected = self.items.get(index).map(|item| item.id.clone());
                     self.intent = None;
                     if self.confirm_card.is_some_and(|card| cx.tree.dialog() == Some(card)) {
                         let _ = cx.tree.close_dialog()?;
@@ -1711,11 +1738,13 @@ impl Screen for GameFixes {
             None
         };
         if let Some(install) = action {
-            let Some(index) = self.selected else {
+            let Some(selected_id) = self.selected.as_deref() else {
                 cx.status = Some("Сначала выберите исправление".to_owned());
                 return Ok(());
             };
-            let Some(item) = self.items.get(index) else {
+            let Some(item) = self.items.iter().find(|item| item.id == selected_id) else {
+                self.selected = None;
+                cx.status = Some("Выбранное исправление исчезло после обновления списка".to_owned());
                 return Ok(());
             };
             let Some(game) = cx.app.selected_game().map(str::to_owned) else {
@@ -1803,6 +1832,13 @@ impl Screen for GameFixes {
             if let Some(reply) = payload.downcast_ref::<FixReply>() {
                 match reply {
                     FixReply::List(Ok(items)) => {
+                        if self
+                            .selected
+                            .as_ref()
+                            .is_some_and(|id| !items.iter().any(|item| &item.id == id))
+                        {
+                            self.selected = None;
+                        }
                         self.intent = None;
                         if self.confirm_card.is_some_and(|card| cx.tree.dialog() == Some(card)) {
                             let _ = cx.tree.close_dialog()?;
