@@ -54,7 +54,10 @@ fn startup_language(settings: &sse_app::AppSettings) -> String {
     let Some(system) = system else { return "en".to_owned() };
     let normalized = system.split('.').next().unwrap_or(&system).replace('_', "-");
     let base = normalized.split('-').next().unwrap_or(&normalized);
-    if crate::strings::LANGUAGES.iter().any(|code| code.eq_ignore_ascii_case(&normalized) || code.eq_ignore_ascii_case(base)) {
+    if crate::strings::LANGUAGES
+        .iter()
+        .any(|code| code.eq_ignore_ascii_case(&normalized) || code.eq_ignore_ascii_case(base))
+    {
         normalized
     } else {
         "en".to_owned()
