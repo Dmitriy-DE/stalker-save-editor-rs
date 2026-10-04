@@ -1149,7 +1149,7 @@ struct GameFixes {
 }
 
 fn fix_target(game: &str) -> Option<sse_fixes::GameTarget> {
-    sse_fixes::GameTarget::parse(game).or_else(|| match game {
+    sse_fixes::GameTarget::parse(game).or(match game {
         "stalker-soc" => Some(sse_fixes::GameTarget::ShadowOfChernobyl),
         "stalker-cs" | "clear_sky" => Some(sse_fixes::GameTarget::ClearSky),
         "stalker-cop" => Some(sse_fixes::GameTarget::CallOfPripyat),
