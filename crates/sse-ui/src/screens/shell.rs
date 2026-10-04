@@ -5,6 +5,7 @@ use super::{registry, AppMessage, Context, Group, Screen, ScreenId};
 use crate::event_loop::{App, Flow, Message, Proxy, WindowEvent};
 use crate::glyphs::{to_px, Face, TextStyle};
 use crate::layout::{Align, Edges, NodeKind, Size, Style};
+use crate::path::Icon;
 use crate::widget::{Content, Look, TextAlign, Tree, WidgetId};
 use crate::widgets::scroll::ScrollView;
 use sse_core::Result;
@@ -21,6 +22,14 @@ pub struct Shell {
     screens: Vec<Box<dyn Screen>>,
     hosts: Vec<Option<WidgetId>>,
     nav: Vec<WidgetId>,
+    sidebar: WidgetId,
+    nav_toggle: WidgetId,
+    nav_brand: Vec<WidgetId>,
+    nav_groups: Vec<WidgetId>,
+    nav_version: WidgetId,
+    nav_collapsed: bool,
+    nav_user_choice: Option<bool>,
+    nav_pending_persist: Option<bool>,
     content: WidgetId,
     scroll: ScrollView,
     scroll_bar: WidgetId,
@@ -139,8 +148,8 @@ impl Shell {
         )?;
 
         let sidebar_style = Style {
-            preferred: Size::new(232.0, 0.0),
-            min: Size::new(232.0, 0.0),
+            preferred: Size::new(236.0, 0.0),
+            min: Size::new(236.0, 0.0),
             shrink: 0.0,
             padding: padded(0.0, 18.0, 0.0, 12.0),
             align_items: Align::Stretch,
@@ -162,7 +171,7 @@ impl Shell {
             padding: padded(20.0, 0.0, 20.0, 0.0),
             ..Style::default()
         };
-        tree.add(
+        let brand_title = tree.add(
             Some(sidebar),
             NodeKind::Leaf,
             brand,
@@ -175,7 +184,7 @@ impl Shell {
                 ..Look::default()
             },
         )?;
-        tree.add(
+        let brand_subtitle = tree.add(
             Some(sidebar),
             NodeKind::Leaf,
             Style {
@@ -191,15 +200,23 @@ impl Shell {
                 ..Look::default()
             },
         )?;
+        let nav_toggle = tree.add(
+            Some(sidebar), NodeKind::Leaf,
+            Style { min: Size::new(0.0, 30.0), padding: padded(20.0, 0.0, 12.0, 0.0), ..Style::default() },
+            Content::Button { text: "☰  Свернуть меню".to_owned(), style: TextStyle::new(Face::Heading, 12.0) },
+            style::nav(false),
+        )?;
 
         let screens = registry();
         let mut nav = Vec::with_capacity(screens.len());
+        let mut nav_groups = Vec::new();
         let mut group: Option<Group> = None;
+        let nav_icons = [Icon::Saves, Icon::Inventory, Icon::Factions, Icon::Stash, Icon::MapTransitions, Icon::Backup, Icon::Compare, Icon::Timeline, Icon::Doctor, Icon::Games, Icon::Fixes, Icon::Doctor, Icon::Wrench, Icon::Companion, Icon::Trophy, Icon::Cloud, Icon::Book, Icon::ShieldCapabilities, Icon::Update, Icon::Settings];
         for screen in &screens {
             let id = screen.id();
             if group != Some(id.group()) {
                 group = Some(id.group());
-                tree.add(
+                nav_groups.push(tree.add(
                     Some(sidebar),
                     NodeKind::Leaf,
                     Style {
@@ -214,14 +231,16 @@ impl Shell {
                         text: rgb(style::TEXT_MUTED),
                         ..Look::default()
                     },
-                )?;
+                )?);
             }
             let item = Style {
                 min: Size::new(0.0, 30.0),
                 padding: padded(22.0, 0.0, 12.0, 0.0),
                 ..Style::default()
             };
-            let content = Content::Button {
+            let icon = nav_icons.get(nav.len()).copied().unwrap_or(Icon::Info);
+            let content = Content::IconButton {
+                icon,
                 text: crate::strings::t(id.title()).to_owned(),
                 style: TextStyle::new(Face::Heading, 14.0),
             };
@@ -241,7 +260,7 @@ impl Shell {
             text: format!("{} · Rust", env!("CARGO_PKG_VERSION")),
             style: Text::Note.style(),
         };
-        tree.add(
+        let nav_version = tree.add(
             Some(sidebar),
             NodeKind::Leaf,
             brand,
@@ -436,6 +455,14 @@ impl Shell {
             screens,
             hosts,
             nav,
+            sidebar,
+            nav_toggle,
+            nav_brand: vec![brand_title, brand_subtitle],
+            nav_groups,
+            nav_version,
+            nav_collapsed: false,
+            nav_user_choice: settings.navigation_collapsed,
+            nav_pending_persist: None,
             content,
             scroll: ScrollView::new(),
             scroll_bar,
