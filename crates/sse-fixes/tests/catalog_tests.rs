@@ -294,7 +294,7 @@ fn shipped_cop_catalogue_contains_retail_verified_fixes_and_includes_community_i
     assert!(!recommended.iter().any(|f| f.id == "cop.prp.knife-hit-reach"));
 
     assert!(
-        !GameFixCatalog::for_preset(GameTarget::CallOfPripyat, GameFixPreset::AllSafeFixes)
+        GameFixCatalog::for_preset(GameTarget::CallOfPripyat, GameFixPreset::AllSafeFixes)
             .iter()
             .any(|f| f.category == GameFixCategory::Community)
     );
