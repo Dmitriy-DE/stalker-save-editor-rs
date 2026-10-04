@@ -1,0 +1,274 @@
+//! Background worker pool with cancellation, progress reporting, and UI notifications.
+//!
+//! Rule: The interface thread NEVER blocks or waits.
+//! All background operations communicate results and progress back to the UI thread
+//! via standard non-blocking message queues (`std::sync::mpsc`).
+
+use std::any::Any;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, Mutex};
+use std::thread::{self, JoinHandle};
+
+/// Unique identifier for a background task.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct TaskId(pub u64);
+
+static NEXT_TASK_ID: AtomicU64 = AtomicU64::new(1);
+
+impl TaskId {
+    /// Allocates a new distinct task ID.
+    #[must_use]
+    pub fn next() -> Self {
+        Self(NEXT_TASK_ID.fetch_add(1, Ordering::Relaxed))
+    }
+}
+
+/// Token used to check whether a task has been cancelled.
+#[derive(Clone, Debug, Default)]
+pub struct CancellationToken {
+    cancelled: Arc<AtomicBool>,
+}
+
+impl CancellationToken {
+    /// Creates a new uncancelled token.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            cancelled: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// Requests cancellation for this token and any tasks holding it.
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+    }
+
+    /// Returns `true` if cancellation has been requested.
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
+    }
+}
+
+/// Progress notification emitted by a running background task.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TaskProgress {
+    /// Task identifier.
+    pub task_id: TaskId,
+    /// Progress fraction between 0.0 and 1.0, if quantifiable.
+    pub fraction: Option<f32>,
+    /// Step description or status message.
+    pub message: Option<String>,
+}
+
+/// Handle given to the worker closure to report progress and check cancellation.
+#[derive(Clone)]
+pub struct TaskContext {
+    task_id: TaskId,
+    cancellation: CancellationToken,
+    progress_sender: Sender<TaskEvent>,
+}
+
+impl TaskContext {
+    /// Returns the task identifier.
+    #[must_use]
+    pub fn task_id(&self) -> TaskId {
+        self.task_id
+    }
+
+    /// Checks if cancellation was requested.
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
+        self.cancellation.is_cancelled()
+    }
+
+    /// Reports incremental progress (fraction 0.0..1.0 and optional message).
+    pub fn report_progress(&self, fraction: Option<f32>, message: Option<String>) {
+        let _ = self.progress_sender.send(TaskEvent::Progress(TaskProgress {
+            task_id: self.task_id,
+            fraction,
+            message,
+        }));
+    }
+}
+
+/// Events sent from background worker tasks to the interface thread.
+pub enum TaskEvent {
+    /// Task started executing.
+    Started(TaskId),
+    /// Task reported progress.
+    Progress(TaskProgress),
+    /// Task completed successfully with a payload.
+    Completed(TaskId, Box<dyn Any + Send>),
+    /// Task failed with an error message.
+    Failed(TaskId, String),
+    /// Task was explicitly cancelled.
+    Cancelled(TaskId),
+}
+
+/// Handle retained by the caller to control a submitted task.
+pub struct TaskHandle {
+    task_id: TaskId,
+    cancellation: CancellationToken,
+}
+
+impl TaskHandle {
+    /// Returns the ID of the task.
+    #[must_use]
+    pub fn id(&self) -> TaskId {
+        self.task_id
+    }
+
+    /// Requests cancellation of this task.
+    pub fn cancel(&self) {
+        self.cancellation.cancel();
+    }
+
+    /// Checks if cancellation was requested.
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
+        self.cancellation.is_cancelled()
+    }
+}
+
+type TaskEntry = (CancellationToken, Option<JoinHandle<()>>);
+
+/// Manages background task execution and non-blocking event dispatch.
+///
+/// Designed to satisfy the strict rule: the UI thread NEVER blocks or waits.
+/// Instead, the UI thread periodically drains `poll_events()` via non-blocking `try_recv`.
+pub struct TaskManager {
+    event_sender: Sender<TaskEvent>,
+    event_receiver: Receiver<TaskEvent>,
+    tasks: Mutex<HashMap<TaskId, TaskEntry>>,
+}
+
+impl Default for TaskManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TaskManager {
+    /// Creates a new background task manager.
+    #[must_use]
+    pub fn new() -> Self {
+        let (event_sender, event_receiver) = mpsc::channel();
+        Self {
+            event_sender,
+            event_receiver,
+            tasks: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Submits a background task returning a typed result `R: Any + Send + 'static`.
+    ///
+    /// The worker closure receives a `TaskContext` which it can use to check for cancellation
+    /// and send progress updates.
+    ///
+    /// Returns a `TaskHandle` that can be used to cancel the task.
+    pub fn spawn<F, R>(&self, name: &'static str, work: F) -> TaskHandle
+    where
+        F: FnOnce(TaskContext) -> Result<R, String> + Send + 'static,
+        R: Any + Send + 'static,
+    {
+        let task_id = TaskId::next();
+        let cancellation = CancellationToken::new();
+        let task_context = TaskContext {
+            task_id,
+            cancellation: cancellation.clone(),
+            progress_sender: self.event_sender.clone(),
+        };
+
+        let sender = self.event_sender.clone();
+        let join_handle = thread::Builder::new()
+            .name(format!("sse-worker-{name}"))
+            .spawn(move || {
+                let _ = sender.send(TaskEvent::Started(task_id));
+                if task_context.is_cancelled() {
+                    let _ = sender.send(TaskEvent::Cancelled(task_id));
+                    return;
+                }
+
+                let result = work(task_context.clone());
+
+                if task_context.is_cancelled() {
+                    let _ = sender.send(TaskEvent::Cancelled(task_id));
+                    return;
+                }
+
+                match result {
+                    Ok(val) => {
+                        let _ = sender.send(TaskEvent::Completed(task_id, Box::new(val)));
+                    }
+                    Err(err) => {
+                        let _ = sender.send(TaskEvent::Failed(task_id, err));
+                    }
+                }
+            });
+
+        let mut tasks_lock = self.tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        tasks_lock.insert(task_id, (cancellation.clone(), join_handle.ok()));
+
+        TaskHandle { task_id, cancellation }
+    }
+
+    /// Non-blocking check for events arriving from worker threads.
+    ///
+    /// The UI thread calls this each tick or frame; it never blocks.
+    #[must_use]
+    pub fn poll_events(&self) -> Vec<TaskEvent> {
+        let mut events = Vec::new();
+        while let Ok(event) = self.event_receiver.try_recv() {
+            if matches!(
+                event,
+                TaskEvent::Completed(..) | TaskEvent::Failed(..) | TaskEvent::Cancelled(..)
+            ) {
+                let id = match event {
+                    TaskEvent::Completed(id, _) | TaskEvent::Failed(id, _) | TaskEvent::Cancelled(id) => id,
+                    _ => unreachable!(),
+                };
+                let mut tasks_lock = self.tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                if let Some((_, Some(handle))) = tasks_lock.remove(&id) {
+                    // Joining finished thread handle if completed
+                    if handle.is_finished() {
+                        let _ = handle.join();
+                    }
+                }
+            }
+            events.push(event);
+        }
+        events
+    }
+
+    /// Cancels a specific task by its ID.
+    pub fn cancel(&self, id: TaskId) {
+        let tasks_lock = self.tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some((token, _)) = tasks_lock.get(&id) {
+            token.cancel();
+        }
+    }
+
+    /// Cancels all active tasks.
+    pub fn cancel_all(&self) {
+        let tasks_lock = self.tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        for (token, _) in tasks_lock.values() {
+            token.cancel();
+        }
+    }
+
+    /// Returns the number of currently tracked tasks.
+    #[must_use]
+    pub fn active_task_count(&self) -> usize {
+        let tasks_lock = self.tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        tasks_lock.len()
+    }
+}
+
+impl Drop for TaskManager {
+    fn drop(&mut self) {
+        self.cancel_all();
+    }
+}
