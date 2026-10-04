@@ -196,12 +196,24 @@ enum CompanionReply {
     Changed(std::result::Result<String, String>),
 }
 
+fn confirm_twice(armed: &mut Option<WidgetId>, clicked: Option<WidgetId>, status: &mut Option<String>) -> bool {
+    if *armed == clicked {
+        *armed = None;
+        return true;
+    }
+    *armed = clicked;
+    *status = Some("Подтвердите действие повторным нажатием".to_owned());
+    false
+}
+
 #[derive(Default)]
 struct Companion {
     status: Option<WidgetId>,
     version: Option<WidgetId>,
     install: Option<WidgetId>,
     remove: Option<WidgetId>,
+    /// Destructive button pressed once and waiting for the second press.
+    armed: Option<WidgetId>,
 }
 
 impl Companion {
@@ -262,7 +274,10 @@ impl Screen for Companion {
         message: &Message<AppMessage>,
         clicked: Option<WidgetId>,
     ) -> Result<()> {
-        if clicked == self.install || clicked == self.remove {
+        if clicked.is_some() && (clicked == self.install || clicked == self.remove) {
+            if !confirm_twice(&mut self.armed, clicked, &mut cx.status) {
+                return Ok(());
+            }
             let install = clicked == self.install;
             let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
             let game = cx.app.selected_game().map(str::to_owned);
@@ -427,7 +442,9 @@ impl Screen for Achievements {
                 cx.status = self.items.get(i).map(|a| a.description.clone());
             }
         }
-        let change = if clicked == self.set {
+        let change = if clicked.is_none() {
+            None
+        } else if clicked == self.set {
             Some(true)
         } else if clicked == self.clear {
             Some(false)
@@ -509,6 +526,8 @@ struct Cloud {
     selected: Option<usize>,
     download: Option<WidgetId>,
     upload: Option<WidgetId>,
+    /// Destructive button pressed once and waiting for the second press.
+    armed: Option<WidgetId>,
 }
 
 impl Cloud {
@@ -585,7 +604,10 @@ impl Screen for Cloud {
                 cx.status = self.items.get(i).map(|f| format!("Выбран {}", f.name));
             }
         }
-        if clicked == self.download || clicked == self.upload {
+        if clicked.is_some() && (clicked == self.download || clicked == self.upload) {
+            if !confirm_twice(&mut self.armed, clicked, &mut cx.status) {
+                return Ok(());
+            }
             let upload = clicked == self.upload;
             let Some(i) = self.selected else {
                 cx.status = Some("Сначала выберите файл Steam Cloud".to_owned());
@@ -670,6 +692,8 @@ struct Updates {
     status: Option<WidgetId>,
     check: Option<WidgetId>,
     install: Option<WidgetId>,
+    /// Destructive button pressed once and waiting for the second press.
+    armed: Option<WidgetId>,
 }
 
 impl Screen for Updates {
@@ -699,8 +723,11 @@ impl Screen for Updates {
         message: &Message<AppMessage>,
         clicked: Option<WidgetId>,
     ) -> Result<()> {
-        let install = clicked == self.install;
-        if clicked == self.check || install {
+        let install = clicked.is_some() && clicked == self.install;
+        if install && !confirm_twice(&mut self.armed, clicked, &mut cx.status) {
+            return Ok(());
+        }
+        if (clicked.is_some() && clicked == self.check) || install {
             let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
             std::thread::spawn(move || {
                 let result = (|| {
