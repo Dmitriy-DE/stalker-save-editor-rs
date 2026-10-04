@@ -1471,7 +1471,7 @@ impl Screen for GameFixes {
                     let target = game.as_deref().and_then(fix_target).ok_or_else(|| "Игра не поддерживается".to_owned())?;
                     let directory = directory.ok_or_else(|| "Папка игры не выбрана".to_owned())?;
                     let result = sse_fixes::GameFixEngine::new().apply_preset(target, preset, &directory).map_err(|e| e.to_string())?;
-                    Ok(format!("ПРЕСЕТ {}: УСТАНОВЛЕНО {}; УЖЕ АКТУАЛЬНЫХ {}. РЕЗЕРВНАЯ ТОЧКА НЕДОСТУПНА: ядро apply_preset не создаёт Toolkit snapshot.", preset.as_str(), result.installed.len(), result.already_installed.len()))
+                    Ok(format!("ПРЕСЕТ {}: УСТАНОВЛЕНО {}; УЖЕ АКТУАЛЬНЫХ {}. РЕЗЕРВНАЯ ТОЧКА НЕДОСТУПНА: ядро apply_preset не создаёт Toolkit snapshot.", preset.as_str(), result.installed_fix_ids.len(), result.already_installed_fix_ids.len()))
                 })();
                 proxy.send(AppMessage::ToScreen(ScreenId::GameFixes, Box::new(FixReply::Changed(result))));
             });
