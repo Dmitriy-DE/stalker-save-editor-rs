@@ -15,7 +15,6 @@ pub fn screens() -> Vec<Box<dyn Screen>> {
     vec![Box::new(Capabilities), Box::new(Settings::default())]
 }
 
-
 #[derive(Clone, Copy)]
 enum Support {
     Write,
@@ -46,13 +45,83 @@ struct CapabilityRow {
 }
 
 const CAPABILITY_ROWS: [CapabilityRow; 7] = [
-    CapabilityRow { game: "ТЧ", read: Support::Write, money: Support::Write, items: Support::Write, s2: Support::No, fixes: Support::Write, companion: Support::Write, cloud: Support::Write, reason: "X-Ray 1.0: чтение и проверенные мутации" },
-    CapabilityRow { game: "ЧН", read: Support::Write, money: Support::Write, items: Support::Write, s2: Support::No, fixes: Support::Write, companion: Support::Write, cloud: Support::Write, reason: "X-Ray 1.5: чтение и проверенные мутации" },
-    CapabilityRow { game: "ЗП", read: Support::Write, money: Support::Write, items: Support::Write, s2: Support::No, fixes: Support::Write, companion: Support::Write, cloud: Support::Write, reason: "X-Ray 1.6: чтение и проверенные мутации" },
-    CapabilityRow { game: "ТЧ EE", read: Support::Read, money: Support::Read, items: Support::Read, s2: Support::No, fixes: Support::Write, companion: Support::No, cloud: Support::Write, reason: "Enhanced: сейвы доступны для чтения; запись ограничена до верификации" },
-    CapabilityRow { game: "ЧН EE", read: Support::Read, money: Support::Read, items: Support::Read, s2: Support::No, fixes: Support::Write, companion: Support::No, cloud: Support::Write, reason: "Enhanced: сейвы доступны для чтения; запись ограничена до верификации" },
-    CapabilityRow { game: "ЗП EE", read: Support::Read, money: Support::Read, items: Support::Read, s2: Support::No, fixes: Support::Write, companion: Support::No, cloud: Support::Write, reason: "Enhanced: сейвы доступны для чтения; запись ограничена до верификации" },
-    CapabilityRow { game: "S2", read: Support::Read, money: Support::Read, items: Support::Read, s2: Support::Read, fixes: Support::No, companion: Support::Write, cloud: Support::Write, reason: "UE5: поддержка S2 есть, запись сейва остаётся safety-restricted" },
+    CapabilityRow {
+        game: "ТЧ",
+        read: Support::Write,
+        money: Support::Write,
+        items: Support::Write,
+        s2: Support::No,
+        fixes: Support::Write,
+        companion: Support::Write,
+        cloud: Support::Write,
+        reason: "X-Ray 1.0: чтение и проверенные мутации",
+    },
+    CapabilityRow {
+        game: "ЧН",
+        read: Support::Write,
+        money: Support::Write,
+        items: Support::Write,
+        s2: Support::No,
+        fixes: Support::Write,
+        companion: Support::Write,
+        cloud: Support::Write,
+        reason: "X-Ray 1.5: чтение и проверенные мутации",
+    },
+    CapabilityRow {
+        game: "ЗП",
+        read: Support::Write,
+        money: Support::Write,
+        items: Support::Write,
+        s2: Support::No,
+        fixes: Support::Write,
+        companion: Support::Write,
+        cloud: Support::Write,
+        reason: "X-Ray 1.6: чтение и проверенные мутации",
+    },
+    CapabilityRow {
+        game: "ТЧ EE",
+        read: Support::Read,
+        money: Support::Read,
+        items: Support::Read,
+        s2: Support::No,
+        fixes: Support::Write,
+        companion: Support::No,
+        cloud: Support::Write,
+        reason: "Enhanced: сейвы доступны для чтения; запись ограничена до верификации",
+    },
+    CapabilityRow {
+        game: "ЧН EE",
+        read: Support::Read,
+        money: Support::Read,
+        items: Support::Read,
+        s2: Support::No,
+        fixes: Support::Write,
+        companion: Support::No,
+        cloud: Support::Write,
+        reason: "Enhanced: сейвы доступны для чтения; запись ограничена до верификации",
+    },
+    CapabilityRow {
+        game: "ЗП EE",
+        read: Support::Read,
+        money: Support::Read,
+        items: Support::Read,
+        s2: Support::No,
+        fixes: Support::Write,
+        companion: Support::No,
+        cloud: Support::Write,
+        reason: "Enhanced: сейвы доступны для чтения; запись ограничена до верификации",
+    },
+    CapabilityRow {
+        game: "S2",
+        read: Support::Read,
+        money: Support::Read,
+        items: Support::Read,
+        s2: Support::Read,
+        fixes: Support::No,
+        companion: Support::Write,
+        cloud: Support::Write,
+        reason: "UE5: поддержка S2 есть, запись сейва остаётся safety-restricted",
+    },
 ];
 
 struct Capabilities;
