@@ -1,5 +1,10 @@
 //! C# 1.3.1 visual tokens. Values are logical pixels; scale only at the UI boundary.
 
+use std::sync::atomic::{AtomicU8, Ordering};
+
+static CURRENT_THEME: AtomicU8 = AtomicU8::new(0);
+static CURRENT_ACCENT: AtomicU8 = AtomicU8::new(0);
+
 /// RGB token.
 pub type Rgb = u32;
 /// StalkerTheme.BgBase.
@@ -153,6 +158,75 @@ pub struct Theme {
     pub metrics: Metrics,
 }
 
+/// Stable C# appearance ids.
+pub const THEMES: [(&str, &str); 3] = [("zone", "Тёмная"), ("day", "Светлая"), ("clear-sky", "Бирюзовая")];
+/// Stable C# accent ids.
+pub const ACCENT_IDS: [&str; 4] = ["amber", "teal", "blue", "rust"];
+
+/// Applies the selected C# appearance to subsequently built widgets.
+pub fn apply_appearance(theme_id: &str, accent_id: &str) {
+    let theme = match theme_id { "day" => 1, "clear-sky" => 2, _ => 0 };
+    let accent = match accent_id { "teal" => 1, "blue" => 2, "rust" => 3, _ => 0 };
+    CURRENT_THEME.store(theme, Ordering::Relaxed);
+    CURRENT_ACCENT.store(accent, Ordering::Relaxed);
+}
+
+/// Current stable theme id.
+#[must_use]
+pub fn current_theme_id() -> &'static str {
+    match CURRENT_THEME.load(Ordering::Relaxed) { 1 => "day", 2 => "clear-sky", _ => "zone" }
+}
+
+/// Current stable accent id.
+#[must_use]
+pub fn current_accent_id() -> &'static str {
+    match CURRENT_ACCENT.load(Ordering::Relaxed) { 1 => "teal", 2 => "blue", 3 => "rust", _ => "amber" }
+}
+
+/// Current C# palette with the selected accent.
+#[must_use]
+pub fn current() -> Theme {
+    palette(current_theme_id(), current_accent_id())
+}
+
+/// Exact C# 1.3.1 palette for a stable theme/accent id.
+#[must_use]
+pub fn palette(theme_id: &str, accent_id: &str) -> Theme {
+    let mut theme = match theme_id {
+        "day" => Theme::with_colors(
+            [0xD8D8D0, 0xF0F0E9, 0xFAFAF4, 0xE4E6DD, 0xFFFFFF, 0xE8E9E1],
+            [0xC5C9BE, 0xAEB5A8, 0x8F998D],
+            [0x202720, 0x4B564E, 0x68736B, 0x46584D],
+            [0x347345, 0x8A610C, 0xA43F32],
+        ),
+        "clear-sky" => Theme::with_colors(
+            [0x0C1517, 0x111D1F, 0x17272A, 0x203437, 0x172326, 0x182629],
+            [0x263739, 0x35484A, 0x456064],
+            [0xDCE5DC, 0xAABBB7, 0x7F928D, 0xBED1C4],
+            [0x82CA8B, 0xD5AA52, 0xE06C59],
+        ),
+        _ => Theme::dark(),
+    };
+    let (accent, dim, hover, foreground) = match (theme_id, accent_id) {
+        ("day", "teal") => (0x176B5E, 0x5C9287, 0x337D71, 0xFFFFFF),
+        ("day", "blue") => (0x285F8D, 0x678BA5, 0x42729B, 0xFFFFFF),
+        ("day", "rust") => (0x9B452B, 0xB17A66, 0xA75B44, 0xFFFFFF),
+        ("day", _) => (0x8A610C, 0xA68C53, 0x987429, 0xFFFFFF),
+        ("clear-sky", "teal") => (0x70BCA6, 0x4C8073, 0x7BC1AD, 0x10130F),
+        ("clear-sky", "blue") => (0x78AFE0, 0x517898, 0x83B5E2, 0xFFFFFF),
+        ("clear-sky", "rust") => (0xE07A57, 0x945640, 0xE28564, 0xFFFFFF),
+        ("clear-sky", _) => (0xD6A62D, 0x8D7225, 0xD9AD3E, 0xFFFFFF),
+        (_, "teal") => (0x70BCA6, 0x4C7D6E, 0x7BC1AD, 0x10130F),
+        (_, "blue") => (0x78AFE0, 0x517593, 0x83B5E2, 0xFFFFFF),
+        (_, "rust") => (0xE07A57, 0x94533B, 0xE28564, 0xFFFFFF),
+        _ => (0xD6A62D, 0x8D6F20, 0xD9AD3E, 0xFFFFFF),
+    };
+    theme.colors.accent = [accent, dim, hover, foreground];
+    theme.colors.selection = dim;
+    theme.colors.focus_ring = accent;
+    theme
+}
+
 impl Theme {
     /// Shipped C# zone/amber theme.
     #[must_use]
@@ -217,6 +291,20 @@ impl Theme {
                 animations_ms: [120.0, 180.0],
                 shadow: [24.0, 8.0],
             },
+        }
+    }
+
+    const fn with_colors(background: [Rgb; 6], borders: [Rgb; 3], text: [Rgb; 4], state: [Rgb; 3]) -> Self {
+        let base = Self::dark();
+        Self {
+            colors: Colors {
+                background,
+                borders,
+                text,
+                state,
+                ..base.colors
+            },
+            ..base
         }
     }
 
