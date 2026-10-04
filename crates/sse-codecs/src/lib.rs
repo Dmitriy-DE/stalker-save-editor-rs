@@ -40,3 +40,5 @@ pub mod sha256;
 
 /// Oodle Kraken decompressor used by STALKER 2 saves.
 pub mod kraken;
+/// Kraken encoder used by S.T.A.L.K.E.R. 2 save writes.
+pub mod kraken_encode;
