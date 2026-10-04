@@ -1446,6 +1446,7 @@ enum FixReply {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum FixOperation {
     Install,
     Remove,
