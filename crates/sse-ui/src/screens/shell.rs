@@ -485,8 +485,34 @@ impl Shell {
             app: sse_app::state::AppState::new(),
             wizard,
         };
+        let initial_collapsed = settings.navigation_collapsed.unwrap_or(false);
+        shell.apply_navigation(tree, initial_collapsed)?;
         shell.show(tree, 0)?;
         Ok(shell)
+    }
+
+    fn apply_navigation(&mut self, tree: &mut Tree, collapsed: bool) -> Result<()> {
+        self.nav_collapsed = collapsed;
+        let width = if collapsed { 58.0 } else { 236.0 };
+        tree.set_style(self.sidebar, Style { preferred: Size::new(width, 0.0), min: Size::new(width, 0.0), shrink: 0.0, padding: padded(0.0, 18.0, 0.0, 12.0), align_items: Align::Stretch, ..Style::default() })?;
+        for id in &self.nav_brand { tree.set_visible(*id, !collapsed)?; }
+        for id in &self.nav_groups { tree.set_visible(*id, !collapsed)?; }
+        tree.set_visible(self.nav_version, !collapsed)?;
+        tree.set_text(self.nav_toggle, if collapsed { "☰" } else { "☰  Свернуть меню" })?;
+        tree.set_style(self.nav_toggle, Style { min: Size::new(0.0, 30.0), padding: padded(if collapsed { 18.0 } else { 20.0 }, 0.0, 8.0, 0.0), ..Style::default() })?;
+        for (index, id) in self.nav.iter().copied().enumerate() {
+            let text = if collapsed { "" } else { self.screens.get(index).map(|screen| crate::strings::t(screen.id().title())).unwrap_or("") };
+            tree.set_text(id, text)?;
+            tree.set_style(id, Style { min: Size::new(0.0, 30.0), padding: padded(if collapsed { 20.0 } else { 22.0 }, 0.0, 8.0, 0.0), ..Style::default() })?;
+        }
+        Ok(())
+    }
+
+    fn sync_navigation_width(&mut self, tree: &mut Tree, width: u32) -> Result<()> {
+        let forced = width < 900;
+        let collapsed = forced || self.nav_user_choice.unwrap_or(width < 1150);
+        if collapsed != self.nav_collapsed { self.apply_navigation(tree, collapsed)?; }
+        Ok(())
     }
 
     /// Shared application state.
@@ -656,7 +682,9 @@ impl Shell {
 
     fn handle(&mut self, tree: &mut Tree, message: &Message<AppMessage>, clicked: Option<WidgetId>) -> Result<Flow> {
         if let Message::Window(WindowEvent::Resized { width, .. }) = message {
-            let panel_width = width.saturating_sub(232);
+            self.sync_navigation_width(tree, *width)?;
+            let sidebar_width = if self.nav_collapsed { 58 } else { 236 };
+            let panel_width = width.saturating_sub(sidebar_width);
             tree.set_visible(self.edition, panel_width >= 1000)?;
         }
         if let Message::Window(WindowEvent::Wheel { delta }) = message {
@@ -669,7 +697,23 @@ impl Shell {
             tree.set_visible(self.scroll_bar, self.scroll.thumb().is_some())?;
             return Ok(Flow::Continue);
         }
-        let mut wizard_status = None;
+        if clicked.is_some() && clicked == Some(self.nav_toggle) {
+            if self.nav_pending_persist == Some(self.nav_collapsed) {
+                let mut settings = sse_app::AppSettings::load(&sse_app::default_settings_path());
+                settings.navigation_collapsed = Some(self.nav_collapsed);
+                settings.save(&sse_app::default_settings_path())?;
+                self.nav_user_choice = Some(self.nav_collapsed);
+                self.nav_pending_persist = None;
+                tree.set_text(self.status, "Состояние меню сохранено.")?;
+            } else {
+                let wanted = !self.nav_collapsed;
+                self.apply_navigation(tree, wanted)?;
+                self.nav_pending_persist = Some(wanted);
+                tree.set_text(self.status, "Нажмите ☰ ещё раз, чтобы сохранить состояние меню.")?;
+            }
+            return Ok(Flow::Continue);
+        }
+                let mut wizard_status = None;
         if let Some(target) = self.wizard.message(tree, message, clicked, &mut wizard_status)? {
             self.open(tree, target)?;
             return Ok(Flow::Continue);
