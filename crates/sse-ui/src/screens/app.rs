@@ -6,7 +6,9 @@
 use super::style::{self, Button, Text};
 use super::{AppMessage, Context, Screen, ScreenId};
 use crate::event_loop::Message;
-use crate::widget::WidgetId;
+use crate::glyphs::{Face, TextStyle};
+use crate::layout::{GridPlacement, NodeKind, Size, Style, Track};
+use crate::widget::{Content, Look, TextAlign, WidgetId};
 use sse_core::Result;
 
 /// Screens of this package.
@@ -210,12 +212,65 @@ const CAPABILITY_ROWS: [CapabilityRow; 12] = [
     },
 ];
 
-struct Capabilities;
+#[derive(Default)]
+struct Capabilities {
+    cells: Vec<(WidgetId, usize, usize)>,
+    detail: Option<WidgetId>,
+}
+
+fn grid_label(
+    tree: &mut crate::widget::Tree,
+    parent: WidgetId,
+    text: &str,
+    column: usize,
+    row: usize,
+    heading: bool,
+) -> Result<WidgetId> {
+    let colors = crate::theme::current().colors;
+    tree.add(
+        Some(parent),
+        NodeKind::Leaf,
+        Style {
+            min: Size::new(0.0, 36.0),
+            padding: crate::layout::Edges { left: 8.0, top: 0.0, right: 8.0, bottom: 0.0 },
+            grid: Some(GridPlacement::cell(column, row)),
+            ..Style::default()
+        },
+        Content::Label {
+            text: text.to_owned(),
+            style: TextStyle::new(if heading { Face::Heading } else { Face::Body }, if heading { 13.0 } else { 14.0 }),
+        },
+        Look {
+            border: Some((style::rgb(colors.borders[0]), 1.0)),
+            fill: heading.then(|| style::rgb(colors.background[2])),
+            text: style::rgb(if heading { colors.text[0] } else { colors.text[1] }),
+            align: if column == 0 { TextAlign::Start } else { TextAlign::Center },
+            ..Look::default()
+        },
+    )
+}
+
+fn grid_cell(
+    tree: &mut crate::widget::Tree,
+    parent: WidgetId,
+    text: &str,
+    column: usize,
+    row: usize,
+) -> Result<WidgetId> {
+    let id = style::button(tree, parent, text, Button::Secondary)?;
+    tree.set_style(
+        id,
+        Style {
+            min: Size::new(0.0, 36.0),
+            grid: Some(GridPlacement::cell(column, row)),
+            ..Style::default()
+        },
+    )?;
+    Ok(id)
+}
 
 impl Screen for Capabilities {
-    fn id(&self) -> ScreenId {
-        ScreenId::Capabilities
-    }
+    fn id(&self) -> ScreenId { ScreenId::Capabilities }
 
     fn subtitle(&self) -> &str {
         "Игра × возможность: запись, чтение и причины ограничений"
@@ -224,76 +279,69 @@ impl Screen for Capabilities {
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
         let help = style::card(cx.tree, host)?;
         style::label(cx.tree, help, "СПРАВКА ПО ВОЗМОЖНОСТЯМ", Text::Heading)?;
-        style::label(cx.tree, help, "МАТРИЦА ВОЗМОЖНОСТЕЙ РЕДАКТОРА", Text::Value)?;
-        style::label(
-            cx.tree,
-            help,
-            "Что редактор умеет делать с сейвами каждой игры.",
-            Text::Body,
-        )?;
+        style::label(cx.tree, help, "Что редактор умеет делать с сейвами каждой игры.", Text::Body)?;
 
         let matrix = style::card(cx.tree, host)?;
         style::label(cx.tree, matrix, "МАТРИЦА ПОДДЕРЖИВАЕМЫХ ВОЗМОЖНОСТЕЙ", Text::Heading)?;
-        style::label(
+        let grid = cx.tree.add(
+            Some(matrix),
+            NodeKind::Grid {
+                columns: vec![
+                    Track::Fixed(220.0),
+                    Track::Fixed(92.0), Track::Fixed(92.0), Track::Fixed(92.0),
+                    Track::Fixed(92.0), Track::Fixed(92.0), Track::Fixed(92.0),
+                    Track::Fixed(92.0),
+                ],
+                rows: vec![Track::Fixed(38.0); CAPABILITY_ROWS.len() + 1],
+            },
+            Style { gap: Size::new(2.0, 2.0), ..Style::default() },
+            Content::Panel,
+            Look::default(),
+        )?;
+        grid_label(cx.tree, grid, "ОПЕРАЦИЯ", 0, 0, true)?;
+        for (column, game) in GAMES.into_iter().enumerate() {
+            grid_label(cx.tree, grid, game, column + 1, 0, true)?;
+        }
+        for (row_index, row) in CAPABILITY_ROWS.iter().enumerate() {
+            let grid_row = row_index + 1;
+            grid_label(cx.tree, grid, row.name, 0, grid_row, false)?;
+            for (column, support) in row.support.into_iter().enumerate() {
+                let id = grid_cell(cx.tree, grid, support.label(), column + 1, grid_row)?;
+                self.cells.push((id, row_index, column));
+            }
+        }
+        self.detail = Some(style::label(
             cx.tree,
             matrix,
-            "ОПЕРАЦИЯ        ТЧ       ЧН       ЗП       ТЧ EE    ЧН EE    ЗП EE    S2",
-            Text::Value,
-        )?;
-        for row in CAPABILITY_ROWS {
-            let mut line = format!("{:<18}", row.name);
-            for support in row.support {
-                line.push_str(&format!(" {:<8}", support.label()));
-            }
-            style::label(cx.tree, matrix, &line, Text::Body)?;
-            style::label(cx.tree, matrix, row.description, Text::Note)?;
-            let mut reasons = String::new();
-            for (game, support) in GAMES.into_iter().zip(row.support) {
-                if !reasons.is_empty() {
-                    reasons.push_str(" · ");
-                }
-                reasons.push_str(game);
-                reasons.push_str(": ");
-                reasons.push_str(support.reason());
-            }
-            style::label(cx.tree, matrix, &reasons, Text::Note)?;
-        }
+            "Выберите ячейку, чтобы увидеть причину уровня поддержки.",
+            Text::Note,
+        )?);
 
         let legend = style::card(cx.tree, host)?;
         style::label(cx.tree, legend, "ОБОЗНАЧЕНИЯ", Text::Heading)?;
-        style::label(
-            cx.tree,
-            legend,
-            "Запись (Verified) — Полная поддержка чтения и записи, верифицировано тестами.",
-            Text::Body,
-        )?;
-        style::label(
-            cx.tree,
-            legend,
-            "Эксперим. (Experimental) — Поддержка в формате реализована, ожидается подтверждение в игре.",
-            Text::Body,
-        )?;
-        style::label(
-            cx.tree,
-            legend,
-            "Чтение (Research) — Режим только для чтения.",
-            Text::Body,
-        )?;
-        style::label(
-            cx.tree,
-            legend,
-            "Нет (Unsupported) — Механика отсутствует в игре или не поддерживается.",
-            Text::Body,
-        )?;
+        style::label(cx.tree, legend, "Запись — полная поддержка чтения и записи, верифицировано тестами.", Text::Body)?;
+        style::label(cx.tree, legend, "Эксперим. — поддержка реализована, ожидается подтверждение в игре.", Text::Body)?;
+        style::label(cx.tree, legend, "Чтение — режим только для чтения.", Text::Body)?;
+        style::label(cx.tree, legend, "Нет — механика отсутствует или не поддерживается.", Text::Body)?;
         Ok(())
     }
 
-    fn message(
-        &mut self,
-        _cx: &mut Context<'_>,
-        _message: &Message<AppMessage>,
-        _clicked: Option<WidgetId>,
-    ) -> Result<()> {
+    fn message(&mut self, cx: &mut Context<'_>, _message: &Message<AppMessage>, clicked: Option<WidgetId>) -> Result<()> {
+        if clicked.is_some() {
+            if let Some((_, row, column)) = self.cells.iter().find(|(id, _, _)| Some(*id) == clicked) {
+                if let (Some(capability), Some(game), Some(detail)) = (
+                    CAPABILITY_ROWS.get(*row),
+                    GAMES.get(*column),
+                    self.detail,
+                ) {
+                    let support = capability.support[*column];
+                    cx.tree.set_text(
+                        detail,
+                        &format!("{} · {} · {} — {}", capability.name, game, capability.description, support.reason()),
+                    )?;
+                }
+            }
+        }
         Ok(())
     }
 }
