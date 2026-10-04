@@ -3,7 +3,7 @@
 //! Replace each placeholder with a struct implementing [`Screen`]; keep the order.
 
 use super::style::{self, Button, Text};
-use super::{AppMessage, Context, Placeholder, Screen, ScreenId};
+use super::{AppMessage, Context, Screen, ScreenId};
 use crate::event_loop::Message;
 use crate::text::{self, Metrics};
 use crate::widget::WidgetId;
