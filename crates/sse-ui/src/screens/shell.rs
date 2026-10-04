@@ -25,6 +25,8 @@ pub struct Shell {
     selected: usize,
     proxy: Option<Proxy<AppMessage>>,
     app: sse_app::state::AppState,
+    wizard: Option<super::wizard::Wizard>,
+    wizard_host: Option<WidgetId>,
 }
 
 fn padded(left: f32, top: f32, right: f32, bottom: f32) -> Edges {
@@ -244,8 +246,40 @@ impl Shell {
             selected: 0,
             proxy,
             app: sse_app::state::AppState::new(),
+            wizard: None,
+            wizard_host: None,
         };
         shell.show(tree, 0)?;
+
+        let settings = sse_app::AppSettings::load(&sse_app::default_settings_path());
+        if !settings.first_run_completed {
+            if let Some(host) = shell.hosts.get(shell.selected).copied().flatten() {
+                tree.set_visible(host, false)?;
+            }
+            let host = tree.add(
+                Some(shell.content),
+                NodeKind::Column,
+                Style {
+                    grow: 1.0,
+                    gap: Size::new(0.0, 16.0),
+                    align_items: Align::Stretch,
+                    ..Style::default()
+                },
+                Content::Panel,
+                Look::default(),
+            )?;
+            let mut wizard = super::wizard::Wizard::default();
+            let mut cx = Context {
+                tree,
+                proxy: shell.proxy.as_ref(),
+                status: None,
+                app: &mut shell.app,
+            };
+            wizard.build(&mut cx, host)?;
+            shell.wizard = Some(wizard);
+            shell.wizard_host = Some(host);
+            shell.title = style::label(cx.tree, host, "ПЕРВЫЙ ЗАПУСК", Text::Title)?;
+        }
         Ok(shell)
     }
 
@@ -370,6 +404,7 @@ impl Shell {
             let wanted = match message {
                 Message::User(AppMessage::Tick(_)) => true,
                 Message::User(AppMessage::ToScreen(id, _)) => *id == screen.id(),
+                Message::User(AppMessage::Wizard(_)) => false,
                 Message::Window(_) => index == self.selected,
             };
             if wanted {
@@ -390,6 +425,38 @@ impl Shell {
     }
 
     fn handle(&mut self, tree: &mut Tree, message: &Message<AppMessage>, clicked: Option<WidgetId>) -> Result<Flow> {
+        if self.wizard.is_some() {
+            let completed = {
+                let mut cx = Context {
+                    tree,
+                    proxy: self.proxy.as_ref(),
+                    status: None,
+                    app: &mut self.app,
+                };
+                let completed = self
+                    .wizard
+                    .as_mut()
+                    .map(|wizard| wizard.message(&mut cx, message, clicked))
+                    .transpose()?
+                    .unwrap_or(false);
+                if let Some(status) = cx.status {
+                    cx.tree.set_text(self.status, &status)?;
+                }
+                completed
+            };
+            if completed {
+                if let Some(host) = self.wizard_host.take() {
+                    tree.set_visible(host, false)?;
+                }
+                self.wizard = None;
+                if let Some(host) = self.hosts.get(self.selected).copied().flatten() {
+                    tree.set_visible(host, true)?;
+                }
+                self.show(tree, self.selected)?;
+                tree.damage_all();
+            }
+            return Ok(Flow::Continue);
+        }
         if let Some(index) = clicked.and_then(|id| self.nav.iter().position(|nav| *nav == id)) {
             self.select(tree, index)?;
             return Ok(Flow::Continue);
