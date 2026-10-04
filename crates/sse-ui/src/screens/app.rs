@@ -179,7 +179,23 @@ impl Screen for Capabilities {
 }
 
 const SCALES: [&str; 4] = ["100 %", "125 %", "150 %", "200 %"];
-const LANGUAGE_NAMES: [&str; 15] = ["Русский", "Українська", "English", "Deutsch", "Français", "Italiano", "Español", "Polski", "Čeština", "Português (Brasil)", "Türkçe", "日本語", "한국어", "简体中文", "繁體中文"];
+const LANGUAGE_NAMES: [&str; 15] = [
+    "Русский",
+    "Українська",
+    "English",
+    "Deutsch",
+    "Français",
+    "Italiano",
+    "Español",
+    "Polski",
+    "Čeština",
+    "Português (Brasil)",
+    "Türkçe",
+    "日本語",
+    "한국어",
+    "简体中文",
+    "繁體中文",
+];
 
 /// Result of the background check started by the settings screen.
 struct Checked(String);
@@ -216,18 +232,43 @@ impl Screen for Settings {
         style::label(cx.tree, view, crate::strings::t("ВИД"), Text::Heading)?;
         let language_line = style::row(cx.tree, view)?;
         style::label(cx.tree, language_line, crate::strings::t("Язык:"), Text::Body)?;
-        self.language_value = Some(style::label(cx.tree, language_line, LANGUAGE_NAMES[self.language], Text::Value)?);
-        self.language_button = Some(style::button(cx.tree, language_line, crate::strings::t("Изменить"), Button::Secondary)?);
+        self.language_value = Some(style::label(
+            cx.tree,
+            language_line,
+            LANGUAGE_NAMES[self.language],
+            Text::Value,
+        )?);
+        self.language_button = Some(style::button(
+            cx.tree,
+            language_line,
+            crate::strings::t("Изменить"),
+            Button::Secondary,
+        )?);
         let line = style::row(cx.tree, view)?;
         style::label(cx.tree, line, crate::strings::t("Масштаб интерфейса:"), Text::Body)?;
         self.scale_value = Some(style::label(cx.tree, line, SCALES[0], Text::Value)?);
-        self.scale_button = Some(style::button(cx.tree, line, crate::strings::t("Изменить"), Button::Secondary)?);
+        self.scale_button = Some(style::button(
+            cx.tree,
+            line,
+            crate::strings::t("Изменить"),
+            Button::Secondary,
+        )?);
 
         let updates = style::card(cx.tree, host)?;
         style::label(cx.tree, updates, crate::strings::t("ОБНОВЛЕНИЯ"), Text::Heading)?;
         let line = style::row(cx.tree, updates)?;
-        self.check_button = Some(style::button(cx.tree, line, crate::strings::t("Проверить"), Button::Primary)?);
-        self.check_result = Some(style::label(cx.tree, line, crate::strings::t("Ещё не проверяли"), Text::Note)?);
+        self.check_button = Some(style::button(
+            cx.tree,
+            line,
+            crate::strings::t("Проверить"),
+            Button::Primary,
+        )?);
+        self.check_result = Some(style::label(
+            cx.tree,
+            line,
+            crate::strings::t("Ещё не проверяли"),
+            Text::Note,
+        )?);
         Ok(())
     }
 
@@ -238,7 +279,11 @@ impl Screen for Settings {
         clicked: Option<WidgetId>,
     ) -> Result<()> {
         if clicked.is_some() && clicked == self.language_button {
-            self.language = self.language.saturating_add(1).checked_rem(crate::strings::LANGUAGES.len()).unwrap_or(0);
+            self.language = self
+                .language
+                .saturating_add(1)
+                .checked_rem(crate::strings::LANGUAGES.len())
+                .unwrap_or(0);
             let code = crate::strings::LANGUAGES[self.language];
             crate::strings::set_language(Some(code));
             self.settings.language = Some(code.to_owned());
