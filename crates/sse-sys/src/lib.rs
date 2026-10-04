@@ -1,7 +1,12 @@
-//! Small dependency-free operating-system adapters used by the UI.
+//! Small standard-library system adapters and FFI exports used by UI hosts.
 
 pub mod fetch;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod output;
+
+/// WebAssembly exports for the safe browser runtime.
+#[cfg(target_arch = "wasm32")]
+pub mod web_abi;
 
 #[cfg(target_os = "windows")]
 mod win32_ffi;

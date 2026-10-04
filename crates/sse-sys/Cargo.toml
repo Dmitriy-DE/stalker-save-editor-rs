@@ -5,8 +5,14 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[lib]
+crate-type = ["rlib", "cdylib"]
+
 [dependencies]
 sse-core = { path = "../sse-core" }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+sse-web = { path = "../sse-web" }
 
 [lints.rust]
 unsafe_code = "allow"

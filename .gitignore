@@ -1,3 +1,4 @@
 /target
 /oracle-out
+/web/sse_sys.wasm
 *.swp

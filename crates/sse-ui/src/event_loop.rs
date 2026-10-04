@@ -161,7 +161,7 @@ pub fn run<U, A: App<U>, P: Present>(
         stats.wakes = stats.wakes.saturating_add(1);
         let mut next = Some(first);
         while let Some(message) = next {
-            if handle(tree, app, &message) == Flow::Exit {
+            if dispatch(tree, app, &message) == Flow::Exit {
                 return Ok(stats);
             }
             next = receiver.try_recv().ok();
@@ -192,7 +192,10 @@ pub fn run<U, A: App<U>, P: Present>(
     Ok(stats)
 }
 
-fn handle<U, A: App<U>>(tree: &mut Tree, app: &mut A, message: &Message<U>) -> Flow {
+/// Applies one message to the retained tree and application without entering the blocking receiver loop.
+///
+/// This is used by hosts such as browsers that receive one event at a time from an external event loop.
+pub fn dispatch<U, A: App<U>>(tree: &mut Tree, app: &mut A, message: &Message<U>) -> Flow {
     let mut clicked = None;
     if let Message::Window(event) = message {
         match *event {
