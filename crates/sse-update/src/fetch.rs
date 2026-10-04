@@ -133,56 +133,46 @@ impl Fetch for FileFetch {
     }
 }
 
-/// Default fetcher combining local file access and system network fetching.
+/// Live update fetcher restricted to the official HTTPS update origin.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct DefaultFetch;
 
+const UPDATE_HOST: &str = "save-editor-downloads.save-editor.workers.dev";
+
+fn official_https_url(url: &str) -> bool {
+    let Some(rest) = url.strip_prefix("https://") else {
+        return false;
+    };
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let Some(authority) = rest.get(..authority_end) else {
+        return false;
+    };
+    if authority.contains('@') {
+        return false;
+    }
+    authority.eq_ignore_ascii_case(UPDATE_HOST) || authority.eq_ignore_ascii_case(&format!("{UPDATE_HOST}:443"))
+}
+
 impl Fetch for DefaultFetch {
     fn get(&mut self, url: &str, range_from: u64, sink: &mut dyn FnMut(&[u8]) -> bool) -> Result<Response> {
-        if url.starts_with("file://") || !url.contains("://") {
-            let mut file_fetch = FileFetch;
-            return file_fetch.get(url, range_from, sink);
+        if !official_https_url(url) {
+            return Err(Error::Refused(
+                "Update fetch is restricted to the official HTTPS host".to_owned(),
+            ));
         }
-
-        let mut cmd = std::process::Command::new("curl");
-        cmd.arg("-s").arg("-L").arg("--fail");
-        if range_from > 0 {
-            cmd.arg("-C").arg(range_from.to_string());
+        let mut fetch = sse_sys::fetch::SystemFetch {
+            max_bytes: crate::manifest::MAXIMUM_ARTIFACT_BYTES,
+            ..sse_sys::fetch::SystemFetch::default()
+        };
+        let response = sse_sys::fetch::Fetch::get(&mut fetch, url, range_from, sink)?;
+        if !official_https_url(&response.final_url) {
+            return Err(Error::Refused(
+                "Update redirect left the official HTTPS host".to_owned(),
+            ));
         }
-        cmd.arg(url);
-        cmd.stdout(std::process::Stdio::piped());
-        cmd.stderr(std::process::Stdio::null());
-
-        let mut child = cmd.spawn().map_err(Error::from)?;
-        let mut stdout = child.stdout.take().ok_or_else(|| Error::damaged("Missing stdout"))?;
-
-        let mut buffer = [0u8; 64 * 1024];
-        let mut total: u64 = 0;
-        loop {
-            let read = stdout.read(&mut buffer).map_err(Error::from)?;
-            if read == 0 {
-                break;
-            }
-            total = total.saturating_add(read as u64);
-            if let Some(chunk) = buffer.get(..read) {
-                if !sink(chunk) {
-                    let _ = child.kill();
-                    break;
-                }
-            }
-        }
-
-        let status = child.wait().map_err(Error::from)?;
-        if !status.success() {
-            return Err(Error::Refused(format!(
-                "Network fetch failed: exit code {:?}",
-                status.code()
-            )));
-        }
-
         Ok(Response {
-            status_code: 200,
-            content_length: Some(total),
+            status_code: response.status,
+            content_length: response.content_length,
             location: None,
         })
     }
@@ -541,6 +531,26 @@ pub(crate) fn hex_encode(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_fetch_origin_filter_rejects_non_https_and_foreign_hosts() {
+        assert!(official_https_url(
+            "https://save-editor-downloads.save-editor.workers.dev/latest.json"
+        ));
+        assert!(official_https_url(
+            "https://save-editor-downloads.save-editor.workers.dev:443/latest.json"
+        ));
+        assert!(!official_https_url(
+            "http://save-editor-downloads.save-editor.workers.dev/latest.json"
+        ));
+        assert!(!official_https_url("file:///tmp/update"));
+        assert!(!official_https_url(
+            "https://save-editor-downloads.save-editor.workers.dev.evil.test/update"
+        ));
+        assert!(!official_https_url(
+            "https://save-editor-downloads.save-editor.workers.dev@evil.test/update"
+        ));
+    }
 
     #[test]
     fn sha256_hasher_matches_sha256_function() {
