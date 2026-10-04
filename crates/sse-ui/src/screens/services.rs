@@ -367,6 +367,8 @@ struct Achievements {
     selected: Option<usize>,
     set: Option<WidgetId>,
     clear: Option<WidgetId>,
+    refresh: Option<WidgetId>,
+    progress: Option<WidgetId>,
     confirm: Option<bool>,
 }
 
@@ -398,7 +400,12 @@ impl Achievements {
             }
         }
         if let Some(id) = self.status {
-            cx.tree.set_text(id, &format!("Достижений: {}", self.items.len()))?;
+            cx.tree.set_text(id, &format!("Загружено {} достижений.", self.items.len()))?;
+        }
+        if let Some(id) = self.progress {
+            let got = self.items.iter().filter(|item| item.achieved).count();
+            let percent = if self.items.is_empty() { 0.0 } else { (got as f64 * 100.0) / self.items.len() as f64 };
+            cx.tree.set_text(id, &format!("{got} из {} получено ({percent:.0}%)", self.items.len()))?;
         }
         Ok(())
     }
@@ -413,8 +420,11 @@ impl Screen for Achievements {
     }
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
         let card = style::card(cx.tree, host)?;
-        style::label(cx.tree, card, "ДОСТИЖЕНИЯ", Text::Heading)?;
-        self.status = Some(style::label(cx.tree, card, "Загрузка…", Text::Note)?);
+        style::label(cx.tree, card, "ДОСТИЖЕНИЯ STEAM", Text::Heading)?;
+        style::label(cx.tree, card, "Steam доступен / недоступен определяется рабочим процессом Steam.", Text::Note)?;
+        self.status = Some(style::label(cx.tree, card, "Запрос достижений...", Text::Note)?);
+        self.progress = Some(style::label(cx.tree, card, "0 из 0 получено (0%)", Text::Value)?);
+        self.refresh = Some(style::button(cx.tree, card, "ОБНОВИТЬ", Button::Secondary)?);
         for _ in 0..ROWS {
             let r = style::button(cx.tree, card, "", Button::Secondary)?;
             cx.tree.set_visible(r, false)?;
@@ -435,6 +445,10 @@ impl Screen for Achievements {
         message: &Message<AppMessage>,
         clicked: Option<WidgetId>,
     ) -> Result<()> {
+        if clicked.is_some() && clicked == self.refresh {
+            self.load(cx);
+            return Ok(());
+        }
         for (i, row) in self.rows.iter().copied().enumerate() {
             if clicked == Some(row) && self.items.get(i).is_some() {
                 self.selected = Some(i);
@@ -458,7 +472,7 @@ impl Screen for Achievements {
             };
             if self.confirm != Some(set) {
                 self.confirm = Some(set);
-                cx.status = Some("Подтвердите действие повторным нажатием".to_owned());
+                cx.status = self.items.get(i).map(|a| if set { format!("РАЗБЛОКИРОВАТЬ ДОСТИЖЕНИЕ: подтвердите «{}» повторным нажатием.", a.display_name) } else { format!("СНЯТЬ ДОСТИЖЕНИЕ: подтвердите «{}» повторным нажатием.", a.display_name) });
                 return Ok(());
             }
             self.confirm = None;
@@ -502,7 +516,14 @@ impl Screen for Achievements {
                         }
                     }
                     AchReply::Changed(Ok(())) => {
-                        cx.status = Some("Steam подтвердил изменение достижения".to_owned());
+                        if let Some(index) = self.selected {
+                            if let Some(item) = self.items.get_mut(index) {
+                                let was = item.achieved;
+                                item.achieved = !was;
+                                cx.status = Some(if item.achieved { format!("Достижение «{}» получено в Steam.", item.display_name) } else { format!("Достижение «{}» снято в Steam.", item.display_name) });
+                            }
+                        }
+                        self.render(cx)?;
                         self.load(cx)
                     }
                     AchReply::Changed(Err(e)) => cx.status = Some(format!("Steam: {e}")),
