@@ -669,6 +669,9 @@ impl Screen for Overview {
         clicked: Option<WidgetId>,
     ) -> Result<()> {
         self.workspace.poll_tasks();
+        if let Some(search_button) = self.search_button {
+            self.search_focused = cx.tree.focused() == Some(search_button);
+        }
         if let Message::Window(crate::event_loop::WindowEvent::Key {
             pressed: true,
             keysym,
@@ -678,7 +681,15 @@ impl Screen for Overview {
         }) = message
         {
             if *ctrl && matches!(*keysym, 0x46 | 0x66) {
-                self.search_focused = true;
+                if let Some(search_button) = self.search_button {
+                    self.search_focused = cx.tree.is_visible(search_button);
+                    if self.search_focused {
+                        cx.tree.set_focus(Some(search_button))?;
+                    }
+                }
+                return self.render(cx);
+            }
+            if *keysym == 0xff09 {
                 return self.render(cx);
             }
             if self.search_focused {
@@ -686,7 +697,11 @@ impl Screen for Overview {
                     0xff08 => {
                         self.search_query.pop();
                     }
-                    0xff0d | 0xff1b => self.search_focused = false,
+                    0xff0d | 0xff1b => {
+                        self.search_focused = false;
+                        cx.tree.set_focus(None)?;
+                        return self.render(cx);
+                    }
                     _ => {
                         if let Some(character) = text.filter(|character| !character.is_control()) {
                             self.search_query.push(character);
@@ -710,7 +725,7 @@ impl Screen for Overview {
             return self.render(cx);
         }
         if clicked.is_some() && clicked == self.search_button {
-            self.search_focused = !self.search_focused;
+            self.search_focused = true;
             return self.render(cx);
         }
         if let Some(offset) = clicked.and_then(|id| self.rows.iter().position(|row| *row == id)) {
@@ -1351,6 +1366,17 @@ impl Screen for Inventory {
         clicked: Option<WidgetId>,
     ) -> Result<()> {
         self.workspace.poll_tasks();
+        if let Message::Window(crate::event_loop::WindowEvent::Key {
+            pressed: true,
+            ctrl: true,
+            keysym,
+            ..
+        }) = message
+        {
+            if matches!(*keysym, 0x53 | 0x73) {
+                return self.save(cx);
+            }
+        }
         if clicked.is_some() && clicked == self.money_decrease {
             self.stage_money(false);
             return self.render(cx);

@@ -1936,6 +1936,9 @@ impl Screen for Encyclopedia {
         message: &Message<AppMessage>,
         clicked: Option<WidgetId>,
     ) -> Result<()> {
+        if let (Some(search), Some(search_label)) = (self.search.as_mut(), self.search_label) {
+            search.focus(cx.tree.focused() == Some(search_label), 0);
+        }
         if clicked.is_some() && clicked == self.search_label {
             if let Some(search) = self.search.as_mut() {
                 search.focus(true, 0);
@@ -1950,6 +1953,24 @@ impl Screen for Encyclopedia {
             shift,
         }) = message
         {
+            if *keysym == 0xff09 {
+                if let (Some(search), Some(search_label)) = (self.search.as_mut(), self.search_label) {
+                    search.focus(cx.tree.focused() == Some(search_label), 0);
+                }
+                return Ok(());
+            }
+            if matches!(*keysym, 0xff0d | 0xff1b)
+                && self
+                    .search
+                    .as_ref()
+                    .is_some_and(crate::widgets::text_input::TextInput::focused)
+            {
+                if let Some(search) = self.search.as_mut() {
+                    search.focus(false, 0);
+                }
+                cx.tree.set_focus(None)?;
+                return Ok(());
+            }
             if self
                 .search
                 .as_ref()
