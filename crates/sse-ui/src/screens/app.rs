@@ -206,7 +206,11 @@ fn language_code(index: usize) -> &'static str {
 }
 
 fn language_name(index: usize) -> &'static str {
-    LANGUAGE_NAMES.get(index).copied().or_else(|| LANGUAGE_NAMES.first().copied()).unwrap_or("Русский")
+    LANGUAGE_NAMES
+        .get(index)
+        .copied()
+        .or_else(|| LANGUAGE_NAMES.first().copied())
+        .unwrap_or("Русский")
 }
 
 /// Result of the background check started by the settings screen.
