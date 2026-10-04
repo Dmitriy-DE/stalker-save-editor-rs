@@ -52,24 +52,170 @@ struct CapabilityRow {
 }
 
 const CAPABILITY_ROWS: [CapabilityRow; 12] = [
-    CapabilityRow { name: "Деньги", description: "Изменение количества рублей у сталкера", support: [Support::Verified, Support::Verified, Support::Verified, Support::Experimental, Support::Experimental, Support::Experimental, Support::Experimental] },
-    CapabilityRow { name: "Стаки предметов", description: "Изменение количества в пачках патронов и расходников", support: [Support::Verified, Support::Verified, Support::Verified, Support::Experimental, Support::Experimental, Support::Experimental, Support::Experimental] },
-    CapabilityRow { name: "Прочность снаряжения", description: "Состояние и износ оружия, бронекостюмов и шлемов", support: [Support::Experimental, Support::Experimental, Support::Experimental, Support::Unsupported, Support::Unsupported, Support::Unsupported, Support::Experimental] },
-    CapabilityRow { name: "Размещение в слотах", description: "Слоты оружия, пояс для артефактов и рюкзак", support: [Support::Experimental, Support::Experimental, Support::Experimental, Support::Unsupported, Support::Unsupported, Support::Unsupported, Support::Unsupported] },
-    CapabilityRow { name: "Апгрейды и модификации", description: "Установка и снятие веток улучшений оружия и брони", support: [Support::Unsupported, Support::Experimental, Support::Experimental, Support::Unsupported, Support::Unsupported, Support::Unsupported, Support::Unsupported] },
-    CapabilityRow { name: "Отношения группировок", description: "Редактирование очков репутации и враждебности фракций", support: [Support::Experimental, Support::Experimental, Support::Experimental, Support::Unsupported, Support::Unsupported, Support::Unsupported, Support::Unsupported] },
-    CapabilityRow { name: "Фракция игрока", description: "Смена принадлежности сталкера к группировке", support: [Support::Experimental, Support::Experimental, Support::Experimental, Support::Unsupported, Support::Unsupported, Support::Unsupported, Support::Unsupported] },
-    CapabilityRow { name: "Тайники (перемещение)", description: "Перемещение хабара из тайников в рюкзак и обратно", support: [Support::Verified, Support::Verified, Support::Verified, Support::Experimental, Support::Experimental, Support::Experimental, Support::Unsupported] },
-    CapabilityRow { name: "Добавление предметов", description: "Спавн новых предметов из каталога в инвентарь", support: [Support::Verified, Support::Verified, Support::Verified, Support::Experimental, Support::Experimental, Support::Experimental, Support::Unsupported] },
-    CapabilityRow { name: "Удаление предметов", description: "Безопасное удаление объектов из инвентаря", support: [Support::Verified, Support::Verified, Support::Verified, Support::Experimental, Support::Experimental, Support::Experimental, Support::Unsupported] },
-    CapabilityRow { name: "Чтение инвентаря", description: "Парсинг предметов, патронов и экипировки", support: [Support::Verified, Support::Verified, Support::Verified, Support::Verified, Support::Verified, Support::Verified, Support::Verified] },
-    CapabilityRow { name: "Каталог предметов", description: "Сопоставление идентификаторов с официальными именами", support: [Support::Verified, Support::Verified, Support::Verified, Support::Verified, Support::Verified, Support::Verified, Support::Research] },
+    CapabilityRow {
+        name: "Деньги",
+        description: "Изменение количества рублей у сталкера",
+        support: [
+            Support::Verified,
+            Support::Verified,
+            Support::Verified,
+            Support::Experimental,
+            Support::Experimental,
+            Support::Experimental,
+            Support::Experimental,
+        ],
+    },
+    CapabilityRow {
+        name: "Стаки предметов",
+        description: "Изменение количества в пачках патронов и расходников",
+        support: [
+            Support::Verified,
+            Support::Verified,
+            Support::Verified,
+            Support::Experimental,
+            Support::Experimental,
+            Support::Experimental,
+            Support::Experimental,
+        ],
+    },
+    CapabilityRow {
+        name: "Прочность снаряжения",
+        description: "Состояние и износ оружия, бронекостюмов и шлемов",
+        support: [
+            Support::Experimental,
+            Support::Experimental,
+            Support::Experimental,
+            Support::Unsupported,
+            Support::Unsupported,
+            Support::Unsupported,
+            Support::Experimental,
+        ],
+    },
+    CapabilityRow {
+        name: "Размещение в слотах",
+        description: "Слоты оружия, пояс для артефактов и рюкзак",
+        support: [
+            Support::Experimental,
+            Support::Experimental,
+            Support::Experimental,
+            Support::Unsupported,
+            Support::Unsupported,
+            Support::Unsupported,
+            Support::Unsupported,
+        ],
+    },
+    CapabilityRow {
+        name: "Апгрейды и модификации",
+        description: "Установка и снятие веток улучшений оружия и брони",
+        support: [
+            Support::Unsupported,
+            Support::Experimental,
+            Support::Experimental,
+            Support::Unsupported,
+            Support::Unsupported,
+            Support::Unsupported,
+            Support::Unsupported,
+        ],
+    },
+    CapabilityRow {
+        name: "Отношения группировок",
+        description: "Редактирование очков репутации и враждебности фракций",
+        support: [
+            Support::Experimental,
+            Support::Experimental,
+            Support::Experimental,
+            Support::Unsupported,
+            Support::Unsupported,
+            Support::Unsupported,
+            Support::Unsupported,
+        ],
+    },
+    CapabilityRow {
+        name: "Фракция игрока",
+        description: "Смена принадлежности сталкера к группировке",
+        support: [
+            Support::Experimental,
+            Support::Experimental,
+            Support::Experimental,
+            Support::Unsupported,
+            Support::Unsupported,
+            Support::Unsupported,
+            Support::Unsupported,
+        ],
+    },
+    CapabilityRow {
+        name: "Тайники (перемещение)",
+        description: "Перемещение хабара из тайников в рюкзак и обратно",
+        support: [
+            Support::Verified,
+            Support::Verified,
+            Support::Verified,
+            Support::Experimental,
+            Support::Experimental,
+            Support::Experimental,
+            Support::Unsupported,
+        ],
+    },
+    CapabilityRow {
+        name: "Добавление предметов",
+        description: "Спавн новых предметов из каталога в инвентарь",
+        support: [
+            Support::Verified,
+            Support::Verified,
+            Support::Verified,
+            Support::Experimental,
+            Support::Experimental,
+            Support::Experimental,
+            Support::Unsupported,
+        ],
+    },
+    CapabilityRow {
+        name: "Удаление предметов",
+        description: "Безопасное удаление объектов из инвентаря",
+        support: [
+            Support::Verified,
+            Support::Verified,
+            Support::Verified,
+            Support::Experimental,
+            Support::Experimental,
+            Support::Experimental,
+            Support::Unsupported,
+        ],
+    },
+    CapabilityRow {
+        name: "Чтение инвентаря",
+        description: "Парсинг предметов, патронов и экипировки",
+        support: [
+            Support::Verified,
+            Support::Verified,
+            Support::Verified,
+            Support::Verified,
+            Support::Verified,
+            Support::Verified,
+            Support::Verified,
+        ],
+    },
+    CapabilityRow {
+        name: "Каталог предметов",
+        description: "Сопоставление идентификаторов с официальными именами",
+        support: [
+            Support::Verified,
+            Support::Verified,
+            Support::Verified,
+            Support::Verified,
+            Support::Verified,
+            Support::Verified,
+            Support::Research,
+        ],
+    },
 ];
 
 struct Capabilities;
 
 impl Screen for Capabilities {
-    fn id(&self) -> ScreenId { ScreenId::Capabilities }
+    fn id(&self) -> ScreenId {
+        ScreenId::Capabilities
+    }
 
     fn subtitle(&self) -> &str {
         "Игра × возможность: запись, чтение и причины ограничений"
@@ -79,11 +225,21 @@ impl Screen for Capabilities {
         let help = style::card(cx.tree, host)?;
         style::label(cx.tree, help, "СПРАВКА ПО ВОЗМОЖНОСТЯМ", Text::Heading)?;
         style::label(cx.tree, help, "МАТРИЦА ВОЗМОЖНОСТЕЙ РЕДАКТОРА", Text::Value)?;
-        style::label(cx.tree, help, "Что редактор умеет делать с сейвами каждой игры.", Text::Body)?;
+        style::label(
+            cx.tree,
+            help,
+            "Что редактор умеет делать с сейвами каждой игры.",
+            Text::Body,
+        )?;
 
         let matrix = style::card(cx.tree, host)?;
         style::label(cx.tree, matrix, "МАТРИЦА ПОДДЕРЖИВАЕМЫХ ВОЗМОЖНОСТЕЙ", Text::Heading)?;
-        style::label(cx.tree, matrix, "ОПЕРАЦИЯ        ТЧ       ЧН       ЗП       ТЧ EE    ЧН EE    ЗП EE    S2", Text::Value)?;
+        style::label(
+            cx.tree,
+            matrix,
+            "ОПЕРАЦИЯ        ТЧ       ЧН       ЗП       ТЧ EE    ЧН EE    ЗП EE    S2",
+            Text::Value,
+        )?;
         for row in CAPABILITY_ROWS {
             let mut line = format!("{:<18}", row.name);
             for support in row.support {
@@ -93,7 +249,9 @@ impl Screen for Capabilities {
             style::label(cx.tree, matrix, row.description, Text::Note)?;
             let mut reasons = String::new();
             for (game, support) in GAMES.into_iter().zip(row.support) {
-                if !reasons.is_empty() { reasons.push_str(" · "); }
+                if !reasons.is_empty() {
+                    reasons.push_str(" · ");
+                }
                 reasons.push_str(game);
                 reasons.push_str(": ");
                 reasons.push_str(support.reason());
@@ -103,14 +261,39 @@ impl Screen for Capabilities {
 
         let legend = style::card(cx.tree, host)?;
         style::label(cx.tree, legend, "ОБОЗНАЧЕНИЯ", Text::Heading)?;
-        style::label(cx.tree, legend, "Запись (Verified) — Полная поддержка чтения и записи, верифицировано тестами.", Text::Body)?;
-        style::label(cx.tree, legend, "Эксперим. (Experimental) — Поддержка в формате реализована, ожидается подтверждение в игре.", Text::Body)?;
-        style::label(cx.tree, legend, "Чтение (Research) — Режим только для чтения.", Text::Body)?;
-        style::label(cx.tree, legend, "Нет (Unsupported) — Механика отсутствует в игре или не поддерживается.", Text::Body)?;
+        style::label(
+            cx.tree,
+            legend,
+            "Запись (Verified) — Полная поддержка чтения и записи, верифицировано тестами.",
+            Text::Body,
+        )?;
+        style::label(
+            cx.tree,
+            legend,
+            "Эксперим. (Experimental) — Поддержка в формате реализована, ожидается подтверждение в игре.",
+            Text::Body,
+        )?;
+        style::label(
+            cx.tree,
+            legend,
+            "Чтение (Research) — Режим только для чтения.",
+            Text::Body,
+        )?;
+        style::label(
+            cx.tree,
+            legend,
+            "Нет (Unsupported) — Механика отсутствует в игре или не поддерживается.",
+            Text::Body,
+        )?;
         Ok(())
     }
 
-    fn message(&mut self, _cx: &mut Context<'_>, _message: &Message<AppMessage>, _clicked: Option<WidgetId>) -> Result<()> {
+    fn message(
+        &mut self,
+        _cx: &mut Context<'_>,
+        _message: &Message<AppMessage>,
+        _clicked: Option<WidgetId>,
+    ) -> Result<()> {
         Ok(())
     }
 }
