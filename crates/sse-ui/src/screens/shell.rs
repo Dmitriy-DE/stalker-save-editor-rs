@@ -18,6 +18,7 @@ pub struct Shell {
     screens: Vec<Box<dyn Screen>>,
     hosts: Vec<Option<WidgetId>>,
     nav: Vec<WidgetId>,
+    group_labels: Vec<(Group, WidgetId)>,
     content: WidgetId,
     title: WidgetId,
     subtitle: WidgetId,
@@ -25,6 +26,7 @@ pub struct Shell {
     selected: usize,
     proxy: Option<Proxy<AppMessage>>,
     app: sse_app::state::AppState,
+    language: String,
 }
 
 fn padded(left: f32, top: f32, right: f32, bottom: f32) -> Edges {
@@ -42,6 +44,8 @@ impl Shell {
     /// # Errors
     /// Returns an error from the widget tree.
     pub fn build(tree: &mut Tree, proxy: Option<Proxy<AppMessage>>) -> Result<Self> {
+        let settings = sse_app::AppSettings::load(&sse_app::default_settings_path());
+        crate::strings::set_language(settings.language.as_deref());
         let root_style = Style {
             align_items: Align::Stretch,
             ..Style::default()
@@ -93,7 +97,7 @@ impl Shell {
                 ..Style::default()
             },
             Content::Label {
-                text: "РЕДАКТОР СОХРАНЕНИЙ".to_owned(),
+                text: crate::strings::t("РЕДАКТОР СОХРАНЕНИЙ").to_owned(),
                 style: TextStyle::new(Face::Heading, 12.0),
             },
             Look {
@@ -104,12 +108,13 @@ impl Shell {
 
         let screens = registry();
         let mut nav = Vec::with_capacity(screens.len());
+        let mut group_labels = Vec::new();
         let mut group: Option<Group> = None;
         for screen in &screens {
             let id = screen.id();
             if group != Some(id.group()) {
                 group = Some(id.group());
-                tree.add(
+                let group_id = tree.add(
                     Some(sidebar),
                     NodeKind::Leaf,
                     Style {
@@ -117,7 +122,7 @@ impl Shell {
                         ..Style::default()
                     },
                     Content::Label {
-                        text: id.group().caption().to_owned(),
+                        text: crate::strings::t(id.group().caption()).to_owned(),
                         style: TextStyle::new(Face::Heading, 11.0),
                     },
                     Look {
@@ -125,6 +130,7 @@ impl Shell {
                         ..Look::default()
                     },
                 )?;
+                group_labels.push((id.group(), group_id));
             }
             let item = Style {
                 min: Size::new(0.0, 30.0),
@@ -132,7 +138,7 @@ impl Shell {
                 ..Style::default()
             };
             let content = Content::Button {
-                text: id.title().to_owned(),
+                text: crate::strings::t(id.title()).to_owned(),
                 style: TextStyle::new(Face::Heading, 14.0),
             };
             nav.push(tree.add(Some(sidebar), NodeKind::Leaf, item, content, style::nav(nav.is_empty()))?);
@@ -222,7 +228,7 @@ impl Shell {
                 ..Style::default()
             },
             Content::Label {
-                text: "Готово".to_owned(),
+                text: crate::strings::t("Готово").to_owned(),
                 style: Text::Note.style(),
             },
             Look {
@@ -237,6 +243,7 @@ impl Shell {
             screens,
             hosts,
             nav,
+            group_labels,
             content,
             title,
             subtitle,
@@ -244,6 +251,7 @@ impl Shell {
             selected: 0,
             proxy,
             app: sse_app::state::AppState::new(),
+            language: crate::strings::current_language().to_owned(),
         };
         shell.show(tree, 0)?;
         Ok(shell)
@@ -325,8 +333,8 @@ impl Shell {
         let (Some(screen), Some(slot)) = (self.screens.get_mut(index), self.hosts.get_mut(index)) else {
             return Ok(());
         };
-        tree.set_text(self.title, screen.id().title())?;
-        tree.set_text(self.subtitle, screen.subtitle())?;
+        tree.set_text(self.title, crate::strings::t(screen.id().title()))?;
+        tree.set_text(self.subtitle, crate::strings::t(screen.subtitle()))?;
         let mut cx = Context {
             tree,
             proxy: self.proxy.as_ref(),
@@ -358,6 +366,33 @@ impl Shell {
         if let Some(text) = status {
             tree.set_text(self.status, &text)?;
         }
+        Ok(())
+    }
+
+    fn refresh_language(&mut self, tree: &mut Tree) -> Result<()> {
+        let language = crate::strings::current_language();
+        if self.language == language {
+            return Ok(());
+        }
+        language.clone_into(&mut self.language);
+        for (group, widget) in &self.group_labels {
+            tree.set_text(*widget, crate::strings::t(group.caption()))?;
+        }
+        for (screen, widget) in self.screens.iter().zip(&self.nav) {
+            tree.set_text(*widget, crate::strings::t(screen.id().title()))?;
+        }
+        for host in self.hosts.iter().flatten().copied() {
+            tree.set_visible(host, false)?;
+        }
+        let selected_id = self.screens.get(self.selected).map(|screen| screen.id());
+        self.screens = registry();
+        self.hosts = vec![None; self.screens.len()];
+        if let Some(id) = selected_id {
+            self.selected = self.screens.iter().position(|screen| screen.id() == id).unwrap_or(0);
+        }
+        tree.set_text(self.status, crate::strings::t("Готово"))?;
+        self.show(tree, self.selected)?;
+        tree.damage_all();
         Ok(())
     }
 
@@ -413,6 +448,7 @@ impl Shell {
             }
         }
         self.route(tree, message, clicked)?;
+        self.refresh_language(tree)?;
         Ok(Flow::Continue)
     }
 }
