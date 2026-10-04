@@ -631,7 +631,7 @@ impl Screen for GamesOverview {
                 .copied()
                 .unwrap_or(GameTarget::ShadowOfChernobyl);
             state.selected_target = Some(new_target);
-            state.selected_index = state.installations.iter().position(|inst| inst.target == new_target);
+            state.selected_installation = state.installations.iter().find(|inst| inst.target == new_target).map(|inst| inst.directory.clone());
             drop(state);
             return self.render(cx);
         }
@@ -1424,7 +1424,7 @@ struct GameFixes {
     detail: Option<WidgetId>,
     rows: Vec<WidgetId>,
     items: Vec<FixRow>,
-    selected: Option<usize>,
+    selected: Option<String>,
     install: Option<WidgetId>,
     remove: Option<WidgetId>,
     check: Option<WidgetId>,
@@ -1612,7 +1612,7 @@ impl Screen for GameFixes {
         if clicked.is_some() {
             for (index, row) in self.rows.iter().copied().enumerate() {
                 if clicked == Some(row) && self.items.get(index).is_some() {
-                    self.selected = Some(index);
+                    self.selected = self.items.get(index).map(|item| item.id.clone());
                     self.confirm = None;
                     if let (Some(detail), Some(item)) = (self.detail, self.items.get(index)) {
                         cx.tree
@@ -1689,7 +1689,7 @@ impl Screen for GameFixes {
             None
         };
         if let Some(install) = action {
-            let Some(index) = self.selected else {
+            let Some(selected_id) = self.selected.as_deref() else {
                 cx.status = Some("Сначала выберите исправление".to_owned());
                 return Ok(());
             };
@@ -1700,7 +1700,9 @@ impl Screen for GameFixes {
                 return Ok(());
             }
             self.confirm = None;
-            let Some(item) = self.items.get(index) else {
+            let Some(item) = self.items.iter().find(|item| item.id == selected_id) else {
+                self.selected = None;
+                cx.status = Some("Выбранное исправление исчезло после обновления списка".to_owned());
                 return Ok(());
             };
             let fix_id = item.id.clone();
@@ -1753,6 +1755,7 @@ impl Screen for GameFixes {
             if let Some(reply) = payload.downcast_ref::<FixReply>() {
                 match reply {
                     FixReply::List(Ok(items)) => {
+                        if self.selected.as_ref().is_some_and(|id| !items.iter().any(|item| &item.id == id)) { self.selected = None; self.confirm = None; }
                         self.items.clone_from(items);
                         self.render(cx)?;
                     }
