@@ -1,5 +1,7 @@
 //! Our own interface toolkit (U1): canvas, text, layout, widgets, windows. Owner: Claude.
 
+/// Save byte, line and three-way comparison helpers (S3).
+pub mod diff;
 /// Text field editing model (X27).
 pub mod edit;
 /// Event loop: window events and worker messages on one channel, idle sleep, damage-only repaint (U1).

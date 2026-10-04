@@ -40,6 +40,15 @@ pub struct ByteRange {
     /// New-image exclusive end byte.
     pub new_end: usize,
 }
+
+/// A bounded prefix of changed byte ranges.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BoundedByteRanges {
+    /// At most the requested number of ranges, in ascending order.
+    pub ranges: Vec<ByteRange>,
+    /// True when at least one additional range was omitted.
+    pub truncated: bool,
+}
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// Overlapping unequal edits encountered by three-way merge.
 pub struct MergeConflict {
@@ -449,6 +458,87 @@ pub fn byte_ranges(a: &[u8], b: &[u8], merge_gap: usize) -> Vec<ByteRange> {
     merged
 }
 
+/// Returns no more than `maximum_ranges` changed ranges without allocating a range per changed island.
+///
+/// The scan stops as soon as it proves that another range would exceed the output limit. This keeps memory
+/// bounded for adversarial inputs whose bytes alternate between equal and unequal.
+#[must_use]
+pub fn byte_ranges_bounded(a: &[u8], b: &[u8], merge_gap: usize, maximum_ranges: usize) -> BoundedByteRanges {
+    let common = min(a.len(), b.len());
+    let mut result = BoundedByteRanges {
+        ranges: Vec::with_capacity(maximum_ranges.min(32)),
+        truncated: false,
+    };
+    let mut current: Option<ByteRange> = None;
+    for index in 0..common {
+        if a.get(index) != b.get(index) {
+            let end = index.saturating_add(1);
+            let next = ByteRange {
+                old_start: index,
+                old_end: end,
+                new_start: index,
+                new_end: end,
+            };
+            if let Some(mut range) = current.take() {
+                let gap = index
+                    .saturating_sub(range.old_end)
+                    .max(index.saturating_sub(range.new_end));
+                if gap <= merge_gap {
+                    range.old_end = end;
+                    range.new_end = end;
+                    current = Some(range);
+                } else {
+                    if !push_bounded_range(&mut result, range, maximum_ranges) {
+                        return result;
+                    }
+                    current = Some(next);
+                }
+            } else {
+                current = Some(next);
+            }
+        }
+    }
+    if a.len() != b.len() {
+        let tail = ByteRange {
+            old_start: common,
+            old_end: a.len(),
+            new_start: common,
+            new_end: b.len(),
+        };
+        if let Some(mut range) = current.take() {
+            let gap = tail
+                .old_start
+                .saturating_sub(range.old_end)
+                .max(tail.new_start.saturating_sub(range.new_end));
+            if gap <= merge_gap {
+                range.old_end = tail.old_end;
+                range.new_end = tail.new_end;
+                current = Some(range);
+            } else {
+                if !push_bounded_range(&mut result, range, maximum_ranges) {
+                    return result;
+                }
+                current = Some(tail);
+            }
+        } else {
+            current = Some(tail);
+        }
+    }
+    if let Some(range) = current {
+        let _ = push_bounded_range(&mut result, range, maximum_ranges);
+    }
+    result
+}
+
+fn push_bounded_range(result: &mut BoundedByteRanges, range: ByteRange, maximum_ranges: usize) -> bool {
+    if result.ranges.len() >= maximum_ranges {
+        result.truncated = true;
+        return false;
+    }
+    result.ranges.push(range);
+    true
+}
+
 /// Conservative three-way merge: identical sides win; disjoint line edits combine; overlapping unequal edits conflict.
 pub fn merge3(base: &[u8], left: &[u8], right: &[u8]) -> Result<MergeResult> {
     if left == right {
@@ -558,6 +648,35 @@ mod tests {
     #[test]
     fn byte_diff_merges() {
         assert_eq!(byte_ranges(b"abcX12Yz", b"abcQ12Rz", 2).len(), 1)
+    }
+    #[test]
+    fn bounded_byte_diff_caps_alternating_changes_and_reports_truncation() {
+        let old = b"a0a0a0a0a0a0";
+        let new = b"b0b0b0b0b0b0";
+        let bounded = byte_ranges_bounded(old, new, 0, 3);
+        assert_eq!(bounded.ranges.len(), 3);
+        assert!(bounded.truncated);
+    }
+    #[test]
+    fn bounded_byte_diff_merges_length_change_with_neighboring_range() {
+        let bounded = byte_ranges_bounded(b"abX", b"abYmore", 0, 4);
+        assert_eq!(
+            bounded.ranges,
+            vec![ByteRange {
+                old_start: 2,
+                old_end: 3,
+                new_start: 2,
+                new_end: 7
+            }]
+        );
+        assert!(!bounded.truncated);
+    }
+    #[test]
+    fn bounded_byte_diff_keeps_separate_islands_when_gap_exceeds_limit() {
+        let bounded = byte_ranges_bounded(b"aXbcYd", b"aQbcRd", 1, 4);
+        assert_eq!(bounded.ranges.len(), 2);
+        assert_eq!(bounded.ranges.first().map(|range| range.old_start), Some(1));
+        assert_eq!(bounded.ranges.get(1).map(|range| range.old_start), Some(4));
     }
     #[test]
     fn crlf_round_trip() {
