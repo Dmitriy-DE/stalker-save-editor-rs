@@ -415,10 +415,18 @@ impl Screen for Settings {
         let sections = style::card(cx.tree, settings_root)?;
         style::label(cx.tree, sections, "Разделы", Text::Heading)?;
         for name in [
-            "ОБЩИЕ", "ИНТЕРФЕЙС", "Звук", "ПУТИ И АВТОПОИСК", "ОБНОВЛЕНИЯ",
-            "РЕЗЕРВНЫЕ КОПИИ", "ИНСТРУМЕНТЫ ДЛЯ ПОДДЕРЖКИ", "ОТЧЁТЫ И ПРИВАТНОСТЬ", "ВЕРСИЯ",
+            "ОБЩИЕ",
+            "ИНТЕРФЕЙС",
+            "Звук",
+            "ПУТИ И АВТОПОИСК",
+            "ОБНОВЛЕНИЯ",
+            "РЕЗЕРВНЫЕ КОПИИ",
+            "ИНСТРУМЕНТЫ ДЛЯ ПОДДЕРЖКИ",
+            "ОТЧЁТЫ И ПРИВАТНОСТЬ",
+            "ВЕРСИЯ",
         ] {
-            self.section_buttons.push(style::button(cx.tree, sections, name, Button::Secondary)?);
+            self.section_buttons
+                .push(style::button(cx.tree, sections, name, Button::Secondary)?);
         }
         let content = style::card(cx.tree, settings_root)?;
 
@@ -497,20 +505,55 @@ impl Screen for Settings {
 
         let sound = style::card(cx.tree, content)?;
         style::label(cx.tree, sound, "Звуки интерфейса", Text::Heading)?;
-        self.sound_button = Some(style::button(cx.tree, sound, if self.settings.sound_enabled { "Звуковые эффекты: ВКЛ" } else { "Звуковые эффекты: ВЫКЛ" }, Button::Secondary)?);
-        self.music_button = Some(style::button(cx.tree, sound, if self.settings.music_enabled { "Музыка меню: ВКЛ" } else { "Музыка меню: ВЫКЛ" }, Button::Secondary)?);
-        self.volume_button = Some(style::button(cx.tree, sound, &format!("Громкость звуков: {}%", self.settings.sound_volume), Button::Secondary)?);
+        self.sound_button = Some(style::button(
+            cx.tree,
+            sound,
+            if self.settings.sound_enabled {
+                "Звуковые эффекты: ВКЛ"
+            } else {
+                "Звуковые эффекты: ВЫКЛ"
+            },
+            Button::Secondary,
+        )?);
+        self.music_button = Some(style::button(
+            cx.tree,
+            sound,
+            if self.settings.music_enabled {
+                "Музыка меню: ВКЛ"
+            } else {
+                "Музыка меню: ВЫКЛ"
+            },
+            Button::Secondary,
+        )?);
+        self.volume_button = Some(style::button(
+            cx.tree,
+            sound,
+            &format!("Громкость звуков: {}%", self.settings.sound_volume),
+            Button::Secondary,
+        )?);
         self.section_panels.push(sound);
 
         let paths = style::card(cx.tree, content)?;
         style::label(cx.tree, paths, "КАТАЛОГИ СОХРАНЕНИЙ", Text::Heading)?;
-        style::label(cx.tree, paths, "Папки автоматического поиска сохранений (ТЧ, ЧН, ЗП, S2):", Text::Body)?;
+        style::label(
+            cx.tree,
+            paths,
+            "Папки автоматического поиска сохранений (ТЧ, ЧН, ЗП, S2):",
+            Text::Body,
+        )?;
         if let Some(dirs) = &self.settings.save_directories {
-            for dir in dirs { style::label(cx.tree, paths, &dir.to_string_lossy(), Text::Note)?; }
+            for dir in dirs {
+                style::label(cx.tree, paths, &dir.to_string_lossy(), Text::Note)?;
+            }
         } else {
             style::label(cx.tree, paths, "Используется автопоиск папок.", Text::Note)?;
         }
-        style::label(cx.tree, paths, "Добавление/удаление/обзор требуют контроллера выбора папки; до его подключения изменения путей отключены.", Text::Note)?;
+        style::label(
+            cx.tree,
+            paths,
+            "Добавление/удаление/обзор требуют контроллера выбора папки; до его подключения изменения путей отключены.",
+            Text::Note,
+        )?;
         self.section_panels.push(paths);
 
         let updates = style::card(cx.tree, content)?;
@@ -518,39 +561,101 @@ impl Screen for Settings {
         let line = style::row(cx.tree, updates)?;
         self.check_button = Some(style::button(cx.tree, line, "Проверить", Button::Primary)?);
         self.check_result = Some(style::label(cx.tree, line, "Ещё не проверяли", Text::Note)?);
-        style::label(cx.tree, updates, "Исправления для игры устанавливаются или обновляются только после явного действия пользователя.", Text::Note)?;
+        style::label(
+            cx.tree,
+            updates,
+            "Исправления для игры устанавливаются или обновляются только после явного действия пользователя.",
+            Text::Note,
+        )?;
         self.section_panels.push(updates);
 
         let backups = style::card(cx.tree, content)?;
         style::label(cx.tree, backups, "РЕЗЕРВНОЕ КОПИРОВАНИЕ", Text::Heading)?;
-        style::label(cx.tree, backups, "Папка для создания резервных копий и журналов восстановления:", Text::Body)?;
-        style::label(cx.tree, backups, self.settings.backup_directory.as_ref().map_or("<по умолчанию>", |p| p.to_str().unwrap_or("<не-UTF-8 путь>")), Text::Value)?;
-        style::label(cx.tree, backups, "Новое значение папки применяется только после «Сохранить настройки».", Text::Note)?;
+        style::label(
+            cx.tree,
+            backups,
+            "Папка для создания резервных копий и журналов восстановления:",
+            Text::Body,
+        )?;
+        style::label(
+            cx.tree,
+            backups,
+            self.settings
+                .backup_directory
+                .as_ref()
+                .map_or("<по умолчанию>", |p| p.to_str().unwrap_or("<не-UTF-8 путь>")),
+            Text::Value,
+        )?;
+        style::label(
+            cx.tree,
+            backups,
+            "Новое значение папки применяется только после «Сохранить настройки».",
+            Text::Note,
+        )?;
         self.section_panels.push(backups);
 
         let support = style::card(cx.tree, content)?;
         style::label(cx.tree, support, "ПРОВЕРКА ОКРУЖЕНИЯ", Text::Heading)?;
-        style::label(cx.tree, support, "Диагностика не нужна для обычного использования, но полезна для отчётов об ошибках.", Text::Body)?;
+        style::label(
+            cx.tree,
+            support,
+            "Диагностика не нужна для обычного использования, но полезна для отчётов об ошибках.",
+            Text::Body,
+        )?;
         style::label(cx.tree, support, "Проверка окружения подключена к кнопке «Проверить» в разделе обновлений; CrashReporter/report bundle API в sse-app пока отсутствует.", Text::Note)?;
         self.section_panels.push(support);
 
         let reports = style::card(cx.tree, content)?;
         style::label(cx.tree, reports, "ОТЧЁТЫ ОБ ОШИБКАХ", Text::Heading)?;
-        self.reports_button = Some(style::button(cx.tree, reports, if self.settings.send_reports { "Отправлять отчёты: ВКЛ" } else { "Отправлять отчёты: ВЫКЛ" }, Button::Secondary)?);
-        self.send_report_button = Some(style::button(cx.tree, reports, "Отправить отчёт сейчас", Button::Secondary)?);
-        style::label(cx.tree, reports, "Отправить обезличенные журналы и отчёт окружения. Сохранения не отправляются.", Text::Note)?;
+        self.reports_button = Some(style::button(
+            cx.tree,
+            reports,
+            if self.settings.send_reports {
+                "Отправлять отчёты: ВКЛ"
+            } else {
+                "Отправлять отчёты: ВЫКЛ"
+            },
+            Button::Secondary,
+        )?);
+        self.send_report_button = Some(style::button(
+            cx.tree,
+            reports,
+            "Отправить отчёт сейчас",
+            Button::Secondary,
+        )?);
+        style::label(
+            cx.tree,
+            reports,
+            "Отправить обезличенные журналы и отчёт окружения. Сохранения не отправляются.",
+            Text::Note,
+        )?;
         self.section_panels.push(reports);
 
         let about = style::card(cx.tree, content)?;
         style::label(cx.tree, about, "О ПРОГРАММЕ", Text::Heading)?;
-        style::label(cx.tree, about, &format!("S.T.A.L.K.E.R. Save Editor {}", env!("CARGO_PKG_VERSION")), Text::Value)?;
-        style::label(cx.tree, about, "Редактор сохранений для всей серии S.T.A.L.K.E.R.", Text::Body)?;
+        style::label(
+            cx.tree,
+            about,
+            &format!("S.T.A.L.K.E.R. Save Editor {}", env!("CARGO_PKG_VERSION")),
+            Text::Value,
+        )?;
+        style::label(
+            cx.tree,
+            about,
+            "Редактор сохранений для всей серии S.T.A.L.K.E.R.",
+            Text::Body,
+        )?;
         self.section_panels.push(about);
 
         for (index, panel) in self.section_panels.iter().copied().enumerate() {
             cx.tree.set_visible(panel, index == 0)?;
         }
-        self.save_button = Some(style::button(cx.tree, host, crate::strings::t("Сохранить настройки"), Button::Primary)?);
+        self.save_button = Some(style::button(
+            cx.tree,
+            host,
+            crate::strings::t("Сохранить настройки"),
+            Button::Primary,
+        )?);
         Ok(())
     }
 
@@ -578,8 +683,16 @@ impl Screen for Settings {
             cx.status = Some("Музыка изменена; нажмите «Сохранить настройки», чтобы применить.".to_owned());
         }
         if clicked.is_some() && clicked == self.volume_button {
-            self.settings.sound_volume = self.settings.sound_volume.saturating_add(10).checked_rem(110).unwrap_or(0);
-            cx.status = Some(format!("Громкость: {}%. Нажмите «Сохранить настройки».", self.settings.sound_volume));
+            self.settings.sound_volume = self
+                .settings
+                .sound_volume
+                .saturating_add(10)
+                .checked_rem(110)
+                .unwrap_or(0);
+            cx.status = Some(format!(
+                "Громкость: {}%. Нажмите «Сохранить настройки».",
+                self.settings.sound_volume
+            ));
         }
         if clicked.is_some() && clicked == self.reports_button {
             self.settings.send_reports = !self.settings.send_reports;
