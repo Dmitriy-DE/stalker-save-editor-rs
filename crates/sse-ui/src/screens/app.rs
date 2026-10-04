@@ -232,19 +232,31 @@ fn grid_label(
         NodeKind::Leaf,
         Style {
             min: Size::new(0.0, 36.0),
-            padding: crate::layout::Edges { left: 8.0, top: 0.0, right: 8.0, bottom: 0.0 },
+            padding: crate::layout::Edges {
+                left: 8.0,
+                top: 0.0,
+                right: 8.0,
+                bottom: 0.0,
+            },
             grid: Some(GridPlacement::cell(column, row)),
             ..Style::default()
         },
         Content::Label {
             text: text.to_owned(),
-            style: TextStyle::new(if heading { Face::Heading } else { Face::Body }, if heading { 13.0 } else { 14.0 }),
+            style: TextStyle::new(
+                if heading { Face::Heading } else { Face::Body },
+                if heading { 13.0 } else { 14.0 },
+            ),
         },
         Look {
             border: Some((style::rgb(colors.borders[0]), 1.0)),
             fill: heading.then(|| style::rgb(colors.background[2])),
             text: style::rgb(if heading { colors.text[0] } else { colors.text[1] }),
-            align: if column == 0 { TextAlign::Start } else { TextAlign::Center },
+            align: if column == 0 {
+                TextAlign::Start
+            } else {
+                TextAlign::Center
+            },
             ..Look::default()
         },
     )
@@ -263,7 +275,12 @@ fn grid_cell(
         NodeKind::Leaf,
         Style {
             min: Size::new(0.0, 36.0),
-            padding: crate::layout::Edges { left: 6.0, top: 0.0, right: 6.0, bottom: 0.0 },
+            padding: crate::layout::Edges {
+                left: 6.0,
+                top: 0.0,
+                right: 6.0,
+                bottom: 0.0,
+            },
             grid: Some(GridPlacement::cell(column, row)),
             ..Style::default()
         },
@@ -283,7 +300,9 @@ fn grid_cell(
 }
 
 impl Screen for Capabilities {
-    fn id(&self) -> ScreenId { ScreenId::Capabilities }
+    fn id(&self) -> ScreenId {
+        ScreenId::Capabilities
+    }
 
     fn subtitle(&self) -> &str {
         "Игра × возможность: запись, чтение и причины ограничений"
@@ -292,7 +311,12 @@ impl Screen for Capabilities {
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
         let help = style::card(cx.tree, host)?;
         style::label(cx.tree, help, "СПРАВКА ПО ВОЗМОЖНОСТЯМ", Text::Heading)?;
-        style::label(cx.tree, help, "Что редактор умеет делать с сейвами каждой игры.", Text::Body)?;
+        style::label(
+            cx.tree,
+            help,
+            "Что редактор умеет делать с сейвами каждой игры.",
+            Text::Body,
+        )?;
 
         let matrix = style::card(cx.tree, host)?;
         style::label(cx.tree, matrix, "МАТРИЦА ПОДДЕРЖИВАЕМЫХ ВОЗМОЖНОСТЕЙ", Text::Heading)?;
@@ -301,13 +325,20 @@ impl Screen for Capabilities {
             NodeKind::Grid {
                 columns: vec![
                     Track::Fixed(220.0),
-                    Track::Fixed(92.0), Track::Fixed(92.0), Track::Fixed(92.0),
-                    Track::Fixed(92.0), Track::Fixed(92.0), Track::Fixed(92.0),
+                    Track::Fixed(92.0),
+                    Track::Fixed(92.0),
+                    Track::Fixed(92.0),
+                    Track::Fixed(92.0),
+                    Track::Fixed(92.0),
+                    Track::Fixed(92.0),
                     Track::Fixed(92.0),
                 ],
                 rows: vec![Track::Fixed(38.0); CAPABILITY_ROWS.len() + 1],
             },
-            Style { gap: Size::new(2.0, 2.0), ..Style::default() },
+            Style {
+                gap: Size::new(2.0, 2.0),
+                ..Style::default()
+            },
             Content::Panel,
             Look::default(),
         )?;
@@ -332,25 +363,49 @@ impl Screen for Capabilities {
 
         let legend = style::card(cx.tree, host)?;
         style::label(cx.tree, legend, "ОБОЗНАЧЕНИЯ", Text::Heading)?;
-        style::label(cx.tree, legend, "Запись — полная поддержка чтения и записи, верифицировано тестами.", Text::Body)?;
-        style::label(cx.tree, legend, "Эксперим. — поддержка реализована, ожидается подтверждение в игре.", Text::Body)?;
+        style::label(
+            cx.tree,
+            legend,
+            "Запись — полная поддержка чтения и записи, верифицировано тестами.",
+            Text::Body,
+        )?;
+        style::label(
+            cx.tree,
+            legend,
+            "Эксперим. — поддержка реализована, ожидается подтверждение в игре.",
+            Text::Body,
+        )?;
         style::label(cx.tree, legend, "Чтение — режим только для чтения.", Text::Body)?;
-        style::label(cx.tree, legend, "Нет — механика отсутствует или не поддерживается.", Text::Body)?;
+        style::label(
+            cx.tree,
+            legend,
+            "Нет — механика отсутствует или не поддерживается.",
+            Text::Body,
+        )?;
         Ok(())
     }
 
-    fn message(&mut self, cx: &mut Context<'_>, _message: &Message<AppMessage>, clicked: Option<WidgetId>) -> Result<()> {
+    fn message(
+        &mut self,
+        cx: &mut Context<'_>,
+        _message: &Message<AppMessage>,
+        clicked: Option<WidgetId>,
+    ) -> Result<()> {
         if clicked.is_some() {
             if let Some((_, row, column)) = self.cells.iter().find(|(id, _, _)| Some(*id) == clicked) {
-                if let (Some(capability), Some(game), Some(detail)) = (
-                    CAPABILITY_ROWS.get(*row),
-                    GAMES.get(*column),
-                    self.detail,
-                ) {
+                if let (Some(capability), Some(game), Some(detail)) =
+                    (CAPABILITY_ROWS.get(*row), GAMES.get(*column), self.detail)
+                {
                     let support = capability.support[*column];
                     cx.tree.set_text(
                         detail,
-                        &format!("{} · {} · {} — {}", capability.name, game, capability.description, support.reason()),
+                        &format!(
+                            "{} · {} · {} — {}",
+                            capability.name,
+                            game,
+                            capability.description,
+                            support.reason()
+                        ),
                     )?;
                 }
             }
