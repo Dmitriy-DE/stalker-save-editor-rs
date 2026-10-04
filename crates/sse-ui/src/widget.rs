@@ -479,11 +479,11 @@ impl Tree {
             .filter_map(|child| {
                 self.nodes
                     .get(child.0)
-                    .map(|node| i64::from(node.rect.y) + i64::from(node.rect.height) + i64::from(current))
+                    .map(|node| i64::from(node.rect.y).saturating_add(i64::from(node.rect.height)).saturating_add(i64::from(current)))
             })
             .max()
             .unwrap_or(i64::from(viewport.y));
-        Ok((bottom.saturating_sub(i64::from(viewport.y))).max(0) as f32)
+        Ok(u32_to_f32(u32::try_from(bottom.saturating_sub(i64::from(viewport.y)).max(0)).unwrap_or(u32::MAX)))
     }
 
     /// Last arranged rectangle of a widget.
@@ -935,16 +935,16 @@ fn hidden_style() -> Style {
 fn intersection(a: &Rect, b: Rect) -> Option<Rect> {
     let x0 = i64::from(a.x).max(i64::from(b.x));
     let y0 = i64::from(a.y).max(i64::from(b.y));
-    let x1 = (i64::from(a.x) + i64::from(a.width)).min(i64::from(b.x) + i64::from(b.width));
-    let y1 = (i64::from(a.y) + i64::from(a.height)).min(i64::from(b.y) + i64::from(b.height));
+    let x1 = i64::from(a.x).saturating_add(i64::from(a.width)).min(i64::from(b.x).saturating_add(i64::from(b.width)));
+    let y1 = i64::from(a.y).saturating_add(i64::from(a.height)).min(i64::from(b.y).saturating_add(i64::from(b.height)));
     if x1 <= x0 || y1 <= y0 {
         return None;
     }
     Some(Rect::new(
         i32::try_from(x0).ok()?,
         i32::try_from(y0).ok()?,
-        u32::try_from(x1 - x0).ok()?,
-        u32::try_from(y1 - y0).ok()?,
+        u32::try_from(x1.saturating_sub(x0)).ok()?,
+        u32::try_from(y1.saturating_sub(y0)).ok()?,
     ))
 }
 
