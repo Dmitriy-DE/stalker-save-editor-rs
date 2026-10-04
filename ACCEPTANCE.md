@@ -2987,3 +2987,374 @@ quicksave=Ctrl+S
 **П-9. ACCEPTANCE-CORE.md §11.3.** Auto-Cloud для S2 недостижим из приложения (хост его не создаёт). Пункт §15 п.12 «удалить или подключить» остаётся в силе.
 
 **П-10. ACCEPTANCE-CORE.md §16** закрыт полностью; таблица в §6 этого документа.
+
+
+---
+
+# Часть IV. Steam FFI
+
+> **Проверено на машине владельца (Linux, 2026-10-04).** `~/.steam/steam/steamrt64/libsteam_api.so` (и `steamrt32`) экспортирует `SteamAPI_InitFlat`, `SteamAPI_InitSafe`, `SteamInternal_SteamAPI_Init`, `SteamAPI_SteamRemoteStorage_v016`, `SteamAPI_SteamUserStats_v013`; **символа `SteamAPI_Init` нет** — C# 1.3.1 на Linux к Steam не подключался. Rust: `SteamAPI_InitFlat`, затем `_v016`/`_v013` (перебор версий как в §2.2/§2.3). Сигнатуру `SteamAPI_InitFlat` сверить с заголовком SDK.
+
+## STEAM-FFI-SPEC.md — вызовы libsteam_api в C# 1.3.1 и спецификация для `sse-sys`
+
+**Источник:** `StalkerSaveEditor.Steam` из `sse-claude-core.zip`:
+- `SteamNativeRemoteStorage.cs` — классы `SteamNativeRemoteStorage`, `SteamNativeApi`;
+- `SteamNativeUserStats.cs` — классы `SteamNativeUserStats`, `SteamUserStatsApi`;
+- `SteamLibraryLocator.cs`, `SteamWorkerCommandLine.cs`, `SteamNativeWorkerHost.cs`, `SteamAchievementsWorkerHost.cs`, `SteamWorkerProcessRunner.cs`;
+- `SteamRemoteStorageCloudWriter.cs`, `SteamCloudWriteTransaction.cs`, `SteamAchievementsClient.cs`, `SteamReadOnlyClient.cs`.
+
+Ниже «C#» — то, что видно в коде. Пометка «не определено» — поведение Steam или SDK, которое из кода не следует; «рекомендация» — моё предложение для Rust.
+
+---
+
+### 1. Загрузка библиотеки
+
+#### 1.1 Где C# ищет (`SteamLibraryLocator.FindLibraryPath`)
+
+**Корни Steam, по порядку:**
+
+1. `$STEAM_DIR` (любая ОС).
+2. Windows:
+   - `%ProgramFiles(x86)%\Steam`;
+   - `%ProgramFiles%\Steam`;
+   - `%LocalAppData%\Programs\Steam`.
+3. Не Windows:
+   - `~/.steam/steam`;
+   - `~/.steam/root`;
+   - `~/.local/share/Steam`;
+   - `/usr/lib/steam`;
+   - `/usr/lib/steam/steam`.
+4. Каждый корень дополняется библиотеками из `<корень>/steamapps/libraryfolders.vdf`: только абсолютные пути, без дублей без учёта регистра.
+
+**Кандидаты для каждого корня или библиотеки:**
+
+| ОС | Порядок |
+|---|---|
+| Windows (`steam_api64.dll`) | `<lib>/steamapps/common/Stalker 2/Binaries/Win64/steam_api64.dll` → `<lib>/steamapps/common/S.T.A.L.K.E.R. 2/Binaries/Win64/steam_api64.dll` → **первая** найденная `<lib>/steamapps/common/*/Binaries/Win64/steam_api64.dll` (порядок перебора каталогов — как отдаёт ОС) |
+| Linux (`libsteam_api.so`) | `<root>/steamrt64/libsteam_api.so` → `<root>/libsteam_api.so` → первая `<lib>/steamapps/common/*/Binaries/Linux/libsteam_api.so` |
+| macOS | **не поддерживается**: ищется `libsteam_api.so`, а на macOS библиотека — `libsteam_api.dylib`. Ни одна игра S.T.A.L.K.E.R. не выходила на macOS |
+
+**Загрузка:** `NativeLibrary.Load(path)`, библиотека не выгружается. `DllImport("steam_api")` перенаправлен на этот дескриптор (`SetDllImportResolver`).
+
+**Linux.** Ни одна из игр серии не нативна для Linux. Значит, `.so` найдётся только в корне Steam или в чужой нативной игре. Лежит ли `libsteam_api.so` в `~/.steam/steam/steamrt64/` у текущего клиента Steam — **не определено**, нужна проверка на машине владельца. Proton не используется: процесс нативный, библиотека — нативная `.so`.
+
+#### 1.2 Рекомендация для Rust
+
+- Тот же порядок поиска. В Rust он уже повторён в `sse-steam/src/discovery.rs:125`, `:141`.
+- Linux: `dlopen(path, RTLD_NOW | RTLD_LOCAL)`.
+- Windows: `LoadLibraryExW(path, NULL, LOAD_WITH_ALTERED_SEARCH_PATH)` — полный путь, чтобы не подхватить DLL из текущего каталога.
+- macOS: искать `libsteam_api.dylib` в `~/Library/Application Support/Steam/...`. Это **сверх C#**, пути не определены. Иначе — «не поддерживается», как в C#.
+- Библиотеку не выгружать: её не выгружает и C#, а SDK рассчитывает на это до `SteamAPI_Shutdown`.
+
+---
+
+### 2. Экспортируемые функции и сигнатуры (C ABI)
+
+Все вызовы — `cdecl` (на x86-64 единственное соглашение). `bool` — **1 байт** (`MarshalAs(I1)`). Строки — UTF-8 с нулём в конце. `ISteamRemoteStorage*` и `ISteamUserStats*` — непрозрачные указатели.
+
+#### 2.1 Общие
+
+| Символ | Сигнатура C | Как вызывает C# |
+|---|---|---|
+| `SteamAPI_Init` | `bool SteamAPI_Init(void)` | один раз на процесс-исполнитель |
+| `SteamAPI_Shutdown` | `void SteamAPI_Shutdown(void)` | в `Dispose` |
+| `SteamAPI_RunCallbacks` | `void SteamAPI_RunCallbacks(void)` | перед списком и чтением; после записи; в циклах ожидания |
+
+**Не определено.** В новых SDK `SteamAPI_Init` может быть встроенной функцией поверх `SteamInternal_SteamAPI_Init` или `SteamAPI_InitFlat`. Тогда символа `SteamAPI_Init` в `.so`/`.dll` может не быть. C# привязывается **только** к `SteamAPI_Init` и при его отсутствии упадёт с `EntryPointNotFoundException`.
+
+**Рекомендация:**
+
+1. `SteamAPI_Init`;
+2. если его нет — `SteamAPI_InitFlat(char* err_msg_1024) -> int` (0 = OK).
+
+Сигнатуру `InitFlat` надо подтвердить заголовком SDK: из кода C# она не следует.
+
+#### 2.2 RemoteStorage
+
+**Получение интерфейса.** C# перебирает `SteamAPI_SteamRemoteStorage_v020` … `_v014` (сверху вниз) и берёт первый существующий экспорт. Сигнатура: `ISteamRemoteStorage* SteamAPI_SteamRemoteStorage_vNNN(void)`. `NULL` → `Steam ISteamRemoteStorage interface is unavailable.`
+
+| Символ | Сигнатура C | Проверки C# вокруг |
+|---|---|---|
+| `SteamAPI_ISteamRemoteStorage_GetFileCount` | `int32_t (ISteamRemoteStorage*)` | `0 ≤ count ≤ 100 000`, иначе `Steam RemoteStorage returned an invalid file count.` |
+| `SteamAPI_ISteamRemoteStorage_GetFileNameAndSize` | `const char* (ISteamRemoteStorage*, int32_t iFile, int32_t* pnFileSizeInBytes)` | `NULL`, пустое имя или `size < 0` → запись пропускается |
+| `SteamAPI_ISteamRemoteStorage_GetFileTimestamp` | `int64_t (ISteamRemoteStorage*, const char* name)` | Unix-секунды |
+| `SteamAPI_ISteamRemoteStorage_FileExists` | `bool (ISteamRemoteStorage*, const char*)` | перед чтением; `false` → `FileNotFoundException("Steam RemoteStorage file does not exist.")` |
+| `SteamAPI_ISteamRemoteStorage_FilePersisted` | `bool (ISteamRemoteStorage*, const char*)` | только в списке; признак «загружено в облако» |
+| `SteamAPI_ISteamRemoteStorage_GetFileSize` | `int32_t (ISteamRemoteStorage*, const char*)` | `0 ≤ size ≤ 64 МиБ`, иначе `Steam RemoteStorage returned an invalid or oversized file.` |
+| `SteamAPI_ISteamRemoteStorage_FileRead` | `int32_t (ISteamRemoteStorage*, const char*, void* pvData, int32_t cubDataToRead)` | возврат == size, иначе `Steam RemoteStorage returned {read} of {size} bytes.` |
+| `SteamAPI_ISteamRemoteStorage_FileWrite` | `bool (ISteamRemoteStorage*, const char*, const void* pvData, int32_t cubData)` | `1 ≤ len ≤ 64 МиБ`; `false` → `Steam RemoteStorage rejected the write for {name}.` |
+
+**Список** (`ListFiles`) по шагам:
+
+1. `RunCallbacks`.
+2. `GetFileCount`.
+3. Для каждого `i`:
+   - `GetFileNameAndSize`;
+   - `GetFileTimestamp(name)`, `FilePersisted(name)`, `FileExists(name)`.
+4. Сортировка по времени, новые сверху.
+
+**Чтение** (`ReadFile`):
+
+1. `RunCallbacks`.
+2. `FileExists`.
+3. `GetFileSize`.
+4. Выделить ровно `size` байт.
+5. `FileRead(name, buf, size)`.
+
+**Запись** (`WriteFile`):
+
+1. Проверка `len`.
+2. `FileWrite(name, buf, len)`.
+3. `RunCallbacks`.
+4. Возврат. Затем процесс-исполнитель завершается через `Dispose` → `SteamAPI_Shutdown`. **Флаг «persisted» в том же процессе не ждётся** (см. §4.3).
+
+`FileWriteAsync`, `FileForget`, `FileDelete`, `SetSyncPlatforms` C# **не вызывает**.
+
+#### 2.3 UserStats (достижения)
+
+**Получение интерфейса.** C# пробует `SteamAPI_SteamUserStats_v013`, `_v012`, `_v011`. Сигнатура: `ISteamUserStats* (void)`. `NULL` → `Steam ISteamUserStats interface is unavailable.`; символ не найден → `Steam ISteamUserStats v013 accessor was not found.`
+
+| Символ | Сигнатура C |
+|---|---|
+| `SteamAPI_ISteamUserStats_GetNumAchievements` | `uint32_t (ISteamUserStats*)` |
+| `SteamAPI_ISteamUserStats_GetAchievementName` | `const char* (ISteamUserStats*, uint32_t iAchievement)` |
+| `SteamAPI_ISteamUserStats_GetAchievementDisplayAttribute` | `const char* (ISteamUserStats*, const char* pchName, const char* pchKey)` — ключи `"name"`, `"desc"`, `"hidden"` |
+| `SteamAPI_ISteamUserStats_GetAchievementAndUnlockTime` | `bool (ISteamUserStats*, const char* pchName, bool* pbAchieved, uint32_t* punUnlockTime)` |
+| `SteamAPI_ISteamUserStats_SetAchievement` | `bool (ISteamUserStats*, const char*)` |
+| `SteamAPI_ISteamUserStats_ClearAchievement` | `bool (ISteamUserStats*, const char*)` |
+| `SteamAPI_ISteamUserStats_StoreStats` | `bool (ISteamUserStats*)` |
+
+`RequestCurrentStats` C# **не вызывает**: статистика ждётся опросом.
+
+**Список:**
+
+1. Цикл: `RunCallbacks` → `GetNumAchievements`; пока 0 — пауза 200 мс, не дольше 10 с. Итог 0 → `Steam returned no achievements for this game or did not load its statistics.`; больше 100 000 → `Steam returned an invalid achievement count.`
+2. Для каждого `i`:
+   - `GetAchievementName`; `NULL` или пустое → пропуск;
+   - `GetAchievementAndUnlockTime`; `false` → `Steam did not return the state for achievement {name}.`;
+   - атрибуты `name`, `desc`, `hidden`; `hidden == "1"` → скрытое.
+
+**Изменение:**
+
+1. Список (как выше). Имени нет → `The game does not define achievement {name}.`
+2. `SetAchievement` или `ClearAchievement`, затем `StoreStats`. Любой `false` → `Steam refused to change achievement {name}.`
+3. 10 раз: `RunCallbacks` + 200 мс.
+4. Снова список. Состояние не совпало → `Steam did not confirm achievement state {name}.`
+
+Разрешённые appId: `1643320, 4500, 20510, 41700, 2427410, 2427420, 2427430`. Иначе — `Achievements are limited to official S.T.A.L.K.E.R. releases.`
+
+---
+
+### 3. Инициализация процесса-исполнителя
+
+1. **Переменные окружения.** Родитель ставит `SteamAppId=<id>` и `SteamGameId=<id>` в окружение дочернего процесса (`CreateStartInfo`). Дочерний процесс ещё раз ставит их в своё окружение (`Environment.SetEnvironmentVariable`) перед `SteamAPI_Init`.
+2. **`steam_appid.txt` не создаётся** и не читается. `SteamAPI_RestartAppIfNecessary` не вызывается.
+3. `SteamAPI_Init()`. `false` → `SteamAPI_Init failed. The Steam client may not be running.`
+4. Аксессор интерфейса (§2.2 / §2.3).
+5. Операция.
+6. `Dispose` → `SteamAPI_Shutdown()` один раз.
+
+**Один процесс — один appId — одна операция.** Исключение — «сессия» для Auto-Cloud S2 (§4.4). Причины изоляции видны из кода: `SteamAPI_Init` привязывает процесс к одному appId на всё время жизни; падение внутри Steam не должно ронять редактор.
+
+**Следствие (не определено, поведение Steam).** Пока исполнитель жив, клиент Steam считает пользователя «играющим» в этот appId.
+
+**Рекомендация для `sse-sys`.** API без глобального состояния снаружи, примерно так:
+
+```rust
+pub struct SteamLibrary { /* дескриптор и указатели функций, загруженные один раз */ }
+
+impl SteamLibrary {
+    pub fn load(path: &Path) -> Result<Self>;
+}
+
+pub struct SteamSession<'lib> { /* после успешного SteamAPI_Init; Drop → SteamAPI_Shutdown */ }
+
+impl SteamLibrary {
+    /// Запускает SteamAPI_Init. Окружение (SteamAppId/SteamGameId) задаёт родитель при запуске процесса.
+    pub fn init(&self) -> Result<SteamSession<'_>>;
+}
+
+impl SteamSession<'_> {
+    pub fn remote_storage(&self) -> Result<RemoteStorage<'_>>;
+    pub fn user_stats(&self) -> Result<UserStats<'_>>;
+    pub fn run_callbacks(&self);
+}
+```
+
+Ставить окружение в самом процессе (`set_var`) не нужно и небезопасно в многопоточном Rust: его ставит родитель через `Command::env`.
+
+**SAFETY-инварианты для каждого `unsafe` блока:**
+
+1. Указатель функции получен `dlsym`/`GetProcAddress` по точному имени из §2 и проверен на не-`NULL`. Тип `extern "C" fn` в точности повторяет сигнатуру из таблицы; `bool` — `u8`/`bool` размером 1 байт.
+2. Указатель интерфейса получен от аксессора после успешного `SteamAPI_Init`, не `NULL` и используется только до `SteamAPI_Shutdown` (время жизни `'session`).
+3. Строки передаются как `CString`, живущие до возврата вызова.
+4. Возвращённые `const char*` копируются сразу (`CStr::from_ptr(...).to_string_lossy()`), до следующего вызова Steam.
+5. Буфер `FileRead` — `Vec<u8>` длиной ровно `size`; возвращённое число проверяется: `0 ≤ read ≤ size`, иначе ошибка.
+6. Все вызовы — из одного потока процесса-исполнителя (C# так и делает).
+
+---
+
+### 4. Процесс-исполнитель: командная строка и протокол
+
+#### 4.1 Запуск (`SteamWorkerProcessRunner.CreateStartInfo`)
+
+- Исполняемый файл — **тот же**, что у родителя (`Environment.ProcessPath`; для `dotnet` добавляется путь к `.dll`). В Rust — `std::env::current_exe()`.
+- stdin, stdout, stderr перенаправлены. `CreateNoWindow = true`.
+- Окружение: `SteamAppId`, `SteamGameId`.
+
+**Аргументы** (`SteamWorkerCommandLine.TryRun`: первый аргумент начинается с `--steam-native-`):
+
+| Аргументы | Режим |
+|---|---|
+| `--steam-native-worker` | RemoteStorage: запрос по stdin |
+| `--steam-native-op session --app-id <N>` | сессия Auto-Cloud (S2) |
+| `--steam-native-op achievements --app-id <N>` | список достижений |
+| `--steam-native-op achievement --app-id <N> --name <api> --achieved <0\|1>` | изменение достижения |
+
+- Другие аргументы → stderr `Usage: --steam-native-worker | --steam-native-op <session|achievements|achievement> --app-id <positive-id> [--name <api-name> --achieved <0|1>]`, код выхода **2**.
+- `app-id`: только цифры, больше 0.
+- Исключение в исполнителе → stderr `Error: {msg}`, код **1**.
+
+#### 4.2 Протокол `--steam-native-worker`
+
+**Запрос** (stdin): одна строка JSON до `\n`, не больше 1 МиБ; для записи — сразу за ней сырые байты.
+
+```
+{"operation":"list","appId":41700,"fileName":null}\n
+{"operation":"read","appId":41700,"fileName":"_appdata_/savedgames/q.sav"}\n
+{"operation":"write","appId":41700,"fileName":"_appdata_/savedgames/q.sav","size":123456}\n<123456 байт>
+```
+
+Ключи в camelCase; при чтении регистр не важен, числа можно передавать строками.
+
+**Ответ** (stdout): одна строка JSON до `\n`, не больше 1 МиБ; для `data` — за ней ровно `size` байт.
+
+| `type` | Поля | Когда |
+|---|---|---|
+| `files` | `files: [{name, size, timestamp, isPersisted, exists}]` | list |
+| `data` | `size` | read, затем байты |
+| `ok` | — | write |
+| `error` | `message` | любая ошибка, код выхода 1 |
+
+**Проверки в исполнителе до `SteamAPI_Init`** (только для write):
+
+- профиль appId: `RemoteStorage writes are limited to official X-Ray trilogy releases.`;
+- путь в списке разрешённых: `RemoteStorage write path is outside the selected release's save allow-list.`;
+- `1 ≤ size ≤ 64 МиБ`: `RemoteStorage write size is outside the supported range.`;
+- формат сохранения (полный разбор X-Ray или EE): `RemoteStorage write payload is not a save for the selected release.`
+
+Операция не из `list`/`read`/`write` → `Only Steam RemoteStorage list, read, and save-write are supported.`
+
+**Родитель** (`RunAsync`):
+
+1. Пишет запрос и данные, закрывает stdin.
+2. Читает строку заголовка. Для `error` → `InvalidOperationException(message)`. Для `data` дочитывает `size` байт (`0…64 МиБ`, иначе `Steam worker returned an invalid file size.`).
+3. Ждёт выхода. Код не 0 → `Steam worker exited with code {n}[: {stderr}]`.
+4. Закрытый stdout до заголовка → `Steam worker closed stdout before returning a response.`; заголовок больше 1 МиБ → `Steam worker response header exceeded the size limit.`
+5. stderr читается до конца, хранится последний хвост (64 К символов).
+6. Непредвиденный `type`: `Steam worker returned an unexpected list/read/write response.`
+
+**Таймауты родителя:**
+
+| Операция | Таймаут | Где |
+|---|---|---|
+| list / read / write RemoteStorage | 15 с на процесс | `SteamReadOnlyClient.DefaultTimeout` |
+| достижения (список и изменение) | 30 с | `SteamAchievementsClient.DefaultTimeout` |
+| старт сессии | 15 с до строки `ready` | `SteamAutoCloudWriter.DefaultSessionStartupTimeout` |
+| закрытие сессии | 30 с до `ok` | `SteamWorkerGameSession` |
+| жизнь сессии | 3 ч; обратные вызовы раз в 500 мс; в конце 4 раза через 250 мс | `SteamNativeWorkerHost` |
+
+**По таймауту:**
+
+- дерево процессов убивается (`Kill(entireProcessTree: true)`), ожидается выход;
+- stderr дочитывается не дольше 2 с;
+- ошибка `Steam worker exceeded the {N} second timeout.` (`TimeoutException`).
+
+#### 4.3 Как C# проверяет «persisted»
+
+Не в процессе записи. После `write` родитель (`RemoteStorageWriteTransport.WaitForPersistedAsync`) раз в **2 с** запускает **новый** исполнитель `list` (таймаут 15 с каждый) и ищет файл с тем же именем (`\` → `/`):
+
+- `exists && isPersisted && size == ожидаемый` → успех;
+- общий предел — 120 с (`persistedTimeoutSeconds`).
+
+Затем отдельный `read` и сверка SHA-256 (`SteamCloudWriteTransaction`, ACCEPTANCE-CORE §11.1).
+
+#### 4.4 Протокол сессии (`session`, только Auto-Cloud S2)
+
+1. `SteamAPI_Init` → stdout `{"type":"ready"}`.
+2. Пока stdin не закрыт и не прошло 3 ч: `RunCallbacks` раз в 500 мс.
+3. Родитель закрывает stdin → 4 × (`RunCallbacks` + 250 мс) → `{"type":"ok"}`, код 0.
+4. Прошло 3 ч → `{"type":"error","message":"Steam game session exceeded its lifetime."}`, код 1.
+
+#### 4.5 Протокол достижений
+
+- stdin родитель сразу закрывает.
+- Ответ — одна строка JSON. **Регистр `type` другой — PascalCase:**
+  - `{"type":"Achievements","items":[{apiName,name,description,achieved,unlockTime,hidden}]}`
+  - `{"type":"Achievement","item":{…}}`
+  - `{"type":"Error","message":…}`
+- Клиент принимает и `"Unavailable"` как ошибку.
+- Код не 0 → `message` из ответа, иначе `Steam worker exited with code {n}[: stderr]`.
+- В клиенте любая `IOException`, `InvalidOperationException`, `TimeoutException` → `Steam achievement operation failed: {msg}`.
+
+**Рекомендация:** в Rust привести `type` к одному регистру. Но если нужна совместимость исполнителя Rust с родителем C# (или наоборот), регистр надо сохранить.
+
+---
+
+### 5. Ошибки и их классификация
+
+#### 5.1 Запись в облако (`SteamCloudWriteTransaction` + `RemoteStorageWriteTransport`)
+
+| Этап | Что падает | Класс в C# | Статус в UI (хост) |
+|---|---|---|---|
+| До ввода-вывода | SHA подготовленных байт; возможность записи; чтение облака перед записью; сверка SHA источника; бэкап | `CloudTransactionException` | `Aborted` («Запись отменена») |
+| Путь изменился после проверки (`EnsurePath`) | `CloudWriteNotAttemptedException` | → `CloudTransactionException("Cloud write was not attempted: …")` | `Aborted` |
+| **Вызов `worker.WriteAsync`** — **любое** другое исключение | `Uncertain("WriteFile result is uncertain after request: …")` | | `Uncertain` |
+| Ожидание persisted: ошибка или 120 с | `Uncertain` | | `Uncertain` |
+| Обратное чтение: ошибка или SHA не совпал | `Uncertain` | | `Uncertain` |
+| Всё совпало | `Verified` | | `Verified` |
+
+**Важная неточность C#.** К `Uncertain` сводятся и ошибки, при которых **запись точно не начиналась**:
+
+- проверки исполнителя до `SteamAPI_Init` (§4.2: профиль, путь, размер, формат);
+- `SteamAPI_Init failed…`;
+- `interface is unavailable`;
+- `FileWrite` вернул `false` (`rejected the write`) — по смыслу API запись тоже не состоялась.
+
+Все они приходят родителю как `{"type":"error"}` → `InvalidOperationException` → `Uncertain`. Отличить их родитель не может.
+
+**Рекомендация для Rust-протокола** — поле этапа в ответе об ошибке:
+
+```
+{"type":"error","stage":"before_write","message":"…"}   → NotAttempted → «Запись отменена»
+{"type":"error","stage":"write_rejected","message":"…"} → FileWrite вернул false → NotAttempted
+{"type":"error","stage":"after_write","message":"…"}    → Uncertain
+```
+
+Таймаут или падение процесса **после** отправки данных — всегда `Uncertain`: процесс мог успеть вызвать `FileWrite`. Таймаут **до** записи stdin — `NotAttempted`.
+
+#### 5.2 Прочие ошибки — тексты C# (сохранить)
+
+| Где | Текст |
+|---|---|
+| библиотека | `Steam libsteam_api library was not found.` / `Steam ISteamRemoteStorage accessor was not found.` |
+| init | `SteamAPI_Init failed. The Steam client may not be running.` |
+| интерфейс | `Steam ISteamRemoteStorage interface is unavailable.` / `Steam ISteamUserStats interface is unavailable.` |
+| не подключено | `Steam RemoteStorage is not connected.` / `Steam ISteamUserStats is not connected.` |
+| исполнитель | `Steam worker received no request.` / `Steam worker request exceeded the size limit.` |
+| доступность записи | `RemoteStorage save writing is supported only for official X-Ray trilogy releases.` / `Steam libsteam_api was not found.` / `Could not locate Steam libsteam_api: {msg}` |
+
+---
+
+### 6. Чек-лист приёмки `sse-sys` FFI
+
+1. Linux, Steam запущен, ЗП куплена → `list 41700` выдаёт файлы `_appdata_/savedgames/*.sav` с `isPersisted=true`.
+2. Steam закрыт → `{"type":"error","message":"SteamAPI_Init failed. The Steam client may not be running."}`, код 1, без зависания (таймаут не сработал).
+3. `read` несуществующего имени → `Steam RemoteStorage file does not exist.` (`stage: before_write` не нужен — это чтение).
+4. `write` чужого формата (ТЧ-сейв в appId ЗП) → отказ **до** `SteamAPI_Init`; в Rust — `stage:"before_write"`.
+5. `write` нормального сейва → `ok`; затем через ≤ 120 с `list` показывает `isPersisted=true` и тот же размер; `read` даёт тот же SHA-256.
+6. Убить исполнитель после передачи данных → родитель: `Uncertain`, без повтора.
+7. Библиотека без `SteamAPI_SteamRemoteStorage_v020`, но с `_v016` → используется `_v016`.
+8. Список достижений ЗП → не 0 элементов за ≤ 10 с; изменение и обратное изменение подтверждаются повторным списком.
+9. Windows: `steam_api64.dll` берётся из `Stalker 2/Binaries/Win64` при наличии; из текущего каталога DLL не подгружается.
+10. На каждый `unsafe` блок — `// SAFETY:` со ссылкой на инвариант §3.
