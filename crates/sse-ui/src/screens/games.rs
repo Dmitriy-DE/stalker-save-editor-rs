@@ -1137,7 +1137,9 @@ struct Environment {
     status: Option<WidgetId>,
     lines: Vec<WidgetId>,
     snapshot: Option<WidgetId>,
+    restore: Option<WidgetId>,
     audit: Option<WidgetId>,
+    pending_restore: Option<String>,
 }
 
 impl Environment {
@@ -1229,6 +1231,7 @@ impl Screen for Environment {
             Text::Note,
         )?;
         self.snapshot = Some(style::button(cx.tree, card, "СОЗДАТЬ СНИМОК", Button::Primary)?);
+        self.restore = Some(style::button(cx.tree, card, "ВОССТАНОВИТЬ ПОСЛЕДНИЙ СНИМОК", Button::Danger)?);
         style::label(cx.tree, card, "ПРОФИЛИ ИГРЫ", Text::Heading)?;
         style::label(
             cx.tree,
@@ -1261,6 +1264,32 @@ impl Screen for Environment {
         message: &Message<AppMessage>,
         clicked: Option<WidgetId>,
     ) -> Result<()> {
+        if clicked.is_some() && clicked == self.restore {
+            let directory = cx.app.game_dir().map(Path::to_path_buf);
+            let game = cx.app.selected_game().and_then(fix_target);
+            let Some(directory) = directory else { cx.status = Some("Управляемая установка: не выбрана".to_owned()); return Ok(()); };
+            let snapshots = sse_fixes::toolkit::ToolkitSnapshotService::list_snapshots(&directory).map_err(|e| sse_core::Error::Refused(e.to_string()))?;
+            let Some(snapshot) = snapshots.first() else { cx.status = Some("Снимков пока нет.".to_owned()); return Ok(()); };
+            if self.pending_restore.as_deref() != Some(snapshot.id.as_str()) {
+                self.pending_restore = Some(snapshot.id.clone());
+                cx.status = Some(format!("ВОССТАНОВЛЕНИЕ ИЗМЕНИТ ФАЙЛЫ ИГРЫ. Нажмите «ВОССТАНОВИТЬ ПОСЛЕДНИЙ СНИМОК» ещё раз для подтверждения: {}", snapshot.label));
+                return Ok(());
+            }
+            self.pending_restore = None;
+            let Some(game) = game else { cx.status = Some("Игра не поддерживается Toolkit.".to_owned()); return Ok(()); };
+            let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
+            let snapshot_id = snapshot.id.clone();
+            std::thread::spawn(move || {
+                let engine = sse_fixes::GameFixEngine::new();
+                let catalog = sse_fixes::GameFixCatalog;
+                let lines = sse_fixes::toolkit::ToolkitSnapshotService::restore_snapshot(&directory, &engine, &catalog, &snapshot_id)
+                    .map(|r| vec![format!("Восстановлен снимок {} · установлено фиксов {} · удалено {} · user.ltx {}", r.snapshot_id, r.installed_fixes.len(), r.uninstalled_fixes.len(), r.user_ltx_updates_count)])
+                    .unwrap_or_else(|e| vec![format!("Ошибка восстановления: {e}")]);
+                let _ = game;
+                proxy.send(AppMessage::ToScreen(ScreenId::Environment, Box::new(EnvironmentResult { lines })));
+            });
+            return Ok(());
+        }
         if clicked.is_some() && (clicked == self.snapshot || clicked == self.audit) {
             let create_snapshot = clicked == self.snapshot;
             let game = cx.app.selected_game().and_then(fix_target);
