@@ -51,6 +51,9 @@ pub(crate) fn screens_with_workspace(workspace: Workspace) -> Vec<Box<dyn Screen
     ]
 }
 
+/// S2 stash transfer stays off until a written save is proven to load in the game.
+const S2_STASH_MOVE_ENABLED: bool = false;
+
 #[derive(Clone, Default)]
 pub(crate) struct Workspace(Arc<Mutex<WorkspaceState>>);
 
@@ -1670,7 +1673,10 @@ impl Stashes {
                     ),
                 )?;
                 cx.tree.set_visible(row.row, true)?;
-                let can_move = !save.index().is_legacy() && save.unresolved_handles().is_empty();
+                // S2 stash -> backpack shifts bytes without fixing outer lengths; C# 1.3.1 kept it disabled
+                // (move_items unsupported). Off until proven in the game.
+                let can_move =
+                    S2_STASH_MOVE_ENABLED && !save.index().is_legacy() && save.unresolved_handles().is_empty();
                 cx.tree.set_text(
                     row.move_button,
                     if pending_moves.contains(&item.handle) {
