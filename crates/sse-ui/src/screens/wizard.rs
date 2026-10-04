@@ -8,8 +8,21 @@ use crate::widget::WidgetId;
 use sse_core::Result;
 
 const LANGUAGE_NAMES: [&str; 15] = [
-    "Русский", "Українська", "English", "Deutsch", "Français", "Italiano", "Español", "Polski",
-    "Čeština", "Português (Brasil)", "Türkçe", "日本語", "한국어", "简体中文", "繁體中文",
+    "Русский",
+    "Українська",
+    "English",
+    "Deutsch",
+    "Français",
+    "Italiano",
+    "Español",
+    "Polski",
+    "Čeština",
+    "Português (Brasil)",
+    "Türkçe",
+    "日本語",
+    "한국어",
+    "简体中文",
+    "繁體中文",
 ];
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -56,7 +69,12 @@ impl Wizard {
         )?);
         let language = style::row(cx.tree, card)?;
         style::label(cx.tree, language, "Язык:", Text::Body)?;
-        self.language_value = Some(style::label(cx.tree, language, LANGUAGE_NAMES[self.language], Text::Value)?);
+        self.language_value = Some(style::label(
+            cx.tree,
+            language,
+            LANGUAGE_NAMES[self.language],
+            Text::Value,
+        )?);
         self.language_button = Some(style::button(cx.tree, language, "Изменить", Button::Secondary)?);
 
         style::label(cx.tree, card, "НАЙДЕННЫЕ ИГРЫ", Text::Heading)?;
@@ -93,14 +111,19 @@ impl Wizard {
             let text = if self.installations.is_empty() {
                 "2/3 · Игры не найдены — их можно добавить позже в «Обзоре игр»".to_owned()
             } else {
-                format!("2/3 · Найдено установок: {} · выберите нужную или продолжайте", self.installations.len())
+                format!(
+                    "2/3 · Найдено установок: {} · выберите нужную или продолжайте",
+                    self.installations.len()
+                )
             };
             let _ = cx.tree.set_text(status, &text);
         }
         for (index, widget) in self.game_rows.iter().copied().enumerate() {
             if let Some(game) = self.installations.get(index) {
                 let _ = cx.tree.set_visible(widget, true);
-                let _ = cx.tree.set_text(widget, &format!("{}\n{}", game.title, game.directory.display()));
+                let _ = cx
+                    .tree
+                    .set_text(widget, &format!("{}\n{}", game.title, game.directory.display()));
             } else {
                 let _ = cx.tree.set_visible(widget, false);
             }
@@ -110,7 +133,8 @@ impl Wizard {
     fn show_ready(&mut self, cx: &mut Context<'_>) -> Result<()> {
         self.step = Step::Ready;
         if let Some(status) = self.status {
-            cx.tree.set_text(status, "3/3 · Готово. Настройки можно изменить в любой момент.")?;
+            cx.tree
+                .set_text(status, "3/3 · Готово. Настройки можно изменить в любой момент.")?;
         }
         if let Some(button) = self.language_button {
             cx.tree.set_visible(button, false)?;
