@@ -201,9 +201,17 @@ impl Shell {
             },
         )?;
         let nav_toggle = tree.add(
-            Some(sidebar), NodeKind::Leaf,
-            Style { min: Size::new(0.0, 30.0), padding: padded(20.0, 0.0, 12.0, 0.0), ..Style::default() },
-            Content::Button { text: "☰  Свернуть меню".to_owned(), style: TextStyle::new(Face::Heading, 12.0) },
+            Some(sidebar),
+            NodeKind::Leaf,
+            Style {
+                min: Size::new(0.0, 30.0),
+                padding: padded(20.0, 0.0, 12.0, 0.0),
+                ..Style::default()
+            },
+            Content::Button {
+                text: "☰  Свернуть меню".to_owned(),
+                style: TextStyle::new(Face::Heading, 12.0),
+            },
             style::nav(false),
         )?;
 
@@ -211,7 +219,28 @@ impl Shell {
         let mut nav = Vec::with_capacity(screens.len());
         let mut nav_groups = Vec::new();
         let mut group: Option<Group> = None;
-        let nav_icons = [Icon::Saves, Icon::Inventory, Icon::Factions, Icon::Stash, Icon::MapTransitions, Icon::Backup, Icon::Compare, Icon::Timeline, Icon::Doctor, Icon::Games, Icon::Fixes, Icon::Doctor, Icon::Wrench, Icon::Companion, Icon::Trophy, Icon::Cloud, Icon::Book, Icon::ShieldCapabilities, Icon::Update, Icon::Settings];
+        let nav_icons = [
+            Icon::Saves,
+            Icon::Inventory,
+            Icon::Factions,
+            Icon::Stash,
+            Icon::MapTransitions,
+            Icon::Backup,
+            Icon::Compare,
+            Icon::Timeline,
+            Icon::Doctor,
+            Icon::Games,
+            Icon::Fixes,
+            Icon::Doctor,
+            Icon::Wrench,
+            Icon::Companion,
+            Icon::Trophy,
+            Icon::Cloud,
+            Icon::Book,
+            Icon::ShieldCapabilities,
+            Icon::Update,
+            Icon::Settings,
+        ];
         for screen in &screens {
             let id = screen.id();
             if group != Some(id.group()) {
@@ -494,16 +523,58 @@ impl Shell {
     fn apply_navigation(&mut self, tree: &mut Tree, collapsed: bool) -> Result<()> {
         self.nav_collapsed = collapsed;
         let width = if collapsed { 58.0 } else { 236.0 };
-        tree.set_style(self.sidebar, Style { preferred: Size::new(width, 0.0), min: Size::new(width, 0.0), shrink: 0.0, padding: padded(0.0, 18.0, 0.0, 12.0), align_items: Align::Stretch, ..Style::default() })?;
-        for id in &self.nav_brand { tree.set_visible(*id, !collapsed)?; }
-        for id in &self.nav_groups { tree.set_visible(*id, !collapsed)?; }
+        tree.set_style(
+            self.sidebar,
+            Style {
+                preferred: Size::new(width, 0.0),
+                min: Size::new(width, 0.0),
+                shrink: 0.0,
+                padding: padded(0.0, 18.0, 0.0, 12.0),
+                align_items: Align::Stretch,
+                ..Style::default()
+            },
+        )?;
+        for id in &self.nav_brand {
+            tree.set_visible(*id, !collapsed)?;
+        }
+        for id in &self.nav_groups {
+            tree.set_visible(*id, !collapsed)?;
+        }
         tree.set_visible(self.nav_version, !collapsed)?;
-        tree.set_text(self.nav_toggle, if collapsed { "☰" } else { "☰  Свернуть меню" })?;
-        tree.set_style(self.nav_toggle, Style { min: Size::new(0.0, 30.0), padding: padded(if collapsed { 18.0 } else { 20.0 }, 0.0, 8.0, 0.0), ..Style::default() })?;
+        tree.set_text(
+            self.nav_toggle,
+            if collapsed {
+                "☰"
+            } else {
+                "☰  Свернуть меню"
+            },
+        )?;
+        tree.set_style(
+            self.nav_toggle,
+            Style {
+                min: Size::new(0.0, 30.0),
+                padding: padded(if collapsed { 18.0 } else { 20.0 }, 0.0, 8.0, 0.0),
+                ..Style::default()
+            },
+        )?;
         for (index, id) in self.nav.iter().copied().enumerate() {
-            let text = if collapsed { "" } else { self.screens.get(index).map(|screen| crate::strings::t(screen.id().title())).unwrap_or("") };
+            let text = if collapsed {
+                ""
+            } else {
+                self.screens
+                    .get(index)
+                    .map(|screen| crate::strings::t(screen.id().title()))
+                    .unwrap_or("")
+            };
             tree.set_text(id, text)?;
-            tree.set_style(id, Style { min: Size::new(0.0, 30.0), padding: padded(if collapsed { 20.0 } else { 22.0 }, 0.0, 8.0, 0.0), ..Style::default() })?;
+            tree.set_style(
+                id,
+                Style {
+                    min: Size::new(0.0, 30.0),
+                    padding: padded(if collapsed { 20.0 } else { 22.0 }, 0.0, 8.0, 0.0),
+                    ..Style::default()
+                },
+            )?;
         }
         Ok(())
     }
@@ -511,7 +582,9 @@ impl Shell {
     fn sync_navigation_width(&mut self, tree: &mut Tree, width: u32) -> Result<()> {
         let forced = width < 900;
         let collapsed = forced || self.nav_user_choice.unwrap_or(width < 1150);
-        if collapsed != self.nav_collapsed { self.apply_navigation(tree, collapsed)?; }
+        if collapsed != self.nav_collapsed {
+            self.apply_navigation(tree, collapsed)?;
+        }
         Ok(())
     }
 
@@ -713,7 +786,7 @@ impl Shell {
             }
             return Ok(Flow::Continue);
         }
-                let mut wizard_status = None;
+        let mut wizard_status = None;
         if let Some(target) = self.wizard.message(tree, message, clicked, &mut wizard_status)? {
             self.open(tree, target)?;
             return Ok(Flow::Continue);
