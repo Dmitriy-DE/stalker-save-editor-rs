@@ -1768,26 +1768,37 @@ impl Screen for GameFixes {
             None
         };
         if let Some(preset) = preset {
-            let game = cx.app.selected_game().map(str::to_owned);
-            let directory = cx.app.game_dir().map(Path::to_path_buf);
-            let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
-            std::thread::spawn(move || {
-                let result = (|| {
-                    let target = game
-                        .as_deref()
-                        .and_then(fix_target)
-                        .ok_or_else(|| "Игра не поддерживается".to_owned())?;
-                    let directory = directory.ok_or_else(|| "Папка игры не выбрана".to_owned())?;
-                    let result = sse_fixes::GameFixEngine::new()
-                        .apply_preset(target, preset, &directory)
-                        .map_err(|e| e.to_string())?;
-                    Ok(format!("ПРЕСЕТ {}: УСТАНОВЛЕНО {}; УЖЕ АКТУАЛЬНЫХ {}. РЕЗЕРВНАЯ ТОЧКА НЕДОСТУПНА: ядро apply_preset не создаёт Toolkit snapshot.", preset.as_str(), result.installed_fix_ids.len(), result.already_installed_fix_ids.len()))
-                })();
-                proxy.send(AppMessage::ToScreen(
-                    ScreenId::GameFixes,
-                    Box::new(FixReply::Changed(result)),
-                ));
+            let Some(game) = cx.app.selected_game().map(str::to_owned) else {
+                return Ok(());
+            };
+            let Some(directory) = cx.app.game_dir().map(Path::to_path_buf) else {
+                return Ok(());
+            };
+            let verified = self.verified.as_ref().is_some_and(|state| {
+                state.game == game && state.directory == directory
             });
+            if !verified {
+                cx.status = Some("СНАЧАЛА ПРОВЕРЬТЕ УСТАНОВКУ И ВЕРСИЮ.".to_owned());
+                return Ok(());
+            }
+            let target = fix_target(&game).ok_or_else(|| sse_core::Error::damaged("Игра не поддерживается"))?;
+            let build = self.verified.as_ref().map(|state| state.build.as_str()).unwrap_or_default();
+            if sse_fixes::GameFixCatalog::for_preset(target, preset)
+                .iter()
+                .any(|definition| !definition.supported_steam_build_ids.iter().any(|id| id == build))
+            {
+                cx.status = Some(format!("СБОРКА STEAM {build} НЕ ПОДДЕРЖИВАЕТ ВЫБРАННЫЙ ПРЕСЕТ."));
+                return Ok(());
+            }
+            self.intent = Some(FixIntent {
+                fix_id: None,
+                operation: FixOperation::Preset(preset),
+                game,
+                directory,
+            });
+            if let Some(card) = self.confirm_card {
+                cx.tree.open_dialog(card)?;
+            }
             return Ok(());
         }
 
