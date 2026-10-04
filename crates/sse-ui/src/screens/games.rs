@@ -1168,7 +1168,10 @@ impl GameDoctor {
         self.cancellation = Some(std::sync::Arc::clone(&cancelled));
         std::thread::spawn(move || {
             use std::sync::atomic::Ordering;
-            proxy.send(AppMessage::ToScreen(ScreenId::GameDoctor, Box::new(DoctorReply::Progress("25% · строю дерево файлов".to_owned()))));
+            proxy.send(AppMessage::ToScreen(
+                ScreenId::GameDoctor,
+                Box::new(DoctorReply::Progress("25% · строю дерево файлов".to_owned())),
+            ));
             let result = (|| {
                 let tree = sse_content::GameFileTree::load_simple(
                     game,
@@ -1178,36 +1181,64 @@ impl GameDoctor {
                         lower.ends_with(".ltx") || lower.ends_with(".xml") || lower.ends_with(".script")
                     },
                     false,
-                ).map_err(|e| e.to_string())?;
-                if cancelled.load(Ordering::Relaxed) { return Err("Проверка отменена".to_owned()); }
-                proxy.send(AppMessage::ToScreen(ScreenId::GameDoctor, Box::new(DoctorReply::Progress("60% · запускаю линтер".to_owned()))));
+                )
+                .map_err(|e| e.to_string())?;
+                if cancelled.load(Ordering::Relaxed) {
+                    return Err("Проверка отменена".to_owned());
+                }
+                proxy.send(AppMessage::ToScreen(
+                    ScreenId::GameDoctor,
+                    Box::new(DoctorReply::Progress("60% · запускаю линтер".to_owned())),
+                ));
                 let engine = sse_lint::LintEngine::new(sse_lint::LintOptions {
                     single_checker: None,
                     config_subdir: None,
                     max_files_globals: None,
                 });
                 let report = engine.lint_tree(&tree);
-                if cancelled.load(Ordering::Relaxed) { return Err("Проверка отменена".to_owned()); }
-                let mut findings: Vec<DoctorFinding> = report.findings.into_iter().map(|finding| DoctorFinding {
-                    file: finding.file,
-                    severity: finding.severity.as_str().to_owned(),
-                    message: finding.message,
-                }).collect();
+                if cancelled.load(Ordering::Relaxed) {
+                    return Err("Проверка отменена".to_owned());
+                }
+                let mut findings: Vec<DoctorFinding> = report
+                    .findings
+                    .into_iter()
+                    .map(|finding| DoctorFinding {
+                        file: finding.file,
+                        severity: finding.severity.as_str().to_owned(),
+                        message: finding.message,
+                    })
+                    .collect();
 
-                let row_ids: Vec<u64> = (0..findings.len()).filter_map(|index| u64::try_from(index).ok()).collect();
+                let row_ids: Vec<u64> = (0..findings.len())
+                    .filter_map(|index| u64::try_from(index).ok())
+                    .collect();
                 let headers = vec![
-                    crate::widgets::table::Header { label: "Файл".to_owned(), sortable: true, direction: None },
-                    crate::widgets::table::Header { label: "Тяжесть".to_owned(), sortable: true, direction: None },
+                    crate::widgets::table::Header {
+                        label: "Файл".to_owned(),
+                        sortable: true,
+                        direction: None,
+                    },
+                    crate::widgets::table::Header {
+                        label: "Тяжесть".to_owned(),
+                        sortable: true,
+                        direction: None,
+                    },
                 ];
                 if let Ok(mut table) = crate::widgets::table::Table::new(row_ids, 24.0, headers) {
                     let _ = table.header_click(0, false, |left, right, _| {
                         let a = usize::try_from(left).ok().and_then(|i| findings.get(i));
                         let b = usize::try_from(right).ok().and_then(|i| findings.get(i));
-                        a.map(|v| (&v.file, &v.severity)).cmp(&b.map(|v| (&v.file, &v.severity)))
+                        a.map(|v| (&v.file, &v.severity))
+                            .cmp(&b.map(|v| (&v.file, &v.severity)))
                     });
                     let mut ordered = Vec::with_capacity(findings.len());
                     for index in 0..findings.len() {
-                        if let Some(row) = table.visible_row(index).and_then(|id| usize::try_from(id).ok()).and_then(|i| findings.get(i)).cloned() {
+                        if let Some(row) = table
+                            .visible_row(index)
+                            .and_then(|id| usize::try_from(id).ok())
+                            .and_then(|i| findings.get(i))
+                            .cloned()
+                        {
                             ordered.push(row);
                         }
                     }
@@ -1215,14 +1246,21 @@ impl GameDoctor {
                 }
                 Ok((report.files_checked, report.elapsed_ms, findings))
             })();
-            proxy.send(AppMessage::ToScreen(ScreenId::GameDoctor, Box::new(DoctorReply::Done(result))));
+            proxy.send(AppMessage::ToScreen(
+                ScreenId::GameDoctor,
+                Box::new(DoctorReply::Done(result)),
+            ));
         });
     }
 }
 
 impl Screen for GameDoctor {
-    fn id(&self) -> ScreenId { ScreenId::GameDoctor }
-    fn subtitle(&self) -> &str { "Фоновая проверка установки линтером; находки сгруппированы по файлу и тяжести" }
+    fn id(&self) -> ScreenId {
+        ScreenId::GameDoctor
+    }
+    fn subtitle(&self) -> &str {
+        "Фоновая проверка установки линтером; находки сгруппированы по файлу и тяжести"
+    }
 
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
         let card = style::card(cx.tree, host)?;
@@ -1240,34 +1278,57 @@ impl Screen for GameDoctor {
         Ok(())
     }
 
-    fn message(&mut self, cx: &mut Context<'_>, message: &Message<AppMessage>, clicked: Option<WidgetId>) -> Result<()> {
+    fn message(
+        &mut self,
+        cx: &mut Context<'_>,
+        message: &Message<AppMessage>,
+        clicked: Option<WidgetId>,
+    ) -> Result<()> {
         if clicked.is_some() && clicked == self.start {
             self.run(cx);
         }
         if clicked.is_some() && clicked == self.cancel {
             if let Some(cancelled) = &self.cancellation {
                 cancelled.store(true, std::sync::atomic::Ordering::Relaxed);
-                if let Some(status) = self.status { cx.tree.set_text(status, "Отмена запрошена…")?; }
+                if let Some(status) = self.status {
+                    cx.tree.set_text(status, "Отмена запрошена…")?;
+                }
             }
         }
         if let Message::User(AppMessage::ToScreen(ScreenId::GameDoctor, payload)) = message {
             if let Some(reply) = payload.downcast_ref::<DoctorReply>() {
                 match reply {
-                    DoctorReply::Progress(text) => if let Some(status) = self.status { cx.tree.set_text(status, text)?; },
+                    DoctorReply::Progress(text) => {
+                        if let Some(status) = self.status {
+                            cx.tree.set_text(status, text)?;
+                        }
+                    }
                     DoctorReply::Done(Ok((files, elapsed, findings))) => {
                         self.cancellation = None;
                         self.findings.clone_from(findings);
-                        if let Some(status) = self.status { cx.tree.set_text(status, &format!("100% · файлов: {files} · находок: {} · {elapsed} мс", findings.len()))?; }
+                        if let Some(status) = self.status {
+                            cx.tree.set_text(
+                                status,
+                                &format!("100% · файлов: {files} · находок: {} · {elapsed} мс", findings.len()),
+                            )?;
+                        }
                         for (index, widget) in self.rows.iter().copied().enumerate() {
                             if let Some(finding) = findings.get(index) {
                                 cx.tree.set_visible(widget, true)?;
-                                cx.tree.set_text(widget, &format!("{} · {} · {}", finding.file, finding.severity, finding.message))?;
-                            } else { cx.tree.set_visible(widget, false)?; }
+                                cx.tree.set_text(
+                                    widget,
+                                    &format!("{} · {} · {}", finding.file, finding.severity, finding.message),
+                                )?;
+                            } else {
+                                cx.tree.set_visible(widget, false)?;
+                            }
                         }
                     }
                     DoctorReply::Done(Err(error)) => {
                         self.cancellation = None;
-                        if let Some(status) = self.status { cx.tree.set_text(status, error)?; }
+                        if let Some(status) = self.status {
+                            cx.tree.set_text(status, error)?;
+                        }
                     }
                 }
             }
