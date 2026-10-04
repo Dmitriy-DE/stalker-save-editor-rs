@@ -3,8 +3,8 @@
 use sse_core::{Error, Result, SaveBuffer};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-/// Maximum decoded S2 image, matching the C# codec limit.
-pub const MAXIMUM_UNPACKED_SIZE: usize = 536_870_912;
+/// Maximum decoded S2 image admitted by the bounded Rust reader.
+pub const MAXIMUM_UNPACKED_SIZE: usize = 256 * 1024 * 1024;
 const MAXIMUM_OWNED_HANDLES: usize = 4096;
 const MAXIMUM_GRID_CELLS: usize = 8192;
 const GRID_WIDTH: u16 = 8;
