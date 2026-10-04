@@ -45,3 +45,5 @@ pub mod sha256;
 
 /// Oodle Kraken decompressor used by STALKER 2 saves.
 pub mod kraken;
+/// Safe Kraken mode-1 LZ and Huffman encoder paired with [`kraken`].
+pub mod kraken_encode;
