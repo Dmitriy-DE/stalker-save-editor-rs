@@ -179,7 +179,8 @@ pub fn check_logic_refs_with_known(
 
         for r in extract_scheme_refs(val_part) {
             if r.contains('@') {
-                let found = sections.contains(&r) || known_sections.is_some_and(|k| k.contains(&r.to_ascii_lowercase()));
+                let found =
+                    sections.contains(&r) || known_sections.is_some_and(|k| k.contains(&r.to_ascii_lowercase()));
                 if !found {
                     let snippet = trimmed.chars().take(140).collect::<String>();
                     findings.push(LintFinding {

@@ -55,15 +55,15 @@ pub fn compare(
     }
     let mut diff = vec![0u8; expected];
     let (mut bad, mut max) = (0usize, 0u8);
-    for (i, (a, b)) in rendered
+    for ((a, b), out) in rendered
         .chunks_exact(4)
         .zip(reference.pixels.chunks_exact(4))
-        .enumerate()
+        .zip(diff.chunks_exact_mut(4))
     {
         let mut pixel_bad = false;
         let mut pd = 0u8;
-        for c in 0..4 {
-            let d = a[c].abs_diff(b[c]);
+        for (x, y) in a.iter().zip(b) {
+            let d = x.abs_diff(*y);
             max = max.max(d);
             pd = pd.max(d);
             pixel_bad |= d > tolerance.channel;
@@ -71,11 +71,7 @@ pub fn compare(
         if pixel_bad {
             bad = bad.saturating_add(1);
         }
-        let o = i.checked_mul(4).ok_or_else(|| Error::damaged("golden diff offset"))?;
-        diff[o] = pd;
-        diff[o + 1] = if pixel_bad { 0 } else { pd };
-        diff[o + 2] = 0;
-        diff[o + 3] = 255;
+        out.copy_from_slice(&[pd, if pixel_bad { 0 } else { pd }, 0, 255]);
     }
     let pixels = expected / 4;
     let bad_u32 = u32::try_from(bad).map_err(|_| Error::damaged("golden bad-pixel count"))?;

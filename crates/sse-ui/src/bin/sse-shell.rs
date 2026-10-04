@@ -9,9 +9,10 @@ use sse_ui::event_loop::channel_pair;
 use sse_ui::event_loop::Present;
 use sse_ui::glyphs::Fonts;
 use sse_ui::screens::shell::Shell;
-use sse_ui::screens::style::{rgb, BG_BASE};
+use sse_ui::screens::style::rgb;
 use sse_ui::screens::AppMessage;
 use sse_ui::screens::ScreenId;
+use sse_ui::theme::BG_BASE;
 use sse_ui::widget::Tree;
 use std::time::Duration;
 use std::time::Instant;
@@ -208,7 +209,6 @@ fn window() -> Result<()> {
     eprintln!("wakes {} frames {} pixels {}", stats.wakes, stats.frames, stats.pixels);
     Ok(())
 }
-
 
 /// Minimal PNG (RGBA, stored deflate) until X37 lands its encoder.
 fn encode_png(frame: &[u32], width: u32, height: u32) -> Vec<u8> {
