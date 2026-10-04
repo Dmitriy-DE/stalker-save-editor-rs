@@ -196,14 +196,11 @@ enum CompanionReply {
     Changed(std::result::Result<String, String>),
 }
 
-fn confirm_twice(armed: &mut Option<WidgetId>, clicked: Option<WidgetId>, status: &mut Option<String>) -> bool {
-    if *armed == clicked {
-        *armed = None;
-        return true;
-    }
-    *armed = clicked;
-    *status = Some("Подтвердите действие повторным нажатием".to_owned());
-    false
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CompanionIntent {
+    install: bool,
+    game: String,
+    directory: PathBuf,
 }
 
 #[derive(Default)]
@@ -217,8 +214,10 @@ struct Companion {
     inspect: Option<WidgetId>,
     save_hotkeys: Option<WidgetId>,
     default_hotkeys: Option<WidgetId>,
-    /// Destructive button pressed once and waiting for the second press.
-    armed: Option<WidgetId>,
+    confirm_card: Option<WidgetId>,
+    confirm_write: Option<WidgetId>,
+    confirm_cancel: Option<WidgetId>,
+    intent: Option<CompanionIntent>,
 }
 
 impl Companion {
@@ -334,9 +333,19 @@ impl Screen for Companion {
         style::label(cx.tree, hot, &format!("Файл: {}", hotkey_path.display()), Text::Note)?;
         self.save_hotkeys = Some(style::button(cx.tree, hot, "СОХРАНИТЬ КЛАВИШИ", Button::Primary)?);
         self.default_hotkeys = Some(style::button(cx.tree, hot, "ПО УМОЛЧАНИЮ", Button::Secondary)?);
+        let confirm = style::card(cx.tree, host)?;
+        self.confirm_card = Some(confirm);
+        style::label(cx.tree, confirm, "ПОДТВЕРЖДЕНИЕ ИЗМЕНЕНИЯ ИГРЫ", Text::Heading)?;
+        style::label(cx.tree, confirm, "Будут изменены файлы выбранной игры. Проверьте игру и папку перед продолжением.", Text::Note)?;
+        let confirm_row = style::row(cx.tree, confirm)?;
+        self.confirm_write = Some(style::button(cx.tree, confirm_row, "ПОДТВЕРДИТЬ", Button::Primary)?);
+        self.confirm_cancel = Some(style::button(cx.tree, confirm_row, "ОТМЕНА", Button::Secondary)?);
+        cx.tree.set_visible(confirm, false)?;
         Ok(())
     }
     fn shown(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        self.intent = None;
+        if let Some(card) = self.confirm_card { cx.tree.set_visible(card, false)?; }
         self.refresh(cx);
         Ok(())
     }
@@ -375,13 +384,37 @@ impl Screen for Companion {
             return Ok(());
         }
         if clicked.is_some() && (clicked == self.install || clicked == self.remove) {
-            if !confirm_twice(&mut self.armed, clicked, &mut cx.status) {
+            let Some(game) = cx.app.selected_game().map(str::to_owned) else {
+                cx.status = Some("Игра не выбрана".to_owned());
+                return Ok(());
+            };
+            let Some(directory) = cx.app.game_dir().map(Path::to_path_buf) else {
+                cx.status = Some("Папка игры не выбрана".to_owned());
+                return Ok(());
+            };
+            self.intent = Some(CompanionIntent { install: clicked == self.install, game, directory });
+            if let Some(card) = self.confirm_card { cx.tree.open_dialog(card)?; }
+            return Ok(());
+        }
+        if clicked.is_some() && clicked == self.confirm_cancel {
+            self.intent = None;
+            if let Some(card) = self.confirm_card { cx.tree.close_dialog(card)?; }
+            return Ok(());
+        }
+        if clicked.is_some() && clicked == self.confirm_write {
+            let Some(intent) = self.intent.take() else { return Ok(()) };
+            let current_game = cx.app.selected_game();
+            let current_dir = cx.app.game_dir();
+            if current_game != Some(intent.game.as_str()) || current_dir != Some(intent.directory.as_path()) {
+                if let Some(card) = self.confirm_card { cx.tree.close_dialog(card)?; }
+                cx.status = Some("Выбор игры изменился; подтверждение отменено.".to_owned());
                 return Ok(());
             }
-            let install = clicked == self.install;
+            if let Some(card) = self.confirm_card { cx.tree.close_dialog(card)?; }
+            let install = intent.install;
+            let game = Some(intent.game);
+            let dir = Some(intent.directory);
             let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
-            let game = cx.app.selected_game().map(str::to_owned);
-            let dir = cx.app.game_dir().map(Path::to_path_buf);
             std::thread::spawn(move || {
                 let result = (|| {
                     let game = game.ok_or_else(|| "Игра не выбрана".to_owned())?;
