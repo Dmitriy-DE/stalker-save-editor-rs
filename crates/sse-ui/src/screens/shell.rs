@@ -21,6 +21,17 @@ pub struct Shell {
     content: WidgetId,
     title: WidgetId,
     subtitle: WidgetId,
+    breadcrumb: WidgetId,
+    edition: WidgetId,
+    undo: WidgetId,
+    redo: WidgetId,
+    reset: WidgetId,
+    open_button: WidgetId,
+    refresh: WidgetId,
+    save: WidgetId,
+    reports_banner: WidgetId,
+    reports_ok: WidgetId,
+    reports_off: WidgetId,
     status: WidgetId,
     selected: usize,
     proxy: Option<Proxy<AppMessage>>,
@@ -217,7 +228,16 @@ impl Shell {
             Content::Panel,
             Look::default(),
         )?;
-        let title = style::label(tree, header, "", Text::Title)?;
+        let top = style::row(tree, header)?;
+        let title = style::label(tree, top, "S.T.A.L.K.E.R. SAVE EDITOR", Text::Title)?;
+        let edition = style::label(tree, top, "X-Ray / S2", Text::Value)?;
+        let undo = style::button(tree, top, "Отменить", style::Button::Secondary)?;
+        let redo = style::button(tree, top, "Вернуть", style::Button::Secondary)?;
+        let reset = style::button(tree, top, "Сбросить", style::Button::Secondary)?;
+        let open_button = style::button(tree, top, "Открыть…", style::Button::Secondary)?;
+        let refresh = style::button(tree, top, "Обновить", style::Button::Secondary)?;
+        let save = style::button(tree, top, "СОХРАНИТЬ", style::Button::Primary)?;
+        let breadcrumb = style::label(tree, header, "", Text::Note)?;
         let subtitle = tree.add(
             Some(header),
             NodeKind::Leaf,
@@ -231,6 +251,32 @@ impl Shell {
                 ..Look::default()
             },
         )?;
+        let reports_banner = tree.add(
+            Some(main),
+            NodeKind::Row,
+            Style {
+                min: Size::new(0.0, 44.0),
+                padding: padded(16.0, 6.0, 16.0, 6.0),
+                align_items: Align::Center,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look {
+                fill: Some(rgb(style::BG_PANEL)),
+                border: Some((rgb(style::BORDER_SUBTLE), 1.0)),
+                ..Look::default()
+            },
+        )?;
+        style::label(
+            tree,
+            reports_banner,
+            "Редактор раз в сутки и после сбоя отправляет разработчику журнал работы, чтобы находить ошибки. Пути, имена и Steam ID из него вырезаются, сейвы не отправляются.",
+            Text::Note,
+        )?;
+        let reports_ok = style::button(tree, reports_banner, "Понятно", style::Button::Secondary)?;
+        let reports_off = style::button(tree, reports_banner, "Не отправлять", style::Button::Secondary)?;
+        tree.set_visible(reports_banner, !settings.reports_notice_shown)?;
+
         let content_style = Style {
             grow: 1.0,
             margin: padded(32.0, 0.0, 32.0, 20.0),
@@ -272,6 +318,17 @@ impl Shell {
             content,
             title,
             subtitle,
+            breadcrumb,
+            edition,
+            undo,
+            redo,
+            reset,
+            open_button,
+            refresh,
+            save,
+            reports_banner,
+            reports_ok,
+            reports_off,
             status,
             selected: 0,
             proxy,
@@ -360,6 +417,8 @@ impl Shell {
         };
         tree.set_text(self.title, crate::strings::t(screen.id().title()))?;
         tree.set_text(self.subtitle, crate::strings::t(screen.subtitle()))?;
+        tree.set_text(self.breadcrumb, &format!("{} / {}", crate::strings::t(screen.id().group().caption()), crate::strings::t(screen.id().title())))?;
+        tree.set_text(self.edition, self.app.selected_game().unwrap_or("X-Ray / S2"))?;
         let mut cx = Context {
             tree,
             proxy: self.proxy.as_ref(),
@@ -433,6 +492,35 @@ impl Shell {
         }
         if let Some(text) = wizard_status {
             tree.set_text(self.status, &text)?;
+        }
+        if clicked.is_some() && clicked == Some(self.reports_ok) {
+            let mut settings = sse_app::AppSettings::load(&sse_app::default_settings_path());
+            settings.reports_notice_shown = true;
+            settings.save(&sse_app::default_settings_path())?;
+            tree.set_visible(self.reports_banner, false)?;
+            tree.set_text(self.status, "Настройки отчётов сохранены.")?;
+            return Ok(Flow::Continue);
+        }
+        if clicked.is_some() && clicked == Some(self.reports_off) {
+            let mut settings = sse_app::AppSettings::load(&sse_app::default_settings_path());
+            settings.reports_notice_shown = true;
+            settings.send_reports = false;
+            settings.save(&sse_app::default_settings_path())?;
+            tree.set_visible(self.reports_banner, false)?;
+            tree.set_text(self.status, "Отправка отчётов отключена.")?;
+            return Ok(Flow::Continue);
+        }
+        if clicked.is_some() && [self.undo, self.redo, self.reset, self.save].contains(&clicked.unwrap_or(self.undo)) {
+            tree.set_text(self.status, "Действие недоступно: AppState ещё не предоставляет журнал черновика и транзакционный save API.")?;
+            return Ok(Flow::Continue);
+        }
+        if clicked.is_some() && clicked == Some(self.open_button) {
+            tree.set_text(self.status, "Открыть… недоступно: системный file-picker ещё не подключён к Shell.")?;
+            return Ok(Flow::Continue);
+        }
+        if clicked.is_some() && clicked == Some(self.refresh) {
+            tree.set_text(self.status, "Обновление библиотеки недоступно: AppState ещё не предоставляет refresh/cancel API.")?;
+            return Ok(Flow::Continue);
         }
         if let Some(index) = clicked.and_then(|id| self.nav.iter().position(|nav| *nav == id)) {
             self.select(tree, index)?;
