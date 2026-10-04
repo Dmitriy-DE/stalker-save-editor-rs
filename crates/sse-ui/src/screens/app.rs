@@ -256,9 +256,18 @@ impl Screen for Settings {
         let view = style::card(cx.tree, host)?;
         style::label(cx.tree, view, "ВИД", Text::Heading)?;
         self.settings = load_settings();
-        self.theme = crate::theme::THEMES.iter().position(|(id, _)| *id == self.settings.theme_id).unwrap_or(0);
-        self.accent = crate::theme::ACCENT_IDS.iter().position(|id| *id == self.settings.accent_id).unwrap_or(0);
-        self.scale = SCALES.iter().position(|value| *value == self.settings.ui_scale_percent).unwrap_or(0);
+        self.theme = crate::theme::THEMES
+            .iter()
+            .position(|(id, _)| *id == self.settings.theme_id)
+            .unwrap_or(0);
+        self.accent = crate::theme::ACCENT_IDS
+            .iter()
+            .position(|id| *id == self.settings.accent_id)
+            .unwrap_or(0);
+        self.scale = SCALES
+            .iter()
+            .position(|value| *value == self.settings.ui_scale_percent)
+            .unwrap_or(0);
         let old_theme = crate::theme::current();
         crate::theme::apply_appearance(&self.settings.theme_id, &self.settings.accent_id);
         repaint_theme(cx.tree, old_theme, crate::theme::current());
@@ -267,12 +276,22 @@ impl Screen for Settings {
 
         let theme_line = style::row(cx.tree, view)?;
         style::label(cx.tree, theme_line, "Тема:", Text::Body)?;
-        self.theme_value = Some(style::label(cx.tree, theme_line, crate::theme::THEMES[self.theme].1, Text::Value)?);
+        self.theme_value = Some(style::label(
+            cx.tree,
+            theme_line,
+            crate::theme::THEMES[self.theme].1,
+            Text::Value,
+        )?);
         self.theme_button = Some(style::button(cx.tree, theme_line, "Изменить", Button::Secondary)?);
 
         let accent_line = style::row(cx.tree, view)?;
         style::label(cx.tree, accent_line, "Акцент:", Text::Body)?;
-        self.accent_value = Some(style::label(cx.tree, accent_line, crate::theme::ACCENT_IDS[self.accent], Text::Value)?);
+        self.accent_value = Some(style::label(
+            cx.tree,
+            accent_line,
+            crate::theme::ACCENT_IDS[self.accent],
+            Text::Value,
+        )?);
         self.accent_button = Some(style::button(cx.tree, accent_line, "Изменить", Button::Secondary)?);
 
         let line = style::row(cx.tree, view)?;
@@ -301,11 +320,20 @@ impl Screen for Settings {
                 self.pending_save = None;
                 cx.status = Some("Тема сохранена".to_owned());
             } else {
-                self.theme = self.theme.saturating_add(1).checked_rem(crate::theme::THEMES.len()).unwrap_or(0);
+                self.theme = self
+                    .theme
+                    .saturating_add(1)
+                    .checked_rem(crate::theme::THEMES.len())
+                    .unwrap_or(0);
                 let old = crate::theme::current();
-                crate::theme::apply_appearance(crate::theme::THEMES[self.theme].0, crate::theme::ACCENT_IDS[self.accent]);
+                crate::theme::apply_appearance(
+                    crate::theme::THEMES[self.theme].0,
+                    crate::theme::ACCENT_IDS[self.accent],
+                );
                 repaint_theme(cx.tree, old, crate::theme::current());
-                if let Some(value) = self.theme_value { cx.tree.set_text(value, crate::theme::THEMES[self.theme].1)?; }
+                if let Some(value) = self.theme_value {
+                    cx.tree.set_text(value, crate::theme::THEMES[self.theme].1)?;
+                }
                 self.pending_save = clicked;
                 cx.status = Some("Тема применена. Нажмите «Изменить» ещё раз, чтобы сохранить настройку.".to_owned());
             }
@@ -317,11 +345,20 @@ impl Screen for Settings {
                 self.pending_save = None;
                 cx.status = Some("Акцент сохранён".to_owned());
             } else {
-                self.accent = self.accent.saturating_add(1).checked_rem(crate::theme::ACCENT_IDS.len()).unwrap_or(0);
+                self.accent = self
+                    .accent
+                    .saturating_add(1)
+                    .checked_rem(crate::theme::ACCENT_IDS.len())
+                    .unwrap_or(0);
                 let old = crate::theme::current();
-                crate::theme::apply_appearance(crate::theme::THEMES[self.theme].0, crate::theme::ACCENT_IDS[self.accent]);
+                crate::theme::apply_appearance(
+                    crate::theme::THEMES[self.theme].0,
+                    crate::theme::ACCENT_IDS[self.accent],
+                );
                 repaint_theme(cx.tree, old, crate::theme::current());
-                if let Some(value) = self.accent_value { cx.tree.set_text(value, crate::theme::ACCENT_IDS[self.accent])?; }
+                if let Some(value) = self.accent_value {
+                    cx.tree.set_text(value, crate::theme::ACCENT_IDS[self.accent])?;
+                }
                 self.pending_save = clicked;
                 cx.status = Some("Акцент применён. Нажмите «Изменить» ещё раз, чтобы сохранить настройку.".to_owned());
             }
@@ -336,7 +373,9 @@ impl Screen for Settings {
                 self.scale = self.scale.saturating_add(1).checked_rem(SCALES.len()).unwrap_or(0);
                 let percent = SCALES[self.scale];
                 cx.tree.set_scale(percent as f32 / 100.0);
-                if let Some(value) = self.scale_value { cx.tree.set_text(value, &format!("{percent} %"))?; }
+                if let Some(value) = self.scale_value {
+                    cx.tree.set_text(value, &format!("{percent} %"))?;
+                }
                 self.pending_save = clicked;
                 cx.status = Some("Масштаб применён. Нажмите «Изменить» ещё раз, чтобы сохранить настройку.".to_owned());
             }
