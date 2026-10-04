@@ -110,10 +110,16 @@ record_artifact() {
     local arch="$3"
     local kind="$4"
     local artifact="$5"
-    local size digest
+    local size digest maximum_size
     size="$(get_file_size "${artifact}")"
     digest="$(sha256_file "${artifact}")"
     [[ "${size}" =~ ^[0-9]+$ ]] && (( size > 0 && size <= 2147483648 )) || die "artifact size is outside G5 limits: ${artifact}"
+    case "${key}" in
+        linux-x86_64|windows-x86_64|linux-deb-amd64) maximum_size=31457280 ;;
+        macos-arm64|macos-x86_64) maximum_size=36700160 ;;
+        *) die "no packaging size budget is defined for ${key}" ;;
+    esac
+    (( size <= maximum_size )) || die "${key} exceeds the repository packaging size budget (${maximum_size} bytes)"
     [[ "${digest}" =~ ^[0-9a-f]{64}$ ]] || die "invalid SHA-256 result for ${artifact}"
     printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
         "${SOURCE_COMMIT}" "${VERSION}" "${target}" "${arch}" "${kind}" \
@@ -155,6 +161,9 @@ build_linux() {
     need_command ar
     build_linux_binaries
     [[ -x "${cli}" && -x "${shell_bin}" ]] || die "Linux release binaries were not produced"
+    local cli_size
+    cli_size="$(get_file_size "${cli}")"
+    (( cli_size <= 3145728 )) || die "stalker-save exceeds the 3 MiB CLI size budget"
 
     stage="$(mktemp -d "${TMPDIR:-/tmp}/sse-package-linux.XXXXXX")"
     SSE_PACKAGE_STAGE="${stage}"
@@ -178,7 +187,7 @@ Version: ${VERSION}
 Section: games
 Priority: optional
 Architecture: amd64
-Maintainer: S.T.A.L.K.E.R. Save Editor Team
+Maintainer: S.T.A.L.K.E.R. Save Editor Team <dev@stalker-save-editor.org>
 Description: S.T.A.L.K.E.R. save editor and shell
 EOF
     chmod 0755 "${deb_stage}/usr/bin/stalker-save" "${deb_stage}/usr/bin/sse-shell"
@@ -198,6 +207,9 @@ build_windows() {
     need_command zip
     build_rust_binaries "${target}"
     [[ -f "${cli}" && -f "${shell_bin}" ]] || die "Windows release binaries were not produced"
+    local cli_size
+    cli_size="$(get_file_size "${cli}")"
+    (( cli_size <= 3145728 )) || die "stalker-save.exe exceeds the 3 MiB CLI size budget"
     local stage
     stage="$(mktemp -d "${TMPDIR:-/tmp}/sse-package-windows.XXXXXX")"
     SSE_PACKAGE_STAGE="${stage}"
