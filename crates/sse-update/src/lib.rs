@@ -13,7 +13,8 @@ pub mod signature;
 pub use detector::{UpdateInstallation, UpdateInstallationDetector, LINUX_PACKAGE_INSTALL_ROOT};
 pub use fetch::{download_artifact, verify_existing_file, DefaultFetch, Fetch, FileFetch, MemoryFetch, Response};
 pub use installer::{
-    install_artifact, MockProcessRunner, ProcessRunner, SystemProcessRunner, UpdateInstallResult, UpdateInstallState,
+    install_artifact, prepare_private_directory, MockProcessRunner, ProcessRunner, SystemProcessRunner, UpdateInstallResult,
+    UpdateInstallState,
 };
 pub use manifest::{
     compare_versions, PrereleasePart, SemVer, UpdateArtifact, UpdateManifest, UpdateState, MAXIMUM_ARTIFACT_BYTES,
