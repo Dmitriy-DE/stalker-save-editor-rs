@@ -49,9 +49,7 @@ pub fn verify_directory_owner(path: &Path) -> Result<()> {
 
         let metadata = std::fs::symlink_metadata(path).map_err(Error::from)?;
         if metadata.file_type().is_symlink() || !metadata.is_dir() {
-            return Err(Error::Refused(
-                "Update directory is not a real directory".to_owned(),
-            ));
+            return Err(Error::Refused("Update directory is not a real directory".to_owned()));
         }
         if metadata.uid() != current_effective_uid() {
             return Err(Error::Refused(
@@ -63,9 +61,7 @@ pub fn verify_directory_owner(path: &Path) -> Result<()> {
     #[cfg(not(target_os = "linux"))]
     {
         if !std::fs::metadata(path).map_err(Error::from)?.is_dir() {
-            return Err(Error::Refused(
-                "Update directory is not a directory".to_owned(),
-            ));
+            return Err(Error::Refused("Update directory is not a directory".to_owned()));
         }
     }
     Ok(())
