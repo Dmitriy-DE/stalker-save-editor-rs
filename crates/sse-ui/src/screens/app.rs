@@ -494,12 +494,6 @@ impl Screen for Settings {
             crate::strings::t("Язык применится после перезапуска приложения."),
             Text::Note,
         )?;
-        self.save_button = Some(style::button(
-            cx.tree,
-            view,
-            crate::strings::t("Сохранить настройки"),
-            Button::Primary,
-        )?);
 
         let sound = style::card(cx.tree, content)?;
         style::label(cx.tree, sound, "Звуки интерфейса", Text::Heading)?;
@@ -556,6 +550,7 @@ impl Screen for Settings {
         for (index, panel) in self.section_panels.iter().copied().enumerate() {
             cx.tree.set_visible(panel, index == 0)?;
         }
+        self.save_button = Some(style::button(cx.tree, host, crate::strings::t("Сохранить настройки"), Button::Primary)?);
         Ok(())
     }
 
