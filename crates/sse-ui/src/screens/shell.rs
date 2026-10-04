@@ -37,12 +37,39 @@ fn padded(left: f32, top: f32, right: f32, bottom: f32) -> Edges {
     }
 }
 
+fn startup_language(settings: &sse_app::AppSettings) -> String {
+    if let Ok(value) = std::env::var("STALKER_EDITOR_LANG") {
+        if !value.trim().is_empty() {
+            return value;
+        }
+    }
+    if let Some(value) = settings.language.as_deref() {
+        return value.to_owned();
+    }
+    let system = std::env::var("LC_ALL")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .or_else(|| std::env::var("LC_MESSAGES").ok().filter(|value| !value.is_empty()))
+        .or_else(|| std::env::var("LANG").ok().filter(|value| !value.is_empty()));
+    let Some(system) = system else { return "en".to_owned() };
+    let normalized = system.split('.').next().unwrap_or(&system).replace('_', "-");
+    let base = normalized.split('-').next().unwrap_or(&normalized);
+    if crate::strings::LANGUAGES.iter().any(|code| code.eq_ignore_ascii_case(&normalized) || code.eq_ignore_ascii_case(base)) {
+        normalized
+    } else {
+        "en".to_owned()
+    }
+}
+
 impl Shell {
     /// Builds the frame into an empty tree and shows the first screen.
     ///
     /// # Errors
     /// Returns an error from the widget tree.
     pub fn build(tree: &mut Tree, proxy: Option<Proxy<AppMessage>>) -> Result<Self> {
+        let settings = sse_app::AppSettings::load(&sse_app::default_settings_path());
+        let language = startup_language(&settings);
+        crate::strings::set_language(Some(&language));
         let root_style = Style {
             align_items: Align::Stretch,
             ..Style::default()
@@ -133,7 +160,7 @@ impl Shell {
                 ..Style::default()
             };
             let content = Content::Button {
-                text: id.title().to_owned(),
+                text: crate::strings::t(id.title()).to_owned(),
                 style: TextStyle::new(Face::Heading, 14.0),
             };
             nav.push(tree.add(Some(sidebar), NodeKind::Leaf, item, content, style::nav(nav.is_empty()))?);
@@ -328,8 +355,8 @@ impl Shell {
         let (Some(screen), Some(slot)) = (self.screens.get_mut(index), self.hosts.get_mut(index)) else {
             return Ok(());
         };
-        tree.set_text(self.title, screen.id().title())?;
-        tree.set_text(self.subtitle, screen.subtitle())?;
+        tree.set_text(self.title, crate::strings::t(screen.id().title()))?;
+        tree.set_text(self.subtitle, crate::strings::t(screen.subtitle()))?;
         let mut cx = Context {
             tree,
             proxy: self.proxy.as_ref(),

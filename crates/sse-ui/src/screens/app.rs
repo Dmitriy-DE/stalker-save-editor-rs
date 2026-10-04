@@ -203,6 +203,11 @@ fn save_settings(settings: &sse_app::AppSettings) -> Result<()> {
     settings.save(&sse_app::default_settings_path())
 }
 
+const LANGUAGE_NAMES: [&str; 15] = [
+    "Русский", "Українська", "English", "Deutsch", "Français", "Italiano", "Español", "Polski",
+    "Čeština", "Português (Brasil)", "Türkçe", "日本語", "한국어", "简体中文", "繁體中文",
+];
+
 /// Result of the background check started by the settings screen.
 struct Checked(String);
 
@@ -215,6 +220,10 @@ pub struct Settings {
     theme_button: Option<WidgetId>,
     accent_value: Option<WidgetId>,
     accent_button: Option<WidgetId>,
+    language_value: Option<WidgetId>,
+    language_button: Option<WidgetId>,
+    save_button: Option<WidgetId>,
+    language: usize,
     check_button: Option<WidgetId>,
     check_result: Option<WidgetId>,
     scale: usize,
@@ -259,6 +268,8 @@ impl Screen for Settings {
     }
 
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
+        self.settings = load_settings();
+        self.language = crate::strings::language_index(self.settings.language.as_deref().unwrap_or("ru"));
         let view = style::card(cx.tree, host)?;
         style::label(cx.tree, view, "ВИД", Text::Heading)?;
         self.settings = load_settings();
@@ -299,6 +310,14 @@ impl Screen for Settings {
         };
         self.scale_value = Some(style::label(cx.tree, line, &scale_label, Text::Value)?);
         self.scale_button = Some(style::button(cx.tree, line, "Изменить", Button::Secondary)?);
+
+        let language_line = style::row(cx.tree, view)?;
+        style::label(cx.tree, language_line, crate::strings::t("Язык интерфейса:"), Text::Body)?;
+        let language_name = LANGUAGE_NAMES.get(self.language).copied().unwrap_or("Русский");
+        self.language_value = Some(style::label(cx.tree, language_line, language_name, Text::Value)?);
+        self.language_button = Some(style::button(cx.tree, language_line, crate::strings::t("Изменить"), Button::Secondary)?);
+        style::label(cx.tree, view, crate::strings::t("Язык применится после перезапуска приложения."), Text::Note)?;
+        self.save_button = Some(style::button(cx.tree, view, crate::strings::t("Сохранить настройки"), Button::Primary)?);
 
         let updates = style::card(cx.tree, host)?;
         style::label(cx.tree, updates, "ОБНОВЛЕНИЯ", Text::Heading)?;
@@ -380,6 +399,21 @@ impl Screen for Settings {
             match save_settings(&self.settings) {
                 Ok(()) => cx.status = Some("Настройки сохранены.".to_owned()),
                 Err(error) => cx.status = Some(format!("Не удалось сохранить настройки: {error}")),
+            }
+        }
+
+        if clicked.is_some() && clicked == self.language_button {
+            self.language = self.language.saturating_add(1).checked_rem(crate::strings::LANGUAGES.len()).unwrap_or(0);
+            if let Some(value) = self.language_value {
+                cx.tree.set_text(value, LANGUAGE_NAMES.get(self.language).copied().unwrap_or("Русский"))?;
+            }
+            cx.status = Some(crate::strings::t("Язык применится после перезапуска приложения.").to_owned());
+        }
+        if clicked.is_some() && clicked == self.save_button {
+            self.settings.language = crate::strings::LANGUAGES.get(self.language).map(|code| (*code).to_owned());
+            match save_settings(&self.settings) {
+                Ok(()) => cx.status = Some(crate::strings::t("Настройки сохранены.").to_owned()),
+                Err(error) => cx.status = Some(format!("{}{}", crate::strings::t("Не удалось сохранить настройки: "), error)),
             }
         }
 
