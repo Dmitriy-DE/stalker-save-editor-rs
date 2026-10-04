@@ -972,26 +972,47 @@ impl Screen for Cloud {
             let Some(app_id) = cx.app.selected_game().and_then(app_id) else {
                 return Ok(());
             };
-            let Some(local) = cx.app.current_save().map(Path::to_path_buf) else {
-                cx.status = Some("Сначала откройте локальный сейв".to_owned());
-                return Ok(());
-            };
+            // Never touch the open save: a cloud file goes into <data>/backups/cloud_downloads as a new file.
+            // Replacing a local save from the cloud needs the checks of ACCEPTANCE §18.3 (same name, same game,
+            // valid save, journaled backup) and is done by the save writer, not here.
+            let downloads = sse_app::paths::default_data_directory()
+                .join("backups")
+                .join("cloud_downloads");
             let remote = item.name.clone();
             let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
             std::thread::spawn(move || {
                 let result = (|| {
                     let source = worker(&Request::Read {
                         app_id,
-                        remote_name: remote,
+                        remote_name: remote.clone(),
                     })?;
-                    let backup = local.with_extension("cloud-backup");
-                    if local.is_file() {
-                        std::fs::copy(&local, &backup).map_err(|error| error.to_string())?;
+                    let name = std::path::Path::new(&remote)
+                        .file_name()
+                        .ok_or_else(|| "Облачный файл без имени".to_owned())?;
+                    std::fs::create_dir_all(&downloads).map_err(|error| error.to_string())?;
+                    let target = downloads.join(name);
+                    let temp = downloads.join(format!(".{}.download.tmp", name.to_string_lossy()));
+                    let written = (|| {
+                        use std::io::Write;
+                        let mut file = std::fs::File::create(&temp)?;
+                        file.write_all(&source)?;
+                        file.sync_all()?;
+                        if target.exists() {
+                            return Err(std::io::Error::new(
+                                std::io::ErrorKind::AlreadyExists,
+                                format!("{} уже есть", target.display()),
+                            ));
+                        }
+                        std::fs::rename(&temp, &target)
+                    })();
+                    if let Err(error) = written {
+                        let _ = std::fs::remove_file(&temp);
+                        return Err(error.to_string());
                     }
-                    let temp = local.with_extension("cloud-download.tmp");
-                    std::fs::write(&temp, &source).map_err(|error| error.to_string())?;
-                    std::fs::rename(&temp, &local).map_err(|error| error.to_string())?;
-                    Ok(format!("Файл успешно скачан: {}", local.display()))
+                    Ok(format!(
+                        "Файл скачан отдельно, открытый сейв не тронут: {}",
+                        target.display()
+                    ))
                 })();
                 proxy.send(AppMessage::ToScreen(
                     ScreenId::Cloud,
