@@ -45,7 +45,7 @@ pub enum JsonValue {
     Null,
 }
 
-/// One edit request stored in the C# schema-2 draft envelope.
+/// One edit request stored in the local draft envelope.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AddRequest {
     /// Catalog key used to create an item.
@@ -99,7 +99,18 @@ impl StashPut {
     }
 }
 
-/// One C#-compatible plan snapshot. `unmapped_legacy_plan` retains edits that this build cannot apply.
+/// One confirmed item placement saved in the edit draft.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DraftPlacement {
+    /// Move into the backpack.
+    Ruck,
+    /// Move onto the artifact belt.
+    Belt,
+    /// Equip in the validated slot number.
+    Slot(u8),
+}
+
+/// One plan snapshot. `unmapped_legacy_plan` retains edits this build cannot apply.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DraftPlan {
     /// SHA-256 of the untouched source save.
@@ -108,6 +119,12 @@ pub struct DraftPlan {
     pub money: Option<u32>,
     /// Requested counts keyed by registry object id.
     pub stack_counts: BTreeMap<u32, u32>,
+    /// Requested durability percentages keyed by registry object id.
+    pub durability: BTreeMap<u32, u8>,
+    /// Requested placement keyed by registry object id.
+    pub placements: BTreeMap<u32, DraftPlacement>,
+    /// Requested catalog-backed upgrades keyed by registry object id.
+    pub upgrades: BTreeMap<u32, Vec<String>>,
     /// Registry handles to remove.
     pub detach_handles: Vec<u16>,
     /// Items to add.
@@ -128,6 +145,9 @@ impl DraftPlan {
             source_sha256: source_sha256.to_owned(),
             money: None,
             stack_counts: BTreeMap::new(),
+            durability: BTreeMap::new(),
+            placements: BTreeMap::new(),
+            upgrades: BTreeMap::new(),
             detach_handles: Vec::new(),
             adds: Vec::new(),
             stash_takes: Vec::new(),
@@ -139,6 +159,9 @@ impl DraftPlan {
     fn has_changes(&self) -> bool {
         self.money.is_some()
             || !self.stack_counts.is_empty()
+            || !self.durability.is_empty()
+            || !self.placements.is_empty()
+            || !self.upgrades.is_empty()
             || !self.detach_handles.is_empty()
             || !self.adds.is_empty()
             || !self.stash_takes.is_empty()
@@ -151,6 +174,32 @@ impl DraftPlan {
         let mut detach = HashSet::new();
         if self.detach_handles.iter().any(|handle| !detach.insert(*handle)) {
             return Err(Error::Refused("draft detach handles must be unique".to_owned()));
+        }
+        if self
+            .durability
+            .iter()
+            .any(|(handle, value)| !valid_draft_handle(*handle) || *value > 100)
+        {
+            return Err(Error::Refused(
+                "draft durability must use valid handles and percentages in 0..=100".to_owned(),
+            ));
+        }
+        if self
+            .placements
+            .iter()
+            .any(|(handle, placement)| !valid_draft_handle(*handle) || matches!(placement, DraftPlacement::Slot(0)))
+        {
+            return Err(Error::Refused("draft placement is invalid".to_owned()));
+        }
+        for (handle, upgrades) in &self.upgrades {
+            if !valid_draft_handle(*handle)
+                || upgrades
+                    .iter()
+                    .any(|upgrade| upgrade.is_empty() || upgrade.len() > 256 || upgrade.contains('\0'))
+                || upgrades.iter().collect::<HashSet<_>>().len() != upgrades.len()
+            {
+                return Err(Error::Refused("draft upgrades are invalid or duplicated".to_owned()));
+            }
         }
         let mut takes = HashSet::new();
         if self
@@ -189,6 +238,10 @@ impl DraftPlan {
         }
         Ok(())
     }
+}
+
+fn valid_draft_handle(handle: u32) -> bool {
+    handle != 0 && handle != u32::MAX
 }
 
 /// Bounded edit history with undo, redo, and branch support.
@@ -356,7 +409,7 @@ impl DraftStore {
         Ok(self.directory.join(format!("{source_sha256}.json")))
     }
 
-    /// Loads schema 1 or schema 2, returning `None` for a missing, invalid, or oversized draft.
+    /// Loads schemas 1–3, returning `None` for a missing, invalid, or oversized draft.
     pub fn load(&self, source_sha256: &str) -> Result<Option<DraftJournal>> {
         let path = self.path_for(source_sha256)?;
         if fs::symlink_metadata(&path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
@@ -473,7 +526,11 @@ fn parse_journal(bytes: &[u8], expected_sha256: &str) -> Result<DraftJournal> {
             .collect::<Result<Vec<_>>>()?,
         2 => plans
             .iter()
-            .map(|plan| parse_current_plan(plan, expected_sha256))
+            .map(|plan| parse_current_plan(plan, expected_sha256, false))
+            .collect::<Result<Vec<_>>>()?,
+        3 => plans
+            .iter()
+            .map(|plan| parse_current_plan(plan, expected_sha256, true))
             .collect::<Result<Vec<_>>>()?,
         _ => return Err(Error::Refused("unsupported draft schema".to_owned())),
     };
@@ -484,20 +541,35 @@ fn parse_journal(bytes: &[u8], expected_sha256: &str) -> Result<DraftJournal> {
     Ok(journal)
 }
 
-fn parse_current_plan(value: &JsonValue, expected_sha256: &str) -> Result<DraftPlan> {
-    let members = object_members(
-        value,
-        &[
-            "sourceSha256",
-            "money",
-            "stackCounts",
-            "detachHandles",
-            "adds",
-            "stashTakes",
-            "stashPuts",
-            "unmappedLegacyPlan",
-        ],
-    )?;
+fn parse_current_plan(value: &JsonValue, expected_sha256: &str, extended: bool) -> Result<DraftPlan> {
+    let base_fields = [
+        "sourceSha256",
+        "money",
+        "stackCounts",
+        "detachHandles",
+        "adds",
+        "stashTakes",
+        "stashPuts",
+        "unmappedLegacyPlan",
+    ];
+    let extended_fields = [
+        "sourceSha256",
+        "money",
+        "stackCounts",
+        "detachHandles",
+        "adds",
+        "stashTakes",
+        "stashPuts",
+        "durability",
+        "placements",
+        "upgrades",
+        "unmappedLegacyPlan",
+    ];
+    let members = if extended {
+        object_members(value, &extended_fields)?
+    } else {
+        object_members(value, &base_fields)?
+    };
     if string_field(members, "sourceSha256")? != expected_sha256 {
         return Err(Error::Refused(
             "draft plan belongs to a different source save".to_owned(),
@@ -512,6 +584,47 @@ fn parse_current_plan(value: &JsonValue, expected_sha256: &str) -> Result<DraftP
         let count = number_u32(value)?;
         if plan.stack_counts.insert(handle, count).is_some() {
             return Err(Error::damaged("draft repeats a stack handle"));
+        }
+    }
+    if extended {
+        let value = field(members, "durability")?;
+        for (key, value) in object_entries(value)? {
+            let handle = draft_handle_key(key)?;
+            let durability = number_u8(value)?;
+            if plan.durability.insert(handle, durability).is_some() {
+                return Err(Error::damaged("draft repeats a durability handle"));
+            }
+        }
+        let value = field(members, "placements")?;
+        for (key, value) in object_entries(value)? {
+            let handle = draft_handle_key(key)?;
+            let placement = match string_value(value)? {
+                "ruck" => DraftPlacement::Ruck,
+                "belt" => DraftPlacement::Belt,
+                encoded if encoded.starts_with("slot:") => {
+                    let slot = encoded
+                        .get(5..)
+                        .and_then(|value| value.parse::<u8>().ok())
+                        .filter(|slot| *slot > 0)
+                        .ok_or_else(|| Error::damaged("draft slot placement is invalid"))?;
+                    DraftPlacement::Slot(slot)
+                }
+                _ => return Err(Error::damaged("draft placement is unknown")),
+            };
+            if plan.placements.insert(handle, placement).is_some() {
+                return Err(Error::damaged("draft repeats a placement handle"));
+            }
+        }
+        let value = field(members, "upgrades")?;
+        for (key, value) in object_entries(value)? {
+            let handle = draft_handle_key(key)?;
+            let upgrades = array_value(value)?
+                .iter()
+                .map(|value| string_value(value).map(str::to_owned))
+                .collect::<Result<Vec<_>>>()?;
+            if plan.upgrades.insert(handle, upgrades).is_some() {
+                return Err(Error::damaged("draft repeats an upgrades handle"));
+            }
         }
     }
     plan.detach_handles = array_field(members, "detachHandles")?
@@ -650,7 +763,7 @@ fn serialize_journal(journal: &DraftJournal) -> Result<Vec<u8>> {
     }
     writer.array_end()?;
     writer.key("schema")?;
-    writer.u64(2)?;
+    writer.u64(3)?;
     writer.key("source_sha256")?;
     writer.string(
         &journal
@@ -715,6 +828,36 @@ fn write_current_plan(writer: &mut Writer, plan: &DraftPlan) -> Result<()> {
         writer.object_end()?;
     }
     writer.array_end()?;
+    writer.key("durability")?;
+    writer.object_start()?;
+    for (handle, durability) in &plan.durability {
+        writer.key(&handle.to_string())?;
+        writer.u64(u64::from(*durability))?;
+    }
+    writer.object_end()?;
+    writer.key("placements")?;
+    writer.object_start()?;
+    for (handle, placement) in &plan.placements {
+        writer.key(&handle.to_string())?;
+        let encoded = match placement {
+            DraftPlacement::Ruck => "ruck".to_owned(),
+            DraftPlacement::Belt => "belt".to_owned(),
+            DraftPlacement::Slot(slot) => format!("slot:{slot}"),
+        };
+        writer.string(&encoded)?;
+    }
+    writer.object_end()?;
+    writer.key("upgrades")?;
+    writer.object_start()?;
+    for (handle, upgrades) in &plan.upgrades {
+        writer.key(&handle.to_string())?;
+        writer.array_start()?;
+        for upgrade in upgrades {
+            writer.string(upgrade)?;
+        }
+        writer.array_end()?;
+    }
+    writer.object_end()?;
     writer.key("unmappedLegacyPlan")?;
     if let Some(unmapped) = &plan.unmapped_legacy_plan {
         write_json_value(writer, unmapped)?;
@@ -813,6 +956,16 @@ fn object_members<'a>(value: &'a JsonValue, expected: &[&str]) -> Result<&'a [(S
     Ok(members)
 }
 
+fn draft_handle_key(key: &str) -> Result<u32> {
+    let handle = key
+        .parse::<u32>()
+        .map_err(|_| Error::damaged("draft item handle is not an unsigned 32-bit integer"))?;
+    if !valid_draft_handle(handle) {
+        return Err(Error::damaged("draft item handle is outside the supported range"));
+    }
+    Ok(handle)
+}
+
 fn object_entries(value: &JsonValue) -> Result<&[(String, JsonValue)]> {
     match value {
         JsonValue::Object(members) => Ok(members),
@@ -875,6 +1028,12 @@ fn number_u16(value: &JsonValue) -> Result<u16> {
     number_string(value)?
         .parse::<u16>()
         .map_err(|_| Error::damaged("draft number is not an unsigned 16-bit integer"))
+}
+
+fn number_u8(value: &JsonValue) -> Result<u8> {
+    number_string(value)?
+        .parse::<u8>()
+        .map_err(|_| Error::damaged("draft number is not an unsigned 8-bit integer"))
 }
 
 fn number_string(value: &JsonValue) -> Result<&str> {
