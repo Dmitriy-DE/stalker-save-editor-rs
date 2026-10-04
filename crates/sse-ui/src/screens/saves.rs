@@ -1820,11 +1820,11 @@ impl Screen for Stashes {
         _message: &Message<AppMessage>,
         clicked: Option<WidgetId>,
     ) -> Result<()> {
-        if clicked == self.previous {
+        if clicked.is_some() && clicked == self.previous {
             self.page = self.page.saturating_sub(1);
             return self.render(cx);
         }
-        if clicked == self.next {
+        if clicked.is_some() && clicked == self.next {
             self.page = self.page.saturating_add(1);
             return self.render(cx);
         }

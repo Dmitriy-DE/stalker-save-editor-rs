@@ -1322,7 +1322,7 @@ impl Screen for Environment {
             return Ok(());
         }
         if clicked.is_some() && (clicked == self.snapshot || clicked == self.audit) {
-            let create_snapshot = clicked == self.snapshot;
+            let create_snapshot = clicked.is_some() && clicked == self.snapshot;
             let game = cx.app.selected_game().and_then(fix_target);
             let directory = cx.app.game_dir().map(Path::to_path_buf);
             let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };

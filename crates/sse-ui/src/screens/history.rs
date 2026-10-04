@@ -647,14 +647,14 @@ impl Screen for HistoryScreen {
                 self.render_current_page(cx)?;
             }
         }
-        if clicked == self.cancel_restore {
+        if clicked.is_some() && clicked == self.cancel_restore {
             self.pending_restore = None;
             if let Some(id) = self.restore_confirmation {
                 cx.tree.set_visible(id, false)?;
             }
             self.set_summary(cx.tree, "Восстановление отменено.")?;
         }
-        if clicked == self.confirm_restore {
+        if clicked.is_some() && clicked == self.confirm_restore {
             if let Some((journal, source)) = self.pending_restore.take() {
                 if let Some(id) = self.restore_confirmation {
                     cx.tree.set_visible(id, false)?;
