@@ -158,23 +158,35 @@ impl HotkeyLayout {
     pub fn parse(text: &str) -> Result<Self, HotkeyError> {
         let mut bindings = BTreeMap::new();
         let mut gestures = HashSet::new();
-        for line in text.lines() {
-            let line = line.trim();
+        for (index, raw) in text.lines().enumerate() {
+            let line_no = index.saturating_add(1);
+            let line = raw.trim();
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
             let (name, value) = line
                 .split_once('=')
-                .ok_or_else(|| HotkeyError::new("hotkey line must use action=Modifier+Letter"))?;
-            let action =
-                HotkeyAction::from_name(name.trim()).ok_or_else(|| HotkeyError::new("unknown hotkey action"))?;
-            let gesture = HotkeyGesture::parse(value.trim())?;
-            if bindings.insert(action, gesture).is_some() || !gestures.insert(gesture) {
-                return Err(HotkeyError::new("hotkey action or gesture is duplicated"));
+                .ok_or_else(|| HotkeyError::new(format!("Hotkey line {line_no} must use action=Ctrl+Key syntax.")))?;
+            let action_name = name.trim();
+            let action = HotkeyAction::from_name(action_name)
+                .ok_or_else(|| HotkeyError::new(format!("Unknown hotkey action '{action_name}' on line {line_no}.")))?;
+            if bindings.contains_key(&action) {
+                return Err(HotkeyError::new(format!(
+                    "Hotkey action '{action_name}' is configured more than once."
+                )));
             }
+            let gesture_text = value.trim();
+            let gesture = HotkeyGesture::parse(gesture_text)
+                .map_err(|error| HotkeyError::new(format!("Invalid hotkey on line {line_no}: {error}")))?;
+            if !gestures.insert(gesture) {
+                return Err(HotkeyError::new(format!(
+                    "Hotkey '{gesture}' is assigned more than once."
+                )));
+            }
+            let _ = bindings.insert(action, gesture);
         }
         if bindings.is_empty() {
-            return Err(HotkeyError::new("hotkey layout is empty"));
+            return Err(HotkeyError::new("At least one hotkey binding is required."));
         }
         Ok(Self { bindings })
     }

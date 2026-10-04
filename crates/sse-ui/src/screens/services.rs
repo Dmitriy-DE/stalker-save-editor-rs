@@ -212,6 +212,11 @@ struct Companion {
     version: Option<WidgetId>,
     install: Option<WidgetId>,
     remove: Option<WidgetId>,
+    refresh_button: Option<WidgetId>,
+    ping: Option<WidgetId>,
+    inspect: Option<WidgetId>,
+    save_hotkeys: Option<WidgetId>,
+    default_hotkeys: Option<WidgetId>,
     /// Destructive button pressed once and waiting for the second press.
     armed: Option<WidgetId>,
 }
@@ -244,14 +249,78 @@ impl Screen for Companion {
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
         let card = style::card(cx.tree, host)?;
         style::label(cx.tree, card, "МОД-КОМПАНЬОН", Text::Heading)?;
+        style::label(
+            cx.tree,
+            card,
+            "Меню в игре: Esc → F1 или КПК компаньона. Установка через приложение ниже.",
+            Text::Note,
+        )?;
+        style::label(cx.tree, card, "Целевая игра: выбранная в «Обзоре игр»", Text::Body)?;
+        style::label(cx.tree, card, "СТАТУС И СВЯЗЬ", Text::Heading)?;
         self.status = Some(style::label(cx.tree, card, "Выберите игру", Text::Value)?);
         self.version = Some(style::label(cx.tree, card, "Версия: —", Text::Note)?);
         let row = style::row(cx.tree, card)?;
-        self.install = Some(style::button(cx.tree, row, "Установить", Button::Primary)?);
-        self.remove = Some(style::button(cx.tree, row, "Удалить", Button::Secondary)?);
+        self.install = Some(style::button(cx.tree, row, "УСТАНОВИТЬ / ОБНОВИТЬ", Button::Primary)?);
+        self.remove = Some(style::button(cx.tree, row, "УДАЛИТЬ", Button::Secondary)?);
+        self.ping = Some(style::button(cx.tree, row, "ПРОВЕРИТЬ СВЯЗЬ", Button::Secondary)?);
+        self.refresh_button = Some(style::button(cx.tree, row, "ОБНОВИТЬ СТАТУС", Button::Secondary)?);
+        let live = style::card(cx.tree, host)?;
+        style::label(cx.tree, live, "ЖИВОЙ ИНСПЕКТОР", Text::Heading)?;
+        style::label(
+            cx.tree,
+            live,
+            "Показываются только ответы протокола Companion: info и list_inventory.",
+            Text::Note,
+        )?;
+        self.inspect = Some(style::button(cx.tree, live, "ПОЛУЧИТЬ ДАННЫЕ", Button::Secondary)?);
+        style::label(
+            cx.tree,
+            live,
+            "Для живой проверки нужен установленный Companion-протокол.",
+            Text::Note,
+        )?;
+        let s2 = style::card(cx.tree, host)?;
+        style::label(
+            cx.tree,
+            s2,
+            "S.T.A.L.K.E.R. 2 — команды игры (экспериментально)",
+            Text::Heading,
+        )?;
+        style::label(cx.tree, s2, "Нужны S2 на ПК, UE4SS и установленный мод. Команды выполняет сама игра (XSetGodMode, XSetNoClipGSC, XSetTimeSpeed).", Text::Note)?;
+        for command in [
+            "Бессмертие: вкл",
+            "Бессмертие: выкл",
+            "Полёт: вкл",
+            "Полёт: выкл",
+            "Время ×5",
+            "Время: норма",
+        ] {
+            style::button(cx.tree, s2, command, Button::Secondary)?;
+        }
+        let all = style::card(cx.tree, host)?;
+        style::label(cx.tree, all, "ВСЕ ИГРЫ", Text::Heading)?;
+        for game in [
+            "S.T.A.L.K.E.R. Зов Припяти",
+            "S.T.A.L.K.E.R. Чистое Небо",
+            "S.T.A.L.K.E.R. Тень Чернобыля",
+            "Зов Припяти (Enhanced Edition)",
+            "Чистое Небо (Enhanced Edition)",
+            "Тень Чернобыля (Enhanced Edition)",
+            "S.T.A.L.K.E.R. 2 (экспериментально, нужен UE4SS)",
+        ] {
+            style::label(cx.tree, all, &format!("[ ] {game} · игра не найдена"), Text::Body)?;
+        }
+        style::button(
+            cx.tree,
+            all,
+            "УСТАНОВИТЬ / ОБНОВИТЬ ВО ВСЕ ОТМЕЧЕННЫЕ",
+            Button::Secondary,
+        )?;
         let hot = style::card(cx.tree, host)?;
-        style::label(cx.tree, hot, "ГОРЯЧИЕ КЛАВИШИ МОДА", Text::Heading)?;
-        let layout = sse_companion::hotkeys::HotkeyLayout::default();
+        style::label(cx.tree, hot, "ГОРЯЧИЕ КЛАВИШИ", Text::Heading)?;
+        style::label(cx.tree, hot, "Приложение перехватывает сочетание и отправляет команду моду через файл-протокол. Игра должна быть запущена с установленным модом.", Text::Note)?;
+        let hotkey_path = sse_app::paths::default_data_directory().join("hotkeys.txt");
+        let layout = sse_companion::hotkeys::HotkeyLayout::load(&hotkey_path);
         for action in [
             sse_companion::hotkeys::HotkeyAction::Heal,
             sse_companion::hotkeys::HotkeyAction::RepairEquipped,
@@ -262,6 +331,9 @@ impl Screen for Companion {
             let key = layout.binding(action).map_or_else(|| "—".to_owned(), |v| v.to_string());
             style::label(cx.tree, hot, &format!("{} — {key}", action.name()), Text::Body)?;
         }
+        style::label(cx.tree, hot, &format!("Файл: {}", hotkey_path.display()), Text::Note)?;
+        self.save_hotkeys = Some(style::button(cx.tree, hot, "СОХРАНИТЬ КЛАВИШИ", Button::Primary)?);
+        self.default_hotkeys = Some(style::button(cx.tree, hot, "ПО УМОЛЧАНИЮ", Button::Secondary)?);
         Ok(())
     }
     fn shown(&mut self, cx: &mut Context<'_>) -> Result<()> {
@@ -274,6 +346,34 @@ impl Screen for Companion {
         message: &Message<AppMessage>,
         clicked: Option<WidgetId>,
     ) -> Result<()> {
+        if clicked.is_some() && clicked == self.refresh_button {
+            self.refresh(cx);
+            return Ok(());
+        }
+        if clicked.is_some() && (clicked == self.ping || clicked == self.inspect) {
+            cx.status = Some(
+                "Для живой связи ядру нужен resolver каталога file-protocol для выбранной игры; UI не угадывает путь."
+                    .to_owned(),
+            );
+            return Ok(());
+        }
+        if clicked.is_some() && clicked == self.default_hotkeys {
+            let path = sse_app::paths::default_data_directory().join("hotkeys.txt");
+            match sse_companion::hotkeys::HotkeyLayout::default().save(&path) {
+                Ok(()) => cx.status = Some(format!("Клавиши сохранены: {}.", path.display())),
+                Err(error) => cx.status = Some(format!("Клавиши не сохранены: {error}")),
+            }
+            return Ok(());
+        }
+        if clicked.is_some() && clicked == self.save_hotkeys {
+            let path = sse_app::paths::default_data_directory().join("hotkeys.txt");
+            let layout = sse_companion::hotkeys::HotkeyLayout::load(&path);
+            match layout.save(&path) {
+                Ok(()) => cx.status = Some(format!("Клавиши сохранены: {}.", path.display())),
+                Err(error) => cx.status = Some(format!("Клавиши не сохранены: {error}")),
+            }
+            return Ok(());
+        }
         if clicked.is_some() && (clicked == self.install || clicked == self.remove) {
             if !confirm_twice(&mut self.armed, clicked, &mut cx.status) {
                 return Ok(());
