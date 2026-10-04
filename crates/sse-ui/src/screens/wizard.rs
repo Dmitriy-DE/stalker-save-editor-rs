@@ -138,7 +138,7 @@ impl Wizard {
             let path = self.input.text();
             let trimmed = path.trim();
             if !trimmed.is_empty() && Self::save_directory(PathBuf::from(trimmed))? {
-                self.input.set_text("")?;
+                self.input = TextInput::new("", EditConfig { mode: FieldMode::SingleLine, max_graphemes: 4096, history_limit: 16, filter: InputFilter::Any })?;
                 tree.set_text(self.path_label, "Путь к папке с сейвами…")?;
             }
         }
