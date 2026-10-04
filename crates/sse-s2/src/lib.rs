@@ -2,6 +2,7 @@
 
 use sse_core::{Error, Result, SaveBuffer};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::ops::Range;
 
 /// Maximum decoded S2 image admitted by the bounded Rust reader.
 pub const MAXIMUM_UNPACKED_SIZE: usize = 256 * 1024 * 1024;
@@ -15,6 +16,32 @@ const WALLET_ANCHOR: [u8; 32] = [
 const LEGACY_CONTAINER_ID: [u8; 12] = [0xca, 0xcf, 0xa8, 0x48, 0xc8, 0x95, 0x21, 0x49, 0xb5, 0x1b, 0x94, 0x44];
 const STASH_MARKER: [u8; 10] = [0xff, 0xff, 0xff, 0xff, 0x06, 0x01, 0x00, 0x00, 0x00, 0x06];
 const STASH_HEADER_TAIL: [u8; 4] = [0x03, 0x00, 0x00, 0x00];
+
+/// Change supported by the compiled S2 writer.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum S2Change {
+    /// Replace the player wallet balance.
+    SetMoney(u32),
+    /// Replace a validated stack count and scale its total weight.
+    SetStackCount {
+        /// Unique object handle.
+        handle: u32,
+        /// New positive stack count.
+        count: u32,
+    },
+    /// Replace a validated equipped-item condition in the inclusive 0..=1 range.
+    SetDurability {
+        /// Unique equipped-item handle.
+        handle: u32,
+        /// New durability fraction from zero through one.
+        condition: f32,
+    },
+    /// Move an item from the stash into the first fitting backpack cells.
+    MoveStashToBackpack {
+        /// Unique item handle owned by the stash.
+        handle: u32,
+    },
+}
 
 /// One S2 container's unpacked image and integrity metadata.
 pub struct S2Container {
@@ -196,6 +223,21 @@ impl S2Save {
     pub fn stash(&self) -> Result<S2StashLayout> {
         S2StashLayout::locate(self.container.image(), &self.index)
     }
+
+    /// Whether this S2 layout can be written with the safe RLE Kraken encoder.
+    #[must_use]
+    pub const fn can_write(&self) -> bool {
+        true
+    }
+
+    /// Applies supported changes and encodes a packed S2 save with a CRC-checked read-back.
+    ///
+    /// # Errors
+    /// Reports invalid, ambiguous, or unsupported edit requests without modifying this parsed save.
+    pub fn write_changes(&self, changes: &[S2Change]) -> Result<Vec<u8>> {
+        let (image, changed_ranges) = apply_changes_to_image(self, changes)?;
+        pack_and_verify_s2_image(&image, &changed_ranges)
+    }
 }
 
 /// One validated grid cell.
@@ -297,8 +339,12 @@ pub struct S2OrphanItem {
 /// Validated stash handle and grid offsets.
 pub struct S2StashLayout {
     owned_count_offset: usize,
+    owned_handles_offset: usize,
     owned_handles: Vec<u32>,
     live_handles: Vec<u32>,
+    grid_count_offset: usize,
+    grid_offset: usize,
+    grid_count: usize,
     grid_cells: Vec<S2GridCell>,
     grid_end_offset: usize,
 }
@@ -384,8 +430,12 @@ impl S2StashLayout {
         let grid_end_offset = checked_add(grid_offset, grid_bytes, "S2 stash grid end overflow")?;
         Ok(Self {
             owned_count_offset,
+            owned_handles_offset: handles_offset,
             owned_handles,
             live_handles,
+            grid_count_offset,
+            grid_offset,
+            grid_count,
             grid_cells,
             grid_end_offset,
         })
@@ -1178,6 +1228,7 @@ pub struct S2InventoryIndex {
     owned_handles: Vec<u32>,
     grid_count_offset: usize,
     grid_offset: usize,
+    grid_count: usize,
     grid_cells: Vec<S2GridCell>,
     grid_end_offset: usize,
     grid_handle_count: usize,
@@ -1306,6 +1357,7 @@ impl S2InventoryIndex {
             owned_handles,
             grid_count_offset,
             grid_offset,
+            grid_count,
             grid_cells,
             grid_end_offset,
             grid_handle_count: all_grid_handles.len(),
@@ -1422,6 +1474,446 @@ fn require_range(bytes: &[u8], offset: usize, length: usize, message: &'static s
     Ok(())
 }
 
+fn apply_changes_to_image(save: &S2Save, changes: &[S2Change]) -> Result<(Vec<u8>, Vec<Range<usize>>)> {
+    if changes.is_empty() {
+        return Err(Error::Refused("S2 write requires at least one change".to_owned()));
+    }
+    if save.index.is_legacy {
+        return Err(Error::Refused("legacy S2 layouts are read-only".to_owned()));
+    }
+    if changes
+        .iter()
+        .filter(|change| matches!(change, S2Change::MoveStashToBackpack { .. }))
+        .count()
+        > 1
+    {
+        return Err(Error::Refused(
+            "one S2 edit batch may move at most one stash item".to_owned(),
+        ));
+    }
+
+    let durability_items = changes
+        .iter()
+        .any(|change| matches!(change, S2Change::SetDurability { .. }))
+        .then(|| save.items());
+    let mut image = save.container.image().to_vec();
+    let mut changed_ranges = Vec::with_capacity(changes.len().saturating_add(3));
+    let mut stash_move = None;
+
+    for change in changes {
+        match *change {
+            S2Change::SetMoney(amount) => {
+                write_u32_at(&mut image, save.index.money_offset, amount)?;
+                changed_ranges.push(save.index.money_offset..save.index.money_offset.saturating_add(4));
+            }
+            S2Change::SetStackCount { handle, count } => {
+                if !(1..=10_000_000).contains(&count) {
+                    return Err(Error::Refused(
+                        "S2 stack count is outside the supported range".to_owned(),
+                    ));
+                }
+                let record = save
+                    .objects
+                    .unique(handle)
+                    .ok_or_else(|| Error::Refused("S2 stack handle is missing or ambiguous".to_owned()))?;
+                if save.unresolved_handles.contains(&handle) || !is_editable_stack(record.kind_code, record.count) {
+                    return Err(Error::Refused(
+                        "S2 stack kind or layout is not confirmed editable".to_owned(),
+                    ));
+                }
+                if record.kind_code == 8 && count == 1 {
+                    return Err(Error::Refused(
+                        "S2 kind-8 stacks cannot be reduced to one before packing".to_owned(),
+                    ));
+                }
+                let unit_weight = record.total_weight / record.count as f32;
+                let total_weight = unit_weight * count as f32;
+                if !total_weight.is_finite() || !(0.0..=10_000_000.0).contains(&total_weight) {
+                    return Err(Error::Refused(
+                        "S2 stack weight would leave the supported range".to_owned(),
+                    ));
+                }
+                write_u32_at(&mut image, record.count_offset, count)?;
+                write_u32_at(&mut image, record.weight_offset, total_weight.to_bits())?;
+                changed_ranges.push(record.count_offset..record.count_offset.saturating_add(4));
+                changed_ranges.push(record.weight_offset..record.weight_offset.saturating_add(4));
+            }
+            S2Change::SetDurability { handle, condition } => {
+                if !condition.is_finite() || !(0.0..=1.0).contains(&condition) {
+                    return Err(Error::Refused(
+                        "S2 durability must be finite and between zero and one".to_owned(),
+                    ));
+                }
+                let item = durability_items
+                    .as_ref()
+                    .and_then(|items| items.iter().find(|item| item.handle == handle))
+                    .ok_or_else(|| Error::Refused("S2 durability handle is missing or ambiguous".to_owned()))?;
+                if save.unresolved_handles.contains(&handle) {
+                    return Err(Error::Refused("S2 durability item is unresolved".to_owned()));
+                }
+                let offset = item
+                    .condition_offset
+                    .filter(|_| item.condition.is_some())
+                    .ok_or_else(|| Error::Refused("S2 durability field is not confirmed editable".to_owned()))?;
+                write_u32_at(&mut image, offset, condition.to_bits())?;
+                changed_ranges.push(offset..offset.saturating_add(4));
+            }
+            S2Change::MoveStashToBackpack { handle } => stash_move = Some(handle),
+        }
+    }
+
+    if let Some(handle) = stash_move {
+        let stash = save.stash()?;
+        move_stash_item_to_backpack(save, &stash, handle, &mut image, &mut changed_ranges)?;
+    }
+    merge_ranges(&mut changed_ranges);
+    Ok((image, changed_ranges))
+}
+
+fn move_stash_item_to_backpack(
+    save: &S2Save,
+    stash: &S2StashLayout,
+    handle: u32,
+    image: &mut Vec<u8>,
+    changed_ranges: &mut Vec<Range<usize>>,
+) -> Result<()> {
+    if !save.unresolved_handles.is_empty() {
+        return Err(Error::Refused(
+            "S2 stash move requires a fully resolved inventory".to_owned(),
+        ));
+    }
+    let record = save
+        .objects
+        .unique(handle)
+        .ok_or_else(|| Error::Refused("S2 stash item handle is missing or ambiguous".to_owned()))?;
+    if record.record_offset < stash.grid_end_offset {
+        return Err(Error::Refused(
+            "S2 stash item record precedes the stash grid".to_owned(),
+        ));
+    }
+    let stash_owned_index = stash
+        .owned_handles
+        .iter()
+        .position(|owned| *owned == handle)
+        .ok_or_else(|| Error::Refused("S2 handle is not owned by the stash".to_owned()))?;
+    if stash.owned_handles.iter().filter(|owned| **owned == handle).count() != 1 {
+        return Err(Error::Refused("S2 stash handle is duplicated".to_owned()));
+    }
+    if save.index.owned_handles.contains(&handle) {
+        return Err(Error::Refused(
+            "S2 stash item is already owned by the backpack".to_owned(),
+        ));
+    }
+    if !is_known_kind(record.kind_code) && record.kind_code != 3 {
+        return Err(Error::Refused(
+            "S2 stash item kind is not confirmed editable".to_owned(),
+        ));
+    }
+    if read_u8(image, record.record_offset.saturating_add(15))? != 1
+        || read_u8(image, record.record_offset.saturating_add(28))? & 0x08 == 0
+    {
+        return Err(Error::Refused("S2 object is not marked as stash-owned".to_owned()));
+    }
+    let stash_cells = stash
+        .grid_cells
+        .iter()
+        .filter(|cell| cell.handle == handle)
+        .copied()
+        .collect::<Vec<_>>();
+    if stash_cells.is_empty() {
+        return Err(Error::Refused("S2 stash item footprint is missing".to_owned()));
+    }
+    let min_x = stash_cells.iter().map(|cell| cell.x).min().unwrap_or_default();
+    let max_x = stash_cells.iter().map(|cell| cell.x).max().unwrap_or_default();
+    let min_y = stash_cells.iter().map(|cell| cell.y).min().unwrap_or_default();
+    let max_y = stash_cells.iter().map(|cell| cell.y).max().unwrap_or_default();
+    let width = max_x.saturating_sub(min_x).saturating_add(1);
+    let height = max_y.saturating_sub(min_y).saturating_add(1);
+    let footprint = stash_cells.len();
+    let unique_positions = stash_cells.iter().map(|cell| (cell.x, cell.y)).collect::<HashSet<_>>();
+    if unique_positions.len() != stash_cells.len() {
+        return Err(Error::Refused(
+            "S2 stash item footprint contains duplicate cells".to_owned(),
+        ));
+    }
+    if width == 0 || height == 0 || width > GRID_WIDTH || height > 128 {
+        return Err(Error::Refused("S2 stash item does not fit a backpack".to_owned()));
+    }
+    let new_owned_count = save
+        .index
+        .owned_handles
+        .len()
+        .checked_add(1)
+        .filter(|count| *count <= MAXIMUM_OWNED_HANDLES)
+        .ok_or_else(|| Error::Refused("S2 backpack owned-handle limit would be exceeded".to_owned()))?;
+    let new_grid_count = save
+        .index
+        .grid_count
+        .checked_add(footprint)
+        .filter(|count| *count <= MAXIMUM_GRID_CELLS && *count <= usize::from(u16::MAX))
+        .ok_or_else(|| Error::Refused("S2 backpack grid-cell limit would be exceeded".to_owned()))?;
+    let occupied = save
+        .index
+        .grid_cells
+        .iter()
+        .map(|cell| (cell.x, cell.y))
+        .collect::<HashSet<_>>();
+    let mut placement = None;
+    for y in 0..=128_u16.saturating_sub(height) {
+        for x in 0..=GRID_WIDTH.saturating_sub(width) {
+            let fits = stash_cells.iter().all(|cell| {
+                let dx = cell.x.saturating_sub(min_x);
+                let dy = cell.y.saturating_sub(min_y);
+                x.checked_add(dx)
+                    .zip(y.checked_add(dy))
+                    .is_some_and(|position| !occupied.contains(&position))
+            });
+            if fits {
+                placement = Some((x, y));
+                break;
+            }
+        }
+        if placement.is_some() {
+            break;
+        }
+    }
+    let (place_x, place_y) =
+        placement.ok_or_else(|| Error::Refused("S2 backpack has no fitting free cells".to_owned()))?;
+
+    let added_cells = footprint
+        .checked_mul(8)
+        .ok_or_else(|| Error::damaged("S2 added grid-cell byte count overflows"))?;
+    let inserted_bytes = 4_usize
+        .checked_add(added_cells)
+        .ok_or_else(|| Error::damaged("S2 stash move insertion size overflows"))?;
+    let removed_bytes = stash_cells
+        .len()
+        .checked_mul(8)
+        .ok_or_else(|| Error::damaged("S2 removed stash-cell byte count overflows"))?;
+    let final_len = image
+        .len()
+        .checked_add(inserted_bytes)
+        .and_then(|length| length.checked_sub(removed_bytes))
+        .ok_or_else(|| Error::damaged("S2 final image length overflows"))?;
+    if final_len > MAXIMUM_UNPACKED_SIZE {
+        return Err(Error::Refused(
+            "S2 edit would exceed the maximum unpacked image size".to_owned(),
+        ));
+    }
+    let original_range_count = changed_ranges.len();
+    image
+        .try_reserve(inserted_bytes)
+        .map_err(|error| Error::Refused(format!("cannot reserve S2 working image: {error}")))?;
+
+    write_u16_at(
+        image,
+        save.index.owned_count_offset,
+        u16::try_from(new_owned_count).map_err(|_| Error::damaged("S2 owned count does not fit u16"))?,
+    )?;
+    insert_bytes(image, save.index.grid_count_offset, &handle.to_le_bytes())?;
+    let player_grid_count_offset = save
+        .index
+        .grid_count_offset
+        .checked_add(4)
+        .ok_or_else(|| Error::damaged("S2 player grid count offset overflows"))?;
+    write_u16_at(
+        image,
+        player_grid_count_offset,
+        u16::try_from(new_grid_count).map_err(|_| Error::damaged("S2 grid count does not fit u16"))?,
+    )?;
+    let player_grid_insert_offset = save
+        .index
+        .grid_end_offset
+        .checked_add(4)
+        .ok_or_else(|| Error::damaged("S2 player grid insertion offset overflows"))?;
+    let mut added_grid_bytes = Vec::with_capacity(added_cells);
+    for cell in &stash_cells {
+        let x = place_x.saturating_add(cell.x.saturating_sub(min_x));
+        let y = place_y.saturating_add(cell.y.saturating_sub(min_y));
+        added_grid_bytes.extend_from_slice(&handle.to_le_bytes());
+        added_grid_bytes.extend_from_slice(&x.to_le_bytes());
+        added_grid_bytes.extend_from_slice(&y.to_le_bytes());
+    }
+    insert_bytes(image, player_grid_insert_offset, &added_grid_bytes)?;
+
+    let shifted_stash_handles = stash
+        .owned_handles_offset
+        .checked_add(inserted_bytes)
+        .ok_or_else(|| Error::damaged("S2 shifted stash handle offset overflows"))?;
+    let shifted_stash_grid_count = stash
+        .grid_count_offset
+        .checked_add(inserted_bytes)
+        .ok_or_else(|| Error::damaged("S2 shifted stash grid count offset overflows"))?;
+    let shifted_stash_grid = stash
+        .grid_offset
+        .checked_add(inserted_bytes)
+        .ok_or_else(|| Error::damaged("S2 shifted stash grid offset overflows"))?;
+    let new_stash_grid_count = stash
+        .grid_count
+        .checked_sub(stash_cells.len())
+        .ok_or_else(|| Error::damaged("S2 stash grid count underflows"))?;
+    write_u32_at(
+        image,
+        shifted_stash_handles
+            .checked_add(stash_owned_index.saturating_mul(4))
+            .ok_or_else(|| Error::damaged("S2 moved stash handle offset overflows"))?,
+        u32::MAX,
+    )?;
+    write_u16_at(
+        image,
+        shifted_stash_grid_count,
+        u16::try_from(new_stash_grid_count).map_err(|_| Error::damaged("S2 stash grid count does not fit u16"))?,
+    )?;
+    let mut cell_indexes = stash
+        .grid_cells
+        .iter()
+        .enumerate()
+        .filter_map(|(index, cell)| (cell.handle == handle).then_some(index))
+        .collect::<Vec<_>>();
+    cell_indexes.sort_unstable_by(|left, right| right.cmp(left));
+    for cell_index in cell_indexes {
+        let start = shifted_stash_grid
+            .checked_add(cell_index.saturating_mul(8))
+            .ok_or_else(|| Error::damaged("S2 stash cell removal offset overflows"))?;
+        remove_bytes(image, start, 8)?;
+    }
+
+    let shifted_bytes = inserted_bytes
+        .checked_sub(removed_bytes)
+        .ok_or_else(|| Error::damaged("S2 stash transfer unexpectedly shrank the image"))?;
+    let moved_record_offset = record
+        .record_offset
+        .checked_add(shifted_bytes)
+        .ok_or_else(|| Error::damaged("S2 moved object record offset overflows"))?;
+    let position_x_offset = moved_record_offset.saturating_add(11);
+    let position_y_offset = moved_record_offset.saturating_add(13);
+    let record_flag_offset = moved_record_offset.saturating_add(15);
+    let flags_offset = moved_record_offset.saturating_add(28);
+    write_u16_at(image, position_x_offset, place_x)?;
+    write_u16_at(image, position_y_offset, place_y)?;
+    write_u8_at(image, record_flag_offset, 0)?;
+    let flags = read_u8(image, flags_offset)?;
+    write_u8_at(image, flags_offset, flags & !0x08)?;
+
+    let player_end = save.index.grid_end_offset.saturating_add(inserted_bytes);
+    let stash_start = stash.owned_count_offset.saturating_add(inserted_bytes);
+    let stash_end = stash
+        .grid_offset
+        .saturating_add(inserted_bytes)
+        .saturating_sub(removed_bytes);
+    changed_ranges.push(save.index.owned_count_offset..player_end);
+    changed_ranges.push(stash_start..stash_end);
+    changed_ranges.push(position_x_offset..record_flag_offset.saturating_add(1));
+    changed_ranges.push(flags_offset..flags_offset.saturating_add(1));
+    for range in changed_ranges.iter_mut().take(original_range_count) {
+        if range.start >= stash.grid_end_offset {
+            range.start = range.start.saturating_add(shifted_bytes);
+            range.end = range.end.saturating_add(shifted_bytes);
+        }
+    }
+    Ok(())
+}
+
+fn pack_and_verify_s2_image(image: &[u8], changed_ranges: &[Range<usize>]) -> Result<Vec<u8>> {
+    if image.is_empty() || image.len() > MAXIMUM_UNPACKED_SIZE {
+        return Err(Error::Refused(
+            "S2 image is outside the supported size range".to_owned(),
+        ));
+    }
+    let unpacked_size =
+        u32::try_from(image.len()).map_err(|_| Error::Refused("S2 image exceeds u32 length".to_owned()))?;
+    for range in changed_ranges {
+        if image.get(range.clone()).is_none() {
+            return Err(Error::damaged("S2 changed range is out of bounds"));
+        }
+    }
+    let compressed = sse_codecs::kraken_c3a::compress(image);
+    if compressed.is_empty() {
+        return Err(Error::Refused("Kraken encoder refused the S2 image".to_owned()));
+    }
+    let capacity = compressed
+        .len()
+        .checked_add(8)
+        .ok_or_else(|| Error::damaged("S2 output container length overflows"))?;
+    let mut packed = Vec::with_capacity(capacity);
+    packed.extend_from_slice(&unpacked_size.to_le_bytes());
+    packed.extend_from_slice(&compressed);
+    let crc = sse_codecs::crc32::crc32(&packed);
+    packed.extend_from_slice(&crc.to_le_bytes());
+
+    let verified = S2Container::from_bytes(&packed)?;
+    if verified.image() != image {
+        return Err(Error::damaged("S2 write verification differs from the complete image"));
+    }
+    Ok(packed)
+}
+
+fn write_u8_at(bytes: &mut [u8], offset: usize, value: u8) -> Result<()> {
+    *bytes
+        .get_mut(offset)
+        .ok_or_else(|| Error::damaged("S2 write offset is out of bounds"))? = value;
+    Ok(())
+}
+
+fn write_u16_at(bytes: &mut [u8], offset: usize, value: u16) -> Result<()> {
+    let end = checked_add(offset, 2, "S2 write range overflows")?;
+    bytes
+        .get_mut(offset..end)
+        .ok_or_else(|| Error::damaged("S2 write range is out of bounds"))?
+        .copy_from_slice(&value.to_le_bytes());
+    Ok(())
+}
+
+fn write_u32_at(bytes: &mut [u8], offset: usize, value: u32) -> Result<()> {
+    let end = checked_add(offset, 4, "S2 write range overflows")?;
+    bytes
+        .get_mut(offset..end)
+        .ok_or_else(|| Error::damaged("S2 write range is out of bounds"))?
+        .copy_from_slice(&value.to_le_bytes());
+    Ok(())
+}
+
+fn insert_bytes(image: &mut Vec<u8>, offset: usize, inserted: &[u8]) -> Result<()> {
+    if offset > image.len() {
+        return Err(Error::damaged("S2 insertion offset is out of bounds"));
+    }
+    let previous_len = image.len();
+    let new_len = previous_len
+        .checked_add(inserted.len())
+        .ok_or_else(|| Error::damaged("S2 image length overflows during insertion"))?;
+    image.resize(new_len, 0);
+    image.copy_within(offset..previous_len, offset.saturating_add(inserted.len()));
+    let end = offset.saturating_add(inserted.len());
+    image
+        .get_mut(offset..end)
+        .ok_or_else(|| Error::damaged("S2 insertion range is out of bounds"))?
+        .copy_from_slice(inserted);
+    Ok(())
+}
+
+fn remove_bytes(image: &mut Vec<u8>, offset: usize, length: usize) -> Result<()> {
+    let end = checked_add(offset, length, "S2 removal range overflows")?;
+    if image.get(offset..end).is_none() {
+        return Err(Error::damaged("S2 removal range is out of bounds"));
+    }
+    let previous_len = image.len();
+    image.copy_within(end..previous_len, offset);
+    image.truncate(previous_len.saturating_sub(length));
+    Ok(())
+}
+
+fn merge_ranges(ranges: &mut Vec<Range<usize>>) {
+    ranges.sort_unstable_by_key(|range| range.start);
+    ranges.dedup_by(|next, previous| {
+        if next.start <= previous.end {
+            previous.end = previous.end.max(next.end);
+            true
+        } else {
+            false
+        }
+    });
+}
+
 fn find_all(bytes: &[u8], needle: &[u8]) -> Vec<usize> {
     if needle.is_empty() || bytes.len() < needle.len() {
         return Vec::new();
@@ -1490,13 +1982,266 @@ fn validate_owned_handles(handles: &[u32], legacy: bool) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{S2Container, S2InventoryIndex, S2Save, S2StashLayout};
+    use super::{
+        apply_changes_to_image, pack_and_verify_s2_image, S2Change, S2Container, S2InventoryIndex, S2Save,
+        S2StashLayout,
+    };
     use sse_codecs::crc32;
     use sse_core::Error;
 
     const SYNTHETIC_SAVE: &[u8] = include_bytes!("../../../fixtures/synthetic/synthetic-s2.sav");
     const SYNTHETIC_RAW: &[u8] = include_bytes!("../../../fixtures/synthetic/synthetic-s2.raw");
     const SYNTHETIC_STASH_RAW: &[u8] = include_bytes!("../../../fixtures/synthetic/synthetic-s2-stash.raw");
+    const WRITER_S2_MONEY_SOURCE: &[u8] =
+        include_bytes!("../../../fixtures/synthetic/writer-s2-money/s2-money-source.sav");
+    const WRITER_S2_MONEY_EXPECTED: &[u8] =
+        include_bytes!("../../../fixtures/synthetic/writer-s2-money/s2-money-expected.raw");
+    const WRITER_S2_STACK_SOURCE: &[u8] =
+        include_bytes!("../../../fixtures/synthetic/writer-s2-stacks/s2-stacks-source.sav");
+    const WRITER_S2_STACK_EXPECTED: &[u8] =
+        include_bytes!("../../../fixtures/synthetic/writer-s2-stacks/s2-stacks-expected.raw");
+    const WRITER_S2_ARMOR_MONEY_SOURCE: &[u8] =
+        include_bytes!("../../../fixtures/synthetic/writer-s2-equipment/s2-equipment-armor-money-source.sav");
+    const WRITER_S2_ARMOR_MONEY_EXPECTED: &[u8] =
+        include_bytes!("../../../fixtures/synthetic/writer-s2-equipment/s2-equipment-armor-money-expected.raw");
+    const WRITER_S2_WEAPON_SOURCE: &[u8] =
+        include_bytes!("../../../fixtures/synthetic/writer-s2-equipment/s2-equipment-weapon-source.sav");
+    const WRITER_S2_WEAPON_EXPECTED: &[u8] =
+        include_bytes!("../../../fixtures/synthetic/writer-s2-equipment/s2-equipment-weapon-expected.raw");
+    const WRITER_S2_STASH_SOURCE: &[u8] =
+        include_bytes!("../../../fixtures/synthetic/writer-s2-stash/s2-stash-source.raw");
+    const WRITER_S2_STASH_EXPECTED: &[u8] =
+        include_bytes!("../../../fixtures/synthetic/writer-s2-stash/s2-stash-expected.raw");
+
+    #[test]
+    fn public_s2_writer_round_trips_money_stack_and_crc() {
+        let parsed = S2Save::from_bytes(WRITER_S2_STACK_SOURCE);
+        assert!(parsed.is_ok());
+        let Ok(parsed) = parsed else { return };
+        let original_image = parsed.container().image().to_vec();
+        let original_sha = sse_codecs::sha256::sha256_hex(WRITER_S2_STACK_SOURCE);
+        let changes = [
+            S2Change::SetMoney(876_543),
+            S2Change::SetStackCount {
+                handle: 0x3000_0001,
+                count: 7,
+            },
+        ];
+
+        let packed = parsed.write_changes(&changes);
+        assert!(packed.is_ok(), "writer returned {packed:?}");
+        let Ok(packed) = packed else { return };
+        let verified = S2Save::from_bytes(&packed);
+        assert!(verified.is_ok());
+        let Ok(verified) = verified else { return };
+        assert_eq!(verified.money(), 876_543);
+        assert_eq!(
+            verified
+                .items()
+                .iter()
+                .find(|item| item.handle == 0x3000_0001)
+                .map(|item| item.count),
+            Some(7)
+        );
+        let trailer_offset = packed.len().saturating_sub(4);
+        let stored_crc = super::read_u32(&packed, trailer_offset);
+        let computed_crc = packed.get(..trailer_offset).map(crc32::crc32);
+        assert!(matches!((stored_crc, computed_crc), (Ok(stored), Some(computed)) if stored == computed));
+        assert_eq!(parsed.container().image(), original_image);
+        assert_eq!(sse_codecs::sha256::sha256_hex(WRITER_S2_STACK_SOURCE), original_sha);
+    }
+
+    #[test]
+    #[ignore = "manual Release packed S2 writer throughput measurement"]
+    fn release_s2_packed_writer_throughput_measurement() {
+        let parsed = S2Save::from_bytes(WRITER_S2_STACK_SOURCE);
+        assert!(parsed.is_ok());
+        let Ok(parsed) = parsed else { return };
+        let iterations = 10_000_u32;
+        let started = std::time::Instant::now();
+        let mut checksum = 0_u64;
+        for value in 0..iterations {
+            let packed = parsed.write_changes(&[
+                S2Change::SetMoney(value),
+                S2Change::SetStackCount {
+                    handle: 0x3000_0001,
+                    count: 7,
+                },
+            ]);
+            assert!(packed.is_ok());
+            let Ok(packed) = packed else { return };
+            checksum = checksum.wrapping_add(u64::try_from(packed.len()).unwrap_or(u64::MAX));
+        }
+        let elapsed = started.elapsed();
+        println!(
+            "S2 packed writer: {iterations} money+stack edits of 350 bytes in {elapsed:?}; {:.3} us/edit; output bytes {checksum}",
+            elapsed.as_secs_f64() * 1_000_000.0 / f64::from(iterations)
+        );
+        assert!(checksum > 0);
+    }
+
+    #[test]
+    fn s2_money_writer_matches_the_reference_image_and_writes_a_container() {
+        let parsed = S2Save::from_bytes(WRITER_S2_MONEY_SOURCE);
+        assert!(parsed.is_ok());
+        let Ok(parsed) = parsed else { return };
+        let result = apply_changes_to_image(&parsed, &[S2Change::SetMoney(876_543)]);
+        assert_eq!(result.map(|(image, _)| image), Ok(WRITER_S2_MONEY_EXPECTED.to_vec()));
+        assert!(parsed.can_write());
+        let packed = parsed.write_changes(&[S2Change::SetMoney(876_543)]);
+        assert!(packed.is_ok());
+        let Ok(packed) = packed else { return };
+        let verified = S2Save::from_bytes(&packed);
+        assert!(verified.is_ok());
+        let Ok(verified) = verified else { return };
+        assert_eq!(verified.money(), 876_543);
+        assert_eq!(parsed.money(), 100);
+    }
+
+    #[test]
+    fn s2_writer_packs_and_verifies_changed_ranges() {
+        let parsed = S2Save::from_bytes(WRITER_S2_MONEY_SOURCE);
+        assert!(parsed.is_ok());
+        let Ok(parsed) = parsed else { return };
+        let image = apply_changes_to_image(&parsed, &[S2Change::SetMoney(876_543)]);
+        assert!(image.is_ok());
+        let Ok((image, changed_ranges)) = image else { return };
+        let packed = pack_and_verify_s2_image(&image, &changed_ranges);
+        assert!(packed.is_ok());
+        let Ok(packed) = packed else { return };
+        let reread = S2Container::from_bytes(&packed);
+        assert!(reread.is_ok());
+        let Ok(reread) = reread else { return };
+        assert_eq!(reread.image(), image);
+        assert_eq!(super::read_u32(&packed, 0), Ok(350));
+        let trailer = packed.len().saturating_sub(4);
+        let expected_crc = packed.get(..trailer).map(crc32::crc32);
+        assert!(matches!(
+            (super::read_u32(&packed, trailer), expected_crc),
+            (Ok(stored), Some(computed)) if stored == computed
+        ));
+    }
+
+    #[test]
+    #[ignore = "manual Release raw-writer throughput measurement"]
+    fn release_s2_raw_writer_throughput_measurement() {
+        let parsed = S2Save::from_bytes(WRITER_S2_MONEY_SOURCE);
+        assert!(parsed.is_ok());
+        let Ok(parsed) = parsed else { return };
+        let iterations = 100_000_u32;
+        let started = std::time::Instant::now();
+        let mut checksum = 0_u64;
+        for _ in 0..iterations {
+            let changed = apply_changes_to_image(&parsed, &[S2Change::SetMoney(876_543)]);
+            assert!(changed.is_ok());
+            let Ok((image, _)) = changed else { return };
+            checksum = checksum.wrapping_add(u64::from(super::read_u32(&image, 50).unwrap_or_default()));
+        }
+        let elapsed = started.elapsed();
+        println!(
+            "S2 money writer: {iterations} raw edits of 350 bytes in {elapsed:?}; {:.3} us/edit; checksum {checksum}",
+            elapsed.as_secs_f64() * 1_000_000.0 / f64::from(iterations)
+        );
+        assert_eq!(checksum, 87_654_300_000);
+    }
+
+    #[test]
+    fn s2_stack_writer_matches_reference_count_and_scaled_weight() {
+        let parsed = S2Save::from_bytes(WRITER_S2_STACK_SOURCE);
+        assert!(parsed.is_ok());
+        let Ok(parsed) = parsed else { return };
+        let result = apply_changes_to_image(
+            &parsed,
+            &[S2Change::SetStackCount {
+                handle: 0x3000_0001,
+                count: 7,
+            }],
+        );
+        assert_eq!(result.map(|(image, _)| image), Ok(WRITER_S2_STACK_EXPECTED.to_vec()));
+    }
+
+    #[test]
+    fn s2_durability_and_money_share_one_working_image_and_match_reference() {
+        let parsed = S2Save::from_bytes(WRITER_S2_ARMOR_MONEY_SOURCE);
+        assert!(parsed.is_ok());
+        let Ok(parsed) = parsed else { return };
+        let result = apply_changes_to_image(
+            &parsed,
+            &[
+                S2Change::SetMoney(900_000),
+                S2Change::SetDurability {
+                    handle: 805_308_859,
+                    condition: 1.0,
+                },
+            ],
+        );
+        assert_eq!(
+            result.map(|(image, _)| image),
+            Ok(WRITER_S2_ARMOR_MONEY_EXPECTED.to_vec())
+        );
+    }
+
+    #[test]
+    fn s2_weapon_durability_writer_matches_reference_image() {
+        let parsed = S2Save::from_bytes(WRITER_S2_WEAPON_SOURCE);
+        assert!(parsed.is_ok());
+        let Ok(parsed) = parsed else { return };
+        let result = apply_changes_to_image(
+            &parsed,
+            &[S2Change::SetDurability {
+                handle: 805_309_098,
+                condition: 0.9,
+            }],
+        );
+        assert_eq!(result.map(|(image, _)| image), Ok(WRITER_S2_WEAPON_EXPECTED.to_vec()));
+    }
+
+    #[test]
+    fn s2_stash_move_matches_reference_in_one_working_image() {
+        let packed = pack_raw(WRITER_S2_STASH_SOURCE);
+        let parsed = S2Save::from_bytes(&packed);
+        assert!(parsed.is_ok());
+        let Ok(parsed) = parsed else { return };
+        let result = apply_changes_to_image(&parsed, &[S2Change::MoveStashToBackpack { handle: 0x3000_0010 }]);
+        assert_eq!(result.map(|(image, _)| image), Ok(WRITER_S2_STASH_EXPECTED.to_vec()));
+    }
+
+    #[test]
+    fn s2_kind_eight_stack_cannot_be_reduced_to_one() {
+        let mut raw = SYNTHETIC_RAW.to_vec();
+        let parsed = S2Save::from_bytes(SYNTHETIC_SAVE);
+        assert!(parsed.is_ok());
+        let Ok(parsed) = parsed else { return };
+        let Some(record_offset) = parsed.objects.unique(0x3000_0003).map(|record| record.record_offset) else {
+            return;
+        };
+        let Some(kind_offset) = record_offset.checked_add(31) else {
+            return;
+        };
+        let Some(kind) = raw.get_mut(kind_offset) else { return };
+        *kind = 8;
+        let Some(count_offset) = record_offset.checked_add(19) else {
+            return;
+        };
+        let Some(count) = raw.get_mut(count_offset..count_offset.saturating_add(4)) else {
+            return;
+        };
+        count.copy_from_slice(&2_u32.to_le_bytes());
+        let packed = pack_raw(&raw);
+        let parsed = S2Save::from_bytes(&packed);
+        assert!(parsed.is_ok());
+        let Ok(parsed) = parsed else { return };
+        assert!(matches!(
+            apply_changes_to_image(
+                &parsed,
+                &[S2Change::SetStackCount {
+                    handle: 0x3000_0003,
+                    count: 1,
+                }]
+            ),
+            Err(Error::Refused(_))
+        ));
+    }
 
     fn legacy_synthetic_raw() -> Vec<u8> {
         let mut raw = vec![0_u8; 64];
@@ -1725,6 +2470,7 @@ mod tests {
             owned_handles: vec![handle],
             grid_count_offset: 0,
             grid_offset: 0,
+            grid_count: 0,
             grid_cells: Vec::new(),
             grid_end_offset: 0,
             grid_handle_count: 0,
@@ -1854,6 +2600,7 @@ mod tests {
             owned_handles: vec![handle],
             grid_count_offset: 0,
             grid_offset: 0,
+            grid_count: 0,
             grid_cells: Vec::new(),
             grid_end_offset: 0,
             grid_handle_count: 0,
