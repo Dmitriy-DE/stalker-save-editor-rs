@@ -396,7 +396,9 @@ impl Screen for Capabilities {
                 if let (Some(capability), Some(game), Some(detail)) =
                     (CAPABILITY_ROWS.get(*row), GAMES.get(*column), self.detail)
                 {
-                    let Some(support) = capability.support.get(*column).copied() else { return Ok(()) };
+                    let Some(support) = capability.support.get(*column).copied() else {
+                        return Ok(());
+                    };
                     cx.tree.set_text(
                         detail,
                         &format!(
