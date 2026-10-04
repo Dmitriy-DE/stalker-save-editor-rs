@@ -26,3 +26,12 @@ lto = "fat"
 codegen-units = 1
 panic = "abort"
 strip = true
+
+# Small build cache: no debug info and no incremental state in dev/test builds (the shared target fills the disk).
+[profile.dev]
+debug = 0
+incremental = false
+
+[profile.test]
+debug = 0
+incremental = false

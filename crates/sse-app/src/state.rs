@@ -61,6 +61,7 @@ pub struct AppStateSnapshot {
 /// Central application state container.
 pub struct AppState {
     selected_game: Option<String>,
+    game_dir: Option<PathBuf>,
     current_save: Option<PathBuf>,
     active_screen: String,
     recent_saves: Vec<PathBuf>,
@@ -82,6 +83,7 @@ impl AppState {
         let (event_sender, event_receiver) = mpsc::channel();
         Self {
             selected_game: None,
+            game_dir: None,
             current_save: None,
             active_screen: "overview".to_owned(),
             recent_saves: Vec::new(),
@@ -133,6 +135,17 @@ impl AppState {
             self.selected_game = game.clone();
             let _ = self.event_sender.send(AppEvent::SelectedGameChanged(game));
         }
+    }
+
+    /// Install directory of the selected game, set by the games overview.
+    #[must_use]
+    pub fn game_dir(&self) -> Option<&Path> {
+        self.game_dir.as_deref()
+    }
+
+    /// Sets the install directory of the selected game.
+    pub fn set_game_dir(&mut self, dir: Option<PathBuf>) {
+        self.game_dir = dir;
     }
 
     /// Returns the current save path.

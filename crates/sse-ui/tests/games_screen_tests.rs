@@ -23,10 +23,12 @@ fn games_overview_headless_build_and_render_without_installations() -> sse_core:
         return Err(sse_core::Error::damaged("games screen registry is empty"));
     };
     {
+        let mut app_state = sse_app::state::AppState::new();
         let mut context = Context {
             tree: &mut tree,
             proxy: None,
             status: None,
+            app: &mut app_state,
         };
         screen.build(&mut context, host)?;
     }
@@ -44,10 +46,12 @@ fn games_overview_headless_build_and_render_without_installations() -> sse_core:
 
     // Initial shown() call should succeed and keep layout intact
     {
+        let mut app_state = sse_app::state::AppState::new();
         let mut context = Context {
             tree: &mut tree,
             proxy: None,
             status: None,
+            app: &mut app_state,
         };
         screen.shown(&mut context)?;
     }
@@ -70,10 +74,12 @@ fn games_overview_handles_synthetic_installation_state() -> sse_core::Result<()>
         return Err(sse_core::Error::damaged("games screen registry is empty"));
     };
     {
+        let mut app_state = sse_app::state::AppState::new();
         let mut context = Context {
             tree: &mut tree,
             proxy: None,
             status: None,
+            app: &mut app_state,
         };
         screen.build(&mut context, host)?;
     }
@@ -103,10 +109,12 @@ fn games_overview_handles_synthetic_installation_state() -> sse_core::Result<()>
     let payload = Box::new(result);
     let app_msg = Message::User(AppMessage::ToScreen(ScreenId::Games, payload));
     {
+        let mut app_state = sse_app::state::AppState::new();
         let mut context = Context {
             tree: &mut tree,
             proxy: None,
             status: None,
+            app: &mut app_state,
         };
         screen.message(&mut context, &app_msg, None)?;
     }

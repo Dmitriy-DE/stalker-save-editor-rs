@@ -198,6 +198,8 @@ pub struct Context<'a> {
     pub proxy: Option<&'a crate::event_loop::Proxy<AppMessage>>,
     /// Status line text to show, if the screen wants to say something.
     pub status: Option<String>,
+    /// Shared application state: selected game and its install directory, current save, recent saves, drafts.
+    pub app: &'a mut sse_app::state::AppState,
 }
 
 /// One editor screen.

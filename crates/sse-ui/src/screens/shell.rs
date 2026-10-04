@@ -23,6 +23,7 @@ pub struct Shell {
     status: WidgetId,
     selected: usize,
     proxy: Option<Proxy<AppMessage>>,
+    app: sse_app::state::AppState,
 }
 
 fn padded(left: f32, top: f32, right: f32, bottom: f32) -> Edges {
@@ -241,9 +242,16 @@ impl Shell {
             status,
             selected: 0,
             proxy,
+            app: sse_app::state::AppState::new(),
         };
         shell.show(tree, 0)?;
         Ok(shell)
+    }
+
+    /// Shared application state.
+    #[must_use]
+    pub fn app(&self) -> &sse_app::state::AppState {
+        &self.app
     }
 
     /// Currently shown screen.
@@ -290,6 +298,7 @@ impl Shell {
             tree,
             proxy: self.proxy.as_ref(),
             status: None,
+            app: &mut self.app,
         };
         match *slot {
             Some(host) => cx.tree.set_visible(host, true)?,
@@ -335,6 +344,7 @@ impl Shell {
                     tree,
                     proxy: self.proxy.as_ref(),
                     status: None,
+                    app: &mut self.app,
                 };
                 screen.message(&mut cx, message, clicked)?;
                 status = cx.status.or(status);
