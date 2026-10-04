@@ -370,6 +370,7 @@ struct Achievements {
     refresh: Option<WidgetId>,
     progress: Option<WidgetId>,
     confirm: Option<bool>,
+    pending_set: Option<bool>,
 }
 
 impl Achievements {
@@ -476,6 +477,7 @@ impl Screen for Achievements {
                 return Ok(());
             }
             self.confirm = None;
+            self.pending_set = Some(set);
             let Some(item) = self.items.get(i) else { return Ok(()) };
             let Some(app_id) = cx.app.selected_game().and_then(app_id) else {
                 return Ok(());
@@ -518,8 +520,7 @@ impl Screen for Achievements {
                     AchReply::Changed(Ok(())) => {
                         if let Some(index) = self.selected {
                             if let Some(item) = self.items.get_mut(index) {
-                                let was = item.achieved;
-                                item.achieved = !was;
+                                item.achieved = self.pending_set.take().unwrap_or(item.achieved);
                                 cx.status = Some(if item.achieved { format!("Достижение «{}» получено в Steam.", item.display_name) } else { format!("Достижение «{}» снято в Steam.", item.display_name) });
                             }
                         }
