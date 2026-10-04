@@ -5,6 +5,7 @@
 use super::style::{self, Button, Text};
 use super::{AppMessage, Context, Placeholder, Screen, ScreenId};
 use crate::event_loop::Message;
+use crate::text::{self, Metrics};
 use crate::widget::WidgetId;
 use sse_core::Result;
 use sse_storage::discovery::{normalize_full_path, resolve_links, SaveDirectoryCandidate, SaveDirectoryLocator};
@@ -338,13 +339,13 @@ impl GamesOverview {
                     let is_selected = selected_index == Some(i);
                     let prefix = if is_selected { "> " } else { "  " };
                     let path_str = install.directory.to_string_lossy();
-                    let shortened = short_text(&path_str, 24);
+                    let shortened = text::ellipsize_middle(&path_str, 420.0, &PathMetrics);
                     let row_text = format!(
-                        "{prefix}{} [{}] · {} · сейвов: {}",
+                        "{prefix}{} [{}] · сейвов: {}\n   {}",
                         install.title,
                         install.source.display(),
-                        shortened,
-                        install.save_count
+                        install.save_count,
+                        shortened
                     );
                     cx.tree.set_text(row_id, &row_text)?;
                 } else {
@@ -388,7 +389,7 @@ impl GamesOverview {
 
         if let Some(id) = self.folder_value {
             let text = selected_install.map_or("—".to_owned(), |inst| inst.directory.to_string_lossy().to_string());
-            let shortened = short_text(&text, 48);
+            let shortened = text::ellipsize_middle(&text, 520.0, &PathMetrics);
             cx.tree.set_text(id, &shortened)?;
         }
 
@@ -1058,56 +1059,67 @@ fn extract_quoted_strings(line: &str) -> Vec<&str> {
 }
 
 fn count_saves_for_installations(installations: &mut [DiscoveredInstallation]) {
-    // Collect all candidate save directories from sse_storage
     let candidates = SaveDirectoryLocator::find_candidate_directories(None);
+    let mut family_counts = std::collections::HashMap::new();
 
-    for install in installations.iter_mut() {
-        let release_id = install.target.release_id();
-        let family_id = install.target.family();
-
-        // Candidates matching this release
-        let matching_candidates: Vec<SaveDirectoryCandidate> = candidates
+    for family in ["soc", "clear_sky", "cop", "stalker2"] {
+        let mut save_paths: Vec<PathBuf> = candidates
             .iter()
-            .filter(|c| c.release_id == release_id || c.game_id == family_id)
-            .cloned()
+            .filter(|candidate| candidate.game_id == family)
+            .map(|candidate| candidate.directory_path.clone())
             .collect();
 
-        // Check also relative save folder if fsgame.ltx resolves inside install dir
-        let mut save_paths = Vec::new();
-        for candidate in &matching_candidates {
-            save_paths.push(candidate.directory_path.clone());
+        for install in installations.iter().filter(|install| install.target.family() == family) {
+            let local = install.directory.join("_appdata_").join("savedgames");
+            if local.is_dir() {
+                save_paths.push(local);
+            }
         }
 
-        // Add local game data saves if found
-        let local_appdata = install.directory.join("_appdata_").join("savedgames");
-        if local_appdata.is_dir() {
-            save_paths.push(local_appdata);
-        }
-
-        let mut count = 0_usize;
+        let mut seen_directories = HashSet::new();
         let mut seen_slots = HashSet::new();
-
+        let mut count = 0_usize;
         for save_path in save_paths {
+            let canonical = resolve_links(&normalize_full_path(&save_path));
+            if !seen_directories.insert(canonical) {
+                continue;
+            }
             if let Ok(entries) = fs::read_dir(&save_path) {
                 for entry in entries.flatten() {
                     let path = entry.path();
-                    if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
-                        let lower = file_name.to_ascii_lowercase();
-                        if (lower.ends_with(".sav") || lower.ends_with(".scop") || lower.ends_with(".scs"))
-                            && lower != "campaignssave.sav"
-                            && lower != "analyticsdata.sav"
-                        {
-                            let key = path.to_string_lossy().to_string();
-                            if seen_slots.insert(key) {
-                                count = count.saturating_add(1);
-                            }
+                    let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+                        continue;
+                    };
+                    let lower = file_name.to_ascii_lowercase();
+                    if (lower.ends_with(".sav") || lower.ends_with(".scop") || lower.ends_with(".scs"))
+                        && lower != "campaignssave.sav"
+                        && lower != "analyticsdata.sav"
+                    {
+                        let key = resolve_links(&normalize_full_path(&path));
+                        if seen_slots.insert(key) {
+                            count = count.saturating_add(1);
                         }
                     }
                 }
             }
         }
+        family_counts.insert(family, count);
+    }
 
-        install.save_count = count;
+    for install in installations {
+        install.save_count = family_counts.get(install.target.family()).copied().unwrap_or(0);
+    }
+}
+
+struct PathMetrics;
+
+impl Metrics for PathMetrics {
+    fn advance(&self, character: char) -> f32 {
+        if character.is_ascii() { 7.0 } else { 8.0 }
+    }
+
+    fn kerning(&self, _left: char, _right: char) -> f32 {
+        0.0
     }
 }
 
