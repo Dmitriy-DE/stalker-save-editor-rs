@@ -165,8 +165,17 @@ pub const ACCENT_IDS: [&str; 4] = ["amber", "teal", "blue", "rust"];
 
 /// Applies the selected C# appearance to subsequently built widgets.
 pub fn apply_appearance(theme_id: &str, accent_id: &str) {
-    let theme = match theme_id { "day" => 1, "clear-sky" => 2, _ => 0 };
-    let accent = match accent_id { "teal" => 1, "blue" => 2, "rust" => 3, _ => 0 };
+    let theme = match theme_id {
+        "day" => 1,
+        "clear-sky" => 2,
+        _ => 0,
+    };
+    let accent = match accent_id {
+        "teal" => 1,
+        "blue" => 2,
+        "rust" => 3,
+        _ => 0,
+    };
     CURRENT_THEME.store(theme, Ordering::Relaxed);
     CURRENT_ACCENT.store(accent, Ordering::Relaxed);
 }
@@ -174,13 +183,22 @@ pub fn apply_appearance(theme_id: &str, accent_id: &str) {
 /// Current stable theme id.
 #[must_use]
 pub fn current_theme_id() -> &'static str {
-    match CURRENT_THEME.load(Ordering::Relaxed) { 1 => "day", 2 => "clear-sky", _ => "zone" }
+    match CURRENT_THEME.load(Ordering::Relaxed) {
+        1 => "day",
+        2 => "clear-sky",
+        _ => "zone",
+    }
 }
 
 /// Current stable accent id.
 #[must_use]
 pub fn current_accent_id() -> &'static str {
-    match CURRENT_ACCENT.load(Ordering::Relaxed) { 1 => "teal", 2 => "blue", 3 => "rust", _ => "amber" }
+    match CURRENT_ACCENT.load(Ordering::Relaxed) {
+        1 => "teal",
+        2 => "blue",
+        3 => "rust",
+        _ => "amber",
+    }
 }
 
 /// Current C# palette with the selected accent.
