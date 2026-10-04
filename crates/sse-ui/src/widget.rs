@@ -1232,5 +1232,4 @@ mod tests {
         assert_eq!(tree.take_changed_inputs(), vec![input]);
         Ok(())
     }
-
 }
