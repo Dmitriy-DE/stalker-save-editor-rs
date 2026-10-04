@@ -53,10 +53,31 @@ fn padded(left: f32, top: f32, right: f32, bottom: f32) -> Edges {
 fn top_button(tree: &mut Tree, parent: WidgetId, text: &str, primary: bool) -> Result<WidgetId> {
     let colors = crate::theme::current().colors;
     tree.add(
-        Some(parent), NodeKind::Leaf,
-        Style { min: Size::new(58.0, 32.0), padding: padded(8.0, 0.0, 8.0, 0.0), shrink: 1.0, ..Style::default() },
-        Content::Button { text: text.to_uppercase(), style: TextStyle::new(Face::Heading, 11.0) },
-        Look { fill: primary.then(|| rgb(colors.accent[0])), hover_fill: Some(rgb(if primary { colors.accent[2] } else { colors.background[3] })), border: (!primary).then(|| (rgb(colors.borders[1]), 1.0)), radius: crate::theme::BUTTON_RADIUS, text: rgb(if primary { colors.accent[3] } else { colors.text[0] }), align: TextAlign::Center, ..Look::default() },
+        Some(parent),
+        NodeKind::Leaf,
+        Style {
+            min: Size::new(58.0, 32.0),
+            padding: padded(8.0, 0.0, 8.0, 0.0),
+            shrink: 1.0,
+            ..Style::default()
+        },
+        Content::Button {
+            text: text.to_uppercase(),
+            style: TextStyle::new(Face::Heading, 11.0),
+        },
+        Look {
+            fill: primary.then(|| rgb(colors.accent[0])),
+            hover_fill: Some(rgb(if primary {
+                colors.accent[2]
+            } else {
+                colors.background[3]
+            })),
+            border: (!primary).then(|| (rgb(colors.borders[1]), 1.0)),
+            radius: crate::theme::BUTTON_RADIUS,
+            text: rgb(if primary { colors.accent[3] } else { colors.text[0] }),
+            align: TextAlign::Center,
+            ..Look::default()
+        },
     )
 }
 
@@ -252,8 +273,35 @@ impl Shell {
             Content::Panel,
             Look::default(),
         )?;
-        let top = tree.add(Some(header), NodeKind::Row, Style { gap: Size::new(6.0, 0.0), align_items: Align::Center, ..Style::default() }, Content::Panel, Look::default())?;
-        let brand = tree.add(Some(top), NodeKind::Leaf, Style { grow: 1.0, shrink: 1.0, min: Size::new(190.0, 0.0), ..Style::default() }, Content::Label { text: "S.T.A.L.K.E.R. SAVE EDITOR".to_owned(), style: TextStyle::new(Face::Heading, 18.0) }, Look { text: rgb(style::TEXT_PRIMARY), ..Look::default() })?;
+        let top = tree.add(
+            Some(header),
+            NodeKind::Row,
+            Style {
+                gap: Size::new(6.0, 0.0),
+                align_items: Align::Center,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        let brand = tree.add(
+            Some(top),
+            NodeKind::Leaf,
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: Size::new(190.0, 0.0),
+                ..Style::default()
+            },
+            Content::Label {
+                text: "S.T.A.L.K.E.R. SAVE EDITOR".to_owned(),
+                style: TextStyle::new(Face::Heading, 18.0),
+            },
+            Look {
+                text: rgb(style::TEXT_PRIMARY),
+                ..Look::default()
+            },
+        )?;
         let _ = brand;
         let edition = style::label(tree, top, "X-Ray / S2", Text::Value)?;
         tree.set_visible(edition, false)?;
