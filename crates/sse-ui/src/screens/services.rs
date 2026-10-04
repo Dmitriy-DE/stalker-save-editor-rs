@@ -15,7 +15,7 @@ pub fn screens() -> Vec<Box<dyn Screen>> {
     ]
 }
 
-struct Checked { id: ScreenId, text: String }
+struct Checked {\n    id: ScreenId,\n    text: String,\n}
 
 /// Service screen with retained widget identifiers.
 pub struct Service {
@@ -27,7 +27,7 @@ pub struct Service {
 }
 impl Service {
     const fn new(id: ScreenId) -> Self {
-        Self { id, state: None, refresh: None, details: None, busy: false }
+        Self {\n            id,\n            state: None,\n            refresh: None,\n            details: None,\n            busy: false,\n        }
     }
     fn initial(&self) -> &'static str {
         match self.id {
@@ -40,7 +40,7 @@ impl Service {
     }
 }
 impl Screen for Service {
-    fn id(&self) -> ScreenId { self.id }
+    fn id(&self) -> ScreenId {\n        self.id\n    }
     fn subtitle(&self) -> &str {
         match self.id {
             ScreenId::Companion => "Установка мода и горячие клавиши",
@@ -58,32 +58,32 @@ impl Screen for Service {
         self.refresh = Some(style::button(cx.tree, row, "Проверить", Button::Primary)?);
         self.details = Some(style::label(cx.tree, card, "Нет доступных данных", Text::Note)?);
         if self.id == ScreenId::Companion {
-            style::label(cx.tree, card, "Установка и удаление доступны только после выбора и проверки игры. Автоматических изменений нет.", Text::Note)?;
+            style::label(\n                cx.tree,\n                card,\n                "Установка и удаление доступны только после выбора и проверки игры. Автоматических изменений нет.",\n                Text::Note,\n            )?;
         }
         if self.id == ScreenId::Cloud {
             style::label(cx.tree, card, "Запись в Steam Cloud отключена.", Text::Note)?;
         }
         Ok(())
     }
-    fn message(&mut self, cx: &mut Context<'_>, message: &Message<AppMessage>, clicked: Option<WidgetId>) -> Result<()> {
+    fn message(\n        &mut self,\n        cx: &mut Context<'_>,\n        message: &Message<AppMessage>,\n        clicked: Option<WidgetId>,\n    ) -> Result<()> {
         if clicked.is_some() && clicked == self.refresh && !self.busy {
             self.busy = true;
-            if let Some(id) = self.state { cx.tree.set_text(id, "Проверка…")?; }
+            if let Some(id) = self.state {\n                cx.tree.set_text(id, "Проверка…")?;\n            }
             if let Some(proxy) = cx.proxy.cloned() {
                 let id = self.id;
                 std::thread::spawn(move || {
                     let text = match id {
-                        ScreenId::Updates => format!("Текущая версия: {}. Сетевая проверка недоступна без подключения сервиса обновлений.", env!("CARGO_PKG_VERSION")),
-                        ScreenId::Companion => "Не выбрана установленная игра. Состояние Companion неизвестно; файлы не изменены.".to_owned(),
-                        ScreenId::Achievements => "Нет подключённого каталога достижений для выбранной игры.".to_owned(),
-                        ScreenId::Cloud => "Нет соединения с Steam Cloud; локальные и облачные файлы не изменены.".to_owned(),
+                        ScreenId::Updates => format!(\n                            "Текущая версия: {}. Сетевая проверка недоступна без подключения сервиса обновлений.",\n                            env!("CARGO_PKG_VERSION")\n                        ),
+                        ScreenId::Companion => {\n                            "Не выбрана установленная игра. Состояние Companion неизвестно; файлы не изменены."\n                                .to_owned()\n                        }
+                        ScreenId::Achievements => {\n                            "Нет подключённого каталога достижений для выбранной игры.".to_owned()\n                        }
+                        ScreenId::Cloud => {\n                            "Нет соединения с Steam Cloud; локальные и облачные файлы не изменены.".to_owned()\n                        }
                         _ => "Нет данных".to_owned(),
                     };
                     proxy.send(AppMessage::ToScreen(id, Box::new(Checked { id, text })));
                 });
             } else {
                 self.busy = false;
-                if let Some(id) = self.state { cx.tree.set_text(id, "Фоновый сервис недоступен")?; }
+                if let Some(id) = self.state {\n                    cx.tree.set_text(id, "Фоновый сервис недоступен")?;\n                }
             }
         }
         if let Message::User(AppMessage::ToScreen(id, payload)) = message {
@@ -91,8 +91,8 @@ impl Screen for Service {
                 if let Some(done) = payload.downcast_ref::<Checked>() {
                     if done.id == self.id {
                         self.busy = false;
-                        if let Some(state) = self.state { cx.tree.set_text(state, &done.text)?; }
-                        if let Some(details) = self.details { cx.tree.set_text(details, "Проверка завершена без изменения файлов")?; }
+                        if let Some(state) = self.state {\n                            cx.tree.set_text(state, &done.text)?;\n                        }
+                        if let Some(details) = self.details {\n                            cx.tree.set_text(details, "Проверка завершена без изменения файлов")?;\n                        }
                     }
                 }
             }
