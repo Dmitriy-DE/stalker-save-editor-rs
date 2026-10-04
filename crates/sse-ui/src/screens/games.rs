@@ -1136,6 +1136,10 @@ struct EnvironmentResult {
 struct Environment {
     status: Option<WidgetId>,
     lines: Vec<WidgetId>,
+    snapshot: Option<WidgetId>,
+    restore: Option<WidgetId>,
+    audit: Option<WidgetId>,
+    pending_restore: Option<String>,
 }
 
 impl Environment {
@@ -1213,7 +1217,39 @@ impl Screen for Environment {
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
         let card = style::card(cx.tree, host)?;
         style::label(cx.tree, card, "СРЕДА ИГРЫ", Text::Heading)?;
-        self.status = Some(style::label(cx.tree, card, "Выберите игру", Text::Note)?);
+        self.status = Some(style::label(
+            cx.tree,
+            card,
+            "Управляемая установка: не выбрана",
+            Text::Note,
+        )?);
+        style::label(cx.tree, card, "УПРАВЛЯЕМЫЕ СНИМКИ", Text::Heading)?;
+        style::label(
+            cx.tree,
+            card,
+            "Снимки включают только файлы и манифесты Game Fix, Companion и настроек, которыми владеет инструмент.",
+            Text::Note,
+        )?;
+        self.snapshot = Some(style::button(cx.tree, card, "СОЗДАТЬ СНИМОК", Button::Primary)?);
+        self.restore = Some(style::button(
+            cx.tree,
+            card,
+            "ВОССТАНОВИТЬ ПОСЛЕДНИЙ СНИМОК",
+            Button::Danger,
+        )?);
+        style::label(cx.tree, card, "ПРОФИЛИ ИГРЫ", Text::Heading)?;
+        style::label(
+            cx.tree,
+            card,
+            "Профили поддерживаются ядром; UI имени/списка будет подключён после text-input binding.",
+            Text::Note,
+        )?;
+        style::label(cx.tree, card, "НАСТРОЙКИ user.ltx", Text::Heading)?;
+        for setting in sse_fixes::toolkit::MANAGED_SETTINGS {
+            style::label(cx.tree, card, setting.key, Text::Body)?;
+        }
+        style::label(cx.tree, card, "АУДИТ УСТАНОВКИ", Text::Heading)?;
+        self.audit = Some(style::button(cx.tree, card, "ПРОВЕРИТЬ", Button::Secondary)?);
         for _ in 0..10 {
             let line = style::label(cx.tree, card, "", Text::Body)?;
             cx.tree.set_visible(line, false)?;
@@ -1231,8 +1267,116 @@ impl Screen for Environment {
         &mut self,
         cx: &mut Context<'_>,
         message: &Message<AppMessage>,
-        _clicked: Option<WidgetId>,
+        clicked: Option<WidgetId>,
     ) -> Result<()> {
+        if clicked.is_some() && clicked == self.restore {
+            let directory = cx.app.game_dir().map(Path::to_path_buf);
+            let game = cx.app.selected_game().and_then(fix_target);
+            let Some(directory) = directory else {
+                cx.status = Some("Управляемая установка: не выбрана".to_owned());
+                return Ok(());
+            };
+            let snapshots = sse_fixes::toolkit::ToolkitSnapshotService::list_snapshots(&directory)
+                .map_err(|e| sse_core::Error::Refused(e.to_string()))?;
+            let Some(snapshot) = snapshots.first() else {
+                cx.status = Some("Снимков пока нет.".to_owned());
+                return Ok(());
+            };
+            if self.pending_restore.as_deref() != Some(snapshot.id.as_str()) {
+                self.pending_restore = Some(snapshot.id.clone());
+                cx.status = Some(format!("ВОССТАНОВЛЕНИЕ ИЗМЕНИТ ФАЙЛЫ ИГРЫ. Нажмите «ВОССТАНОВИТЬ ПОСЛЕДНИЙ СНИМОК» ещё раз для подтверждения: {}", snapshot.label));
+                return Ok(());
+            }
+            self.pending_restore = None;
+            let Some(game) = game else {
+                cx.status = Some("Игра не поддерживается Toolkit.".to_owned());
+                return Ok(());
+            };
+            let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
+            let snapshot_id = snapshot.id.clone();
+            std::thread::spawn(move || {
+                let engine = sse_fixes::GameFixEngine::new();
+                let catalog = sse_fixes::GameFixCatalog;
+                let lines = sse_fixes::toolkit::ToolkitSnapshotService::restore_snapshot(
+                    &directory,
+                    &engine,
+                    &catalog,
+                    &snapshot_id,
+                )
+                .map(|r| {
+                    vec![format!(
+                        "Восстановлен снимок {} · установлено фиксов {} · удалено {} · user.ltx {}",
+                        r.snapshot_id,
+                        r.installed_fixes.len(),
+                        r.uninstalled_fixes.len(),
+                        r.user_ltx_updates_count
+                    )]
+                })
+                .unwrap_or_else(|e| vec![format!("Ошибка восстановления: {e}")]);
+                let _ = game;
+                proxy.send(AppMessage::ToScreen(
+                    ScreenId::Environment,
+                    Box::new(EnvironmentResult { lines }),
+                ));
+            });
+            return Ok(());
+        }
+        if clicked.is_some() && (clicked == self.snapshot || clicked == self.audit) {
+            let create_snapshot = clicked == self.snapshot;
+            let game = cx.app.selected_game().and_then(fix_target);
+            let directory = cx.app.game_dir().map(Path::to_path_buf);
+            let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
+            std::thread::spawn(move || {
+                let result = (|| {
+                    let game = game.ok_or_else(|| "Выберите поддерживаемую игру".to_owned())?;
+                    let directory = directory.ok_or_else(|| "Управляемая установка: не выбрана".to_owned())?;
+                    let engine = sse_fixes::GameFixEngine::new();
+                    if create_snapshot {
+                        if !game.is_xray() {
+                            return Err("Снимки доступны только для X-Ray игр.".to_owned());
+                        }
+                        let snap = sse_fixes::toolkit::ToolkitSnapshotService::create_snapshot(
+                            &directory, game, &engine, None,
+                        )
+                        .map_err(|e| e.to_string())?;
+                        Ok(vec![
+                            format!("Создан снимок: {}", snap.id),
+                            format!(
+                                "исправлений: {} · Companion: {}",
+                                snap.installed_fixes.len(),
+                                if snap.companion_installed {
+                                    "включён"
+                                } else {
+                                    "выключен"
+                                }
+                            ),
+                        ])
+                    } else {
+                        let report =
+                            sse_fixes::toolkit::ToolkitInstallAudit::audit_installation(&directory, game, &engine)
+                                .map_err(|e| e.to_string())?;
+                        let mut lines = vec![format!(
+                            "Проверено файлов: {}. Управляемых: {}. Неизвестных/модов: {}. Требуют проверки: {}.",
+                            report.total_scanned,
+                            report.managed_count,
+                            report.custom_mod_count,
+                            report.needs_review_count
+                        )];
+                        lines.extend(report.items.into_iter().take(8).map(|item| {
+                            format!("{:?} · {} · {}", item.classification, item.relative_path, item.details)
+                        }));
+                        Ok(lines)
+                    }
+                })();
+                proxy.send(AppMessage::ToScreen(
+                    ScreenId::Environment,
+                    Box::new(EnvironmentResult {
+                        lines: result.unwrap_or_else(|e| vec![format!("Ошибка: {e}")]),
+                    }),
+                ));
+            });
+            return Ok(());
+        }
         if let Message::User(AppMessage::ToScreen(ScreenId::Environment, payload)) = message {
             if let Some(result) = payload.downcast_ref::<EnvironmentResult>() {
                 if let Some(status) = self.status {
@@ -1657,6 +1801,7 @@ struct GameDoctor {
     status: Option<WidgetId>,
     start: Option<WidgetId>,
     cancel: Option<WidgetId>,
+    toggle_s2_mods: Option<WidgetId>,
     rows: Vec<WidgetId>,
     findings: Vec<DoctorFinding>,
     cancellation: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
@@ -1787,6 +1932,12 @@ impl Screen for GameDoctor {
         let actions = style::row(cx.tree, card)?;
         self.start = Some(style::button(cx.tree, actions, "Проверить", Button::Primary)?);
         self.cancel = Some(style::button(cx.tree, actions, "Отмена", Button::Secondary)?);
+        self.toggle_s2_mods = Some(style::button(
+            cx.tree,
+            actions,
+            "ВРЕМЕННО ОТКЛЮЧИТЬ / ВОССТАНОВИТЬ КАСТОМНЫЕ МОДЫ",
+            Button::Secondary,
+        )?);
         style::label(cx.tree, card, "ФАЙЛ · ТЯЖЕСТЬ · НАХОДКА", Text::Value)?;
         for _ in 0..10 {
             let row = style::label(cx.tree, card, "", Text::Body)?;
@@ -1804,6 +1955,20 @@ impl Screen for GameDoctor {
     ) -> Result<()> {
         if clicked.is_some() && clicked == self.start {
             self.run(cx);
+        }
+        if clicked.is_some() && clicked == self.toggle_s2_mods {
+            let is_s2 = cx.app.selected_game().is_some_and(|g| matches!(g, "s2" | "stalker2"));
+            let directory = cx.app.game_dir().map(Path::to_path_buf);
+            if !is_s2 {
+                cx.status = Some("Переключение модов доступно только для S.T.A.L.K.E.R. 2.".to_owned());
+            } else if let Some(directory) = directory {
+                match sse_fixes::toolkit::Stalker2ModToggle::toggle(&directory) {
+                    Ok(result) => cx.status = Some(format!("S2 mods: {result:?}")),
+                    Err(error) => cx.status = Some(error.to_string()),
+                }
+            } else {
+                cx.status = Some("ВЫБЕРИТЕ ИГРУ И ПАПКУ УСТАНОВКИ ДЛЯ ПРОВЕРКИ.".to_owned());
+            }
         }
         if clicked.is_some() && clicked == self.cancel {
             if let Some(cancelled) = &self.cancellation {
