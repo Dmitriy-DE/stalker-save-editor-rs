@@ -93,6 +93,9 @@ version = "2.0.0-dev"
 dependencies = [
  "sse-codecs",
  "sse-core",
+ "sse-s2",
+ "sse-storage",
+ "sse-xray",
 ]
 
 [[package]]

@@ -8,6 +8,9 @@ rust-version.workspace = true
 [dependencies]
 sse-core = { path = "../sse-core" }
 sse-codecs = { path = "../sse-codecs" }
+sse-s2 = { path = "../sse-s2" }
+sse-storage = { path = "../sse-storage" }
+sse-xray = { path = "../sse-xray" }
 
 [lints]
 workspace = true
