@@ -1347,7 +1347,11 @@ impl GameFixes {
                             problem: definition.problem.clone(),
                             source: definition.source.clone(),
                             builds: definition.supported_steam_build_ids.join(", "),
-                            files: definition.text_patches.len().saturating_add(definition.overlays.len()).saturating_add(definition.spawn_edits.len()),
+                            files: definition
+                                .text_patches
+                                .len()
+                                .saturating_add(definition.overlays.len())
+                                .saturating_add(definition.spawn_edits.len()),
                         }
                     })
                     .collect();
@@ -1388,10 +1392,25 @@ impl Screen for GameFixes {
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
         let card = style::card(cx.tree, host)?;
         style::label(cx.tree, card, "ИСПРАВЛЕНИЯ ИГРЫ", Text::Heading)?;
-        self.compatibility = Some(style::label(cx.tree, card, "СНАЧАЛА ПРОВЕРЬТЕ УСТАНОВКУ И ВЕРСИЮ.", Text::Note)?);
-        self.check = Some(style::button(cx.tree, card, "ПРОВЕРИТЬ СОВМЕСТИМОСТЬ", Button::Secondary)?);
+        self.compatibility = Some(style::label(
+            cx.tree,
+            card,
+            "СНАЧАЛА ПРОВЕРЬТЕ УСТАНОВКУ И ВЕРСИЮ.",
+            Text::Note,
+        )?);
+        self.check = Some(style::button(
+            cx.tree,
+            card,
+            "ПРОВЕРИТЬ СОВМЕСТИМОСТЬ",
+            Button::Secondary,
+        )?);
         let counts = style::card(cx.tree, card)?;
-        style::label(cx.tree, counts, "КАТЕГОРИИ: ОБЯЗАТЕЛЬНЫЕ · РЕКОМЕНДУЕМЫЕ · НЕОБЯЗАТЕЛЬНЫЕ · СООБЩЕСТВО · ЭКСПЕРИМЕНТАЛЬНЫЕ", Text::Note)?;
+        style::label(
+            cx.tree,
+            counts,
+            "КАТЕГОРИИ: ОБЯЗАТЕЛЬНЫЕ · РЕКОМЕНДУЕМЫЕ · НЕОБЯЗАТЕЛЬНЫЕ · СООБЩЕСТВО · ЭКСПЕРИМЕНТАЛЬНЫЕ",
+            Text::Note,
+        )?;
         self.status = Some(style::label(cx.tree, card, "Выберите игру", Text::Note)?);
         for _ in 0..8 {
             let row = style::button(cx.tree, card, "", Button::Secondary)?;
@@ -1400,9 +1419,24 @@ impl Screen for GameFixes {
         }
         self.detail = Some(style::label(cx.tree, card, "ВЫБЕРИТЕ ИСПРАВЛЕНИЕ", Text::Body)?);
         let presets = style::row(cx.tree, card)?;
-        self.preset_recommended = Some(style::button(cx.tree, presets, "ПРИМЕНИТЬ: РЕКОМЕНДУЕМЫЕ", Button::Primary)?);
-        self.preset_essential = Some(style::button(cx.tree, presets, "ПРИМЕНИТЬ: ОБЯЗАТЕЛЬНЫЕ", Button::Secondary)?);
-        self.preset_safe = Some(style::button(cx.tree, presets, "ПРИМЕНИТЬ: ВСЕ БЕЗОПАСНЫЕ", Button::Secondary)?);
+        self.preset_recommended = Some(style::button(
+            cx.tree,
+            presets,
+            "ПРИМЕНИТЬ: РЕКОМЕНДУЕМЫЕ",
+            Button::Primary,
+        )?);
+        self.preset_essential = Some(style::button(
+            cx.tree,
+            presets,
+            "ПРИМЕНИТЬ: ОБЯЗАТЕЛЬНЫЕ",
+            Button::Secondary,
+        )?);
+        self.preset_safe = Some(style::button(
+            cx.tree,
+            presets,
+            "ПРИМЕНИТЬ: ВСЕ БЕЗОПАСНЫЕ",
+            Button::Secondary,
+        )?);
         let actions = style::row(cx.tree, card)?;
         self.install = Some(style::button(
             cx.tree,
@@ -1410,7 +1444,12 @@ impl Screen for GameFixes {
             "Установить / обновить",
             Button::Primary,
         )?);
-        self.remove = Some(style::button(cx.tree, actions, "УДАЛИТЬ И ВОССТАНОВИТЬ", Button::Secondary)?);
+        self.remove = Some(style::button(
+            cx.tree,
+            actions,
+            "УДАЛИТЬ И ВОССТАНОВИТЬ",
+            Button::Secondary,
+        )?);
         style::label(cx.tree, card, "ИСПРАВЛЕНИЕ ЗАПИСЫВАЕТСЯ ТОЛЬКО ПО НАЖАТИЮ КНОПКИ. ПРИ ИЗМЕНЕНИИ УПРАВЛЯЕМОГО ФАЙЛА УДАЛЕНИЕ ОСТАНОВИТСЯ, НЕ ПЕРЕЗАПИСЫВАЯ ЕГО.", Text::Note)?;
         Ok(())
     }
@@ -1445,13 +1484,23 @@ impl Screen for GameFixes {
             let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
             std::thread::spawn(move || {
                 let result = (|| {
-                    let target = game.as_deref().and_then(fix_target).ok_or_else(|| "Игра не поддерживается".to_owned())?;
+                    let target = game
+                        .as_deref()
+                        .and_then(fix_target)
+                        .ok_or_else(|| "Игра не поддерживается".to_owned())?;
                     let directory = directory.ok_or_else(|| "Папка игры не выбрана".to_owned())?;
                     let (matches, build) = sse_fixes::identify_game(target, &directory);
-                    if !matches { return Err("ПАПКА НЕ ПОХОЖА НА ВЫБРАННУЮ УСТАНОВКУ ИГРЫ.".to_owned()); }
-                    build.map(|id| format!("НАЙДЕНА СБОРКА STEAM: {id}.")).ok_or_else(|| "ВЕРСИЯ STEAM НЕ ОПРЕДЕЛЕНА; УСТАНОВКА ИСПРАВЛЕНИЙ С ЗАЩИТОЙ ПО СБОРКЕ НЕДОСТУПНА.".to_owned())
+                    if !matches {
+                        return Err("ПАПКА НЕ ПОХОЖА НА ВЫБРАННУЮ УСТАНОВКУ ИГРЫ.".to_owned());
+                    }
+                    build.map(|id| format!("НАЙДЕНА СБОРКА STEAM: {id}.")).ok_or_else(|| {
+                        "ВЕРСИЯ STEAM НЕ ОПРЕДЕЛЕНА; УСТАНОВКА ИСПРАВЛЕНИЙ С ЗАЩИТОЙ ПО СБОРКЕ НЕДОСТУПНА.".to_owned()
+                    })
                 })();
-                proxy.send(AppMessage::ToScreen(ScreenId::GameFixes, Box::new(FixReply::Compatibility(result))));
+                proxy.send(AppMessage::ToScreen(
+                    ScreenId::GameFixes,
+                    Box::new(FixReply::Compatibility(result)),
+                ));
             });
             return Ok(());
         }
@@ -1461,19 +1510,29 @@ impl Screen for GameFixes {
             Some(sse_fixes::GameFixPreset::EssentialOnly)
         } else if clicked.is_some() && clicked == self.preset_safe {
             Some(sse_fixes::GameFixPreset::AllSafeFixes)
-        } else { None };
+        } else {
+            None
+        };
         if let Some(preset) = preset {
             let game = cx.app.selected_game().map(str::to_owned);
             let directory = cx.app.game_dir().map(Path::to_path_buf);
             let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
             std::thread::spawn(move || {
                 let result = (|| {
-                    let target = game.as_deref().and_then(fix_target).ok_or_else(|| "Игра не поддерживается".to_owned())?;
+                    let target = game
+                        .as_deref()
+                        .and_then(fix_target)
+                        .ok_or_else(|| "Игра не поддерживается".to_owned())?;
                     let directory = directory.ok_or_else(|| "Папка игры не выбрана".to_owned())?;
-                    let result = sse_fixes::GameFixEngine::new().apply_preset(target, preset, &directory).map_err(|e| e.to_string())?;
+                    let result = sse_fixes::GameFixEngine::new()
+                        .apply_preset(target, preset, &directory)
+                        .map_err(|e| e.to_string())?;
                     Ok(format!("ПРЕСЕТ {}: УСТАНОВЛЕНО {}; УЖЕ АКТУАЛЬНЫХ {}. РЕЗЕРВНАЯ ТОЧКА НЕДОСТУПНА: ядро apply_preset не создаёт Toolkit snapshot.", preset.as_str(), result.installed_fix_ids.len(), result.already_installed_fix_ids.len()))
                 })();
-                proxy.send(AppMessage::ToScreen(ScreenId::GameFixes, Box::new(FixReply::Changed(result))));
+                proxy.send(AppMessage::ToScreen(
+                    ScreenId::GameFixes,
+                    Box::new(FixReply::Changed(result)),
+                ));
             });
             return Ok(());
         }
@@ -1559,10 +1618,14 @@ impl Screen for GameFixes {
                         }
                     }
                     FixReply::Compatibility(Ok(text)) => {
-                        if let Some(id) = self.compatibility { cx.tree.set_text(id, text)?; }
+                        if let Some(id) = self.compatibility {
+                            cx.tree.set_text(id, text)?;
+                        }
                     }
                     FixReply::Compatibility(Err(error)) => {
-                        if let Some(id) = self.compatibility { cx.tree.set_text(id, error)?; }
+                        if let Some(id) = self.compatibility {
+                            cx.tree.set_text(id, error)?;
+                        }
                     }
                     FixReply::Changed(Ok(text)) => {
                         cx.status = Some(text.clone());
