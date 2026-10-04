@@ -292,16 +292,12 @@ impl Screen for Settings {
 
         let line = style::row(cx.tree, view)?;
         style::label(cx.tree, line, "Масштаб интерфейса:", Text::Body)?;
-        self.scale_value = Some(style::label(
-            cx.tree,
-            line,
-            if percent == 0 {
-                "По размеру экрана"
-            } else {
-                &format!("{percent} %")
-            },
-            Text::Value,
-        )?);
+        let scale_label = if percent == 0 {
+            "По размеру экрана".to_owned()
+        } else {
+            format!("{percent} %")
+        };
+        self.scale_value = Some(style::label(cx.tree, line, &scale_label, Text::Value)?);
         self.scale_button = Some(style::button(cx.tree, line, "Изменить", Button::Secondary)?);
 
         let updates = style::card(cx.tree, host)?;
