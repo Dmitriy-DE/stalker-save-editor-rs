@@ -217,8 +217,8 @@ impl ToolkitProfileService {
     pub fn serialize_profile(profile: &ToolkitProfile) -> String {
         let mut out = String::with_capacity(512);
         out.push_str("{\n");
-        out.push_str(&format!("  \"name\": \"{}\",\n", profile.name));
-        out.push_str(&format!("  \"description\": \"{}\",\n", profile.description));
+        out.push_str(&format!("  \"name\": \"{}\",\n", json_escape(&profile.name)));
+        out.push_str(&format!("  \"description\": \"{}\",\n", json_escape(&profile.description)));
         out.push_str(&format!("  \"game\": \"{}\",\n", game_target_str(profile.game)));
         out.push_str("  \"target_fix_ids\": [\n");
         for (i, id) in profile.target_fix_ids.iter().enumerate() {
@@ -227,7 +227,7 @@ impl ToolkitProfileService {
             } else {
                 ","
             };
-            out.push_str(&format!("    \"{}\"{}\n", id, comma));
+            out.push_str(&format!("    \"{}\"{}\n", json_escape(id), comma));
         }
         out.push_str("  ],\n");
         out.push_str("  \"user_ltx_overrides\": {\n");
@@ -239,7 +239,7 @@ impl ToolkitProfileService {
             } else {
                 ","
             };
-            out.push_str(&format!("    \"{}\": \"{}\"{}\n", k, v, comma));
+            out.push_str(&format!("    \"{}\": \"{}\"{}\n", json_escape(k), json_escape(v), comma));
         }
         out.push_str("  }");
         if let Some(s2_mods) = profile.s2_mods_enabled {
@@ -312,6 +312,22 @@ impl ToolkitProfileService {
             s2_mods_enabled,
         })
     }
+}
+
+fn json_escape(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '"' => escaped.push_str("\\\""),
+            '\\' => escaped.push_str("\\\\"),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            ch if ch.is_control() => escaped.push_str(&format!("\\u{:04x}", u32::from(ch))),
+            ch => escaped.push(ch),
+        }
+    }
+    escaped
 }
 
 fn ensure_xray_profile(game: GameTarget) -> Result<()> {
