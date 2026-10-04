@@ -162,6 +162,8 @@ pub struct Theme {
 pub const THEMES: [(&str, &str); 3] = [("zone", "Зона (тёмная)"), ("clear-sky", "Чистое небо"), ("day", "День")];
 /// Stable C# accent ids.
 pub const ACCENT_IDS: [&str; 4] = ["amber", "teal", "blue", "rust"];
+/// Display names from ACCEPTANCE §22.
+pub const ACCENT_NAMES: [&str; 4] = ["Янтарный", "Бирюзовый", "Синий", "Ржавый"];
 
 /// Applies the selected C# appearance to subsequently built widgets.
 pub fn apply_appearance(theme_id: &str, accent_id: &str) {
