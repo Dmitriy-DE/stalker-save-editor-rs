@@ -6,7 +6,9 @@
 
 use crate::glyphs::{to_px, to_u32, Fonts, TextStyle};
 use crate::layout::{self, Constraints, Layout, NodeId, NodeKind, Size, Style};
-use crate::raster::{Color, Radii, Rect, Surface};
+use crate::path::Icon;
+use crate::raster::{Color, MaskRef, Radii, Rect, Surface};
+use crate::widgets::icon::IconCache;
 use sse_core::{Error, Result};
 
 /// Damage rectangles kept separately before they are merged into one bounding box.
@@ -109,6 +111,15 @@ pub enum Content {
         /// Font face and size.
         style: TextStyle,
     },
+    /// A clickable navigation row with a built-in vector icon from path.rs.
+    IconButton {
+        /// Vector icon.
+        icon: Icon,
+        /// Optional text; empty in collapsed navigation.
+        text: String,
+        /// Font face and size.
+        style: TextStyle,
+    },
 }
 
 impl Content {
@@ -118,12 +129,13 @@ impl Content {
             Self::Label { text, style }
             | Self::Input { text, style }
             | Self::Paragraph { text, style }
-            | Self::Button { text, style } => Some((text.as_str(), *style)),
+            | Self::Button { text, style }
+            | Self::IconButton { text, style, .. } => Some((text.as_str(), *style)),
         }
     }
 
     const fn interactive(&self) -> bool {
-        matches!(self, Self::Button { .. } | Self::Input { .. })
+        matches!(self, Self::Button { .. } | Self::IconButton { .. } | Self::Input { .. })
     }
 }
 
@@ -155,6 +167,7 @@ pub struct Tree {
     focused: Option<WidgetId>,
     previous_dialog_focus: Option<WidgetId>,
     modal_dialog: Option<WidgetId>,
+    icon_cache: IconCache,
     overlay_host: Option<WidgetId>,
 }
 
@@ -177,6 +190,7 @@ impl Tree {
             focused: None,
             previous_dialog_focus: None,
             modal_dialog: None,
+            icon_cache: IconCache::new(),
             overlay_host: None,
         }
     }
@@ -368,6 +382,17 @@ impl Tree {
             _ => return Ok(()),
         }
         self.restyle(id)
+    }
+
+    /// Replaces layout style of a widget.
+    pub fn set_style(&mut self, id: WidgetId, style: Style) -> Result<()> {
+        let node = self.node_mut(id)?;
+        node.style = style;
+        let layout = node.layout;
+        self.layout.set_style(layout, self.text_style(&self.node(id)?.content, style))?;
+        self.needs_layout = true;
+        self.damage_all();
+        Ok(())
     }
 
     /// Replaces how a widget looks.
@@ -791,6 +816,7 @@ impl Tree {
             paint_node(
                 surface,
                 &mut self.fonts,
+                &mut self.icon_cache,
                 rect,
                 padding,
                 &look,
@@ -860,6 +886,7 @@ impl Tree {
 fn paint_node(
     surface: &mut Surface<'_>,
     fonts: &mut Fonts,
+    icon_cache: &mut IconCache,
     rect: Rect,
     padding: layout::Edges,
     look: &Look,
@@ -888,6 +915,16 @@ fn paint_node(
             color,
         );
     }
+    if let Content::IconButton { icon, .. } = content {
+        let size = u16::try_from(rect.height.min(18)).unwrap_or(18);
+        if let Ok(bitmap) = icon_cache.get(*icon, size, look.text.to_u32()) {
+            if let Ok(mask) = MaskRef::new(&bitmap.alpha, u32::from(size), u32::from(size), usize::from(size)) {
+                let x = rect.x.saturating_add(to_px(padding.left.max(8.0)));
+                let y = rect.y.saturating_add(i32::try_from(rect.height.saturating_sub(u32::from(size)) / 2).unwrap_or(0));
+                surface.blit_mask(mask, x, y, Color::from_u32(bitmap.color));
+            }
+        }
+    }
     let Some((text, style)) = content.text() else {
         return;
     };
@@ -897,7 +934,8 @@ fn paint_node(
         look.text
     };
     let line = fonts.line_height(style);
-    let left = i32_to_f32(rect.x) + padding.left;
+    let icon_inset = if matches!(content, Content::IconButton { text, .. } if !text.is_empty()) { 24.0 } else { 0.0 };
+    let left = i32_to_f32(rect.x) + padding.left + icon_inset;
     if matches!(content, Content::Paragraph { .. }) {
         let inner_width = (u32_to_f32(rect.width) - padding.left - padding.right).max(1.0);
         let lines = crate::text::break_lines(text, inner_width, &fonts.metrics(style));
