@@ -319,7 +319,7 @@ impl Screen for Companion {
         let hot = style::card(cx.tree, host)?;
         style::label(cx.tree, hot, "ГОРЯЧИЕ КЛАВИШИ", Text::Heading)?;
         style::label(cx.tree, hot, "Приложение перехватывает сочетание и отправляет команду моду через файл-протокол. Игра должна быть запущена с установленным модом.", Text::Note)?;
-        let hotkey_path = sse_app::default_data_directory().join("hotkeys.txt");
+        let hotkey_path = sse_app::paths::default_data_directory().join("hotkeys.txt");
         let layout = sse_companion::hotkeys::HotkeyLayout::load(&hotkey_path);
         for action in [
             sse_companion::hotkeys::HotkeyAction::Heal,
@@ -358,7 +358,7 @@ impl Screen for Companion {
             return Ok(());
         }
         if clicked.is_some() && clicked == self.default_hotkeys {
-            let path = sse_app::default_data_directory().join("hotkeys.txt");
+            let path = sse_app::paths::default_data_directory().join("hotkeys.txt");
             match sse_companion::hotkeys::HotkeyLayout::default().save(&path) {
                 Ok(()) => cx.status = Some(format!("Клавиши сохранены: {}.", path.display())),
                 Err(error) => cx.status = Some(format!("Клавиши не сохранены: {error}")),
@@ -366,7 +366,7 @@ impl Screen for Companion {
             return Ok(());
         }
         if clicked.is_some() && clicked == self.save_hotkeys {
-            let path = sse_app::default_data_directory().join("hotkeys.txt");
+            let path = sse_app::paths::default_data_directory().join("hotkeys.txt");
             let layout = sse_companion::hotkeys::HotkeyLayout::load(&path);
             match layout.save(&path) {
                 Ok(()) => cx.status = Some(format!("Клавиши сохранены: {}.", path.display())),
