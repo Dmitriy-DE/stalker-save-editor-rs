@@ -150,8 +150,7 @@ fn official_https_url(url: &str) -> bool {
     if authority.contains('@') {
         return false;
     }
-    authority.eq_ignore_ascii_case(UPDATE_HOST)
-        || authority.eq_ignore_ascii_case(&format!("{UPDATE_HOST}:443"))
+    authority.eq_ignore_ascii_case(UPDATE_HOST) || authority.eq_ignore_ascii_case(&format!("{UPDATE_HOST}:443"))
 }
 
 impl Fetch for DefaultFetch {
@@ -535,12 +534,22 @@ mod tests {
 
     #[test]
     fn default_fetch_origin_filter_rejects_non_https_and_foreign_hosts() {
-        assert!(official_https_url("https://save-editor-downloads.save-editor.workers.dev/latest.json"));
-        assert!(official_https_url("https://save-editor-downloads.save-editor.workers.dev:443/latest.json"));
-        assert!(!official_https_url("http://save-editor-downloads.save-editor.workers.dev/latest.json"));
+        assert!(official_https_url(
+            "https://save-editor-downloads.save-editor.workers.dev/latest.json"
+        ));
+        assert!(official_https_url(
+            "https://save-editor-downloads.save-editor.workers.dev:443/latest.json"
+        ));
+        assert!(!official_https_url(
+            "http://save-editor-downloads.save-editor.workers.dev/latest.json"
+        ));
         assert!(!official_https_url("file:///tmp/update"));
-        assert!(!official_https_url("https://save-editor-downloads.save-editor.workers.dev.evil.test/update"));
-        assert!(!official_https_url("https://save-editor-downloads.save-editor.workers.dev@evil.test/update"));
+        assert!(!official_https_url(
+            "https://save-editor-downloads.save-editor.workers.dev.evil.test/update"
+        ));
+        assert!(!official_https_url(
+            "https://save-editor-downloads.save-editor.workers.dev@evil.test/update"
+        ));
     }
 
     #[test]
