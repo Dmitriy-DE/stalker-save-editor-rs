@@ -1524,17 +1524,17 @@ impl GameFixes {
                         let current = installed.iter().find(|item| item.id == definition.id);
                         let status = if let Some(item) = current {
                             if item.version != definition.version {
-                                format!("устарел {} → {}", item.version, definition.version)
+                                "ОБНОВЛЕНИЕ ДОСТУПНО".to_owned()
                             } else {
                                 match engine.get_status(definition, &directory) {
-                                    Ok(sse_fixes::GameFixState::Installed) => "установлен".to_owned(),
-                                    Ok(sse_fixes::GameFixState::Modified) => "изменён".to_owned(),
-                                    Ok(_) => "не установлен".to_owned(),
-                                    Err(error) => format!("ошибка: {error}"),
+                                    Ok(sse_fixes::GameFixState::Installed) => "УСТАНОВЛЕНО".to_owned(),
+                                    Ok(sse_fixes::GameFixState::Modified) => "ФАЙЛ ИЗМЕНЁН ПОСЛЕ УСТАНОВКИ".to_owned(),
+                                    Ok(_) => "НЕ УСТАНОВЛЕНО".to_owned(),
+                                    Err(error) => format!("ОШИБКА: {error}"),
                                 }
                             }
                         } else {
-                            "не установлен".to_owned()
+                            "НЕ УСТАНОВЛЕНО".to_owned()
                         };
                         FixRow {
                             id: definition.id.clone(),
@@ -1566,7 +1566,7 @@ impl GameFixes {
 
     fn render(&mut self, cx: &mut Context<'_>) -> Result<()> {
         if let Some(status) = self.status {
-            cx.tree.set_text(status, &format!("Фиксов: {}", self.items.len()))?;
+            cx.tree.set_text(status, &if self.items.is_empty() { "НЕТ ПРОВЕРЕННЫХ ИСПРАВЛЕНИЙ ДЛЯ ЭТОЙ ВЕРСИИ.".to_owned() } else { format!("ИСПРАВЛЕНИЙ В КАТАЛОГЕ: {}", self.items.len()) })?;
         }
         for (index, widget) in self.rows.iter().copied().enumerate() {
             if let Some(item) = self.items.get(index) {
