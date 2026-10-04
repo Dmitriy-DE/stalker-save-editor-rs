@@ -144,6 +144,7 @@ impl ToolkitProfileService {
         engine: &GameFixEngine,
         _catalog: &GameFixCatalog,
     ) -> Result<ProfileApplyResult> {
+        ensure_xray_profile(profile.game)?;
         // 1. Mandatory pre-switch snapshot
         let pre_snapshot = ToolkitSnapshotService::create_snapshot(
             game_directory,
@@ -388,5 +389,82 @@ fn game_target_str(target: GameTarget) -> &'static str {
         GameTarget::ClearSkyEnhancedEdition => "cs_ee",
         GameTarget::CallOfPripyatEnhancedEdition => "cop_ee",
         GameTarget::Stalker2 => "s2",
+    }
+}
+
+#[cfg(test)]
+mod storage_tests {
+    use super::{ToolkitProfile, ToolkitProfileService};
+    use crate::{GameFixEngine, GameTarget};
+    use std::collections::BTreeMap;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+
+    fn temp_root() -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "sse-profile-store-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
+
+    fn profile(game: GameTarget) -> ToolkitProfile {
+        ToolkitProfile {
+            name: "Тест".to_owned(),
+            description: String::new(),
+            game,
+            target_fix_ids: Vec::new(),
+            user_ltx_overrides: BTreeMap::new(),
+            s2_mods_enabled: None,
+        }
+    }
+
+    #[test]
+    fn profile_store_round_trips_and_deletes_private_file() -> sse_core::Result<()> {
+        let root = temp_root();
+        let game = root.join("game");
+        fs::create_dir_all(&game).map_err(sse_core::Error::from)?;
+        let engine = GameFixEngine::new();
+        let id = ToolkitProfileService::save_profile(
+            &root,
+            &game,
+            &profile(GameTarget::CallOfPripyat),
+            &engine,
+        )?;
+        let stored = ToolkitProfileService::list_profiles(&root)?;
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored.first().map(|item| item.id.as_str()), Some(id.as_str()));
+        assert_eq!(stored.first().map(|item| item.profile.name.as_str()), Some("Тест"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(fs::metadata(root.join("profiles")).map_err(sse_core::Error::from)?.permissions().mode() & 0o777, 0o700);
+            assert_eq!(fs::metadata(root.join("profiles").join(format!("{id}.json"))).map_err(sse_core::Error::from)?.permissions().mode() & 0o777, 0o600);
+        }
+        ToolkitProfileService::delete_profile(&root, &id)?;
+        assert!(ToolkitProfileService::list_profiles(&root)?.is_empty());
+        let _ = fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[test]
+    fn stalker2_profile_save_is_refused_with_acceptance_text() {
+        let root = temp_root();
+        let game = root.join("game");
+        let _ = fs::create_dir_all(&game);
+        let result = ToolkitProfileService::save_profile(
+            &root,
+            &game,
+            &profile(GameTarget::Stalker2),
+            &GameFixEngine::new(),
+        );
+        assert_eq!(
+            result.err().map(|error| error.to_string()).as_deref(),
+            Some("Toolkit profiles currently support X-Ray managed providers only.")
+        );
+        let _ = fs::remove_dir_all(root);
     }
 }
