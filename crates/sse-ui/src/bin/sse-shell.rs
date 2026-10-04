@@ -122,7 +122,28 @@ fn window() -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(all(unix, not(target_os = "macos"))))]
+#[cfg(windows)]
+fn window() -> Result<()> {
+    let (proxy, receiver) = channel_pair::<AppMessage>();
+    let mut tree = Tree::new(Fonts::bundled()?, rgb(BG_BASE));
+    let mut shell = Shell::build(&mut tree, Some(proxy.clone()))?;
+    let (width, height) = (1280_u32, 800_u32);
+    let mut backend =
+        sse_ui::win32_window::Win32Presenter::open("S.T.A.L.K.E.R. Save Editor", width, height, proxy.clone())?;
+    tree.resize(width, height);
+    let started = Instant::now();
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_secs(1));
+        if !proxy.send(AppMessage::Tick(started.elapsed().as_secs())) {
+            return;
+        }
+    });
+    let stats = sse_ui::event_loop::run(&receiver, &mut tree, &mut shell, &mut backend)?;
+    eprintln!("wakes {} frames {} pixels {}", stats.wakes, stats.frames, stats.pixels);
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
 fn window() -> Result<()> {
     let _ = (channel_pair::<AppMessage>, Duration::from_secs, BG_BASE, Instant::now);
     Err(Error::Refused(

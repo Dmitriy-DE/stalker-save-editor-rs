@@ -82,6 +82,30 @@ fn first_paint_covers_the_window_then_nothing_is_dirty() {
 }
 
 #[test]
+fn dpi_change_relayouts_widgets_and_ignores_non_finite_scale() {
+    let mut f = fixture();
+    let mut pixels = frame();
+    f.tree.paint(&mut pixels, 400).unwrap();
+    let button = f.tree.rect(f.buttons[0]).unwrap();
+    assert_eq!(button.height, 40);
+
+    let (proxy, receiver) = channel_pair::<u32>();
+    proxy.window(WindowEvent::DpiChanged { scale: 2.0 });
+    proxy.window(WindowEvent::DpiChanged { scale: f32::NAN });
+    let mut screen = Screen::default();
+    let mut app = Counter {
+        label: f.label,
+        seen: Vec::new(),
+    };
+    // Drop the last sender after queuing events so the loop drains both messages and exits.
+    drop(proxy);
+    let _ = run(&receiver, &mut f.tree, &mut app, &mut screen).unwrap();
+    f.tree.paint(&mut pixels, 400).unwrap();
+    assert_eq!(f.tree.rect(f.buttons[0]).unwrap().height, 40);
+    assert_eq!(f.tree.scale(), 2.0);
+}
+
+#[test]
 fn hover_damages_only_the_buttons_involved() {
     let mut f = fixture();
     let mut pixels = frame();
