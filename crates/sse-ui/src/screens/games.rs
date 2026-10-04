@@ -4,7 +4,7 @@
 
 use super::style::{self, Button, Text};
 use super::{AppMessage, Context, Screen, ScreenId};
-use crate::event_loop::Message;
+use crate::event_loop::{Message, WindowEvent};
 use crate::text::{self, Metrics};
 use crate::widget::WidgetId;
 use sse_core::Result;
@@ -1704,6 +1704,14 @@ impl Screen for GameFixes {
         message: &Message<AppMessage>,
         clicked: Option<WidgetId>,
     ) -> Result<()> {
+        if let Message::Window(WindowEvent::Wheel { delta }) = message {
+            if let Some(scroll) = self.list_scroll {
+                self.scroll_y = self.scroll_y.saturating_add(delta.saturating_mul(48)).max(0);
+                cx.tree.set_scroll_y(scroll, self.scroll_y)?;
+                return Ok(());
+            }
+        }
+
         if clicked.is_some() {
             for (index, row) in self.rows.iter().copied().enumerate() {
                 if clicked == Some(row) && self.items.get(index).is_some() {
