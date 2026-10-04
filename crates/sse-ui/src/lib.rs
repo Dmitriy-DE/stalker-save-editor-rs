@@ -12,6 +12,9 @@ pub mod layout;
 pub mod list;
 /// Numbers, sizes, dates and plural forms in the 15 interface languages (X23).
 pub mod locale;
+/// macOS window adapter over the safe `sse-sys` window API.
+#[cfg(any(target_os = "macos", test))]
+pub mod macos_window;
 /// SVG path data, flattening, strokes and the 28 interface icons (X25).
 pub mod path;
 /// Software raster primitives over a premultiplied BGRA surface (X14).

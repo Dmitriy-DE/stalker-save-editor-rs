@@ -1,17 +1,23 @@
-//! Event loop: one channel carries window events and worker messages; the UI thread sleeps in `recv` while idle.
+//! Event loop: one channel carries window events and worker messages while the UI thread sleeps between updates.
 //!
-//! The UI thread never waits for work. Backends push [`WindowEvent`]s from their reader thread, workers push their
-//! own messages through a [`Proxy`]. Every wake drains the channel, lets the app react, lays out and repaints only
-//! the damaged rectangles, then presents them.
+//! Channel-backed platforms block on the receiver while idle. A platform with a main-thread native event pump may
+//! override [`Present::wait_for_message`]; workers wake it through a [`Proxy`] callback. Every wake drains queued
+//! messages, lets the app react, lays out and repaints only the damaged rectangles, then presents them.
 
 use crate::raster::Rect;
 use crate::widget::Tree;
 use sse_core::Result;
 use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::{Arc, Mutex};
 
 /// Platform-independent window input.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum WindowEvent {
+    /// The native backing scale changed (for example, after moving between DPI-scaled monitors).
+    DpiChanged {
+        /// Logical-to-framebuffer scale, where `1.0` is 96 DPI.
+        scale: f32,
+    },
     /// The window has a new size in pixels.
     Resized {
         /// Width.
@@ -76,29 +82,62 @@ pub enum Message<U> {
     User(U),
 }
 
+/// Callback run after a message is queued to wake a platform event loop.
+pub type WakeCallback = Arc<dyn Fn() + Send + Sync>;
+type SharedWakeCallback = Arc<Mutex<Option<WakeCallback>>>;
+
 /// Cloneable sender for worker threads.
-#[derive(Debug)]
 pub struct Proxy<U> {
     sender: Sender<Message<U>>,
+    wake_callback: SharedWakeCallback,
 }
 
 impl<U> Clone for Proxy<U> {
     fn clone(&self) -> Self {
         Self {
             sender: self.sender.clone(),
+            wake_callback: Arc::clone(&self.wake_callback),
         }
+    }
+}
+
+impl<U> std::fmt::Debug for Proxy<U> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Proxy").finish_non_exhaustive()
     }
 }
 
 impl<U> Proxy<U> {
     /// Sends a worker message to the UI thread. Returns false when the UI is gone.
     pub fn send(&self, message: U) -> bool {
-        self.sender.send(Message::User(message)).is_ok()
+        let sent = self.sender.send(Message::User(message)).is_ok();
+        if sent {
+            self.wake();
+        }
+        sent
     }
 
     /// Sends a window event (used by backends).
     pub fn window(&self, event: WindowEvent) -> bool {
-        self.sender.send(Message::Window(event)).is_ok()
+        let sent = self.sender.send(Message::Window(event)).is_ok();
+        if sent {
+            self.wake();
+        }
+        sent
+    }
+
+    /// Installs a callback that wakes a native event loop after a message is queued.
+    pub fn set_wake_callback(&self, callback: Option<WakeCallback>) {
+        if let Ok(mut slot) = self.wake_callback.lock() {
+            *slot = callback;
+        }
+    }
+
+    fn wake(&self) {
+        let callback = self.wake_callback.lock().ok().and_then(|slot| slot.clone());
+        if let Some(callback) = callback {
+            callback();
+        }
     }
 }
 
@@ -106,7 +145,13 @@ impl<U> Proxy<U> {
 #[must_use]
 pub fn channel_pair<U>() -> (Proxy<U>, Receiver<Message<U>>) {
     let (sender, receiver) = channel();
-    (Proxy { sender }, receiver)
+    (
+        Proxy {
+            sender,
+            wake_callback: Arc::new(Mutex::new(None)),
+        },
+        receiver,
+    )
 }
 
 /// Shows frames. Implemented by the X11, Wayland, Win32 and macOS backends and by the headless test backend.
@@ -116,6 +161,13 @@ pub trait Present {
     /// # Errors
     /// Returns an error when the display connection fails.
     fn present(&mut self, frame: &[u32], stride: usize, width: u32, height: u32, rects: &[Rect]) -> Result<()>;
+
+    /// Waits for a worker or window message. Backends with a main-thread native event pump may override this.
+    ///
+    /// The default blocks on the channel used by [`Proxy`].
+    fn wait_for_message<U>(&mut self, receiver: &Receiver<Message<U>>) -> Result<Option<Message<U>>> {
+        Ok(receiver.recv().ok())
+    }
 }
 
 /// What the app wants after handling a message.
@@ -157,7 +209,7 @@ pub fn run<U, A: App<U>, P: Present>(
 ) -> Result<Stats> {
     let mut stats = Stats::default();
     let mut frame: Vec<u32> = Vec::new();
-    while let Ok(first) = receiver.recv() {
+    while let Some(first) = backend.wait_for_message(receiver)? {
         stats.wakes = stats.wakes.saturating_add(1);
         let mut next = Some(first);
         while let Some(message) = next {
@@ -196,6 +248,7 @@ fn handle<U, A: App<U>>(tree: &mut Tree, app: &mut A, message: &Message<U>) -> F
     let mut clicked = None;
     if let Message::Window(event) = message {
         match *event {
+            WindowEvent::DpiChanged { scale } => tree.set_scale(scale),
             WindowEvent::Resized { width, height } => tree.resize(width, height),
             WindowEvent::Exposed(rect) => tree.add_damage(rect),
             WindowEvent::PointerMoved { x, y } => {
@@ -216,4 +269,25 @@ fn handle<U, A: App<U>>(tree: &mut Tree, app: &mut A, message: &Message<U>) -> F
         }
     }
     app.message(tree, message, clicked)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{channel_pair, Message};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    #[test]
+    fn proxy_wakes_a_registered_native_event_loop_after_sending() {
+        let (proxy, receiver) = channel_pair::<u8>();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let callback_calls = Arc::clone(&calls);
+        proxy.set_wake_callback(Some(Arc::new(move || {
+            callback_calls.fetch_add(1, Ordering::Relaxed);
+        })));
+
+        assert!(proxy.send(7));
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+        assert!(matches!(receiver.recv(), Ok(Message::User(7))));
+    }
 }

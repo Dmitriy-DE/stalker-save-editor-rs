@@ -257,6 +257,23 @@ impl Tree {
         }
     }
 
+    /// Sets the logical-to-framebuffer scale reported by the native window.
+    ///
+    /// Invalid, non-positive scales are ignored so a malformed platform event cannot poison layout geometry.
+    pub fn set_scale(&mut self, scale: f32) {
+        if scale.is_finite() && scale > 0.0 && self.scale != scale {
+            self.scale = scale;
+            self.needs_layout = true;
+            self.damage_all();
+        }
+    }
+
+    /// Current logical-to-framebuffer scale used to snap layout boundaries.
+    #[must_use]
+    pub const fn scale(&self) -> f32 {
+        self.scale
+    }
+
     /// Current window size.
     #[must_use]
     pub const fn size(&self) -> (u32, u32) {

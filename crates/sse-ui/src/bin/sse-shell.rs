@@ -4,13 +4,18 @@
 //! PNG without opening a window or playing sounds; `--bench` reports paint timings.
 
 use sse_core::{Error, Result};
+#[cfg(any(all(unix, not(target_os = "macos")), target_os = "macos"))]
 use sse_ui::event_loop::channel_pair;
 use sse_ui::glyphs::Fonts;
 use sse_ui::screens::shell::Shell;
 use sse_ui::screens::style::{rgb, BG_BASE};
-use sse_ui::screens::{AppMessage, ScreenId};
+#[cfg(any(all(unix, not(target_os = "macos")), target_os = "macos"))]
+use sse_ui::screens::AppMessage;
+use sse_ui::screens::ScreenId;
 use sse_ui::widget::Tree;
-use std::time::{Duration, Instant};
+#[cfg(any(all(unix, not(target_os = "macos")), target_os = "macos"))]
+use std::time::Duration;
+use std::time::Instant;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -122,11 +127,31 @@ fn window() -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(all(unix, not(target_os = "macos"))))]
+#[cfg(target_os = "macos")]
 fn window() -> Result<()> {
-    let _ = (channel_pair::<AppMessage>, Duration::from_secs, BG_BASE, Instant::now);
+    let (proxy, receiver) = channel_pair::<AppMessage>();
+    let mut tree = Tree::new(Fonts::bundled()?, rgb(BG_BASE));
+    let mut shell = Shell::build(&mut tree, Some(proxy.clone()))?;
+    let (width, height) = (1280_u32, 800_u32);
+    let mut backend =
+        sse_ui::macos_window::MacPresenter::open("S.T.A.L.K.E.R. Save Editor", width, height, proxy.clone())?;
+    tree.resize(width, height);
+    let started = Instant::now();
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_secs(1));
+        if !proxy.send(AppMessage::Tick(started.elapsed().as_secs())) {
+            return;
+        }
+    });
+    let stats = sse_ui::event_loop::run(&receiver, &mut tree, &mut shell, &mut backend)?;
+    eprintln!("wakes {} frames {} pixels {}", stats.wakes, stats.frames, stats.pixels);
+    Ok(())
+}
+
+#[cfg(windows)]
+fn window() -> Result<()> {
     Err(Error::Refused(
-        "window backend for this platform comes in U3/U4; use --screenshot".to_owned(),
+        "Windows window backend comes in U2; use --screenshot".to_owned(),
     ))
 }
 
