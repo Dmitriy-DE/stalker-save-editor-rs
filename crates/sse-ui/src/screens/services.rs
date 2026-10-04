@@ -46,11 +46,19 @@ fn xray_game(game: &str) -> Option<sse_companion::bundled::Game> {
 }
 
 fn companion_root(game: &str, root: &Path) -> std::result::Result<PathBuf, String> {
-    if xray_game(game).is_some() { return Ok(root.to_path_buf()); }
+    if xray_game(game).is_some() {
+        return Ok(root.to_path_buf());
+    }
     if matches!(game, "s2" | "stalker2") {
-        for rel in ["Stalker2/Binaries/Win64/ue4ss/Mods", "Binaries/Win64/ue4ss/Mods", "ue4ss/Mods"] {
+        for rel in [
+            "Stalker2/Binaries/Win64/ue4ss/Mods",
+            "Binaries/Win64/ue4ss/Mods",
+            "ue4ss/Mods",
+        ] {
             let path = root.join(rel);
-            if path.is_dir() { return Ok(path); }
+            if path.is_dir() {
+                return Ok(path);
+            }
         }
         return Err("Не найдена папка UE4SS Mods для S.T.A.L.K.E.R. 2".to_owned());
     }
@@ -137,10 +145,19 @@ impl<'a> Cursor<'a> {
 }
 
 fn cloud_files(bytes: &[u8]) -> std::result::Result<Vec<CloudFile>, String> {
-    let mut c=Cursor::new(bytes); let count=usize::try_from(c.u32()?).map_err(|_| "Cloud count overflow".to_owned())?;
-    if count>10_000 { return Err("Cloud response exceeds 10,000 files".to_owned()); }
-    let mut out=Vec::with_capacity(count);
-    for _ in 0..count { out.push(CloudFile{name:c.string()?,size:c.u64()?,timestamp:c.i64()?}); }
+    let mut c = Cursor::new(bytes);
+    let count = usize::try_from(c.u32()?).map_err(|_| "Cloud count overflow".to_owned())?;
+    if count > 10_000 {
+        return Err("Cloud response exceeds 10,000 files".to_owned());
+    }
+    let mut out = Vec::with_capacity(count);
+    for _ in 0..count {
+        out.push(CloudFile {
+            name: c.string()?,
+            size: c.u64()?,
+            timestamp: c.i64()?,
+        });
+    }
     Ok(out)
 }
 
@@ -165,7 +182,11 @@ fn achievement_list(bytes: &[u8]) -> std::result::Result<Vec<Achievement>, Strin
 }
 
 fn clip(text: &str) -> String {
-    if text.chars().count()<=80 { text.to_owned() } else { text.chars().take(79).chain(std::iter::once('…')).collect() }
+    if text.chars().count() <= 80 {
+        text.to_owned()
+    } else {
+        text.chars().take(79).chain(std::iter::once('…')).collect()
+    }
 }
 
 #[derive(Debug)]
@@ -201,16 +222,32 @@ impl Companion {
 }
 
 impl Screen for Companion {
-    fn id(&self)->ScreenId{ScreenId::Companion}
-    fn subtitle(&self)->&str{"Мод-компаньон, версия и горячие клавиши"}
-    fn build(&mut self,cx:&mut Context<'_>,host:WidgetId)->Result<()> {
-        let card=style::card(cx.tree,host)?; style::label(cx.tree,card,"МОД-КОМПАНЬОН",Text::Heading)?;
-        self.status=Some(style::label(cx.tree,card,"Выберите игру",Text::Value)?); self.version=Some(style::label(cx.tree,card,"Версия: —",Text::Note)?);
-        let row=style::row(cx.tree,card)?; self.install=Some(style::button(cx.tree,row,"Установить",Button::Primary)?); self.remove=Some(style::button(cx.tree,row,"Удалить",Button::Secondary)?);
-        let hot=style::card(cx.tree,host)?; style::label(cx.tree,hot,"ГОРЯЧИЕ КЛАВИШИ МОДА",Text::Heading)?;
-        let layout=sse_companion::hotkeys::HotkeyLayout::default();
-        for action in [sse_companion::hotkeys::HotkeyAction::Heal,sse_companion::hotkeys::HotkeyAction::RepairEquipped,sse_companion::hotkeys::HotkeyAction::Mark,sse_companion::hotkeys::HotkeyAction::JumpLast,sse_companion::hotkeys::HotkeyAction::QuickSave] {
-            let key=layout.binding(action).map_or_else(||"—".to_owned(),|v|v.to_string()); style::label(cx.tree,hot,&format!("{} — {key}",action.name()),Text::Body)?;
+    fn id(&self) -> ScreenId {
+        ScreenId::Companion
+    }
+    fn subtitle(&self) -> &str {
+        "Мод-компаньон, версия и горячие клавиши"
+    }
+    fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
+        let card = style::card(cx.tree, host)?;
+        style::label(cx.tree, card, "МОД-КОМПАНЬОН", Text::Heading)?;
+        self.status = Some(style::label(cx.tree, card, "Выберите игру", Text::Value)?);
+        self.version = Some(style::label(cx.tree, card, "Версия: —", Text::Note)?);
+        let row = style::row(cx.tree, card)?;
+        self.install = Some(style::button(cx.tree, row, "Установить", Button::Primary)?);
+        self.remove = Some(style::button(cx.tree, row, "Удалить", Button::Secondary)?);
+        let hot = style::card(cx.tree, host)?;
+        style::label(cx.tree, hot, "ГОРЯЧИЕ КЛАВИШИ МОДА", Text::Heading)?;
+        let layout = sse_companion::hotkeys::HotkeyLayout::default();
+        for action in [
+            sse_companion::hotkeys::HotkeyAction::Heal,
+            sse_companion::hotkeys::HotkeyAction::RepairEquipped,
+            sse_companion::hotkeys::HotkeyAction::Mark,
+            sse_companion::hotkeys::HotkeyAction::JumpLast,
+            sse_companion::hotkeys::HotkeyAction::QuickSave,
+        ] {
+            let key = layout.binding(action).map_or_else(|| "—".to_owned(), |v| v.to_string());
+            style::label(cx.tree, hot, &format!("{} — {key}", action.name()), Text::Body)?;
         }
         Ok(())
     }
@@ -302,13 +339,53 @@ impl Screen for Companion {
 }
 
 #[derive(Debug)]
-enum AchReply { List(std::result::Result<Vec<Achievement>,String>), Changed(std::result::Result<(),String>) }
+enum AchReply {
+    List(std::result::Result<Vec<Achievement>, String>),
+    Changed(std::result::Result<(), String>),
+}
 #[derive(Default)]
-struct Achievements { status:Option<WidgetId>,rows:Vec<WidgetId>,items:Vec<Achievement>,selected:Option<usize>,set:Option<WidgetId>,clear:Option<WidgetId>,confirm:Option<bool> }
+struct Achievements {
+    status: Option<WidgetId>,
+    rows: Vec<WidgetId>,
+    items: Vec<Achievement>,
+    selected: Option<usize>,
+    set: Option<WidgetId>,
+    clear: Option<WidgetId>,
+    confirm: Option<bool>,
+}
 
 impl Achievements {
-    fn load(&self,cx:&mut Context<'_>){let Some(proxy)=cx.proxy.cloned()else{return};let id=cx.app.selected_game().and_then(app_id);std::thread::spawn(move||{let result=id.ok_or_else(||"Для выбранной игры нет Steam App ID".to_owned()).and_then(|app_id|worker(&Request::ListAchievements{app_id})).and_then(|b|achievement_list(&b));proxy.send(AppMessage::ToScreen(ScreenId::Achievements,Box::new(AchReply::List(result))));});}
-    fn render(&mut self,cx:&mut Context<'_>)->Result<()> {for(i,row)in self.rows.iter().copied().enumerate(){if let Some(a)=self.items.get(i){cx.tree.set_visible(row,true)?;cx.tree.set_text(row,&format!("{} {}",if a.achieved{"✓"}else{"○"},clip(&a.display_name)))?;}else{cx.tree.set_visible(row,false)?;}}if let Some(id)=self.status{cx.tree.set_text(id,&format!("Достижений: {}",self.items.len()))?;}Ok(())}
+    fn load(&self, cx: &mut Context<'_>) {
+        let Some(proxy) = cx.proxy.cloned() else { return };
+        let id = cx.app.selected_game().and_then(app_id);
+        std::thread::spawn(move || {
+            let result = id
+                .ok_or_else(|| "Для выбранной игры нет Steam App ID".to_owned())
+                .and_then(|app_id| worker(&Request::ListAchievements { app_id }))
+                .and_then(|b| achievement_list(&b));
+            proxy.send(AppMessage::ToScreen(
+                ScreenId::Achievements,
+                Box::new(AchReply::List(result)),
+            ));
+        });
+    }
+    fn render(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        for (i, row) in self.rows.iter().copied().enumerate() {
+            if let Some(a) = self.items.get(i) {
+                cx.tree.set_visible(row, true)?;
+                cx.tree.set_text(
+                    row,
+                    &format!("{} {}", if a.achieved { "✓" } else { "○" }, clip(&a.display_name)),
+                )?;
+            } else {
+                cx.tree.set_visible(row, false)?;
+            }
+        }
+        if let Some(id) = self.status {
+            cx.tree.set_text(id, &format!("Достижений: {}", self.items.len()))?;
+        }
+        Ok(())
+    }
 }
 
 impl Screen for Achievements {
@@ -419,13 +496,50 @@ impl Screen for Achievements {
 }
 
 #[derive(Debug)]
-enum CloudReply { List(std::result::Result<Vec<CloudFile>,String>), Done(std::result::Result<String,String>) }
+enum CloudReply {
+    List(std::result::Result<Vec<CloudFile>, String>),
+    Done(std::result::Result<String, String>),
+}
 #[derive(Default)]
-struct Cloud { status:Option<WidgetId>,rows:Vec<WidgetId>,items:Vec<CloudFile>,selected:Option<usize>,download:Option<WidgetId>,upload:Option<WidgetId> }
+struct Cloud {
+    status: Option<WidgetId>,
+    rows: Vec<WidgetId>,
+    items: Vec<CloudFile>,
+    selected: Option<usize>,
+    download: Option<WidgetId>,
+    upload: Option<WidgetId>,
+}
 
 impl Cloud {
-    fn load(&self,cx:&mut Context<'_>){let Some(proxy)=cx.proxy.cloned()else{return};let id=cx.app.selected_game().and_then(app_id);std::thread::spawn(move||{let result=id.ok_or_else(||"Для выбранной игры нет Steam App ID".to_owned()).and_then(|app_id|worker(&Request::List{app_id})).and_then(|b|cloud_files(&b));proxy.send(AppMessage::ToScreen(ScreenId::Cloud,Box::new(CloudReply::List(result))));});}
-    fn render(&mut self,cx:&mut Context<'_>)->Result<()> {for(i,row)in self.rows.iter().copied().enumerate(){if let Some(f)=self.items.get(i){cx.tree.set_visible(row,true)?;cx.tree.set_text(row,&format!("{} · {} KiB",clip(&f.name),f.size/1024))?;}else{cx.tree.set_visible(row,false)?;}}if let Some(id)=self.status{cx.tree.set_text(id,&format!("Файлов: {}",self.items.len()))?;}Ok(())}
+    fn load(&self, cx: &mut Context<'_>) {
+        let Some(proxy) = cx.proxy.cloned() else { return };
+        let id = cx.app.selected_game().and_then(app_id);
+        std::thread::spawn(move || {
+            let result = id
+                .ok_or_else(|| "Для выбранной игры нет Steam App ID".to_owned())
+                .and_then(|app_id| worker(&Request::List { app_id }))
+                .and_then(|b| cloud_files(&b));
+            proxy.send(AppMessage::ToScreen(
+                ScreenId::Cloud,
+                Box::new(CloudReply::List(result)),
+            ));
+        });
+    }
+    fn render(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        for (i, row) in self.rows.iter().copied().enumerate() {
+            if let Some(f) = self.items.get(i) {
+                cx.tree.set_visible(row, true)?;
+                cx.tree
+                    .set_text(row, &format!("{} · {} KiB", clip(&f.name), f.size / 1024))?;
+            } else {
+                cx.tree.set_visible(row, false)?;
+            }
+        }
+        if let Some(id) = self.status {
+            cx.tree.set_text(id, &format!("Файлов: {}", self.items.len()))?;
+        }
+        Ok(())
+    }
 }
 
 impl Screen for Cloud {
@@ -549,17 +663,89 @@ impl Screen for Cloud {
 }
 
 #[derive(Debug)]
-struct UpdateReply(std::result::Result<String,String>);
+struct UpdateReply(std::result::Result<String, String>);
 #[derive(Default)]
-struct Updates { status:Option<WidgetId>,check:Option<WidgetId>,install:Option<WidgetId> }
+struct Updates {
+    status: Option<WidgetId>,
+    check: Option<WidgetId>,
+    install: Option<WidgetId>,
+}
 
 impl Screen for Updates {
-    fn id(&self)->ScreenId{ScreenId::Updates} fn subtitle(&self)->&str{"Подписанные обновления редактора"}
-    fn build(&mut self,cx:&mut Context<'_>,host:WidgetId)->Result<()> {let card=style::card(cx.tree,host)?;style::label(cx.tree,card,"ОБНОВЛЕНИЯ РЕДАКТОРА",Text::Heading)?;self.status=Some(style::label(cx.tree,card,&format!("Установлена {}",env!("CARGO_PKG_VERSION")),Text::Value)?);let row=style::row(cx.tree,card)?;self.check=Some(style::button(cx.tree,row,"Проверить",Button::Secondary)?);self.install=Some(style::button(cx.tree,row,"Скачать и установить",Button::Primary)?);Ok(())}
-    fn message(&mut self,cx:&mut Context<'_>,message:&Message<AppMessage>,clicked:Option<WidgetId>)->Result<()> {
-        let install=clicked==self.install;
-        if clicked==self.check||install {let Some(proxy)=cx.proxy.cloned()else{return Ok(())};std::thread::spawn(move||{let result=(||{let detected=sse_update::UpdateInstallationDetector::detect(None,None,None).map_err(|e|e.to_string())?;let service=sse_update::UpdateService::new(env!("CARGO_PKG_VERSION"),detected);let mut fetch=sse_update::DefaultFetch;let check=service.check(&mut fetch);if let Some(error)=check.error{return Err(error)}let manifest=check.manifest.ok_or_else(||"Нет манифеста обновления".to_owned())?;if !install{return Ok(format!("Последняя версия: {} ({:?})",manifest.version,check.state))}if !matches!(check.state,sse_update::UpdateState::Available){return Ok(format!("Обновление не требуется: {}",manifest.version))}let artifact=check.artifact.ok_or_else(||"Нет пакета для этой установки".to_owned())?;let path=std::env::temp_dir().join(&artifact.file);service.download(&mut fetch,&artifact,&path,None).map_err(|e|e.to_string())?;let mut runner=sse_update::SystemProcessRunner;let done=service.install(&artifact,&path,&mut runner).map_err(|e|e.to_string())?;Ok(format!("{:?}: {}",done.state,done.message))})();proxy.send(AppMessage::ToScreen(ScreenId::Updates,Box::new(UpdateReply(result))));});}
-        if let Message::User(AppMessage::ToScreen(ScreenId::Updates,payload))=message{if let Some(UpdateReply(result))=payload.downcast_ref::<UpdateReply>(){let text=match result{Ok(v)=>v.clone(),Err(e)=>format!("Ошибка обновления: {e}")};if let Some(id)=self.status{cx.tree.set_text(id,&clip(&text))?;}cx.status=Some(text);}}
+    fn id(&self) -> ScreenId {
+        ScreenId::Updates
+    }
+    fn subtitle(&self) -> &str {
+        "Подписанные обновления редактора"
+    }
+    fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
+        let card = style::card(cx.tree, host)?;
+        style::label(cx.tree, card, "ОБНОВЛЕНИЯ РЕДАКТОРА", Text::Heading)?;
+        self.status = Some(style::label(
+            cx.tree,
+            card,
+            &format!("Установлена {}", env!("CARGO_PKG_VERSION")),
+            Text::Value,
+        )?);
+        let row = style::row(cx.tree, card)?;
+        self.check = Some(style::button(cx.tree, row, "Проверить", Button::Secondary)?);
+        self.install = Some(style::button(cx.tree, row, "Скачать и установить", Button::Primary)?);
+        Ok(())
+    }
+    fn message(
+        &mut self,
+        cx: &mut Context<'_>,
+        message: &Message<AppMessage>,
+        clicked: Option<WidgetId>,
+    ) -> Result<()> {
+        let install = clicked == self.install;
+        if clicked == self.check || install {
+            let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
+            std::thread::spawn(move || {
+                let result = (|| {
+                    let detected =
+                        sse_update::UpdateInstallationDetector::detect(None, None, None).map_err(|e| e.to_string())?;
+                    let service = sse_update::UpdateService::new(env!("CARGO_PKG_VERSION"), detected);
+                    let mut fetch = sse_update::DefaultFetch;
+                    let check = service.check(&mut fetch);
+                    if let Some(error) = check.error {
+                        return Err(error);
+                    }
+                    let manifest = check.manifest.ok_or_else(|| "Нет манифеста обновления".to_owned())?;
+                    if !install {
+                        return Ok(format!("Последняя версия: {} ({:?})", manifest.version, check.state));
+                    }
+                    if !matches!(check.state, sse_update::UpdateState::Available) {
+                        return Ok(format!("Обновление не требуется: {}", manifest.version));
+                    }
+                    let artifact = check
+                        .artifact
+                        .ok_or_else(|| "Нет пакета для этой установки".to_owned())?;
+                    let path = std::env::temp_dir().join(&artifact.file);
+                    service
+                        .download(&mut fetch, &artifact, &path, None)
+                        .map_err(|e| e.to_string())?;
+                    let mut runner = sse_update::SystemProcessRunner;
+                    let done = service
+                        .install(&artifact, &path, &mut runner)
+                        .map_err(|e| e.to_string())?;
+                    Ok(format!("{:?}: {}", done.state, done.message))
+                })();
+                proxy.send(AppMessage::ToScreen(ScreenId::Updates, Box::new(UpdateReply(result))));
+            });
+        }
+        if let Message::User(AppMessage::ToScreen(ScreenId::Updates, payload)) = message {
+            if let Some(UpdateReply(result)) = payload.downcast_ref::<UpdateReply>() {
+                let text = match result {
+                    Ok(v) => v.clone(),
+                    Err(e) => format!("Ошибка обновления: {e}"),
+                };
+                if let Some(id) = self.status {
+                    cx.tree.set_text(id, &clip(&text))?;
+                }
+                cx.status = Some(text);
+            }
+        }
         Ok(())
     }
 }
