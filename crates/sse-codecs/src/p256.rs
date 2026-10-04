@@ -742,7 +742,10 @@ fn base64_value(byte: u8) -> Result<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{jacobian_add, jacobian_double, jacobian_x, pow_mod, scalar_mul, Affine, PublicKey, P, P_MINUS_TWO, GX, GY, N, U256, parse_signature, field_mul, field_square};
+    use super::{
+        field_mul, field_square, jacobian_add, jacobian_double, jacobian_x, parse_signature, pow_mod, scalar_mul,
+        Affine, PublicKey, GX, GY, N, P, P_MINUS_TWO, U256,
+    };
     use core::cmp::Ordering;
 
     const PUBLIC_KEY: &str = "-----BEGIN PUBLIC KEY-----\n\
