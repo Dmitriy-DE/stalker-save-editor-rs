@@ -1445,8 +1445,7 @@ enum FixReply {
     Compatibility(std::result::Result<(String, String, PathBuf, String), String>),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum FixOperation {
     Install,
     Remove,
@@ -1785,7 +1784,7 @@ impl Screen for GameFixes {
             let build = self.verified.as_ref().map(|state| state.build.as_str()).unwrap_or_default();
             if sse_fixes::GameFixCatalog::for_preset(target, preset)
                 .iter()
-                .any(|definition| !definition.supported_steam_build_ids.iter().any(|id| id == build))
+                .any(|definition| !definition.supported_steam_build_ids.iter().any(|id| id.as_str() == build))
             {
                 cx.status = Some(format!("СБОРКА STEAM {build} НЕ ПОДДЕРЖИВАЕТ ВЫБРАННЫЙ ПРЕСЕТ."));
                 return Ok(());
@@ -1924,6 +1923,8 @@ impl Screen for GameFixes {
                     Box::new(FixReply::Changed(result)),
                 ));
             });
+            return Ok(());
+        }
 
         if let Message::User(AppMessage::ToScreen(ScreenId::GameFixes, payload)) = message {
             if let Some(reply) = payload.downcast_ref::<FixReply>() {
