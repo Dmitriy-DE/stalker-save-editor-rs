@@ -211,7 +211,7 @@ struct WorkspaceState {
     idle: bool,
     installations: Vec<DiscoveredInstallation>,
     selected_target: Option<GameTarget>,
-    selected_index: Option<usize>,
+    selected_installation: Option<PathBuf>,
     status_message: Option<String>,
 }
 
@@ -291,14 +291,14 @@ impl GamesOverview {
     }
 
     fn render(&mut self, cx: &mut Context<'_>) -> Result<()> {
-        let (idle, discovering, installations, selected_target, selected_index, status_message) = {
+        let (idle, discovering, installations, selected_target, selected_installation, status_message) = {
             let state = self.workspace.lock();
             (
                 state.idle,
                 state.discovering,
                 state.installations.clone(),
                 state.selected_target.unwrap_or(GameTarget::ShadowOfChernobyl),
-                state.selected_index,
+                state.selected_installation.clone(),
                 state.status_message.clone(),
             )
         };
@@ -336,7 +336,7 @@ impl GamesOverview {
             if let Some(row_id) = self.rows.get(i).copied() {
                 if let Some(install) = installations.get(i) {
                     cx.tree.set_visible(row_id, true)?;
-                    let is_selected = selected_index == Some(i);
+                    let is_selected = selected_installation.as_ref() == Some(&install.directory);
                     let prefix = if is_selected { "> " } else { "  " };
                     let path_str = install.directory.to_string_lossy();
                     let shortened = text::ellipsize_middle(&path_str, 420.0, &PathMetrics);
@@ -355,7 +355,7 @@ impl GamesOverview {
         }
 
         // Selected installation details
-        let selected_install = selected_index.and_then(|idx| installations.get(idx));
+        let selected_install = selected_installation.as_ref().and_then(|id| installations.iter().find(|install| &install.directory == id));
 
         if let Some(id) = self.target_title {
             let title = if let Some(install) = selected_install {
@@ -615,7 +615,7 @@ impl Screen for GamesOverview {
                 .unwrap_or(GameTarget::ShadowOfChernobyl);
             state.selected_target = Some(new_target);
             // Also select matching installation if any
-            state.selected_index = state.installations.iter().position(|inst| inst.target == new_target);
+            state.selected_installation = state.installations.iter().find(|inst| inst.target == new_target).map(|inst| inst.directory.clone());
             drop(state);
             return self.render(cx);
         }
@@ -642,7 +642,7 @@ impl Screen for GamesOverview {
                 let mut state = self.workspace.lock();
                 if let Some(inst) = state.installations.get(i) {
                     state.selected_target = Some(inst.target);
-                    state.selected_index = Some(i);
+                    state.selected_installation = Some(inst.directory.clone());
                 }
                 drop(state);
                 return self.render(cx);
@@ -652,7 +652,7 @@ impl Screen for GamesOverview {
         // 6. Click on "Открыть папку"
         if clicked.is_some() && clicked == self.open_folder_button {
             let state = self.workspace.lock();
-            let selected_install = state.selected_index.and_then(|idx| state.installations.get(idx));
+            let selected_install = state.selected_installation.as_ref().and_then(|id| state.installations.iter().find(|install| &install.directory == id));
             if let Some(install) = selected_install {
                 cx.status = Some(format!("Папка игры: {}", install.directory.display()));
             } else {
@@ -674,8 +674,8 @@ impl Screen for GamesOverview {
                 state.discovering = false;
                 state.installations.clone_from(&result.installations);
                 state.status_message = Some(result.status.clone());
-                if state.selected_index.is_none() && !state.installations.is_empty() {
-                    state.selected_index = Some(0);
+                if state.selected_installation.as_ref().is_none_or(|id| !state.installations.iter().any(|install| &install.directory == id)) && !state.installations.is_empty() {
+                    state.selected_installation = state.installations.first().map(|install| install.directory.clone());
                     if let Some(first) = state.installations.first() {
                         state.selected_target = Some(first.target);
                     }
@@ -702,8 +702,8 @@ fn start_background_discovery(workspace: &Workspace, cx: &mut Context<'_>) {
         state.discovering = false;
         state.installations = found;
         state.status_message = Some(status);
-        if state.selected_index.is_none() && !state.installations.is_empty() {
-            state.selected_index = Some(0);
+        if state.selected_installation.as_ref().is_none_or(|id| !state.installations.iter().any(|install| &install.directory == id)) && !state.installations.is_empty() {
+            state.selected_installation = state.installations.first().map(|install| install.directory.clone());
             if let Some(first) = state.installations.first() {
                 state.selected_target = Some(first.target);
             }
