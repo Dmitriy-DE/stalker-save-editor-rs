@@ -1215,14 +1215,31 @@ impl Screen for Environment {
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
         let card = style::card(cx.tree, host)?;
         style::label(cx.tree, card, "СРЕДА ИГРЫ", Text::Heading)?;
-        self.status = Some(style::label(cx.tree, card, "Управляемая установка: не выбрана", Text::Note)?);
+        self.status = Some(style::label(
+            cx.tree,
+            card,
+            "Управляемая установка: не выбрана",
+            Text::Note,
+        )?);
         style::label(cx.tree, card, "УПРАВЛЯЕМЫЕ СНИМКИ", Text::Heading)?;
-        style::label(cx.tree, card, "Снимки включают только файлы и манифесты Game Fix, Companion и настроек, которыми владеет инструмент.", Text::Note)?;
+        style::label(
+            cx.tree,
+            card,
+            "Снимки включают только файлы и манифесты Game Fix, Companion и настроек, которыми владеет инструмент.",
+            Text::Note,
+        )?;
         self.snapshot = Some(style::button(cx.tree, card, "СОЗДАТЬ СНИМОК", Button::Primary)?);
         style::label(cx.tree, card, "ПРОФИЛИ ИГРЫ", Text::Heading)?;
-        style::label(cx.tree, card, "Профили поддерживаются ядром; UI имени/списка будет подключён после text-input binding.", Text::Note)?;
+        style::label(
+            cx.tree,
+            card,
+            "Профили поддерживаются ядром; UI имени/списка будет подключён после text-input binding.",
+            Text::Note,
+        )?;
         style::label(cx.tree, card, "НАСТРОЙКИ user.ltx", Text::Heading)?;
-        for setting in sse_fixes::toolkit::MANAGED_SETTINGS { style::label(cx.tree, card, setting.key, Text::Body)?; }
+        for setting in sse_fixes::toolkit::MANAGED_SETTINGS {
+            style::label(cx.tree, card, setting.key, Text::Body)?;
+        }
         style::label(cx.tree, card, "АУДИТ УСТАНОВКИ", Text::Heading)?;
         self.audit = Some(style::button(cx.tree, card, "ПРОВЕРИТЬ", Button::Secondary)?);
         for _ in 0..10 {
@@ -1255,17 +1272,48 @@ impl Screen for Environment {
                     let directory = directory.ok_or_else(|| "Управляемая установка: не выбрана".to_owned())?;
                     let engine = sse_fixes::GameFixEngine::new();
                     if create_snapshot {
-                        if !game.is_xray() { return Err("Снимки доступны только для X-Ray игр.".to_owned()); }
-                        let snap = sse_fixes::toolkit::ToolkitSnapshotService::create_snapshot(&directory, game, &engine, None).map_err(|e| e.to_string())?;
-                        Ok(vec![format!("Создан снимок: {}", snap.id), format!("исправлений: {} · Companion: {}", snap.installed_fixes.len(), if snap.companion_installed { "включён" } else { "выключен" })])
+                        if !game.is_xray() {
+                            return Err("Снимки доступны только для X-Ray игр.".to_owned());
+                        }
+                        let snap = sse_fixes::toolkit::ToolkitSnapshotService::create_snapshot(
+                            &directory, game, &engine, None,
+                        )
+                        .map_err(|e| e.to_string())?;
+                        Ok(vec![
+                            format!("Создан снимок: {}", snap.id),
+                            format!(
+                                "исправлений: {} · Companion: {}",
+                                snap.installed_fixes.len(),
+                                if snap.companion_installed {
+                                    "включён"
+                                } else {
+                                    "выключен"
+                                }
+                            ),
+                        ])
                     } else {
-                        let report = sse_fixes::toolkit::ToolkitInstallAudit::audit_installation(&directory, game, &engine).map_err(|e| e.to_string())?;
-                        let mut lines = vec![format!("Проверено файлов: {}. Управляемых: {}. Неизвестных/модов: {}. Требуют проверки: {}.", report.total_scanned, report.managed_count, report.custom_mod_count, report.needs_review_count)];
-                        lines.extend(report.items.into_iter().take(8).map(|item| format!("{:?} · {} · {}", item.classification, item.relative_path, item.details)));
+                        let report =
+                            sse_fixes::toolkit::ToolkitInstallAudit::audit_installation(&directory, game, &engine)
+                                .map_err(|e| e.to_string())?;
+                        let mut lines = vec![format!(
+                            "Проверено файлов: {}. Управляемых: {}. Неизвестных/модов: {}. Требуют проверки: {}.",
+                            report.total_scanned,
+                            report.managed_count,
+                            report.custom_mod_count,
+                            report.needs_review_count
+                        )];
+                        lines.extend(report.items.into_iter().take(8).map(|item| {
+                            format!("{:?} · {} · {}", item.classification, item.relative_path, item.details)
+                        }));
                         Ok(lines)
                     }
                 })();
-                proxy.send(AppMessage::ToScreen(ScreenId::Environment, Box::new(EnvironmentResult { lines: result.unwrap_or_else(|e| vec![format!("Ошибка: {e}")]) })));
+                proxy.send(AppMessage::ToScreen(
+                    ScreenId::Environment,
+                    Box::new(EnvironmentResult {
+                        lines: result.unwrap_or_else(|e| vec![format!("Ошибка: {e}")]),
+                    }),
+                ));
             });
             return Ok(());
         }
@@ -1689,7 +1737,12 @@ impl Screen for GameDoctor {
         let actions = style::row(cx.tree, card)?;
         self.start = Some(style::button(cx.tree, actions, "Проверить", Button::Primary)?);
         self.cancel = Some(style::button(cx.tree, actions, "Отмена", Button::Secondary)?);
-        self.toggle_s2_mods = Some(style::button(cx.tree, actions, "ВРЕМЕННО ОТКЛЮЧИТЬ / ВОССТАНОВИТЬ КАСТОМНЫЕ МОДЫ", Button::Secondary)?);
+        self.toggle_s2_mods = Some(style::button(
+            cx.tree,
+            actions,
+            "ВРЕМЕННО ОТКЛЮЧИТЬ / ВОССТАНОВИТЬ КАСТОМНЫЕ МОДЫ",
+            Button::Secondary,
+        )?);
         style::label(cx.tree, card, "ФАЙЛ · ТЯЖЕСТЬ · НАХОДКА", Text::Value)?;
         for _ in 0..10 {
             let row = style::label(cx.tree, card, "", Text::Body)?;
