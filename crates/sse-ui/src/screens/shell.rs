@@ -298,7 +298,11 @@ impl Shell {
         let viewport = tree.add(
             Some(main),
             NodeKind::Row,
-            Style { grow: 1.0, align_items: Align::Stretch, ..Style::default() },
+            Style {
+                grow: 1.0,
+                align_items: Align::Stretch,
+                ..Style::default()
+            },
             Content::Panel,
             Look::default(),
         )?;
@@ -308,13 +312,31 @@ impl Shell {
             align_items: Align::Stretch,
             ..Style::default()
         };
-        let content = tree.add(Some(viewport), NodeKind::Column, content_style, Content::Panel, Look::default())?;
+        let content = tree.add(
+            Some(viewport),
+            NodeKind::Column,
+            content_style,
+            Content::Panel,
+            Look::default(),
+        )?;
         tree.set_clip_children(content, true)?;
         let scroll_bar = tree.add(
-            Some(viewport), NodeKind::Leaf,
-            Style { preferred: Size::new(10.0, 0.0), min: Size::new(10.0, 0.0), margin: padded(0.0, 4.0, 10.0, 20.0), ..Style::default() },
-            Content::Label { text: "▐".to_owned(), style: TextStyle::new(Face::Body, 10.0) },
-            Look { text: rgb(crate::widgets::scroll::THUMB), ..Look::default() },
+            Some(viewport),
+            NodeKind::Leaf,
+            Style {
+                preferred: Size::new(10.0, 0.0),
+                min: Size::new(10.0, 0.0),
+                margin: padded(0.0, 4.0, 10.0, 20.0),
+                ..Style::default()
+            },
+            Content::Label {
+                text: "▐".to_owned(),
+                style: TextStyle::new(Face::Body, 10.0),
+            },
+            Look {
+                text: rgb(crate::widgets::scroll::THUMB),
+                ..Look::default()
+            },
         )?;
         let wizard = super::wizard::Wizard::build(tree, content)?;
         let status = tree.add(
