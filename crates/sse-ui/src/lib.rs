@@ -27,6 +27,8 @@ pub mod raster;
 pub mod screens;
 /// C# screen acceptance inventory (X36).
 pub mod screens_spec;
+/// Interface strings in 15 languages, generated from the C# 1.3.1 catalogues (L1).
+pub mod strings;
 /// Line breaking, carets, ellipsis and search folding (X13).
 pub mod text;
 /// Visual theme tokens and interface scaling (X36).

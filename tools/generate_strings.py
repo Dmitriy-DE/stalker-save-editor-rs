@@ -8,7 +8,21 @@ import sys
 LANGS = ["ru","uk","en","de","fr","it","es","pl","cs","pt-BR","tr","ja","ko","zh-CN","zh-TW"]
 
 def q(value: str) -> str:
-    return json.dumps(value, ensure_ascii=False)
+    """Rust string literal; control, format and other invisible characters are written as \\u{..} escapes."""
+    import unicodedata
+    out = []
+    for ch in value:
+        if ch == "\\":
+            out.append("\\\\")
+        elif ch == '"':
+            out.append('\\"')
+        elif ch == "\n":
+            out.append("\\n")
+        elif unicodedata.category(ch) in ("Cc", "Cf", "Zl", "Zp") or (unicodedata.category(ch) == "Zs" and ch != " "):
+            out.append("\\u{%x}" % ord(ch))
+        else:
+            out.append(ch)
+    return '"' + "".join(out) + '"'
 
 def main() -> int:
     if len(sys.argv) != 2:
@@ -39,8 +53,10 @@ def main() -> int:
         rows.append(f"    ({q(key)}, [" + ", ".join(q(v) for v in values) + "]),")
     header = """//! Generated from C# 1.3.1 localization. Do not edit by hand.
 use std::sync::atomic::{AtomicU8, Ordering};
+/// Interface languages, Russian first (it is the key language).
 pub const LANGUAGES: [&str; 15] = [\"ru\",\"uk\",\"en\",\"de\",\"fr\",\"it\",\"es\",\"pl\",\"cs\",\"pt-BR\",\"tr\",\"ja\",\"ko\",\"zh-CN\",\"zh-TW\"];
 static CURRENT_LANGUAGE: AtomicU8 = AtomicU8::new(0);
+/// Index of a language code in [`LANGUAGES`]; unknown codes fall back to Russian.
 #[must_use]
 pub fn language_index(code: &str) -> usize {
     let clean = code.trim().replace('_', "-");
@@ -51,16 +67,20 @@ pub fn language_index(code: &str) -> usize {
         .or_else(|| lower.split('-').next().and_then(|base| LANGUAGES.iter().position(|v| v.eq_ignore_ascii_case(base))))
         .unwrap_or(0)
 }
+/// Sets the interface language (`None` = Russian).
 pub fn set_language(code: Option<&str>) {
     let index = code.map_or(0, language_index);
     CURRENT_LANGUAGE.store(u8::try_from(index).unwrap_or(0), Ordering::Relaxed);
 }
+/// Current interface language code.
 #[must_use]
 pub fn current_language() -> &'static str {
     LANGUAGES.get(usize::from(CURRENT_LANGUAGE.load(Ordering::Relaxed))).copied().unwrap_or("ru")
 }
+/// Translation of a Russian key into the current language; unknown keys are returned as is.
 #[must_use]
 pub fn t(key: &str) -> &str { t_in(current_language(), key) }
+/// Translation of a Russian key into `language`.
 #[must_use]
 pub fn t_in<'a>(language: &str, key: &'a str) -> &'a str {
     let lang = language_index(language);
@@ -76,6 +96,7 @@ static STRINGS: &[Row] = &[
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::indexing_slicing)]
     use super::*;
     #[test]
     fn every_key_has_fifteen_non_empty_values() {
