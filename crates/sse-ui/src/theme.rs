@@ -294,6 +294,72 @@ impl Theme {
         }
     }
 
+    /// Shipped C# zone/amber theme.
+    #[must_use]
+    pub const fn dark() -> Self {
+        Self {
+            colors: Colors {
+                background: [BG_BASE, BG_PANEL, BG_ELEVATED, BG_HOVER, BG_INPUT, PLATE_BG],
+                borders: [BORDER_SUBTLE, BORDER, BORDER_METAL],
+                text: [TEXT_PRIMARY, TEXT_SECONDARY, TEXT_DISABLED, TEXT_KHAKI],
+                accent: [ACCENT, ACCENT_DIM, ACCENT_HOVER, ACCENT_FOREGROUND],
+                state: [SUCCESS, WARNING, ERROR],
+                selection: SELECTION,
+                focus_ring: FOCUS_RING,
+            },
+            typography: Typography {
+                page_title: TextRole {
+                    family: "Oswald",
+                    size: 28.0,
+                    line_height: 34.0,
+                    weight: 600,
+                },
+                section_title: TextRole {
+                    family: "Oswald",
+                    size: 18.0,
+                    line_height: 24.0,
+                    weight: 600,
+                },
+                body: TextRole {
+                    family: "Liberation Sans Narrow",
+                    size: 13.0,
+                    line_height: 18.0,
+                    weight: 400,
+                },
+                caption: TextRole {
+                    family: "Liberation Sans Narrow",
+                    size: 11.0,
+                    line_height: 15.0,
+                    weight: 400,
+                },
+                table_cell: TextRole {
+                    family: "Liberation Sans Narrow",
+                    size: 12.0,
+                    line_height: 17.0,
+                    weight: 400,
+                },
+                button: TextRole {
+                    family: "Liberation Sans Narrow",
+                    size: 12.0,
+                    line_height: 16.0,
+                    weight: 600,
+                },
+            },
+            metrics: Metrics {
+                spacing: [2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 16.0, 20.0, 24.0],
+                radii: [1.0, 2.0, 3.0, 4.0, 6.0],
+                borders: [1.0, 2.0],
+                controls: [34.0, 34.0, 40.0],
+                sidebar_widths: [72.0, 240.0],
+                sidebar_items: [46.0, 46.0],
+                bars: [54.0, 33.0],
+                scrollbar: 10.0,
+                animations_ms: [120.0, 180.0],
+                shadow: [24.0, 8.0],
+            },
+        }
+    }
+
     const fn with_colors(background: [Rgb; 6], borders: [Rgb; 3], text: [Rgb; 4], state: [Rgb; 3]) -> Self {
         let base = Self::dark();
         Self {
