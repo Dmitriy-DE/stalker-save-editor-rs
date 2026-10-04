@@ -326,6 +326,16 @@ impl XRayArchive {
             )));
         }
 
+        let stored_end = u64::from(entry.offset)
+            .checked_add(u64::from(entry.compressed_size))
+            .ok_or_else(|| Error::damaged("archive entry range overflow"))?;
+        if stored_end > self.reader.len() {
+            return Err(Error::damaged(format!(
+                "entry '{}' points past the end of the archive",
+                entry.name
+            )));
+        }
+
         let comp_len =
             usize::try_from(entry.compressed_size).map_err(|_| Error::damaged("compressed size too large"))?;
         let mut stored = vec![0u8; comp_len];
@@ -508,5 +518,24 @@ fn try_parse_entries(header: &[u8], data_start: usize, data_end: usize) -> Optio
         None
     } else {
         Some(entries)
+    }
+}
+
+#[cfg(test)]
+mod bounds_tests {
+    use super::*;
+
+    #[test]
+    fn entry_range_is_rejected_before_read_buffer_allocation() {
+        let entry = XRayArchiveEntry {
+            name: "oversized.bin".to_owned(),
+            uncompressed_size: 128,
+            compressed_size: 128,
+            crc32: 0,
+            offset: 8,
+        };
+        let archive = XRayArchive::from_reader_with_entries(Box::new(vec![0_u8; 16]), vec![entry], None)
+            .unwrap_or_else(|error| panic!("archive construction failed: {error:?}"));
+        assert!(matches!(archive.read_file("oversized.bin"), Err(Error::Damaged(_))));
     }
 }
