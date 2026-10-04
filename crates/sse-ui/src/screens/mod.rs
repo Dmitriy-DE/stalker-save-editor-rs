@@ -16,6 +16,7 @@ pub mod saves;
 pub mod services;
 pub mod shell;
 pub mod style;
+pub mod wizard;
 
 /// Every screen of the editor, in sidebar order (same as the C# 1.3.1 sidebar).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -179,6 +180,8 @@ pub enum AppMessage {
     Tick(u64),
     /// Result of background work for one screen; the screen downcasts the payload it sent itself.
     ToScreen(ScreenId, Box<dyn Any + Send>),
+    /// Result of first-run wizard background discovery.
+    Wizard(Box<dyn Any + Send>),
 }
 
 impl std::fmt::Debug for AppMessage {
@@ -186,6 +189,7 @@ impl std::fmt::Debug for AppMessage {
         match self {
             Self::Tick(seconds) => write!(f, "Tick({seconds})"),
             Self::ToScreen(id, _) => write!(f, "ToScreen({id:?})"),
+            Self::Wizard(_) => f.write_str("Wizard(..)"),
         }
     }
 }
