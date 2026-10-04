@@ -3,7 +3,7 @@
 use super::style::{self, rgb, Text};
 use super::{registry, AppMessage, Context, Group, Screen, ScreenId};
 use crate::event_loop::{App, Flow, Message, Proxy, WindowEvent};
-use crate::glyphs::{Face, TextStyle};
+use crate::glyphs::{to_px, Face, TextStyle};
 use crate::layout::{Align, Edges, NodeKind, Size, Style};
 use crate::widget::{Content, Look, Tree, WidgetId};
 use crate::widgets::scroll::ScrollView;
@@ -573,7 +573,7 @@ impl Shell {
             let content_height = tree.content_height(self.content)?;
             self.scroll.set_extent(content_height, viewport.height as f32);
             if self.scroll.wheel(-(*delta as f32)) {
-                tree.set_scroll_y(self.content, self.scroll.offset_y().round() as i32)?;
+                tree.set_scroll_y(self.content, to_px(self.scroll.offset_y().round()))?;
             }
             tree.set_visible(self.scroll_bar, self.scroll.thumb().is_some())?;
             return Ok(Flow::Continue);
