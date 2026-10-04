@@ -261,6 +261,16 @@ fn handle<U, A: App<U>>(tree: &mut Tree, app: &mut A, message: &Message<U>) -> F
                 x,
                 y,
             } => clicked = tree.pointer_button(pressed, x, y),
+            WindowEvent::Key {
+                pressed: true,
+                keysym,
+                text,
+                ctrl: false,
+                ..
+            } => {
+                let text_buffer = text.map(|ch| ch.to_string());
+                let _ = tree.edit_focused_input(keysym, text_buffer.as_deref());
+            }
             WindowEvent::CloseRequested | WindowEvent::Disconnected => {
                 app.message(tree, message, None);
                 return Flow::Exit;
