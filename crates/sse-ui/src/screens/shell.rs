@@ -278,7 +278,8 @@ impl Shell {
             wizard.build(&mut cx, host)?;
             shell.wizard = Some(wizard);
             shell.wizard_host = Some(host);
-            shell.title = style::label(cx.tree, host, "ПЕРВЫЙ ЗАПУСК", Text::Title)?;
+            cx.tree.set_text(shell.title, "ПЕРВЫЙ ЗАПУСК")?;
+            cx.tree.set_text(shell.subtitle, "Язык → найденные игры → готово")?;
         }
         Ok(shell)
     }
