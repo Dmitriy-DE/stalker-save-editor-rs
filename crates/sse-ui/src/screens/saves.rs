@@ -142,6 +142,23 @@ impl Workspace {
         self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
+    pub(crate) fn is_saving(&self) -> bool {
+        self.lock().saving
+    }
+
+    pub(crate) fn begin_saving(&self) -> bool {
+        let mut state = self.lock();
+        if state.saving {
+            return false;
+        }
+        state.saving = true;
+        true
+    }
+
+    pub(crate) fn finish_saving(&self) {
+        self.lock().saving = false;
+    }
+
     pub(crate) fn library_snapshot(&self) -> (bool, Option<String>, Vec<SaveSlot>) {
         let state = self.lock();
         (
@@ -304,6 +321,7 @@ struct WorkspaceState {
     last_file_check: u64,
     file_check_generation: u64,
     file_check_in_flight: bool,
+    saving: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -419,11 +437,17 @@ impl LoadedSave {
         slot.format_id = Some(format.to_owned());
         let info = save_info(&slot);
         let parameters = format!(
-            "ДЕНЬГИ\n{money} RU\nПРЕДМЕТОВ\n{}\nТАЙНИКОВ\n—\nИГРОВОЕ ВРЕМЯ\n{}\nПЕРСОНАЖ · ЗДОРОВЬЕ · РАНГ · РЕПУТАЦИЯ · ЗАДАНИЯ · УБИТО · ПОГОДА\n—",
+            "Деньги: {money} RU · Предметов: {} · Тайников: —\nИгровое время: {} · Персонаж: — · Здоровье: —\nРанг: — · Репутация: — · Задания: — · Убито: — · Погода: —",
             inventory.len(),
             save.game_time()
         );
-        let integrity = save_integrity(&slot, &source_sha256, packed.len(), format);
+        let integrity = save_integrity(
+            &slot,
+            &source_sha256,
+            packed.len(),
+            "не подтверждается отдельным полем",
+            format,
+        );
         let factions = match save.player_faction() {
             Some(id) => format!("Фракция игрока: ID {id}\nРедактирование отношений недоступно в текущем индексаторе."),
             None => "Идентификатор фракции игрока не подтверждён этим сохранением.".to_owned(),
@@ -457,13 +481,23 @@ impl LoadedSave {
         slot.format_id = Some("stalker2".to_owned());
         let info = save_info(&slot);
         let parameters = format!(
-            "ДЕНЬГИ\n{} RU\nПРЕДМЕТОВ\n{}\nТАЙНИКОВ\n{}\nИГРОВОЕ ВРЕМЯ · ПЕРСОНАЖ · ЗДОРОВЬЕ · РАНГ · РЕПУТАЦИЯ · ЗАДАНИЯ · УБИТО · ПОГОДА\n—\nНЕОПОЗНАННЫХ ССЫЛОК\n{}",
+            "Деньги: {} RU · Предметов: {} · Тайников: {}\nИгровое время · Персонаж · Здоровье · Ранг · Репутация · Задания · Убито · Погода: —\nНеопознанных ссылок: {}",
             save.money(),
             inventory.len(),
             stash.as_ref().map_or_else(|| "—".to_owned(), |items| items.live_handles().len().to_string()),
             save.unresolved_handles().len()
         );
-        let integrity = save_integrity(&slot, &source_sha256, packed.len(), "S2");
+        let integrity = save_integrity(
+            &slot,
+            &source_sha256,
+            packed.len(),
+            if save.container().stored_crc32() == save.container().computed_crc32() {
+                "OK (CRC32)"
+            } else {
+                "ошибка"
+            },
+            "S2",
+        );
         let factions =
             "Фракции S2 доступны только для чтения; отношения и принадлежность пока не индексируются.".to_owned();
         let stashes = describe_s2_stash(stash.as_ref());
@@ -503,9 +537,9 @@ fn save_info(slot: &SaveSlot) -> String {
     )
 }
 
-fn save_integrity(slot: &SaveSlot, source_sha256: &str, bytes_read: usize, format: &str) -> String {
+fn save_integrity(slot: &SaveSlot, source_sha256: &str, bytes_read: usize, crc_status: &str, format: &str) -> String {
     format!(
-        "Размер файла: {} байт\nИзменён: {} UTC\nSHA-256: {source_sha256}\nФормат: {format}\nСборка игры: —",
+        "Размер файла: {} байт · Изменён: {} UTC\nSHA-256: {source_sha256}\nCRC: {crc_status} · Формат: {format} · Сборка игры: —",
         bytes_read,
         display_file_time(slot.last_write_time_utc, false, true)
     )
@@ -786,7 +820,7 @@ fn schedule_file_check(workspace: &Workspace, cx: &Context<'_>, seconds: u64) {
     };
     let (path, expected_size, expected_modified, source_sha256, generation) = {
         let mut state = workspace.lock();
-        if state.file_check_in_flight || seconds.saturating_sub(state.last_file_check) < 3 {
+        if state.saving || state.file_check_in_flight || seconds.saturating_sub(state.last_file_check) < 3 {
             return;
         }
         let Some(selected) = state.selected.as_ref() else {
@@ -1169,12 +1203,13 @@ struct Overview {
     previous: Option<WidgetId>,
     next: Option<WidgetId>,
     rows: Vec<WidgetId>,
+    row_containers: Vec<WidgetId>,
     list_status: Option<WidgetId>,
     selected_info: Option<WidgetId>,
     selected_parameters: Option<WidgetId>,
     selected_integrity: Option<WidgetId>,
-    search_button: Option<WidgetId>,
     search_text: Option<WidgetId>,
+    search_input: Option<TextInput>,
     search_query: String,
     search_focused: bool,
     external_banner_row: Option<WidgetId>,
@@ -1191,12 +1226,13 @@ impl Overview {
             previous: None,
             next: None,
             rows: Vec::new(),
+            row_containers: Vec::new(),
             list_status: None,
             selected_info: None,
             selected_parameters: None,
             selected_integrity: None,
-            search_button: None,
             search_text: None,
+            search_input: None,
             search_query: String::new(),
             search_focused: false,
             external_banner_row: None,
@@ -1290,18 +1326,15 @@ impl Overview {
         if let Some(id) = self.search_text {
             cx.tree.set_text(
                 id,
-                &format!(
-                    "Поиск: {}{}",
-                    if self.search_query.is_empty() {
-                        "имя файла"
-                    } else {
-                        &self.search_query
-                    },
-                    if self.search_focused { " · ввод" } else { "" }
-                ),
+                if self.search_query.is_empty() {
+                    "Поиск по имени файла…"
+                } else {
+                    &self.search_query
+                },
             )?;
         }
         for (offset, id) in self.rows.iter().enumerate() {
+            let container = self.row_containers.get(offset).copied();
             let slot = table
                 .visible_row(start.saturating_add(offset))
                 .and_then(|row| usize::try_from(row).ok())
@@ -1312,7 +1345,7 @@ impl Overview {
                     .file_name()
                     .map(|name| name.to_string_lossy())
                     .unwrap_or_else(|| "без имени".into());
-                let shortened = short_text(&file_name, 34);
+                let shortened = short_text(&file_name, 26);
                 let game = slot
                     .format_id
                     .as_deref()
@@ -1321,14 +1354,21 @@ impl Overview {
                 cx.tree.set_text(
                     *id,
                     &format!(
-                        "{game} · {shortened} · {} · {}",
+                        "{} · {shortened} · {} · {}",
+                        short_text(game, 16),
                         display_size(slot.size),
                         display_file_time(slot.last_write_time_utc, true, false)
                     ),
                 )?;
                 cx.tree.set_visible(*id, true)?;
+                if let Some(container) = container {
+                    cx.tree.set_visible(container, true)?;
+                }
             } else {
                 cx.tree.set_visible(*id, false)?;
+                if let Some(container) = container {
+                    cx.tree.set_visible(container, false)?;
+                }
             }
         }
         let (info, parameters, integrity) = state.selected.as_ref().map_or(
@@ -1374,18 +1414,103 @@ impl Screen for Overview {
         self.external_banner = Some(banner);
         self.external_reload = Some(reload);
         let list = style::card(cx.tree, host)?;
+        cx.tree.set_style(
+            list,
+            Style {
+                padding: crate::layout::Edges::all(crate::theme::CARD_PADDING),
+                gap: Size::new(0.0, 0.0),
+                align_items: crate::layout::Align::Stretch,
+                shrink: 0.0,
+                ..Style::default()
+            },
+        )?;
         style::label(cx.tree, list, "СОХРАНЕНИЯ", Text::Heading)?;
         let actions = style::row(cx.tree, list)?;
+        cx.tree.set_style(
+            actions,
+            Style {
+                margin: crate::layout::Edges {
+                    top: 4.0,
+                    bottom: 4.0,
+                    ..crate::layout::Edges::default()
+                },
+                gap: Size::new(crate::theme::CONTROL_GAP, 0.0),
+                align_items: crate::layout::Align::Center,
+                ..Style::default()
+            },
+        )?;
         self.refresh = Some(style::button(cx.tree, actions, "Найти сейвы", Button::Primary)?);
-        self.search_button = Some(style::button(cx.tree, actions, "Поиск по имени", Button::Secondary)?);
-        self.search_text = Some(style::label(cx.tree, actions, "Поиск: имя файла", Text::Note)?);
+        let colors = crate::theme::current().colors;
+        let search = cx.tree.add(
+            Some(actions),
+            NodeKind::Leaf,
+            Style {
+                grow: 1.0,
+                min: Size::new(180.0, crate::theme::BUTTON_HEIGHT),
+                padding: crate::layout::Edges {
+                    left: 10.0,
+                    top: 0.0,
+                    right: 10.0,
+                    bottom: 0.0,
+                },
+                ..Style::default()
+            },
+            Content::Input {
+                text: "Поиск по имени файла…".to_owned(),
+                style: Text::Body.style(),
+            },
+            Look {
+                fill: Some(style::rgb(colors.background[4])),
+                border: Some((style::rgb(colors.borders[1]), 1.0)),
+                radius: crate::theme::BUTTON_RADIUS,
+                text: style::rgb(colors.text[0]),
+                ..Look::default()
+            },
+        )?;
+        self.search_text = Some(search);
+        self.search_input = Some(TextInput::new("", inventory_search_config())?);
         self.previous = Some(style::button(cx.tree, actions, "Назад", Button::Secondary)?);
         self.next = Some(style::button(cx.tree, actions, "Дальше", Button::Secondary)?);
-        style::label(cx.tree, list, "ИГРА · СОХРАНЕНИЕ · РАЗМЕР · ДАТА ИЗМЕНЕНИЯ", Text::Note)?;
-        self.list_status = Some(style::label(cx.tree, list, "Сейвы ещё не искали.", Text::Note)?);
+        let headings = style::label(cx.tree, list, "ИГРА · СОХРАНЕНИЕ · РАЗМЕР · ДАТА ИЗМЕНЕНИЯ", Text::Note)?;
+        cx.tree.set_style(
+            headings,
+            Style {
+                margin: crate::layout::Edges {
+                    top: 2.0,
+                    ..crate::layout::Edges::default()
+                },
+                ..Style::default()
+            },
+        )?;
+        let status = style::label(cx.tree, list, "Сейвы ещё не искали.", Text::Note)?;
+        cx.tree.set_style(
+            status,
+            Style {
+                margin: crate::layout::Edges {
+                    top: 2.0,
+                    ..crate::layout::Edges::default()
+                },
+                ..Style::default()
+            },
+        )?;
+        self.list_status = Some(status);
         for _ in 0..SAVE_PAGE_SIZE {
-            let row = style::button(cx.tree, list, "", Button::Secondary)?;
-            cx.tree.set_visible(row, false)?;
+            let row_container = cx.tree.add(
+                Some(list),
+                NodeKind::Column,
+                Style {
+                    margin: crate::layout::Edges {
+                        top: 4.0,
+                        ..crate::layout::Edges::default()
+                    },
+                    ..Style::default()
+                },
+                Content::Panel,
+                Look::default(),
+            )?;
+            let row = style::button(cx.tree, row_container, "", Button::Secondary)?;
+            cx.tree.set_visible(row_container, false)?;
+            self.row_containers.push(row_container);
             self.rows.push(row);
         }
         let overview = style::card(cx.tree, host)?;
@@ -1401,16 +1526,16 @@ impl Screen for Overview {
         self.selected_parameters = Some(paragraph(
             cx.tree,
             parameters,
-            "Деньги: —\nПредметов: —\nТайников: —",
-            Text::Body,
+            "Деньги: — · Предметов: — · Тайников: —\nИгровое время: — · Персонаж: — · Здоровье: —\nРанг: — · Репутация: — · Задания: — · Убито: — · Погода: —",
+            Text::Note,
         )?);
         let integrity = style::card(cx.tree, host)?;
         style::label(cx.tree, integrity, "ЦЕЛОСТНОСТЬ И МЕТАДАННЫЕ", Text::Heading)?;
         self.selected_integrity = Some(paragraph(
             cx.tree,
             integrity,
-            "Размер файла: —\nИзменён: —\nSHA-256: —\nФормат: —",
-            Text::Body,
+            "Размер файла: — · Изменён: —\nSHA-256: —\nФормат: — · Сборка игры: —",
+            Text::Note,
         )?);
         Ok(())
     }
@@ -1443,22 +1568,29 @@ impl Screen for Overview {
         if let Message::User(AppMessage::Tick(seconds)) = message {
             schedule_file_check(&self.workspace, cx, *seconds);
         }
-        if let Some(search_button) = self.search_button {
-            self.search_focused = cx.tree.focused() == Some(search_button);
+        if let Some(search_widget) = self.search_text {
+            self.search_focused = cx.tree.focused() == Some(search_widget);
+            if let Some(input) = self.search_input.as_mut() {
+                input.focus(self.search_focused, 0);
+            }
         }
         if let Message::Window(crate::event_loop::WindowEvent::Key {
             pressed: true,
             keysym,
             text,
             ctrl,
+            shift,
             ..
         }) = message
         {
             if *ctrl && matches!(*keysym, 0x46 | 0x66) {
-                if let Some(search_button) = self.search_button {
-                    self.search_focused = cx.tree.is_visible(search_button);
+                if let Some(search_widget) = self.search_text {
+                    self.search_focused = cx.tree.is_visible(search_widget);
                     if self.search_focused {
-                        cx.tree.set_focus(Some(search_button))?;
+                        cx.tree.set_focus(Some(search_widget))?;
+                        if let Some(input) = self.search_input.as_mut() {
+                            input.focus(true, 0);
+                        }
                     }
                 }
                 return self.render(cx);
@@ -1466,25 +1598,56 @@ impl Screen for Overview {
             if *keysym == 0xff09 {
                 return self.render(cx);
             }
-            if self.search_focused {
-                match *keysym {
-                    0xff08 => {
-                        self.search_query.pop();
+            if self.search_input.as_ref().is_some_and(TextInput::focused) {
+                if matches!(*keysym, 0xff0d | 0xff1b) {
+                    self.search_focused = false;
+                    if let Some(input) = self.search_input.as_mut() {
+                        input.focus(false, 0);
                     }
-                    0xff0d | 0xff1b => {
-                        self.search_focused = false;
-                        cx.tree.set_focus(None)?;
-                        return self.render(cx);
-                    }
-                    _ => {
-                        if let Some(character) = text.filter(|character| !character.is_control()) {
-                            self.search_query.push(character);
-                        }
+                    cx.tree.set_focus(None)?;
+                    return self.render(cx);
+                }
+                let key = match *keysym {
+                    0xff08 => Key::Backspace,
+                    0xffff => Key::Delete,
+                    0xff51 => Key::Left,
+                    0xff53 => Key::Right,
+                    0xff50 => Key::Home,
+                    0xff57 => Key::End,
+                    value if *ctrl && matches!(value, 0x61 | 0x41) => Key::A,
+                    value if *ctrl && matches!(value, 0x7a | 0x5a) => Key::Z,
+                    _ => Key::Character(text.unwrap_or('\0')),
+                };
+                let typed = text.map(|character| character.to_string());
+                let mut clipboard = SaveClipboard::default();
+                if let Some(input) = self.search_input.as_mut() {
+                    let _ = input.key(
+                        key,
+                        Modifiers {
+                            ctrl: *ctrl,
+                            shift: *shift,
+                        },
+                        typed.as_deref(),
+                        &mut clipboard,
+                    )?;
+                    self.search_query = input.text();
+                    if let Some(widget) = self.search_text {
+                        cx.tree.set_text(widget, &self.search_query)?;
                     }
                 }
                 self.page = 0;
                 return self.render(cx);
             }
+        }
+        if clicked.is_some() && clicked == self.search_text {
+            if let Some(widget) = self.search_text {
+                cx.tree.set_focus(Some(widget))?;
+            }
+            self.search_focused = true;
+            if let Some(input) = self.search_input.as_mut() {
+                input.focus(true, 0);
+            }
+            return self.render(cx);
         }
         if clicked.is_some() && clicked == self.refresh {
             start_discovery(&self.workspace, cx);
@@ -1499,10 +1662,6 @@ impl Screen for Overview {
         }
         if clicked.is_some() && clicked == self.next {
             self.page = self.page.saturating_add(1);
-            return self.render(cx);
-        }
-        if clicked.is_some() && clicked == self.search_button {
-            self.search_focused = true;
             return self.render(cx);
         }
         if let Some(offset) = clicked.and_then(|id| self.rows.iter().position(|row| *row == id)) {
@@ -1593,6 +1752,7 @@ impl Screen for Overview {
 }
 
 struct ItemControls {
+    row: WidgetId,
     label: WidgetId,
     select: WidgetId,
     decrease: WidgetId,
@@ -1970,6 +2130,7 @@ impl Inventory {
                         let Some(item) = group.first().copied() else {
                             continue;
                         };
+                        cx.tree.set_visible(row.row, true)?;
                         let count = item.count.map_or_else(
                             || group.len().to_string(),
                             |original| {
@@ -1987,24 +2148,13 @@ impl Inventory {
                             .map(|value| format!("{value}%"))
                             .or_else(|| item.condition.map(|value| format!("{:.0}%", value * 100.0)))
                             .unwrap_or_else(|| "—".to_owned());
-                        let placement = state
-                            .pending_placements
-                            .get(&ItemHandle::Xray(item.handle))
-                            .map(|value| match value {
-                                DraftPlacement::Ruck => "Рюкзак",
-                                DraftPlacement::Belt => "Пояс",
-                                DraftPlacement::Slot(_) => "Слот",
-                            })
-                            .or(item.placement.as_deref())
-                            .unwrap_or("—");
+                        let name = sse_catalog::SaveNaming::item_name(save.format().id(), &item.section, None);
                         cx.tree.set_text(
                             row.label,
                             &format!(
-                                "◇ {} · {} · {} · {} · состояние {condition} · × {count}",
-                                sse_catalog::SaveNaming::item_name(save.format().id(), &item.section, None),
-                                item.section,
+                                "◇ {} · {} · {condition} · × {count}",
+                                short_text(&name, 20),
                                 item.category,
-                                placement,
                             ),
                         )?;
                         let condition_ratio = state
@@ -2046,6 +2196,7 @@ impl Inventory {
                         row.handle = Some(ItemHandle::Xray(item.handle));
                     } else {
                         row.handle = None;
+                        cx.tree.set_visible(row.row, false)?;
                         cx.tree.set_visible(row.label, false)?;
                         cx.tree.set_visible(row.select, false)?;
                         cx.tree.set_visible(row.decrease, false)?;
@@ -2132,6 +2283,7 @@ impl Inventory {
                 let start = self.page.saturating_mul(INVENTORY_PAGE_SIZE);
                 for (offset, row) in self.rows.iter_mut().enumerate() {
                     if let Some(item) = visible_items.get(start.saturating_add(offset)) {
+                        cx.tree.set_visible(row.row, true)?;
                         let name = item.display_name.as_deref().unwrap_or("Неизвестный предмет");
                         let count = state
                             .pending_stacks
@@ -2142,13 +2294,12 @@ impl Inventory {
                             "{:02x}{:02x}{:02x}",
                             item.type_key[0], item.type_key[1], item.type_key[2]
                         );
+                        let category = s2_inventory_category(item.kind_code, item.display_name.as_deref());
                         cx.tree.set_text(
                             row.label,
                             &format!(
-                                "◇ {name} · {} · размещение ({:?}, {:?}) · состояние {} · × {count} · {key}",
-                                s2_inventory_category(item.kind_code, item.display_name.as_deref()),
-                                item.x,
-                                item.y,
+                                "◇ {} · {category} · {} · × {count} · {key}",
+                                short_text(name, 18),
                                 item.condition
                                     .map_or_else(|| "—".to_owned(), |value| format!("{:.0}%", value * 100.0))
                             ),
@@ -2173,6 +2324,7 @@ impl Inventory {
                         cx.tree.set_visible(row.increase, editable)?;
                         row.handle = Some(ItemHandle::Stalker2(item.handle));
                     } else {
+                        cx.tree.set_visible(row.row, false)?;
                         cx.tree.set_visible(row.label, false)?;
                         cx.tree.set_visible(row.select, false)?;
                         cx.tree.set_visible(row.decrease, false)?;
@@ -2489,6 +2641,7 @@ impl Inventory {
             cx.tree.set_visible(*id, visible)?;
         }
         for row in &self.rows {
+            cx.tree.set_visible(row.row, visible)?;
             cx.tree.set_visible(row.decrease, visible)?;
             cx.tree.set_visible(row.increase, visible)?;
             cx.tree.set_visible(row.label, visible)?;
@@ -3134,14 +3287,23 @@ impl Inventory {
                 return Ok(());
             }
         }
+        if !self.workspace.begin_saving() {
+            let text = "Сохранение уже выполняется.";
+            if let Some(status) = self.status {
+                cx.tree.set_text(status, text)?;
+            }
+            cx.status = Some(text.to_owned());
+            return Ok(());
+        }
         if let Some(status) = self.status {
-            cx.tree.set_text(status, "Создаю резервную копию и сохраняю…")?;
+            cx.tree.set_text(status, "Сохранение…")?;
         }
         self.workspace.spawn("save-write", move |context| {
-            if context.is_cancelled() {
-                return;
-            }
-            let result = commit_save_edits(&selected, &edits, &stash_moves).map_err(|error| error.to_string());
+            let result = if context.is_cancelled() {
+                Err("Сохранение отменено.".to_owned())
+            } else {
+                commit_save_edits(&selected, &edits, &stash_moves).map_err(|error| error.to_string())
+            };
             let _ = proxy.send(AppMessage::ToScreen(
                 ScreenId::Inventory,
                 Box::new(SaveFinished { source_sha256, result }),
@@ -3222,9 +3384,11 @@ fn commit_save_edits_to(
     Ok((
         Arc::new(reloaded),
         format!(
-            "Сохранено и повторно прочитано · бэкап {} · SHA-256 {}",
-            receipt.backup_path.display(),
-            receipt.output_sha256
+            "Сохранено успешно. Backup: {}",
+            receipt.backup_path.file_name().map_or_else(
+                || receipt.backup_path.display().to_string(),
+                |name| name.to_string_lossy().into_owned()
+            )
         ),
     ))
 }
@@ -3444,6 +3608,11 @@ fn prepare_save_edits(
         } => {
             if save.index().is_legacy() {
                 return Err(Error::Refused(S2_LEGACY_EDIT_REFUSAL.to_owned()));
+            }
+            if !stash_moves.is_empty() && !S2_STASH_MOVE_ENABLED {
+                return Err(Error::Refused(
+                    "S2 stash transfer is disabled until the written save is verified in the game.".to_owned(),
+                ));
             }
             if !edits.placements.is_empty()
                 || !edits.upgrades.is_empty()
@@ -3832,13 +4001,22 @@ impl Screen for Inventory {
         let pages = style::row(cx.tree, inventory)?;
         self.previous = Some(style::button(cx.tree, pages, "Назад", Button::Secondary)?);
         self.next = Some(style::button(cx.tree, pages, "Дальше", Button::Secondary)?);
+        let item_rows = cx.tree.add(
+            Some(inventory),
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
         for _ in 0..INVENTORY_PAGE_SIZE {
-            let row = style::row(cx.tree, inventory)?;
+            let row = style::row(cx.tree, item_rows)?;
+            cx.tree.set_visible(row, false)?;
             let label = style::label(cx.tree, row, "", Text::Body)?;
             let select = style::button(cx.tree, row, "Осмотреть", Button::Secondary)?;
             let decrease = style::button(cx.tree, row, "−", Button::Secondary)?;
             let increase = style::button(cx.tree, row, "+", Button::Secondary)?;
             self.rows.push(ItemControls {
+                row,
                 label,
                 select,
                 decrease,
@@ -4400,6 +4578,7 @@ impl Screen for Inventory {
                 }
             }
             if let Some(SaveFinished { source_sha256, result }) = payload.downcast_ref::<SaveFinished>() {
+                self.workspace.finish_saving();
                 match result {
                     Ok((loaded, text)) => {
                         let mut state = self.workspace.lock();
@@ -4429,9 +4608,14 @@ impl Screen for Inventory {
                             cx.tree.set_text(id, text)?;
                         }
                         cx.status = Some(text.clone());
+                        if let Some(proxy) = cx.proxy.as_ref() {
+                            for screen in [ScreenId::Overview, ScreenId::Backups, ScreenId::Timeline] {
+                                let _ = proxy.send(AppMessage::ToScreen(screen, Box::new(())));
+                            }
+                        }
                     }
                     Err(error) => {
-                        let text = format!("Не сохранено: {error}");
+                        let text = format!("Не удалось сохранить: {error}");
                         if let Some(id) = self.status {
                             cx.tree.set_text(id, &text)?;
                         }
@@ -4696,6 +4880,10 @@ impl Stashes {
                 cx.status = Some("Перенос тайника поддерживается только для S2.".to_owned());
                 return Ok(());
             };
+            if !S2_STASH_MOVE_ENABLED {
+                cx.status = Some("Перенос тайника отключён, пока запись не подтверждена в игре.".to_owned());
+                return Ok(());
+            }
             if save.index().is_legacy() || !save.unresolved_handles().is_empty() {
                 cx.status = Some("Перенос недоступен для этого S2-сейва.".to_owned());
                 return Ok(());
@@ -5248,7 +5436,7 @@ mod tests {
     }
 
     #[test]
-    fn s2_stash_transfer_creates_backup_and_passes_durable_read_back() -> sse_core::Result<()> {
+    fn unverified_s2_stash_transfer_does_not_write_a_save() -> sse_core::Result<()> {
         let temp = TempDirectory::new();
         let saves = temp.0.join("saves");
         fs::create_dir_all(&saves)?;
@@ -5272,27 +5460,23 @@ mod tests {
             super::SaveData::Xray { .. } => return Err(Error::damaged("S2 fixture parsed as X-Ray")),
         };
 
-        let pending_moves = BTreeSet::from([handle]);
-        let (updated, status) =
-            commit_save_edits_to(&selected, &PendingInventoryEdits::default(), &pending_moves, &backup)?;
-        let super::SaveData::Stalker2 { save, .. } = &updated.data else {
-            return Err(Error::damaged("updated S2 fixture parsed as X-Ray"));
-        };
-        assert!(!save.stash_items()?.iter().any(|item| item.handle == handle));
-        assert!(save.items().iter().any(|item| item.handle == handle));
-        assert!(status.contains("прочитан"));
-
-        let durable = S2Save::from_bytes(&fs::read(&path)?)?;
-        assert!(!durable.stash_items()?.iter().any(|item| item.handle == handle));
-        assert!(durable.items().iter().any(|item| item.handle == handle));
-        assert!(sse_storage::transaction::list_backups(&backup)?
-            .iter()
-            .any(|entry| entry.status == sse_storage::transaction::BackupStatus::Verified));
+        let result = commit_save_edits_to(
+            &selected,
+            &PendingInventoryEdits::default(),
+            &BTreeSet::from([handle]),
+            &backup,
+        );
+        assert!(matches!(result, Err(Error::Refused(_))));
+        assert_eq!(
+            fs::read(&path)?,
+            include_bytes!("../../../../fixtures/synthetic/writer-s2-stash/s2-stash-source.sav")
+        );
+        assert!(sse_storage::transaction::list_backups(&backup)?.is_empty());
         Ok(())
     }
 
     #[test]
-    fn s2_stash_transfer_is_staged_and_can_be_toggled_off() -> sse_core::Result<()> {
+    fn unverified_s2_stash_transfer_is_hidden_and_refused() -> sse_core::Result<()> {
         let temp = TempDirectory::new();
         let path = temp.0.join("stash.sav");
         let original = include_bytes!("../../../../fixtures/synthetic/writer-s2-stash/s2-stash-source.sav");
@@ -5310,10 +5494,8 @@ mod tests {
                 .ok_or_else(|| Error::damaged("S2 stash fixture has no items"))?,
             super::SaveData::Xray { .. } => return Err(Error::damaged("S2 fixture parsed as X-Ray")),
         };
-        let draft_directory = temp.0.join("drafts");
-        let workspace = Workspace::with_draft_directory(draft_directory.clone());
+        let workspace = Workspace::with_draft_directory(temp.0.join("drafts"));
         workspace.lock().selected = Some(std::sync::Arc::new(selected));
-        let (proxy, receiver) = channel_pair::<AppMessage>();
         let mut app = sse_app::AppState::new();
         let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
         let host = tree.add(
@@ -5326,41 +5508,22 @@ mod tests {
         let mut screen = super::Stashes::new(workspace.clone());
         let mut cx = Context {
             tree: &mut tree,
-            proxy: Some(&proxy),
+            proxy: None,
             status: None,
             app: &mut app,
         };
         screen.build(&mut cx, host)?;
 
+        let move_button = screen
+            .rows
+            .first()
+            .map(|row| row.move_button)
+            .ok_or_else(|| Error::damaged("S2 stash row was not built"))?;
+        assert!(!cx.tree.is_visible(move_button));
         screen.move_item(&mut cx, handle)?;
-        assert!(workspace.lock().pending_stash_moves.contains(&handle));
-        assert_eq!(
-            cx.app.draft(&source_sha256).map(|plan| plan.s2_stash_takes.as_slice()),
-            Some([handle].as_slice())
-        );
-        let _ = receiver
-            .recv_timeout(std::time::Duration::from_secs(5))
-            .map_err(|error| Error::System(error.to_string()))?;
-        let persisted = DraftStore::new(&draft_directory)
-            .load(&source_sha256)?
-            .ok_or_else(|| Error::damaged("S2 stash draft was not persisted"))?;
-        assert_eq!(
-            persisted.current().map(|plan| plan.s2_stash_takes.as_slice()),
-            Some([handle].as_slice())
-        );
-
-        let restored_workspace = Workspace::default();
-        let restored_selected = LoadedSave::read(fixture_slot(&path.to_string_lossy(), "stalker2", "stalker2"))?;
-        restored_workspace.lock().selected = Some(std::sync::Arc::new(restored_selected));
-        super::set_workspace_draft(&restored_workspace, &persisted);
-        assert!(restored_workspace.lock().pending_stash_moves.contains(&handle));
-        assert_eq!(fs::read(&path)?, original);
-        screen.move_item(&mut cx, handle)?;
+        assert!(cx.status.as_deref().is_some_and(|text| text.contains("отключён")));
         assert!(!workspace.lock().pending_stash_moves.contains(&handle));
-        let _ = receiver
-            .recv_timeout(std::time::Duration::from_secs(5))
-            .map_err(|error| Error::System(error.to_string()))?;
-        assert!(DraftStore::new(&draft_directory).load(&source_sha256)?.is_none());
+        assert!(cx.app.draft(&source_sha256).is_none());
         assert_eq!(fs::read(&path)?, original);
         Ok(())
     }

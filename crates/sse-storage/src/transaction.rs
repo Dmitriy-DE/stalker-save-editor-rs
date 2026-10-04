@@ -160,6 +160,17 @@ pub struct ExportReceipt {
     pub output_sha256: String,
 }
 
+/// Result of an in-place backup restore.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RestoreReceipt {
+    /// Save file that now contains the restored bytes.
+    pub save_path: PathBuf,
+    /// Safety backup created from the pre-restore save, when the file existed.
+    pub safety_backup_path: Option<PathBuf>,
+    /// Journal for the safety backup, when the file existed.
+    pub safety_journal_path: Option<PathBuf>,
+}
+
 /// Backup listing status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackupStatus {
@@ -236,7 +247,7 @@ pub fn export_transaction(
     }
     if backup_directory.starts_with(source_directory) {
         return Err(Error::Refused(
-            "backup directory must be outside the source directory".to_owned(),
+            "Backup directory must be outside the selected save directory.".to_owned(),
         ));
     }
 
@@ -244,7 +255,7 @@ pub fn export_transaction(
     let source_sha256 = sha256::sha256_hex(&source_bytes);
     if source_sha256 != expected_source_sha256 {
         return Err(Error::Refused(format!(
-            "source changed since preparation: expected {expected_source_sha256}, found {source_sha256}"
+            "Source changed since analysis: expected {expected_source_sha256}, found {source_sha256}."
         )));
     }
     let output_sha256 = sha256::sha256_hex(replacement);
@@ -368,37 +379,34 @@ pub fn list_backups(directory: &Path) -> Result<Vec<BackupEntry>> {
 pub fn restore_backup(journal_path: &Path, output_path: &Path) -> Result<PathBuf> {
     let journal_path = absolute_path(journal_path)?;
     let output_path = absolute_path(output_path)?;
-    if fs::symlink_metadata(&output_path).is_ok() {
-        return Err(Error::System(format!(
-            "restore output already exists: {}",
-            output_path.display()
-        )));
-    }
     let directory = journal_path
         .parent()
         .ok_or_else(|| Error::Refused("backup journal has no parent directory".to_owned()))?;
     let entry = inspect_backup(directory, &journal_path);
     if entry.status != BackupStatus::Verified {
-        return Err(Error::Refused(format!(
-            "backup is not restorable: {}",
-            entry.error.unwrap_or_else(|| "unverified backup".to_owned())
-        )));
+        return Err(restore_not_restorable(&entry));
     }
     if output_path == entry.backup_path {
-        return Err(Error::Refused("restore output cannot be the backup file".to_owned()));
+        return Err(Error::Refused("Restore output cannot be the backup file.".to_owned()));
+    }
+    if fs::symlink_metadata(&output_path).is_ok() {
+        return Err(Error::System(format!(
+            "Restore output already exists: {}.",
+            output_path.display()
+        )));
     }
     let output_directory = output_path
         .parent()
-        .ok_or_else(|| Error::Refused("restore output has no parent directory".to_owned()))?;
+        .ok_or_else(|| Error::Refused("Restore output has no parent directory.".to_owned()))?;
     if !output_directory.is_dir() {
         return Err(Error::Refused(format!(
-            "restore output directory does not exist: {}",
+            "Restore output directory does not exist: {}.",
             output_directory.display()
         )));
     }
     let bytes = fs::read(&entry.backup_path)?;
     if sha256::sha256_hex(&bytes) != entry.source_sha256 {
-        return Err(Error::Refused("backup changed after verification".to_owned()));
+        return Err(Error::Refused("Backup changed after its last verification.".to_owned()));
     }
     let token = transaction_token();
     let output_name = output_path
@@ -412,11 +420,131 @@ pub fn restore_backup(journal_path: &Path, output_path: &Path) -> Result<PathBuf
     publish?;
     let read_back = fs::read(&output_path)?;
     if read_back != bytes || sha256::sha256_hex(&read_back) != entry.source_sha256 {
+        if fs::read(&output_path).is_ok_and(|published| published == bytes) {
+            let _ = StdFileSystem.delete_if_exists(&output_path);
+        }
         return Err(Error::System(
-            "restored output read-back did not match the backup".to_owned(),
+            "Restored output read-back did not match its expected bytes.".to_owned(),
         ));
     }
     Ok(output_path)
+}
+
+fn restore_not_restorable(entry: &BackupEntry) -> Error {
+    let status = match entry.status {
+        BackupStatus::Verified => "Verified",
+        BackupStatus::Missing => "Missing",
+        BackupStatus::Corrupt => "Corrupt",
+    };
+    let detail = match entry.error.as_deref().unwrap_or("unknown backup error") {
+        "backup file is missing" => "Backup file is missing.".to_owned(),
+        "backup SHA-256 does not match the journal" => "Backup SHA256 does not match the journal.".to_owned(),
+        "journal status is not verified" => "Journal status is not verified.".to_owned(),
+        "journal operation is not an object" => "Journal operation must be an object.".to_owned(),
+        detail => {
+            let mut characters = detail.chars();
+            let first = characters
+                .next()
+                .map_or_else(String::new, |value| value.to_uppercase().collect());
+            let mut sentence = first + characters.as_str();
+            if !sentence.ends_with('.') {
+                sentence.push('.');
+            }
+            sentence
+        }
+    };
+    Error::Refused(format!("Backup is not restorable ({status}): {detail}"))
+}
+
+/// Restores a verified replace/restore backup over its source after checking the current output hash.
+///
+/// When the source exists, a verified safety backup and `restore` journal are written before the
+/// replacement. If read-back validation fails, the pre-restore bytes are restored before returning.
+/// A missing source is restored as a new file and has no safety backup.
+pub fn restore_in_place(journal_path: &Path) -> Result<RestoreReceipt> {
+    let journal_path = absolute_path(journal_path)?;
+    let directory = journal_path
+        .parent()
+        .ok_or_else(|| Error::Refused("backup journal has no parent directory".to_owned()))?;
+    let entry = inspect_backup(directory, &journal_path);
+    if entry.status != BackupStatus::Verified {
+        return Err(restore_not_restorable(&entry));
+    }
+    let metadata = read_restore_metadata(&journal_path)?;
+    if !matches!(metadata.operation_mode.as_str(), "replace" | "restore") {
+        return Err(Error::Refused(
+            "Journal does not describe an in-place save replacement.".to_owned(),
+        ));
+    }
+    if metadata.output_path != entry.source_path {
+        return Err(Error::Refused(
+            "Journal output path does not match its source save.".to_owned(),
+        ));
+    }
+    let source_path = absolute_path(&entry.source_path)?;
+    let source_metadata = match fs::symlink_metadata(&source_path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            return Err(Error::Refused("Restoring a symbolic-link save is refused.".to_owned()));
+        }
+        Ok(metadata) => Some(metadata),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.into()),
+    };
+    let source_directory = source_path
+        .parent()
+        .ok_or_else(|| Error::Refused("Source save has no parent directory.".to_owned()))?;
+    if !source_directory.is_dir() {
+        return Err(Error::Refused(format!(
+            "Source save directory does not exist: {}.",
+            source_directory.display()
+        )));
+    }
+    let restore_bytes = fs::read(&entry.backup_path)?;
+    if sha256::sha256_hex(&restore_bytes) != entry.source_sha256 {
+        return Err(Error::Refused("Backup changed after its last verification.".to_owned()));
+    }
+    if source_metadata.is_none() {
+        let restored_path = restore_backup(&journal_path, &source_path)?;
+        return Ok(RestoreReceipt {
+            save_path: restored_path,
+            safety_backup_path: None,
+            safety_journal_path: None,
+        });
+    }
+    let current = fs::read(&source_path)?;
+    if sha256::sha256_hex(&current) != metadata.output_sha256 {
+        return Err(Error::Refused(
+            "Current save changed after the journaled replacement; refusing to overwrite it.".to_owned(),
+        ));
+    }
+    if directory.starts_with(source_directory) {
+        return Err(Error::Refused(
+            "Backup directory must be outside the save directory. (Parameter 'backupDirectory')".to_owned(),
+        ));
+    }
+    let restore_from = entry.backup_path.clone();
+    let (receipt, ()) = replace_with_file_system_and_verifier_operation(
+        &StdFileSystem,
+        &source_path,
+        &metadata.output_sha256,
+        &restore_bytes,
+        directory,
+        JournalOperation::Restore(&restore_from),
+        |read_back| {
+            if read_back == restore_bytes && sha256::sha256_hex(read_back) == entry.source_sha256 {
+                Ok(())
+            } else {
+                Err(Error::System(
+                    "Restored save read-back did not match its expected bytes.".to_owned(),
+                ))
+            }
+        },
+    )?;
+    Ok(RestoreReceipt {
+        save_path: receipt.source_path,
+        safety_backup_path: Some(receipt.backup_path),
+        safety_journal_path: Some(receipt.journal_path),
+    })
 }
 
 /// Replaces a save only when its fresh SHA-256 still matches the prepared source hash.
@@ -482,6 +610,26 @@ pub fn replace_with_file_system_and_verifier<T>(
     backup_directory: &Path,
     verify_readback: impl FnOnce(&[u8]) -> Result<T>,
 ) -> Result<(ReplacementReceipt, T)> {
+    replace_with_file_system_and_verifier_operation(
+        files,
+        source_path,
+        expected_source_sha256,
+        replacement,
+        backup_directory,
+        JournalOperation::Replace,
+        verify_readback,
+    )
+}
+
+fn replace_with_file_system_and_verifier_operation<T>(
+    files: &impl FileSystem,
+    source_path: &Path,
+    expected_source_sha256: &str,
+    replacement: &[u8],
+    backup_directory: &Path,
+    operation: JournalOperation<'_>,
+    verify_readback: impl FnOnce(&[u8]) -> Result<T>,
+) -> Result<(ReplacementReceipt, T)> {
     if replacement.is_empty() {
         return Err(Error::Refused("replacement save is empty".to_owned()));
     }
@@ -495,7 +643,7 @@ pub fn replace_with_file_system_and_verifier<T>(
         .ok_or_else(|| Error::Refused("source save has no parent directory".to_owned()))?;
     if backup_directory.starts_with(source_directory) {
         return Err(Error::Refused(
-            "backup directory must be outside the source directory".to_owned(),
+            "Backup directory must be outside the selected save directory.".to_owned(),
         ));
     }
     if files.is_symlink(&source_path)? {
@@ -552,6 +700,7 @@ pub fn replace_with_file_system_and_verifier<T>(
                 output_sha256: &output_sha256,
                 backup_path: &backup_path,
                 recovery_path: &recovery_path,
+                operation,
             }),
         )?;
         journal_created = true;
@@ -560,9 +709,9 @@ pub fn replace_with_file_system_and_verifier<T>(
         let current_source = files.read_all(&source_path)?;
         let current_hash = sha256::sha256_hex(&current_source);
         if current_hash != expected_source_sha256 {
-            return Err(Error::Refused(
-                "source changed immediately before replacement".to_owned(),
-            ));
+            return Err(Error::Refused(format!(
+                "Source changed before replacement: expected {expected_source_sha256}, found {current_hash}."
+            )));
         }
 
         files.copy_permissions(&source_path, &temporary_output)?;
@@ -589,6 +738,7 @@ pub fn replace_with_file_system_and_verifier<T>(
                 output_sha256: &output_sha256,
                 backup_path: &backup_path,
                 recovery_path: &recovery_path,
+                operation,
             }),
         )?;
         files.replace(&temporary_journal, &journal_path)?;
@@ -705,6 +855,13 @@ struct Journal<'a> {
     output_sha256: &'a str,
     backup_path: &'a Path,
     recovery_path: &'a Path,
+    operation: JournalOperation<'a>,
+}
+
+#[derive(Clone, Copy)]
+enum JournalOperation<'a> {
+    Replace,
+    Restore(&'a Path),
 }
 
 struct ExportJournal<'a> {
@@ -877,6 +1034,12 @@ enum TopValue {
     Other,
 }
 
+struct RestoreMetadata {
+    output_path: PathBuf,
+    output_sha256: String,
+    operation_mode: String,
+}
+
 fn parse_top_fields(bytes: &[u8]) -> Result<HashMap<String, TopValue>> {
     use sse_codecs::json::{Event, Reader, Text};
 
@@ -971,6 +1134,92 @@ fn field_u64(fields: &HashMap<String, TopValue>, name: &str) -> Result<u64> {
     }
 }
 
+fn read_restore_metadata(journal_path: &Path) -> Result<RestoreMetadata> {
+    let bytes = fs::read(journal_path)?;
+    let fields = parse_top_fields(&bytes)?;
+    let output_path = PathBuf::from(field_string(&fields, "output_path")?);
+    let output_sha256 = field_string(&fields, "output_sha256")?;
+    if !valid_sha256(&output_sha256) {
+        return Err(Error::Refused("journal output SHA-256 is malformed".to_owned()));
+    }
+    let operation_mode = parse_operation_mode(&bytes)?;
+    Ok(RestoreMetadata {
+        output_path,
+        output_sha256,
+        operation_mode,
+    })
+}
+
+fn parse_operation_mode(bytes: &[u8]) -> Result<String> {
+    use sse_codecs::json::{Event, Reader};
+
+    let mut reader = Reader::new(bytes);
+    if !matches!(reader.next_event()?, Some(Event::ObjectStart)) {
+        return Err(Error::Refused("journal root is not a JSON object".to_owned()));
+    }
+    loop {
+        let event = reader
+            .next_event()?
+            .ok_or_else(|| Error::Refused("journal object is truncated".to_owned()))?;
+        let Event::Key(key) = event else {
+            if event == Event::ObjectEnd {
+                return Err(Error::Refused("journal operation is missing".to_owned()));
+            }
+            return Err(Error::Refused("journal has an invalid top-level member".to_owned()));
+        };
+        let key = key.into_owned();
+        let value = reader
+            .next_event()?
+            .ok_or_else(|| Error::Refused("journal value is missing".to_owned()))?;
+        if key == "operation" {
+            if value != Event::ObjectStart {
+                return Err(Error::Refused("journal operation is not an object".to_owned()));
+            }
+            let mut mode = None;
+            loop {
+                match reader
+                    .next_event()?
+                    .ok_or_else(|| Error::Refused("journal operation is truncated".to_owned()))?
+                {
+                    Event::ObjectEnd => break,
+                    Event::Key(name) => {
+                        let name = name.into_owned();
+                        let value = reader
+                            .next_event()?
+                            .ok_or_else(|| Error::Refused("journal operation value is missing".to_owned()))?;
+                        if name == "mode" {
+                            if mode.is_some() {
+                                return Err(Error::Refused("journal operation repeats the mode field".to_owned()));
+                            }
+                            let Event::String(value) = value else {
+                                return Err(Error::Refused("journal operation mode is not text".to_owned()));
+                            };
+                            mode = Some(value.into_owned());
+                        } else {
+                            skip_json_value(&mut reader, value)?;
+                        }
+                    }
+                    _ => return Err(Error::Refused("journal operation has an invalid member".to_owned())),
+                }
+            }
+            return mode.ok_or_else(|| Error::Refused("journal operation mode is missing".to_owned()));
+        }
+        skip_json_value(&mut reader, value)?;
+    }
+}
+
+fn skip_json_value(reader: &mut sse_codecs::json::Reader<'_>, value: sse_codecs::json::Event<'_>) -> Result<()> {
+    use sse_codecs::json::Event;
+
+    match value {
+        Event::ObjectStart | Event::ArrayStart => skip_json_container(reader),
+        Event::String(_) | Event::Number(_) | Event::Bool(_) | Event::Null => Ok(()),
+        Event::Key(_) | Event::ObjectEnd | Event::ArrayEnd => {
+            Err(Error::Refused("journal has an invalid JSON value".to_owned()))
+        }
+    }
+}
+
 fn valid_sha256(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
@@ -981,8 +1230,15 @@ fn serialize_journal(journal: &Journal<'_>) -> Vec<u8> {
     let backup_path = json_escape(&journal.backup_path.to_string_lossy());
     let recovery_path = json_escape(&journal.recovery_path.to_string_lossy());
     let created_at = json_escape(journal.created_at);
+    let operation = match journal.operation {
+        JournalOperation::Replace => "{\"mode\":\"replace\",\"money\":null,\"stack_count\":0}".to_owned(),
+        JournalOperation::Restore(restore_from) => format!(
+            "{{\"mode\":\"restore\",\"restore_from\":\"{}\",\"money\":null,\"stack_count\":0}}",
+            json_escape(&restore_from.to_string_lossy())
+        ),
+    };
     format!(
-        "{{\"version\":1,\"status\":\"{}\",\"created_at\":\"{created_at}\",\"source_path\":\"{source_path}\",\"source_sha256\":\"{}\",\"output_path\":\"{output_path}\",\"output_sha256\":\"{}\",\"backup_path\":\"{backup_path}\",\"recovery_path\":\"{recovery_path}\",\"operation\":{{\"mode\":\"replace\",\"money\":null,\"stack_count\":0}}}}",
+        "{{\"version\":1,\"status\":\"{}\",\"created_at\":\"{created_at}\",\"source_path\":\"{source_path}\",\"source_sha256\":\"{}\",\"output_path\":\"{output_path}\",\"output_sha256\":\"{}\",\"backup_path\":\"{backup_path}\",\"recovery_path\":\"{recovery_path}\",\"operation\":{operation}}}",
         journal.status, journal.source_sha256, journal.output_sha256
     )
     .into_bytes()
@@ -1211,6 +1467,87 @@ mod tests {
             .backup_path
             .file_name()
             .is_some_and(|name| name.to_string_lossy().contains("_ORIGINAL.sav")));
+        std::fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn in_place_restore_checks_current_hash_and_creates_a_reversible_safety_backup() -> TestResult {
+        let unique = format!(
+            "sse-storage-restore-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        );
+        let root = std::env::temp_dir().join(unique);
+        let saves = root.join("saves");
+        let backups = root.join("backups");
+        std::fs::create_dir_all(&saves)?;
+        std::fs::create_dir_all(&backups)?;
+        let source = saves.join("save.sav");
+        let original = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-source.sav");
+        let edited = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-expected.sav");
+        std::fs::write(&source, original)?;
+        let receipt = super::replace_transaction(&source, &sse_codecs::sha256::sha256_hex(original), edited, &backups)?;
+
+        let restored = super::restore_in_place(&receipt.journal_path)?;
+
+        assert_eq!(std::fs::read(&source)?, original);
+        let safety_backup = restored
+            .safety_backup_path
+            .as_ref()
+            .ok_or_else(|| std::io::Error::other("restore should create a safety backup"))?;
+        let safety_journal = restored
+            .safety_journal_path
+            .as_ref()
+            .ok_or_else(|| std::io::Error::other("restore should create a safety journal"))?;
+        assert_eq!(std::fs::read(safety_backup)?, edited);
+        let journal = std::fs::read_to_string(safety_journal)?;
+        assert!(journal.contains("\"mode\":\"restore\""));
+        assert!(journal.contains("\"restore_from\":"));
+
+        super::restore_in_place(safety_journal)?;
+        assert_eq!(std::fs::read(&source)?, edited);
+        std::fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn in_place_restore_refuses_changed_source_and_restores_a_missing_source() -> TestResult {
+        let unique = format!(
+            "sse-storage-restore-guard-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        );
+        let root = std::env::temp_dir().join(unique);
+        let saves = root.join("saves");
+        let backups = root.join("backups");
+        std::fs::create_dir_all(&saves)?;
+        std::fs::create_dir_all(&backups)?;
+        let source = saves.join("save.sav");
+        let original = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-source.sav");
+        let edited = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-expected.sav");
+        std::fs::write(&source, original)?;
+        let receipt = super::replace_transaction(&source, &sse_codecs::sha256::sha256_hex(original), edited, &backups)?;
+        std::fs::write(&source, b"changed after save")?;
+        let Err(error) = super::restore_in_place(&receipt.journal_path) else {
+            return Err("changed source must be refused".into());
+        };
+        assert_eq!(
+            error.to_string(),
+            "Current save changed after the journaled replacement; refusing to overwrite it."
+        );
+        assert_eq!(std::fs::read(&source)?, b"changed after save");
+
+        std::fs::write(&source, edited)?;
+        std::fs::remove_file(&source)?;
+        let restored = super::restore_in_place(&receipt.journal_path)?;
+        assert_eq!(std::fs::read(&source)?, original);
+        assert!(restored.safety_backup_path.is_none());
+        assert!(restored.safety_journal_path.is_none());
         std::fs::remove_dir_all(root)?;
         Ok(())
     }

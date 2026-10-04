@@ -30,35 +30,29 @@ fn save_eligibility(
     plan: Option<&sse_storage::drafts::DraftPlan>,
     invalid_numbers: bool,
 ) -> SaveEligibility {
-    let Some(plan) = has_save.then_some(plan).flatten() else {
+    if !has_save {
         return SaveEligibility {
-            reason: if has_save {
-                if invalid_numbers {
-                    "Введены некорректные значения (проверьте введённые числа).".to_owned()
-                } else {
-                    "Нет несохранённых изменений.".to_owned()
-                }
-            } else {
-                "Выберите сохранение для редактирования.".to_owned()
-            },
+            reason: "Выберите сохранение для редактирования.".to_owned(),
             can_save: false,
             change_count: 0,
         };
-    };
-    let has_unmapped = plan.unmapped_legacy_plan.is_some();
-    let change_count = usize::from(plan.money.is_some())
-        .saturating_add(plan.stack_counts.len())
-        .saturating_add(plan.durability.len())
-        .saturating_add(plan.placements.len())
-        .saturating_add(plan.upgrades.len())
-        .saturating_add(plan.detach_handles.len())
-        .saturating_add(plan.adds.len())
-        .saturating_add(plan.stash_takes.len())
-        .saturating_add(plan.s2_stash_takes.len())
-        .saturating_add(plan.stash_puts.len())
-        .saturating_add(usize::from(has_unmapped));
-    let has_changes = change_count > 0 || invalid_numbers;
-    let unsupported = has_changes && has_unsupported_edit(format_id, legacy_s2, plan);
+    }
+    let has_unmapped = plan.is_some_and(|plan| plan.unmapped_legacy_plan.is_some());
+    let change_count = plan.map_or(0, |plan| {
+        usize::from(plan.money.is_some())
+            .saturating_add(plan.stack_counts.len())
+            .saturating_add(plan.durability.len())
+            .saturating_add(plan.placements.len())
+            .saturating_add(plan.upgrades.len())
+            .saturating_add(plan.detach_handles.len())
+            .saturating_add(plan.adds.len())
+            .saturating_add(plan.stash_takes.len())
+            .saturating_add(plan.s2_stash_takes.len())
+            .saturating_add(plan.stash_puts.len())
+            .saturating_add(usize::from(has_unmapped))
+    });
+    let has_changes = change_count > 0;
+    let unsupported = has_changes && plan.is_some_and(|plan| has_unsupported_edit(format_id, legacy_s2, plan));
     let reason = if has_unmapped {
         "В черновике есть правки из другой версии редактора, которые эта версия не понимает. Сбросьте черновик, чтобы продолжить (он сохранится рядом).".to_owned()
     } else if unsupported {
@@ -88,6 +82,7 @@ fn has_unsupported_edit(format_id: Option<&str>, legacy_s2: bool, plan: &sse_sto
                 || !plan.upgrades.is_empty()
                 || !plan.detach_handles.is_empty()
                 || !plan.adds.is_empty()
+                || !plan.s2_stash_takes.is_empty()
                 || !plan.stash_takes.is_empty()
                 || !plan.stash_puts.is_empty()
         }
@@ -163,6 +158,7 @@ pub struct Shell {
     reports_banner: WidgetId,
     reports_ok: WidgetId,
     reports_off: WidgetId,
+    saving_dialog: WidgetId,
     status: WidgetId,
     selected: usize,
     proxy: Option<Proxy<AppMessage>>,
@@ -741,6 +737,15 @@ impl Shell {
             Look::default(),
         )?;
         tree.set_overlay_host(overlay_host)?;
+        let saving_dialog = style::card(tree, overlay_host)?;
+        style::label(tree, saving_dialog, "СОХРАНЕНИЕ ФАЙЛА", Text::Heading)?;
+        style::label(
+            tree,
+            saving_dialog,
+            "Создаю резервную копию, записываю файл и проверяю его повторным чтением…",
+            Text::Body,
+        )?;
+        tree.set_visible(saving_dialog, false)?;
 
         let hosts = vec![None; screens.len()];
         let mut shell = Self {
@@ -774,6 +779,7 @@ impl Shell {
             reports_banner,
             reports_ok,
             reports_off,
+            saving_dialog,
             status,
             selected: 0,
             proxy,
@@ -980,11 +986,7 @@ impl Shell {
             invalid_numbers,
         );
         let has_changes = eligibility.change_count > 0 || invalid_numbers;
-        let draft_badge = if invalid_numbers {
-            "Есть несохранённые изменения".to_owned()
-        } else {
-            format!("Черновик: {} действ.", eligibility.change_count)
-        };
+        let draft_badge = format!("Черновик: {} действ.", eligibility.change_count);
         tree.set_text(self.draft_badge, &draft_badge)?;
         tree.set_text(self.save_reason, &eligibility.reason)?;
         tree.set_enabled(
@@ -996,7 +998,7 @@ impl Shell {
             journal.is_some_and(sse_storage::drafts::DraftJournal::can_redo),
         )?;
         tree.set_enabled(self.reset, has_changes)?;
-        tree.set_enabled(self.save, eligibility.can_save)?;
+        tree.set_enabled(self.save, eligibility.can_save && !self.library_workspace.is_saving())?;
         Ok(())
     }
 
@@ -1011,7 +1013,19 @@ impl Shell {
             }
         }
         self.route(tree, &Message::User(AppMessage::EditorAction(action)), None)?;
-        self.sync_draft_controls(tree)
+        self.sync_draft_controls(tree)?;
+        self.sync_saving_overlay(tree)
+    }
+
+    fn sync_saving_overlay(&self, tree: &mut Tree) -> Result<()> {
+        if self.library_workspace.is_saving() {
+            if !tree.dialog_open() {
+                tree.open_dialog(self.saving_dialog)?;
+            }
+        } else if tree.dialog() == Some(self.saving_dialog) {
+            let _ = tree.close_dialog()?;
+        }
+        Ok(())
     }
 
     fn handle(&mut self, tree: &mut Tree, message: &Message<AppMessage>, clicked: Option<WidgetId>) -> Result<Flow> {
@@ -1039,6 +1053,15 @@ impl Shell {
                     ..Style::default()
                 },
             )?;
+        }
+        if self.library_workspace.is_saving()
+            && !matches!(
+                message,
+                Message::User(AppMessage::ToScreen(_, _)) | Message::User(AppMessage::Tick(_))
+            )
+        {
+            self.sync_saving_overlay(tree)?;
+            return Ok(Flow::Continue);
         }
         if let Message::Window(WindowEvent::Wheel { delta }) = message {
             let viewport = tree.rect(self.content)?;
@@ -1306,6 +1329,7 @@ impl Shell {
             self.render_library(tree)?;
         }
         self.sync_draft_controls(tree)?;
+        self.sync_saving_overlay(tree)?;
         if let Some(screen) = self.screens.get(self.selected) {
             let host = self.hosts.get(self.selected).copied().flatten();
             self.wizard.sync(tree, &self.app, screen.id(), host)?;
@@ -1417,6 +1441,10 @@ mod tests {
             save_eligibility(false, None, false, None, false).reason,
             "Выберите сохранение для редактирования."
         );
+        assert_eq!(
+            save_eligibility(true, None, false, None, true).reason,
+            "Нет несохранённых изменений."
+        );
 
         let mut unsupported = DraftPlan::empty(&source_sha256)?;
         unsupported.placements.insert(5, DraftPlacement::Ruck);
@@ -1439,6 +1467,22 @@ mod tests {
             save_eligibility(true, Some("stalker2"), false, Some(&supported), true).reason,
             "В черновике есть правки из другой версии редактора, которые эта версия не понимает. Сбросьте черновик, чтобы продолжить (он сохранится рядом)."
         );
+        Ok(())
+    }
+
+    #[test]
+    fn saving_uses_a_modal_overlay_and_closes_it_after_completion() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let shell = Shell::build(&mut tree, None)?;
+
+        assert!(shell.library_workspace.begin_saving());
+        shell.sync_saving_overlay(&mut tree)?;
+        assert!(tree.dialog_open());
+        assert_eq!(tree.dialog(), Some(shell.saving_dialog));
+
+        shell.library_workspace.finish_saving();
+        shell.sync_saving_overlay(&mut tree)?;
+        assert!(!tree.dialog_open());
         Ok(())
     }
 
@@ -1487,7 +1531,7 @@ mod tests {
     }
 
     #[test]
-    fn s2_stash_transfers_are_saveable_and_count_as_draft_edits() -> sse_core::Result<()> {
+    fn unverified_s2_stash_transfers_are_counted_but_not_saveable() -> sse_core::Result<()> {
         let source_sha256 = "c".repeat(64);
         let mut plan = DraftPlan::empty(&source_sha256)?;
         plan.s2_stash_takes.push(0x1234_5678);
@@ -1495,7 +1539,11 @@ mod tests {
         let eligibility = save_eligibility(true, Some("stalker2"), false, Some(&plan), false);
 
         assert_eq!(eligibility.change_count, 1);
-        assert!(eligibility.can_save);
+        assert!(!eligibility.can_save);
+        assert_eq!(
+            eligibility.reason,
+            "Эта правка для формата S.T.A.L.K.E.R. 2 не поддерживается (см. «Возможности»)."
+        );
         Ok(())
     }
 
