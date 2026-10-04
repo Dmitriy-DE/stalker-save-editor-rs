@@ -3,6 +3,9 @@
 pub mod fetch;
 pub mod output;
 
+#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+pub mod shm;
+
 #[cfg(target_os = "windows")]
 mod win32_ffi;
 #[cfg(target_os = "windows")]
