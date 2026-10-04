@@ -4,7 +4,7 @@
 //! through the status line, push slow work to a thread and come back with `AppMessage::ToScreen`.
 
 use super::style::{self, Button, Text};
-use super::{AppMessage, Context, Placeholder, Screen, ScreenId};
+use super::{AppMessage, Context, Screen, ScreenId};
 use crate::event_loop::Message;
 use crate::widget::WidgetId;
 use sse_core::Result;
@@ -12,13 +12,101 @@ use sse_core::Result;
 /// Screens of this package.
 #[must_use]
 pub fn screens() -> Vec<Box<dyn Screen>> {
-    vec![
-        Box::new(Placeholder::new(
-            ScreenId::Capabilities,
-            "Что редактор умеет для каждой игры",
-        )),
-        Box::new(Settings::default()),
-    ]
+    vec![Box::new(Capabilities), Box::new(Settings::default())]
+}
+
+
+#[derive(Clone, Copy)]
+enum Support {
+    Write,
+    Read,
+    No,
+}
+
+impl Support {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Write => "✓",
+            Self::Read => "чт.",
+            Self::No => "—",
+        }
+    }
+}
+
+struct CapabilityRow {
+    game: &'static str,
+    read: Support,
+    money: Support,
+    items: Support,
+    s2: Support,
+    fixes: Support,
+    companion: Support,
+    cloud: Support,
+    reason: &'static str,
+}
+
+const CAPABILITY_ROWS: [CapabilityRow; 7] = [
+    CapabilityRow { game: "ТЧ", read: Support::Write, money: Support::Write, items: Support::Write, s2: Support::No, fixes: Support::Write, companion: Support::Write, cloud: Support::Write, reason: "X-Ray 1.0: чтение и проверенные мутации" },
+    CapabilityRow { game: "ЧН", read: Support::Write, money: Support::Write, items: Support::Write, s2: Support::No, fixes: Support::Write, companion: Support::Write, cloud: Support::Write, reason: "X-Ray 1.5: чтение и проверенные мутации" },
+    CapabilityRow { game: "ЗП", read: Support::Write, money: Support::Write, items: Support::Write, s2: Support::No, fixes: Support::Write, companion: Support::Write, cloud: Support::Write, reason: "X-Ray 1.6: чтение и проверенные мутации" },
+    CapabilityRow { game: "ТЧ EE", read: Support::Read, money: Support::Read, items: Support::Read, s2: Support::No, fixes: Support::Write, companion: Support::No, cloud: Support::Write, reason: "Enhanced: сейвы доступны для чтения; запись ограничена до верификации" },
+    CapabilityRow { game: "ЧН EE", read: Support::Read, money: Support::Read, items: Support::Read, s2: Support::No, fixes: Support::Write, companion: Support::No, cloud: Support::Write, reason: "Enhanced: сейвы доступны для чтения; запись ограничена до верификации" },
+    CapabilityRow { game: "ЗП EE", read: Support::Read, money: Support::Read, items: Support::Read, s2: Support::No, fixes: Support::Write, companion: Support::No, cloud: Support::Write, reason: "Enhanced: сейвы доступны для чтения; запись ограничена до верификации" },
+    CapabilityRow { game: "S2", read: Support::Read, money: Support::Read, items: Support::Read, s2: Support::Read, fixes: Support::No, companion: Support::Write, cloud: Support::Write, reason: "UE5: поддержка S2 есть, запись сейва остаётся safety-restricted" },
+];
+
+struct Capabilities;
+
+impl Screen for Capabilities {
+    fn id(&self) -> ScreenId {
+        ScreenId::Capabilities
+    }
+
+    fn subtitle(&self) -> &str {
+        "Игра × возможность: запись, чтение и причины ограничений"
+    }
+
+    fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
+        let card = style::card(cx.tree, host)?;
+        style::label(cx.tree, card, "МАТРИЦА ВОЗМОЖНОСТЕЙ", Text::Heading)?;
+        style::label(
+            cx.tree,
+            card,
+            "✓ — поддержано · чт. — только чтение · — — не поддерживается",
+            Text::Note,
+        )?;
+        style::label(
+            cx.tree,
+            card,
+            "ИГРА     ЧТЕН.  ДЕНЬГИ  ПРЕДМ.  S2   ФИКСЫ  КОМП.  CLOUD",
+            Text::Value,
+        )?;
+        for row in CAPABILITY_ROWS {
+            let line = format!(
+                "{:<8} {:<6} {:<7} {:<7} {:<4} {:<6} {:<6} {}",
+                row.game,
+                row.read.label(),
+                row.money.label(),
+                row.items.label(),
+                row.s2.label(),
+                row.fixes.label(),
+                row.companion.label(),
+                row.cloud.label()
+            );
+            style::label(cx.tree, card, &line, Text::Body)?;
+            style::label(cx.tree, card, row.reason, Text::Note)?;
+        }
+        Ok(())
+    }
+
+    fn message(
+        &mut self,
+        _cx: &mut Context<'_>,
+        _message: &Message<AppMessage>,
+        _clicked: Option<WidgetId>,
+    ) -> Result<()> {
+        Ok(())
+    }
 }
 
 const SCALES: [&str; 4] = ["100 %", "125 %", "150 %", "200 %"];
