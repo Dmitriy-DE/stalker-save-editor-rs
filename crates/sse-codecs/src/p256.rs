@@ -742,7 +742,10 @@ fn base64_value(byte: u8) -> Result<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_signature, PublicKey, N, U256};
+    use super::{
+        field_mul, field_square, jacobian_add, jacobian_double, jacobian_x, parse_signature, pow_mod, scalar_mul,
+        Affine, PublicKey, GX, GY, N, P, P_MINUS_TWO, U256,
+    };
     use core::cmp::Ordering;
 
     const PUBLIC_KEY: &str = "-----BEGIN PUBLIC KEY-----\n\
@@ -819,6 +822,33 @@ DuEkmd6oGnQq6qsZmILc2fYC0wfqEMk/NB88BSFAC1N6fmziJf11RVtlLQ==\n\
         }
         let (r, _) = parse_signature(&raw).unwrap_or_else(|| panic!("raw signature"));
         assert!(r.cmp(&N) != Ordering::Less);
+    }
+
+    #[test]
+    fn jacobian_add_uses_doubling_when_u1_g_equals_u2_q() {
+        let g = Affine { x: GX, y: GY };
+        let two_g = scalar_mul(g, U256([2, 0, 0, 0]));
+        let z_inv = pow_mod(two_g.z, P_MINUS_TWO, P);
+        let q = Affine {
+            x: field_mul(two_g.x, field_square(z_inv)),
+            y: field_mul(two_g.y, field_mul(field_square(z_inv), z_inv)),
+        };
+        let p1 = scalar_mul(g, U256([6, 0, 0, 0]));
+        let p2 = scalar_mul(q, U256([3, 0, 0, 0]));
+        assert_eq!(jacobian_x(p1), jacobian_x(p2));
+        assert_eq!(jacobian_x(jacobian_add(p1, p2)), jacobian_x(jacobian_double(p1)));
+    }
+
+    #[test]
+    fn signature_parser_rejects_bad_der_and_p1363_lengths() {
+        assert!(parse_signature(&[0_u8; 63]).is_none());
+        assert!(parse_signature(&[0_u8; 65]).is_none());
+        assert!(parse_signature(&[0x30, 0x06, 0x02, 0x01, 0x01, 0x02, 0x02, 0x01]).is_none());
+        assert!(parse_signature(&[0x30, 0x81, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x01]).is_none());
+        let mut oversized_integer = vec![0x30, 0x26, 0x02, 0x21];
+        oversized_integer.extend_from_slice(&[1_u8; 33]);
+        oversized_integer.extend_from_slice(&[0x02, 0x01, 0x01]);
+        assert!(parse_signature(&oversized_integer).is_none());
     }
 
     #[test]

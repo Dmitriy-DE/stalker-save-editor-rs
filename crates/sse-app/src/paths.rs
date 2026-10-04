@@ -62,3 +62,9 @@ pub fn default_data_directory() -> PathBuf {
 pub fn default_settings_path() -> PathBuf {
     default_data_directory().join("settings.json")
 }
+
+/// Returns the private directory used for downloaded update packages.
+#[must_use]
+pub fn update_download_directory() -> PathBuf {
+    default_data_directory().join("updates")
+}
