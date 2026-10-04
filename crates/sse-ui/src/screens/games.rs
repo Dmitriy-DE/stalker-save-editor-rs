@@ -1147,15 +1147,20 @@ struct Encyclopedia {
 impl Encyclopedia {
     fn load(&self, cx: &mut Context<'_>) {
         let Some(game) = cx.app.selected_game().and_then(content_game) else {
-            if let Some(status) = self.status { let _ = cx.tree.set_text(status, "Энциклопедия сейчас доступна для X-Ray игр"); }
+            if let Some(status) = self.status {
+                let _ = cx.tree.set_text(status, "Энциклопедия сейчас доступна для X-Ray игр");
+            }
             return;
         };
-        let Some(directory) = cx.app.game_dir().map(Path::to_path_buf) else { return };
+        let Some(directory) = cx.app.game_dir().map(Path::to_path_buf) else {
+            return;
+        };
         let Some(proxy) = cx.proxy.cloned() else { return };
         std::thread::spawn(move || {
             let cache = std::env::temp_dir().join("stalker-save-editor").join("catalog-cache");
             let result = (|| {
-                let content = sse_catalog::GameContentService::load(game, &directory, &cache, "ru").map_err(|e| e.to_string())?
+                let content = sse_catalog::GameContentService::load(game, &directory, &cache, "ru")
+                    .map_err(|e| e.to_string())?
                     .ok_or_else(|| "Каталог установки не построен".to_owned())?;
                 let bundle = content.bundle();
                 let mut entries = Vec::new();
@@ -1164,7 +1169,12 @@ impl Encyclopedia {
                         kind: "предмет".to_owned(),
                         key: item.key.clone(),
                         name: item.display_name.clone().unwrap_or_else(|| item.key.clone()),
-                        detail: format!("{} · {} · цена: {}", item.category.as_deref().unwrap_or("без категории"), item.source, item.cost.map_or("—".to_owned(), |v| v.to_string())),
+                        detail: format!(
+                            "{} · {} · цена: {}",
+                            item.category.as_deref().unwrap_or("без категории"),
+                            item.source,
+                            item.cost.map_or("—".to_owned(), |v| v.to_string())
+                        ),
                     });
                 }
                 if let Some(factions) = &bundle.factions {
@@ -1180,61 +1190,107 @@ impl Encyclopedia {
                 let search = sse_content::CompanionArchiveLocator::discover(&directory, &["fsgame.ltx"], game);
                 for archive in search.archive_paths {
                     if let Some(name) = archive.file_stem().and_then(|v| v.to_str()) {
-                        if name.to_ascii_lowercase().contains("level") || name.to_ascii_lowercase().contains("location") {
-                            entries.push(EncyclopediaEntry { kind: "локация".to_owned(), key: name.to_owned(), name: name.to_owned(), detail: archive.display().to_string() });
+                        if name.to_ascii_lowercase().contains("level") || name.to_ascii_lowercase().contains("location")
+                        {
+                            entries.push(EncyclopediaEntry {
+                                kind: "локация".to_owned(),
+                                key: name.to_owned(),
+                                name: name.to_owned(),
+                                detail: archive.display().to_string(),
+                            });
                         }
                     }
                 }
                 Ok(entries)
             })();
-            proxy.send(AppMessage::ToScreen(ScreenId::Encyclopedia, Box::new(EncyclopediaResult(result))));
+            proxy.send(AppMessage::ToScreen(
+                ScreenId::Encyclopedia,
+                Box::new(EncyclopediaResult(result)),
+            ));
         });
     }
 
     fn apply_search(&mut self, cx: &mut Context<'_>) -> Result<()> {
-        let query = self.search.as_ref().map_or_else(String::new, crate::widgets::text_input::TextInput::text);
-        self.visible = self.entries.iter().enumerate().filter_map(|(index, entry)| {
-            (query.is_empty()
-                || crate::text::folded_contains(&entry.name, &query, crate::text::SearchLocale::General)
-                || crate::text::folded_contains(&entry.key, &query, crate::text::SearchLocale::General)
-                || crate::text::folded_contains(&entry.kind, &query, crate::text::SearchLocale::General))
+        let query = self
+            .search
+            .as_ref()
+            .map_or_else(String::new, crate::widgets::text_input::TextInput::text);
+        self.visible = self
+            .entries
+            .iter()
+            .enumerate()
+            .filter_map(|(index, entry)| {
+                (query.is_empty()
+                    || crate::text::folded_contains(&entry.name, &query, crate::text::SearchLocale::General)
+                    || crate::text::folded_contains(&entry.key, &query, crate::text::SearchLocale::General)
+                    || crate::text::folded_contains(&entry.kind, &query, crate::text::SearchLocale::General))
                 .then_some(index)
-        }).collect();
+            })
+            .collect();
 
-        let ids: Vec<u64> = self.visible.iter().filter_map(|index| u64::try_from(*index).ok()).collect();
+        let ids: Vec<u64> = self
+            .visible
+            .iter()
+            .filter_map(|index| u64::try_from(*index).ok())
+            .collect();
         let headers = vec![
-            crate::widgets::table::Header { label: "Тип".to_owned(), sortable: true, direction: None },
-            crate::widgets::table::Header { label: "Название".to_owned(), sortable: true, direction: None },
+            crate::widgets::table::Header {
+                label: "Тип".to_owned(),
+                sortable: true,
+                direction: None,
+            },
+            crate::widgets::table::Header {
+                label: "Название".to_owned(),
+                sortable: true,
+                direction: None,
+            },
         ];
         let _table = crate::widgets::table::Table::new(ids, 24.0, headers)?;
 
         if let Some(label) = self.search_label {
-            cx.tree.set_text(label, &format!("Поиск: {} · результатов: {}", if query.is_empty() { "все" } else { &query }, self.visible.len()))?;
+            cx.tree.set_text(
+                label,
+                &format!(
+                    "Поиск: {} · результатов: {}",
+                    if query.is_empty() { "все" } else { &query },
+                    self.visible.len()
+                ),
+            )?;
         }
         for (row_index, widget) in self.rows.iter().copied().enumerate() {
             if let Some(entry) = self.visible.get(row_index).and_then(|index| self.entries.get(*index)) {
                 cx.tree.set_visible(widget, true)?;
-                cx.tree.set_text(widget, &format!("{} · {} · {}", entry.kind, entry.name, entry.key))?;
-            } else { cx.tree.set_visible(widget, false)?; }
+                cx.tree
+                    .set_text(widget, &format!("{} · {} · {}", entry.kind, entry.name, entry.key))?;
+            } else {
+                cx.tree.set_visible(widget, false)?;
+            }
         }
         Ok(())
     }
 }
 
 impl Screen for Encyclopedia {
-    fn id(&self) -> ScreenId { ScreenId::Encyclopedia }
-    fn subtitle(&self) -> &str { "Предметы, персонажи и локации из каталога установленной игры" }
+    fn id(&self) -> ScreenId {
+        ScreenId::Encyclopedia
+    }
+    fn subtitle(&self) -> &str {
+        "Предметы, персонажи и локации из каталога установленной игры"
+    }
 
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
         let card = style::card(cx.tree, host)?;
         style::label(cx.tree, card, "ЭНЦИКЛОПЕДИЯ", Text::Heading)?;
         self.status = Some(style::label(cx.tree, card, "Загрузка каталога…", Text::Note)?);
-        self.search = Some(crate::widgets::text_input::TextInput::new("", crate::edit::EditConfig {
-            mode: crate::edit::FieldMode::SingleLine,
-            max_graphemes: 128,
-            history_limit: 32,
-            filter: crate::edit::InputFilter::Any,
-        })?);
+        self.search = Some(crate::widgets::text_input::TextInput::new(
+            "",
+            crate::edit::EditConfig {
+                mode: crate::edit::FieldMode::SingleLine,
+                max_graphemes: 128,
+                history_limit: 32,
+                filter: crate::edit::InputFilter::Any,
+            },
+        )?);
         self.search_label = Some(style::label(cx.tree, card, "Поиск: все", Text::Value)?);
         style::label(cx.tree, card, "ТИП · НАЗВАНИЕ · КЛЮЧ", Text::Note)?;
         for _ in 0..10 {
@@ -1246,16 +1302,25 @@ impl Screen for Encyclopedia {
         Ok(())
     }
 
-    fn shown(&mut self, cx: &mut Context<'_>) -> Result<()> { self.load(cx); Ok(()) }
+    fn shown(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        self.load(cx);
+        Ok(())
+    }
 
-    fn message(&mut self, cx: &mut Context<'_>, message: &Message<AppMessage>, clicked: Option<WidgetId>) -> Result<()> {
+    fn message(
+        &mut self,
+        cx: &mut Context<'_>,
+        message: &Message<AppMessage>,
+        clicked: Option<WidgetId>,
+    ) -> Result<()> {
         if clicked.is_some() {
             for (row_index, widget) in self.rows.iter().copied().enumerate() {
                 if clicked == Some(widget) {
                     if let Some(index) = self.visible.get(row_index).copied() {
                         self.selected = Some(index);
                         if let (Some(card), Some(entry)) = (self.card, self.entries.get(index)) {
-                            cx.tree.set_text(card, &format!("{}\n{}\n{}", entry.name, entry.kind, entry.detail))?;
+                            cx.tree
+                                .set_text(card, &format!("{}\n{}\n{}", entry.name, entry.kind, entry.detail))?;
                         }
                     }
                 }
@@ -1266,10 +1331,16 @@ impl Screen for Encyclopedia {
                 match result {
                     Ok(entries) => {
                         self.entries.clone_from(entries);
-                        if let Some(status) = self.status { cx.tree.set_text(status, &format!("Записей: {}", entries.len()))?; }
+                        if let Some(status) = self.status {
+                            cx.tree.set_text(status, &format!("Записей: {}", entries.len()))?;
+                        }
                         self.apply_search(cx)?;
                     }
-                    Err(error) => if let Some(status) = self.status { cx.tree.set_text(status, error)?; },
+                    Err(error) => {
+                        if let Some(status) = self.status {
+                            cx.tree.set_text(status, error)?;
+                        }
+                    }
                 }
             }
         }
