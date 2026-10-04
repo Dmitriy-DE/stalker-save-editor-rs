@@ -43,6 +43,8 @@ pub struct AppSettings {
     pub send_reports: bool,
     /// Whether the user has seen the first-run notice about reports. Default is `false`.
     pub reports_notice_shown: bool,
+    /// Whether the language/game discovery first-run wizard was completed.
+    pub first_run_completed: bool,
     /// Timestamp of last sent report in UTC (ISO 8601 string, e.g. "2026-10-03T12:00:00Z").
     pub last_report_utc: Option<String>,
 }
@@ -62,6 +64,7 @@ impl Default for AppSettings {
             navigation_collapsed: None,
             send_reports: true,
             reports_notice_shown: false,
+            first_run_completed: false,
             last_report_utc: None,
         }
     }
@@ -166,6 +169,11 @@ impl AppSettings {
                                 settings.reports_notice_shown = val;
                             }
                         }
+                        "first_run_completed" => {
+                            if let Some(val) = parse_optional_bool(&mut reader)? {
+                                settings.first_run_completed = val;
+                            }
+                        }
                         "last_report_utc" => {
                             settings.last_report_utc = parse_optional_string(&mut reader)?;
                         }
@@ -249,6 +257,9 @@ impl AppSettings {
 
         writer.key("reports_notice_shown")?;
         writer.bool(self.reports_notice_shown)?;
+
+        writer.key("first_run_completed")?;
+        writer.bool(self.first_run_completed)?;
 
         writer.key("last_report_utc")?;
         if let Some(ts) = &self.last_report_utc {
