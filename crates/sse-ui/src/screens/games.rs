@@ -3,11 +3,12 @@
 //! Replace each placeholder with a struct implementing [`Screen`]; keep the order.
 
 use super::style::{self, Button, Text};
-use super::{AppMessage, Context, Placeholder, Screen, ScreenId};
+use super::{AppMessage, Context, Screen, ScreenId};
 use crate::event_loop::Message;
+use crate::text::{self, Metrics};
 use crate::widget::WidgetId;
 use sse_core::Result;
-use sse_storage::discovery::{normalize_full_path, resolve_links, SaveDirectoryCandidate, SaveDirectoryLocator};
+use sse_storage::discovery::{normalize_full_path, resolve_links, SaveDirectoryLocator};
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -19,10 +20,10 @@ pub fn screens() -> Vec<Box<dyn Screen>> {
     let workspace = Workspace::default();
     vec![
         Box::new(GamesOverview::new(workspace)),
-        Box::new(Placeholder::new(ScreenId::GameFixes, "Исправления вылетов и ошибок")),
-        Box::new(Placeholder::new(ScreenId::GameDoctor, "Проверка установки игры")),
-        Box::new(Placeholder::new(ScreenId::Environment, "Инструменты и среда игры")),
-        Box::new(Placeholder::new(ScreenId::Encyclopedia, "Предметы, персонажи, локации")),
+        Box::new(GameFixes::default()),
+        Box::new(Environment::default()),
+        Box::new(GameDoctor::default()),
+        Box::new(Encyclopedia::default()),
     ]
 }
 
@@ -338,13 +339,13 @@ impl GamesOverview {
                     let is_selected = selected_index == Some(i);
                     let prefix = if is_selected { "> " } else { "  " };
                     let path_str = install.directory.to_string_lossy();
-                    let shortened = short_text(&path_str, 24);
+                    let shortened = text::ellipsize_middle(&path_str, 420.0, &PathMetrics);
                     let row_text = format!(
-                        "{prefix}{} [{}] · {} · сейвов: {}",
+                        "{prefix}{} [{}] · сейвов: {}\n   {}",
                         install.title,
                         install.source.display(),
-                        shortened,
-                        install.save_count
+                        install.save_count,
+                        shortened
                     );
                     cx.tree.set_text(row_id, &row_text)?;
                 } else {
@@ -388,7 +389,7 @@ impl GamesOverview {
 
         if let Some(id) = self.folder_value {
             let text = selected_install.map_or("—".to_owned(), |inst| inst.directory.to_string_lossy().to_string());
-            let shortened = short_text(&text, 48);
+            let shortened = text::ellipsize_middle(&text, 520.0, &PathMetrics);
             cx.tree.set_text(id, &shortened)?;
         }
 
@@ -1058,65 +1059,968 @@ fn extract_quoted_strings(line: &str) -> Vec<&str> {
 }
 
 fn count_saves_for_installations(installations: &mut [DiscoveredInstallation]) {
-    // Collect all candidate save directories from sse_storage
     let candidates = SaveDirectoryLocator::find_candidate_directories(None);
+    let mut family_counts = std::collections::HashMap::new();
 
-    for install in installations.iter_mut() {
-        let release_id = install.target.release_id();
-        let family_id = install.target.family();
-
-        // Candidates matching this release
-        let matching_candidates: Vec<SaveDirectoryCandidate> = candidates
+    for family in ["soc", "clear_sky", "cop", "stalker2"] {
+        let mut save_paths: Vec<PathBuf> = candidates
             .iter()
-            .filter(|c| c.release_id == release_id || c.game_id == family_id)
-            .cloned()
+            .filter(|candidate| candidate.game_id == family)
+            .map(|candidate| candidate.directory_path.clone())
             .collect();
 
-        // Check also relative save folder if fsgame.ltx resolves inside install dir
-        let mut save_paths = Vec::new();
-        for candidate in &matching_candidates {
-            save_paths.push(candidate.directory_path.clone());
+        for install in installations.iter().filter(|install| install.target.family() == family) {
+            let local = install.directory.join("_appdata_").join("savedgames");
+            if local.is_dir() {
+                save_paths.push(local);
+            }
         }
 
-        // Add local game data saves if found
-        let local_appdata = install.directory.join("_appdata_").join("savedgames");
-        if local_appdata.is_dir() {
-            save_paths.push(local_appdata);
-        }
-
-        let mut count = 0_usize;
+        let mut seen_directories = HashSet::new();
         let mut seen_slots = HashSet::new();
-
+        let mut count = 0_usize;
         for save_path in save_paths {
+            let canonical = resolve_links(&normalize_full_path(&save_path));
+            if !seen_directories.insert(canonical) {
+                continue;
+            }
             if let Ok(entries) = fs::read_dir(&save_path) {
                 for entry in entries.flatten() {
                     let path = entry.path();
-                    if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
-                        let lower = file_name.to_ascii_lowercase();
-                        if (lower.ends_with(".sav") || lower.ends_with(".scop") || lower.ends_with(".scs"))
-                            && lower != "campaignssave.sav"
-                            && lower != "analyticsdata.sav"
-                        {
-                            let key = path.to_string_lossy().to_string();
-                            if seen_slots.insert(key) {
-                                count = count.saturating_add(1);
-                            }
+                    let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+                        continue;
+                    };
+                    let lower = file_name.to_ascii_lowercase();
+                    if (lower.ends_with(".sav") || lower.ends_with(".scop") || lower.ends_with(".scs"))
+                        && lower != "campaignssave.sav"
+                        && lower != "analyticsdata.sav"
+                    {
+                        let key = resolve_links(&normalize_full_path(&path));
+                        if seen_slots.insert(key) {
+                            count = count.saturating_add(1);
                         }
                     }
                 }
             }
         }
+        family_counts.insert(family, count);
+    }
 
-        install.save_count = count;
+    for install in installations {
+        install.save_count = family_counts.get(install.target.family()).copied().unwrap_or(0);
     }
 }
 
-fn short_text(text: &str, max_chars: usize) -> String {
-    if text.chars().count() <= max_chars {
-        return text.to_owned();
+struct PathMetrics;
+
+impl Metrics for PathMetrics {
+    fn advance(&self, character: char) -> f32 {
+        if character.is_ascii() {
+            7.0
+        } else {
+            8.0
+        }
     }
-    let keep = max_chars.saturating_sub(1);
-    let mut result = text.chars().take(keep).collect::<String>();
-    result.push('…');
-    result
+
+    fn kerning(&self, _left: char, _right: char) -> f32 {
+        0.0
+    }
+}
+
+#[derive(Debug)]
+struct EnvironmentResult {
+    lines: Vec<String>,
+}
+
+#[derive(Default)]
+struct Environment {
+    status: Option<WidgetId>,
+    lines: Vec<WidgetId>,
+}
+
+impl Environment {
+    fn inspect(cx: &Context<'_>) -> std::result::Result<(sse_content::CompanionGame, PathBuf), String> {
+        let game = cx
+            .app
+            .selected_game()
+            .ok_or_else(|| "Сначала выберите игру в «Обзоре игр»".to_owned())?;
+        let directory = cx
+            .app
+            .game_dir()
+            .map(Path::to_path_buf)
+            .ok_or_else(|| "Папка игры не выбрана".to_owned())?;
+        let target = match game {
+            "soc" | "stalker-soc" | "soc-ee" | "stalker-soc-ee" => sse_content::CompanionGame::ShadowOfChernobyl,
+            "cs" | "clear_sky" | "stalker-cs" | "cs-ee" | "stalker-cs-ee" => sse_content::CompanionGame::ClearSky,
+            "cop" | "stalker-cop" | "cop-ee" | "stalker-cop-ee" => sse_content::CompanionGame::CallOfPripyat,
+            _ => return Err("Среда X-Ray для выбранной игры не применяется".to_owned()),
+        };
+        Ok((target, directory))
+    }
+
+    fn start(&self, cx: &mut Context<'_>) {
+        let Ok((game, directory)) = Self::inspect(cx) else {
+            if let Some(id) = self.status {
+                let _ = cx.tree.set_text(id, "Сначала выберите X-Ray игру в «Обзоре игр»");
+            }
+            return;
+        };
+        let Some(proxy) = cx.proxy.cloned() else { return };
+        std::thread::spawn(move || {
+            let search = sse_content::CompanionArchiveLocator::discover(&directory, &["fsgame.ltx"], game);
+            let gamedata = search.game_data_directory.as_ref().is_some_and(|path| path.is_dir());
+            let mods = directory.join("mods");
+            let unpacked = search.game_data_directory.as_ref().map_or(0_usize, |root| {
+                std::fs::read_dir(root).map_or(0, |entries| entries.flatten().count())
+            });
+            let mut lines = vec![
+                format!(
+                    "fsgame.ltx: {}",
+                    search
+                        .fsgame_path
+                        .as_ref()
+                        .map_or("не найден".to_owned(), |p| p.display().to_string())
+                ),
+                format!("gamedata: {}", if gamedata { "найдена" } else { "нет" }),
+                format!(
+                    "mods: {}",
+                    if mods.is_dir() {
+                        mods.display().to_string()
+                    } else {
+                        "нет".to_owned()
+                    }
+                ),
+                format!("распакованные файлы/папки в gamedata: {unpacked}"),
+                format!("архивов обнаружено: {}", search.archive_paths.len()),
+            ];
+            lines.extend(search.issues.into_iter().map(|issue| format!("⚠ {issue}")));
+            proxy.send(AppMessage::ToScreen(
+                ScreenId::Environment,
+                Box::new(EnvironmentResult { lines }),
+            ));
+        });
+    }
+}
+
+impl Screen for Environment {
+    fn id(&self) -> ScreenId {
+        ScreenId::Environment
+    }
+    fn subtitle(&self) -> &str {
+        "Что найдено в установке; экран ничего не изменяет"
+    }
+
+    fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
+        let card = style::card(cx.tree, host)?;
+        style::label(cx.tree, card, "СРЕДА ИГРЫ", Text::Heading)?;
+        self.status = Some(style::label(cx.tree, card, "Выберите игру", Text::Note)?);
+        for _ in 0..10 {
+            let line = style::label(cx.tree, card, "", Text::Body)?;
+            cx.tree.set_visible(line, false)?;
+            self.lines.push(line);
+        }
+        Ok(())
+    }
+
+    fn shown(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        self.start(cx);
+        Ok(())
+    }
+
+    fn message(
+        &mut self,
+        cx: &mut Context<'_>,
+        message: &Message<AppMessage>,
+        _clicked: Option<WidgetId>,
+    ) -> Result<()> {
+        if let Message::User(AppMessage::ToScreen(ScreenId::Environment, payload)) = message {
+            if let Some(result) = payload.downcast_ref::<EnvironmentResult>() {
+                if let Some(status) = self.status {
+                    cx.tree.set_text(status, "Только чтение · проверка завершена")?;
+                }
+                for (index, widget) in self.lines.iter().copied().enumerate() {
+                    if let Some(line) = result.lines.get(index) {
+                        cx.tree.set_visible(widget, true)?;
+                        cx.tree.set_text(widget, line)?;
+                    } else {
+                        cx.tree.set_visible(widget, false)?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug)]
+struct FixRow {
+    id: String,
+    title: String,
+    description: String,
+    version: String,
+    status: String,
+}
+
+#[derive(Debug)]
+enum FixReply {
+    List(std::result::Result<Vec<FixRow>, String>),
+    Changed(std::result::Result<String, String>),
+}
+
+#[derive(Default)]
+struct GameFixes {
+    status: Option<WidgetId>,
+    detail: Option<WidgetId>,
+    rows: Vec<WidgetId>,
+    items: Vec<FixRow>,
+    selected: Option<usize>,
+    install: Option<WidgetId>,
+    remove: Option<WidgetId>,
+    confirm: Option<bool>,
+}
+
+fn fix_target(game: &str) -> Option<sse_fixes::GameTarget> {
+    sse_fixes::GameTarget::parse(game).or(match game {
+        "stalker-soc" => Some(sse_fixes::GameTarget::ShadowOfChernobyl),
+        "stalker-cs" | "clear_sky" => Some(sse_fixes::GameTarget::ClearSky),
+        "stalker-cop" => Some(sse_fixes::GameTarget::CallOfPripyat),
+        "stalker-soc-ee" => Some(sse_fixes::GameTarget::ShadowOfChernobylEnhancedEdition),
+        "stalker-cs-ee" => Some(sse_fixes::GameTarget::ClearSkyEnhancedEdition),
+        "stalker-cop-ee" => Some(sse_fixes::GameTarget::CallOfPripyatEnhancedEdition),
+        "stalker2" => Some(sse_fixes::GameTarget::Stalker2),
+        _ => None,
+    })
+}
+
+impl GameFixes {
+    fn refresh(&self, cx: &mut Context<'_>) {
+        let game = cx.app.selected_game().map(str::to_owned);
+        let directory = cx.app.game_dir().map(Path::to_path_buf);
+        let Some(proxy) = cx.proxy.cloned() else { return };
+        std::thread::spawn(move || {
+            let result = (|| {
+                let target = game
+                    .as_deref()
+                    .and_then(fix_target)
+                    .ok_or_else(|| "Выбранная игра не поддерживается каталогом фиксов".to_owned())?;
+                let directory = directory.ok_or_else(|| "Сначала выберите установленную игру".to_owned())?;
+                let engine = sse_fixes::GameFixEngine::new();
+                let installed = engine.list_installed(&directory, None).map_err(|e| e.to_string())?;
+                let rows = sse_fixes::GameFixCatalog::for_game(target)
+                    .into_iter()
+                    .map(|definition| {
+                        let current = installed.iter().find(|item| item.id == definition.id);
+                        let status = if let Some(item) = current {
+                            if item.version != definition.version {
+                                format!("устарел {} → {}", item.version, definition.version)
+                            } else {
+                                match engine.get_status(definition, &directory) {
+                                    Ok(sse_fixes::GameFixState::Installed) => "установлен".to_owned(),
+                                    Ok(sse_fixes::GameFixState::Modified) => "изменён".to_owned(),
+                                    Ok(_) => "не установлен".to_owned(),
+                                    Err(error) => format!("ошибка: {error}"),
+                                }
+                            }
+                        } else {
+                            "не установлен".to_owned()
+                        };
+                        FixRow {
+                            id: definition.id.clone(),
+                            title: definition.title.clone(),
+                            description: definition.description.clone(),
+                            version: definition.version.clone(),
+                            status,
+                        }
+                    })
+                    .collect();
+                Ok(rows)
+            })();
+            proxy.send(AppMessage::ToScreen(
+                ScreenId::GameFixes,
+                Box::new(FixReply::List(result)),
+            ));
+        });
+    }
+
+    fn render(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        if let Some(status) = self.status {
+            cx.tree.set_text(status, &format!("Фиксов: {}", self.items.len()))?;
+        }
+        for (index, widget) in self.rows.iter().copied().enumerate() {
+            if let Some(item) = self.items.get(index) {
+                cx.tree.set_visible(widget, true)?;
+                cx.tree
+                    .set_text(widget, &format!("{} · v{} · {}", item.title, item.version, item.status))?;
+            } else {
+                cx.tree.set_visible(widget, false)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Screen for GameFixes {
+    fn id(&self) -> ScreenId {
+        ScreenId::GameFixes
+    }
+    fn subtitle(&self) -> &str {
+        "Каталог исправлений выбранной игры с транзакционной установкой"
+    }
+
+    fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
+        let card = style::card(cx.tree, host)?;
+        style::label(cx.tree, card, "ИСПРАВЛЕНИЯ ИГРЫ", Text::Heading)?;
+        self.status = Some(style::label(cx.tree, card, "Выберите игру", Text::Note)?);
+        for _ in 0..8 {
+            let row = style::button(cx.tree, card, "", Button::Secondary)?;
+            cx.tree.set_visible(row, false)?;
+            self.rows.push(row);
+        }
+        self.detail = Some(style::label(cx.tree, card, "Выберите исправление", Text::Body)?);
+        let actions = style::row(cx.tree, card)?;
+        self.install = Some(style::button(
+            cx.tree,
+            actions,
+            "Установить / обновить",
+            Button::Primary,
+        )?);
+        self.remove = Some(style::button(cx.tree, actions, "Удалить", Button::Secondary)?);
+        Ok(())
+    }
+
+    fn shown(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        self.refresh(cx);
+        Ok(())
+    }
+
+    fn message(
+        &mut self,
+        cx: &mut Context<'_>,
+        message: &Message<AppMessage>,
+        clicked: Option<WidgetId>,
+    ) -> Result<()> {
+        if clicked.is_some() {
+            for (index, row) in self.rows.iter().copied().enumerate() {
+                if clicked == Some(row) && self.items.get(index).is_some() {
+                    self.selected = Some(index);
+                    self.confirm = None;
+                    if let (Some(detail), Some(item)) = (self.detail, self.items.get(index)) {
+                        cx.tree
+                            .set_text(detail, &format!("{}\n{}", item.status, item.description))?;
+                    }
+                }
+            }
+        }
+
+        let action = if clicked.is_some() && clicked == self.install {
+            Some(true)
+        } else if clicked.is_some() && clicked == self.remove {
+            Some(false)
+        } else {
+            None
+        };
+        if let Some(install) = action {
+            let Some(index) = self.selected else {
+                cx.status = Some("Сначала выберите исправление".to_owned());
+                return Ok(());
+            };
+            if self.confirm != Some(install) {
+                self.confirm = Some(install);
+                cx.status =
+                    Some("Операция изменит файлы игры. Нажмите ту же кнопку ещё раз для подтверждения.".to_owned());
+                return Ok(());
+            }
+            self.confirm = None;
+            let Some(item) = self.items.get(index) else {
+                return Ok(());
+            };
+            let fix_id = item.id.clone();
+            let game = cx.app.selected_game().map(str::to_owned);
+            let directory = cx.app.game_dir().map(Path::to_path_buf);
+            let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
+            std::thread::spawn(move || {
+                let result = (|| {
+                    let directory = directory.ok_or_else(|| "Папка игры не выбрана".to_owned())?;
+                    let target = game
+                        .as_deref()
+                        .and_then(fix_target)
+                        .ok_or_else(|| "Игра не поддерживается".to_owned())?;
+                    let definition = sse_fixes::GameFixCatalog::try_get(&fix_id)
+                        .ok_or_else(|| "Фикс исчез из каталога".to_owned())?;
+                    if definition.game != target {
+                        return Err("Фикс не относится к выбранной игре".to_owned());
+                    }
+                    let engine = sse_fixes::GameFixEngine::new();
+                    let result = if install {
+                        match engine.get_status(definition, &directory).map_err(|e| e.to_string())? {
+                            sse_fixes::GameFixState::Installed => engine.update(definition, &directory),
+                            _ => engine.install(definition, &directory),
+                        }
+                    } else {
+                        let check = engine.check_uninstall(&fix_id, &directory);
+                        if !check.can_uninstall {
+                            return Err(check
+                                .reason
+                                .unwrap_or_else(|| "Безопасное удаление запрещено".to_owned()));
+                        }
+                        engine.uninstall(&fix_id, &directory)
+                    }
+                    .map_err(|e| e.to_string())?;
+                    Ok(format!(
+                        "{}: {:?}; файлов: {}",
+                        fix_id,
+                        result.state,
+                        result.files.len()
+                    ))
+                })();
+                proxy.send(AppMessage::ToScreen(
+                    ScreenId::GameFixes,
+                    Box::new(FixReply::Changed(result)),
+                ));
+            });
+        }
+
+        if let Message::User(AppMessage::ToScreen(ScreenId::GameFixes, payload)) = message {
+            if let Some(reply) = payload.downcast_ref::<FixReply>() {
+                match reply {
+                    FixReply::List(Ok(items)) => {
+                        self.items.clone_from(items);
+                        self.render(cx)?;
+                    }
+                    FixReply::List(Err(error)) => {
+                        if let Some(status) = self.status {
+                            cx.tree.set_text(status, error)?;
+                        }
+                    }
+                    FixReply::Changed(Ok(text)) => {
+                        cx.status = Some(text.clone());
+                        self.refresh(cx);
+                    }
+                    FixReply::Changed(Err(error)) => cx.status = Some(format!("Исправления: {error}")),
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug)]
+struct DoctorFinding {
+    file: String,
+    severity: String,
+    message: String,
+}
+
+#[derive(Debug)]
+enum DoctorReply {
+    Progress(String),
+    Done(std::result::Result<(usize, u64, Vec<DoctorFinding>), String>),
+}
+
+#[derive(Default)]
+struct GameDoctor {
+    status: Option<WidgetId>,
+    start: Option<WidgetId>,
+    cancel: Option<WidgetId>,
+    rows: Vec<WidgetId>,
+    findings: Vec<DoctorFinding>,
+    cancellation: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+}
+
+fn content_game(game: &str) -> Option<sse_content::CompanionGame> {
+    match game {
+        "soc" | "stalker-soc" | "soc-ee" | "stalker-soc-ee" => Some(sse_content::CompanionGame::ShadowOfChernobyl),
+        "cs" | "clear_sky" | "stalker-cs" | "cs-ee" | "stalker-cs-ee" => Some(sse_content::CompanionGame::ClearSky),
+        "cop" | "stalker-cop" | "cop-ee" | "stalker-cop-ee" => Some(sse_content::CompanionGame::CallOfPripyat),
+        _ => None,
+    }
+}
+
+impl GameDoctor {
+    fn run(&mut self, cx: &mut Context<'_>) {
+        let Some(game) = cx.app.selected_game().and_then(content_game) else {
+            cx.status = Some("Доктор игры сейчас проверяет X-Ray установки".to_owned());
+            return;
+        };
+        let Some(directory) = cx.app.game_dir().map(Path::to_path_buf) else {
+            cx.status = Some("Сначала выберите установленную игру".to_owned());
+            return;
+        };
+        let Some(proxy) = cx.proxy.cloned() else { return };
+        let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        self.cancellation = Some(std::sync::Arc::clone(&cancelled));
+        std::thread::spawn(move || {
+            use std::sync::atomic::Ordering;
+            proxy.send(AppMessage::ToScreen(
+                ScreenId::GameDoctor,
+                Box::new(DoctorReply::Progress("25% · строю дерево файлов".to_owned())),
+            ));
+            let result = (|| {
+                let tree = sse_content::GameFileTree::load_simple(
+                    game,
+                    &directory,
+                    |path| {
+                        let lower = path.to_ascii_lowercase();
+                        lower.ends_with(".ltx") || lower.ends_with(".xml") || lower.ends_with(".script")
+                    },
+                    false,
+                )
+                .map_err(|e| e.to_string())?;
+                if cancelled.load(Ordering::Relaxed) {
+                    return Err("Проверка отменена".to_owned());
+                }
+                proxy.send(AppMessage::ToScreen(
+                    ScreenId::GameDoctor,
+                    Box::new(DoctorReply::Progress("60% · запускаю линтер".to_owned())),
+                ));
+                let engine = sse_lint::LintEngine::new(sse_lint::LintOptions {
+                    single_checker: None,
+                    config_subdir: None,
+                    max_files_globals: None,
+                });
+                let report = engine.lint_tree(&tree);
+                if cancelled.load(Ordering::Relaxed) {
+                    return Err("Проверка отменена".to_owned());
+                }
+                let mut findings: Vec<DoctorFinding> = report
+                    .findings
+                    .into_iter()
+                    .map(|finding| DoctorFinding {
+                        file: finding.file,
+                        severity: finding.severity.as_str().to_owned(),
+                        message: finding.message,
+                    })
+                    .collect();
+
+                let row_ids: Vec<u64> = (0..findings.len())
+                    .filter_map(|index| u64::try_from(index).ok())
+                    .collect();
+                let headers = vec![
+                    crate::widgets::table::Header {
+                        label: "Файл".to_owned(),
+                        sortable: true,
+                        direction: None,
+                    },
+                    crate::widgets::table::Header {
+                        label: "Тяжесть".to_owned(),
+                        sortable: true,
+                        direction: None,
+                    },
+                ];
+                if let Ok(mut table) = crate::widgets::table::Table::new(row_ids, 24.0, headers) {
+                    let _ = table.header_click(0, false, |left, right, _| {
+                        let a = usize::try_from(left).ok().and_then(|i| findings.get(i));
+                        let b = usize::try_from(right).ok().and_then(|i| findings.get(i));
+                        a.map(|v| (&v.file, &v.severity))
+                            .cmp(&b.map(|v| (&v.file, &v.severity)))
+                    });
+                    let mut ordered = Vec::with_capacity(findings.len());
+                    for index in 0..findings.len() {
+                        if let Some(row) = table
+                            .visible_row(index)
+                            .and_then(|id| usize::try_from(id).ok())
+                            .and_then(|i| findings.get(i))
+                            .cloned()
+                        {
+                            ordered.push(row);
+                        }
+                    }
+                    findings = ordered;
+                }
+                Ok((report.files_checked, report.elapsed_ms, findings))
+            })();
+            proxy.send(AppMessage::ToScreen(
+                ScreenId::GameDoctor,
+                Box::new(DoctorReply::Done(result)),
+            ));
+        });
+    }
+}
+
+impl Screen for GameDoctor {
+    fn id(&self) -> ScreenId {
+        ScreenId::GameDoctor
+    }
+    fn subtitle(&self) -> &str {
+        "Фоновая проверка установки линтером; находки сгруппированы по файлу и тяжести"
+    }
+
+    fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
+        let card = style::card(cx.tree, host)?;
+        style::label(cx.tree, card, "ДОКТОР ИГРЫ", Text::Heading)?;
+        self.status = Some(style::label(cx.tree, card, "Готов к проверке", Text::Note)?);
+        let actions = style::row(cx.tree, card)?;
+        self.start = Some(style::button(cx.tree, actions, "Проверить", Button::Primary)?);
+        self.cancel = Some(style::button(cx.tree, actions, "Отмена", Button::Secondary)?);
+        style::label(cx.tree, card, "ФАЙЛ · ТЯЖЕСТЬ · НАХОДКА", Text::Value)?;
+        for _ in 0..10 {
+            let row = style::label(cx.tree, card, "", Text::Body)?;
+            cx.tree.set_visible(row, false)?;
+            self.rows.push(row);
+        }
+        Ok(())
+    }
+
+    fn message(
+        &mut self,
+        cx: &mut Context<'_>,
+        message: &Message<AppMessage>,
+        clicked: Option<WidgetId>,
+    ) -> Result<()> {
+        if clicked.is_some() && clicked == self.start {
+            self.run(cx);
+        }
+        if clicked.is_some() && clicked == self.cancel {
+            if let Some(cancelled) = &self.cancellation {
+                cancelled.store(true, std::sync::atomic::Ordering::Relaxed);
+                if let Some(status) = self.status {
+                    cx.tree.set_text(status, "Отмена запрошена…")?;
+                }
+            }
+        }
+        if let Message::User(AppMessage::ToScreen(ScreenId::GameDoctor, payload)) = message {
+            if let Some(reply) = payload.downcast_ref::<DoctorReply>() {
+                match reply {
+                    DoctorReply::Progress(text) => {
+                        if let Some(status) = self.status {
+                            cx.tree.set_text(status, text)?;
+                        }
+                    }
+                    DoctorReply::Done(Ok((files, elapsed, findings))) => {
+                        self.cancellation = None;
+                        self.findings.clone_from(findings);
+                        if let Some(status) = self.status {
+                            cx.tree.set_text(
+                                status,
+                                &format!("100% · файлов: {files} · находок: {} · {elapsed} мс", findings.len()),
+                            )?;
+                        }
+                        for (index, widget) in self.rows.iter().copied().enumerate() {
+                            if let Some(finding) = findings.get(index) {
+                                cx.tree.set_visible(widget, true)?;
+                                cx.tree.set_text(
+                                    widget,
+                                    &format!("{} · {} · {}", finding.file, finding.severity, finding.message),
+                                )?;
+                            } else {
+                                cx.tree.set_visible(widget, false)?;
+                            }
+                        }
+                    }
+                    DoctorReply::Done(Err(error)) => {
+                        self.cancellation = None;
+                        if let Some(status) = self.status {
+                            cx.tree.set_text(status, error)?;
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn encyclopedia_game(game: &str) -> Option<sse_content::CompanionGame> {
+    match game {
+        "soc" | "stalker-soc" | "soc-ee" | "stalker-soc-ee" => Some(sse_content::CompanionGame::ShadowOfChernobyl),
+        "cs" | "clear_sky" | "stalker-cs" | "cs-ee" | "stalker-cs-ee" => Some(sse_content::CompanionGame::ClearSky),
+        "cop" | "stalker-cop" | "cop-ee" | "stalker-cop-ee" => Some(sse_content::CompanionGame::CallOfPripyat),
+        _ => None,
+    }
+}
+
+struct EncyclopediaClipboard;
+impl crate::edit::Clipboard for EncyclopediaClipboard {
+    fn read_text(&mut self) -> Result<String> {
+        Ok(String::new())
+    }
+    fn write_text(&mut self, _text: &str) -> Result<()> {
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug)]
+struct EncyclopediaEntry {
+    kind: String,
+    key: String,
+    name: String,
+    detail: String,
+}
+
+#[derive(Debug)]
+struct EncyclopediaResult(std::result::Result<Vec<EncyclopediaEntry>, String>);
+
+#[derive(Default)]
+struct Encyclopedia {
+    status: Option<WidgetId>,
+    search_label: Option<WidgetId>,
+    rows: Vec<WidgetId>,
+    card: Option<WidgetId>,
+    entries: Vec<EncyclopediaEntry>,
+    visible: Vec<usize>,
+    selected: Option<usize>,
+    search: Option<crate::widgets::text_input::TextInput>,
+}
+
+impl Encyclopedia {
+    fn load(&self, cx: &mut Context<'_>) {
+        let Some(game) = cx.app.selected_game().and_then(encyclopedia_game) else {
+            if let Some(status) = self.status {
+                let _ = cx.tree.set_text(status, "Энциклопедия сейчас доступна для X-Ray игр");
+            }
+            return;
+        };
+        let Some(directory) = cx.app.game_dir().map(Path::to_path_buf) else {
+            return;
+        };
+        let Some(proxy) = cx.proxy.cloned() else { return };
+        std::thread::spawn(move || {
+            let cache = std::env::temp_dir().join("stalker-save-editor").join("catalog-cache");
+            let result = (|| {
+                let content = sse_catalog::GameContentService::load(game, &directory, &cache, "ru")
+                    .map_err(|e| e.to_string())?
+                    .ok_or_else(|| "Каталог установки не построен".to_owned())?;
+                let bundle = content.bundle();
+                let mut entries = Vec::new();
+                for item in bundle.items.items() {
+                    entries.push(EncyclopediaEntry {
+                        kind: "предмет".to_owned(),
+                        key: item.key.clone(),
+                        name: item.display_name.clone().unwrap_or_else(|| item.key.clone()),
+                        detail: format!(
+                            "{} · {} · цена: {}",
+                            item.category.as_deref().unwrap_or("без категории"),
+                            item.source,
+                            item.cost.map_or("—".to_owned(), |v| v.to_string())
+                        ),
+                    });
+                }
+                if let Some(factions) = &bundle.factions {
+                    for faction in factions.factions() {
+                        entries.push(EncyclopediaEntry {
+                            kind: "персонаж/группировка".to_owned(),
+                            key: faction.key.clone(),
+                            name: faction.display_name.clone().unwrap_or_else(|| faction.key.clone()),
+                            detail: format!("группировка · {}", faction.source),
+                        });
+                    }
+                }
+                let search = sse_content::CompanionArchiveLocator::discover(&directory, &["fsgame.ltx"], game);
+                for archive in search.archive_paths {
+                    if let Some(name) = archive.file_stem().and_then(|v| v.to_str()) {
+                        if name.to_ascii_lowercase().contains("level") || name.to_ascii_lowercase().contains("location")
+                        {
+                            entries.push(EncyclopediaEntry {
+                                kind: "локация".to_owned(),
+                                key: name.to_owned(),
+                                name: name.to_owned(),
+                                detail: archive.display().to_string(),
+                            });
+                        }
+                    }
+                }
+                Ok(entries)
+            })();
+            proxy.send(AppMessage::ToScreen(
+                ScreenId::Encyclopedia,
+                Box::new(EncyclopediaResult(result)),
+            ));
+        });
+    }
+
+    fn apply_search(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        let query = self
+            .search
+            .as_ref()
+            .map_or_else(String::new, crate::widgets::text_input::TextInput::text);
+        self.visible = self
+            .entries
+            .iter()
+            .enumerate()
+            .filter_map(|(index, entry)| {
+                (query.is_empty()
+                    || crate::text::folded_contains(&entry.name, &query, crate::text::SearchLocale::General)
+                    || crate::text::folded_contains(&entry.key, &query, crate::text::SearchLocale::General)
+                    || crate::text::folded_contains(&entry.kind, &query, crate::text::SearchLocale::General))
+                .then_some(index)
+            })
+            .collect();
+
+        let ids: Vec<u64> = self
+            .visible
+            .iter()
+            .filter_map(|index| u64::try_from(*index).ok())
+            .collect();
+        let headers = vec![
+            crate::widgets::table::Header {
+                label: "Тип".to_owned(),
+                sortable: true,
+                direction: None,
+            },
+            crate::widgets::table::Header {
+                label: "Название".to_owned(),
+                sortable: true,
+                direction: None,
+            },
+        ];
+        let _table = crate::widgets::table::Table::new(ids, 24.0, headers)?;
+
+        if let Some(label) = self.search_label {
+            cx.tree.set_text(
+                label,
+                &format!(
+                    "Поиск: {} · результатов: {}",
+                    if query.is_empty() { "все" } else { &query },
+                    self.visible.len()
+                ),
+            )?;
+        }
+        for (row_index, widget) in self.rows.iter().copied().enumerate() {
+            if let Some(entry) = self.visible.get(row_index).and_then(|index| self.entries.get(*index)) {
+                cx.tree.set_visible(widget, true)?;
+                cx.tree
+                    .set_text(widget, &format!("{} · {} · {}", entry.kind, entry.name, entry.key))?;
+            } else {
+                cx.tree.set_visible(widget, false)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Screen for Encyclopedia {
+    fn id(&self) -> ScreenId {
+        ScreenId::Encyclopedia
+    }
+    fn subtitle(&self) -> &str {
+        "Предметы, персонажи и локации из каталога установленной игры"
+    }
+
+    fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
+        let card = style::card(cx.tree, host)?;
+        style::label(cx.tree, card, "ЭНЦИКЛОПЕДИЯ", Text::Heading)?;
+        self.status = Some(style::label(cx.tree, card, "Загрузка каталога…", Text::Note)?);
+        self.search = Some(crate::widgets::text_input::TextInput::new(
+            "",
+            crate::edit::EditConfig {
+                mode: crate::edit::FieldMode::SingleLine,
+                max_graphemes: 128,
+                history_limit: 32,
+                filter: crate::edit::InputFilter::Any,
+            },
+        )?);
+        self.search_label = Some(style::button(
+            cx.tree,
+            card,
+            "Поиск: все · нажмите и печатайте",
+            Button::Secondary,
+        )?);
+        style::label(cx.tree, card, "ТИП · НАЗВАНИЕ · КЛЮЧ", Text::Note)?;
+        for _ in 0..10 {
+            let row = style::button(cx.tree, card, "", Button::Secondary)?;
+            cx.tree.set_visible(row, false)?;
+            self.rows.push(row);
+        }
+        self.card = Some(style::label(cx.tree, card, "Выберите запись", Text::Body)?);
+        Ok(())
+    }
+
+    fn shown(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        self.load(cx);
+        Ok(())
+    }
+
+    fn message(
+        &mut self,
+        cx: &mut Context<'_>,
+        message: &Message<AppMessage>,
+        clicked: Option<WidgetId>,
+    ) -> Result<()> {
+        if clicked.is_some() && clicked == self.search_label {
+            if let Some(search) = self.search.as_mut() {
+                search.focus(true, 0);
+                cx.status = Some("Поиск активен: вводите текст с клавиатуры".to_owned());
+            }
+        }
+        if let Message::Window(crate::event_loop::WindowEvent::Key {
+            pressed: true,
+            keysym,
+            text,
+            ctrl,
+            shift,
+        }) = message
+        {
+            if self
+                .search
+                .as_ref()
+                .is_some_and(crate::widgets::text_input::TextInput::focused)
+            {
+                let key = match *keysym {
+                    0xff08 => crate::edit::Key::Backspace,
+                    0xffff => crate::edit::Key::Delete,
+                    0xff51 => crate::edit::Key::Left,
+                    0xff53 => crate::edit::Key::Right,
+                    0xff50 => crate::edit::Key::Home,
+                    0xff57 => crate::edit::Key::End,
+                    value if *ctrl && matches!(value, 0x61 | 0x41) => crate::edit::Key::A,
+                    value if *ctrl && matches!(value, 0x7a | 0x5a) => crate::edit::Key::Z,
+                    _ => crate::edit::Key::Character(text.unwrap_or('\0')),
+                };
+                let typed = text.map(|character| character.to_string());
+                let mut clipboard = EncyclopediaClipboard;
+                if let Some(search) = self.search.as_mut() {
+                    let changed = search.key(
+                        key,
+                        crate::edit::Modifiers {
+                            ctrl: *ctrl,
+                            shift: *shift,
+                        },
+                        typed.as_deref(),
+                        &mut clipboard,
+                    )?;
+                    if changed {
+                        self.apply_search(cx)?;
+                    }
+                }
+            }
+        }
+        if let Message::User(AppMessage::Tick(seconds)) = message {
+            if let Some(search) = self.search.as_mut() {
+                let _ = search.tick(seconds.saturating_mul(1_000));
+            }
+        }
+
+        if clicked.is_some() {
+            for (row_index, widget) in self.rows.iter().copied().enumerate() {
+                if clicked == Some(widget) {
+                    if let Some(index) = self.visible.get(row_index).copied() {
+                        self.selected = Some(index);
+                        if let (Some(card), Some(entry)) = (self.card, self.entries.get(index)) {
+                            cx.tree
+                                .set_text(card, &format!("{}\n{}\n{}", entry.name, entry.kind, entry.detail))?;
+                        }
+                    }
+                }
+            }
+        }
+        if let Message::User(AppMessage::ToScreen(ScreenId::Encyclopedia, payload)) = message {
+            if let Some(EncyclopediaResult(result)) = payload.downcast_ref::<EncyclopediaResult>() {
+                match result {
+                    Ok(entries) => {
+                        self.entries.clone_from(entries);
+                        if let Some(status) = self.status {
+                            cx.tree.set_text(status, &format!("Записей: {}", entries.len()))?;
+                        }
+                        self.apply_search(cx)?;
+                    }
+                    Err(error) => {
+                        if let Some(status) = self.status {
+                            cx.tree.set_text(status, error)?;
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
 }
