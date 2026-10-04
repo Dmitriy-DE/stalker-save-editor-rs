@@ -1179,6 +1179,7 @@ impl Screen for Cloud {
 #[derive(Debug)]
 enum UpdateReply {
     Checked(std::result::Result<(sse_update::UpdateState, String, Option<sse_update::UpdateArtifact>), String>),
+    Progress(u64, u64),
     Downloaded(std::result::Result<(sse_update::UpdateArtifact, PathBuf), String>),
     Installed(std::result::Result<String, String>),
 }
@@ -1257,8 +1258,15 @@ impl Updates {
                 let directory = std::env::temp_dir().join("stalker-save-editor-updates");
                 std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
                 let path = directory.join(&artifact.file);
+                let progress_proxy = proxy.clone();
+                let mut progress = move |downloaded: u64, total: u64| {
+                    progress_proxy.send(AppMessage::ToScreen(
+                        ScreenId::Updates,
+                        Box::new(UpdateReply::Progress(downloaded, total)),
+                    ));
+                };
                 service
-                    .download(&mut fetch, &artifact, &path, None)
+                    .download(&mut fetch, &artifact, &path, Some(&mut progress))
                     .map_err(|e| e.to_string())?;
                 Ok((artifact, path))
             })();
@@ -1349,8 +1357,22 @@ impl Screen for Updates {
 
         if let Message::User(AppMessage::ToScreen(ScreenId::Updates, payload)) = message {
             if let Some(reply) = payload.downcast_ref::<UpdateReply>() {
+                if matches!(reply, UpdateReply::Progress(_, _)) {
+                    if let UpdateReply::Progress(downloaded, total) = reply {
+                        let percent = if *total == 0 {
+                            0
+                        } else {
+                            downloaded.saturating_mul(100).checked_div(*total).unwrap_or(0).min(100)
+                        };
+                        if let Some(id) = self.status {
+                            cx.tree.set_text(id, &format!("Скачивание пакета обновления... {percent}%"))?;
+                        }
+                    }
+                    return Ok(());
+                }
                 self.busy = false;
                 match reply {
+                    UpdateReply::Progress(_, _) => {}
                     UpdateReply::Checked(Ok((state, version, artifact))) => {
                         self.artifact.clone_from(artifact);
                         self.downloaded = None;
