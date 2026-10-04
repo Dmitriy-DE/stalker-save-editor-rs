@@ -336,7 +336,12 @@ impl Screen for Companion {
         let confirm = style::card(cx.tree, host)?;
         self.confirm_card = Some(confirm);
         style::label(cx.tree, confirm, "ПОДТВЕРЖДЕНИЕ ИЗМЕНЕНИЯ ИГРЫ", Text::Heading)?;
-        style::label(cx.tree, confirm, "Будут изменены файлы выбранной игры. Проверьте игру и папку перед продолжением.", Text::Note)?;
+        style::label(
+            cx.tree,
+            confirm,
+            "Будут изменены файлы выбранной игры. Проверьте игру и папку перед продолжением.",
+            Text::Note,
+        )?;
         let confirm_row = style::row(cx.tree, confirm)?;
         self.confirm_write = Some(style::button(cx.tree, confirm_row, "ПОДТВЕРДИТЬ", Button::Primary)?);
         self.confirm_cancel = Some(style::button(cx.tree, confirm_row, "ОТМЕНА", Button::Secondary)?);
@@ -345,7 +350,9 @@ impl Screen for Companion {
     }
     fn shown(&mut self, cx: &mut Context<'_>) -> Result<()> {
         self.intent = None;
-        if let Some(card) = self.confirm_card { cx.tree.set_visible(card, false)?; }
+        if let Some(card) = self.confirm_card {
+            cx.tree.set_visible(card, false)?;
+        }
         self.refresh(cx);
         Ok(())
     }
@@ -392,25 +399,39 @@ impl Screen for Companion {
                 cx.status = Some("Папка игры не выбрана".to_owned());
                 return Ok(());
             };
-            self.intent = Some(CompanionIntent { install: clicked == self.install, game, directory });
-            if let Some(card) = self.confirm_card { cx.tree.open_dialog(card)?; }
+            self.intent = Some(CompanionIntent {
+                install: clicked == self.install,
+                game,
+                directory,
+            });
+            if let Some(card) = self.confirm_card {
+                cx.tree.open_dialog(card)?;
+            }
             return Ok(());
         }
         if clicked.is_some() && clicked == self.confirm_cancel {
             self.intent = None;
-            if let Some(card) = self.confirm_card { cx.tree.close_dialog()?; }
+            if let Some(card) = self.confirm_card {
+                cx.tree.close_dialog()?;
+            }
             return Ok(());
         }
         if clicked.is_some() && clicked == self.confirm_write {
-            let Some(intent) = self.intent.take() else { return Ok(()) };
+            let Some(intent) = self.intent.take() else {
+                return Ok(());
+            };
             let current_game = cx.app.selected_game();
             let current_dir = cx.app.game_dir();
             if current_game != Some(intent.game.as_str()) || current_dir != Some(intent.directory.as_path()) {
-                if let Some(card) = self.confirm_card { cx.tree.close_dialog()?; }
+                if let Some(card) = self.confirm_card {
+                    cx.tree.close_dialog()?;
+                }
                 cx.status = Some("Выбор игры изменился; подтверждение отменено.".to_owned());
                 return Ok(());
             }
-            if let Some(card) = self.confirm_card { cx.tree.close_dialog()?; }
+            if let Some(card) = self.confirm_card {
+                cx.tree.close_dialog()?;
+            }
             let install = intent.install;
             let game = Some(intent.game);
             let dir = Some(intent.directory);
@@ -590,7 +611,12 @@ impl Screen for Achievements {
         let confirm = style::card(cx.tree, host)?;
         self.confirm_card = Some(confirm);
         style::label(cx.tree, confirm, "ПОДТВЕРЖДЕНИЕ ДОСТИЖЕНИЯ", Text::Heading)?;
-        style::label(cx.tree, confirm, "Изменение будет отправлено в Steam для выбранной игры и достижения.", Text::Note)?;
+        style::label(
+            cx.tree,
+            confirm,
+            "Изменение будет отправлено в Steam для выбранной игры и достижения.",
+            Text::Note,
+        )?;
         let actions = style::row(cx.tree, confirm)?;
         self.confirm_write = Some(style::button(cx.tree, actions, "ПОДТВЕРДИТЬ", Button::Primary)?);
         self.confirm_cancel = Some(style::button(cx.tree, actions, "ОТМЕНА", Button::Secondary)?);
@@ -615,7 +641,9 @@ impl Screen for Achievements {
             if clicked == Some(row) && self.items.get(i).is_some() {
                 self.selected = Some(i);
                 self.intent = None;
-                if self.confirm_card.is_some_and(|card| cx.tree.dialog() == Some(card)) { let _ = cx.tree.close_dialog()?; }
+                if self.confirm_card.is_some_and(|card| cx.tree.dialog() == Some(card)) {
+                    let _ = cx.tree.close_dialog()?;
+                }
                 cx.status = self.items.get(i).map(|a| a.description.clone());
             }
         }
@@ -634,9 +662,17 @@ impl Screen for Achievements {
                 return Ok(());
             };
             let Some(item) = self.items.get(i) else { return Ok(()) };
-            let Some(app_id) = cx.app.selected_game().and_then(app_id) else { return Ok(()) };
-            self.intent = Some(AchievementIntent { app_id, name: item.name.clone(), set });
-            if let Some(card) = self.confirm_card { cx.tree.open_dialog(card)?; }
+            let Some(app_id) = cx.app.selected_game().and_then(app_id) else {
+                return Ok(());
+            };
+            self.intent = Some(AchievementIntent {
+                app_id,
+                name: item.name.clone(),
+                set,
+            });
+            if let Some(card) = self.confirm_card {
+                cx.tree.open_dialog(card)?;
+            }
             return Ok(());
         }
         if clicked.is_some() && clicked == self.confirm_cancel {
@@ -645,7 +681,9 @@ impl Screen for Achievements {
             return Ok(());
         }
         if clicked.is_some() && clicked == self.confirm_write {
-            let Some(intent) = self.intent.take() else { return Ok(()) };
+            let Some(intent) = self.intent.take() else {
+                return Ok(());
+            };
             if cx.app.selected_game().and_then(app_id) != Some(intent.app_id) {
                 let _ = cx.tree.close_dialog()?;
                 cx.status = Some("Выбранная игра изменилась; подтверждение отменено.".to_owned());
@@ -683,7 +721,9 @@ impl Screen for Achievements {
                 match reply {
                     AchReply::List(Ok(items)) => {
                         self.intent = None;
-                        if self.confirm_card.is_some_and(|card| cx.tree.dialog() == Some(card)) { let _ = cx.tree.close_dialog()?; }
+                        if self.confirm_card.is_some_and(|card| cx.tree.dialog() == Some(card)) {
+                            let _ = cx.tree.close_dialog()?;
+                        }
                         self.items.clone_from(items);
                         self.render(cx)?
                     }
