@@ -321,7 +321,7 @@ impl Screen for Settings {
                 .checked_rem(crate::theme::THEMES.len())
                 .unwrap_or(0);
             let old = crate::theme::current();
-            let (theme_id, theme_name) = crate::theme::THEMES.get(self.theme).copied().unwrap_or(crate::theme::THEMES[0]);
+            let (theme_id, theme_name) = crate::theme::THEMES.get(self.theme).copied().unwrap_or(("zone", "Зона (тёмная)"));
             let accent_id = crate::theme::ACCENT_IDS.get(self.accent).copied().unwrap_or("amber");
             self.settings.theme_id = theme_id.to_owned();
             crate::theme::apply_appearance(&self.settings.theme_id, accent_id);
