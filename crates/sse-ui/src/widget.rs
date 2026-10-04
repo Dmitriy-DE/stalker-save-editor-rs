@@ -135,6 +135,8 @@ struct Node {
     parent: Option<WidgetId>,
     rect: Rect,
     visible: bool,
+    scroll_y: i32,
+    clip_children: bool,
 }
 
 /// Retained widget tree, its layout and its pending damage.
@@ -338,6 +340,8 @@ impl Tree {
             parent,
             rect: Rect::new(0, 0, 0, 0),
             visible: true,
+            scroll_y: 0,
+            clip_children: false,
         });
         if parent.is_none() {
             self.root = Some(id);
@@ -441,6 +445,51 @@ impl Tree {
         self.restyle(id)
     }
 
+    /// Makes this widget a clipping viewport for descendants.
+    pub fn set_clip_children(&mut self, id: WidgetId, clip_children: bool) -> Result<()> {
+        let node = self.node_mut(id)?;
+        if node.clip_children != clip_children {
+            node.clip_children = clip_children;
+            self.needs_layout = true;
+            self.damage_all();
+        }
+        Ok(())
+    }
+
+    /// Scrolls descendants upward without changing their measured sizes.
+    pub fn set_scroll_y(&mut self, id: WidgetId, offset: i32) -> Result<()> {
+        let node = self.node_mut(id)?;
+        let offset = offset.max(0);
+        if node.scroll_y != offset {
+            node.scroll_y = offset;
+            self.needs_layout = true;
+            self.damage_all();
+        }
+        Ok(())
+    }
+
+    /// Natural descendant height inside a viewport before its current scroll offset.
+    pub fn content_height(&mut self, id: WidgetId) -> Result<f32> {
+        self.update_layout()?;
+        let viewport = self.node(id)?.rect;
+        let current = self.node(id)?.scroll_y;
+        let bottom = (0..self.nodes.len())
+            .map(WidgetId)
+            .filter(|child| *child != id && self.within_subtree(*child, id))
+            .filter_map(|child| {
+                self.nodes.get(child.0).map(|node| {
+                    i64::from(node.rect.y)
+                        .saturating_add(i64::from(node.rect.height))
+                        .saturating_add(i64::from(current))
+                })
+            })
+            .max()
+            .unwrap_or(i64::from(viewport.y));
+        Ok(u32_to_f32(
+            u32::try_from(bottom.saturating_sub(i64::from(viewport.y)).max(0)).unwrap_or(u32::MAX),
+        ))
+    }
+
     /// Last arranged rectangle of a widget.
     ///
     /// # Errors
@@ -539,12 +588,27 @@ impl Tree {
             &mut no_text,
         )?;
         self.layout.arrange(root_layout, bounds, self.scale, &mut no_text)?;
+        let scrolls: Vec<i32> = (0..self.nodes.len())
+            .map(|index| {
+                let mut total = 0_i32;
+                let mut parent = self.nodes.get(index).and_then(|node| node.parent);
+                while let Some(at) = parent {
+                    if let Some(node) = self.nodes.get(at.0) {
+                        total = total.saturating_add(node.scroll_y);
+                        parent = node.parent;
+                    } else {
+                        break;
+                    }
+                }
+                total
+            })
+            .collect();
         let mut moved = Vec::new();
-        for node in &mut self.nodes {
+        for (index, node) in self.nodes.iter_mut().enumerate() {
             let arranged = self.layout.rect(node.layout)?;
             let rect = Rect::new(
                 to_px(arranged.x.round()),
-                to_px(arranged.y.round()),
+                to_px(arranged.y.round()).saturating_sub(scrolls.get(index).copied().unwrap_or(0)),
                 to_u32(arranged.width.round()),
                 to_u32(arranged.height.round()),
             );
@@ -590,6 +654,7 @@ impl Tree {
                 .get(id.0)
                 .is_some_and(|node| node.content.interactive() && contains(node.rect, x, y))
                 && self.shown(*id)
+                && self.clip_for(*id).is_none_or(|clip| contains(clip, x, y))
                 && self.modal_dialog.is_none_or(|dialog| self.within_subtree(*id, dialog))
         })
     }
@@ -657,6 +722,21 @@ impl Tree {
             && self.modal_dialog.is_none_or(|dialog| self.within_subtree(id, dialog))
     }
 
+    fn clip_for(&self, id: WidgetId) -> Option<Rect> {
+        let mut current = self.nodes.get(id.0).and_then(|node| node.parent);
+        let mut clip_rect: Option<Rect> = None;
+        while let Some(at) = current {
+            let node = self.nodes.get(at.0)?;
+            if node.clip_children {
+                clip_rect = Some(clip_rect.map_or(node.rect, |old| {
+                    intersection(&old, node.rect).unwrap_or(Rect::new(0, 0, 0, 0))
+                }));
+            }
+            current = node.parent;
+        }
+        clip_rect
+    }
+
     fn within_subtree(&self, id: WidgetId, root: WidgetId) -> bool {
         let mut current = Some(id);
         while let Some(at) = current {
@@ -692,7 +772,11 @@ impl Tree {
                 continue;
             }
             let Some(node) = self.nodes.get(index) else { continue };
-            if node.rect.width == 0 || node.rect.height == 0 || !touches(node.rect, area) {
+            let clipped_area = self
+                .clip_for(id)
+                .and_then(|clip| intersection(&area, clip))
+                .unwrap_or(area);
+            if node.rect.width == 0 || node.rect.height == 0 || !touches(node.rect, clipped_area) {
                 continue;
             }
             let hovered = self.hover == Some(id);
@@ -850,6 +934,26 @@ fn hidden_style() -> Style {
         shrink: 1.0,
         ..Style::default()
     }
+}
+
+fn intersection(a: &Rect, b: Rect) -> Option<Rect> {
+    let x0 = i64::from(a.x).max(i64::from(b.x));
+    let y0 = i64::from(a.y).max(i64::from(b.y));
+    let x1 = i64::from(a.x)
+        .saturating_add(i64::from(a.width))
+        .min(i64::from(b.x).saturating_add(i64::from(b.width)));
+    let y1 = i64::from(a.y)
+        .saturating_add(i64::from(a.height))
+        .min(i64::from(b.y).saturating_add(i64::from(b.height)));
+    if x1 <= x0 || y1 <= y0 {
+        return None;
+    }
+    Some(Rect::new(
+        i32::try_from(x0).ok()?,
+        i32::try_from(y0).ok()?,
+        u32::try_from(x1.saturating_sub(x0)).ok()?,
+        u32::try_from(y1.saturating_sub(y0)).ok()?,
+    ))
 }
 
 fn clip(rect: Rect, size: (u32, u32)) -> Option<Rect> {

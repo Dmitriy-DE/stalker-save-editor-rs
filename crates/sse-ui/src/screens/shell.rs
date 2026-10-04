@@ -3,9 +3,10 @@
 use super::style::{self, rgb, Text};
 use super::{registry, AppMessage, Context, Group, Screen, ScreenId};
 use crate::event_loop::{App, Flow, Message, Proxy, WindowEvent};
-use crate::glyphs::{Face, TextStyle};
+use crate::glyphs::{to_px, Face, TextStyle};
 use crate::layout::{Align, Edges, NodeKind, Size, Style};
 use crate::widget::{Content, Look, Tree, WidgetId};
+use crate::widgets::scroll::ScrollView;
 use sse_core::Result;
 use std::path::Path;
 
@@ -21,6 +22,8 @@ pub struct Shell {
     hosts: Vec<Option<WidgetId>>,
     nav: Vec<WidgetId>,
     content: WidgetId,
+    scroll: ScrollView,
+    scroll_bar: WidgetId,
     title: WidgetId,
     subtitle: WidgetId,
     breadcrumb: WidgetId,
@@ -292,18 +295,48 @@ impl Shell {
         let reports_off = style::button(tree, reports_banner, "Не отправлять", style::Button::Secondary)?;
         tree.set_visible(reports_banner, !settings.reports_notice_shown)?;
 
+        let viewport = tree.add(
+            Some(main),
+            NodeKind::Row,
+            Style {
+                grow: 1.0,
+                align_items: Align::Stretch,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
         let content_style = Style {
             grow: 1.0,
-            margin: padded(32.0, 0.0, 32.0, 20.0),
+            margin: padded(32.0, 0.0, 12.0, 20.0),
             align_items: Align::Stretch,
             ..Style::default()
         };
         let content = tree.add(
-            Some(main),
+            Some(viewport),
             NodeKind::Column,
             content_style,
             Content::Panel,
             Look::default(),
+        )?;
+        tree.set_clip_children(content, true)?;
+        let scroll_bar = tree.add(
+            Some(viewport),
+            NodeKind::Leaf,
+            Style {
+                preferred: Size::new(10.0, 0.0),
+                min: Size::new(10.0, 0.0),
+                margin: padded(0.0, 4.0, 10.0, 20.0),
+                ..Style::default()
+            },
+            Content::Label {
+                text: "▐".to_owned(),
+                style: TextStyle::new(Face::Body, 10.0),
+            },
+            Look {
+                text: rgb(crate::widgets::scroll::THUMB),
+                ..Look::default()
+            },
         )?;
         let wizard = super::wizard::Wizard::build(tree, content)?;
         let status = tree.add(
@@ -344,6 +377,8 @@ impl Shell {
             hosts,
             nav,
             content,
+            scroll: ScrollView::new(),
+            scroll_bar,
             title,
             subtitle,
             breadcrumb,
@@ -439,6 +474,8 @@ impl Shell {
             tree.set_look(*new, style::nav(true))?;
         }
         self.selected = index;
+        self.scroll.scroll_to(0.0);
+        tree.set_scroll_y(self.content, 0)?;
         self.show(tree, index)
     }
 
@@ -531,6 +568,16 @@ impl Shell {
     }
 
     fn handle(&mut self, tree: &mut Tree, message: &Message<AppMessage>, clicked: Option<WidgetId>) -> Result<Flow> {
+        if let Message::Window(WindowEvent::Wheel { delta }) = message {
+            let viewport = tree.rect(self.content)?;
+            let content_height = tree.content_height(self.content)?;
+            self.scroll.set_extent(content_height, viewport.height as f32);
+            if self.scroll.wheel(-(*delta as f32)) {
+                tree.set_scroll_y(self.content, to_px(self.scroll.offset_y().round()))?;
+            }
+            tree.set_visible(self.scroll_bar, self.scroll.thumb().is_some())?;
+            return Ok(Flow::Continue);
+        }
         let mut wizard_status = None;
         if let Some(target) = self.wizard.message(tree, message, clicked, &mut wizard_status)? {
             self.open(tree, target)?;
