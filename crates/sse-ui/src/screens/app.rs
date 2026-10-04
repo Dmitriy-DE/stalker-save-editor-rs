@@ -465,6 +465,14 @@ struct Checked(String);
 /// Settings screen.
 #[derive(Default)]
 pub struct Settings {
+    section_buttons: Vec<WidgetId>,
+    section_panels: Vec<WidgetId>,
+    selected_section: usize,
+    sound_button: Option<WidgetId>,
+    music_button: Option<WidgetId>,
+    volume_button: Option<WidgetId>,
+    reports_button: Option<WidgetId>,
+    send_report_button: Option<WidgetId>,
     scale_value: Option<WidgetId>,
     scale_button: Option<WidgetId>,
     theme_value: Option<WidgetId>,
@@ -521,8 +529,37 @@ impl Screen for Settings {
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
         self.settings = load_settings();
         self.language = crate::strings::language_index(self.settings.language.as_deref().unwrap_or("ru"));
-        let view = style::card(cx.tree, host)?;
-        style::label(cx.tree, view, "ВИД", Text::Heading)?;
+        let settings_root = style::row(cx.tree, host)?;
+        let sections = style::card(cx.tree, settings_root)?;
+        style::label(cx.tree, sections, "Разделы", Text::Heading)?;
+        for name in [
+            "ОБЩИЕ",
+            "ИНТЕРФЕЙС",
+            "Звук",
+            "ПУТИ И АВТОПОИСК",
+            "ОБНОВЛЕНИЯ",
+            "РЕЗЕРВНЫЕ КОПИИ",
+            "ИНСТРУМЕНТЫ ДЛЯ ПОДДЕРЖКИ",
+            "ОТЧЁТЫ И ПРИВАТНОСТЬ",
+            "ВЕРСИЯ",
+        ] {
+            self.section_buttons
+                .push(style::button(cx.tree, sections, name, Button::Secondary)?);
+        }
+        let content = style::card(cx.tree, settings_root)?;
+
+        let general = style::card(cx.tree, content)?;
+        style::label(cx.tree, general, "ОБЩИЕ", Text::Heading)?;
+        style::label(cx.tree, general, "УПРАВЛЕНИЕ ОСНОВНЫМ ПОВЕДЕНИЕМ РЕДАКТОРА", Text::Note)?;
+        style::label(cx.tree, general, "[ STEAM CLOUD ]", Text::Value)?;
+        style::label(cx.tree, general, "Откройте экран Steam Cloud, чтобы просматривать состояние синхронизации и выполнять действия с явным подтверждением.", Text::Body)?;
+        style::button(cx.tree, general, "Открыть Steam Cloud", Button::Secondary)?;
+        self.section_panels.push(general);
+
+        let view = style::card(cx.tree, content)?;
+        style::label(cx.tree, view, "ИНТЕРФЕЙС", Text::Heading)?;
+        style::label(cx.tree, view, "ЯЗЫК, ТЕМА, АКЦЕНТ И МАСШТАБ", Text::Note)?;
+        self.section_panels.push(view);
         self.settings = load_settings();
         self.theme = crate::theme::THEMES
             .iter()
@@ -583,18 +620,160 @@ impl Screen for Settings {
             crate::strings::t("Язык применится после перезапуска приложения."),
             Text::Note,
         )?;
-        self.save_button = Some(style::button(
-            cx.tree,
-            view,
-            crate::strings::t("Сохранить настройки"),
-            Button::Primary,
-        )?);
 
-        let updates = style::card(cx.tree, host)?;
+        let sound = style::card(cx.tree, content)?;
+        style::label(cx.tree, sound, "Звуки интерфейса", Text::Heading)?;
+        self.sound_button = Some(style::button(
+            cx.tree,
+            sound,
+            if self.settings.sound_enabled {
+                "Звуковые эффекты: ВКЛ"
+            } else {
+                "Звуковые эффекты: ВЫКЛ"
+            },
+            Button::Secondary,
+        )?);
+        self.music_button = Some(style::button(
+            cx.tree,
+            sound,
+            if self.settings.music_enabled {
+                "Музыка меню: ВКЛ"
+            } else {
+                "Музыка меню: ВЫКЛ"
+            },
+            Button::Secondary,
+        )?);
+        self.volume_button = Some(style::button(
+            cx.tree,
+            sound,
+            &format!("Громкость звуков: {}%", self.settings.sound_volume),
+            Button::Secondary,
+        )?);
+        self.section_panels.push(sound);
+
+        let paths = style::card(cx.tree, content)?;
+        style::label(cx.tree, paths, "КАТАЛОГИ СОХРАНЕНИЙ", Text::Heading)?;
+        style::label(
+            cx.tree,
+            paths,
+            "Папки автоматического поиска сохранений (ТЧ, ЧН, ЗП, S2):",
+            Text::Body,
+        )?;
+        if let Some(dirs) = &self.settings.save_directories {
+            for dir in dirs {
+                style::label(cx.tree, paths, &dir.to_string_lossy(), Text::Note)?;
+            }
+        } else {
+            style::label(cx.tree, paths, "Используется автопоиск папок.", Text::Note)?;
+        }
+        style::label(
+            cx.tree,
+            paths,
+            "Добавление/удаление/обзор требуют контроллера выбора папки; до его подключения изменения путей отключены.",
+            Text::Note,
+        )?;
+        self.section_panels.push(paths);
+
+        let updates = style::card(cx.tree, content)?;
         style::label(cx.tree, updates, "ОБНОВЛЕНИЯ", Text::Heading)?;
         let line = style::row(cx.tree, updates)?;
         self.check_button = Some(style::button(cx.tree, line, "Проверить", Button::Primary)?);
         self.check_result = Some(style::label(cx.tree, line, "Ещё не проверяли", Text::Note)?);
+        style::label(
+            cx.tree,
+            updates,
+            "Исправления для игры устанавливаются или обновляются только после явного действия пользователя.",
+            Text::Note,
+        )?;
+        self.section_panels.push(updates);
+
+        let backups = style::card(cx.tree, content)?;
+        style::label(cx.tree, backups, "РЕЗЕРВНОЕ КОПИРОВАНИЕ", Text::Heading)?;
+        style::label(
+            cx.tree,
+            backups,
+            "Папка для создания резервных копий и журналов восстановления:",
+            Text::Body,
+        )?;
+        style::label(
+            cx.tree,
+            backups,
+            self.settings
+                .backup_directory
+                .as_ref()
+                .map_or("<по умолчанию>", |p| p.to_str().unwrap_or("<не-UTF-8 путь>")),
+            Text::Value,
+        )?;
+        style::label(
+            cx.tree,
+            backups,
+            "Новое значение папки применяется только после «Сохранить настройки».",
+            Text::Note,
+        )?;
+        self.section_panels.push(backups);
+
+        let support = style::card(cx.tree, content)?;
+        style::label(cx.tree, support, "ПРОВЕРКА ОКРУЖЕНИЯ", Text::Heading)?;
+        style::label(
+            cx.tree,
+            support,
+            "Диагностика не нужна для обычного использования, но полезна для отчётов об ошибках.",
+            Text::Body,
+        )?;
+        style::label(cx.tree, support, "Проверка окружения подключена к кнопке «Проверить» в разделе обновлений; CrashReporter/report bundle API в sse-app пока отсутствует.", Text::Note)?;
+        self.section_panels.push(support);
+
+        let reports = style::card(cx.tree, content)?;
+        style::label(cx.tree, reports, "ОТЧЁТЫ ОБ ОШИБКАХ", Text::Heading)?;
+        self.reports_button = Some(style::button(
+            cx.tree,
+            reports,
+            if self.settings.send_reports {
+                "Отправлять отчёты: ВКЛ"
+            } else {
+                "Отправлять отчёты: ВЫКЛ"
+            },
+            Button::Secondary,
+        )?);
+        self.send_report_button = Some(style::button(
+            cx.tree,
+            reports,
+            "Отправить отчёт сейчас",
+            Button::Secondary,
+        )?);
+        style::label(
+            cx.tree,
+            reports,
+            "Отправить обезличенные журналы и отчёт окружения. Сохранения не отправляются.",
+            Text::Note,
+        )?;
+        self.section_panels.push(reports);
+
+        let about = style::card(cx.tree, content)?;
+        style::label(cx.tree, about, "О ПРОГРАММЕ", Text::Heading)?;
+        style::label(
+            cx.tree,
+            about,
+            &format!("S.T.A.L.K.E.R. Save Editor {}", env!("CARGO_PKG_VERSION")),
+            Text::Value,
+        )?;
+        style::label(
+            cx.tree,
+            about,
+            "Редактор сохранений для всей серии S.T.A.L.K.E.R.",
+            Text::Body,
+        )?;
+        self.section_panels.push(about);
+
+        for (index, panel) in self.section_panels.iter().copied().enumerate() {
+            cx.tree.set_visible(panel, index == 0)?;
+        }
+        self.save_button = Some(style::button(
+            cx.tree,
+            host,
+            crate::strings::t("Сохранить настройки"),
+            Button::Primary,
+        )?);
         Ok(())
     }
 
@@ -604,6 +783,46 @@ impl Screen for Settings {
         message: &Message<AppMessage>,
         clicked: Option<WidgetId>,
     ) -> Result<()> {
+        if clicked.is_some() {
+            if let Some(index) = self.section_buttons.iter().position(|id| Some(*id) == clicked) {
+                self.selected_section = index;
+                for (panel_index, panel) in self.section_panels.iter().copied().enumerate() {
+                    cx.tree.set_visible(panel, panel_index == index)?;
+                }
+                return Ok(());
+            }
+        }
+        if clicked.is_some() && clicked == self.sound_button {
+            self.settings.sound_enabled = !self.settings.sound_enabled;
+            cx.status = Some("Звук изменён; нажмите «Сохранить настройки», чтобы применить.".to_owned());
+        }
+        if clicked.is_some() && clicked == self.music_button {
+            self.settings.music_enabled = !self.settings.music_enabled;
+            cx.status = Some("Музыка изменена; нажмите «Сохранить настройки», чтобы применить.".to_owned());
+        }
+        if clicked.is_some() && clicked == self.volume_button {
+            self.settings.sound_volume = self
+                .settings
+                .sound_volume
+                .saturating_add(10)
+                .checked_rem(110)
+                .unwrap_or(0);
+            cx.status = Some(format!(
+                "Громкость: {}%. Нажмите «Сохранить настройки».",
+                self.settings.sound_volume
+            ));
+        }
+        if clicked.is_some() && clicked == self.reports_button {
+            self.settings.send_reports = !self.settings.send_reports;
+            cx.status = Some("Настройка отчётов изменена; нажмите «Сохранить настройки».".to_owned());
+        }
+        if clicked.is_some() && clicked == self.send_report_button {
+            cx.status = Some(if self.settings.send_reports {
+                "Отправка отчёта недоступна: report transport API ещё не предоставлен sse-app.".to_owned()
+            } else {
+                "Отправка отчёта отключена в настройках.".to_owned()
+            });
+        }
         if clicked.is_some() && clicked == self.theme_button {
             self.theme = self
                 .theme
