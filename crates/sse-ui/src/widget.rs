@@ -252,7 +252,12 @@ impl Tree {
         }
         for node in &mut self.nodes {
             let look = &mut node.look;
-            for color in [&mut look.fill, &mut look.hover_fill, &mut look.pressed_fill, &mut look.hover_text] {
+            for color in [
+                &mut look.fill,
+                &mut look.hover_fill,
+                &mut look.pressed_fill,
+                &mut look.hover_text,
+            ] {
                 if *color == Some(from) {
                     *color = Some(to);
                 }
