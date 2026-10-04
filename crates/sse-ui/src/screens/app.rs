@@ -350,7 +350,7 @@ impl Screen for Capabilities {
             let grid_row = row_index.saturating_add(1);
             grid_label(cx.tree, grid, row.name, 0, grid_row, false)?;
             for (column, support) in row.support.into_iter().enumerate() {
-                let id = grid_cell(cx.tree, grid, support.label(), column + 1, grid_row)?;
+                let id = grid_cell(cx.tree, grid, support.label(), column.saturating_add(1), grid_row)?;
                 self.cells.push((id, row_index, column));
             }
         }
