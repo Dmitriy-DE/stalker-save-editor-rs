@@ -229,7 +229,7 @@ impl Shell {
             Look::default(),
         )?;
         let top = style::row(tree, header)?;
-        let title = style::label(tree, top, "S.T.A.L.K.E.R. SAVE EDITOR", Text::Title)?;
+        style::label(tree, top, "S.T.A.L.K.E.R. SAVE EDITOR", Text::Title)?;
         let edition = style::label(tree, top, "X-Ray / S2", Text::Value)?;
         let undo = style::button(tree, top, "Отменить", style::Button::Secondary)?;
         let redo = style::button(tree, top, "Вернуть", style::Button::Secondary)?;
@@ -238,6 +238,7 @@ impl Shell {
         let refresh = style::button(tree, top, "Обновить", style::Button::Secondary)?;
         let save = style::button(tree, top, "СОХРАНИТЬ", style::Button::Primary)?;
         let breadcrumb = style::label(tree, header, "", Text::Note)?;
+        let title = style::label(tree, header, "", Text::Title)?;
         let subtitle = tree.add(
             Some(header),
             NodeKind::Leaf,
