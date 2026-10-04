@@ -4,24 +4,28 @@ use super::style::{self, Button, Text};
 use super::{AppMessage, Context, EditorAction, Screen, ScreenId};
 use crate::edit::{Clipboard, EditConfig, FieldMode, InputFilter, Key, Modifiers};
 use crate::event_loop::Message;
-use crate::layout::{NodeKind, Style};
+use crate::layout::{NodeKind, Size, Style};
+use crate::raster::Color;
 use crate::widget::{Content, Look, WidgetId};
 use crate::widgets::table::{Header, Table};
 use crate::widgets::text_input::TextInput;
 use sse_core::{Error, Result, SaveBuffer};
 use sse_s2::{S2Change, S2InventoryItem, S2Save, S2StashItem, S2StashLayout};
 use sse_storage::discovery::{SaveDirectoryLocator, SaveSlot, SaveSlotDiscovery};
-use sse_storage::drafts::{DraftJournal, DraftPlan, DraftStore};
+use sse_storage::drafts::{AddRequest, DraftJournal, DraftPlacement, DraftPlan, DraftStore};
 use sse_storage::transaction::{self, EditSummary};
 use sse_xray::{save::InventoryItem, writer, Save};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 const SAVE_PAGE_SIZE: usize = 10;
 const INVENTORY_PAGE_SIZE: usize = 8;
+const ADD_ITEM_PAGE_SIZE: usize = 8;
 const MAXIMUM_STASH_ROWS: usize = 10;
+const MAXIMUM_UPGRADE_ROWS: usize = 16;
+const S2_LEGACY_EDIT_REFUSAL: &str = "This save was written by game version 1.0.x. It can be read, but its layout is not supported for editing; load it in the current game and save again.";
 const INVENTORY_CATEGORIES: [&str; 8] = [
     "ВСЕ",
     "ОРУЖИЕ",
@@ -136,6 +140,38 @@ impl Workspace {
 
     fn lock(&self) -> MutexGuard<'_, WorkspaceState> {
         self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    pub(crate) fn library_snapshot(&self) -> (bool, Option<String>, Vec<SaveSlot>) {
+        let state = self.lock();
+        (
+            state.scanning,
+            state.load_error.clone(),
+            state.discovery.as_ref().map_or_else(Vec::new, |discovery| {
+                discovery
+                    .slots
+                    .iter()
+                    .filter(|slot| slot.detection_error.is_none())
+                    .cloned()
+                    .collect()
+            }),
+        )
+    }
+
+    pub(crate) fn refresh_library(&self, cx: &mut Context<'_>) {
+        start_discovery(self, cx);
+    }
+
+    pub(crate) fn select_library_path(&self, path: &Path, cx: &mut Context<'_>) {
+        let slot = self
+            .lock()
+            .discovery
+            .as_ref()
+            .and_then(|discovery| discovery.slots.iter().find(|slot| slot.path == path))
+            .cloned();
+        if let Some(slot) = slot {
+            start_load(self, slot, cx);
+        }
     }
 
     pub(crate) fn spawn<F>(&self, name: &'static str, work: F)
@@ -258,7 +294,16 @@ struct WorkspaceState {
     selected: Option<Arc<LoadedSave>>,
     pending_money: Option<u32>,
     pending_stacks: BTreeMap<ItemHandle, u32>,
+    pending_durability: BTreeMap<ItemHandle, u8>,
+    pending_placements: BTreeMap<ItemHandle, DraftPlacement>,
+    pending_upgrades: BTreeMap<ItemHandle, Vec<String>>,
+    pending_removed: BTreeSet<ItemHandle>,
+    pending_adds: Vec<AddRequest>,
     pending_stash_moves: BTreeSet<u32>,
+    external_change: bool,
+    last_file_check: u64,
+    file_check_generation: u64,
+    file_check_in_flight: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -276,10 +321,35 @@ impl ItemHandle {
     }
 }
 
+#[derive(Clone, Default)]
+struct PendingInventoryEdits {
+    money: Option<u32>,
+    stacks: BTreeMap<ItemHandle, u32>,
+    durability: BTreeMap<ItemHandle, u8>,
+    placements: BTreeMap<ItemHandle, DraftPlacement>,
+    upgrades: BTreeMap<ItemHandle, Vec<String>>,
+    removals: BTreeSet<ItemHandle>,
+    adds: Vec<AddRequest>,
+}
+
+impl PendingInventoryEdits {
+    fn has_changes(&self) -> bool {
+        self.money.is_some()
+            || !self.stacks.is_empty()
+            || !self.durability.is_empty()
+            || !self.placements.is_empty()
+            || !self.upgrades.is_empty()
+            || !self.removals.is_empty()
+            || !self.adds.is_empty()
+    }
+}
+
 struct LoadedSave {
     slot: SaveSlot,
     source_sha256: String,
-    summary: String,
+    info: String,
+    parameters: String,
+    integrity: String,
     factions: String,
     stashes: String,
     transitions: String,
@@ -347,13 +417,13 @@ impl LoadedSave {
         slot.candidate_game_id = game.to_owned();
         slot.candidate_release_id = format.to_owned();
         slot.format_id = Some(format.to_owned());
-        let summary = format!(
-            "Игра: {format}\nЛокация: не подтверждена текущим индексатором\nИзменён (Unix UTC): {}\nРазмер: {} байт\nФормат: {format}\nCRC: контейнер X-Ray не хранит CRC\nВремя игры: {}\nДеньги: {money}\nПредметов в инвентаре: {}",
-            unix_time(slot.last_write_time_utc),
-            packed.len(),
-            save.game_time(),
-            inventory.len()
+        let info = save_info(&slot);
+        let parameters = format!(
+            "ДЕНЬГИ\n{money} RU\nПРЕДМЕТОВ\n{}\nТАЙНИКОВ\n—\nИГРОВОЕ ВРЕМЯ\n{}\nПЕРСОНАЖ · ЗДОРОВЬЕ · РАНГ · РЕПУТАЦИЯ · ЗАДАНИЯ · УБИТО · ПОГОДА\n—",
+            inventory.len(),
+            save.game_time()
         );
+        let integrity = save_integrity(&slot, &source_sha256, packed.len(), format);
         let factions = match save.player_faction() {
             Some(id) => format!("Фракция игрока: ID {id}\nРедактирование отношений недоступно в текущем индексаторе."),
             None => "Идентификатор фракции игрока не подтверждён этим сохранением.".to_owned(),
@@ -363,7 +433,9 @@ impl LoadedSave {
         Ok(Self {
             slot,
             source_sha256,
-            summary,
+            info,
+            parameters,
+            integrity,
             factions,
             stashes,
             transitions,
@@ -383,15 +455,15 @@ impl LoadedSave {
         slot.candidate_game_id = "stalker2".to_owned();
         slot.candidate_release_id = "stalker2".to_owned();
         slot.format_id = Some("stalker2".to_owned());
-        let summary = format!(
-            "Игра: S.T.A.L.K.E.R. 2\nЛокация: не подтверждена текущим индексатором\nИзменён (Unix UTC): {}\nРазмер: {} байт\nФормат: S2\nCRC32: {:08X} — проверен\nДеньги: {}\nПредметов в рюкзаке: {}\nНеопознанных ссылок: {}",
-            unix_time(slot.last_write_time_utc),
-            packed.len(),
-            save.container().stored_crc32(),
+        let info = save_info(&slot);
+        let parameters = format!(
+            "ДЕНЬГИ\n{} RU\nПРЕДМЕТОВ\n{}\nТАЙНИКОВ\n{}\nИГРОВОЕ ВРЕМЯ · ПЕРСОНАЖ · ЗДОРОВЬЕ · РАНГ · РЕПУТАЦИЯ · ЗАДАНИЯ · УБИТО · ПОГОДА\n—\nНЕОПОЗНАННЫХ ССЫЛОК\n{}",
             save.money(),
             inventory.len(),
+            stash.as_ref().map_or_else(|| "—".to_owned(), |items| items.live_handles().len().to_string()),
             save.unresolved_handles().len()
         );
+        let integrity = save_integrity(&slot, &source_sha256, packed.len(), "S2");
         let factions =
             "Фракции S2 доступны только для чтения; отношения и принадлежность пока не индексируются.".to_owned();
         let stashes = describe_s2_stash(stash.as_ref());
@@ -402,7 +474,9 @@ impl LoadedSave {
         Self {
             slot,
             source_sha256,
-            summary,
+            info,
+            parameters,
+            integrity,
             factions,
             stashes,
             transitions,
@@ -415,18 +489,90 @@ impl LoadedSave {
     }
 }
 
-fn unix_time(time: std::time::SystemTime) -> u64 {
-    time.duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |duration| duration.as_secs())
+fn save_info(slot: &SaveSlot) -> String {
+    let game = slot.format_id.as_deref().unwrap_or(&slot.candidate_release_id);
+    let filename = slot
+        .path
+        .file_name()
+        .map(|name| name.to_string_lossy())
+        .unwrap_or_else(|| "без имени".into());
+    format!(
+        "Игра: {}\nИмя файла: {filename}\nПуть: {}",
+        format_display_name(game),
+        slot.path.display()
+    )
 }
 
-fn display_size(bytes: u64) -> String {
-    if bytes >= 1_048_576 {
-        format!("{} MiB", bytes / 1_048_576)
-    } else if bytes >= 1_024 {
-        format!("{} KiB", bytes / 1_024)
+fn save_integrity(slot: &SaveSlot, source_sha256: &str, bytes_read: usize, format: &str) -> String {
+    format!(
+        "Размер файла: {} байт\nИзменён: {} UTC\nSHA-256: {source_sha256}\nФормат: {format}\nСборка игры: —",
+        bytes_read,
+        display_file_time(slot.last_write_time_utc, false, true)
+    )
+}
+
+pub(super) fn format_display_name(format: &str) -> &'static str {
+    match format {
+        "stalker-soc-ee" => "Тень Чернобыля (Enhanced Edition)",
+        "stalker-soc" | "soc" => "Тень Чернобыля",
+        "stalker-cs-ee" => "Чистое Небо (Enhanced Edition)",
+        "stalker-cs" | "clear_sky" => "Чистое Небо",
+        "stalker-cop-ee" => "Зов Припяти (Enhanced Edition)",
+        "stalker-cop" | "cop" => "Зов Припяти",
+        "stalker2" | "s2" => "S.T.A.L.K.E.R. 2: Сердце Чернобыля",
+        _ => "S.T.A.L.K.E.R.",
+    }
+}
+
+pub(super) fn display_file_time(time: std::time::SystemTime, short_year: bool, seconds: bool) -> String {
+    let unix_seconds = time
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs());
+    let days = i64::try_from(unix_seconds / 86_400).unwrap_or(1_000_000_000);
+    let shifted = days.saturating_add(719_468);
+    let era = shifted / 146_097;
+    let day_of_era = shifted % 146_097;
+    let year_of_era = day_of_era
+        .saturating_sub(day_of_era / 1_460)
+        .saturating_add(day_of_era / 36_524)
+        .saturating_sub(day_of_era / 146_096)
+        / 365;
+    let year = year_of_era.saturating_add(era.saturating_mul(400));
+    let day_of_year = day_of_era.saturating_sub(
+        365_i64
+            .saturating_mul(year_of_era)
+            .saturating_add(year_of_era / 4)
+            .saturating_sub(year_of_era / 100),
+    );
+    let month_prime = 5_i64.saturating_mul(day_of_year).saturating_add(2) / 153;
+    let day = day_of_year
+        .saturating_sub(153_i64.saturating_mul(month_prime).saturating_add(2) / 5)
+        .saturating_add(1);
+    let month = if month_prime < 10 {
+        month_prime.saturating_add(3)
     } else {
-        format!("{bytes} B")
+        month_prime.saturating_sub(9)
+    };
+    let year = year.saturating_add(i64::from(month <= 2));
+    let day_seconds = unix_seconds % 86_400;
+    let hour = day_seconds / 3_600;
+    let minute = day_seconds % 3_600 / 60;
+    let second = day_seconds % 60;
+    let shown_year = if short_year { year.rem_euclid(100) } else { year };
+    if seconds {
+        format!("{day:02}.{month:02}.{shown_year:04} {hour:02}:{minute:02}:{second:02}")
+    } else {
+        format!("{day:02}.{month:02}.{shown_year:02} {hour:02}:{minute:02}")
+    }
+}
+
+pub(super) fn display_size(bytes: u64) -> String {
+    if bytes >= 1_048_576 {
+        format!("{:.1} МБ", bytes as f64 / 1_048_576.0)
+    } else if bytes >= 1_024 {
+        format!("{:.0} КБ", bytes as f64 / 1_024.0)
+    } else {
+        format!("{bytes} Б")
     }
 }
 
@@ -569,7 +715,16 @@ where
         state.selected = None;
         state.pending_money = None;
         state.pending_stacks.clear();
+        state.pending_durability.clear();
+        state.pending_placements.clear();
+        state.pending_upgrades.clear();
+        state.pending_removed.clear();
+        state.pending_adds.clear();
         state.pending_stash_moves.clear();
+        state.external_change = false;
+        state.file_check_generation = state.file_check_generation.saturating_add(1);
+        state.file_check_in_flight = false;
+        state.last_file_check = 0;
         state.load_request
     };
     cx.app.set_current_save(None);
@@ -625,11 +780,190 @@ where
     cx.status = Some("Загружаю и проверяю выбранный сейв…".to_owned());
 }
 
+fn schedule_file_check(workspace: &Workspace, cx: &Context<'_>, seconds: u64) {
+    let Some(proxy) = cx.proxy.cloned() else {
+        return;
+    };
+    let (path, expected_size, expected_modified, source_sha256, generation) = {
+        let mut state = workspace.lock();
+        if state.file_check_in_flight || seconds.saturating_sub(state.last_file_check) < 3 {
+            return;
+        }
+        let Some(selected) = state.selected.as_ref() else {
+            return;
+        };
+        let snapshot = (
+            selected.slot.path.clone(),
+            selected.slot.size,
+            selected.slot.last_write_time_utc,
+            selected.source_sha256.clone(),
+        );
+        state.last_file_check = seconds;
+        state.file_check_in_flight = true;
+        state.file_check_generation = state.file_check_generation.saturating_add(1);
+        (
+            snapshot.0,
+            snapshot.1,
+            snapshot.2,
+            snapshot.3,
+            state.file_check_generation,
+        )
+    };
+    let shared = workspace.clone();
+    workspace.spawn("save-file-monitor", move |context| {
+        if context.is_cancelled() {
+            return;
+        }
+        let changed = std::fs::metadata(&path).map_or(true, |metadata| {
+            metadata.len() != expected_size || metadata.modified().is_ok_and(|modified| modified != expected_modified)
+        });
+        let still_selected = {
+            let mut state = shared.lock();
+            let still_selected = state
+                .selected
+                .as_ref()
+                .is_some_and(|selected| selected.slot.path == path && selected.source_sha256 == source_sha256);
+            if state.file_check_generation == generation {
+                state.file_check_in_flight = false;
+                if still_selected {
+                    state.external_change = changed;
+                }
+            }
+            still_selected
+        };
+        if still_selected {
+            let finished = FileCheckFinished {
+                path,
+                source_sha256,
+                changed,
+            };
+            let _ = proxy.send(AppMessage::ToScreen(ScreenId::Overview, Box::new(finished.clone())));
+            let _ = proxy.send(AppMessage::ToScreen(ScreenId::Inventory, Box::new(finished)));
+        }
+    });
+}
+
+fn start_reload_selected(workspace: &Workspace, cx: &mut Context<'_>) -> Result<()> {
+    let Some(proxy) = cx.proxy.cloned() else {
+        cx.status = Some("Повторное чтение доступно в работающем окне редактора.".to_owned());
+        return Ok(());
+    };
+    let (path, old_sha256, request, generation, empty_journal) = {
+        let selected = workspace.lock().selected.clone();
+        let Some(selected) = selected else {
+            return Ok(());
+        };
+        let old_sha256 = selected.source_sha256.clone();
+        let empty_journal = DraftJournal::new(vec![DraftPlan::empty(&old_sha256)?], 0)?;
+        let generation = workspace
+            .draft_generation
+            .fetch_add(1, Ordering::AcqRel)
+            .saturating_add(1);
+        workspace
+            .draft_latest
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(old_sha256.clone(), generation);
+        let mut state = workspace.lock();
+        state.load_request = state.load_request.saturating_add(1);
+        state.loading = true;
+        state.load_error = None;
+        state.selected = None;
+        state.pending_money = None;
+        state.pending_stacks.clear();
+        state.pending_durability.clear();
+        state.pending_placements.clear();
+        state.pending_upgrades.clear();
+        state.pending_removed.clear();
+        state.pending_adds.clear();
+        state.pending_stash_moves.clear();
+        state.external_change = false;
+        state.file_check_generation = state.file_check_generation.saturating_add(1);
+        state.file_check_in_flight = false;
+        state.last_file_check = 0;
+        (
+            selected.slot.path.clone(),
+            old_sha256,
+            state.load_request,
+            generation,
+            empty_journal,
+        )
+    };
+    cx.app.set_current_save(None);
+    cx.app.discard_draft(&old_sha256);
+    let write_lock = Arc::clone(&workspace.draft_write_lock);
+    let latest = Arc::clone(&workspace.draft_latest);
+    let directory = Arc::clone(&workspace.draft_directory);
+    let shared = workspace.clone();
+    workspace.spawn("save-reload", move |context| {
+        if context.is_cancelled() {
+            return;
+        }
+        let result: Result<(LoadedSave, DraftJournal)> = (|| {
+            {
+                let _guard = write_lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                if latest
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .get(&old_sha256)
+                    .copied()
+                    == Some(generation)
+                {
+                    DraftStore::new(directory.as_path()).save(empty_journal)?;
+                }
+            }
+            let loaded = LoadedSave::read(slot_for_path(&path)?)?;
+            let journal = load_draft_journal(directory.as_path(), &loaded.source_sha256)?;
+            Ok((loaded, journal))
+        })();
+        let mut state = shared.lock();
+        if state.load_request != request {
+            return;
+        }
+        state.loading = false;
+        let completion = match result {
+            Ok((loaded, journal)) => {
+                let path = loaded.slot.path.clone();
+                state.selected = Some(Arc::new(loaded));
+                state.load_error = None;
+                LoadFinished {
+                    request,
+                    selected_path: Some(path),
+                    journal: Some(journal),
+                    error: None,
+                }
+            }
+            Err(error) => {
+                let error = error.to_string();
+                state.selected = None;
+                state.load_error = Some(error.clone());
+                LoadFinished {
+                    request,
+                    selected_path: None,
+                    journal: None,
+                    error: Some(error),
+                }
+            }
+        };
+        drop(state);
+        let _ = proxy.send(AppMessage::ToScreen(ScreenId::Overview, Box::new(completion)));
+    });
+    cx.status = Some("Сбрасываю черновик и перечитываю сейв с диска…".to_owned());
+    Ok(())
+}
+
 struct LoadFinished {
     request: u64,
     selected_path: Option<PathBuf>,
     journal: Option<DraftJournal>,
     error: Option<String>,
+}
+
+#[derive(Clone)]
+struct FileCheckFinished {
+    path: PathBuf,
+    source_sha256: String,
+    changed: bool,
 }
 
 struct DraftPersisted(std::result::Result<(), String>);
@@ -677,7 +1011,101 @@ fn set_workspace_draft(workspace: &Workspace, journal: &DraftJournal) {
             })
         })
         .unwrap_or_default();
+    let pending_durability: BTreeMap<ItemHandle, u8> = journal
+        .current()
+        .and_then(|plan| {
+            state.selected.as_ref().map(|selected| match &selected.data {
+                SaveData::Xray { inventory, .. } => inventory
+                    .iter()
+                    .filter_map(|item| {
+                        plan.durability
+                            .get(&u32::from(item.handle))
+                            .map(|condition| (ItemHandle::Xray(item.handle), *condition))
+                    })
+                    .collect(),
+                SaveData::Stalker2 { inventory, .. } => inventory
+                    .iter()
+                    .filter_map(|item| {
+                        plan.durability
+                            .get(&item.handle)
+                            .map(|condition| (ItemHandle::Stalker2(item.handle), *condition))
+                    })
+                    .collect(),
+            })
+        })
+        .unwrap_or_default();
+    let pending_placements: BTreeMap<ItemHandle, DraftPlacement> = journal
+        .current()
+        .and_then(|plan| {
+            state.selected.as_ref().map(|selected| match &selected.data {
+                SaveData::Xray { inventory, .. } => inventory
+                    .iter()
+                    .filter_map(|item| {
+                        plan.placements
+                            .get(&u32::from(item.handle))
+                            .map(|placement| (ItemHandle::Xray(item.handle), *placement))
+                    })
+                    .collect(),
+                SaveData::Stalker2 { .. } => BTreeMap::new(),
+            })
+        })
+        .unwrap_or_default();
+    let pending_upgrades: BTreeMap<ItemHandle, Vec<String>> = journal
+        .current()
+        .and_then(|plan| {
+            state.selected.as_ref().map(|selected| match &selected.data {
+                SaveData::Xray { inventory, .. } => inventory
+                    .iter()
+                    .filter_map(|item| {
+                        plan.upgrades
+                            .get(&u32::from(item.handle))
+                            .map(|upgrades| (ItemHandle::Xray(item.handle), upgrades.clone()))
+                    })
+                    .collect(),
+                SaveData::Stalker2 { .. } => BTreeMap::new(),
+            })
+        })
+        .unwrap_or_default();
+    let pending_removed: BTreeSet<ItemHandle> = journal
+        .current()
+        .and_then(|plan| {
+            state.selected.as_ref().map(|selected| match &selected.data {
+                SaveData::Xray { inventory, .. } => plan
+                    .detach_handles
+                    .iter()
+                    .filter(|handle| inventory.iter().any(|item| item.handle == **handle))
+                    .map(|handle| ItemHandle::Xray(*handle))
+                    .collect(),
+                SaveData::Stalker2 { .. } => BTreeSet::new(),
+            })
+        })
+        .unwrap_or_default();
+    let pending_adds = journal.current().map_or_else(Vec::new, |plan| plan.adds.clone());
+    let pending_stash_moves = journal
+        .current()
+        .and_then(|plan| {
+            state.selected.as_ref().map(|selected| match &selected.data {
+                SaveData::Stalker2 { stash_items, .. } => {
+                    let Some(items) = stash_items.as_ref().and_then(|items| items.as_ref().ok()) else {
+                        return BTreeSet::new();
+                    };
+                    plan.s2_stash_takes
+                        .iter()
+                        .filter(|handle| items.iter().any(|item| item.handle == **handle))
+                        .copied()
+                        .collect()
+                }
+                SaveData::Xray { .. } => BTreeSet::new(),
+            })
+        })
+        .unwrap_or_default();
     state.pending_stacks = pending_stacks;
+    state.pending_durability = pending_durability;
+    state.pending_placements = pending_placements;
+    state.pending_upgrades = pending_upgrades;
+    state.pending_removed = pending_removed;
+    state.pending_adds = pending_adds;
+    state.pending_stash_moves = pending_stash_moves;
 }
 
 fn save_game_key(slot: &SaveSlot) -> &str {
@@ -698,6 +1126,41 @@ fn slot_for_path(path: &Path) -> Result<SaveSlot> {
     })
 }
 
+fn render_external_file_banner(
+    cx: &mut Context<'_>,
+    container: Option<WidgetId>,
+    label: Option<WidgetId>,
+    reload: Option<WidgetId>,
+    changed: bool,
+) -> Result<()> {
+    if let Some(container) = container {
+        cx.tree.set_visible(container, changed)?;
+    }
+    if let Some(label) = label {
+        if changed {
+            cx.tree.set_text(
+                label,
+                "Файл сейва изменился после открытия (игра или другая программа). Несохранённые правки относятся к старой версии.",
+            )?;
+        }
+    }
+    if let Some(reload) = reload {
+        cx.tree.set_enabled(reload, changed)?;
+    }
+    Ok(())
+}
+
+fn add_external_file_banner(
+    tree: &mut crate::widget::Tree,
+    parent: WidgetId,
+) -> Result<(WidgetId, WidgetId, WidgetId)> {
+    let row = style::row(tree, parent)?;
+    let label = style::label(tree, row, "Файл сейва изменился после открытия.", Text::Note)?;
+    let reload = style::button(tree, row, "Открыть заново", Button::Secondary)?;
+    tree.set_visible(row, false)?;
+    Ok((row, label, reload))
+}
+
 /// Save list and selected-save overview.
 struct Overview {
     workspace: Workspace,
@@ -707,11 +1170,16 @@ struct Overview {
     next: Option<WidgetId>,
     rows: Vec<WidgetId>,
     list_status: Option<WidgetId>,
-    selected_summary: Option<WidgetId>,
+    selected_info: Option<WidgetId>,
+    selected_parameters: Option<WidgetId>,
+    selected_integrity: Option<WidgetId>,
     search_button: Option<WidgetId>,
     search_text: Option<WidgetId>,
     search_query: String,
     search_focused: bool,
+    external_banner_row: Option<WidgetId>,
+    external_banner: Option<WidgetId>,
+    external_reload: Option<WidgetId>,
 }
 
 impl Overview {
@@ -724,16 +1192,28 @@ impl Overview {
             next: None,
             rows: Vec::new(),
             list_status: None,
-            selected_summary: None,
+            selected_info: None,
+            selected_parameters: None,
+            selected_integrity: None,
             search_button: None,
             search_text: None,
             search_query: String::new(),
             search_focused: false,
+            external_banner_row: None,
+            external_banner: None,
+            external_reload: None,
         }
     }
 
     fn render(&mut self, cx: &mut Context<'_>) -> Result<()> {
         let state = self.workspace.lock();
+        render_external_file_banner(
+            cx,
+            self.external_banner_row,
+            self.external_banner,
+            self.external_reload,
+            state.external_change,
+        )?;
         let query = self.search_query.to_lowercase();
         let slots = state
             .discovery
@@ -838,26 +1318,35 @@ impl Overview {
                     .as_deref()
                     .or(Some(slot.candidate_release_id.as_str()))
                     .unwrap_or("неизвестный формат");
-                let modified = slot
-                    .last_write_time_utc
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map_or(0, |duration| duration.as_secs());
                 cx.tree.set_text(
                     *id,
-                    &format!("{game} · {shortened} · {} · {modified}", display_size(slot.size)),
+                    &format!(
+                        "{game} · {shortened} · {} · {}",
+                        display_size(slot.size),
+                        display_file_time(slot.last_write_time_utc, true, false)
+                    ),
                 )?;
                 cx.tree.set_visible(*id, true)?;
             } else {
                 cx.tree.set_visible(*id, false)?;
             }
         }
-        let selected_summary = state
-            .selected
-            .as_ref()
-            .map(|save| save.summary.as_str())
-            .unwrap_or("Выберите сейв из списка.");
-        if let Some(id) = self.selected_summary {
-            cx.tree.set_text(id, selected_summary)?;
+        let (info, parameters, integrity) = state.selected.as_ref().map_or(
+            (
+                "Выберите сохранение для просмотра.".to_owned(),
+                "Деньги: —\nПредметов: —\nТайников: —\nИгровое время: —".to_owned(),
+                "Размер файла: —\nИзменён: —\nSHA-256: —\nФормат: —\nСборка игры: —".to_owned(),
+            ),
+            |save| (save.info.clone(), save.parameters.clone(), save.integrity.clone()),
+        );
+        if let Some(id) = self.selected_info {
+            cx.tree.set_text(id, &info)?;
+        }
+        if let Some(id) = self.selected_parameters {
+            cx.tree.set_text(id, &parameters)?;
+        }
+        if let Some(id) = self.selected_integrity {
+            cx.tree.set_text(id, &integrity)?;
         }
         if let Some(id) = self.previous {
             cx.tree.set_visible(id, pages > 1 && self.page > 0)?;
@@ -880,6 +1369,10 @@ impl Screen for Overview {
     }
 
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
+        let (row, banner, reload) = add_external_file_banner(cx.tree, host)?;
+        self.external_banner_row = Some(row);
+        self.external_banner = Some(banner);
+        self.external_reload = Some(reload);
         let list = style::card(cx.tree, host)?;
         style::label(cx.tree, list, "СОХРАНЕНИЯ", Text::Heading)?;
         let actions = style::row(cx.tree, list)?;
@@ -896,8 +1389,29 @@ impl Screen for Overview {
             self.rows.push(row);
         }
         let overview = style::card(cx.tree, host)?;
-        style::label(cx.tree, overview, "ОБЗОР ВЫБРАННОГО СЕЙВА", Text::Heading)?;
-        self.selected_summary = Some(paragraph(cx.tree, overview, "Выберите сейв из списка.", Text::Body)?);
+        style::label(cx.tree, overview, "ИНФОРМАЦИЯ О СОХРАНЕНИИ", Text::Heading)?;
+        self.selected_info = Some(paragraph(
+            cx.tree,
+            overview,
+            "Выберите сохранение для просмотра.",
+            Text::Body,
+        )?);
+        let parameters = style::card(cx.tree, host)?;
+        style::label(cx.tree, parameters, "ПАРАМЕТРЫ СТАЛКЕРА", Text::Heading)?;
+        self.selected_parameters = Some(paragraph(
+            cx.tree,
+            parameters,
+            "Деньги: —\nПредметов: —\nТайников: —",
+            Text::Body,
+        )?);
+        let integrity = style::card(cx.tree, host)?;
+        style::label(cx.tree, integrity, "ЦЕЛОСТНОСТЬ И МЕТАДАННЫЕ", Text::Heading)?;
+        self.selected_integrity = Some(paragraph(
+            cx.tree,
+            integrity,
+            "Размер файла: —\nИзменён: —\nSHA-256: —\nФормат: —",
+            Text::Body,
+        )?);
         Ok(())
     }
 
@@ -926,6 +1440,9 @@ impl Screen for Overview {
         clicked: Option<WidgetId>,
     ) -> Result<()> {
         self.workspace.poll_tasks();
+        if let Message::User(AppMessage::Tick(seconds)) = message {
+            schedule_file_check(&self.workspace, cx, *seconds);
+        }
         if let Some(search_button) = self.search_button {
             self.search_focused = cx.tree.focused() == Some(search_button);
         }
@@ -973,6 +1490,9 @@ impl Screen for Overview {
             start_discovery(&self.workspace, cx);
             return Ok(());
         }
+        if clicked.is_some() && clicked == self.external_reload {
+            return start_reload_selected(&self.workspace, cx);
+        }
         if clicked.is_some() && clicked == self.previous {
             self.page = self.page.saturating_sub(1);
             return self.render(cx);
@@ -1009,6 +1529,21 @@ impl Screen for Overview {
             }
         }
         if let Message::User(AppMessage::ToScreen(ScreenId::Overview, payload)) = message {
+            if let Some(FileCheckFinished {
+                path,
+                source_sha256,
+                changed,
+            }) = payload.downcast_ref::<FileCheckFinished>()
+            {
+                let mut state = self.workspace.lock();
+                if state
+                    .selected
+                    .as_ref()
+                    .is_some_and(|selected| selected.slot.path == *path && selected.source_sha256 == *source_sha256)
+                {
+                    state.external_change = *changed;
+                }
+            }
             if let Some(LoadFinished {
                 request,
                 selected_path,
@@ -1024,13 +1559,21 @@ impl Screen for Overview {
                             .unwrap_or_default();
                         cx.app.set_current_save_identity(path.clone(), source_sha256);
                         cx.app.set_draft_journal(journal.clone());
-                        let game = self
+                        let (game, format_id, legacy_s2) = self
                             .workspace
                             .lock()
                             .selected
                             .as_ref()
-                            .and_then(|save| save.slot.game_id.clone());
+                            .map(|save| {
+                                (
+                                    save.slot.game_id.clone(),
+                                    save.slot.format_id.clone(),
+                                    matches!(&save.data, SaveData::Stalker2 { save, .. } if save.index().is_legacy()),
+                                )
+                            })
+                            .unwrap_or((None, None, false));
                         cx.app.set_selected_game(game);
+                        cx.app.set_current_save_format(format_id, legacy_s2);
                         set_workspace_draft(&self.workspace, journal);
                     } else {
                         cx.app.set_current_save(None);
@@ -1051,15 +1594,140 @@ impl Screen for Overview {
 
 struct ItemControls {
     label: WidgetId,
+    select: WidgetId,
     decrease: WidgetId,
     increase: WidgetId,
     handle: Option<ItemHandle>,
+}
+
+#[derive(Hash, PartialEq, Eq)]
+struct XrayItemGroupKey<'a> {
+    section: &'a str,
+    category: &'a str,
+    placement: Option<&'a str>,
+    condition_bits: Option<u32>,
+    upgrades: Vec<String>,
+    unique_handle: Option<u16>,
+}
+
+fn group_xray_items<'a>(
+    save: &Save,
+    items: Vec<&'a InventoryItem>,
+    state: &WorkspaceState,
+) -> Vec<Vec<&'a InventoryItem>> {
+    let mut groups: Vec<Vec<&InventoryItem>> = Vec::new();
+    let mut positions: HashMap<XrayItemGroupKey<'a>, usize> = HashMap::new();
+    for item in items {
+        let handle = ItemHandle::Xray(item.handle);
+        let placement = state
+            .pending_placements
+            .get(&handle)
+            .map(|value| match value {
+                DraftPlacement::Ruck => "ruck",
+                DraftPlacement::Belt => "belt",
+                DraftPlacement::Slot(_) => "slot",
+            })
+            .or(item.placement.as_deref());
+        let condition_bits = state
+            .pending_durability
+            .get(&handle)
+            .map(|value| (f32::from(*value) / 100.0).to_bits())
+            .or_else(|| item.condition.map(f32::to_bits));
+        let upgrades = writer::current_upgrades(save, item.handle);
+        let has_pending_edit = state.pending_durability.contains_key(&handle)
+            || state.pending_placements.contains_key(&handle)
+            || state.pending_upgrades.contains_key(&handle)
+            || state.pending_stacks.contains_key(&handle);
+        let key = XrayItemGroupKey {
+            section: &item.section,
+            category: &item.category,
+            placement,
+            condition_bits,
+            upgrades: upgrades.clone().unwrap_or_default(),
+            unique_handle: (item.count.is_some() || has_pending_edit || upgrades.is_err()).then_some(item.handle),
+        };
+        if let Some(index) = positions.get(&key).copied() {
+            if let Some(group) = groups.get_mut(index) {
+                group.push(item);
+            }
+        } else {
+            let index = groups.len();
+            positions.insert(key, index);
+            groups.push(vec![item]);
+        }
+    }
+    groups
+}
+
+struct UpgradeControl {
+    widget: WidgetId,
+    key: Option<String>,
+}
+
+#[derive(Clone)]
+struct AddCandidate {
+    key: String,
+    display_name: String,
+    template_available: bool,
+}
+
+fn add_candidates(selected: &LoadedSave, removed: &BTreeSet<u32>) -> Vec<AddCandidate> {
+    let SaveData::Xray { save, inventory } = &selected.data else {
+        return Vec::new();
+    };
+    if writer::capability(save.format(), writer::ChangeKind::AddItems) == writer::Capability::Unsupported {
+        return Vec::new();
+    }
+    let Some(catalog) = sse_catalog::CatalogBundleReader::load_embedded().get(save.format().id()) else {
+        return Vec::new();
+    };
+    let mut candidates = catalog
+        .items
+        .items()
+        .iter()
+        .map(|item| AddCandidate {
+            key: item.key.clone(),
+            display_name: sse_catalog::SaveNaming::item_name(
+                save.format().id(),
+                &item.key,
+                item.display_name.as_deref(),
+            ),
+            template_available: inventory
+                .iter()
+                .any(|candidate| candidate.section == item.key && !removed.contains(&u32::from(candidate.handle))),
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by(|left, right| {
+        left.display_name
+            .to_lowercase()
+            .cmp(&right.display_name.to_lowercase())
+            .then_with(|| left.key.cmp(&right.key))
+    });
+    candidates
 }
 
 /// Inventory screen with guarded X-Ray and S2 edits.
 struct Inventory {
     workspace: Workspace,
     page: usize,
+    inventory_card: Option<WidgetId>,
+    add_panel: Option<WidgetId>,
+    add_search_widget: Option<WidgetId>,
+    add_search: Option<TextInput>,
+    add_search_query: String,
+    add_quantity_widget: Option<WidgetId>,
+    add_quantity: Option<TextInput>,
+    add_candidate_rows: Vec<(WidgetId, Option<String>)>,
+    add_empty: Option<WidgetId>,
+    add_previous: Option<WidgetId>,
+    add_next: Option<WidgetId>,
+    add_confirm: Option<WidgetId>,
+    add_cancel: Option<WidgetId>,
+    add_candidates: Vec<AddCandidate>,
+    add_selected_key: Option<String>,
+    add_page: usize,
+    add_panel_open: bool,
+    add_previous_focus: Option<WidgetId>,
     money_label: Option<WidgetId>,
     money_input_widget: Option<WidgetId>,
     money_input: Option<TextInput>,
@@ -1078,7 +1746,21 @@ struct Inventory {
     export: Option<WidgetId>,
     status: Option<WidgetId>,
     rows: Vec<ItemControls>,
+    selected_item: Option<ItemHandle>,
+    inspector_summary: Option<WidgetId>,
+    inspector_condition_heading: Option<WidgetId>,
+    inspector_condition: Option<WidgetId>,
+    inspector_placement: Option<WidgetId>,
+    inspector_upgrades: Option<WidgetId>,
+    condition_buttons: Vec<(WidgetId, u8)>,
+    placement_buttons: Vec<(WidgetId, DraftPlacement)>,
+    upgrade_controls: Vec<UpgradeControl>,
+    remove_button: Option<WidgetId>,
+    add_button: Option<WidgetId>,
     last_path: Option<PathBuf>,
+    external_banner_row: Option<WidgetId>,
+    external_banner: Option<WidgetId>,
+    external_reload: Option<WidgetId>,
 }
 
 fn money_input_config() -> EditConfig {
@@ -1096,6 +1778,19 @@ fn inventory_search_config() -> EditConfig {
         max_graphemes: 128,
         history_limit: 32,
         filter: InputFilter::Any,
+    }
+}
+
+fn add_quantity_config() -> EditConfig {
+    EditConfig {
+        mode: FieldMode::SingleLine,
+        max_graphemes: 10,
+        history_limit: 32,
+        filter: InputFilter::Digits {
+            min: Some(0),
+            max: None,
+            allow_empty: true,
+        },
     }
 }
 
@@ -1119,6 +1814,24 @@ impl Inventory {
         Self {
             workspace,
             page: 0,
+            inventory_card: None,
+            add_panel: None,
+            add_search_widget: None,
+            add_search: None,
+            add_search_query: String::new(),
+            add_quantity_widget: None,
+            add_quantity: None,
+            add_candidate_rows: Vec::new(),
+            add_empty: None,
+            add_previous: None,
+            add_next: None,
+            add_confirm: None,
+            add_cancel: None,
+            add_candidates: Vec::new(),
+            add_selected_key: None,
+            add_page: 0,
+            add_panel_open: false,
+            add_previous_focus: None,
             money_label: None,
             money_input_widget: None,
             money_input: None,
@@ -1137,14 +1850,42 @@ impl Inventory {
             export: None,
             status: None,
             rows: Vec::new(),
+            selected_item: None,
+            inspector_summary: None,
+            inspector_condition_heading: None,
+            inspector_condition: None,
+            inspector_placement: None,
+            inspector_upgrades: None,
+            condition_buttons: Vec::new(),
+            placement_buttons: Vec::new(),
+            upgrade_controls: Vec::new(),
+            remove_button: None,
+            add_button: None,
             last_path: None,
+            external_banner_row: None,
+            external_banner: None,
+            external_reload: None,
         }
     }
 
     fn render(&mut self, cx: &mut Context<'_>) -> Result<()> {
         let state = self.workspace.lock();
+        render_external_file_banner(
+            cx,
+            self.external_banner_row,
+            self.external_banner,
+            self.external_reload,
+            state.external_change,
+        )?;
         let money_input_state;
         let Some(selected) = state.selected.as_ref() else {
+            self.add_panel_open = false;
+            if let Some(panel) = self.add_panel {
+                cx.tree.set_visible(panel, false)?;
+            }
+            if let Some(card) = self.inventory_card {
+                cx.tree.set_visible(card, true)?;
+            }
             if let Some(id) = self.money_label {
                 cx.tree.set_text(id, "Сначала выберите сейв на экране «Обзор».")?;
             }
@@ -1157,7 +1898,16 @@ impl Inventory {
         if self.last_path.as_ref() != Some(&selected.slot.path) {
             self.last_path = Some(selected.slot.path.clone());
             self.page = 0;
+            self.selected_item = None;
+            self.add_panel_open = false;
+            if let Some(panel) = self.add_panel {
+                cx.tree.set_visible(panel, false)?;
+            }
+            if let Some(card) = self.inventory_card {
+                cx.tree.set_visible(card, true)?;
+            }
         }
+        let selected_for_inspector = Arc::clone(selected);
         match &selected.data {
             SaveData::Xray { save, inventory } => {
                 let money = save.money()?;
@@ -1186,19 +1936,42 @@ impl Inventory {
                 let visible_items: Vec<&InventoryItem> = inventory
                     .iter()
                     .filter(|item| {
-                        (self.selected_category == "ВСЕ"
-                            || xray_inventory_category(&item.category, &item.section) == self.selected_category)
-                            && search_matches(&format!("{} {}", item.section, item.category), &query)
+                        !state.pending_removed.contains(&ItemHandle::Xray(item.handle))
+                            && (self.selected_category == "ВСЕ"
+                                || xray_inventory_category(&item.category, &item.section) == self.selected_category)
+                            && search_matches(
+                                &format!(
+                                    "{} {}",
+                                    sse_catalog::SaveNaming::item_name(save.format().id(), &item.section, None),
+                                    item.section
+                                ),
+                                &query,
+                            )
                     })
                     .collect();
-                self.update_inventory_filters(cx, visible_items.len())?;
+                let visible_groups = group_xray_items(save, visible_items.clone(), &state);
+                self.update_inventory_filters(cx, visible_groups.len())?;
+                if !self.selected_item.is_some_and(|selected| {
+                    visible_items
+                        .iter()
+                        .any(|item| selected == ItemHandle::Xray(item.handle))
+                }) {
+                    self.selected_item = visible_items
+                        .iter()
+                        .find(|item| item.condition.is_some())
+                        .or_else(|| visible_items.first())
+                        .map(|item| ItemHandle::Xray(item.handle));
+                }
                 let stack_editable =
                     writer::capability(save.format(), writer::ChangeKind::EditStacks) == writer::Capability::Verified;
                 let start = self.page.saturating_mul(INVENTORY_PAGE_SIZE);
                 for (offset, row) in self.rows.iter_mut().enumerate() {
-                    if let Some(item) = visible_items.get(start.saturating_add(offset)) {
+                    if let Some(group) = visible_groups.get(start.saturating_add(offset)) {
+                        let Some(item) = group.first().copied() else {
+                            continue;
+                        };
                         let count = item.count.map_or_else(
-                            || "—".to_owned(),
+                            || group.len().to_string(),
                             |original| {
                                 state
                                     .pending_stacks
@@ -1208,19 +1981,65 @@ impl Inventory {
                                     .to_string()
                             },
                         );
+                        let condition = state
+                            .pending_durability
+                            .get(&ItemHandle::Xray(item.handle))
+                            .map(|value| format!("{value}%"))
+                            .or_else(|| item.condition.map(|value| format!("{:.0}%", value * 100.0)))
+                            .unwrap_or_else(|| "—".to_owned());
+                        let placement = state
+                            .pending_placements
+                            .get(&ItemHandle::Xray(item.handle))
+                            .map(|value| match value {
+                                DraftPlacement::Ruck => "Рюкзак",
+                                DraftPlacement::Belt => "Пояс",
+                                DraftPlacement::Slot(_) => "Слот",
+                            })
+                            .or(item.placement.as_deref())
+                            .unwrap_or("—");
                         cx.tree.set_text(
                             row.label,
                             &format!(
-                                "◇ {} · {} · {} · состояние {} · × {count} · 0x{:04X}",
+                                "◇ {} · {} · {} · {} · состояние {condition} · × {count}",
+                                sse_catalog::SaveNaming::item_name(save.format().id(), &item.section, None),
                                 item.section,
                                 item.category,
-                                item.placement.as_deref().unwrap_or("—"),
-                                item.condition
-                                    .map_or_else(|| "—".to_owned(), |value| format!("{:.0}%", value * 100.0)),
-                                item.handle
+                                placement,
                             ),
                         )?;
+                        let condition_ratio = state
+                            .pending_durability
+                            .get(&ItemHandle::Xray(item.handle))
+                            .map(|value| f32::from(*value) / 100.0)
+                            .or(item.condition);
+                        let condition_color = match condition_ratio {
+                            Some(value) if value >= 0.75 => Color::rgba(104, 200, 144, 255),
+                            Some(value) if value >= 0.4 => Color::rgba(231, 190, 91, 255),
+                            Some(_) => Color::rgba(220, 103, 91, 255),
+                            None => Color::rgba(145, 155, 160, 255),
+                        };
+                        cx.tree.set_look(
+                            row.label,
+                            Look {
+                                text: condition_color,
+                                ..Look::default()
+                            },
+                        )?;
                         cx.tree.set_visible(row.label, true)?;
+                        cx.tree.set_visible(row.select, true)?;
+                        cx.tree.set_enabled(row.select, true)?;
+                        cx.tree.set_text(
+                            row.select,
+                            if self.selected_item == Some(ItemHandle::Xray(item.handle)) {
+                                "Выбрано"
+                            } else {
+                                "Осмотреть"
+                            },
+                        )?;
+                        cx.tree.set_look(
+                            row.select,
+                            style::nav(self.selected_item == Some(ItemHandle::Xray(item.handle))),
+                        )?;
                         let editable = stack_editable && item.count.is_some();
                         cx.tree.set_visible(row.decrease, editable)?;
                         cx.tree.set_visible(row.increase, editable)?;
@@ -1228,11 +2047,12 @@ impl Inventory {
                     } else {
                         row.handle = None;
                         cx.tree.set_visible(row.label, false)?;
+                        cx.tree.set_visible(row.select, false)?;
                         cx.tree.set_visible(row.decrease, false)?;
                         cx.tree.set_visible(row.increase, false)?;
                     }
                 }
-                let pages = visible_items
+                let pages = visible_groups
                     .len()
                     .saturating_add(INVENTORY_PAGE_SIZE.saturating_sub(1))
                     / INVENTORY_PAGE_SIZE;
@@ -1245,6 +2065,11 @@ impl Inventory {
                         .set_visible(id, pages > 1 && self.page.saturating_add(1) < pages)?;
                 }
                 let has_changes = pending_money != money
+                    || !state.pending_durability.is_empty()
+                    || !state.pending_placements.is_empty()
+                    || !state.pending_upgrades.is_empty()
+                    || !state.pending_removed.is_empty()
+                    || !state.pending_adds.is_empty()
                     || state.pending_stacks.iter().any(|(handle, count)| {
                         if let ItemHandle::Xray(handle) = handle {
                             inventory
@@ -1271,17 +2096,7 @@ impl Inventory {
                 let money = save.money();
                 let pending_money = state.pending_money.unwrap_or(money);
                 if let Some(id) = self.money_label {
-                    cx.tree.set_text(
-                        id,
-                        &format!(
-                            "Деньги: {pending_money}{}",
-                            if writable {
-                                " · S2"
-                            } else {
-                                " · S2 1.0.x открыт только для чтения"
-                            }
-                        ),
-                    )?;
+                    cx.tree.set_text(id, &format!("Деньги: {pending_money}"))?;
                 }
                 for (id, _) in &self.money_buttons {
                     cx.tree.set_visible(*id, true)?;
@@ -1303,6 +2118,17 @@ impl Inventory {
                     })
                     .collect();
                 self.update_inventory_filters(cx, visible_items.len())?;
+                if !self.selected_item.is_some_and(|selected| {
+                    visible_items
+                        .iter()
+                        .any(|item| selected == ItemHandle::Stalker2(item.handle))
+                }) {
+                    self.selected_item = visible_items
+                        .iter()
+                        .find(|item| item.condition.is_some())
+                        .or_else(|| visible_items.first())
+                        .map(|item| ItemHandle::Stalker2(item.handle));
+                }
                 let start = self.page.saturating_mul(INVENTORY_PAGE_SIZE);
                 for (offset, row) in self.rows.iter_mut().enumerate() {
                     if let Some(item) = visible_items.get(start.saturating_add(offset)) {
@@ -1328,12 +2154,27 @@ impl Inventory {
                             ),
                         )?;
                         cx.tree.set_visible(row.label, true)?;
+                        cx.tree.set_visible(row.select, true)?;
+                        cx.tree.set_enabled(row.select, true)?;
+                        cx.tree.set_text(
+                            row.select,
+                            if self.selected_item == Some(ItemHandle::Stalker2(item.handle)) {
+                                "Выбрано"
+                            } else {
+                                "Осмотреть"
+                            },
+                        )?;
+                        cx.tree.set_look(
+                            row.select,
+                            style::nav(self.selected_item == Some(ItemHandle::Stalker2(item.handle))),
+                        )?;
                         let editable = writable && item.editable_count;
                         cx.tree.set_visible(row.decrease, editable)?;
                         cx.tree.set_visible(row.increase, editable)?;
-                        row.handle = editable.then_some(ItemHandle::Stalker2(item.handle));
+                        row.handle = Some(ItemHandle::Stalker2(item.handle));
                     } else {
                         cx.tree.set_visible(row.label, false)?;
+                        cx.tree.set_visible(row.select, false)?;
                         cx.tree.set_visible(row.decrease, false)?;
                         cx.tree.set_visible(row.increase, false)?;
                         row.handle = None;
@@ -1352,6 +2193,7 @@ impl Inventory {
                         .set_visible(id, pages > 1 && self.page.saturating_add(1) < pages)?;
                 }
                 let has_changes = pending_money != money
+                    || !state.pending_durability.is_empty()
                     || state.pending_stacks.iter().any(|(handle, count)| {
                         matches!(handle, ItemHandle::Stalker2(_))
                             && inventory
@@ -1370,7 +2212,7 @@ impl Inventory {
                         if writable {
                             "Изменения сохраняются с резервной копией и проверкой повторным чтением."
                         } else {
-                            "Сейв S2 1.0.x открыт только для чтения."
+                            S2_LEGACY_EDIT_REFUSAL
                         },
                     )?;
                 }
@@ -1380,6 +2222,244 @@ impl Inventory {
         self.update_search_input(cx)?;
         if let Some((value, enabled)) = money_input_state {
             self.update_money_input(cx, value, enabled)?;
+        }
+        self.render_inspector(cx, &selected_for_inspector)?;
+        self.render_add_panel(cx)?;
+        Ok(())
+    }
+
+    fn render_inspector(&mut self, cx: &mut Context<'_>, selected: &LoadedSave) -> Result<()> {
+        let state = self.workspace.lock();
+        let Some(handle) = self.selected_item else {
+            if let Some(id) = self.inspector_summary {
+                cx.tree.set_visible(id, true)?;
+                cx.tree.set_text(
+                    id,
+                    "Предмет не выбран\nВыберите предмет для редактирования характеристик.",
+                )?;
+            }
+            if let Some(id) = self.inspector_condition {
+                cx.tree.set_visible(id, true)?;
+                cx.tree.set_text(id, "Прочность: —")?;
+            }
+            if let Some(id) = self.inspector_placement {
+                cx.tree.set_visible(id, true)?;
+                cx.tree.set_text(id, "Размещение: —")?;
+            }
+            if let Some(id) = self.inspector_upgrades {
+                cx.tree.set_visible(id, true)?;
+                cx.tree.set_text(id, "Модификации: —")?;
+            }
+            for (id, _) in &self.condition_buttons {
+                cx.tree.set_visible(*id, false)?;
+            }
+            if let Some(id) = self.add_button {
+                cx.tree.set_enabled(id, false)?;
+            }
+            return Ok(());
+        };
+
+        let (
+            summary,
+            condition,
+            mut placement,
+            upgrades,
+            condition_editable,
+            placement_editable,
+            belt_allowed,
+            remove_editable,
+        ) = match (&selected.data, handle) {
+            (SaveData::Xray { save, inventory }, ItemHandle::Xray(item_handle)) => {
+                let Some(item) = inventory.iter().find(|item| item.handle == item_handle) else {
+                    return Ok(());
+                };
+                let count = item.count.map_or_else(
+                    || "—".to_owned(),
+                    |count| {
+                        state
+                            .pending_stacks
+                            .get(&handle)
+                            .copied()
+                            .unwrap_or(u32::from(count))
+                            .to_string()
+                    },
+                );
+                let upgrades = writer::current_upgrades(save, item_handle)
+                    .map(|values| values.join(", "))
+                    .unwrap_or_else(|_| "—".to_owned());
+                (
+                    format!(
+                        "{}\nКлюч: {}\nКоличество в пачке: {count}",
+                        sse_catalog::SaveNaming::item_name(save.format().id(), &item.section, None),
+                        item.section
+                    ),
+                    item.condition,
+                    item.placement
+                        .clone()
+                        .unwrap_or_else(|| "Размещение не прочитано".to_owned()),
+                    upgrades,
+                    item.condition.is_some()
+                        && writer::capability(save.format(), writer::ChangeKind::EditDurability)
+                            != writer::Capability::Unsupported,
+                    item.placement.is_some()
+                        && writer::capability(save.format(), writer::ChangeKind::EditPlacement)
+                            != writer::Capability::Unsupported,
+                    item.section.to_ascii_lowercase().starts_with("af_"),
+                    writer::capability(save.format(), writer::ChangeKind::RemoveItems)
+                        != writer::Capability::Unsupported
+                        && item.placement.as_deref() != Some("slot"),
+                )
+            }
+            (SaveData::Stalker2 { save, inventory, .. }, ItemHandle::Stalker2(item_handle)) => {
+                let Some(item) = inventory.iter().find(|item| item.handle == item_handle) else {
+                    return Ok(());
+                };
+                let placement = match (item.x, item.y) {
+                    (Some(x), Some(y)) => format!("Рюкзак: столбец {x}, строка {y}"),
+                    _ => "Размещение не прочитано".to_owned(),
+                };
+                (
+                    format!(
+                        "{}\nКлюч: {:02x}{:02x}{:02x}\nКоличество в пачке: {}",
+                        item.display_name.as_deref().unwrap_or("Неизвестный предмет"),
+                        item.type_key[0],
+                        item.type_key[1],
+                        item.type_key[2],
+                        state.pending_stacks.get(&handle).copied().unwrap_or(item.count)
+                    ),
+                    item.condition,
+                    placement,
+                    item.upgrades.join(", "),
+                    !save.index().is_legacy() && item.condition.is_some(),
+                    false,
+                    false,
+                    false,
+                )
+            }
+            _ => {
+                if let Some(id) = self.inspector_summary {
+                    cx.tree.set_text(id, "Выбранный предмет отсутствует в текущем сейве.")?;
+                }
+                for (id, _) in &self.condition_buttons {
+                    cx.tree.set_visible(*id, false)?;
+                }
+                return Ok(());
+            }
+        };
+
+        if let Some(id) = self.inspector_summary {
+            cx.tree.set_visible(id, true)?;
+            cx.tree.set_text(id, &summary)?;
+        }
+        if let Some(id) = self.inspector_condition {
+            cx.tree.set_visible(id, true)?;
+            let shown = condition
+                .map(|value| {
+                    state
+                        .pending_durability
+                        .get(&handle)
+                        .map_or_else(|| format!("{:.0}%", value * 100.0), |pending| format!("{pending}%"))
+                })
+                .unwrap_or_else(|| "нет шкалы состояния / износа".to_owned());
+            cx.tree.set_text(id, &format!("Состояние / прочность: {shown}"))?;
+        }
+        if let Some(id) = self.inspector_placement {
+            cx.tree.set_visible(id, true)?;
+            if let Some(pending) = state.pending_placements.get(&handle) {
+                placement = match pending {
+                    DraftPlacement::Ruck => "ruck".to_owned(),
+                    DraftPlacement::Belt => "belt".to_owned(),
+                    DraftPlacement::Slot(slot) => format!("slot {slot}"),
+                };
+            }
+            cx.tree.set_text(id, &format!("Размещение: {placement}"))?;
+        }
+        let upgrades = state
+            .pending_upgrades
+            .get(&handle)
+            .map(|values| values.join(", "))
+            .unwrap_or(upgrades);
+        if let Some(id) = self.inspector_upgrades {
+            cx.tree.set_visible(id, true)?;
+            cx.tree.set_text(
+                id,
+                &format!("Модификации: {}", if upgrades.is_empty() { "—" } else { &upgrades }),
+            )?;
+        }
+        for (id, _) in &self.condition_buttons {
+            cx.tree.set_visible(*id, condition.is_some())?;
+            cx.tree.set_enabled(*id, condition_editable)?;
+        }
+        for (id, destination) in &self.placement_buttons {
+            cx.tree.set_visible(*id, true)?;
+            let allowed = placement_editable && (*destination != DraftPlacement::Belt || belt_allowed);
+            cx.tree.set_enabled(*id, allowed)?;
+        }
+        if let Some(id) = self.remove_button {
+            cx.tree.set_visible(id, true)?;
+            cx.tree.set_enabled(id, remove_editable)?;
+        }
+        if let Some(id) = self.add_button {
+            cx.tree.set_visible(id, true)?;
+            let add_enabled = match &selected.data {
+                SaveData::Xray { save, .. } => {
+                    writer::capability(save.format(), writer::ChangeKind::AddItems) != writer::Capability::Unsupported
+                }
+                _ => false,
+            };
+            cx.tree.set_enabled(id, add_enabled)?;
+            cx.tree.set_text(id, "+ Добавить предмет")?;
+        }
+        let (upgrade_options, selected_upgrades, upgrades_editable) = match (&selected.data, handle) {
+            (SaveData::Xray { save, inventory }, ItemHandle::Xray(item_handle)) => {
+                let item = inventory.iter().find(|item| item.handle == item_handle);
+                let current = writer::current_upgrades(save, item_handle).ok();
+                let selected = state
+                    .pending_upgrades
+                    .get(&handle)
+                    .cloned()
+                    .or_else(|| current.clone())
+                    .unwrap_or_default();
+                let options = item
+                    .and_then(|item| {
+                        sse_catalog::CatalogBundleReader::load_embedded()
+                            .get(save.format().id())
+                            .and_then(|bundle| bundle.upgrades.as_ref())
+                            .map(|catalog| catalog.for_item(&item.section))
+                    })
+                    .unwrap_or_default()
+                    .into_iter()
+                    .take(MAXIMUM_UPGRADE_ROWS)
+                    .map(|upgrade| {
+                        let label = sse_catalog::SaveNaming::upgrade_name(
+                            Some(save.format().id()),
+                            &upgrade.key,
+                            upgrade.display_name.as_deref(),
+                        );
+                        let effect = upgrade.property_name.as_deref().unwrap_or(&label);
+                        (upgrade.key.clone(), format!("{effect} · {label}"))
+                    })
+                    .collect::<Vec<_>>();
+                let editable = current.is_some()
+                    && writer::capability(save.format(), writer::ChangeKind::EditUpgrades)
+                        != writer::Capability::Unsupported;
+                (options, selected, editable)
+            }
+            _ => (Vec::new(), Vec::new(), false),
+        };
+        for (index, control) in self.upgrade_controls.iter_mut().enumerate() {
+            let Some((key, label)) = upgrade_options.get(index) else {
+                control.key = None;
+                cx.tree.set_visible(control.widget, false)?;
+                continue;
+            };
+            control.key = Some(key.clone());
+            let checked = selected_upgrades.contains(key);
+            cx.tree
+                .set_text(control.widget, &format!("{} {label}", if checked { "✓" } else { "□" }))?;
+            cx.tree.set_look(control.widget, style::nav(checked))?;
+            cx.tree.set_visible(control.widget, true)?;
+            cx.tree.set_enabled(control.widget, upgrades_editable)?;
         }
         Ok(())
     }
@@ -1396,6 +2476,12 @@ impl Inventory {
             .chain(self.empty_results)
             .chain(self.reset_filters)
             .chain(self.export)
+            .chain(self.inspector_summary)
+            .chain(self.inspector_condition)
+            .chain(self.inspector_placement)
+            .chain(self.inspector_upgrades)
+            .chain(self.remove_button)
+            .chain(self.add_button)
         {
             cx.tree.set_visible(id, visible)?;
         }
@@ -1406,6 +2492,16 @@ impl Inventory {
             cx.tree.set_visible(row.decrease, visible)?;
             cx.tree.set_visible(row.increase, visible)?;
             cx.tree.set_visible(row.label, visible)?;
+            cx.tree.set_visible(row.select, visible)?;
+        }
+        for (id, _) in &self.condition_buttons {
+            cx.tree.set_visible(*id, visible)?;
+        }
+        for (id, _) in &self.placement_buttons {
+            cx.tree.set_visible(*id, visible)?;
+        }
+        for control in &self.upgrade_controls {
+            cx.tree.set_visible(control.widget, visible)?;
         }
         if let Some(id) = self.previous {
             cx.tree.set_visible(id, false)?;
@@ -1610,17 +2706,411 @@ impl Inventory {
         Ok(())
     }
 
+    fn stage_durability(&self, cx: &mut Context<'_>, handle: ItemHandle, percent: u8) -> Result<()> {
+        let selected = self.workspace.lock().selected.clone();
+        let Some(selected) = selected else {
+            return Ok(());
+        };
+        let original = match (&selected.data, handle) {
+            (SaveData::Xray { save, inventory }, ItemHandle::Xray(item_handle))
+                if writer::capability(save.format(), writer::ChangeKind::EditDurability)
+                    != writer::Capability::Unsupported =>
+            {
+                inventory
+                    .iter()
+                    .find(|item| item.handle == item_handle)
+                    .and_then(|item| item.condition)
+            }
+            (SaveData::Stalker2 { save, inventory, .. }, ItemHandle::Stalker2(item_handle))
+                if !save.index().is_legacy() =>
+            {
+                inventory
+                    .iter()
+                    .find(|item| item.handle == item_handle)
+                    .and_then(|item| item.condition)
+            }
+            _ => None,
+        };
+        let Some(original) = original else {
+            return Ok(());
+        };
+        let requested = f32::from(percent) / 100.0;
+        let source_sha256 = selected.source_sha256.as_str();
+        let mut plan = cx
+            .app
+            .draft(source_sha256)
+            .cloned()
+            .unwrap_or(DraftPlan::empty(source_sha256)?);
+        if (original - requested).abs() <= 0.005 {
+            plan.durability.remove(&handle.as_u32());
+        } else {
+            plan.durability.insert(handle.as_u32(), percent);
+        }
+        cx.app.record_draft(plan)?;
+        let journal = cx
+            .app
+            .draft_journal(source_sha256)
+            .cloned()
+            .ok_or_else(|| Error::Refused("draft journal disappeared after editing".to_owned()))?;
+        set_workspace_draft(&self.workspace, &journal);
+        self.workspace.persist_draft(journal, cx);
+        Ok(())
+    }
+
+    fn stage_placement(&self, cx: &mut Context<'_>, handle: ItemHandle, destination: DraftPlacement) -> Result<()> {
+        let selected = self.workspace.lock().selected.clone();
+        let Some(selected) = selected else {
+            return Ok(());
+        };
+        let current = match (&selected.data, handle) {
+            (SaveData::Xray { save, inventory }, ItemHandle::Xray(item_handle))
+                if writer::capability(save.format(), writer::ChangeKind::EditPlacement)
+                    != writer::Capability::Unsupported =>
+            {
+                let Some(item) = inventory.iter().find(|item| item.handle == item_handle) else {
+                    return Ok(());
+                };
+                let Some(current) = item.placement.as_deref() else {
+                    return Ok(());
+                };
+                if destination == DraftPlacement::Belt && !item.section.to_ascii_lowercase().starts_with("af_") {
+                    return Ok(());
+                }
+                current.to_owned()
+            }
+            _ => return Ok(()),
+        };
+        let requested_name = match destination {
+            DraftPlacement::Ruck => "ruck",
+            DraftPlacement::Belt => "belt",
+            DraftPlacement::Slot(_) => return Ok(()),
+        };
+        let source_sha256 = selected.source_sha256.as_str();
+        let mut plan = cx
+            .app
+            .draft(source_sha256)
+            .cloned()
+            .unwrap_or(DraftPlan::empty(source_sha256)?);
+        if current == requested_name {
+            plan.placements.remove(&handle.as_u32());
+        } else {
+            plan.placements.insert(handle.as_u32(), destination);
+        }
+        cx.app.record_draft(plan)?;
+        let journal = cx
+            .app
+            .draft_journal(source_sha256)
+            .cloned()
+            .ok_or_else(|| Error::Refused("draft journal disappeared after editing".to_owned()))?;
+        set_workspace_draft(&self.workspace, &journal);
+        self.workspace.persist_draft(journal, cx);
+        Ok(())
+    }
+
+    fn stage_remove(&self, cx: &mut Context<'_>, handle: ItemHandle) -> Result<()> {
+        let selected = self.workspace.lock().selected.clone();
+        let Some(selected) = selected else {
+            return Ok(());
+        };
+        let ItemHandle::Xray(item_handle) = handle else {
+            return Ok(());
+        };
+        let SaveData::Xray { save, inventory } = &selected.data else {
+            return Ok(());
+        };
+        if writer::capability(save.format(), writer::ChangeKind::RemoveItems) == writer::Capability::Unsupported
+            || !inventory.iter().any(|item| item.handle == item_handle)
+        {
+            return Ok(());
+        }
+        let source_sha256 = selected.source_sha256.as_str();
+        let mut plan = cx
+            .app
+            .draft(source_sha256)
+            .cloned()
+            .unwrap_or(DraftPlan::empty(source_sha256)?);
+        if !plan.detach_handles.contains(&item_handle) {
+            plan.detach_handles.push(item_handle);
+        }
+        cx.app.record_draft(plan)?;
+        let journal = cx
+            .app
+            .draft_journal(source_sha256)
+            .cloned()
+            .ok_or_else(|| Error::Refused("draft journal disappeared after editing".to_owned()))?;
+        set_workspace_draft(&self.workspace, &journal);
+        self.workspace.persist_draft(journal, cx);
+        Ok(())
+    }
+
+    fn open_add_panel(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        let (selected, removed) = {
+            let state = self.workspace.lock();
+            let removed = state
+                .pending_removed
+                .iter()
+                .filter_map(|handle| match handle {
+                    ItemHandle::Xray(handle) => Some(u32::from(*handle)),
+                    ItemHandle::Stalker2(_) => None,
+                })
+                .collect::<BTreeSet<_>>();
+            (state.selected.clone(), removed)
+        };
+        let Some(selected) = selected else {
+            return Ok(());
+        };
+        self.add_candidates = add_candidates(&selected, &removed);
+        self.add_search_query.clear();
+        self.add_page = 0;
+        self.add_previous_focus = cx.tree.focused();
+        self.add_selected_key = self
+            .add_candidates
+            .iter()
+            .find(|candidate| candidate.template_available)
+            .map(|candidate| candidate.key.clone());
+        self.add_search = Some(TextInput::new("", inventory_search_config())?);
+        self.add_quantity = Some(TextInput::new("1", add_quantity_config())?);
+        if let Some(card) = self.inventory_card {
+            cx.tree.set_visible(card, false)?;
+        }
+        if let Some(panel) = self.add_panel {
+            cx.tree.set_visible(panel, true)?;
+        }
+        self.add_panel_open = true;
+        if let Some(widget) = self.add_search_widget {
+            cx.tree.set_text(widget, "")?;
+            cx.tree.set_focus(Some(widget))?;
+            if let Some(search) = self.add_search.as_mut() {
+                search.focus(true, 0);
+            }
+        }
+        if let Some(widget) = self.add_quantity_widget {
+            cx.tree.set_text(widget, "1")?;
+        }
+        self.render_add_panel(cx)
+    }
+
+    fn close_add_panel(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        self.add_panel_open = false;
+        if let Some(panel) = self.add_panel {
+            cx.tree.set_visible(panel, false)?;
+        }
+        if let Some(card) = self.inventory_card {
+            cx.tree.set_visible(card, true)?;
+        }
+        if let Some(search) = self.add_search.as_mut() {
+            search.focus(false, 0);
+        }
+        if let Some(quantity) = self.add_quantity.as_mut() {
+            quantity.focus(false, 0);
+        }
+        let restore = self
+            .add_previous_focus
+            .take()
+            .filter(|widget| cx.tree.is_visible(*widget));
+        cx.tree.set_focus(restore)?;
+        Ok(())
+    }
+
+    fn render_add_panel(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        if !self.add_panel_open {
+            return Ok(());
+        }
+        let query = self.add_search_query.to_lowercase();
+        let matching = self
+            .add_candidates
+            .iter()
+            .filter(|candidate| search_matches(&format!("{} {}", candidate.display_name, candidate.key), &query))
+            .collect::<Vec<_>>();
+        let pages = matching.len().saturating_add(ADD_ITEM_PAGE_SIZE.saturating_sub(1)) / ADD_ITEM_PAGE_SIZE;
+        if pages == 0 || self.add_page >= pages {
+            self.add_page = 0;
+        }
+        let start = self.add_page.saturating_mul(ADD_ITEM_PAGE_SIZE);
+        if !self.add_selected_key.as_ref().is_some_and(|key| {
+            matching
+                .iter()
+                .skip(start)
+                .take(ADD_ITEM_PAGE_SIZE)
+                .any(|candidate| candidate.key == *key && candidate.template_available)
+        }) {
+            self.add_selected_key = matching
+                .iter()
+                .skip(start)
+                .take(ADD_ITEM_PAGE_SIZE)
+                .find(|candidate| candidate.template_available)
+                .map(|candidate| candidate.key.clone());
+        }
+        for (offset, (widget, slot)) in self.add_candidate_rows.iter_mut().enumerate() {
+            if let Some(candidate) = matching.get(start.saturating_add(offset)) {
+                *slot = Some(candidate.key.clone());
+                let suffix = if candidate.template_available {
+                    String::new()
+                } else {
+                    " · нет подтверждённого шаблона в сейве".to_owned()
+                };
+                cx.tree.set_text(
+                    *widget,
+                    &format!("{} · {}{suffix}", candidate.display_name, candidate.key),
+                )?;
+                cx.tree.set_visible(*widget, true)?;
+                cx.tree.set_enabled(*widget, candidate.template_available)?;
+                cx.tree.set_look(
+                    *widget,
+                    style::nav(self.add_selected_key.as_deref() == Some(&candidate.key)),
+                )?;
+            } else {
+                *slot = None;
+                cx.tree.set_visible(*widget, false)?;
+            }
+        }
+        if let Some(empty) = self.add_empty {
+            cx.tree.set_visible(empty, matching.is_empty())?;
+            cx.tree.set_text(empty, "Предметы не найдены.")?;
+        }
+        if let Some(previous) = self.add_previous {
+            cx.tree.set_visible(previous, pages > 1 && self.add_page > 0)?;
+        }
+        if let Some(next) = self.add_next {
+            cx.tree
+                .set_visible(next, pages > 1 && self.add_page.saturating_add(1) < pages)?;
+        }
+        let has_template = self.add_selected_key.as_ref().is_some_and(|key| {
+            matching
+                .iter()
+                .any(|candidate| candidate.key == *key && candidate.template_available)
+        });
+        if let Some(confirm) = self.add_confirm {
+            cx.tree.set_enabled(confirm, has_template)?;
+        }
+        if let (Some(widget), Some(quantity)) = (self.add_quantity_widget, self.add_quantity.as_ref()) {
+            if !quantity.focused() {
+                cx.tree.set_text(widget, &quantity.text())?;
+            }
+        }
+        Ok(())
+    }
+
+    fn stage_add_key(&self, cx: &mut Context<'_>, item_key: &str, quantity: u32) -> Result<()> {
+        let selected = self.workspace.lock().selected.clone();
+        let Some(selected) = selected else {
+            return Ok(());
+        };
+        let SaveData::Xray { save, inventory } = &selected.data else {
+            cx.status = Some("Добавление доступно только для подтверждённых X-Ray форматов.".to_owned());
+            return Ok(());
+        };
+        if writer::capability(save.format(), writer::ChangeKind::AddItems) == writer::Capability::Unsupported
+            || sse_catalog::CatalogBundleReader::load_embedded()
+                .get(save.format().id())
+                .and_then(|bundle| bundle.items.resolve(item_key))
+                .is_none()
+            || !inventory.iter().any(|item| item.section == item_key)
+        {
+            cx.status = Some("Для этого предмета или формата нет подтверждённого шаблона добавления.".to_owned());
+            return Ok(());
+        }
+        let source_sha256 = selected.source_sha256.as_str();
+        let mut plan = cx
+            .app
+            .draft(source_sha256)
+            .cloned()
+            .unwrap_or(DraftPlan::empty(source_sha256)?);
+        plan.adds.push(AddRequest::new(item_key, quantity, "inventory")?);
+        cx.app.record_draft(plan)?;
+        let journal = cx
+            .app
+            .draft_journal(source_sha256)
+            .cloned()
+            .ok_or_else(|| Error::Refused("draft journal disappeared after editing".to_owned()))?;
+        set_workspace_draft(&self.workspace, &journal);
+        self.workspace.persist_draft(journal, cx);
+        cx.status = Some(format!(
+            "Предмет {item_key} ({quantity} шт.) добавлен в очередь на запись."
+        ));
+        Ok(())
+    }
+
+    fn stage_upgrade(&self, cx: &mut Context<'_>, handle: ItemHandle, upgrade_key: &str) -> Result<()> {
+        let selected = self.workspace.lock().selected.clone();
+        let Some(selected) = selected else {
+            return Ok(());
+        };
+        let (save, item) = match (&selected.data, handle) {
+            (SaveData::Xray { save, inventory }, ItemHandle::Xray(item_handle)) => {
+                let Some(item) = inventory.iter().find(|item| item.handle == item_handle) else {
+                    return Ok(());
+                };
+                (save, item)
+            }
+            _ => return Ok(()),
+        };
+        if writer::capability(save.format(), writer::ChangeKind::EditUpgrades) == writer::Capability::Unsupported
+            || !sse_catalog::CatalogBundleReader::load_embedded()
+                .get(save.format().id())
+                .and_then(|bundle| bundle.upgrades.as_ref())
+                .is_some_and(|catalog| {
+                    catalog
+                        .for_item(&item.section)
+                        .iter()
+                        .any(|upgrade| upgrade.key == upgrade_key)
+                })
+        {
+            return Ok(());
+        }
+        let mut values = self
+            .workspace
+            .lock()
+            .pending_upgrades
+            .get(&handle)
+            .cloned()
+            .unwrap_or(writer::current_upgrades(save, item.handle)?);
+        if let Some(index) = values.iter().position(|value| value == upgrade_key) {
+            values.remove(index);
+        } else {
+            values.push(upgrade_key.to_owned());
+        }
+        let current = writer::current_upgrades(save, item.handle)?;
+        let source_sha256 = selected.source_sha256.as_str();
+        let mut plan = cx
+            .app
+            .draft(source_sha256)
+            .cloned()
+            .unwrap_or(DraftPlan::empty(source_sha256)?);
+        if values == current {
+            plan.upgrades.remove(&u32::from(item.handle));
+        } else {
+            plan.upgrades.insert(u32::from(item.handle), values);
+        }
+        cx.app.record_draft(plan)?;
+        let journal = cx
+            .app
+            .draft_journal(source_sha256)
+            .cloned()
+            .ok_or_else(|| Error::Refused("draft journal disappeared after editing".to_owned()))?;
+        set_workspace_draft(&self.workspace, &journal);
+        self.workspace.persist_draft(journal, cx);
+        Ok(())
+    }
+
     fn save(&self, cx: &mut Context<'_>) -> Result<()> {
         let Some(proxy) = cx.proxy.cloned() else {
             cx.status = Some("Сохранение доступно в работающем окне редактора.".to_owned());
             return Ok(());
         };
-        let (selected, money, stacks, stash_moves) = {
+        let (selected, edits, stash_moves) = {
             let state = self.workspace.lock();
             (
                 state.selected.clone(),
-                state.pending_money,
-                state.pending_stacks.clone(),
+                PendingInventoryEdits {
+                    money: state.pending_money,
+                    stacks: state.pending_stacks.clone(),
+                    durability: state.pending_durability.clone(),
+                    placements: state.pending_placements.clone(),
+                    upgrades: state.pending_upgrades.clone(),
+                    removals: state.pending_removed.clone(),
+                    adds: state.pending_adds.clone(),
+                },
                 state.pending_stash_moves.clone(),
             )
         };
@@ -1632,8 +3122,7 @@ impl Inventory {
             cx.status = Some("Введены некорректные значения (проверьте введённые числа).".to_owned());
             return Ok(());
         }
-        if !cx.app.has_draft(&selected.source_sha256) && money.is_none() && stacks.is_empty() && stash_moves.is_empty()
-        {
+        if !cx.app.has_draft(&selected.source_sha256) && !edits.has_changes() && stash_moves.is_empty() {
             cx.status = Some("Нет несохранённых изменений.".to_owned());
             return Ok(());
         }
@@ -1641,7 +3130,7 @@ impl Inventory {
         if let Some(plan) = cx.app.draft(&selected.source_sha256) {
             if plan.unmapped_legacy_plan.is_some() {
                 cx.status =
-                    Some("В черновике есть правки из другой версии редактора; сбросьте его перед записью.".to_owned());
+                    Some("В черновике есть правки из другой версии редактора, которые эта версия не понимает. Сбросьте черновик, чтобы продолжить (он сохранится рядом).".to_owned());
                 return Ok(());
             }
         }
@@ -1652,7 +3141,7 @@ impl Inventory {
             if context.is_cancelled() {
                 return;
             }
-            let result = commit_save_edits(&selected, money, &stacks, &stash_moves).map_err(|error| error.to_string());
+            let result = commit_save_edits(&selected, &edits, &stash_moves).map_err(|error| error.to_string());
             let _ = proxy.send(AppMessage::ToScreen(
                 ScreenId::Inventory,
                 Box::new(SaveFinished { source_sha256, result }),
@@ -1702,21 +3191,19 @@ struct SaveFinished {
 
 fn commit_save_edits(
     selected: &LoadedSave,
-    money: Option<u32>,
-    stacks: &BTreeMap<ItemHandle, u32>,
+    edits: &PendingInventoryEdits,
     stash_moves: &BTreeSet<u32>,
 ) -> Result<(Arc<LoadedSave>, String)> {
-    commit_save_edits_to(selected, money, stacks, stash_moves, &default_backup_directory())
+    commit_save_edits_to(selected, edits, stash_moves, &default_backup_directory())
 }
 
 fn commit_save_edits_to(
     selected: &LoadedSave,
-    money: Option<u32>,
-    stacks: &BTreeMap<ItemHandle, u32>,
+    edits: &PendingInventoryEdits,
     stash_moves: &BTreeSet<u32>,
     backup_directory: &Path,
 ) -> Result<(Arc<LoadedSave>, String)> {
-    let (packed, _summary) = prepare_save_edits(selected, money, stacks, stash_moves)?;
+    let (packed, _summary) = prepare_save_edits(selected, edits, stash_moves)?;
     let (receipt, reloaded) = transaction::replace_transaction_with_verifier(
         &selected.slot.path,
         &selected.source_sha256,
@@ -1728,7 +3215,7 @@ fn commit_save_edits_to(
             slot.size = metadata.len();
             slot.last_write_time_utc = metadata.modified().unwrap_or(slot.last_write_time_utc);
             let reloaded = LoadedSave::from_bytes(slot, read_back)?;
-            verify_requested_values(&reloaded, money, stacks, stash_moves)?;
+            verify_requested_values(selected, &reloaded, edits, stash_moves)?;
             Ok(reloaded)
         },
     )?;
@@ -1752,13 +3239,20 @@ fn prepare_xray_edits(
         .iter()
         .map(|(handle, count)| (ItemHandle::Xray(*handle), u32::from(*count)))
         .collect::<BTreeMap<_, _>>();
-    prepare_save_edits(selected, money, &stacks, &BTreeSet::new())
+    prepare_save_edits(
+        selected,
+        &PendingInventoryEdits {
+            money,
+            stacks,
+            ..PendingInventoryEdits::default()
+        },
+        &BTreeSet::new(),
+    )
 }
 
 fn prepare_save_edits(
     selected: &LoadedSave,
-    money: Option<u32>,
-    stacks: &BTreeMap<ItemHandle, u32>,
+    edits: &PendingInventoryEdits,
     stash_moves: &BTreeSet<u32>,
 ) -> Result<(SaveBuffer, EditSummary)> {
     match &selected.data {
@@ -1769,7 +3263,7 @@ fn prepare_save_edits(
                 ));
             }
             let current_money = save.money()?;
-            let money_change = money.filter(|value| *value != current_money);
+            let money_change = edits.money.filter(|value| *value != current_money);
             let mut changes = Vec::new();
             if let Some(new_value) = money_change {
                 changes.push(writer::Change::SetMoney {
@@ -1779,9 +3273,11 @@ fn prepare_save_edits(
                 });
             }
             let mut stack_count = 0_usize;
-            for (handle, new_value) in stacks {
+            for (handle, new_value) in &edits.stacks {
                 let ItemHandle::Xray(handle) = handle else {
-                    continue;
+                    return Err(Error::Refused(
+                        "S2 stack edit cannot be applied to an X-Ray save".to_owned(),
+                    ));
                 };
                 let Some(item) = inventory.iter().find(|item| item.handle == *handle) else {
                     return Err(Error::Refused("selected X-Ray stack no longer exists".to_owned()));
@@ -1799,6 +3295,134 @@ fn prepare_save_edits(
                     });
                     stack_count = stack_count.saturating_add(1);
                 }
+            }
+            for (handle, percent) in &edits.durability {
+                let ItemHandle::Xray(handle) = handle else {
+                    return Err(Error::Refused(
+                        "S2 durability edit cannot be applied to an X-Ray save".to_owned(),
+                    ));
+                };
+                let Some(item) = inventory.iter().find(|item| item.handle == *handle) else {
+                    return Err(Error::Refused(
+                        "selected X-Ray durability item no longer exists".to_owned(),
+                    ));
+                };
+                let Some(old_value) = item.condition else {
+                    return Err(Error::Refused(
+                        "selected X-Ray item has no confirmed condition field".to_owned(),
+                    ));
+                };
+                let new_value = f32::from(*percent) / 100.0;
+                if (old_value - new_value).abs() > 0.005 {
+                    changes.push(writer::Change::SetDurability {
+                        target_object: *handle,
+                        old_value,
+                        new_value,
+                    });
+                }
+            }
+            for (handle, destination) in &edits.placements {
+                let ItemHandle::Xray(handle) = handle else {
+                    return Err(Error::Refused(
+                        "S2 placement edit cannot be applied to an X-Ray save".to_owned(),
+                    ));
+                };
+                if !inventory.iter().any(|item| item.handle == *handle) {
+                    return Err(Error::Refused(
+                        "selected X-Ray placement item no longer exists".to_owned(),
+                    ));
+                }
+                let destination = match destination {
+                    DraftPlacement::Ruck => writer::Placement::Ruck,
+                    DraftPlacement::Belt => writer::Placement::Belt,
+                    DraftPlacement::Slot(slot) => writer::Placement::Slot(*slot),
+                };
+                changes.push(writer::Change::SetPlacement {
+                    target_object: *handle,
+                    destination,
+                });
+            }
+            for (handle, upgrades) in &edits.upgrades {
+                let ItemHandle::Xray(handle) = handle else {
+                    return Err(Error::Refused(
+                        "S2 upgrade edit cannot be applied to an X-Ray save".to_owned(),
+                    ));
+                };
+                let old_value = writer::current_upgrades(save, *handle)?;
+                if old_value != *upgrades {
+                    changes.push(writer::Change::SetUpgrades {
+                        target_object: *handle,
+                        old_value,
+                        new_value: upgrades.clone(),
+                    });
+                }
+            }
+            for handle in &edits.removals {
+                let ItemHandle::Xray(handle) = handle else {
+                    return Err(Error::Refused(
+                        "S2 removal cannot be applied to an X-Ray save".to_owned(),
+                    ));
+                };
+                changes.push(writer::Change::RemoveItem { target_object: *handle });
+            }
+            if !edits.adds.is_empty()
+                && writer::capability(save.format(), writer::ChangeKind::AddItems) == writer::Capability::Unsupported
+            {
+                return Err(Error::Refused(
+                    "adding items is not supported for this X-Ray format".to_owned(),
+                ));
+            }
+            let catalog = sse_catalog::CatalogBundleReader::load_embedded().get(save.format().id());
+            let mut used_object_ids: BTreeSet<u16> =
+                save.registry_objects().iter().map(|object| object.object_id).collect();
+            for request in &edits.adds {
+                if request.destination != "inventory" {
+                    return Err(Error::Refused(
+                        "only inventory item additions are supported here".to_owned(),
+                    ));
+                }
+                if catalog
+                    .and_then(|bundle| bundle.items.resolve(&request.item_key))
+                    .is_none()
+                {
+                    return Err(Error::Refused(format!(
+                        "item '{}' is absent from the release catalog",
+                        request.item_key
+                    )));
+                }
+                let template = inventory
+                    .iter()
+                    .find(|item| {
+                        item.section == request.item_key && !edits.removals.contains(&ItemHandle::Xray(item.handle))
+                    })
+                    .ok_or_else(|| {
+                        Error::Refused(format!(
+                            "item '{}' has no matching serialized template in this save",
+                            request.item_key
+                        ))
+                    })?;
+                let template_object = save
+                    .registry_objects()
+                    .iter()
+                    .find(|object| object.object_id == template.handle && object.parent_id == save.actor_id())
+                    .ok_or_else(|| Error::Refused("selected item template is no longer actor-owned".to_owned()))?;
+                let object_id = used_object_ids
+                    .iter()
+                    .next_back()
+                    .copied()
+                    .and_then(|maximum| maximum.checked_add(1))
+                    .filter(|candidate| *candidate < u16::MAX && !used_object_ids.contains(candidate))
+                    .or_else(|| (1..u16::MAX).find(|candidate| !used_object_ids.contains(candidate)))
+                    .ok_or_else(|| Error::Refused("no free X-Ray registry object id remains".to_owned()))?;
+                used_object_ids.insert(object_id);
+                let quantity = u16::try_from(request.quantity)
+                    .map_err(|_| Error::Refused("item quantity exceeds its supported range".to_owned()))?;
+                changes.push(writer::Change::AddItem {
+                    template_object: template_object.object_id,
+                    item_key: request.item_key.clone(),
+                    object_id,
+                    quantity,
+                });
             }
             if changes.is_empty() {
                 return Err(Error::Refused("there are no inventory changes to save".to_owned()));
@@ -1819,7 +3443,16 @@ fn prepare_save_edits(
             stash_items,
         } => {
             if save.index().is_legacy() {
-                return Err(Error::Refused("legacy S2 layouts are read-only".to_owned()));
+                return Err(Error::Refused(S2_LEGACY_EDIT_REFUSAL.to_owned()));
+            }
+            if !edits.placements.is_empty()
+                || !edits.upgrades.is_empty()
+                || !edits.removals.is_empty()
+                || !edits.adds.is_empty()
+            {
+                return Err(Error::Refused(
+                    "S2 placement, upgrades, removal, and item addition are not supported by this writer".to_owned(),
+                ));
             }
             if !stash_moves.is_empty() {
                 let items = stash_items
@@ -1841,15 +3474,17 @@ fn prepare_save_edits(
                 }
             }
             let current_money = save.money();
-            let money_change = money.filter(|value| *value != current_money);
+            let money_change = edits.money.filter(|value| *value != current_money);
             let mut changes = Vec::new();
             if let Some(new_value) = money_change {
                 changes.push(S2Change::SetMoney(new_value));
             }
             let mut stack_count = 0_usize;
-            for (handle, new_value) in stacks {
+            for (handle, new_value) in &edits.stacks {
                 let ItemHandle::Stalker2(handle) = handle else {
-                    continue;
+                    return Err(Error::Refused(
+                        "X-Ray stack edit cannot be applied to an S2 save".to_owned(),
+                    ));
                 };
                 let Some(item) = inventory
                     .iter()
@@ -1863,6 +3498,30 @@ fn prepare_save_edits(
                         count: *new_value,
                     });
                     stack_count = stack_count.saturating_add(1);
+                }
+            }
+            for (handle, percent) in &edits.durability {
+                let ItemHandle::Stalker2(handle) = handle else {
+                    return Err(Error::Refused(
+                        "X-Ray durability edit cannot be applied to an S2 save".to_owned(),
+                    ));
+                };
+                let Some(item) = inventory.iter().find(|item| item.handle == *handle) else {
+                    return Err(Error::Refused(
+                        "selected S2 durability item no longer exists".to_owned(),
+                    ));
+                };
+                let Some(old_value) = item.condition else {
+                    return Err(Error::Refused(
+                        "selected S2 item has no confirmed durability field".to_owned(),
+                    ));
+                };
+                let condition = f32::from(*percent) / 100.0;
+                if (old_value - condition).abs() > 0.005 {
+                    changes.push(S2Change::SetDurability {
+                        handle: *handle,
+                        condition,
+                    });
                 }
             }
             for handle in stash_moves {
@@ -1886,19 +3545,19 @@ fn prepare_save_edits(
 }
 
 fn verify_requested_values(
+    original: &LoadedSave,
     selected: &LoadedSave,
-    money: Option<u32>,
-    stacks: &BTreeMap<ItemHandle, u32>,
+    edits: &PendingInventoryEdits,
     stash_moves: &BTreeSet<u32>,
 ) -> Result<()> {
     let actual_money = match &selected.data {
         SaveData::Xray { save, .. } => save.money()?,
         SaveData::Stalker2 { save, .. } => save.money(),
     };
-    if money.is_some_and(|expected| expected != actual_money) {
+    if edits.money.is_some_and(|expected| expected != actual_money) {
         return Err(Error::damaged("saved wallet value differs after read-back"));
     }
-    for (handle, expected) in stacks {
+    for (handle, expected) in &edits.stacks {
         let actual = match (&selected.data, handle) {
             (SaveData::Xray { inventory, .. }, ItemHandle::Xray(handle)) => inventory
                 .iter()
@@ -1913,6 +3572,102 @@ fn verify_requested_values(
         };
         if actual != Some(*expected) {
             return Err(Error::damaged("saved stack count differs after read-back"));
+        }
+    }
+    for (handle, percent) in &edits.durability {
+        let actual = match (&selected.data, handle) {
+            (SaveData::Xray { inventory, .. }, ItemHandle::Xray(handle)) => inventory
+                .iter()
+                .find(|item| item.handle == *handle)
+                .and_then(|item| item.condition),
+            (SaveData::Stalker2 { inventory, .. }, ItemHandle::Stalker2(handle)) => inventory
+                .iter()
+                .find(|item| item.handle == *handle)
+                .and_then(|item| item.condition),
+            _ => None,
+        };
+        let expected = f32::from(*percent) / 100.0;
+        if actual.is_none_or(|value| (value - expected).abs() > 0.005) {
+            return Err(Error::damaged("saved item durability differs after read-back"));
+        }
+    }
+    for (handle, destination) in &edits.placements {
+        let expected = match destination {
+            DraftPlacement::Ruck => "ruck",
+            DraftPlacement::Belt => "belt",
+            DraftPlacement::Slot(_) => {
+                return Err(Error::Refused(
+                    "slot placement has no verified read-back field".to_owned(),
+                ))
+            }
+        };
+        let actual = match (&selected.data, handle) {
+            (SaveData::Xray { inventory, .. }, ItemHandle::Xray(handle)) => inventory
+                .iter()
+                .find(|item| item.handle == *handle)
+                .and_then(|item| item.placement.as_deref()),
+            _ => None,
+        };
+        if actual != Some(expected) {
+            return Err(Error::damaged("saved item placement differs after read-back"));
+        }
+    }
+    for (handle, expected) in &edits.upgrades {
+        let actual = match (&selected.data, handle) {
+            (SaveData::Xray { save, .. }, ItemHandle::Xray(handle)) => writer::current_upgrades(save, *handle)?,
+            _ => {
+                return Err(Error::Refused(
+                    "S2 upgrades are not supported by this writer".to_owned(),
+                ))
+            }
+        };
+        if &actual != expected {
+            return Err(Error::damaged("saved item upgrades differ after read-back"));
+        }
+    }
+    for handle in &edits.removals {
+        let exists = match (&selected.data, handle) {
+            (SaveData::Xray { inventory, .. }, ItemHandle::Xray(handle)) => {
+                inventory.iter().any(|item| item.handle == *handle)
+            }
+            _ => {
+                return Err(Error::Refused(
+                    "S2 item removal is not supported by this writer".to_owned(),
+                ))
+            }
+        };
+        if exists {
+            return Err(Error::damaged("removed item remains after read-back"));
+        }
+    }
+    if !edits.adds.is_empty() {
+        let (before, after) = match (&original.data, &selected.data) {
+            (SaveData::Xray { inventory: before, .. }, SaveData::Xray { inventory: after, .. }) => (before, after),
+            _ => {
+                return Err(Error::Refused(
+                    "S2 item additions are not supported by this writer".to_owned(),
+                ))
+            }
+        };
+        let before_handles: BTreeSet<u16> = before.iter().map(|item| item.handle).collect();
+        let mut verified_handles = BTreeSet::new();
+        for request in &edits.adds {
+            let ammo = request.item_key.to_ascii_lowercase().starts_with("ammo_");
+            let expected_count = ammo.then(|| u16::try_from(request.quantity).ok()).flatten();
+            let added_item = after.iter().find(|item| {
+                !before_handles.contains(&item.handle)
+                    && !verified_handles.contains(&item.handle)
+                    && item.section == request.item_key
+                    && if ammo {
+                        item.count == expected_count
+                    } else {
+                        request.quantity == 1 && item.count.is_none_or(|count| count == 1)
+                    }
+            });
+            let Some(added_item) = added_item else {
+                return Err(Error::damaged("added item differs after read-back"));
+            };
+            verified_handles.insert(added_item.handle);
         }
     }
     for handle in stash_moves {
@@ -1956,7 +3711,12 @@ impl Screen for Inventory {
     }
 
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
+        let (row, banner, reload) = add_external_file_banner(cx.tree, host)?;
+        self.external_banner_row = Some(row);
+        self.external_banner = Some(banner);
+        self.external_reload = Some(reload);
         let inventory = style::card(cx.tree, host)?;
+        self.inventory_card = Some(inventory);
         style::label(cx.tree, inventory, "ИНВЕНТАРЬ", Text::Heading)?;
         let money = style::row(cx.tree, inventory)?;
         self.money_label = Some(style::label(
@@ -2075,15 +3835,71 @@ impl Screen for Inventory {
         for _ in 0..INVENTORY_PAGE_SIZE {
             let row = style::row(cx.tree, inventory)?;
             let label = style::label(cx.tree, row, "", Text::Body)?;
+            let select = style::button(cx.tree, row, "Осмотреть", Button::Secondary)?;
             let decrease = style::button(cx.tree, row, "−", Button::Secondary)?;
             let increase = style::button(cx.tree, row, "+", Button::Secondary)?;
             self.rows.push(ItemControls {
                 label,
+                select,
                 decrease,
                 increase,
                 handle: None,
             });
         }
+        let inspector = style::card(cx.tree, inventory)?;
+        style::label(cx.tree, inspector, "ВЫБРАННЫЙ ПРЕДМЕТ", Text::Heading)?;
+        let inspector_summary = paragraph(
+            cx.tree,
+            inspector,
+            "Предмет не выбран\nКлюч: —\nКоличество в пачке: —",
+            Text::Body,
+        )?;
+        // Reserve four lines because a long item name or key may wrap at the narrow shell widths.
+        cx.tree.set_style(
+            inspector_summary,
+            Style {
+                min: Size::new(0.0, 80.0),
+                preferred: Size::new(0.0, 80.0),
+                shrink: 0.0,
+                ..Style::default()
+            },
+        )?;
+        self.inspector_summary = Some(inspector_summary);
+        self.inspector_condition_heading = Some(style::label(cx.tree, inspector, "ПРОЧНОСТЬ", Text::Heading)?);
+        self.inspector_condition = Some(style::label(
+            cx.tree,
+            inspector,
+            "Состояние / прочность: —",
+            Text::Value,
+        )?);
+        let condition_row = style::row(cx.tree, inspector)?;
+        for (percent, label) in [(100_u8, "100%"), (75, "75%"), (50, "50%")] {
+            let button = style::button(cx.tree, condition_row, label, Button::Secondary)?;
+            self.condition_buttons.push((button, percent));
+        }
+        style::label(cx.tree, inspector, "РАЗМЕЩЕНИЕ", Text::Heading)?;
+        self.inspector_placement = Some(style::label(cx.tree, inspector, "Размещение: —", Text::Body)?);
+        let placement_row = style::row(cx.tree, inspector)?;
+        for (label, destination) in [("Рюкзак", DraftPlacement::Ruck), ("Пояс", DraftPlacement::Belt)] {
+            let button = style::button(cx.tree, placement_row, label, Button::Secondary)?;
+            self.placement_buttons.push((button, destination));
+        }
+        style::label(cx.tree, inspector, "МОДИФИКАЦИИ", Text::Heading)?;
+        self.inspector_upgrades = Some(style::label(cx.tree, inspector, "Модификации: —", Text::Body)?);
+        let upgrade_row = style::row(cx.tree, inspector)?;
+        for _ in 0..MAXIMUM_UPGRADE_ROWS {
+            let widget = style::button(cx.tree, upgrade_row, "", Button::Secondary)?;
+            cx.tree.set_visible(widget, false)?;
+            self.upgrade_controls.push(UpgradeControl { widget, key: None });
+        }
+        let edit_actions = style::row(cx.tree, inspector)?;
+        self.remove_button = Some(style::button(cx.tree, edit_actions, "Удалить предмет", Button::Danger)?);
+        self.add_button = Some(style::button(
+            cx.tree,
+            edit_actions,
+            "+ Добавить предмет",
+            Button::Primary,
+        )?);
         self.export = Some(style::button(cx.tree, inventory, "Сохранить", Button::Primary)?);
         self.status = Some(style::label(
             cx.tree,
@@ -2091,6 +3907,87 @@ impl Screen for Inventory {
             "Изменения пока не подготовлены.",
             Text::Note,
         )?);
+        let panel = style::card(cx.tree, host)?;
+        self.add_panel = Some(panel);
+        style::label(cx.tree, panel, "ДОБАВИТЬ ПРЕДМЕТ", Text::Heading)?;
+        style::label(
+            cx.tree,
+            panel,
+            "Доступны записи каталога с сериализованным шаблоном в этом сейве.",
+            Text::Note,
+        )?;
+        let add_search = cx.tree.add(
+            Some(panel),
+            NodeKind::Leaf,
+            Style {
+                grow: 1.0,
+                min: crate::layout::Size::new(220.0, crate::theme::BUTTON_HEIGHT),
+                padding: crate::layout::Edges {
+                    left: 10.0,
+                    top: 0.0,
+                    right: 10.0,
+                    bottom: 0.0,
+                },
+                ..Style::default()
+            },
+            Content::Input {
+                text: "Поиск по названию или ключу секции…".to_owned(),
+                style: Text::Body.style(),
+            },
+            Look {
+                fill: Some(style::rgb(colors.background[4])),
+                border: Some((style::rgb(colors.borders[1]), 1.0)),
+                radius: crate::theme::BUTTON_RADIUS,
+                text: style::rgb(colors.text[2]),
+                ..Look::default()
+            },
+        )?;
+        self.add_search_widget = Some(add_search);
+        self.add_search = Some(TextInput::new("", inventory_search_config())?);
+        let add_empty = style::label(cx.tree, panel, "Предметы не найдены.", Text::Note)?;
+        self.add_empty = Some(add_empty);
+        cx.tree.set_visible(add_empty, false)?;
+        for _ in 0..ADD_ITEM_PAGE_SIZE {
+            let widget = style::button(cx.tree, panel, "", Button::Secondary)?;
+            cx.tree.set_visible(widget, false)?;
+            self.add_candidate_rows.push((widget, None));
+        }
+        let add_pages = style::row(cx.tree, panel)?;
+        self.add_previous = Some(style::button(cx.tree, add_pages, "Назад", Button::Secondary)?);
+        self.add_next = Some(style::button(cx.tree, add_pages, "Дальше", Button::Secondary)?);
+        let quantity_row = style::row(cx.tree, panel)?;
+        style::label(cx.tree, quantity_row, "Количество:", Text::Body)?;
+        let quantity = cx.tree.add(
+            Some(quantity_row),
+            NodeKind::Leaf,
+            Style {
+                min: crate::layout::Size::new(120.0, crate::theme::BUTTON_HEIGHT),
+                padding: crate::layout::Edges {
+                    left: 10.0,
+                    top: 0.0,
+                    right: 10.0,
+                    bottom: 0.0,
+                },
+                ..Style::default()
+            },
+            Content::Input {
+                text: "1".to_owned(),
+                style: Text::Value.style(),
+            },
+            Look {
+                fill: Some(style::rgb(colors.background[4])),
+                border: Some((style::rgb(colors.borders[1]), 1.0)),
+                radius: crate::theme::BUTTON_RADIUS,
+                text: style::rgb(colors.text[0]),
+                ..Look::default()
+            },
+        )?;
+        self.add_quantity_widget = Some(quantity);
+        self.add_quantity = Some(TextInput::new("1", add_quantity_config())?);
+        let add_actions = style::row(cx.tree, panel)?;
+        self.add_confirm = Some(style::button(cx.tree, add_actions, "Добавить", Button::Primary)?);
+        self.add_cancel = Some(style::button(cx.tree, add_actions, "Отмена", Button::Secondary)?);
+        cx.tree.set_visible(panel, false)?;
         self.render(cx)
     }
 
@@ -2105,6 +4002,9 @@ impl Screen for Inventory {
         clicked: Option<WidgetId>,
     ) -> Result<()> {
         self.workspace.poll_tasks();
+        if let Message::User(AppMessage::Tick(seconds)) = message {
+            schedule_file_check(&self.workspace, cx, *seconds);
+        }
         if let Message::User(AppMessage::EditorAction(action)) = message {
             return self.editor_action(*action, cx);
         }
@@ -2114,10 +4014,71 @@ impl Screen for Inventory {
         if let (Some(widget), Some(input)) = (self.money_input_widget, self.money_input.as_mut()) {
             input.focus(cx.tree.focused() == Some(widget), 0);
         }
+        if let (Some(widget), Some(input)) = (self.add_search_widget, self.add_search.as_mut()) {
+            input.focus(cx.tree.focused() == Some(widget), 0);
+        }
+        if let (Some(widget), Some(input)) = (self.add_quantity_widget, self.add_quantity.as_mut()) {
+            input.focus(cx.tree.focused() == Some(widget), 0);
+        }
         if clicked.is_some() && clicked == self.search_widget {
             if let Some(input) = self.search.as_mut() {
                 input.focus(true, 0);
             }
+        }
+        if clicked.is_some() && clicked == self.add_search_widget {
+            if let Some(input) = self.add_search.as_mut() {
+                input.focus(true, 0);
+            }
+        }
+        if clicked.is_some() && clicked == self.add_quantity_widget {
+            if let Some(input) = self.add_quantity.as_mut() {
+                input.focus(true, 0);
+            }
+        }
+        if let Some(key) = self
+            .add_candidate_rows
+            .iter()
+            .find(|(widget, _)| clicked.is_some() && clicked == Some(*widget))
+            .and_then(|(_, key)| key.clone())
+        {
+            self.add_selected_key = Some(key);
+            return self.render_add_panel(cx);
+        }
+        if clicked.is_some() && clicked == self.add_previous {
+            self.add_page = self.add_page.saturating_sub(1);
+            return self.render_add_panel(cx);
+        }
+        if clicked.is_some() && clicked == self.add_next {
+            self.add_page = self.add_page.saturating_add(1);
+            return self.render_add_panel(cx);
+        }
+        if clicked.is_some() && clicked == self.add_cancel {
+            self.close_add_panel(cx)?;
+            return self.render(cx);
+        }
+        if clicked.is_some() && clicked == self.add_confirm {
+            let quantity = self
+                .add_quantity
+                .as_ref()
+                .map(TextInput::text)
+                .and_then(|value| value.parse::<u32>().ok())
+                .unwrap_or(1)
+                .max(1);
+            if quantity > u32::from(u16::MAX) {
+                cx.status = Some("Количество должно быть от 1 до 65535 для этого формата.".to_owned());
+                return Ok(());
+            }
+            let Some(key) = self.add_selected_key.clone() else {
+                cx.status = Some("Выберите предмет с подтверждённым шаблоном добавления.".to_owned());
+                return Ok(());
+            };
+            self.stage_add_key(cx, &key, quantity)?;
+            if let (Some(input), Some(widget)) = (self.add_quantity.as_mut(), self.add_quantity_widget) {
+                input.focus(false, 0);
+                cx.tree.set_text(widget, &quantity.to_string())?;
+            }
+            self.close_add_panel(cx)?;
+            return self.render(cx);
         }
         if clicked.is_some() && clicked == self.clear_search {
             self.search_query.clear();
@@ -2142,6 +4103,49 @@ impl Screen for Inventory {
             self.page = 0;
             return self.render(cx);
         }
+        if let Some(handle) = self
+            .rows
+            .iter()
+            .find(|row| clicked.is_some() && clicked == Some(row.select))
+            .and_then(|row| row.handle)
+        {
+            self.selected_item = Some(handle);
+            return self.render(cx);
+        }
+        if let Some(percent) = self
+            .condition_buttons
+            .iter()
+            .find(|(id, _)| clicked.is_some() && clicked == Some(*id))
+            .map(|(_, percent)| *percent)
+        {
+            if let Some(handle) = self.selected_item {
+                self.stage_durability(cx, handle, percent)?;
+            }
+            return self.render(cx);
+        }
+        if let Some(destination) = self
+            .placement_buttons
+            .iter()
+            .find(|(id, _)| clicked.is_some() && clicked == Some(*id))
+            .map(|(_, destination)| *destination)
+        {
+            if let Some(handle) = self.selected_item {
+                self.stage_placement(cx, handle, destination)?;
+            }
+            return self.render(cx);
+        }
+        if clicked.is_some() && clicked == self.remove_button {
+            if let Some(handle) = self.selected_item {
+                self.stage_remove(cx, handle)?;
+            }
+            return self.render(cx);
+        }
+        if clicked.is_some() && clicked == self.add_button {
+            return self.open_add_panel(cx);
+        }
+        if clicked.is_some() && clicked == self.external_reload {
+            return start_reload_selected(&self.workspace, cx);
+        }
         if let Message::Window(crate::event_loop::WindowEvent::Key {
             pressed: true,
             keysym,
@@ -2150,6 +4154,82 @@ impl Screen for Inventory {
             shift,
         }) = message
         {
+            if self.add_panel_open && *keysym == 0xff1b {
+                self.close_add_panel(cx)?;
+                return self.render(cx);
+            }
+            if self.add_panel_open && *ctrl && matches!(*keysym, 0x46 | 0x66) {
+                if let Some(widget) = self.add_search_widget {
+                    if let Some(input) = self.add_search.as_mut() {
+                        input.focus(true, 0);
+                    }
+                    cx.tree.set_focus(Some(widget))?;
+                }
+                return Ok(());
+            }
+            if self.add_panel_open && self.add_search.as_ref().is_some_and(TextInput::focused) {
+                let key = match *keysym {
+                    0xff08 => Key::Backspace,
+                    0xffff => Key::Delete,
+                    0xff51 => Key::Left,
+                    0xff53 => Key::Right,
+                    0xff50 => Key::Home,
+                    0xff57 => Key::End,
+                    value if *ctrl && matches!(value, 0x61 | 0x41) => Key::A,
+                    value if *ctrl && matches!(value, 0x7a | 0x5a) => Key::Z,
+                    _ => Key::Character(text.unwrap_or('\0')),
+                };
+                let typed = text.map(|character| character.to_string());
+                let mut clipboard = SaveClipboard::default();
+                if let Some(input) = self.add_search.as_mut() {
+                    let _ = input.key(
+                        key,
+                        Modifiers {
+                            ctrl: *ctrl,
+                            shift: false,
+                        },
+                        typed.as_deref(),
+                        &mut clipboard,
+                    )?;
+                    self.add_search_query = input.text();
+                    if let Some(widget) = self.add_search_widget {
+                        cx.tree.set_text(widget, &self.add_search_query)?;
+                    }
+                    self.add_page = 0;
+                    self.add_selected_key = None;
+                    return self.render_add_panel(cx);
+                }
+            }
+            if self.add_panel_open && self.add_quantity.as_ref().is_some_and(TextInput::focused) {
+                let key = match *keysym {
+                    0xff08 => Key::Backspace,
+                    0xffff => Key::Delete,
+                    0xff51 => Key::Left,
+                    0xff53 => Key::Right,
+                    0xff50 => Key::Home,
+                    0xff57 => Key::End,
+                    value if *ctrl && matches!(value, 0x61 | 0x41) => Key::A,
+                    value if *ctrl && matches!(value, 0x7a | 0x5a) => Key::Z,
+                    _ => Key::Character(text.unwrap_or('\0')),
+                };
+                let typed = text.map(|character| character.to_string());
+                let mut clipboard = SaveClipboard::default();
+                if let Some(input) = self.add_quantity.as_mut() {
+                    let _ = input.key(
+                        key,
+                        Modifiers {
+                            ctrl: *ctrl,
+                            shift: *shift,
+                        },
+                        typed.as_deref(),
+                        &mut clipboard,
+                    )?;
+                    if let Some(widget) = self.add_quantity_widget {
+                        cx.tree.set_text(widget, &input.text())?;
+                    }
+                    return self.render_add_panel(cx);
+                }
+            }
             if *ctrl && matches!(*keysym, 0x46 | 0x66) {
                 if let Some(widget) = self.search_widget {
                     self.search.as_mut().map(|input| input.focus(true, 0));
@@ -2290,10 +4370,35 @@ impl Screen for Inventory {
                 return self.render(cx);
             }
         }
+        for control in &self.upgrade_controls {
+            if clicked.is_some() && clicked == Some(control.widget) {
+                if let Some(key) = control.key.as_deref() {
+                    if let Some(handle) = self.selected_item {
+                        self.stage_upgrade(cx, handle, key)?;
+                    }
+                }
+                return self.render(cx);
+            }
+        }
         if clicked.is_some() && clicked == self.export {
             return self.save(cx);
         }
         if let Message::User(AppMessage::ToScreen(ScreenId::Inventory, payload)) = message {
+            if let Some(FileCheckFinished {
+                path,
+                source_sha256,
+                changed,
+            }) = payload.downcast_ref::<FileCheckFinished>()
+            {
+                let mut state = self.workspace.lock();
+                if state
+                    .selected
+                    .as_ref()
+                    .is_some_and(|selected| selected.slot.path == *path && selected.source_sha256 == *source_sha256)
+                {
+                    state.external_change = *changed;
+                }
+            }
             if let Some(SaveFinished { source_sha256, result }) = payload.downcast_ref::<SaveFinished>() {
                 match result {
                     Ok((loaded, text)) => {
@@ -2301,13 +4406,22 @@ impl Screen for Inventory {
                         state.selected = Some(Arc::clone(loaded));
                         state.pending_money = None;
                         state.pending_stacks.clear();
+                        state.pending_durability.clear();
+                        state.pending_placements.clear();
+                        state.pending_upgrades.clear();
+                        state.pending_removed.clear();
+                        state.pending_adds.clear();
                         state.pending_stash_moves.clear();
+                        state.external_change = false;
                         drop(state);
                         cx.app.discard_draft(source_sha256);
                         let old_empty = DraftJournal::new(vec![DraftPlan::empty(source_sha256)?], 0)?;
                         let new_journal = DraftJournal::new(vec![DraftPlan::empty(&loaded.source_sha256)?], 0)?;
                         cx.app
                             .set_current_save_identity(loaded.slot.path.clone(), loaded.source_sha256.clone());
+                        let legacy_s2 =
+                            matches!(&loaded.data, SaveData::Stalker2 { save, .. } if save.index().is_legacy());
+                        cx.app.set_current_save_format(loaded.slot.format_id.clone(), legacy_s2);
                         cx.app.set_draft_journal(new_journal.clone());
                         set_workspace_draft(&self.workspace, &new_journal);
                         self.workspace.persist_drafts(vec![old_empty, new_journal], cx);
@@ -2538,7 +4652,7 @@ impl Stashes {
             if !save.unresolved_handles().is_empty() {
                 self.set_status(cx, "Перенос отключён: индекс сейва содержит неразрешённые ссылки.")?;
             } else if save.index().is_legacy() {
-                self.set_status(cx, "S2 1.0.x доступен только для чтения.")?;
+                self.set_status(cx, S2_LEGACY_EDIT_REFUSAL)?;
             } else if pending_moves.is_empty() {
                 self.set_status(
                     cx,
@@ -2606,6 +4720,30 @@ impl Stashes {
                 format!("{name} будет перенесён в рюкзак при сохранении.")
             }
         };
+        let (source_sha256, pending_moves) = {
+            let state = self.workspace.lock();
+            (
+                state.selected.as_ref().map(|selected| selected.source_sha256.clone()),
+                state.pending_stash_moves.iter().copied().collect::<Vec<_>>(),
+            )
+        };
+        let Some(source_sha256) = source_sha256 else {
+            return Ok(());
+        };
+        let mut plan = cx
+            .app
+            .draft(&source_sha256)
+            .cloned()
+            .unwrap_or(DraftPlan::empty(&source_sha256)?);
+        plan.s2_stash_takes = pending_moves;
+        cx.app.record_draft(plan)?;
+        let journal = cx
+            .app
+            .draft_journal(&source_sha256)
+            .cloned()
+            .ok_or_else(|| Error::Refused("draft journal disappeared after stash edit".to_owned()))?;
+        set_workspace_draft(&self.workspace, &journal);
+        self.workspace.persist_draft(journal, cx);
         cx.status = Some(status.clone());
         self.set_status(cx, &status)?;
         self.render(cx)?;
@@ -2735,7 +4873,7 @@ impl Screen for Transitions {
     }
 }
 
-fn short_text(text: &str, limit: usize) -> String {
+pub(super) fn short_text(text: &str, limit: usize) -> String {
     let mut chars = text.chars();
     let short = chars.by_ref().take(limit).collect::<String>();
     if chars.next().is_some() {
@@ -2748,8 +4886,9 @@ fn short_text(text: &str, limit: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        commit_save_edits_to, prepare_save_edits, prepare_xray_edits, DraftJournal, DraftPlan, DraftStore, Inventory,
-        LoadFinished, LoadedSave, Overview, S2Save, SaveBuffer, SaveSlot, Workspace,
+        add_external_file_banner, commit_save_edits_to, prepare_save_edits, prepare_xray_edits, AddRequest,
+        DraftJournal, DraftPlan, DraftStore, Inventory, LoadFinished, LoadedSave, Overview, PendingInventoryEdits,
+        S2Save, SaveBuffer, SaveSlot, Workspace,
     };
     use crate::event_loop::{channel_pair, Message, WindowEvent};
     use crate::glyphs::Fonts;
@@ -2767,6 +4906,30 @@ mod tests {
     use std::time::UNIX_EPOCH;
 
     static NEXT_TEMP_DIRECTORY: AtomicU64 = AtomicU64::new(1);
+
+    #[test]
+    fn save_library_and_overview_dates_match_reference_patterns() {
+        assert_eq!(super::display_file_time(UNIX_EPOCH, true, false), "01.01.70 00:00");
+        assert_eq!(super::display_file_time(UNIX_EPOCH, false, true), "01.01.1970 00:00:00");
+    }
+
+    #[test]
+    fn external_change_banner_takes_no_space_until_the_file_changes() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let (container, label, reload) = add_external_file_banner(&mut tree, host)?;
+
+        assert!(!tree.is_visible(container));
+        assert!(!tree.is_visible(label));
+        assert!(!tree.is_visible(reload));
+        Ok(())
+    }
 
     struct TempDirectory(PathBuf);
 
@@ -2832,6 +4995,229 @@ mod tests {
     }
 
     #[test]
+    fn inventory_shows_condition_presets_for_a_proven_condition_field() -> sse_core::Result<()> {
+        let source = include_bytes!("../../../../fixtures/synthetic/writer-durability/xray-durability-cop-source.sav");
+        let loaded = Arc::new(load_xray(
+            source,
+            "xray-durability-cop-source.sav",
+            "stalker-cop",
+            "cop",
+        )?);
+        let source_sha256 = loaded.source_sha256.clone();
+        let workspace = Workspace::default();
+        workspace.lock().selected = Some(loaded);
+        let mut screen = Inventory::new(workspace);
+        let mut app = sse_app::AppState::new();
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: None,
+            status: None,
+            app: &mut app,
+        };
+        screen.build(&mut cx, host)?;
+
+        assert_eq!(
+            screen
+                .condition_buttons
+                .iter()
+                .map(|(_, value)| *value)
+                .collect::<Vec<_>>(),
+            [100, 75, 50]
+        );
+        let seventy_five = screen
+            .condition_buttons
+            .iter()
+            .find(|(_, value)| *value == 75)
+            .map(|(id, _)| *id)
+            .ok_or_else(|| Error::damaged("75% durability preset is missing"))?;
+        screen.message(&mut cx, &Message::Window(WindowEvent::PointerLeft), Some(seventy_five))?;
+        assert_eq!(
+            cx.app
+                .draft(&source_sha256)
+                .and_then(|plan| plan.durability.get(&0x3456)),
+            Some(&75)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn inventory_inspector_reserves_space_for_three_line_item_summary() -> sse_core::Result<()> {
+        let source = include_bytes!("../../../../fixtures/synthetic/writer-durability/xray-durability-cop-source.sav");
+        let loaded = Arc::new(load_xray(
+            source,
+            "xray-durability-cop-source.sav",
+            "stalker-cop",
+            "cop",
+        )?);
+        let workspace = Workspace::default();
+        workspace.lock().selected = Some(loaded);
+        let mut screen = Inventory::new(workspace);
+        let mut app = sse_app::AppState::new();
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: None,
+            status: None,
+            app: &mut app,
+        };
+        screen.build(&mut cx, host)?;
+        // The shell leaves roughly this width for the content pane after navigation and the save library.
+        cx.tree.resize(720, 800);
+        cx.tree.update_layout()?;
+        let summary = cx.tree.rect(
+            screen
+                .inspector_summary
+                .ok_or_else(|| Error::damaged("item summary missing"))?,
+        )?;
+        let condition_heading = cx.tree.rect(
+            screen
+                .inspector_condition_heading
+                .ok_or_else(|| Error::damaged("condition heading missing"))?,
+        )?;
+
+        assert!(
+            summary.height >= 80,
+            "item summary has insufficient height: {summary:?}"
+        );
+        assert!(
+            i64::from(summary.y) + i64::from(summary.height) <= i64::from(condition_heading.y),
+            "item summary {summary:?} overlaps condition heading {condition_heading:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn durability_draft_matches_reference_bytes_and_read_back() -> sse_core::Result<()> {
+        let source = include_bytes!("../../../../fixtures/synthetic/writer-durability/xray-durability-cop-source.sav");
+        let expected =
+            include_bytes!("../../../../fixtures/synthetic/writer-durability/xray-durability-cop-expected.sav");
+        let loaded = load_xray(source, "xray-durability-cop-source.sav", "stalker-cop", "cop")?;
+        let edits = super::PendingInventoryEdits {
+            durability: BTreeMap::from([(super::ItemHandle::Xray(0x3456), 75)]),
+            ..super::PendingInventoryEdits::default()
+        };
+        let (output, _) = prepare_save_edits(&loaded, &edits, &BTreeSet::new())?;
+
+        assert_eq!(output.as_slice(), expected);
+        let reloaded = load_xray(
+            output.as_slice(),
+            "xray-durability-cop-expected.sav",
+            "stalker-cop",
+            "cop",
+        )?;
+        super::verify_requested_values(&loaded, &reloaded, &edits, &BTreeSet::new())?;
+        Ok(())
+    }
+
+    #[test]
+    fn add_item_draft_uses_a_catalogued_matching_template_and_reads_back() -> sse_core::Result<()> {
+        let source = include_bytes!("../../../../fixtures/synthetic/writer-add/xray-add-cop-ammo-source.sav");
+        let expected = include_bytes!("../../../../fixtures/synthetic/writer-add/xray-add-cop-ammo-expected.sav");
+        let loaded = load_xray(source, "xray-add-cop-ammo-source.sav", "stalker-cop", "cop")?;
+        let edits = super::PendingInventoryEdits {
+            adds: vec![AddRequest::new("ammo_9x39_pab9", 17, "inventory")?],
+            ..super::PendingInventoryEdits::default()
+        };
+        let (output, _) = prepare_save_edits(&loaded, &edits, &BTreeSet::new())?;
+        assert_eq!(output.as_slice(), expected);
+        let reloaded = LoadedSave::from_bytes(loaded.slot.clone(), output.as_slice())?;
+        super::verify_requested_values(&loaded, &reloaded, &edits, &BTreeSet::new())?;
+        assert_eq!(reloaded.slot.format_id.as_deref(), Some("stalker-cop"));
+        Ok(())
+    }
+
+    #[test]
+    fn add_catalog_shows_template_backed_items_and_disables_unsafe_templates() -> sse_core::Result<()> {
+        let source = include_bytes!("../../../../fixtures/synthetic/writer-add/xray-add-cop-ammo-source.sav");
+        let loaded = load_xray(source, "xray-add-cop-ammo-source.sav", "stalker-cop", "cop")?;
+        let candidates = super::add_candidates(&loaded, &BTreeSet::new());
+
+        let candidate = candidates
+            .iter()
+            .find(|candidate| candidate.key == "ammo_9x39_pab9")
+            .ok_or_else(|| Error::damaged("catalog candidate is missing"))?;
+        assert!(candidate.template_available);
+        assert!(!candidate.display_name.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn cancelling_add_panel_restores_the_previous_focus() -> sse_core::Result<()> {
+        let temp = TempDirectory::new();
+        let source = include_bytes!("../../../../fixtures/synthetic/writer-add/xray-add-cop-ammo-source.sav");
+        let loaded = load_xray(source, "xray-add-cop-ammo-source.sav", "stalker-cop", "cop")?;
+        let source_sha256 = loaded.source_sha256.clone();
+        let workspace = Workspace::with_draft_directory(temp.0.join("drafts"));
+        workspace.lock().selected = Some(Arc::new(loaded));
+        let mut app = sse_app::state::AppState::new();
+        app.set_current_save_identity(PathBuf::from("fixture.sav"), source_sha256.clone());
+        app.set_draft_journal(DraftJournal::new(vec![DraftPlan::empty(&source_sha256)?], 0)?);
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let mut inventory = Inventory::new(workspace);
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: None,
+            status: None,
+            app: &mut app,
+        };
+        inventory.build(&mut cx, host)?;
+        let previous_focus = inventory
+            .search_widget
+            .ok_or_else(|| Error::damaged("inventory search is missing"))?;
+        let add_button = inventory
+            .add_button
+            .ok_or_else(|| Error::damaged("add button is missing"))?;
+        let cancel_button = inventory
+            .add_cancel
+            .ok_or_else(|| Error::damaged("cancel button is missing"))?;
+        cx.tree.set_focus(Some(previous_focus))?;
+        inventory.message(&mut cx, &Message::User(AppMessage::Tick(3)), Some(add_button))?;
+        inventory.message(&mut cx, &Message::User(AppMessage::Tick(3)), Some(cancel_button))?;
+
+        assert_eq!(cx.tree.focused(), Some(previous_focus));
+        Ok(())
+    }
+
+    #[test]
+    fn identical_unit_items_share_one_inventory_row() -> sse_core::Result<()> {
+        let source = include_bytes!("../../../../fixtures/synthetic/writer-durability/xray-durability-cop-source.sav");
+        let loaded = load_xray(source, "xray-durability-cop-source.sav", "stalker-cop", "cop")?;
+        let super::SaveData::Xray { save, inventory } = &loaded.data else {
+            return Err(Error::damaged("X-Ray fixture parsed as S2"));
+        };
+        let item = inventory
+            .iter()
+            .find(|item| item.count.is_none())
+            .ok_or_else(|| Error::damaged("fixture has no individually represented item"))?;
+        let groups = super::group_xray_items(save, vec![item, item], &super::WorkspaceState::default());
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups.first().map(Vec::len), Some(2));
+        Ok(())
+    }
+
+    #[test]
     fn s2_money_edit_uses_the_verified_writer() -> sse_core::Result<()> {
         let source = include_bytes!("../../../../fixtures/synthetic/writer-s2-stacks/s2-stacks-source.sav");
         let packed = SaveBuffer::from_vec(source.to_vec());
@@ -2848,7 +5234,14 @@ mod tests {
             stash,
         );
 
-        let (output, summary) = prepare_save_edits(&loaded, Some(1_000), &BTreeMap::new(), &BTreeSet::new())?;
+        let (output, summary) = prepare_save_edits(
+            &loaded,
+            &PendingInventoryEdits {
+                money: Some(1_000),
+                ..PendingInventoryEdits::default()
+            },
+            &BTreeSet::new(),
+        )?;
         assert_eq!(S2Save::from_bytes(output.as_slice())?.money(), 1_000);
         assert_eq!(summary.money, Some(1_000));
         Ok(())
@@ -2880,7 +5273,8 @@ mod tests {
         };
 
         let pending_moves = BTreeSet::from([handle]);
-        let (updated, status) = commit_save_edits_to(&selected, None, &BTreeMap::new(), &pending_moves, &backup)?;
+        let (updated, status) =
+            commit_save_edits_to(&selected, &PendingInventoryEdits::default(), &pending_moves, &backup)?;
         let super::SaveData::Stalker2 { save, .. } = &updated.data else {
             return Err(Error::damaged("updated S2 fixture parsed as X-Ray"));
         };
@@ -2904,6 +5298,7 @@ mod tests {
         let original = include_bytes!("../../../../fixtures/synthetic/writer-s2-stash/s2-stash-source.sav");
         fs::write(&path, original)?;
         let selected = LoadedSave::read(fixture_slot(&path.to_string_lossy(), "stalker2", "stalker2"))?;
+        let source_sha256 = selected.source_sha256.clone();
         let handle = match &selected.data {
             super::SaveData::Stalker2 { stash_items, .. } => stash_items
                 .as_ref()
@@ -2915,9 +5310,10 @@ mod tests {
                 .ok_or_else(|| Error::damaged("S2 stash fixture has no items"))?,
             super::SaveData::Xray { .. } => return Err(Error::damaged("S2 fixture parsed as X-Ray")),
         };
-        let workspace = Workspace::default();
+        let draft_directory = temp.0.join("drafts");
+        let workspace = Workspace::with_draft_directory(draft_directory.clone());
         workspace.lock().selected = Some(std::sync::Arc::new(selected));
-        let (proxy, _receiver) = channel_pair::<AppMessage>();
+        let (proxy, receiver) = channel_pair::<AppMessage>();
         let mut app = sse_app::AppState::new();
         let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
         let host = tree.add(
@@ -2938,9 +5334,33 @@ mod tests {
 
         screen.move_item(&mut cx, handle)?;
         assert!(workspace.lock().pending_stash_moves.contains(&handle));
+        assert_eq!(
+            cx.app.draft(&source_sha256).map(|plan| plan.s2_stash_takes.as_slice()),
+            Some([handle].as_slice())
+        );
+        let _ = receiver
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .map_err(|error| Error::System(error.to_string()))?;
+        let persisted = DraftStore::new(&draft_directory)
+            .load(&source_sha256)?
+            .ok_or_else(|| Error::damaged("S2 stash draft was not persisted"))?;
+        assert_eq!(
+            persisted.current().map(|plan| plan.s2_stash_takes.as_slice()),
+            Some([handle].as_slice())
+        );
+
+        let restored_workspace = Workspace::default();
+        let restored_selected = LoadedSave::read(fixture_slot(&path.to_string_lossy(), "stalker2", "stalker2"))?;
+        restored_workspace.lock().selected = Some(std::sync::Arc::new(restored_selected));
+        super::set_workspace_draft(&restored_workspace, &persisted);
+        assert!(restored_workspace.lock().pending_stash_moves.contains(&handle));
         assert_eq!(fs::read(&path)?, original);
         screen.move_item(&mut cx, handle)?;
         assert!(!workspace.lock().pending_stash_moves.contains(&handle));
+        let _ = receiver
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .map_err(|error| Error::System(error.to_string()))?;
+        assert!(DraftStore::new(&draft_directory).load(&source_sha256)?.is_none());
         assert_eq!(fs::read(&path)?, original);
         Ok(())
     }
@@ -2960,8 +5380,15 @@ mod tests {
             super::SaveData::Xray { save, .. } => save.money()?.saturating_add(321),
             super::SaveData::Stalker2 { .. } => return Err(Error::damaged("X-Ray fixture parsed as S2")),
         };
-        let (xray_after, _) =
-            commit_save_edits_to(&xray, Some(xray_money), &BTreeMap::new(), &BTreeSet::new(), &backup)?;
+        let (xray_after, _) = commit_save_edits_to(
+            &xray,
+            &PendingInventoryEdits {
+                money: Some(xray_money),
+                ..PendingInventoryEdits::default()
+            },
+            &BTreeSet::new(),
+            &backup,
+        )?;
         assert!(matches!(
             &xray_after.data,
             super::SaveData::Xray { save, .. } if save.money().ok() == Some(xray_money)
@@ -2978,8 +5405,10 @@ mod tests {
         };
         let (s2_after, _) = commit_save_edits_to(
             &s2,
-            Some(s2_money),
-            &BTreeMap::new(),
+            &PendingInventoryEdits {
+                money: Some(s2_money),
+                ..PendingInventoryEdits::default()
+            },
             &BTreeSet::new(),
             &temp.0.join("s2-backups"),
         )?;
@@ -3049,6 +5478,8 @@ mod tests {
         };
         overview.message(&mut cx, &message, None)?;
         assert_eq!(cx.app.current_save(), Some(path.as_path()));
+        assert_eq!(cx.app.current_save_format(), Some("stalker-cop"));
+        assert!(!cx.app.current_save_is_legacy());
         let source_sha256 = sse_codecs::sha256::sha256_hex(include_bytes!(
             "../../../../fixtures/synthetic/writer-money/xray-money-cop-source.sav"
         ));

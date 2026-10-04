@@ -65,6 +65,8 @@ pub struct AppState {
     game_dir: Option<PathBuf>,
     current_save: Option<PathBuf>,
     current_save_sha256: Option<String>,
+    current_save_format: Option<String>,
+    current_save_legacy: bool,
     invalid_numeric_input: bool,
     active_screen: String,
     recent_saves: Vec<PathBuf>,
@@ -89,6 +91,8 @@ impl AppState {
             game_dir: None,
             current_save: None,
             current_save_sha256: None,
+            current_save_format: None,
+            current_save_legacy: false,
             invalid_numeric_input: false,
             active_screen: "overview".to_owned(),
             recent_saves: Vec::new(),
@@ -165,6 +169,24 @@ impl AppState {
         self.current_save_sha256.as_deref()
     }
 
+    /// Stable format identifier of the currently loaded save.
+    #[must_use]
+    pub fn current_save_format(&self) -> Option<&str> {
+        self.current_save_format.as_deref()
+    }
+
+    /// Whether the current save uses the legacy S2 layout that cannot be edited.
+    #[must_use]
+    pub const fn current_save_is_legacy(&self) -> bool {
+        self.current_save_legacy
+    }
+
+    /// Sets format metadata for the active save used by shared save eligibility controls.
+    pub fn set_current_save_format(&mut self, format: Option<String>, is_legacy: bool) {
+        self.current_save_format = format;
+        self.current_save_legacy = is_legacy;
+    }
+
     /// Whether an active numeric editor contains a value that cannot be saved.
     #[must_use]
     pub const fn has_invalid_numeric_input(&self) -> bool {
@@ -186,6 +208,10 @@ impl AppState {
                 self.record_recent_save(path.clone());
             }
             let _ = self.event_sender.send(AppEvent::CurrentSaveChanged(save_path));
+        }
+        if self.current_save.is_none() {
+            self.current_save_format = None;
+            self.current_save_legacy = false;
         }
     }
 
@@ -342,6 +368,7 @@ fn plan_has_changes(plan: &DraftPlan) -> bool {
         || !plan.detach_handles.is_empty()
         || !plan.adds.is_empty()
         || !plan.stash_takes.is_empty()
+        || !plan.s2_stash_takes.is_empty()
         || !plan.stash_puts.is_empty()
         || plan.unmapped_legacy_plan.is_some()
 }

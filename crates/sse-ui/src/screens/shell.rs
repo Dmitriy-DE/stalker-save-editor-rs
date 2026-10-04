@@ -1,7 +1,7 @@
 //! The editor frame: grouped sidebar, header, content host, status line; builds screens lazily and routes messages.
 
 use super::style::{self, rgb, Text};
-use super::{registry, AppMessage, Context, EditorAction, Group, Screen, ScreenId};
+use super::{AppMessage, Context, EditorAction, Group, Screen, ScreenId};
 use crate::event_loop::{App, Flow, Message, Proxy, WindowEvent};
 use crate::glyphs::{to_px, Face, TextStyle};
 use crate::layout::{Align, Edges, NodeKind, Size, Style};
@@ -15,6 +15,121 @@ const KEY_TAB: u32 = 0xff09;
 const KEY_RETURN: u32 = 0xff0d;
 const KEY_UP: u32 = 0xff52;
 const KEY_DOWN: u32 = 0xff54;
+const SAVE_LIBRARY_PAGE_SIZE: usize = 8;
+
+struct SaveEligibility {
+    reason: String,
+    can_save: bool,
+    change_count: usize,
+}
+
+fn save_eligibility(
+    has_save: bool,
+    format_id: Option<&str>,
+    legacy_s2: bool,
+    plan: Option<&sse_storage::drafts::DraftPlan>,
+    invalid_numbers: bool,
+) -> SaveEligibility {
+    let Some(plan) = has_save.then_some(plan).flatten() else {
+        return SaveEligibility {
+            reason: if has_save {
+                if invalid_numbers {
+                    "Введены некорректные значения (проверьте введённые числа).".to_owned()
+                } else {
+                    "Нет несохранённых изменений.".to_owned()
+                }
+            } else {
+                "Выберите сохранение для редактирования.".to_owned()
+            },
+            can_save: false,
+            change_count: 0,
+        };
+    };
+    let has_unmapped = plan.unmapped_legacy_plan.is_some();
+    let change_count = usize::from(plan.money.is_some())
+        .saturating_add(plan.stack_counts.len())
+        .saturating_add(plan.durability.len())
+        .saturating_add(plan.placements.len())
+        .saturating_add(plan.upgrades.len())
+        .saturating_add(plan.detach_handles.len())
+        .saturating_add(plan.adds.len())
+        .saturating_add(plan.stash_takes.len())
+        .saturating_add(plan.s2_stash_takes.len())
+        .saturating_add(plan.stash_puts.len())
+        .saturating_add(usize::from(has_unmapped));
+    let has_changes = change_count > 0 || invalid_numbers;
+    let unsupported = has_changes && has_unsupported_edit(format_id, legacy_s2, plan);
+    let reason = if has_unmapped {
+        "В черновике есть правки из другой версии редактора, которые эта версия не понимает. Сбросьте черновик, чтобы продолжить (он сохранится рядом).".to_owned()
+    } else if unsupported {
+        format!(
+            "Эта правка для формата {} не поддерживается (см. «Возможности»).",
+            display_format_name(format_id.unwrap_or("неизвестный"))
+        )
+    } else if !has_changes {
+        "Нет несохранённых изменений.".to_owned()
+    } else if invalid_numbers {
+        "Введены некорректные значения (проверьте введённые числа).".to_owned()
+    } else {
+        "Сохранить изменения в файл сейва (с созданием резервной копии).".to_owned()
+    };
+    SaveEligibility {
+        reason,
+        can_save: has_changes && !has_unmapped && !unsupported && !invalid_numbers,
+        change_count,
+    }
+}
+
+fn has_unsupported_edit(format_id: Option<&str>, legacy_s2: bool, plan: &sse_storage::drafts::DraftPlan) -> bool {
+    match format_id {
+        Some("stalker2" | "s2") => {
+            legacy_s2
+                || !plan.placements.is_empty()
+                || !plan.upgrades.is_empty()
+                || !plan.detach_handles.is_empty()
+                || !plan.adds.is_empty()
+                || !plan.stash_takes.is_empty()
+                || !plan.stash_puts.is_empty()
+        }
+        Some(id) => {
+            let format = match id {
+                "stalker-soc" | "soc" => sse_xray::Format::Soc,
+                "stalker-cs" | "clear_sky" => sse_xray::Format::Cs,
+                "stalker-cop" | "cop" => sse_xray::Format::Cop,
+                "stalker-soc-ee" => sse_xray::Format::SocEe,
+                "stalker-cs-ee" => sse_xray::Format::CsEe,
+                "stalker-cop-ee" => sse_xray::Format::CopEe,
+                _ => return true,
+            };
+            use sse_xray::writer::{Capability, ChangeKind};
+            let supports = |kind| sse_xray::writer::capability(format, kind) != Capability::Unsupported;
+            (plan.money.is_some() && !supports(ChangeKind::EditMoney))
+                || (!plan.stack_counts.is_empty() && !supports(ChangeKind::EditStacks))
+                || (!plan.durability.is_empty() && !supports(ChangeKind::EditDurability))
+                || (!plan.placements.is_empty() && !supports(ChangeKind::EditPlacement))
+                || (!plan.upgrades.is_empty() && !supports(ChangeKind::EditUpgrades))
+                || (!plan.detach_handles.is_empty() && !supports(ChangeKind::RemoveItems))
+                || (!plan.adds.is_empty() && !supports(ChangeKind::AddItems))
+                || !plan.stash_takes.is_empty()
+                || !plan.s2_stash_takes.is_empty()
+                || !plan.stash_puts.is_empty()
+        }
+        None => true,
+    }
+}
+
+fn display_format_name(format_id: &str) -> &'static str {
+    match format_id {
+        "stalker-soc" | "soc" => "Тень Чернобыля",
+        "stalker-cs" | "clear_sky" => "Чистое Небо",
+        "stalker-cop" | "cop" => "Зов Припяти",
+        "stalker-soc-ee" => "Тень Чернобыля EE",
+        "stalker-cs-ee" => "Чистое Небо EE",
+        "stalker-cop-ee" => "Зов Припяти EE",
+        "stalker2" | "s2" => "S.T.A.L.K.E.R. 2",
+        _ => "неизвестный",
+    }
+}
 
 /// The editor frame and its screens.
 pub struct Shell {
@@ -36,6 +151,15 @@ pub struct Shell {
     open_button: WidgetId,
     refresh: WidgetId,
     save: WidgetId,
+    library: WidgetId,
+    library_refresh: WidgetId,
+    library_previous: WidgetId,
+    library_next: WidgetId,
+    library_count: WidgetId,
+    library_status: WidgetId,
+    library_rows: Vec<(WidgetId, WidgetId, WidgetId)>,
+    library_page: usize,
+    library_workspace: super::saves::Workspace,
     reports_banner: WidgetId,
     reports_ok: WidgetId,
     reports_off: WidgetId,
@@ -80,6 +204,33 @@ fn top_button(tree: &mut Tree, parent: WidgetId, text: &str, primary: bool) -> R
             border: (!primary).then(|| (rgb(colors.borders[1]), 1.0)),
             radius: crate::theme::BUTTON_RADIUS,
             text: rgb(if primary { colors.accent[3] } else { colors.text[0] }),
+            align: TextAlign::Center,
+            ..Look::default()
+        },
+    )
+}
+
+fn compact_library_button(tree: &mut Tree, parent: WidgetId, text: &str) -> Result<WidgetId> {
+    let colors = crate::theme::current().colors;
+    tree.add(
+        Some(parent),
+        NodeKind::Leaf,
+        Style {
+            min: Size::new(64.0, 30.0),
+            padding: padded(5.0, 0.0, 5.0, 0.0),
+            shrink: 1.0,
+            ..Style::default()
+        },
+        Content::Button {
+            text: text.to_uppercase(),
+            style: TextStyle::new(Face::Heading, 10.0),
+        },
+        Look {
+            fill: Some(rgb(colors.background[2])),
+            hover_fill: Some(rgb(colors.background[3])),
+            border: Some((rgb(colors.borders[1]), 1.0)),
+            radius: crate::theme::BUTTON_RADIUS,
+            text: rgb(colors.text[0]),
             align: TextAlign::Center,
             ..Look::default()
         },
@@ -194,7 +345,8 @@ impl Shell {
             },
         )?;
 
-        let screens = registry();
+        let library_workspace = super::saves::Workspace::default();
+        let screens = super::registry_with_save_workspace(library_workspace.clone());
         let mut nav = Vec::with_capacity(screens.len());
         let mut group: Option<Group> = None;
         for screen in &screens {
@@ -370,9 +522,164 @@ impl Shell {
             Content::Panel,
             Look::default(),
         )?;
+        let library = tree.add(
+            Some(viewport),
+            NodeKind::Column,
+            Style {
+                preferred: Size::new(256.0, 0.0),
+                min: Size::new(256.0, 0.0),
+                max: Size::new(256.0, f32::INFINITY),
+                shrink: 0.0,
+                padding: padded(12.0, 12.0, 12.0, 12.0),
+                gap: Size::new(0.0, 8.0),
+                align_items: Align::Stretch,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look {
+                fill: Some(rgb(style::BG_PANEL)),
+                border: Some((rgb(style::BORDER_SUBTLE), 1.0)),
+                ..Look::default()
+            },
+        )?;
+        let library_heading = tree.add(
+            Some(library),
+            NodeKind::Column,
+            Style {
+                gap: Size::new(0.0, 4.0),
+                align_items: Align::Stretch,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        for line in ["БИБЛИОТЕКА", "СОХРАНЕНИЙ"] {
+            tree.add(
+                Some(library_heading),
+                NodeKind::Leaf,
+                Style {
+                    min: Size::new(0.0, 0.0),
+                    shrink: 1.0,
+                    ..Style::default()
+                },
+                Content::Label {
+                    text: line.to_owned(),
+                    style: TextStyle::new(Face::Heading, 13.0),
+                },
+                Look {
+                    text: rgb(crate::theme::current().colors.text[0]),
+                    ..Look::default()
+                },
+            )?;
+        }
+        let library_actions = tree.add(
+            Some(library_heading),
+            NodeKind::Row,
+            Style {
+                gap: Size::new(4.0, 0.0),
+                align_items: Align::Center,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        let library_count = style::label(tree, library_actions, "0", Text::Note)?;
+        let library_refresh = tree.add(
+            Some(library_actions),
+            NodeKind::Leaf,
+            Style {
+                min: Size::new(34.0, 30.0),
+                padding: padded(5.0, 0.0, 5.0, 0.0),
+                shrink: 0.0,
+                ..Style::default()
+            },
+            Content::Button {
+                text: "↻".to_owned(),
+                style: TextStyle::new(Face::Heading, 14.0),
+            },
+            Look {
+                fill: Some(rgb(style::BG_PANEL)),
+                border: Some((rgb(style::BORDER_SUBTLE), 1.0)),
+                radius: crate::theme::BUTTON_RADIUS,
+                text: rgb(crate::theme::current().colors.text[0]),
+                align: TextAlign::Center,
+                ..Look::default()
+            },
+        )?;
+        let mut library_rows = Vec::with_capacity(SAVE_LIBRARY_PAGE_SIZE);
+        let library_status = style::label(tree, library, "Ищу сейвы…", Text::Note)?;
+        for _ in 0..SAVE_LIBRARY_PAGE_SIZE {
+            let row = tree.add(
+                Some(library),
+                NodeKind::Column,
+                Style {
+                    gap: Size::new(0.0, 2.0),
+                    align_items: Align::Stretch,
+                    ..Style::default()
+                },
+                Content::Panel,
+                Look::default(),
+            )?;
+            let select = tree.add(
+                Some(row),
+                NodeKind::Leaf,
+                Style {
+                    min: Size::new(0.0, 30.0),
+                    padding: padded(7.0, 0.0, 7.0, 0.0),
+                    ..Style::default()
+                },
+                Content::Button {
+                    text: "нет снимка".to_owned(),
+                    style: TextStyle::new(Face::Body, 12.0),
+                },
+                Look {
+                    fill: Some(rgb(crate::theme::current().colors.background[2])),
+                    hover_fill: Some(rgb(crate::theme::current().colors.background[3])),
+                    border: Some((rgb(crate::theme::current().colors.borders[0]), 1.0)),
+                    radius: crate::theme::BUTTON_RADIUS,
+                    text: rgb(crate::theme::current().colors.text[0]),
+                    ..Look::default()
+                },
+            )?;
+            let details = tree.add(
+                Some(row),
+                NodeKind::Leaf,
+                Style {
+                    padding: padded(7.0, 0.0, 4.0, 3.0),
+                    ..Style::default()
+                },
+                Content::Label {
+                    text: String::new(),
+                    style: TextStyle::new(Face::Body, 11.0),
+                },
+                Look {
+                    text: rgb(style::TEXT_MUTED),
+                    ..Look::default()
+                },
+            )?;
+            tree.set_visible(row, false)?;
+            library_rows.push((row, select, details));
+        }
+        let library_pages = tree.add(
+            Some(library),
+            NodeKind::Row,
+            Style {
+                gap: Size::new(4.0, 0.0),
+                align_items: Align::Center,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        let library_previous = compact_library_button(tree, library_pages, "Назад")?;
+        let library_next = compact_library_button(tree, library_pages, "Дальше")?;
+        tree.set_visible(library_previous, false)?;
+        tree.set_visible(library_next, false)?;
+        tree.set_clip_children(library, true)?;
+        tree.set_visible(library, true)?;
         let content_style = Style {
             grow: 1.0,
-            margin: padded(32.0, 0.0, 12.0, 20.0),
+            margin: padded(20.0, 0.0, 12.0, 20.0),
             align_items: Align::Stretch,
             ..Style::default()
         };
@@ -455,6 +762,15 @@ impl Shell {
             open_button,
             refresh,
             save,
+            library,
+            library_refresh,
+            library_previous,
+            library_next,
+            library_count,
+            library_status,
+            library_rows,
+            library_page: 0,
+            library_workspace,
             reports_banner,
             reports_ok,
             reports_off,
@@ -465,6 +781,7 @@ impl Shell {
             wizard,
         };
         shell.show(tree, 0)?;
+        shell.render_library(tree)?;
         shell.sync_draft_controls(tree)?;
         Ok(shell)
     }
@@ -541,6 +858,12 @@ impl Shell {
             tree.set_look(*new, style::nav(true))?;
         }
         self.selected = index;
+        tree.set_visible(
+            self.library,
+            self.screens
+                .get(index)
+                .is_some_and(|screen| screen.id().group() == Group::Saves),
+        )?;
         self.scroll.scroll_to(0.0);
         tree.set_scroll_y(self.content, 0)?;
         self.show(tree, index)
@@ -648,36 +971,22 @@ impl Shell {
         };
         let plan = self.app.draft(source_sha256);
         let journal = self.app.draft_journal(source_sha256);
-        let has_unmapped = plan.is_some_and(|plan| plan.unmapped_legacy_plan.is_some());
         let invalid_numbers = self.app.has_invalid_numeric_input();
-        let change_count = plan.map_or(0, |plan| {
-            usize::from(plan.money.is_some())
-                .saturating_add(plan.stack_counts.len())
-                .saturating_add(plan.detach_handles.len())
-                .saturating_add(plan.adds.len())
-                .saturating_add(plan.stash_takes.len())
-                .saturating_add(plan.stash_puts.len())
-                .saturating_add(usize::from(plan.unmapped_legacy_plan.is_some()))
-        });
-        let has_changes = change_count > 0 || invalid_numbers;
+        let eligibility = save_eligibility(
+            true,
+            self.app.current_save_format(),
+            self.app.current_save_is_legacy(),
+            plan,
+            invalid_numbers,
+        );
+        let has_changes = eligibility.change_count > 0 || invalid_numbers;
         let draft_badge = if invalid_numbers {
             "Есть несохранённые изменения".to_owned()
         } else {
-            format!("Черновик: {change_count} действ.")
+            format!("Черновик: {} действ.", eligibility.change_count)
         };
         tree.set_text(self.draft_badge, &draft_badge)?;
-        tree.set_text(
-            self.save_reason,
-            if has_unmapped {
-                "В черновике есть правки из другой версии редактора, которые эта версия не понимает. Сбросьте черновик, чтобы продолжить (он сохранится рядом)."
-            } else if invalid_numbers {
-                "Введены некорректные значения (проверьте введённые числа)."
-            } else if !has_changes {
-                "Нет несохранённых изменений."
-            } else {
-                "Сохранить изменения в файл сейва (с созданием резервной копии)."
-            },
-        )?;
+        tree.set_text(self.save_reason, &eligibility.reason)?;
         tree.set_enabled(
             self.undo,
             journal.is_some_and(sse_storage::drafts::DraftJournal::can_undo),
@@ -687,7 +996,7 @@ impl Shell {
             journal.is_some_and(sse_storage::drafts::DraftJournal::can_redo),
         )?;
         tree.set_enabled(self.reset, has_changes)?;
-        tree.set_enabled(self.save, has_changes && !has_unmapped && !invalid_numbers)?;
+        tree.set_enabled(self.save, eligibility.can_save)?;
         Ok(())
     }
 
@@ -709,6 +1018,27 @@ impl Shell {
         if let Message::Window(WindowEvent::Resized { width, .. }) = message {
             let panel_width = width.saturating_sub(232);
             tree.set_visible(self.edition, panel_width >= 1000)?;
+            let middle_width = width.saturating_sub(232);
+            let library_width = if middle_width < 1100 {
+                220.0
+            } else if middle_width >= 1900 {
+                300.0
+            } else {
+                280.0
+            };
+            tree.set_style(
+                self.library,
+                Style {
+                    preferred: Size::new(library_width - 24.0, 0.0),
+                    min: Size::new(library_width - 24.0, 0.0),
+                    max: Size::new(library_width - 24.0, f32::INFINITY),
+                    shrink: 0.0,
+                    padding: padded(12.0, 12.0, 12.0, 12.0),
+                    gap: Size::new(0.0, 8.0),
+                    align_items: Align::Stretch,
+                    ..Style::default()
+                },
+            )?;
         }
         if let Message::Window(WindowEvent::Wheel { delta }) = message {
             let viewport = tree.rect(self.content)?;
@@ -768,11 +1098,71 @@ impl Shell {
             return Ok(Flow::Continue);
         }
         if clicked.is_some() && clicked == Some(self.refresh) {
-            tree.set_text(
-                self.status,
-                "Обновление библиотеки недоступно: AppState ещё не предоставляет refresh/cancel API.",
-            )?;
+            let status = {
+                let mut cx = Context {
+                    tree: &mut *tree,
+                    proxy: self.proxy.as_ref(),
+                    status: None,
+                    app: &mut self.app,
+                };
+                self.library_workspace.refresh_library(&mut cx);
+                cx.status
+            };
+            if let Some(status) = status {
+                tree.set_text(self.status, &status)?;
+            }
+            self.render_library(tree)?;
             return Ok(Flow::Continue);
+        }
+        if clicked.is_some() && clicked == Some(self.library_refresh) {
+            let status = {
+                let mut cx = Context {
+                    tree: &mut *tree,
+                    proxy: self.proxy.as_ref(),
+                    status: None,
+                    app: &mut self.app,
+                };
+                self.library_workspace.refresh_library(&mut cx);
+                cx.status
+            };
+            if let Some(status) = status {
+                tree.set_text(self.status, &status)?;
+            }
+            self.render_library(tree)?;
+            return Ok(Flow::Continue);
+        }
+        if clicked.is_some() && clicked == Some(self.library_previous) {
+            self.library_page = self.library_page.saturating_sub(1);
+            self.render_library(tree)?;
+            return Ok(Flow::Continue);
+        }
+        if clicked.is_some() && clicked == Some(self.library_next) {
+            self.library_page = self.library_page.saturating_add(1);
+            self.render_library(tree)?;
+            return Ok(Flow::Continue);
+        }
+        if let Some(offset) = clicked.and_then(|id| self.library_rows.iter().position(|(_, select, _)| *select == id)) {
+            let index = self
+                .library_page
+                .saturating_mul(SAVE_LIBRARY_PAGE_SIZE)
+                .saturating_add(offset);
+            let (_, _, slots) = self.library_workspace.library_snapshot();
+            if let Some(slot) = slots.get(index) {
+                let status = {
+                    let mut cx = Context {
+                        tree: &mut *tree,
+                        proxy: self.proxy.as_ref(),
+                        status: None,
+                        app: &mut self.app,
+                    };
+                    self.library_workspace.select_library_path(&slot.path, &mut cx);
+                    cx.status
+                };
+                if let Some(status) = status {
+                    tree.set_text(self.status, &status)?;
+                }
+                return Ok(Flow::Continue);
+            }
         }
         if let Some(index) = clicked.and_then(|id| self.nav.iter().position(|nav| *nav == id)) {
             if let Some(nav) = self.nav.get(index).copied() {
@@ -890,12 +1280,112 @@ impl Shell {
             }
         }
         self.route(tree, message, clicked)?;
+        if let Message::User(AppMessage::ToScreen(ScreenId::Overview, payload)) = message {
+            if payload.is::<()>() {
+                self.library_page = 0;
+                if self.app.current_save().is_none() {
+                    let (_, _, slots) = self.library_workspace.library_snapshot();
+                    if let Some(slot) = slots.first() {
+                        let status = {
+                            let mut cx = Context {
+                                tree: &mut *tree,
+                                proxy: self.proxy.as_ref(),
+                                status: None,
+                                app: &mut self.app,
+                            };
+                            self.library_workspace.select_library_path(&slot.path, &mut cx);
+                            cx.status
+                        };
+                        if let Some(status) = status {
+                            tree.set_text(self.status, &status)?;
+                        }
+                    }
+                }
+            }
+            self.show(tree, self.selected)?;
+            self.render_library(tree)?;
+        }
         self.sync_draft_controls(tree)?;
         if let Some(screen) = self.screens.get(self.selected) {
             let host = self.hosts.get(self.selected).copied().flatten();
             self.wizard.sync(tree, &self.app, screen.id(), host)?;
         }
         Ok(Flow::Continue)
+    }
+
+    fn render_library(&mut self, tree: &mut Tree) -> Result<()> {
+        let (scanning, error, slots) = self.library_workspace.library_snapshot();
+        let pages = slots.len().saturating_add(SAVE_LIBRARY_PAGE_SIZE - 1) / SAVE_LIBRARY_PAGE_SIZE;
+        self.library_page = self.library_page.min(pages.saturating_sub(1));
+        let text = if scanning {
+            format!("{} · …", slots.len())
+        } else if let Some(error) = error.as_deref() {
+            format!("{} · ошибка: {}", slots.len(), super::saves::short_text(error, 24))
+        } else {
+            slots.len().to_string()
+        };
+        tree.set_text(self.library_count, &text)?;
+        let start = self.library_page.saturating_mul(SAVE_LIBRARY_PAGE_SIZE);
+        let selected_path = self.app.current_save();
+        for (offset, (row, select, details)) in self.library_rows.iter().enumerate() {
+            if let Some(slot) = slots.get(start.saturating_add(offset)) {
+                let filename = slot
+                    .path
+                    .file_name()
+                    .map(|name| name.to_string_lossy())
+                    .unwrap_or_else(|| "без имени".into());
+                let game =
+                    super::saves::format_display_name(slot.format_id.as_deref().unwrap_or(&slot.candidate_release_id));
+                let displayed_filename = super::saves::short_text(&filename, 24);
+                tree.set_text(*select, &format!("нет снимка · {displayed_filename}"))?;
+                tree.set_enabled(*select, slot.detection_error.is_none())?;
+                tree.set_text(
+                    *details,
+                    &format!(
+                        "{} · {} · {}",
+                        game,
+                        super::saves::display_file_time(slot.last_write_time_utc, true, false),
+                        super::saves::display_size(slot.size)
+                    ),
+                )?;
+                let is_selected = selected_path.is_some_and(|path| path == slot.path);
+                tree.set_look(
+                    *select,
+                    Look {
+                        fill: Some(rgb(if is_selected {
+                            crate::theme::current().colors.accent[0]
+                        } else {
+                            crate::theme::current().colors.background[2]
+                        })),
+                        hover_fill: Some(rgb(crate::theme::current().colors.background[3])),
+                        border: Some((rgb(crate::theme::current().colors.borders[0]), 1.0)),
+                        radius: crate::theme::BUTTON_RADIUS,
+                        text: rgb(crate::theme::current().colors.text[0]),
+                        ..Look::default()
+                    },
+                )?;
+                tree.set_visible(*row, true)?;
+            } else {
+                tree.set_visible(*row, false)?;
+            }
+        }
+        let status = if scanning {
+            "Поиск сейвов…".to_owned()
+        } else if let Some(error) = error.as_deref() {
+            super::saves::short_text(error, 20)
+        } else if slots.is_empty() {
+            "Сейвы не найдены".to_owned()
+        } else {
+            String::new()
+        };
+        tree.set_text(self.library_status, &status)?;
+        tree.set_visible(self.library_status, scanning || error.is_some() || slots.is_empty())?;
+        tree.set_visible(self.library_previous, pages > 1 && self.library_page > 0)?;
+        tree.set_visible(
+            self.library_next,
+            pages > 1 && self.library_page.saturating_add(1) < pages,
+        )?;
+        Ok(())
     }
 }
 
@@ -913,11 +1403,101 @@ impl App<AppMessage> for Shell {
 
 #[cfg(test)]
 mod tests {
-    use super::Shell;
+    use super::{save_eligibility, ScreenId, Shell};
     use crate::event_loop::{Flow, Message, WindowEvent};
     use crate::glyphs::Fonts;
     use crate::raster::Color;
     use crate::widget::Tree;
+    use sse_storage::drafts::{DraftPlacement, DraftPlan, JsonValue};
+
+    #[test]
+    fn save_disabled_reason_matches_reference_priority_and_capabilities() -> sse_core::Result<()> {
+        let source_sha256 = "a".repeat(64);
+        assert_eq!(
+            save_eligibility(false, None, false, None, false).reason,
+            "Выберите сохранение для редактирования."
+        );
+
+        let mut unsupported = DraftPlan::empty(&source_sha256)?;
+        unsupported.placements.insert(5, DraftPlacement::Ruck);
+        assert_eq!(
+            save_eligibility(true, Some("stalker2"), false, Some(&unsupported), false).reason,
+            "Эта правка для формата S.T.A.L.K.E.R. 2 не поддерживается (см. «Возможности»)."
+        );
+
+        let mut supported = DraftPlan::empty(&source_sha256)?;
+        supported.money = Some(700);
+        let invalid = save_eligibility(true, Some("stalker2"), false, Some(&supported), true);
+        assert_eq!(
+            invalid.reason,
+            "Введены некорректные значения (проверьте введённые числа)."
+        );
+        assert!(!invalid.can_save);
+
+        supported.unmapped_legacy_plan = Some(JsonValue::Null);
+        assert_eq!(
+            save_eligibility(true, Some("stalker2"), false, Some(&supported), true).reason,
+            "В черновике есть правки из другой версии редактора, которые эта версия не понимает. Сбросьте черновик, чтобы продолжить (он сохранится рядом)."
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn save_library_is_visible_on_save_screens_and_hidden_elsewhere() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut shell = Shell::build(&mut tree, None)?;
+
+        assert!(tree.is_visible(shell.library));
+        shell.open(&mut tree, ScreenId::Settings)?;
+        assert!(!tree.is_visible(shell.library));
+        shell.open(&mut tree, ScreenId::Inventory)?;
+        assert!(tree.is_visible(shell.library));
+        Ok(())
+    }
+
+    #[test]
+    fn save_library_uses_reference_width_breakpoints() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut shell = Shell::build(&mut tree, None)?;
+        for (width, expected) in [(940, 220), (1500, 280), (2200, 300)] {
+            tree.resize(width, 700);
+            let message = Message::Window(WindowEvent::Resized { width, height: 700 });
+            shell.handle(&mut tree, &message, None)?;
+            let mut frame = vec![0_u32; usize::try_from(width).unwrap_or_default() * 700];
+            tree.paint(&mut frame, usize::try_from(width).unwrap_or_default())?;
+            assert_eq!(tree.rect(shell.library)?.width, expected, "window width {width}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn extended_inventory_edits_are_counted_in_the_draft_badge() -> sse_core::Result<()> {
+        let source_sha256 = "b".repeat(64);
+        let mut plan = DraftPlan::empty(&source_sha256)?;
+        plan.money = Some(1);
+        plan.durability.insert(1, 75);
+        plan.placements.insert(2, DraftPlacement::Ruck);
+        plan.upgrades.insert(3, vec!["upgrade".to_owned()]);
+
+        let eligibility = save_eligibility(true, Some("stalker-cop"), false, Some(&plan), false);
+
+        assert_eq!(eligibility.change_count, 4);
+        assert!(eligibility.can_save);
+        Ok(())
+    }
+
+    #[test]
+    fn s2_stash_transfers_are_saveable_and_count_as_draft_edits() -> sse_core::Result<()> {
+        let source_sha256 = "c".repeat(64);
+        let mut plan = DraftPlan::empty(&source_sha256)?;
+        plan.s2_stash_takes.push(0x1234_5678);
+
+        let eligibility = save_eligibility(true, Some("stalker2"), false, Some(&plan), false);
+
+        assert_eq!(eligibility.change_count, 1);
+        assert!(eligibility.can_save);
+        Ok(())
+    }
 
     #[test]
     fn escape_does_not_close_the_application() -> sse_core::Result<()> {

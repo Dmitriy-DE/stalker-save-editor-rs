@@ -1165,6 +1165,14 @@ mod tests {
             restored_output_path_at(source, 123),
             Path::new("/save/game_slot_restored_123.sav")
         );
+        assert_eq!(
+            restored_output_path_at(Path::new("/save/game_slot.scop"), 123),
+            Path::new("/save/game_slot_restored_123.scop")
+        );
+        assert_eq!(
+            restored_output_path_at(Path::new("/save/game_slot.scs"), 123),
+            Path::new("/save/game_slot_restored_123.scs")
+        );
     }
 
     #[test]

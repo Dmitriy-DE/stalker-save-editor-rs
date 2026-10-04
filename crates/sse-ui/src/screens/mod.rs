@@ -266,8 +266,11 @@ pub trait Screen {
 /// All screens, in [`ScreenId::ALL`] order.
 #[must_use]
 pub fn registry() -> Vec<Box<dyn Screen>> {
+    registry_with_save_workspace(saves::Workspace::default())
+}
+
+pub(crate) fn registry_with_save_workspace(save_workspace: saves::Workspace) -> Vec<Box<dyn Screen>> {
     let mut screens: Vec<Box<dyn Screen>> = Vec::new();
-    let save_workspace = saves::Workspace::default();
     screens.extend(saves::screens_with_workspace(save_workspace.clone()));
     screens.extend(history::screens_with_workspace(save_workspace));
     screens.extend(games::screens());

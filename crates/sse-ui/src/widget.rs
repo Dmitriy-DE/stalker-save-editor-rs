@@ -527,6 +527,27 @@ impl Tree {
         self.restyle(id)
     }
 
+    /// Replaces the layout style of a widget and invalidates its measured geometry.
+    ///
+    /// # Errors
+    /// Returns an error for an unknown widget or a failed layout update.
+    pub fn set_style(&mut self, id: WidgetId, style: Style) -> Result<()> {
+        let (layout, rect, visible, content) = {
+            let node = self.node(id)?;
+            (node.layout, node.rect, node.visible, node.content.clone())
+        };
+        self.node_mut(id)?.style = style;
+        let layout_style = if visible {
+            self.text_style(&content, style)
+        } else {
+            hidden_style()
+        };
+        self.layout.set_style(layout, layout_style)?;
+        self.add_damage(rect);
+        self.needs_layout = true;
+        Ok(())
+    }
+
     /// Enables or disables pointer and keyboard interaction for a widget.
     ///
     /// # Errors

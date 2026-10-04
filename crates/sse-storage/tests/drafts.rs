@@ -59,7 +59,7 @@ fn reads_the_python_schema_one_fixture_and_preserves_its_edits() {
 }
 
 #[test]
-fn schema_three_roundtrips_all_edits_and_supports_undo_redo_and_branching() {
+fn schema_four_roundtrips_all_edits_and_supports_undo_redo_and_branching() {
     let directory = TemporaryDirectory::new();
     let store = DraftStore::new(&directory.0);
     let source_sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -85,7 +85,7 @@ fn schema_three_roundtrips_all_edits_and_supports_undo_redo_and_branching() {
     let saved = store.save(journal).expect("draft should save");
     let bytes = fs::read(store.path_for(source_sha256).expect("valid hash")).expect("draft file should exist");
     let serialized = std::str::from_utf8(&bytes).expect("draft JSON should be UTF-8");
-    assert!(serialized.contains("\"schema\":3"));
+    assert!(serialized.contains("\"schema\":4"));
     assert!(serialized.contains("\"source_sha256\""));
     assert!(serialized.contains("\"sourceSha256\""));
     assert_eq!(current(&saved).money, Some(200));
@@ -117,6 +117,30 @@ fn schema_three_roundtrips_all_edits_and_supports_undo_redo_and_branching() {
         .expect("branch should be recorded");
     assert_eq!(current(&branched).money, Some(300));
     assert!(!branched.can_redo());
+}
+
+#[test]
+fn schema_four_roundtrips_s2_stash_handles_without_truncation() {
+    let directory = TemporaryDirectory::new();
+    let store = DraftStore::new(&directory.0);
+    let source_sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let mut plan = DraftPlan::empty(source_sha256).expect("valid empty plan");
+    plan.s2_stash_takes.push(0x1234_5678);
+    let journal = DraftJournal::new(vec![plan], 0).expect("valid S2 transfer draft");
+
+    let saved = store.save(journal).expect("S2 transfer draft should persist");
+    let bytes = fs::read(store.path_for(source_sha256).expect("valid hash")).expect("draft should exist");
+    let serialized = std::str::from_utf8(&bytes).expect("draft JSON should be UTF-8");
+    assert!(serialized.contains("\"schema\":4"));
+    assert!(serialized.contains("\"s2StashTakes\":[305419896]"));
+
+    let restored = store
+        .load(source_sha256)
+        .expect("draft read should succeed")
+        .expect("S2 transfer draft should load");
+    assert_eq!(current(&saved).s2_stash_takes, [0x1234_5678]);
+    assert_eq!(current(&restored).s2_stash_takes, [0x1234_5678]);
+    assert_eq!(current(&restored), current(&saved));
 }
 
 #[test]
@@ -207,6 +231,18 @@ fn rejects_slot_zero_in_draft_placement() {
     plan.placements.insert(0x1234, DraftPlacement::Slot(0));
 
     assert!(DraftJournal::new(vec![plan], 0).is_err());
+}
+
+#[test]
+fn rejects_invalid_or_repeated_s2_stash_handles() {
+    let source_sha256 = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+    let mut zero = DraftPlan::empty(source_sha256).expect("valid empty plan");
+    zero.s2_stash_takes.push(0);
+    assert!(DraftJournal::new(vec![zero], 0).is_err());
+
+    let mut duplicate = DraftPlan::empty(source_sha256).expect("valid empty plan");
+    duplicate.s2_stash_takes.extend([0x1234_5678, 0x1234_5678]);
+    assert!(DraftJournal::new(vec![duplicate], 0).is_err());
 }
 
 #[test]
