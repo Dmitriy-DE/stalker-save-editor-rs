@@ -1,12 +1,15 @@
 //! Platform-specific installation handoff matching release 1.3.1.
 
 use crate::detector::UpdateInstallation;
-use crate::fetch::verify_existing_file;
+use crate::fetch::{hex_encode, Sha256Hasher};
 use crate::manifest::UpdateArtifact;
 use crate::platform;
 use sse_core::{Error, Result};
-use std::path::Path;
+use std::fs::OpenOptions;
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// The outcome state of an update installation handoff.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -104,6 +107,85 @@ impl ProcessRunner for MockProcessRunner {
     }
 }
 
+/// Creates or validates a private update directory.
+///
+/// On Unix the directory is forced to mode 0700. On Linux its owner is also
+/// checked against the effective user before it is trusted.
+pub fn prepare_private_directory(path: &Path) -> Result<()> {
+    std::fs::create_dir_all(path).map_err(Error::from)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).map_err(Error::from)?;
+    }
+    sse_sys::secure_fs::verify_directory_owner(path)
+}
+
+fn stage_verified_copy(artifact: &UpdateArtifact, source: &Path, root: &Path) -> Result<PathBuf> {
+    artifact.validate()?;
+    prepare_private_directory(root)?;
+
+    let mut source_file = sse_sys::secure_fs::open_owned_regular(source)?;
+    let source_metadata = source_file.metadata().map_err(Error::from)?;
+    if source_metadata.len() != artifact.size {
+        return Err(Error::damaged("File size mismatch"));
+    }
+
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| Error::System("System clock is before UNIX epoch".to_owned()))?
+        .as_nanos();
+    let stage_dir = root.join(format!("install-{}-{stamp}", std::process::id()));
+    std::fs::create_dir(&stage_dir).map_err(Error::from)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&stage_dir, std::fs::Permissions::from_mode(0o700)).map_err(Error::from)?;
+    }
+    sse_sys::secure_fs::verify_directory_owner(&stage_dir)?;
+
+    let target = stage_dir.join(&artifact.file);
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut target_file = options.open(&target).map_err(Error::from)?;
+
+    let mut hasher = Sha256Hasher::new();
+    let mut copied = 0_u64;
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = source_file.read(&mut buffer).map_err(Error::from)?;
+        if read == 0 {
+            break;
+        }
+        copied = copied
+            .checked_add(u64::try_from(read).map_err(|_| Error::damaged("Update size overflow"))?)
+            .ok_or_else(|| Error::damaged("Update size overflow"))?;
+        if copied > artifact.size {
+            return Err(Error::damaged("File size mismatch"));
+        }
+        let chunk = buffer
+            .get(..read)
+            .ok_or_else(|| Error::damaged("Update read overflow"))?;
+        hasher.update(chunk);
+        target_file.write_all(chunk).map_err(Error::from)?;
+    }
+    if copied != artifact.size {
+        return Err(Error::damaged("File size mismatch"));
+    }
+    let actual = hex_encode(&hasher.finish());
+    if !actual.eq_ignore_ascii_case(&artifact.sha256) {
+        return Err(Error::damaged("File SHA-256 mismatch"));
+    }
+    target_file.flush().map_err(Error::from)?;
+    target_file.sync_all().map_err(Error::from)?;
+    Ok(target)
+}
+
 /// Hands off an update to the platform installer after validating the file on disk.
 ///
 /// # Errors
@@ -118,10 +200,13 @@ pub fn install_artifact(
         return Err(Error::Refused("Update installation type is unsupported".to_string()));
     }
 
-    // Fail closed if local file has been tampered with
-    verify_existing_file(verified_archive, artifact)?;
+    let parent = verified_archive
+        .parent()
+        .ok_or_else(|| Error::Refused("Update package has no parent directory".to_owned()))?;
+    let staging_root = parent.join("verified-install");
+    let staged_archive = stage_verified_copy(artifact, verified_archive, &staging_root)?;
 
-    let archive_str = verified_archive
+    let archive_str = staged_archive
         .to_str()
         .ok_or_else(|| Error::damaged("Invalid archive path encoding"))?;
 
