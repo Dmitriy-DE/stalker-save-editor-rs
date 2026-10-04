@@ -333,7 +333,7 @@ impl Screen for Capabilities {
                     Track::Fixed(92.0),
                     Track::Fixed(92.0),
                 ],
-                rows: vec![Track::Fixed(38.0); CAPABILITY_ROWS.len() + 1],
+                rows: vec![Track::Fixed(38.0); CAPABILITY_ROWS.len().saturating_add(1)],
             },
             Style {
                 gap: Size::new(2.0, 2.0),
@@ -344,10 +344,10 @@ impl Screen for Capabilities {
         )?;
         grid_label(cx.tree, grid, "ОПЕРАЦИЯ", 0, 0, true)?;
         for (column, game) in GAMES.into_iter().enumerate() {
-            grid_label(cx.tree, grid, game, column + 1, 0, true)?;
+            grid_label(cx.tree, grid, game, column.saturating_add(1), 0, true)?;
         }
         for (row_index, row) in CAPABILITY_ROWS.iter().enumerate() {
-            let grid_row = row_index + 1;
+            let grid_row = row_index.saturating_add(1);
             grid_label(cx.tree, grid, row.name, 0, grid_row, false)?;
             for (column, support) in row.support.into_iter().enumerate() {
                 let id = grid_cell(cx.tree, grid, support.label(), column + 1, grid_row)?;
@@ -396,7 +396,7 @@ impl Screen for Capabilities {
                 if let (Some(capability), Some(game), Some(detail)) =
                     (CAPABILITY_ROWS.get(*row), GAMES.get(*column), self.detail)
                 {
-                    let support = capability.support[*column];
+                    let Some(support) = capability.support.get(*column).copied() else { return Ok(()) };
                     cx.tree.set_text(
                         detail,
                         &format!(
