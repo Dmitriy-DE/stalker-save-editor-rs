@@ -33,6 +33,8 @@ pub mod zip;
 
 /// PNG decoder to RGBA8.
 pub mod png;
+/// Minimal deterministic RGBA8 PNG encoder for golden tests.
+pub mod png_encode;
 /// SHA-256 (FIPS 180-4).
 pub mod sha256;
 
