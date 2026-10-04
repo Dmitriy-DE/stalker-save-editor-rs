@@ -16,6 +16,7 @@ pub mod saves;
 pub mod services;
 pub mod shell;
 pub mod style;
+mod wizard;
 
 /// Every screen of the editor, in sidebar order (same as the C# 1.3.1 sidebar).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
