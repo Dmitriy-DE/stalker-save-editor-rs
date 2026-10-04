@@ -1121,6 +1121,15 @@ fn short_text(text: &str, max_chars: usize) -> String {
     result
 }
 
+fn encyclopedia_game(game: &str) -> Option<sse_content::CompanionGame> {
+    match game {
+        "soc" | "stalker-soc" | "soc-ee" | "stalker-soc-ee" => Some(sse_content::CompanionGame::ShadowOfChernobyl),
+        "cs" | "clear_sky" | "stalker-cs" | "cs-ee" | "stalker-cs-ee" => Some(sse_content::CompanionGame::ClearSky),
+        "cop" | "stalker-cop" | "cop-ee" | "stalker-cop-ee" => Some(sse_content::CompanionGame::CallOfPripyat),
+        _ => None,
+    }
+}
+
 #[derive(Clone, Debug)]
 struct EncyclopediaEntry {
     kind: String,
@@ -1146,7 +1155,7 @@ struct Encyclopedia {
 
 impl Encyclopedia {
     fn load(&self, cx: &mut Context<'_>) {
-        let Some(game) = cx.app.selected_game().and_then(content_game) else {
+        let Some(game) = cx.app.selected_game().and_then(encyclopedia_game) else {
             if let Some(status) = self.status {
                 let _ = cx.tree.set_text(status, "Энциклопедия сейчас доступна для X-Ray игр");
             }
