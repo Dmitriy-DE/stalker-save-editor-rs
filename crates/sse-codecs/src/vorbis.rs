@@ -7,6 +7,30 @@ use sse_core::{Error, Result};
 
 const MAX_CODEBOOK_ENTRIES: usize = 1_000_000;
 const MAX_LOOKUP_SCALARS: usize = 4_000_000;
+const MAX_SETUP_CODEBOOK_BYTES: usize = 64 * 1024 * 1024;
+
+struct HeaderBudget {
+    remaining: usize,
+}
+
+impl HeaderBudget {
+    fn new() -> Self {
+        Self {
+            remaining: MAX_SETUP_CODEBOOK_BYTES,
+        }
+    }
+
+    fn reserve<T>(&mut self, count: usize) -> Result<()> {
+        let bytes = count
+            .checked_mul(std::mem::size_of::<T>())
+            .ok_or_else(|| Error::Refused("Vorbis codebook memory budget overflow".to_owned()))?;
+        self.remaining = self
+            .remaining
+            .checked_sub(bytes)
+            .ok_or_else(|| Error::Refused("Vorbis codebook memory budget exceeded".to_owned()))?;
+        Ok(())
+    }
+}
 
 /// Fully decoded interleaved signed 16-bit PCM.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -316,7 +340,7 @@ fn lookup1_values(entries: usize, dimensions: usize) -> usize {
     low
 }
 
-fn read_codebook(bits: &mut Bits<'_>) -> Result<Codebook> {
+fn read_codebook(bits: &mut Bits<'_>, budget: &mut HeaderBudget) -> Result<Codebook> {
     if bits.read(24)? != 0x0056_4342 {
         return Err(Error::damaged("Vorbis codebook sync"));
     }
@@ -327,6 +351,7 @@ fn read_codebook(bits: &mut Bits<'_>) -> Result<Codebook> {
             "Vorbis codebook dimensions/entry limit exceeded".to_owned(),
         ));
     }
+    budget.reserve::<u8>(entries)?;
     let mut lengths = vec![0_u8; entries];
     if bits.flag()? {
         let mut entry = 0_usize;
@@ -355,6 +380,7 @@ fn read_codebook(bits: &mut Bits<'_>) -> Result<Codebook> {
             }
         }
     }
+    budget.reserve::<(usize, u8)>(entries)?;
     let active: Vec<(usize, u8)> = lengths
         .iter()
         .copied()
@@ -373,7 +399,14 @@ fn read_codebook(bits: &mut Bits<'_>) -> Result<Codebook> {
     } else {
         None
     };
-    let mut tree = vec![HuffNode::default()];
+    let maximum_nodes = active
+        .len()
+        .checked_mul(2)
+        .and_then(|value| value.checked_add(1))
+        .ok_or_else(|| Error::Refused("Vorbis Huffman tree size overflow".to_owned()))?;
+    budget.reserve::<HuffNode>(maximum_nodes)?;
+    let mut tree = Vec::with_capacity(maximum_nodes);
+    tree.push(HuffNode::default());
     if single.is_none() {
         for (symbol, length) in active {
             if !insert_code(&mut tree, 0, 0, length, symbol) {
@@ -403,6 +436,7 @@ fn read_codebook(bits: &mut Bits<'_>) -> Result<Codebook> {
         if lookup_values > MAX_LOOKUP_SCALARS {
             return Err(Error::Refused("Vorbis codebook lookup limit exceeded".to_owned()));
         }
+        budget.reserve::<u32>(lookup_values)?;
         let mut multiplicands = Vec::with_capacity(lookup_values);
         for _ in 0..lookup_values {
             multiplicands.push(bits.read(value_bits)?);
@@ -413,6 +447,7 @@ fn read_codebook(bits: &mut Bits<'_>) -> Result<Codebook> {
         if scalar_count > MAX_LOOKUP_SCALARS {
             return Err(Error::Refused("Vorbis expanded VQ limit exceeded".to_owned()));
         }
+        budget.reserve::<f32>(scalar_count)?;
         let mut expanded = Vec::with_capacity(scalar_count);
         for entry in 0..entries {
             let mut last = 0_f32;
@@ -569,8 +604,9 @@ fn setup(packet: &[u8], ident: Ident) -> Result<Setup> {
     let mut bits = Bits::new(data);
     let book_count = usize::try_from(bits.read(8)?).unwrap_or(0).saturating_add(1);
     let mut books = Vec::with_capacity(book_count);
+    let mut codebook_budget = HeaderBudget::new();
     for _ in 0..book_count {
-        books.push(read_codebook(&mut bits)?);
+        books.push(read_codebook(&mut bits, &mut codebook_budget)?);
     }
     let time_count = usize::try_from(bits.read(6)?).unwrap_or(0).saturating_add(1);
     for _ in 0..time_count {
@@ -2034,7 +2070,18 @@ mod tests {
         // Exercise the strongest possible claim instead: 2^24 - 1 entries.
         let bytes = [0x42_u8, 0x43, 0x56, 0x01, 0x00, 0xff, 0xff, 0xff];
         let mut bits = Bits::new(&bytes);
-        assert!(matches!(read_codebook(&mut bits), Err(Error::Refused(_))));
+        let mut budget = HeaderBudget::new();
+        assert!(matches!(read_codebook(&mut bits, &mut budget), Err(Error::Refused(_))));
+    }
+
+    #[test]
+    fn tiny_codebook_header_cannot_request_huge_memory() {
+        // 1 dimension, 1,000,000 entries. The packet itself is tiny, but the
+        // declared tables would exceed the aggregate 64 MiB setup budget.
+        let bytes = [0x42_u8, 0x43, 0x56, 0x01, 0x00, 0x40, 0x42, 0x0f];
+        let mut bits = Bits::new(&bytes);
+        let mut budget = HeaderBudget::new();
+        assert!(matches!(read_codebook(&mut bits, &mut budget), Err(Error::Refused(_))));
     }
 
     #[test]
