@@ -259,7 +259,7 @@ fn shipped_soc_catalogue_contains_only_retail_verified_zrp_bug_fixes() {
 }
 
 #[test]
-fn shipped_cop_catalogue_contains_retail_verified_fixes_and_keeps_community_edits_out_of_presets() {
+fn shipped_cop_catalogue_contains_retail_verified_fixes_and_includes_community_in_all_safe() {
     let fixes = GameFixCatalog::for_game(GameTarget::CallOfPripyat);
     assert_eq!(fixes.len(), 36);
 
