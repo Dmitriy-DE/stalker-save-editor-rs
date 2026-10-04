@@ -8,7 +8,7 @@ use crate::event_loop::Message;
 use crate::text::{self, Metrics};
 use crate::widget::WidgetId;
 use sse_core::Result;
-use sse_storage::discovery::{normalize_full_path, resolve_links, SaveDirectoryCandidate, SaveDirectoryLocator};
+use sse_storage::discovery::{normalize_full_path, resolve_links, SaveDirectoryLocator};
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
