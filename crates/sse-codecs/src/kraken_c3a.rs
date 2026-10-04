@@ -46,16 +46,19 @@ pub fn compress(payload: &[u8]) -> Vec<u8> {
             return Vec::new();
         };
         compressed_quantum.clear();
+        let mut all_chunks_compress = true;
         for chunk in block.chunks(0x20000) {
             if append_rle_chunk(chunk, &mut compressed_quantum, &mut rle_tokens).is_err() {
+                all_chunks_compress = false;
                 compressed_quantum.clear();
                 break;
             }
         }
-        let compressed = compressed_quantum
-            .len()
-            .checked_add(3)
-            .is_some_and(|size| size < block.len() && size <= 0x40000);
+        let compressed = all_chunks_compress
+            && compressed_quantum
+                .len()
+                .checked_add(3)
+                .is_some_and(|size| size < block.len() && size <= 0x40000);
         if compressed {
             let compressed_size = compressed_quantum.len();
             let encoded_size = compressed_size.saturating_sub(1);
@@ -446,17 +449,13 @@ fn append_rle_chunk(source: &[u8], encoded: &mut Vec<u8>, tokens: &mut Vec<u16>)
         .len()
         .checked_sub(body_offset)
         .ok_or_else(|| Error::damaged("Kraken RLE body size underflow"))?;
-    if encoded_body_size > 0x3ffff || encoded_body_size >= source.len() {
-        encoded.truncate(header_offset);
-        let raw_length = u32::try_from(source.len())
-            .map_err(|_| Error::damaged("Kraken raw entropy length does not fit its header"))?;
-        let length_bytes = raw_length.to_be_bytes();
-        let header = length_bytes
-            .get(1..)
-            .ok_or_else(|| Error::damaged("Kraken raw entropy length header is truncated"))?;
-        encoded.extend_from_slice(header);
-        encoded.extend_from_slice(source);
-        return Ok(());
+    if encoded_body_size > 0x3ffff {
+        return Err(Error::damaged("Kraken RLE body exceeds its size field"));
+    }
+    if encoded_body_size >= source.len() {
+        return Err(Error::Refused(
+            "Kraken RLE chunk does not reduce the payload size".to_owned(),
+        ));
     }
     let decoded_size = source
         .len()
@@ -893,7 +892,7 @@ mod tests {
     }
 
     #[test]
-    fn rle_encoder_uses_stored_entropy_when_a_subblock_expands() {
+    fn rle_encoder_falls_back_to_an_uncompressed_block_when_a_subblock_expands() {
         let half = KRAKEN_QUANTUM_SIZE / 2;
         let mut payload = vec![0_u8; KRAKEN_QUANTUM_SIZE];
         for (index, byte) in payload.get_mut(half..).unwrap_or_default().iter_mut().enumerate() {
@@ -902,9 +901,12 @@ mod tests {
         let encoded = compress(&payload);
         let mut output = vec![0_u8; payload.len()];
 
+        assert!(encoded.starts_with(&[0xcc, 0x06]));
         assert_eq!(crate::kraken::decompress_into(&encoded, &mut output), Ok(()));
         assert_eq!(output, payload);
-        assert!(encoded.starts_with(&[0x8c, 0x06]));
+        let mut independent_output = vec![0_u8; payload.len()];
+        assert_eq!(decompress_into(&encoded, &mut independent_output), Ok(()));
+        assert_eq!(independent_output, payload);
     }
 
     #[test]

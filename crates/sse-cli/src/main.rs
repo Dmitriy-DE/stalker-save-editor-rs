@@ -981,10 +981,10 @@ mod tests {
 #[cfg(test)]
 #[allow(clippy::arithmetic_side_effects, clippy::expect_used, clippy::indexing_slicing)]
 mod write_tests {
+    use super::s2_legacy_write_error;
     use super::{
         read_info, read_inventory, run, s2_cli_warnings, s2_info_lines, s2_inventory_lines, s2_type_key, writer, Save,
     };
-    use super::s2_legacy_write_error;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -1099,6 +1099,53 @@ mod write_tests {
             verified.container().image(),
             include_bytes!("../../../fixtures/synthetic/writer-s2-money/s2-money-expected.raw")
         );
+        let entry = sse_storage::transaction::list_backups(&backups)
+            .expect("list S2 backups")
+            .into_iter()
+            .next()
+            .expect("S2 export journal exists");
+        assert_eq!(entry.status, sse_storage::transaction::BackupStatus::Verified);
+        assert_eq!(fs::read(entry.backup_path).expect("S2 source backup"), source_bytes);
+    }
+
+    #[test]
+    fn s2_set_money_writes_an_uncompressed_kraken_block_when_entropy_expands() {
+        let temporary = TempDirectory::new();
+        let saves = temporary.0.join("saves");
+        fs::create_dir(&saves).expect("create save directory");
+        let source = saves.join("source.sav");
+        let output = saves.join("edited.sav");
+        let backups = temporary.0.join("backups");
+        let base = include_bytes!("../../../fixtures/synthetic/writer-s2-money/s2-money-source.sav");
+        let parsed = sse_s2::S2Save::from_bytes(base).expect("parse S2 money fixture");
+        let mut image = parsed.container().image().to_vec();
+        image.resize(0x20000, 0);
+        image.extend((0..0x20000).map(|index| u8::try_from(index % 251 + 1).unwrap_or_default()));
+
+        let mut source_bytes = Vec::with_capacity(image.len().saturating_add(10));
+        source_bytes.extend_from_slice(&u32::try_from(image.len()).unwrap_or_default().to_le_bytes());
+        source_bytes.extend_from_slice(&[0xcc, 0x06]);
+        source_bytes.extend_from_slice(&image);
+        let source_crc = sse_codecs::crc32::crc32(&source_bytes);
+        source_bytes.extend_from_slice(&source_crc.to_le_bytes());
+        sse_s2::S2Save::from_bytes(&source_bytes).expect("read stored-block S2 source");
+        fs::write(&source, &source_bytes).expect("write S2 source");
+
+        let result = run(&arguments("set-money", &source, "876543", &output, &backups));
+
+        assert_eq!(result, 0);
+        let actual = fs::read(&output).expect("S2 export exists");
+        assert_eq!(actual.get(4..6), Some(&[0xcc, 0x06][..]));
+        let verified = sse_s2::S2Save::from_bytes(&actual).expect("read back S2 export");
+        assert_eq!(verified.money(), 876_543);
+        assert_eq!(
+            verified.container().stored_crc32(),
+            verified.container().computed_crc32()
+        );
+        assert!(s2_info_lines(&verified, &actual).iter().any(|line| line == "CRC: OK"));
+        assert!(s2_info_lines(&verified, &actual)
+            .iter()
+            .any(|line| line == "Money: 876543"));
         let entry = sse_storage::transaction::list_backups(&backups)
             .expect("list S2 backups")
             .into_iter()
