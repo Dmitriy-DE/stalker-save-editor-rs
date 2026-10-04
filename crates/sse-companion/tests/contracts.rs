@@ -1,11 +1,11 @@
 //! Contract tests for companion file and payload behavior.
-#![allow(clippy::unwrap_used)] // A single explicit mutation fixture uses unwrap so setup failure is immediate.
-
 use sse_companion::hook::{
     patch_bind_stalker, patch_exact_line, patch_main_menu, patch_quest_include, remove_bind_stalker, remove_exact_line,
     remove_main_menu, remove_quest_include,
 };
-use sse_companion::hotkeys::{HotkeyAction, HotkeyLayout, HotkeyMatcher};
+use sse_companion::hotkeys::{
+    replace_hotkey_layout, HotkeyAction, HotkeyBackend, HotkeyError, HotkeyGesture, HotkeyLayout, HotkeyMatcher,
+};
 use sse_companion::installer::{install_bundled, install_files, install_stalker2, uninstall, PayloadFile};
 use sse_companion::protocol::{CompanionClient, ReplyStatus};
 use std::fs;
@@ -162,6 +162,60 @@ fn hotkey_layout_roundtrips_and_rejects_duplicate_gestures() -> Result<(), Box<d
     Ok(())
 }
 
+#[derive(Default)]
+struct TestHotkeyBackend {
+    registrations: Vec<(HotkeyAction, HotkeyGesture)>,
+    fail_once: Option<(HotkeyAction, HotkeyGesture)>,
+}
+
+impl HotkeyBackend for TestHotkeyBackend {
+    fn register(&mut self, action: HotkeyAction, gesture: HotkeyGesture) -> Result<(), HotkeyError> {
+        if self.fail_once == Some((action, gesture)) {
+            self.fail_once = None;
+            return Err(HotkeyError::new("simulated registration failure"));
+        }
+        self.registrations.push((action, gesture));
+        Ok(())
+    }
+
+    fn unregister(&mut self, action: HotkeyAction, gesture: HotkeyGesture) -> Result<(), HotkeyError> {
+        let Some(index) = self
+            .registrations
+            .iter()
+            .position(|registered| *registered == (action, gesture))
+        else {
+            return Err(HotkeyError::new("simulated registration was not active"));
+        };
+        self.registrations.remove(index);
+        Ok(())
+    }
+}
+
+#[test]
+fn hotkey_layout_replacement_rolls_back_after_a_registration_failure() -> Result<(), Box<dyn std::error::Error>> {
+    let old = HotkeyLayout::parse("heal=Ctrl+H\nrepair_equipped=Alt+R\n")?;
+    let new = HotkeyLayout::parse("heal=Ctrl+J\nrepair_equipped=Alt+R\n")?;
+    let ctrl_h = HotkeyGesture::parse("Ctrl+H")?;
+    let ctrl_j = HotkeyGesture::parse("Ctrl+J")?;
+    let alt_r = HotkeyGesture::parse("Alt+R")?;
+    let mut backend = TestHotkeyBackend {
+        registrations: vec![(HotkeyAction::Heal, ctrl_h), (HotkeyAction::RepairEquipped, alt_r)],
+        fail_once: Some((HotkeyAction::Heal, ctrl_j)),
+    };
+
+    assert!(replace_hotkey_layout(&mut backend, &old, &new).is_err());
+    assert_eq!(
+        backend.registrations,
+        vec![(HotkeyAction::RepairEquipped, alt_r), (HotkeyAction::Heal, ctrl_h),]
+    );
+    assert!(replace_hotkey_layout(&mut backend, &old, &new).is_ok());
+    assert_eq!(
+        backend.registrations,
+        vec![(HotkeyAction::RepairEquipped, alt_r), (HotkeyAction::Heal, ctrl_j),]
+    );
+    Ok(())
+}
+
 #[test]
 fn hotkey_layout_persistence_is_bounded_and_replaces_existing_file() -> Result<(), Box<dyn std::error::Error>> {
     let root = temp_dir("sse-companion-hotkeys");
@@ -226,13 +280,14 @@ fn installer_refuses_to_back_up_an_existing_file_over_the_configured_limit() -> 
 }
 
 #[test]
-fn installer_refuses_to_remove_a_file_changed_after_install() {
+fn installer_refuses_to_remove_a_file_changed_after_install() -> Result<(), Box<dyn std::error::Error>> {
     let root = temp_dir("sse-companion-conflict");
     assert!(install_files(&root, "cs", "v1", &[PayloadFile::new("gamedata/a", b"owned".to_vec())]).is_ok());
-    fs::write(root.join("gamedata/a"), b"user edit").unwrap();
+    fs::write(root.join("gamedata/a"), b"user edit")?;
     assert!(uninstall(&root, "cs").is_err());
     assert!(fs::read(root.join("gamedata/a")).is_ok_and(|bytes| bytes == b"user edit"));
-    let _ = fs::remove_dir_all(root);
+    fs::remove_dir_all(root)?;
+    Ok(())
 }
 
 #[test]

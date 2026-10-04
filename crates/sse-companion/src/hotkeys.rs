@@ -312,6 +312,83 @@ impl HotkeyMatcher {
     }
 }
 
+/// OS registration boundary implemented by the Windows/X11 adapter in `sse-sys`.
+pub trait HotkeyBackend {
+    /// Registers one global gesture for an action.
+    fn register(&mut self, action: HotkeyAction, gesture: HotkeyGesture) -> Result<(), HotkeyError>;
+    /// Unregisters one previously active global gesture.
+    fn unregister(&mut self, action: HotkeyAction, gesture: HotkeyGesture) -> Result<(), HotkeyError>;
+}
+
+/// Replaces active bindings, attempts to restore the previous layout on failure, and reports rollback errors.
+pub fn replace_hotkey_layout(
+    backend: &mut impl HotkeyBackend,
+    current: &HotkeyLayout,
+    next: &HotkeyLayout,
+) -> Result<(), HotkeyError> {
+    let removed = current
+        .bindings
+        .iter()
+        .filter_map(|(action, gesture)| (next.bindings.get(action) != Some(gesture)).then_some((*action, *gesture)))
+        .collect::<Vec<_>>();
+    let added = next
+        .bindings
+        .iter()
+        .filter_map(|(action, gesture)| (current.bindings.get(action) != Some(gesture)).then_some((*action, *gesture)))
+        .collect::<Vec<_>>();
+
+    let mut removed_from_os = Vec::new();
+    for (action, gesture) in &removed {
+        if let Err(error) = backend.unregister(*action, *gesture) {
+            let mut rollback_failures = Vec::new();
+            restore_previous_layout(backend, &removed_from_os, &mut rollback_failures);
+            return Err(transition_error("unregister", error, &rollback_failures));
+        }
+        removed_from_os.push((*action, *gesture));
+    }
+
+    let mut added_to_os = Vec::new();
+    for (action, gesture) in &added {
+        if let Err(error) = backend.register(*action, *gesture) {
+            let mut rollback_failures = Vec::new();
+            for (registered_action, registered_gesture) in added_to_os.iter().rev() {
+                if let Err(rollback_error) = backend.unregister(*registered_action, *registered_gesture) {
+                    rollback_failures.push(rollback_error.to_string());
+                }
+            }
+            restore_previous_layout(backend, &removed_from_os, &mut rollback_failures);
+            return Err(transition_error("register", error, &rollback_failures));
+        }
+        added_to_os.push((*action, *gesture));
+    }
+    Ok(())
+}
+
+fn restore_previous_layout(
+    backend: &mut impl HotkeyBackend,
+    removed: &[(HotkeyAction, HotkeyGesture)],
+    failures: &mut Vec<String>,
+) {
+    for (action, gesture) in removed.iter().rev() {
+        if let Err(error) = backend.register(*action, *gesture) {
+            failures.push(error.to_string());
+        }
+    }
+}
+
+fn transition_error(operation: &str, error: HotkeyError, rollback_failures: &[String]) -> HotkeyError {
+    if rollback_failures.is_empty() {
+        HotkeyError::new(format!(
+            "could not {operation} hotkeys: {error}; previous layout was restored"
+        ))
+    } else {
+        HotkeyError::new(format!(
+            "could not {operation} hotkeys: {error}; rollback incomplete: {}",
+            rollback_failures.join("; ")
+        ))
+    }
+}
+
 /// Invalid or unpersistable hotkey layout.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HotkeyError {
@@ -319,9 +396,11 @@ pub struct HotkeyError {
 }
 
 impl HotkeyError {
-    fn new(message: &str) -> Self {
+    /// Creates an error returned by a platform registration backend.
+    #[must_use]
+    pub fn new(message: impl Into<String>) -> Self {
         Self {
-            message: message.to_owned(),
+            message: message.into(),
         }
     }
     fn from_io(error: std::io::Error) -> Self {
