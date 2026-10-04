@@ -5,6 +5,7 @@
 
 use sse_core::{Error, Result};
 use sse_ui::event_loop::channel_pair;
+#[cfg(all(unix, not(target_os = "macos")))]
 use sse_ui::event_loop::Present;
 use sse_ui::glyphs::Fonts;
 use sse_ui::screens::shell::Shell;
@@ -77,7 +78,7 @@ fn bench(args: &[String]) -> Result<()> {
         (None, None, None)
     };
     #[cfg(not(all(unix, not(target_os = "macos"))))]
-    let (proxy, _receiver, mut backend): (Option<sse_ui::event_loop::Proxy<AppMessage>>, Option<()>, Option<()>) =
+    let (proxy, _receiver, _backend): (Option<sse_ui::event_loop::Proxy<AppMessage>>, Option<()>, Option<()>) =
         (None, None, None);
     let mut shell = Shell::build(&mut tree, proxy)?;
     tree.resize(width, height);
