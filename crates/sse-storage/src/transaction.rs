@@ -204,7 +204,7 @@ pub fn export_transaction(
         ));
     }
     if fs::symlink_metadata(&output_path).is_ok() {
-        return Err(Error::Refused(format!(
+        return Err(Error::System(format!(
             "export output already exists: {}",
             output_path.display()
         )));
@@ -356,7 +356,7 @@ pub fn restore_backup(journal_path: &Path, output_path: &Path) -> Result<PathBuf
     let journal_path = absolute_path(journal_path)?;
     let output_path = absolute_path(output_path)?;
     if fs::symlink_metadata(&output_path).is_ok() {
-        return Err(Error::Refused(format!(
+        return Err(Error::System(format!(
             "restore output already exists: {}",
             output_path.display()
         )));

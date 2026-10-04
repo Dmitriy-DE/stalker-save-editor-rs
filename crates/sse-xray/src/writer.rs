@@ -247,6 +247,21 @@ pub fn apply(save: &Save, changes: &ChangeSet) -> Result<SaveBuffer> {
     )
 }
 
+/// Reads the validated upgrade vector for one actor-owned registry object.
+pub fn current_upgrades(save: &Save, target_object: u16) -> Result<Vec<String>> {
+    let record = save
+        .registry_objects()
+        .iter()
+        .find(|record| record.object_id == target_object)
+        .ok_or_else(|| Error::Refused(format!("upgrade target 0x{target_object:04X} is missing")))?;
+    if record.parent_id != save.actor_id() {
+        return Err(Error::Refused(format!(
+            "upgrade target 0x{target_object:04X} is not actor-owned"
+        )));
+    }
+    read_upgrade_vector(save.raw_image(), record).map(|(values, _, _)| values)
+}
+
 /// Applies changes and returns bounded raw-byte data that can restore the exact source image.
 pub fn apply_with_undo(save: &Save, changes: &ChangeSet) -> Result<(SaveBuffer, UndoToken)> {
     let bundle = CatalogBundleReader::load_embedded().get(save.format().id());
