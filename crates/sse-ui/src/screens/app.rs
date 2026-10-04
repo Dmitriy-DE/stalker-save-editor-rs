@@ -416,7 +416,7 @@ impl Screen for Settings {
         style::label(cx.tree, sections, "Разделы", Text::Heading)?;
         for name in [
             "ОБЩИЕ", "ИНТЕРФЕЙС", "Звук", "ПУТИ И АВТОПОИСК", "ОБНОВЛЕНИЯ",
-            "РЕЗЕРВНЫЕ КОПИИ", "ИНСТРУМЕНТЫ ДЛЯ ПОДДЕРЖКИ", "ОТЧЁТЫ И ПРИВАТНОСТЬ",
+            "РЕЗЕРВНЫЕ КОПИИ", "ИНСТРУМЕНТЫ ДЛЯ ПОДДЕРЖКИ", "ОТЧЁТЫ И ПРИВАТНОСТЬ", "ВЕРСИЯ",
         ] {
             self.section_buttons.push(style::button(cx.tree, sections, name, Button::Secondary)?);
         }
@@ -547,10 +547,11 @@ impl Screen for Settings {
         style::label(cx.tree, reports, "Отправить обезличенные журналы и отчёт окружения. Сохранения не отправляются.", Text::Note)?;
         self.section_panels.push(reports);
 
-        let about = style::card(cx.tree, host)?;
+        let about = style::card(cx.tree, content)?;
         style::label(cx.tree, about, "О ПРОГРАММЕ", Text::Heading)?;
         style::label(cx.tree, about, &format!("S.T.A.L.K.E.R. Save Editor {}", env!("CARGO_PKG_VERSION")), Text::Value)?;
         style::label(cx.tree, about, "Редактор сохранений для всей серии S.T.A.L.K.E.R.", Text::Body)?;
+        self.section_panels.push(about);
 
         for (index, panel) in self.section_panels.iter().copied().enumerate() {
             cx.tree.set_visible(panel, index == 0)?;
