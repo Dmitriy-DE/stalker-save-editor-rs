@@ -5,7 +5,6 @@ use crate::edit::{Clipboard, EditConfig, FieldMode, InputFilter, Key, Modifiers}
 use crate::event_loop::{Message, WindowEvent};
 use crate::glyphs::{Face, TextStyle};
 use crate::layout::{Edges, NodeKind, Size, Style};
-use crate::raster::Color;
 use crate::widget::{Content, Look, Tree, WidgetId};
 use crate::widgets::text_input::TextInput;
 use sse_core::Result;
@@ -231,7 +230,7 @@ impl Wizard {
                 )? {
                     let shown = self.input.text();
                     tree.set_text(
-                        self.path_label,
+                        self.path_input,
                         if shown.is_empty() {
                             "Путь к папке с сейвами…"
                         } else {
