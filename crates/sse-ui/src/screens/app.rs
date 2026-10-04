@@ -257,16 +257,29 @@ fn grid_cell(
     column: usize,
     row: usize,
 ) -> Result<WidgetId> {
-    let id = style::button(tree, parent, text, Button::Secondary)?;
-    tree.set_style(
-        id,
+    let colors = crate::theme::current().colors;
+    tree.add(
+        Some(parent),
+        NodeKind::Leaf,
         Style {
             min: Size::new(0.0, 36.0),
+            padding: crate::layout::Edges { left: 6.0, top: 0.0, right: 6.0, bottom: 0.0 },
             grid: Some(GridPlacement::cell(column, row)),
             ..Style::default()
         },
-    )?;
-    Ok(id)
+        Content::Button {
+            text: text.to_owned(),
+            style: TextStyle::new(Face::Heading, 12.0),
+        },
+        Look {
+            fill: Some(style::rgb(colors.background[1])),
+            hover_fill: Some(style::rgb(colors.background[3])),
+            border: Some((style::rgb(colors.borders[0]), 1.0)),
+            text: style::rgb(colors.text[0]),
+            align: TextAlign::Center,
+            ..Look::default()
+        },
+    )
 }
 
 impl Screen for Capabilities {
