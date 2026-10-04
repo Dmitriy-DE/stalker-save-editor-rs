@@ -1254,8 +1254,8 @@ impl Updates {
                     sse_update::UpdateInstallationDetector::detect(None, None, None).map_err(|e| e.to_string())?;
                 let service = sse_update::UpdateService::new(env!("CARGO_PKG_VERSION"), detected);
                 let mut fetch = sse_update::DefaultFetch;
-                let directory = std::env::temp_dir().join("stalker-save-editor-updates");
-                std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
+                let directory = sse_app::paths::update_download_directory();
+                sse_update::prepare_private_directory(&directory).map_err(|e| e.to_string())?;
                 let path = directory.join(&artifact.file);
                 service
                     .download(&mut fetch, &artifact, &path, None)

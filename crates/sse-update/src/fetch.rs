@@ -529,7 +529,7 @@ pub fn verify_existing_file(path: &Path, artifact: &UpdateArtifact) -> Result<()
     }
 }
 
-fn hex_encode(bytes: &[u8]) -> String {
+pub(crate) fn hex_encode(bytes: &[u8]) -> String {
     let mut s = String::with_capacity(bytes.len().saturating_mul(2));
     for b in bytes {
         use std::fmt::Write;
