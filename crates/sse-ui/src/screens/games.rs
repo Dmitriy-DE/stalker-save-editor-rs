@@ -1868,52 +1868,62 @@ impl Screen for GameFixes {
                 return Ok(());
             }
             let fix_id = intent.fix_id;
-            let install = intent.install;
-            let game = Some(intent.game);
-            let directory = Some(intent.directory);
+            let operation = intent.operation;
+            let game = intent.game;
+            let directory = intent.directory;
             let _ = cx.tree.close_dialog()?;
             let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
+            self.busy = true;
             std::thread::spawn(move || {
                 let result = (|| {
-                    let directory = directory.ok_or_else(|| "Папка игры не выбрана".to_owned())?;
-                    let target = game
-                        .as_deref()
-                        .and_then(fix_target)
-                        .ok_or_else(|| "Игра не поддерживается".to_owned())?;
-                    let definition = sse_fixes::GameFixCatalog::try_get(&fix_id)
-                        .ok_or_else(|| "Фикс исчез из каталога".to_owned())?;
-                    if definition.game != target {
-                        return Err("Фикс не относится к выбранной игре".to_owned());
-                    }
+                    let target = fix_target(&game).ok_or_else(|| "Игра не поддерживается".to_owned())?;
                     let engine = sse_fixes::GameFixEngine::new();
-                    let result = if install {
-                        match engine.get_status(definition, &directory).map_err(|e| e.to_string())? {
-                            sse_fixes::GameFixState::Installed => engine.update(definition, &directory),
-                            _ => engine.install(definition, &directory),
+                    match operation {
+                        FixOperation::Preset(preset) => {
+                            let result = engine.apply_preset(target, preset, &directory).map_err(|e| e.to_string())?;
+                            Ok(format!(
+                                "ПРЕСЕТ {}: УСТАНОВЛЕНО {}; УЖЕ АКТУАЛЬНЫХ {}.",
+                                preset.as_str(),
+                                result.installed_fix_ids.len(),
+                                result.already_installed_fix_ids.len()
+                            ))
                         }
-                    } else {
-                        let check = engine.check_uninstall(&fix_id, &directory);
-                        if !check.can_uninstall {
-                            return Err(check
-                                .reason
-                                .unwrap_or_else(|| "Безопасное удаление запрещено".to_owned()));
+                        FixOperation::Install | FixOperation::Remove => {
+                            let fix_id = fix_id.ok_or_else(|| "Исправление не выбрано".to_owned())?;
+                            let definition = sse_fixes::GameFixCatalog::try_get(&fix_id)
+                                .ok_or_else(|| "Фикс исчез из каталога".to_owned())?;
+                            if definition.game != target {
+                                return Err("Фикс не относится к выбранной игре".to_owned());
+                            }
+                            let result = match operation {
+                                FixOperation::Install => match engine
+                                    .get_status(definition, &directory)
+                                    .map_err(|e| e.to_string())?
+                                {
+                                    sse_fixes::GameFixState::Installed => engine.update(definition, &directory),
+                                    _ => engine.install(definition, &directory),
+                                },
+                                FixOperation::Remove => {
+                                    let check = engine.check_uninstall(&fix_id, &directory);
+                                    if !check.can_uninstall {
+                                        return Err(check.reason.unwrap_or_else(|| {
+                                            "Безопасное удаление запрещено".to_owned()
+                                        }));
+                                    }
+                                    engine.uninstall(&fix_id, &directory)
+                                }
+                                FixOperation::Preset(_) => unreachable!(),
+                            }
+                            .map_err(|e| e.to_string())?;
+                            Ok(format!("{}: {:?}; файлов: {}", fix_id, result.state, result.files.len()))
                         }
-                        engine.uninstall(&fix_id, &directory)
                     }
-                    .map_err(|e| e.to_string())?;
-                    Ok(format!(
-                        "{}: {:?}; файлов: {}",
-                        fix_id,
-                        result.state,
-                        result.files.len()
-                    ))
                 })();
                 proxy.send(AppMessage::ToScreen(
                     ScreenId::GameFixes,
                     Box::new(FixReply::Changed(result)),
                 ));
             });
-        }
 
         if let Message::User(AppMessage::ToScreen(ScreenId::GameFixes, payload)) = message {
             if let Some(reply) = payload.downcast_ref::<FixReply>() {
