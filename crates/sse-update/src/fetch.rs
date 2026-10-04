@@ -143,7 +143,7 @@ fn official_https_url(url: &str) -> bool {
     let Some(rest) = url.strip_prefix("https://") else {
         return false;
     };
-    let authority_end = rest.find(|ch| matches!(ch, '/' | '?' | '#')).unwrap_or(rest.len());
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
     let Some(authority) = rest.get(..authority_end) else {
         return false;
     };
