@@ -8,10 +8,11 @@ use crate::widget::WidgetId;
 use sse_core::{Result, SaveBuffer};
 use sse_storage::discovery::{SaveDirectoryLocator, SaveSlot, SaveSlotDiscovery};
 use sse_storage::transaction::{self, BackupEntry, BackupStatus};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const MAXIMUM_VISIBLE_ENTRIES: usize = 12;
-const MAXIMUM_COMPARE_RANGES: usize = MAXIMUM_VISIBLE_ENTRIES;
 
 /// Screens owned by S3.
 #[must_use]
@@ -64,10 +65,41 @@ enum HistoryResult {
 struct CompareReport {
     first: PathBuf,
     second: PathBuf,
-    old_size: usize,
-    new_size: usize,
-    ranges: Vec<crate::diff::ByteRange>,
-    truncated: bool,
+    differences: Vec<SemanticDifference>,
+    added: usize,
+    removed: usize,
+    changed: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SemanticDifference {
+    kind: DifferenceKind,
+    label: String,
+    value_a: String,
+    value_b: String,
+    category: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DifferenceKind {
+    Added,
+    Removed,
+    Changed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ItemQuantity {
+    label: String,
+    count: u64,
+    all_counts_known: bool,
+    object_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SemanticSnapshot {
+    game: String,
+    money: u32,
+    items: BTreeMap<String, ItemQuantity>,
 }
 
 /// One S3 screen instance.
@@ -77,6 +109,9 @@ pub struct HistoryScreen {
     workspace: Workspace,
     results: Option<WidgetId>,
     refresh: Option<WidgetId>,
+    restore_confirmation: Option<WidgetId>,
+    confirm_restore: Option<WidgetId>,
+    cancel_restore: Option<WidgetId>,
     previous_page: Option<WidgetId>,
     next_page: Option<WidgetId>,
     summary: Option<WidgetId>,
@@ -86,6 +121,7 @@ pub struct HistoryScreen {
     save_entries: Option<Vec<SaveSlot>>,
     page: usize,
     compare_selection: Vec<PathBuf>,
+    pending_restore: Option<(PathBuf, PathBuf)>,
 }
 
 impl HistoryScreen {
@@ -96,6 +132,9 @@ impl HistoryScreen {
             workspace,
             results: None,
             refresh: None,
+            restore_confirmation: None,
+            confirm_restore: None,
+            cancel_restore: None,
             previous_page: None,
             next_page: None,
             summary: None,
@@ -105,6 +144,7 @@ impl HistoryScreen {
             save_entries: None,
             page: 0,
             compare_selection: Vec::new(),
+            pending_restore: None,
         }
     }
 
@@ -118,10 +158,10 @@ impl HistoryScreen {
                 return;
             }
             let result = match id {
-                ScreenId::Backups | ScreenId::Timeline => HistoryResult::Backups(
+                ScreenId::Backups => HistoryResult::Backups(
                     transaction::list_backups(&default_backup_directory()).map_err(|error| error.to_string()),
                 ),
-                ScreenId::Compare | ScreenId::SaveDoctor => {
+                ScreenId::Compare | ScreenId::Timeline | ScreenId::SaveDoctor => {
                     HistoryResult::Saves(discover_saves().map_err(|error| error.to_string()))
                 }
                 _ => return,
@@ -262,17 +302,46 @@ impl HistoryScreen {
     fn render_saves(&mut self, cx: &mut Context<'_>, slots: Vec<SaveSlot>) -> Result<()> {
         self.save_entries = Some(slots);
         self.page = 0;
-        self.compare_selection.clear();
-        self.render_saves_page(cx)
+        if self.id == ScreenId::Timeline {
+            self.render_timeline_page(cx)
+        } else {
+            if self.id == ScreenId::Compare {
+                self.compare_selection.truncate(1);
+            }
+            self.render_saves_page(cx)
+        }
     }
 
     fn render_saves_page(&mut self, cx: &mut Context<'_>) -> Result<()> {
         let (visible, total, pages) = match self.save_entries.as_ref() {
             Some(entries) => {
-                let total = entries.len();
+                let candidates = if self.id == ScreenId::Compare {
+                    match self.compare_selection.first() {
+                        Some(selected_path) => {
+                            let current_family = entries
+                                .iter()
+                                .find(|entry| &entry.path == selected_path)
+                                .map(game_family);
+                            entries
+                                .iter()
+                                .filter(|entry| &entry.path != selected_path)
+                                .filter(|entry| {
+                                    current_family
+                                        .as_deref()
+                                        .is_some_and(|family| game_family(entry) == family)
+                                })
+                                .cloned()
+                                .collect::<Vec<_>>()
+                        }
+                        None => entries.clone(),
+                    }
+                } else {
+                    entries.clone()
+                };
+                let total = candidates.len();
                 let pages = page_count(total);
                 let start = self.page.saturating_mul(MAXIMUM_VISIBLE_ENTRIES);
-                let visible = entries
+                let visible = candidates
                     .iter()
                     .skip(start)
                     .take(MAXIMUM_VISIBLE_ENTRIES)
@@ -284,13 +353,17 @@ impl HistoryScreen {
         };
         self.clear_results(cx.tree)?;
         self.update_page_controls(cx.tree, pages)?;
-        self.set_summary(
-            cx.tree,
-            &format!(
-                "Найдено файлов: {total} · страница {} из {pages}",
-                self.page.saturating_add(1),
-            ),
-        )?;
+        if self.id == ScreenId::Compare && total == 0 {
+            self.set_summary(cx.tree, "Нет других сейвов этой игры для сравнения.")?;
+        } else {
+            self.set_summary(
+                cx.tree,
+                &format!(
+                    "Найдено файлов: {total} · страница {} из {pages}",
+                    self.page.saturating_add(1),
+                ),
+            )?;
+        }
         for (row_index, save_slot) in visible.into_iter().enumerate() {
             let Some(row) = self.rows.get(row_index).copied() else {
                 break;
@@ -339,40 +412,79 @@ impl HistoryScreen {
 
     fn render_current_page(&mut self, cx: &mut Context<'_>) -> Result<()> {
         match self.id {
-            ScreenId::Backups | ScreenId::Timeline => self.render_backups_page(cx),
+            ScreenId::Backups => self.render_backups_page(cx),
+            ScreenId::Timeline => self.render_timeline_page(cx),
             ScreenId::Compare | ScreenId::SaveDoctor => self.render_saves_page(cx),
             _ => Ok(()),
         }
     }
 
-    fn render_compare(&mut self, cx: &mut Context<'_>, report: CompareReport) -> Result<()> {
+    fn render_timeline_page(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        let Some(entries) = self.save_entries.as_ref() else {
+            return Ok(());
+        };
+        let mut ordered = entries.clone();
+        ordered.sort_by(timeline_order);
+        let total = ordered.len();
+        let pages = page_count(total);
+        let start = self.page.saturating_mul(MAXIMUM_VISIBLE_ENTRIES);
+        let visible = ordered
+            .iter()
+            .skip(start)
+            .take(MAXIMUM_VISIBLE_ENTRIES)
+            .collect::<Vec<_>>();
         self.clear_results(cx.tree)?;
-        self.update_page_controls(cx.tree, 0)?;
-        let count = report.ranges.len();
+        self.update_page_controls(cx.tree, pages)?;
         self.set_summary(
             cx.tree,
             &format!(
-                "{} → {} · packed {} → {} байт · диапазонов: {}{}",
+                "Сохранений: {total} · порядок: игра, от старых к новым · страница {} из {pages}",
+                self.page.saturating_add(1)
+            ),
+        )?;
+        for (row_index, save) in visible.into_iter().enumerate() {
+            let Some(row) = self.rows.get(row_index).copied() else {
+                break;
+            };
+            cx.tree.set_visible(row.row, true)?;
+            cx.tree.set_visible(row.button, false)?;
+            let game = save.game_id.as_deref().unwrap_or(&save.candidate_game_id);
+            cx.tree.set_text(
+                row.label,
+                &format!(
+                    "{game} · {} · {} · {} байт",
+                    display_name(&save.path),
+                    format_system_time(save.last_write_time_utc),
+                    save.size
+                ),
+            )?;
+        }
+        Ok(())
+    }
+
+    fn render_compare(&mut self, cx: &mut Context<'_>, report: CompareReport) -> Result<()> {
+        self.clear_results(cx.tree)?;
+        self.update_page_controls(cx.tree, 0)?;
+        let count = report.differences.len();
+        self.set_summary(
+            cx.tree,
+            &format!(
+                "Различий: {count} · добавлено: {} · удалено: {} · изменено: {} · {} → {}",
+                report.added,
+                report.removed,
+                report.changed,
                 display_name(&report.first),
-                display_name(&report.second),
-                report.old_size,
-                report.new_size,
-                count,
-                if report.truncated {
-                    " (показан лимит)"
-                } else {
-                    ""
-                }
+                display_name(&report.second)
             ),
         )?;
         if count == 0 {
             if let Some(row) = self.rows.first().copied() {
                 cx.tree.set_visible(row.row, true)?;
                 cx.tree.set_visible(row.button, false)?;
-                cx.tree.set_text(row.label, "Байты совпадают.")?;
+                cx.tree.set_text(row.label, "Различий в деньгах и предметах нет.")?;
             }
         }
-        for (row_index, range) in report.ranges.into_iter().enumerate() {
+        for (row_index, difference) in report.differences.iter().take(MAXIMUM_VISIBLE_ENTRIES).enumerate() {
             let Some(row) = self.rows.get(row_index).copied() else {
                 break;
             };
@@ -381,8 +493,21 @@ impl HistoryScreen {
             cx.tree.set_text(
                 row.label,
                 &format!(
-                    "A {:08X}..{:08X} → B {:08X}..{:08X}",
-                    range.old_start, range.old_end, range.new_start, range.new_end
+                    "{} · {} · {} → {} · {}",
+                    difference_kind_text(difference.kind),
+                    difference.label,
+                    difference.value_a,
+                    difference.value_b,
+                    difference.category
+                ),
+            )?;
+        }
+        if count > MAXIMUM_VISIBLE_ENTRIES {
+            self.set_summary(
+                cx.tree,
+                &format!(
+                    "Различий: {count} · добавлено: {} · удалено: {} · изменено: {} · показаны первые {}",
+                    report.added, report.removed, report.changed, MAXIMUM_VISIBLE_ENTRIES
                 ),
             )?;
         }
@@ -420,7 +545,7 @@ impl Screen for HistoryScreen {
         let title = match self.id {
             ScreenId::Backups => "БЭКАПЫ И ВОССТАНОВЛЕНИЕ",
             ScreenId::Compare => "СРАВНЕНИЕ СОХРАНЕНИЙ",
-            ScreenId::Timeline => "ИСТОРИЯ ЭКСПОРТОВ",
+            ScreenId::Timeline => "ИСТОРИЯ СОХРАНЕНИЙ",
             ScreenId::SaveDoctor => "ДИАГНОСТИКА СОХРАНЕНИЯ",
             _ => "ИСТОРИЯ",
         };
@@ -429,6 +554,7 @@ impl Screen for HistoryScreen {
         let action = match self.id {
             ScreenId::Compare => "Найти сейвы",
             ScreenId::SaveDoctor => "Выбрать сейв",
+            ScreenId::Timeline => "Обновить историю",
             _ => "Обновить",
         };
         self.refresh = Some(style::button(cx.tree, row, action, Button::Primary)?);
@@ -452,11 +578,9 @@ impl Screen for HistoryScreen {
             cx.tree,
             results,
             match self.id {
-                ScreenId::Backups => {
-                    "Восстановление создаёт новый файл рядом с исходным и никогда его не перезаписывает."
-                }
-                ScreenId::Compare => "Сравниваются упакованные байты; показываются первые 12 диапазонов.",
-                ScreenId::Timeline => "Журнал хранит путь, статус резервной копии и результат предыдущего экспорта.",
+                ScreenId::Backups => "Журнал резервных копий сверяется с файлами и SHA-256; восстановление идёт в отдельный файл после подтверждения.",
+                ScreenId::Compare => "Показываются только различия в читаемых значениях денег и предметов.",
+                ScreenId::Timeline => "Временная последовательность строится по времени изменения файлов сейвов.",
                 ScreenId::SaveDoctor => "Проверка только читает сейв. Автоматического ремонта нет.",
                 _ => "",
             },
@@ -469,6 +593,24 @@ impl Screen for HistoryScreen {
             cx.tree.set_visible(row, false)?;
             self.rows.push(ResultRow { row, label, button });
         }
+        let confirmation = style::card(cx.tree, host)?;
+        self.restore_confirmation = Some(confirmation);
+        style::label(cx.tree, confirmation, "ВОССТАНОВИТЬ РЕЗЕРВНУЮ КОПИЮ", Text::Heading)?;
+        style::label(
+            cx.tree,
+            confirmation,
+            "Подтвердите создание отдельного файла из проверенной копии. Исходный сейв останется без изменений.",
+            Text::Body,
+        )?;
+        let confirm_row = style::row(cx.tree, confirmation)?;
+        self.confirm_restore = Some(style::button(
+            cx.tree,
+            confirm_row,
+            "Подтвердить восстановление",
+            Button::Primary,
+        )?);
+        self.cancel_restore = Some(style::button(cx.tree, confirm_row, "Отмена", Button::Secondary)?);
+        cx.tree.set_visible(confirmation, false)?;
         Ok(())
     }
 
@@ -505,6 +647,22 @@ impl Screen for HistoryScreen {
                 self.render_current_page(cx)?;
             }
         }
+        if clicked == self.cancel_restore {
+            self.pending_restore = None;
+            if let Some(id) = self.restore_confirmation {
+                cx.tree.set_visible(id, false)?;
+            }
+            self.set_summary(cx.tree, "Восстановление отменено.")?;
+        }
+        if clicked == self.confirm_restore {
+            if let Some((journal, source)) = self.pending_restore.take() {
+                if let Some(id) = self.restore_confirmation {
+                    cx.tree.set_visible(id, false)?;
+                }
+                self.set_summary(cx.tree, "Проверяю журнал и восстанавливаю копию в новый файл…")?;
+                self.start_restore(journal, source, cx.proxy.cloned());
+            }
+        }
         if let Some(action) = self
             .actions
             .iter()
@@ -513,28 +671,45 @@ impl Screen for HistoryScreen {
         {
             match action {
                 Action::Restore { journal, source } => {
-                    self.set_summary(cx.tree, "Проверяю журнал и создаю отдельный файл…")?;
-                    self.start_restore(journal, source, cx.proxy.cloned());
+                    self.pending_restore = Some((journal, source));
+                    if let Some(id) = self.restore_confirmation {
+                        cx.tree.set_visible(id, true)?;
+                    }
+                    self.set_summary(cx.tree, "Подтвердите восстановление в отдельный файл.")?;
                 }
                 Action::Compare(path) => {
-                    if self.compare_selection.len() >= 2 {
-                        self.compare_selection.clear();
-                    }
-                    if self.compare_selection.last() == Some(&path) {
-                        self.compare_selection.clear();
-                        self.compare_selection.push(path);
-                    } else {
-                        self.compare_selection.push(path);
-                    }
-                    if self.compare_selection.len() == 2 {
-                        let first = self.compare_selection.first().cloned();
-                        let second = self.compare_selection.get(1).cloned();
-                        if let (Some(first), Some(second)) = (first, second) {
+                    if let Some(current) = cx.app.current_save().map(Path::to_path_buf) {
+                        if current == path {
+                            self.set_summary(cx.tree, "Выберите другой сейв этой игры.")?;
+                        } else {
+                            self.compare_selection = vec![current.clone(), path.clone()];
                             self.set_summary(cx.tree, "Сравниваю…")?;
-                            self.start_compare(first, second, cx.proxy.cloned());
+                            self.start_compare(current, path, cx.proxy.cloned());
                         }
                     } else {
-                        self.set_summary(cx.tree, "Выберите второй сейв для сравнения.")?;
+                        match self.compare_selection.first().cloned() {
+                            Some(first) if first == path => {
+                                self.set_summary(cx.tree, "Выберите другой сейв этой игры.")?;
+                            }
+                            Some(first) => {
+                                let entries = self.save_entries.as_deref().unwrap_or_default();
+                                let first_family = entries.iter().find(|entry| entry.path == first).map(game_family);
+                                let second_family = entries.iter().find(|entry| entry.path == path).map(game_family);
+                                if first_family.is_some() && first_family == second_family {
+                                    self.compare_selection = vec![first.clone(), path.clone()];
+                                    self.set_summary(cx.tree, "Сравниваю…")?;
+                                    self.start_compare(first, path, cx.proxy.cloned());
+                                } else {
+                                    self.set_summary(cx.tree, "Это сейвы разных игр.")?;
+                                }
+                            }
+                            None => {
+                                self.compare_selection.push(path);
+                                self.page = 0;
+                                self.render_saves_page(cx)?;
+                                self.set_summary(cx.tree, "Выберите второй сейв этой игры.")?;
+                            }
+                        }
                     }
                 }
                 Action::Diagnose { path, format_id } => {
@@ -581,10 +756,10 @@ fn clone_report(report: &CompareReport) -> CompareReport {
     CompareReport {
         first: report.first.clone(),
         second: report.second.clone(),
-        old_size: report.old_size,
-        new_size: report.new_size,
-        ranges: report.ranges.clone(),
-        truncated: report.truncated,
+        differences: report.differences.clone(),
+        added: report.added,
+        removed: report.removed,
+        changed: report.changed,
     }
 }
 
@@ -593,23 +768,246 @@ fn discover_saves() -> sse_core::Result<Vec<SaveSlot>> {
     Ok(SaveSlotDiscovery::discover(&candidates).slots)
 }
 
+fn game_family(slot: &SaveSlot) -> String {
+    let value = slot
+        .game_id
+        .as_deref()
+        .unwrap_or(&slot.candidate_game_id)
+        .to_ascii_lowercase();
+    if value == "soc" || value.contains("soc") {
+        "soc".to_owned()
+    } else if value == "clear_sky" || value == "cs" || value.contains("clear-sky") || value.contains("clear_sky") {
+        "clear_sky".to_owned()
+    } else if value == "cop" || value.contains("cop") {
+        "cop".to_owned()
+    } else if value == "stalker2" || value == "stalker-2" || value == "s2" {
+        "stalker2".to_owned()
+    } else {
+        value
+    }
+}
+
+fn timeline_order(left: &SaveSlot, right: &SaveSlot) -> std::cmp::Ordering {
+    game_family(left)
+        .cmp(&game_family(right))
+        .then_with(|| {
+            match (
+                left.last_write_time_utc == UNIX_EPOCH,
+                right.last_write_time_utc == UNIX_EPOCH,
+            ) {
+                (true, false) => std::cmp::Ordering::Greater,
+                (false, true) => std::cmp::Ordering::Less,
+                _ => left.last_write_time_utc.cmp(&right.last_write_time_utc),
+            }
+        })
+        .then_with(|| left.path.cmp(&right.path))
+}
+
+fn format_system_time(value: SystemTime) -> String {
+    let Ok(duration) = value.duration_since(UNIX_EPOCH) else {
+        return "дата неизвестна".to_owned();
+    };
+    let seconds = duration.as_secs();
+    let days = seconds / 86_400;
+    let seconds_of_day = seconds % 86_400;
+    let Ok(days) = i64::try_from(days) else {
+        return "дата вне диапазона".to_owned();
+    };
+    let Some(serial_day) = days.checked_add(719_468) else {
+        return "дата вне диапазона".to_owned();
+    };
+    let era = if serial_day >= 0 {
+        serial_day
+    } else {
+        serial_day.saturating_sub(146_096)
+    }
+    .div_euclid(146_097);
+    let day_of_era = serial_day.saturating_sub(era.saturating_mul(146_097));
+    let year_of_era = day_of_era
+        .saturating_sub(day_of_era / 1_460)
+        .saturating_add(day_of_era / 36_524)
+        .saturating_sub(day_of_era / 146_096)
+        .div_euclid(365);
+    let mut year = year_of_era.saturating_add(era.saturating_mul(400));
+    let day_of_year = day_of_era.saturating_sub(
+        365_i64
+            .saturating_mul(year_of_era)
+            .saturating_add(year_of_era / 4)
+            .saturating_sub(year_of_era / 100),
+    );
+    let month_prime = 5_i64.saturating_mul(day_of_year).saturating_add(2).div_euclid(153);
+    let day = day_of_year
+        .saturating_sub(153_i64.saturating_mul(month_prime).saturating_add(2).div_euclid(5))
+        .saturating_add(1);
+    let month = month_prime.saturating_add(if month_prime < 10 { 3 } else { -9 });
+    if month <= 2 {
+        year = year.saturating_add(1);
+    }
+    format!(
+        "{day:02}.{month:02}.{year:04} {:02}:{:02}:{:02}",
+        seconds_of_day / 3_600,
+        seconds_of_day % 3_600 / 60,
+        seconds_of_day % 60
+    )
+}
+
 fn compare_saves(first: &Path, second: &Path) -> std::result::Result<CompareReport, String> {
     let first_image = SaveBuffer::read(first).map_err(|error| error.to_string())?;
     let second_image = SaveBuffer::read(second).map_err(|error| error.to_string())?;
-    let bounded = crate::diff::byte_ranges_bounded(
-        first_image.as_slice(),
-        second_image.as_slice(),
-        8,
-        MAXIMUM_COMPARE_RANGES,
-    );
+    compare_packed(first, first_image.as_slice(), second, second_image.as_slice())
+}
+
+fn compare_packed(
+    first_path: &Path,
+    first: &[u8],
+    second_path: &Path,
+    second: &[u8],
+) -> std::result::Result<CompareReport, String> {
+    let first_snapshot = semantic_snapshot(first)?;
+    let second_snapshot = semantic_snapshot(second)?;
+    if first_snapshot.game != second_snapshot.game {
+        return Err("Это сейвы разных игр.".to_owned());
+    }
+
+    let mut differences = Vec::new();
+    if first_snapshot.money != second_snapshot.money {
+        differences.push(SemanticDifference {
+            kind: DifferenceKind::Changed,
+            label: "Деньги".to_owned(),
+            value_a: first_snapshot.money.to_string(),
+            value_b: second_snapshot.money.to_string(),
+            category: "Персонаж",
+        });
+    }
+
+    let keys = first_snapshot
+        .items
+        .keys()
+        .chain(second_snapshot.items.keys())
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    for key in keys {
+        let old = first_snapshot.items.get(&key);
+        let new = second_snapshot.items.get(&key);
+        let kind = match (old, new) {
+            (None, Some(_)) => Some(DifferenceKind::Added),
+            (Some(_), None) => Some(DifferenceKind::Removed),
+            (Some(old), Some(new)) if item_quantity_changed(old, new) => Some(DifferenceKind::Changed),
+            _ => None,
+        };
+        let Some(kind) = kind else {
+            continue;
+        };
+        let label = new.or(old).map_or_else(|| key.clone(), |item| item.label.clone());
+        differences.push(SemanticDifference {
+            kind,
+            label,
+            value_a: old.map_or_else(|| "нет".to_owned(), item_quantity_text),
+            value_b: new.map_or_else(|| "нет".to_owned(), item_quantity_text),
+            category: "Предметы",
+        });
+    }
+
+    let added = differences
+        .iter()
+        .filter(|difference| difference.kind == DifferenceKind::Added)
+        .count();
+    let removed = differences
+        .iter()
+        .filter(|difference| difference.kind == DifferenceKind::Removed)
+        .count();
+    let changed = differences
+        .iter()
+        .filter(|difference| difference.kind == DifferenceKind::Changed)
+        .count();
     Ok(CompareReport {
-        first: first.to_path_buf(),
-        second: second.to_path_buf(),
-        old_size: first_image.len(),
-        new_size: second_image.len(),
-        ranges: bounded.ranges,
-        truncated: bounded.truncated,
+        first: first_path.to_path_buf(),
+        second: second_path.to_path_buf(),
+        differences,
+        added,
+        removed,
+        changed,
     })
+}
+
+fn semantic_snapshot(packed: &[u8]) -> std::result::Result<SemanticSnapshot, String> {
+    if let Ok(save) = sse_s2::S2Save::from_bytes(packed) {
+        let mut snapshot = SemanticSnapshot {
+            game: "stalker2".to_owned(),
+            money: save.money(),
+            items: BTreeMap::new(),
+        };
+        for item in save.items() {
+            let key = format!(
+                "{:02x}{:02x}{:02x}",
+                item.type_key[0], item.type_key[1], item.type_key[2]
+            );
+            let label = item.display_name.unwrap_or_else(|| format!("Предмет {}", key));
+            add_item(&mut snapshot, key, label, Some(item.count));
+        }
+        return Ok(snapshot);
+    }
+
+    let save = sse_xray::Save::read(packed).map_err(|error| error.to_string())?;
+    let game = match save.format() {
+        sse_xray::Format::Soc | sse_xray::Format::SocEe => "soc",
+        sse_xray::Format::Cs | sse_xray::Format::CsEe => "clear_sky",
+        sse_xray::Format::Cop | sse_xray::Format::CopEe => "cop",
+    };
+    let mut snapshot = SemanticSnapshot {
+        game: game.to_owned(),
+        money: save.money().map_err(|error| error.to_string())?,
+        items: BTreeMap::new(),
+    };
+    for item in save.inventory().map_err(|error| error.to_string())? {
+        let key = format!(
+            "{}\u{1f}{}",
+            item.section.to_ascii_lowercase(),
+            item.category.to_ascii_lowercase()
+        );
+        let label = format!("{} ({})", item.category, item.section);
+        add_item(&mut snapshot, key, label, item.count.map(u32::from));
+    }
+    Ok(snapshot)
+}
+
+fn add_item(snapshot: &mut SemanticSnapshot, key: String, label: String, count: Option<u32>) {
+    let item = snapshot.items.entry(key).or_insert(ItemQuantity {
+        label,
+        count: 0,
+        all_counts_known: true,
+        object_count: 0,
+    });
+    item.object_count = item.object_count.saturating_add(1);
+    match count {
+        Some(count) if item.all_counts_known => item.count = item.count.saturating_add(u64::from(count)),
+        Some(_) => {}
+        None => item.all_counts_known = false,
+    }
+}
+
+fn item_quantity_changed(first: &ItemQuantity, second: &ItemQuantity) -> bool {
+    match (first.all_counts_known, second.all_counts_known) {
+        (true, true) => first.count != second.count,
+        (false, false) => first.object_count != second.object_count,
+        _ => true,
+    }
+}
+
+fn item_quantity_text(item: &ItemQuantity) -> String {
+    if item.all_counts_known {
+        format!("×{}", item.count)
+    } else {
+        format!("{} объектов · количество неизвестно", item.object_count)
+    }
+}
+
+fn difference_kind_text(kind: DifferenceKind) -> &'static str {
+    match kind {
+        DifferenceKind::Added => "Добавлено",
+        DifferenceKind::Removed => "Удалено",
+        DifferenceKind::Changed => "Изменено",
+    }
 }
 
 fn diagnose_save(path: &Path, format_id: Option<&str>) -> std::result::Result<String, String> {
@@ -651,9 +1049,16 @@ fn restore_to_new_path(journal: &Path, source: &Path) -> std::result::Result<Pat
 }
 
 fn restored_output_path(source: &Path) -> PathBuf {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs());
+    restored_output_path_at(source, timestamp)
+}
+
+fn restored_output_path_at(source: &Path, timestamp: u64) -> PathBuf {
     let name = source.file_stem().unwrap_or_default().to_string_lossy();
     let extension = source.extension().and_then(|value| value.to_str()).unwrap_or("sav");
-    source.with_file_name(format!("{name}_restored.{extension}"))
+    source.with_file_name(format!("{name}_restored_{timestamp}.{extension}"))
 }
 
 fn default_backup_directory() -> PathBuf {
@@ -693,12 +1098,59 @@ fn truncate(value: &str, maximum: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{default_backup_directory, diagnose_packed, page_count, restored_output_path, truncate};
+    use super::{
+        compare_packed, default_backup_directory, diagnose_packed, format_system_time, page_count,
+        restored_output_path_at, timeline_order, truncate, Action, ActionButton, HistoryScreen, Workspace,
+    };
+    use crate::event_loop::Message;
+    use crate::glyphs::Fonts;
+    use crate::layout::{NodeKind, Style};
+    use crate::raster::Color;
+    use crate::screens::{AppMessage, Context, Screen, ScreenId};
+    use crate::widget::{Content, Look, Tree};
+    use sse_storage::discovery::SaveSlot;
+    use sse_storage::transaction::{self, EditSummary};
+    use std::fs;
     use std::path::Path;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     const SYNTHETIC_XRAY_SAVE: &[u8] = include_bytes!("../../../../fixtures/synthetic/xray-soc-ee.sav");
     const SYNTHETIC_S2_SAVE: &[u8] =
         include_bytes!("../../../../fixtures/synthetic/writer-s2-money/s2-money-source.sav");
+
+    static NEXT_TEMP_DIRECTORY: AtomicU64 = AtomicU64::new(1);
+
+    struct TempDirectory(PathBuf);
+
+    impl TempDirectory {
+        fn new() -> Self {
+            let id = NEXT_TEMP_DIRECTORY.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!("sse-history-ui-{}-{id}", std::process::id()));
+            fs::create_dir_all(&path).unwrap_or_else(|error| panic!("create test directory: {error}"));
+            Self(path)
+        }
+    }
+
+    impl Drop for TempDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn fixture_slot(path: &str, game: &str) -> SaveSlot {
+        SaveSlot {
+            path: PathBuf::from(path),
+            candidate_game_id: game.to_owned(),
+            candidate_release_id: game.to_owned(),
+            size: 1,
+            last_write_time_utc: UNIX_EPOCH.checked_add(Duration::from_secs(1)).unwrap_or(UNIX_EPOCH),
+            format_id: Some(game.to_owned()),
+            game_id: Some(game.to_owned()),
+            detection_error: None,
+        }
+    }
 
     #[test]
     fn diagnostic_text_truncation_obeys_character_boundary() {
@@ -709,7 +1161,10 @@ mod tests {
     #[test]
     fn backup_destination_is_a_new_sibling_and_preserves_extension() {
         let source = Path::new("/save/game_slot.sav");
-        assert_eq!(restored_output_path(source), Path::new("/save/game_slot_restored.sav"));
+        assert_eq!(
+            restored_output_path_at(source, 123),
+            Path::new("/save/game_slot_restored_123.sav")
+        );
     }
 
     #[test]
@@ -743,5 +1198,207 @@ mod tests {
         assert!(report.starts_with("S2:"));
         assert!(report.contains("CRC"));
         assert!(report.contains("запись S2 не поддержана"));
+    }
+
+    #[test]
+    fn semantic_compare_reports_money_and_item_changes_without_byte_ranges() {
+        let old_money = include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-source.sav");
+        let new_money = include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-expected.sav");
+        let report = compare_packed(Path::new("old.sav"), old_money, Path::new("new.sav"), new_money)
+            .unwrap_or_else(|error| panic!("compare money fixtures: {error}"));
+        assert_eq!(report.changed, 1);
+        assert_eq!(
+            report.differences.first().map(|entry| entry.label.as_str()),
+            Some("Деньги")
+        );
+
+        let old_items = include_bytes!("../../../../fixtures/synthetic/writer-stacks/xray-stack-cop-source.sav");
+        let new_items = include_bytes!("../../../../fixtures/synthetic/writer-stacks/xray-stack-cop-expected.sav");
+        let report = compare_packed(Path::new("old.sav"), old_items, Path::new("new.sav"), new_items)
+            .unwrap_or_else(|error| panic!("compare item fixtures: {error}"));
+        assert!(report
+            .differences
+            .iter()
+            .any(|entry| entry.category == "Предметы" && entry.kind == super::DifferenceKind::Changed));
+    }
+
+    #[test]
+    fn compare_screen_lists_two_same_game_candidates_when_no_save_is_open() -> sse_core::Result<()> {
+        let fonts = Fonts::bundled()?;
+        let mut tree = Tree::new(fonts, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let mut app = sse_app::AppState::new();
+        let mut screen = HistoryScreen::new(ScreenId::Compare, "test", Workspace::default());
+        {
+            let mut cx = Context {
+                tree: &mut tree,
+                proxy: None,
+                status: None,
+                app: &mut app,
+            };
+            screen.build(&mut cx, host)?;
+            screen.render_saves(
+                &mut cx,
+                vec![
+                    fixture_slot("soc-a.sav", "soc"),
+                    fixture_slot("soc-b.sav", "soc"),
+                    fixture_slot("cop-a.sav", "cop"),
+                ],
+            )?;
+        }
+        assert_eq!(
+            screen.actions.len(),
+            3,
+            "all saves must be offered before a first selection"
+        );
+
+        let first_action = screen
+            .actions
+            .first()
+            .cloned()
+            .ok_or_else(|| sse_core::Error::damaged("missing first candidate"))?;
+        let first_path = match first_action.action {
+            Action::Compare(path) => path,
+            _ => return Err(sse_core::Error::damaged("expected compare action")),
+        };
+        {
+            let message = Message::User(AppMessage::Tick(0));
+            let mut cx = Context {
+                tree: &mut tree,
+                proxy: None,
+                status: None,
+                app: &mut app,
+            };
+            screen.message(&mut cx, &message, Some(first_action.widget))?;
+        }
+        assert_eq!(screen.compare_selection, vec![first_path.clone()]);
+        assert_eq!(
+            screen.actions.len(),
+            1,
+            "the next choice must be a different save from the same game"
+        );
+        let second_action = screen
+            .actions
+            .first()
+            .cloned()
+            .ok_or_else(|| sse_core::Error::damaged("missing second candidate"))?;
+        let second_path = match second_action.action {
+            Action::Compare(path) => path,
+            _ => return Err(sse_core::Error::damaged("expected compare action")),
+        };
+        {
+            let message = Message::User(AppMessage::Tick(0));
+            let mut cx = Context {
+                tree: &mut tree,
+                proxy: None,
+                status: None,
+                app: &mut app,
+            };
+            screen.message(&mut cx, &message, Some(second_action.widget))?;
+        }
+        assert_eq!(screen.compare_selection, vec![first_path, second_path]);
+        Ok(())
+    }
+
+    #[test]
+    fn restore_requires_confirmation_and_restores_verified_backup_to_a_new_file() -> sse_core::Result<()> {
+        let temp = TempDirectory::new();
+        let save_directory = temp.0.join("saves");
+        let backup_directory = temp.0.join("backups");
+        fs::create_dir_all(&save_directory)?;
+        fs::create_dir_all(&backup_directory)?;
+        let source = save_directory.join("slot.sav");
+        fs::write(&source, SYNTHETIC_XRAY_SAVE)?;
+        let expected_sha = sse_codecs::sha256::sha256_hex(SYNTHETIC_XRAY_SAVE);
+        let replacement = include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-expected.sav");
+        let receipt = transaction::export_transaction(
+            &source,
+            &expected_sha,
+            replacement,
+            &save_directory.join("edited.sav"),
+            &backup_directory,
+            EditSummary::default(),
+        )?;
+
+        let fonts = Fonts::bundled()?;
+        let mut tree = Tree::new(fonts, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let mut app = sse_app::AppState::new();
+        let mut screen = HistoryScreen::new(ScreenId::Backups, "test", Workspace::default());
+        let restore_button;
+        {
+            let mut cx = Context {
+                tree: &mut tree,
+                proxy: None,
+                status: None,
+                app: &mut app,
+            };
+            screen.build(&mut cx, host)?;
+            restore_button = screen
+                .rows
+                .first()
+                .ok_or_else(|| sse_core::Error::damaged("missing restore row"))?
+                .button;
+            screen.actions.push(ActionButton {
+                widget: restore_button,
+                action: Action::Restore {
+                    journal: receipt.journal_path.clone(),
+                    source: source.clone(),
+                },
+            });
+            let message = Message::User(AppMessage::Tick(0));
+            screen.message(&mut cx, &message, Some(restore_button))?;
+        }
+        assert_eq!(
+            screen.pending_restore,
+            Some((receipt.journal_path.clone(), source.clone())),
+            "the first click must only request confirmation"
+        );
+        assert_eq!(fs::read(&source)?, SYNTHETIC_XRAY_SAVE);
+
+        let restored = super::restore_to_new_path(&receipt.journal_path, &source).map_err(sse_core::Error::System)?;
+        assert_ne!(restored, source);
+        assert!(restored
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy().starts_with("slot_restored_")));
+        assert_eq!(fs::read(&restored)?, SYNTHETIC_XRAY_SAVE);
+        assert_eq!(fs::read(&source)?, SYNTHETIC_XRAY_SAVE);
+        Ok(())
+    }
+
+    #[test]
+    fn timeline_orders_each_game_oldest_first_and_unknown_times_last() {
+        let slot = |name: &str, time: SystemTime| SaveSlot {
+            path: Path::new(name).to_path_buf(),
+            candidate_game_id: "cop".to_owned(),
+            candidate_release_id: "stalker-cop".to_owned(),
+            size: 1,
+            last_write_time_utc: time,
+            format_id: Some("stalker-cop".to_owned()),
+            game_id: Some("cop".to_owned()),
+            detection_error: None,
+        };
+        let earlier = slot("early.sav", UNIX_EPOCH + Duration::from_secs(10));
+        let later = slot("late.sav", UNIX_EPOCH + Duration::from_secs(20));
+        let unknown = slot("unknown.sav", UNIX_EPOCH);
+        assert_eq!(timeline_order(&earlier, &later), std::cmp::Ordering::Less);
+        assert_eq!(timeline_order(&later, &unknown), std::cmp::Ordering::Less);
+        assert_eq!(format_system_time(UNIX_EPOCH), "01.01.1970 00:00:00");
+        assert_eq!(
+            format_system_time(UNIX_EPOCH + Duration::from_secs(86_400)),
+            "02.01.1970 00:00:00"
+        );
     }
 }
