@@ -2,7 +2,7 @@
 
 #![allow(clippy::arithmetic_side_effects, clippy::expect_used, clippy::indexing_slicing)]
 
-use sse_storage::drafts::{AddRequest, DraftJournal, DraftPlan, DraftStore, StashPut};
+use sse_storage::drafts::{AddRequest, DraftJournal, DraftPlacement, DraftPlan, DraftStore, StashPut};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -59,7 +59,7 @@ fn reads_the_python_schema_one_fixture_and_preserves_its_edits() {
 }
 
 #[test]
-fn schema_two_roundtrips_edits_and_supports_undo_redo_and_branching() {
+fn schema_three_roundtrips_all_edits_and_supports_undo_redo_and_branching() {
     let directory = TemporaryDirectory::new();
     let store = DraftStore::new(&directory.0);
     let source_sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -77,15 +77,24 @@ fn schema_two_roundtrips_edits_and_supports_undo_redo_and_branching() {
     second
         .stash_puts
         .push(StashPut::new(0x4567, 0x5678).expect("valid stash transfer"));
+    second.durability.insert(0x6789, 75);
+    second.placements.insert(0x6789, DraftPlacement::Belt);
+    second.upgrades.insert(0x6789, vec!["wpn_upgrade_scope_1".to_owned()]);
     let journal = DraftJournal::new(vec![empty, first, second], 2).expect("valid journal");
 
     let saved = store.save(journal).expect("draft should save");
     let bytes = fs::read(store.path_for(source_sha256).expect("valid hash")).expect("draft file should exist");
     let serialized = std::str::from_utf8(&bytes).expect("draft JSON should be UTF-8");
-    assert!(serialized.contains("\"schema\":2"));
+    assert!(serialized.contains("\"schema\":3"));
     assert!(serialized.contains("\"source_sha256\""));
     assert!(serialized.contains("\"sourceSha256\""));
     assert_eq!(current(&saved).money, Some(200));
+    assert_eq!(current(&saved).durability.get(&0x6789), Some(&75));
+    assert_eq!(current(&saved).placements.get(&0x6789), Some(&DraftPlacement::Belt));
+    assert_eq!(
+        current(&saved).upgrades.get(&0x6789),
+        Some(&vec!["wpn_upgrade_scope_1".to_owned()])
+    );
 
     let restored = store
         .load(source_sha256)
@@ -94,6 +103,12 @@ fn schema_two_roundtrips_edits_and_supports_undo_redo_and_branching() {
     assert_eq!(current(&restored), current(&saved));
     assert_eq!(current(&restored.undo()).money, Some(100));
     assert_eq!(current(&restored.undo().redo()), current(&restored));
+    assert_eq!(current(&restored).durability.get(&0x6789), Some(&75));
+    assert_eq!(current(&restored).placements.get(&0x6789), Some(&DraftPlacement::Belt));
+    assert_eq!(
+        current(&restored).upgrades.get(&0x6789),
+        Some(&vec!["wpn_upgrade_scope_1".to_owned()])
+    );
     let mut branch_plan = DraftPlan::empty(source_sha256).expect("valid plan with money 300");
     branch_plan.money = Some(300);
     let branched = restored
@@ -102,6 +117,96 @@ fn schema_two_roundtrips_edits_and_supports_undo_redo_and_branching() {
         .expect("branch should be recorded");
     assert_eq!(current(&branched).money, Some(300));
     assert!(!branched.can_redo());
+}
+
+#[test]
+fn schema_three_loads_durability_placement_and_upgrade_edits() {
+    let directory = TemporaryDirectory::new();
+    let store = DraftStore::new(&directory.0);
+    let source_sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let bytes = format!(
+        "{{\"index\":0,\"plans\":[{{\"sourceSha256\":\"{source_sha256}\",\"money\":null,\"stackCounts\":{{}},\"detachHandles\":[],\"adds\":[],\"stashTakes\":[],\"stashPuts\":[],\"durability\":{{\"4660\":75}},\"placements\":{{\"4660\":\"belt\"}},\"upgrades\":{{\"4660\":[\"wpn_upgrade_scope_1\"]}},\"unmappedLegacyPlan\":null}}],\"schema\":3,\"source_sha256\":\"{source_sha256}\"}}"
+    );
+    fs::write(store.path_for(source_sha256).expect("valid source hash"), bytes).expect("draft JSON should be written");
+
+    let restored = store
+        .load(source_sha256)
+        .expect("draft read should succeed")
+        .expect("draft with all supported inventory edits should load");
+
+    assert!(restored.can_apply_current());
+    assert_eq!(current(&restored).durability.get(&4660), Some(&75));
+    assert_eq!(current(&restored).placements.get(&4660), Some(&DraftPlacement::Belt));
+    assert_eq!(
+        current(&restored).upgrades.get(&4660),
+        Some(&vec!["wpn_upgrade_scope_1".to_owned()])
+    );
+}
+
+#[test]
+fn loads_schema_two_drafts_without_extended_fields() {
+    let directory = TemporaryDirectory::new();
+    let store = DraftStore::new(&directory.0);
+    let source_sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let bytes = format!(
+        "{{\"index\":0,\"plans\":[{{\"sourceSha256\":\"{source_sha256}\",\"money\":8765,\"stackCounts\":{{\"4660\":12}},\"detachHandles\":[],\"adds\":[],\"stashTakes\":[],\"stashPuts\":[],\"unmappedLegacyPlan\":null}}],\"schema\":2,\"source_sha256\":\"{source_sha256}\"}}"
+    );
+    fs::write(store.path_for(source_sha256).expect("valid source hash"), bytes).expect("draft JSON should be written");
+
+    let restored = store
+        .load(source_sha256)
+        .expect("draft read should succeed")
+        .expect("schema-two draft should remain readable");
+
+    assert_eq!(current(&restored).money, Some(8765));
+    assert_eq!(current(&restored).stack_counts.get(&4660), Some(&12));
+    assert!(current(&restored).durability.is_empty());
+}
+
+#[test]
+fn persists_a_draft_that_contains_only_durability_placement_and_upgrades() {
+    let directory = TemporaryDirectory::new();
+    let store = DraftStore::new(&directory.0);
+    let source_sha256 = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+    let mut plan = DraftPlan::empty(source_sha256).expect("valid empty plan");
+    plan.durability.insert(0x1234, 75);
+    plan.placements.insert(0x1234, DraftPlacement::Slot(4));
+    plan.upgrades.insert(0x1234, vec!["wpn_upgrade_scope_1".to_owned()]);
+    let journal = DraftJournal::new(vec![plan], 0).expect("valid edit journal");
+
+    store.save(journal).expect("draft should persist");
+    let restored = store
+        .load(source_sha256)
+        .expect("draft read should succeed")
+        .expect("draft with only non-count edits should load");
+
+    assert_eq!(current(&restored).durability.get(&0x1234), Some(&75));
+    assert_eq!(
+        current(&restored).placements.get(&0x1234),
+        Some(&DraftPlacement::Slot(4))
+    );
+    assert_eq!(
+        current(&restored).upgrades.get(&0x1234),
+        Some(&vec!["wpn_upgrade_scope_1".to_owned()])
+    );
+}
+
+#[test]
+fn rejects_durability_outside_zero_to_one_hundred_percent() {
+    let source_sha256 = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+    let mut plan = DraftPlan::empty(source_sha256).expect("valid empty plan");
+    plan.durability.insert(0x1234, 101);
+
+    assert!(DraftJournal::new(vec![plan], 0).is_err());
+}
+
+#[test]
+fn rejects_slot_zero_in_draft_placement() {
+    let source_sha256 = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+    let mut plan = DraftPlan::empty(source_sha256).expect("valid empty plan");
+    plan.placements.insert(0x1234, DraftPlacement::Slot(0));
+
+    assert!(DraftJournal::new(vec![plan], 0).is_err());
 }
 
 #[test]
