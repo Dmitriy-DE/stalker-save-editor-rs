@@ -292,7 +292,16 @@ impl Screen for Settings {
 
         let line = style::row(cx.tree, view)?;
         style::label(cx.tree, line, "Масштаб интерфейса:", Text::Body)?;
-        self.scale_value = Some(style::label(cx.tree, line, if percent == 0 { "По размеру экрана" } else { &format!("{percent} %") }, Text::Value)?);
+        self.scale_value = Some(style::label(
+            cx.tree,
+            line,
+            if percent == 0 {
+                "По размеру экрана"
+            } else {
+                &format!("{percent} %")
+            },
+            Text::Value,
+        )?);
         self.scale_button = Some(style::button(cx.tree, line, "Изменить", Button::Secondary)?);
 
         let updates = style::card(cx.tree, host)?;
@@ -310,7 +319,11 @@ impl Screen for Settings {
         clicked: Option<WidgetId>,
     ) -> Result<()> {
         if clicked.is_some() && clicked == self.theme_button {
-            self.theme = self.theme.saturating_add(1).checked_rem(crate::theme::THEMES.len()).unwrap_or(0);
+            self.theme = self
+                .theme
+                .saturating_add(1)
+                .checked_rem(crate::theme::THEMES.len())
+                .unwrap_or(0);
             let old = crate::theme::current();
             self.settings.theme_id = crate::theme::THEMES[self.theme].0.to_owned();
             crate::theme::apply_appearance(&self.settings.theme_id, crate::theme::ACCENT_IDS[self.accent]);
@@ -324,7 +337,11 @@ impl Screen for Settings {
             }
         }
         if clicked.is_some() && clicked == self.accent_button {
-            self.accent = self.accent.saturating_add(1).checked_rem(crate::theme::ACCENT_IDS.len()).unwrap_or(0);
+            self.accent = self
+                .accent
+                .saturating_add(1)
+                .checked_rem(crate::theme::ACCENT_IDS.len())
+                .unwrap_or(0);
             let old = crate::theme::current();
             self.settings.accent_id = crate::theme::ACCENT_IDS[self.accent].to_owned();
             crate::theme::apply_appearance(crate::theme::THEMES[self.theme].0, &self.settings.accent_id);
@@ -341,9 +358,14 @@ impl Screen for Settings {
             self.scale = self.scale.saturating_add(1).checked_rem(SCALES.len()).unwrap_or(0);
             let percent = SCALES[self.scale];
             self.settings.ui_scale_percent = percent;
-            cx.tree.set_scale(if percent == 0 { 1.0 } else { percent as f32 / 100.0 });
+            cx.tree
+                .set_scale(if percent == 0 { 1.0 } else { percent as f32 / 100.0 });
             if let Some(value) = self.scale_value {
-                let label = if percent == 0 { "По размеру экрана".to_owned() } else { format!("{percent} %") };
+                let label = if percent == 0 {
+                    "По размеру экрана".to_owned()
+                } else {
+                    format!("{percent} %")
+                };
                 cx.tree.set_text(value, &label)?;
             }
             match save_settings(&self.settings) {
