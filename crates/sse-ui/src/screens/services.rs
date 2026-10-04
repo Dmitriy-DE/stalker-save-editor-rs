@@ -13,6 +13,7 @@ use std::time::Duration;
 const TIMEOUT: Duration = Duration::from_secs(15);
 const ROWS: usize = 8;
 
+/// Screens implemented by the S5 services package.
 #[must_use]
 pub fn screens() -> Vec<Box<dyn Screen>> {
     vec![
