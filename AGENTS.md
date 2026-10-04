@@ -4,7 +4,8 @@ You are one of several agents working in parallel. Claude integrates: it owns `s
 `AGENTS.md`, `PLAN.md`, `TASKS.md` and `ACCEPTANCE.md`, reviews and merges every pull request. Read `PLAN.md`, then
 your work package in `TASKS.md`. Any screen work: the screen's section of `ACCEPTANCE.md` (C# 1.3.1 behaviour, exact
 texts, checklist) is the acceptance test; §23 lists every disk/network write and its guards, §24 the C# defects not
-to copy blindly. Five documents only: README, AGENTS, PLAN, TASKS, ACCEPTANCE — no new ones.
+to copy blindly. Part II of the same file is the core: save replacement, backups, drafts, Game Fix, Companion,
+Steam Cloud, updater — exact steps, error texts, and core defects (Part II §15) to fix, not copy. Five documents only: README, AGENTS, PLAN, TASKS, ACCEPTANCE — no new ones.
 
 ## Boundaries
 
