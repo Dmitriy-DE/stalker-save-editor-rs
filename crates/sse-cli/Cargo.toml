@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 sse-codecs = { path = "../sse-codecs" }
 sse-core = { path = "../sse-core" }
+sse-s2 = { path = "../sse-s2" }
 sse-storage = { path = "../sse-storage" }
 sse-s2 = { path = "../sse-s2" }
 sse-xray = { path = "../sse-xray" }

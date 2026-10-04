@@ -10,11 +10,12 @@ use sse_core::{Error, ExitCode as CommandExitCode, SaveBuffer};
 use sse_xray::writer::{self, Change, ChangeSet, Placement};
 use sse_xray::Save;
 
+mod audit;
 mod fixes;
 mod lint;
 mod update;
 
-const USAGE: &str = "Usage: stalker-save <version|info|inventory|set-money|set-stack|edit|backups|fixes|update|lint> ...\n\
+const USAGE: &str = "Usage: stalker-save <version|info|inventory|set-money|set-stack|edit|backups|fixes|update|lint|audit> ...\n\
 Exit codes: 0 done, 2 wrong arguments, 3 refused (unsupported or unsafe), 4 unreadable or damaged input, 5 file or system error.";
 
 fn main() -> ExitCode {
@@ -34,6 +35,11 @@ fn run(arguments: &[String]) -> u8 {
                 || (arguments.len() == 3 && arguments.get(2).map(String::as_str) == Some("--all")) =>
         {
             report(read_inventory(arguments.get(1)))
+        }
+        Some("audit") if arguments.len() == 2 => report(audit::run(arguments.get(1).map(String::as_str))),
+        Some("audit") => {
+            eprintln!("Error: audit requires a file containing one save path per line. {USAGE}");
+            sse_core::ExitCode::Usage as u8
         }
         Some("set-money" | "set-stack" | "edit") => run_write(arguments),
         Some("backups") => run_backups(arguments.get(1..).unwrap_or_default()),
@@ -844,6 +850,17 @@ fn run_backups(arguments: &[String]) -> u8 {
             eprintln!("Error: Usage: stalker-save backups <list [--backup-dir DIR]|restore JOURNAL --output SAVE>");
             CommandExitCode::Usage as u8
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{run, USAGE};
+
+    #[test]
+    fn audit_is_listed_and_requires_a_path_list_argument() {
+        assert!(USAGE.contains("audit"));
+        assert_eq!(run(&["audit".to_owned()]), 2);
     }
 }
 
