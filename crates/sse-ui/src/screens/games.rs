@@ -1832,7 +1832,7 @@ impl Screen for GameFixes {
                     cx.status = Some("СНАЧАЛА ПРОВЕРЬТЕ УСТАНОВКУ И ВЕРСИЮ.".to_owned());
                     return Ok(());
                 };
-                if !item.builds.split(", ").any(|id| id == verified.build) {
+                if !item.builds.split(", ").any(|id| id == verified.build.as_str()) {
                     cx.status = Some(format!(
                         "СБОРКА STEAM {} НЕ ПОДДЕРЖИВАЕТ ВЫБРАННОЕ ИСПРАВЛЕНИЕ.",
                         verified.build
