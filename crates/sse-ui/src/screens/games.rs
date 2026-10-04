@@ -1825,9 +1825,24 @@ impl Screen for GameFixes {
             let Some(directory) = cx.app.game_dir().map(Path::to_path_buf) else {
                 return Ok(());
             };
+            if install {
+                let Some(verified) = self.verified.as_ref().filter(|state| {
+                    state.game == game && state.directory == directory
+                }) else {
+                    cx.status = Some("СНАЧАЛА ПРОВЕРЬТЕ УСТАНОВКУ И ВЕРСИЮ.".to_owned());
+                    return Ok(());
+                };
+                if !item.builds.split(", ").any(|id| id == verified.build) {
+                    cx.status = Some(format!(
+                        "СБОРКА STEAM {} НЕ ПОДДЕРЖИВАЕТ ВЫБРАННОЕ ИСПРАВЛЕНИЕ.",
+                        verified.build
+                    ));
+                    return Ok(());
+                }
+            }
             self.intent = Some(FixIntent {
-                fix_id: item.id.clone(),
-                install,
+                fix_id: Some(item.id.clone()),
+                operation: if install { FixOperation::Install } else { FixOperation::Remove },
                 game,
                 directory,
             });
