@@ -1472,7 +1472,7 @@ impl Screen for GameFixes {
                     self.confirm = None;
                     if let (Some(detail), Some(item)) = (self.detail, self.items.get(index)) {
                         cx.tree
-                            .set_text(detail, &format!("{} · {} · {}\nПРОБЛЕМА: {}\nИЗМЕНЕНИЕ: {}\nПОДДЕРЖИВАЕМЫЕ STEAM-СБОРКИ: {}\nЗАТРАГИВАЕМЫЕ ФАЙЛЫ: {}\nИСТОЧНИК: {}", item.id, item.status, item.maturity, item.problem, item.description, item.builds, item.files, item.source))?;
+                            .set_text(detail, &format!("{} · {} · {}\nПРОБЛЕМА: {}\nИЗМЕНЕНИЕ: {}\nПОДДЕРЖИВАЕМЫЕ STEAM-СБОРКИ: {}\nЗАТРАГИВАЕМЫЕ ФАЙЛЫ: {}\nИСТОЧНИК: {}", item.id, item.status, format!("{} / {}", item.category, item.maturity), item.problem, item.description, item.builds, item.files, item.source))?;
                     }
                 }
             }
