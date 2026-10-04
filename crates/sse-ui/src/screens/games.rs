@@ -1115,7 +1115,11 @@ struct PathMetrics;
 
 impl Metrics for PathMetrics {
     fn advance(&self, character: char) -> f32 {
-        if character.is_ascii() { 7.0 } else { 8.0 }
+        if character.is_ascii() {
+            7.0
+        } else {
+            8.0
+        }
     }
 
     fn kerning(&self, _left: char, _right: char) -> f32 {
