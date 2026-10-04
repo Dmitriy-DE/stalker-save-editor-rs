@@ -49,10 +49,11 @@ impl Text {
     /// Colour.
     #[must_use]
     pub fn color(self) -> Color {
+        let colors = theme::current().colors;
         rgb(match self {
-            Self::Title | Self::Heading | Self::Body => theme::TEXT_PRIMARY,
-            Self::Value => theme::TEXT_KHAKI,
-            Self::Note => theme::TEXT_DISABLED,
+            Self::Title | Self::Heading | Self::Body => colors.text[0],
+            Self::Value => colors.text[3],
+            Self::Note => colors.text[2],
         })
     }
 }
@@ -80,8 +81,8 @@ pub fn card(tree: &mut Tree, parent: WidgetId) -> Result<WidgetId> {
         ..Style::default()
     };
     let look = Look {
-        fill: Some(rgb(theme::BG_ELEVATED)),
-        border: Some((rgb(theme::BORDER_SUBTLE), 1.0)),
+        fill: Some(rgb(theme::current().colors.background[2])),
+        border: Some((rgb(theme::current().colors.borders[0]), 1.0)),
         radius: theme::CARD_RADIUS,
         ..Look::default()
     };
@@ -132,10 +133,11 @@ pub fn button(tree: &mut Tree, parent: WidgetId, text: &str, role: Button) -> Re
         },
         ..Style::default()
     };
+    let colors = theme::current().colors;
     let (fill, hover, foreground, border) = match role {
-        Button::Primary => (Some(theme::ACCENT), theme::ACCENT_HOVER, theme::ACCENT_FOREGROUND, None),
-        Button::Secondary => (None, theme::BG_HOVER, theme::TEXT_PRIMARY, Some(theme::BORDER)),
-        Button::Danger => (None, theme::BG_HOVER, theme::ERROR, Some(theme::ERROR)),
+        Button::Primary => (Some(colors.accent[0]), colors.accent[2], colors.accent[3], None),
+        Button::Secondary => (None, colors.background[3], colors.text[0], Some(colors.borders[1])),
+        Button::Danger => (None, colors.background[3], colors.state[2], Some(colors.state[2])),
     };
     let look = Look {
         fill: fill.map(rgb),
@@ -156,17 +158,14 @@ pub fn button(tree: &mut Tree, parent: WidgetId, text: &str, role: Button) -> Re
 /// Sidebar item look.
 #[must_use]
 pub fn nav(selected: bool) -> Look {
+    let colors = theme::current().colors;
     Look {
-        fill: selected.then(|| rgb(theme::BG_ELEVATED)),
-        hover_fill: Some(rgb(theme::BG_HOVER)),
-        pressed_fill: Some(rgb(theme::BG_ELEVATED)),
-        accent_bar: selected.then(|| (rgb(theme::ACCENT), 3.0)),
-        text: rgb(if selected {
-            theme::TEXT_PRIMARY
-        } else {
-            theme::TEXT_SECONDARY
-        }),
-        hover_text: Some(rgb(theme::TEXT_PRIMARY)),
+        fill: selected.then(|| rgb(colors.background[2])),
+        hover_fill: Some(rgb(colors.background[3])),
+        pressed_fill: Some(rgb(colors.background[2])),
+        accent_bar: selected.then(|| (rgb(colors.accent[0]), 3.0)),
+        text: rgb(if selected { colors.text[0] } else { colors.text[1] }),
+        hover_text: Some(rgb(colors.text[0])),
         ..Look::default()
     }
 }
