@@ -305,7 +305,7 @@ impl Screen for Settings {
             self.settings.language = Some(code.to_owned());
             self.settings.save(&sse_app::default_settings_path())?;
             if let Some(value) = self.language_value {
-                cx.tree.set_text(value, LANGUAGE_NAMES[self.language])?;
+                cx.tree.set_text(value, language_name(self.language))?;
             }
             cx.status = Some(crate::strings::t("Готово").to_owned());
         }
