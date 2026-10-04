@@ -1109,7 +1109,7 @@ mod write_tests {
     }
 
     #[test]
-    fn s2_set_money_writes_an_uncompressed_kraken_block_when_entropy_expands() {
+    fn s2_set_money_writes_a_stored_kraken_block_when_compression_does_not_win() {
         let temporary = TempDirectory::new();
         let saves = temporary.0.join("saves");
         fs::create_dir(&saves).expect("create save directory");
@@ -1119,8 +1119,15 @@ mod write_tests {
         let base = include_bytes!("../../../fixtures/synthetic/writer-s2-money/s2-money-source.sav");
         let parsed = sse_s2::S2Save::from_bytes(base).expect("parse S2 money fixture");
         let mut image = parsed.container().image().to_vec();
-        image.resize(0x20000, 0);
-        image.extend((0..0x20000).map(|index| u8::try_from(index % 251 + 1).unwrap_or_default()));
+        let original_len = image.len();
+        image.resize(0x40000, 0);
+        let mut state = 0x8c06_cc06_u32;
+        for byte in image.iter_mut().skip(original_len) {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            *byte = u8::try_from(state & 0xff).unwrap_or_default();
+        }
 
         let mut source_bytes = Vec::with_capacity(image.len().saturating_add(10));
         source_bytes.extend_from_slice(&u32::try_from(image.len()).unwrap_or_default().to_le_bytes());
