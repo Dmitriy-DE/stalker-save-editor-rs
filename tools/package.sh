@@ -73,6 +73,8 @@ read_release_identity() {
     [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*)?$ ]] || die "workspace version is not supported by the G5 parser: ${VERSION}"
     SOURCE_COMMIT="$(git -C "${PROJECT_ROOT}" rev-parse --verify HEAD)"
     [[ "${SOURCE_COMMIT}" =~ ^[0-9a-f]{40,64}$ ]] || die "could not read a lowercase source commit SHA"
+    SOURCE_DATE_EPOCH="$(git -C "${PROJECT_ROOT}" show -s --format=%ct HEAD)"
+    [[ "${SOURCE_DATE_EPOCH}" =~ ^[0-9]+$ ]] || die "could not read the source commit timestamp"
     [[ "${DOWNLOAD_BASE_URL}" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._/-]*)?$ ]] || die "DOWNLOAD_BASE_URL must be a plain HTTPS base URL"
     DOWNLOAD_BASE_URL="${DOWNLOAD_BASE_URL%/}"
     [[ -n "${DOWNLOAD_BASE_URL}" ]] || die "DOWNLOAD_BASE_URL must include a host"
@@ -160,7 +162,9 @@ build_linux() {
     cp "${cli}" "${stage}/stalker-save"
     cp "${shell_bin}" "${stage}/sse-shell"
     write_build_manifest "${stage}/BUILD_MANIFEST.json" linux x86_64 portable
-    tar -C "${stage}" -czf "${DIST_DIR}/SaveEditor-linux-x86_64.tar.gz" stalker-save sse-shell BUILD_MANIFEST.json
+    tar --sort=name --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 --numeric-owner \
+        -C "${stage}" -cf - stalker-save sse-shell BUILD_MANIFEST.json \
+        | gzip -n >"${DIST_DIR}/SaveEditor-linux-x86_64.tar.gz"
     record_artifact linux-x86_64 linux-x86_64 x86_64 portable "${DIST_DIR}/SaveEditor-linux-x86_64.tar.gz"
 
     local deb_stage="${stage}/deb"
@@ -179,10 +183,10 @@ Description: S.T.A.L.K.E.R. save editor and shell
 EOF
     chmod 0755 "${deb_stage}/usr/bin/stalker-save" "${deb_stage}/usr/bin/sse-shell"
     printf '2.0\n' >"${stage}/debian-binary"
-    (cd "${deb_stage}/DEBIAN" && tar --owner=0 --group=0 --numeric-owner -czf "${stage}/control.tar.gz" control)
-    (cd "${deb_stage}" && tar --owner=0 --group=0 --numeric-owner -czf "${stage}/data.tar.gz" usr)
+    (cd "${deb_stage}/DEBIAN" && tar --sort=name --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 --numeric-owner -cf - control | gzip -n >"${stage}/control.tar.gz")
+    (cd "${deb_stage}" && tar --sort=name --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 --numeric-owner -cf - usr | gzip -n >"${stage}/data.tar.gz")
     local deb_name="stalker-save-editor_${VERSION}_amd64.deb"
-    (cd "${stage}" && ar rcs "${DIST_DIR}/${deb_name}" debian-binary control.tar.gz data.tar.gz)
+    (cd "${stage}" && ar rcsD "${DIST_DIR}/${deb_name}" debian-binary control.tar.gz data.tar.gz)
     record_artifact linux-deb-amd64 linux-deb-amd64 x86_64 package "${DIST_DIR}/${deb_name}"
 }
 
