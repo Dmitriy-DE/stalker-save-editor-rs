@@ -5,7 +5,7 @@
 
 use sse_codecs::{inflate, kraken};
 use sse_core::{Error, Result};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 const IOSTORE_MAGIC: &[u8; 16] = b"-==--==--==--==-";
 const PAK_MAGIC: u32 = 0x5A6F12E1;
@@ -575,7 +575,19 @@ fn parse_directory_index(bytes: &[u8], entry_count: usize) -> Result<BTreeMap<St
     }
     let mut out = BTreeMap::new();
     if !dirs.is_empty() {
-        walk_directory(0, "", &mount, &dirs, &files, &names, entry_count, &mut out, 0)?;
+        let mut visited = BTreeSet::new();
+        walk_directory(
+            0,
+            "",
+            &mount,
+            &dirs,
+            &files,
+            &names,
+            entry_count,
+            &mut out,
+            &mut visited,
+            0,
+        )?;
     }
     Ok(out)
 }
@@ -589,10 +601,14 @@ fn walk_directory(
     names: &[String],
     entry_count: usize,
     out: &mut BTreeMap<String, usize>,
+    visited: &mut BTreeSet<usize>,
     depth: usize,
 ) -> Result<()> {
     if depth > 1024 {
         return Err(Error::damaged("IoStore directory recursion too deep"));
+    }
+    if !visited.insert(index) {
+        return Ok(());
     }
     let &(name, first_child, _next, first_file) = dirs
         .get(index)
@@ -651,6 +667,7 @@ fn walk_directory(
             names,
             entry_count,
             out,
+            visited,
             depth.saturating_add(1),
         )?;
         child = dirs.get(ci).ok_or_else(|| Error::damaged("IoStore child"))?.2;
