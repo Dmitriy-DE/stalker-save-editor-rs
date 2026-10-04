@@ -386,7 +386,7 @@ impl Achievements {
         });
     }
     fn render(&mut self, cx: &mut Context<'_>) -> Result<()> {
-        for (i, row) in self.rows.iter().copied().enumerate() {
+        for (i, row) in self.rows.iter().copied().skip(1).enumerate() {
             if let Some(a) = self.items.get(i) {
                 cx.tree.set_visible(row, true)?;
                 cx.tree.set_text(
