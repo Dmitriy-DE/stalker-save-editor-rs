@@ -254,12 +254,12 @@ impl Settings {
             .unwrap_or(("zone", "Тёмная"))
     }
 
-    fn accent_choice(&self) -> &'static str {
-        crate::theme::ACCENT_IDS
+    fn accent_name(&self) -> &'static str {
+        crate::theme::ACCENT_NAMES
             .get(self.accent)
             .copied()
-            .or_else(|| crate::theme::ACCENT_IDS.first().copied())
-            .unwrap_or("amber")
+            .or_else(|| crate::theme::ACCENT_NAMES.first().copied())
+            .unwrap_or("Янтарный")
     }
 
     fn scale_choice(&self) -> u32 {
@@ -311,7 +311,7 @@ impl Screen for Settings {
 
         let accent_line = style::row(cx.tree, view)?;
         style::label(cx.tree, accent_line, "Акцент:", Text::Body)?;
-        self.accent_value = Some(style::label(cx.tree, accent_line, self.accent_choice(), Text::Value)?);
+        self.accent_value = Some(style::label(cx.tree, accent_line, self.accent_name(), Text::Value)?);
         self.accent_button = Some(style::button(cx.tree, accent_line, "Изменить", Button::Secondary)?);
 
         let line = style::row(cx.tree, view)?;
