@@ -741,13 +741,8 @@ impl Screen for Cloud {
             self.load(cx);
         }
 
-        let selected_row = clicked.and_then(|clicked_id| {
-            self.rows
-                .iter()
-                .copied()
-                .skip(1)
-                .position(|row| row == clicked_id)
-        });
+        let selected_row =
+            clicked.and_then(|clicked_id| self.rows.iter().copied().skip(1).position(|row| row == clicked_id));
         if let Some(row_index) = selected_row.filter(|index| self.items.get(*index).is_some()) {
             self.clear_intent(cx)?;
             self.selected = Some(row_index);
