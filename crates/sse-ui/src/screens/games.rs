@@ -1948,21 +1948,33 @@ impl Screen for GameFixes {
                             cx.tree.set_text(status, error)?;
                         }
                     }
-                    FixReply::Compatibility(Ok(text)) => {
+                    FixReply::Compatibility(Ok((text, game, directory, build))) => {
+                        self.busy = false;
+                        self.verified = Some(FixCompatibility {
+                            game: game.clone(),
+                            directory: directory.clone(),
+                            build: build.clone(),
+                        });
                         if let Some(id) = self.compatibility {
                             cx.tree.set_text(id, text)?;
                         }
                     }
                     FixReply::Compatibility(Err(error)) => {
+                        self.busy = false;
+                        self.verified = None;
                         if let Some(id) = self.compatibility {
                             cx.tree.set_text(id, error)?;
                         }
                     }
                     FixReply::Changed(Ok(text)) => {
+                        self.busy = false;
                         cx.status = Some(text.clone());
                         self.refresh(cx);
                     }
-                    FixReply::Changed(Err(error)) => cx.status = Some(format!("Исправления: {error}")),
+                    FixReply::Changed(Err(error)) => {
+                        self.busy = false;
+                        cx.status = Some(format!("ОШИБКА: {error}"));
+                    }
                 }
             }
         }
