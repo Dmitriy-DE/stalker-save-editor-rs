@@ -1,7 +1,7 @@
 //! The editor frame: grouped sidebar, header, content host, status line; builds screens lazily and routes messages.
 
 use super::style::{self, rgb, Text};
-use super::{registry, AppMessage, Context, Group, Screen, ScreenId};
+use super::{registry, AppMessage, Context, EditorAction, Group, Screen, ScreenId};
 use crate::event_loop::{App, Flow, Message, Proxy, WindowEvent};
 use crate::glyphs::{to_px, Face, TextStyle};
 use crate::layout::{Align, Edges, NodeKind, Size, Style};
@@ -28,6 +28,8 @@ pub struct Shell {
     subtitle: WidgetId,
     breadcrumb: WidgetId,
     edition: WidgetId,
+    draft_badge: WidgetId,
+    save_reason: WidgetId,
     undo: WidgetId,
     redo: WidgetId,
     reset: WidgetId,
@@ -308,12 +310,14 @@ impl Shell {
         let _ = brand;
         let edition = style::label(tree, top, "X-Ray / S2", Text::Value)?;
         tree.set_visible(edition, false)?;
+        let draft_badge = style::label(tree, top, "Черновик: 0 действ.", Text::Note)?;
         let undo = top_button(tree, top, "Отменить", false)?;
         let redo = top_button(tree, top, "Вернуть", false)?;
         let reset = top_button(tree, top, "Сбросить", false)?;
         let open_button = top_button(tree, top, "Открыть…", false)?;
         let refresh = top_button(tree, top, "Обновить", false)?;
         let save = top_button(tree, top, "СОХРАНИТЬ", true)?;
+        let save_reason = style::label(tree, header, "Выберите сохранение для редактирования.", Text::Note)?;
         let breadcrumb = style::label(tree, header, "", Text::Note)?;
         let title = style::label(tree, header, "", Text::Title)?;
         let subtitle = tree.add(
@@ -443,6 +447,8 @@ impl Shell {
             subtitle,
             breadcrumb,
             edition,
+            draft_badge,
+            save_reason,
             undo,
             redo,
             reset,
@@ -459,6 +465,7 @@ impl Shell {
             wizard,
         };
         shell.show(tree, 0)?;
+        shell.sync_draft_controls(tree)?;
         Ok(shell)
     }
 
@@ -608,6 +615,7 @@ impl Shell {
             let wanted = match message {
                 Message::User(AppMessage::Tick(_)) => true,
                 Message::User(AppMessage::ToScreen(id, _)) => *id == screen.id(),
+                Message::User(AppMessage::EditorAction(_)) => screen.id() == ScreenId::Inventory,
                 Message::Window(_) => index == self.selected,
             };
             if wanted {
@@ -625,6 +633,76 @@ impl Shell {
             tree.set_text(self.status, &text)?;
         }
         Ok(())
+    }
+
+    fn sync_draft_controls(&self, tree: &mut Tree) -> Result<()> {
+        tree.set_text(self.edition, self.app.selected_game().unwrap_or("X-Ray / S2"))?;
+        let Some(source_sha256) = self.app.current_save_sha256() else {
+            tree.set_text(self.draft_badge, "Черновик: 0 действ.")?;
+            tree.set_text(self.save_reason, "Выберите сохранение для редактирования.")?;
+            tree.set_enabled(self.undo, false)?;
+            tree.set_enabled(self.redo, false)?;
+            tree.set_enabled(self.reset, false)?;
+            tree.set_enabled(self.save, false)?;
+            return Ok(());
+        };
+        let plan = self.app.draft(source_sha256);
+        let journal = self.app.draft_journal(source_sha256);
+        let has_unmapped = plan.is_some_and(|plan| plan.unmapped_legacy_plan.is_some());
+        let invalid_numbers = self.app.has_invalid_numeric_input();
+        let change_count = plan.map_or(0, |plan| {
+            usize::from(plan.money.is_some())
+                .saturating_add(plan.stack_counts.len())
+                .saturating_add(plan.detach_handles.len())
+                .saturating_add(plan.adds.len())
+                .saturating_add(plan.stash_takes.len())
+                .saturating_add(plan.stash_puts.len())
+                .saturating_add(usize::from(plan.unmapped_legacy_plan.is_some()))
+        });
+        let has_changes = change_count > 0 || invalid_numbers;
+        let draft_badge = if invalid_numbers {
+            "Есть несохранённые изменения".to_owned()
+        } else {
+            format!("Черновик: {change_count} действ.")
+        };
+        tree.set_text(self.draft_badge, &draft_badge)?;
+        tree.set_text(
+            self.save_reason,
+            if has_unmapped {
+                "В черновике есть правки из другой версии редактора, которые эта версия не понимает. Сбросьте черновик, чтобы продолжить (он сохранится рядом)."
+            } else if invalid_numbers {
+                "Введены некорректные значения (проверьте введённые числа)."
+            } else if !has_changes {
+                "Нет несохранённых изменений."
+            } else {
+                "Сохранить изменения в файл сейва (с созданием резервной копии)."
+            },
+        )?;
+        tree.set_enabled(
+            self.undo,
+            journal.is_some_and(sse_storage::drafts::DraftJournal::can_undo),
+        )?;
+        tree.set_enabled(
+            self.redo,
+            journal.is_some_and(sse_storage::drafts::DraftJournal::can_redo),
+        )?;
+        tree.set_enabled(self.reset, has_changes)?;
+        tree.set_enabled(self.save, has_changes && !has_unmapped && !invalid_numbers)?;
+        Ok(())
+    }
+
+    fn dispatch_editor_action(&mut self, tree: &mut Tree, action: EditorAction) -> Result<()> {
+        if let Some(index) = self
+            .screens
+            .iter()
+            .position(|screen| screen.id() == ScreenId::Inventory)
+        {
+            if self.hosts.get(index).is_some_and(Option::is_none) {
+                self.select(tree, index)?;
+            }
+        }
+        self.route(tree, &Message::User(AppMessage::EditorAction(action)), None)?;
+        self.sync_draft_controls(tree)
     }
 
     fn handle(&mut self, tree: &mut Tree, message: &Message<AppMessage>, clicked: Option<WidgetId>) -> Result<Flow> {
@@ -667,11 +745,19 @@ impl Shell {
             tree.set_text(self.status, "Отправка отчётов отключена.")?;
             return Ok(Flow::Continue);
         }
-        if clicked.is_some() && [self.undo, self.redo, self.reset, self.save].contains(&clicked.unwrap_or(self.undo)) {
-            tree.set_text(
-                self.status,
-                "Действие недоступно: AppState ещё не предоставляет журнал черновика и транзакционный save API.",
-            )?;
+        let editor_action = if clicked.is_some() && clicked == Some(self.undo) {
+            Some(EditorAction::Undo)
+        } else if clicked.is_some() && clicked == Some(self.redo) {
+            Some(EditorAction::Redo)
+        } else if clicked.is_some() && clicked == Some(self.reset) {
+            Some(EditorAction::Reset)
+        } else if clicked.is_some() && clicked == Some(self.save) {
+            Some(EditorAction::Save)
+        } else {
+            None
+        };
+        if let Some(action) = editor_action {
+            self.dispatch_editor_action(tree, action)?;
             return Ok(Flow::Continue);
         }
         if clicked.is_some() && clicked == Some(self.open_button) {
@@ -721,6 +807,23 @@ impl Shell {
                 return Ok(Flow::Continue);
             }
             if *keysym == KEY_RETURN {
+                if let Some(focus) = tree.focused() {
+                    let action = if focus == self.undo {
+                        Some(EditorAction::Undo)
+                    } else if focus == self.redo {
+                        Some(EditorAction::Redo)
+                    } else if focus == self.reset {
+                        Some(EditorAction::Reset)
+                    } else if focus == self.save {
+                        Some(EditorAction::Save)
+                    } else {
+                        None
+                    };
+                    if let Some(action) = action {
+                        self.dispatch_editor_action(tree, action)?;
+                        return Ok(Flow::Continue);
+                    }
+                }
                 if let Some(index) = tree
                     .focused()
                     .and_then(|focus| self.nav.iter().position(|nav| *nav == focus))
@@ -742,21 +845,28 @@ impl Shell {
                 return Ok(Flow::Continue);
             }
             if !tree.dialog_open() && *ctrl && matches!(*keysym, 0x46 | 0x66) {
-                if let Some(index) = self.screens.iter().position(|screen| screen.id() == ScreenId::Overview) {
+                let target = if self.current() == Some(ScreenId::Inventory) {
+                    ScreenId::Inventory
+                } else {
+                    ScreenId::Overview
+                };
+                if let Some(index) = self.screens.iter().position(|screen| screen.id() == target) {
                     self.select(tree, index)?;
                 }
                 self.route(tree, message, None)?;
                 return Ok(Flow::Continue);
             }
             if !tree.dialog_open() && *ctrl && matches!(*keysym, 0x53 | 0x73) {
-                if let Some(index) = self
-                    .screens
-                    .iter()
-                    .position(|screen| screen.id() == ScreenId::Inventory)
-                {
-                    self.select(tree, index)?;
-                }
-                self.route(tree, message, None)?;
+                self.dispatch_editor_action(tree, EditorAction::Save)?;
+                return Ok(Flow::Continue);
+            }
+            if !tree.dialog_open() && *ctrl && matches!(*keysym, 0x5a | 0x7a) {
+                let action = if *shift { EditorAction::Redo } else { EditorAction::Undo };
+                self.dispatch_editor_action(tree, action)?;
+                return Ok(Flow::Continue);
+            }
+            if !tree.dialog_open() && *ctrl && matches!(*keysym, 0x59 | 0x79) {
+                self.dispatch_editor_action(tree, EditorAction::Redo)?;
                 return Ok(Flow::Continue);
             }
         }
@@ -780,6 +890,7 @@ impl Shell {
             }
         }
         self.route(tree, message, clicked)?;
+        self.sync_draft_controls(tree)?;
         if let Some(screen) = self.screens.get(self.selected) {
             let host = self.hosts.get(self.selected).copied().flatten();
             self.wizard.sync(tree, &self.app, screen.id(), host)?;
@@ -860,6 +971,35 @@ mod tests {
         });
         assert!(matches!(shell.handle(&mut tree, &message, None)?, Flow::Continue));
         assert_eq!(shell.current(), Some(super::super::ScreenId::Inventory));
+        Ok(())
+    }
+
+    #[test]
+    fn ctrl_shift_z_redoes_instead_of_undoing() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut shell = Shell::build(&mut tree, None)?;
+        let source_sha256 = "a".repeat(64);
+        let mut changed = sse_storage::drafts::DraftPlan::empty(&source_sha256)?;
+        changed.money = Some(5);
+        shell
+            .app
+            .set_current_save_identity(std::path::PathBuf::from("fixture.sav"), source_sha256.clone());
+        shell.app.set_draft_journal(sse_storage::drafts::DraftJournal::new(
+            vec![sse_storage::drafts::DraftPlan::empty(&source_sha256)?, changed],
+            1,
+        )?);
+        let message = Message::Window(WindowEvent::Key {
+            pressed: true,
+            keysym: u32::from('z'),
+            text: None,
+            ctrl: true,
+            shift: true,
+        });
+
+        shell.handle(&mut tree, &message, None)?;
+
+        assert_eq!(shell.app.draft(&source_sha256).and_then(|plan| plan.money), Some(5));
+        assert!(!shell.app.can_redo_draft(&source_sha256));
         Ok(())
     }
 

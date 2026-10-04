@@ -2,7 +2,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use sse_app::state::{AppEvent, AppState, MAX_RECENT_SAVES};
-use sse_storage::drafts::DraftPlan;
+use sse_storage::drafts::{DraftJournal, DraftPlan};
 use std::path::PathBuf;
 
 #[test]
@@ -59,13 +59,25 @@ fn draft_tracking_and_events() {
     let empty_plan = DraftPlan::empty(sha256).expect("empty plan");
     state.set_draft(empty_plan);
 
-    assert!(state.has_draft(sha256));
+    assert!(!state.has_draft(sha256));
     let events = state.poll_events();
     assert_eq!(
         events,
         vec![AppEvent::DraftChanged {
             source_sha256: sha256.to_owned(),
             has_changes: false,
+        }]
+    );
+
+    let mut changed_plan = DraftPlan::empty(sha256).expect("empty plan");
+    changed_plan.money = Some(123);
+    state.record_draft(changed_plan).expect("record money draft");
+    assert!(state.has_draft(sha256));
+    assert_eq!(
+        state.poll_events(),
+        vec![AppEvent::DraftChanged {
+            source_sha256: sha256.to_owned(),
+            has_changes: true,
         }]
     );
 
@@ -102,4 +114,39 @@ fn draft_tracking_counts_durability_placement_and_upgrade_edits() {
         }]
     );
     assert_eq!(state.snapshot().active_draft_hashes, [sha256.to_owned()]);
+}
+
+#[test]
+fn draft_journal_supports_undo_and_redo_for_money_and_stacks() {
+    let mut state = AppState::new();
+    let sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let empty = DraftPlan::empty(sha256).expect("empty plan");
+    state.set_draft_journal(DraftJournal::new(vec![empty.clone()], 0).expect("empty journal"));
+    assert!(!state.has_draft(sha256));
+
+    let mut money = empty.clone();
+    money.money = Some(50_000);
+    state.record_draft(money).expect("record money draft");
+    let mut stack = state.draft(sha256).expect("money draft").clone();
+    stack.stack_counts.insert(42, 5);
+    state.record_draft(stack).expect("record stack draft");
+
+    assert!(state.can_undo_draft(sha256));
+    assert!(state.has_draft(sha256));
+    assert_eq!(
+        state.draft(sha256).and_then(|draft| draft.stack_counts.get(&42)),
+        Some(&5)
+    );
+    state.undo_draft(sha256).expect("undo stack draft");
+    assert_eq!(state.draft(sha256).and_then(|draft| draft.money), Some(50_000));
+    state.redo_draft(sha256).expect("redo stack draft");
+    assert_eq!(
+        state.draft(sha256).and_then(|draft| draft.stack_counts.get(&42)),
+        Some(&5)
+    );
+    assert_eq!(state.draft(sha256).and_then(|draft| draft.money), Some(50_000));
+    state.undo_draft(sha256).expect("undo stack draft");
+    state.undo_draft(sha256).expect("undo money draft");
+    assert!(!state.has_draft(sha256));
+    assert!(state.can_redo_draft(sha256));
 }

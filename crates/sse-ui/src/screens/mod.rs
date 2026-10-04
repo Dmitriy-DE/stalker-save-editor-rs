@@ -180,6 +180,21 @@ pub enum AppMessage {
     Tick(u64),
     /// Result of background work for one screen; the screen downcasts the payload it sent itself.
     ToScreen(ScreenId, Box<dyn Any + Send>),
+    /// Global draft command from the shell, dispatched to the selected-save editor screen.
+    EditorAction(EditorAction),
+}
+
+/// Commands available from the shared editor toolbar and keyboard shortcuts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EditorAction {
+    /// Revert to the preceding draft snapshot.
+    Undo,
+    /// Reapply the next draft snapshot.
+    Redo,
+    /// Discard edits and restore the source save values.
+    Reset,
+    /// Validate and write the current draft with a backup.
+    Save,
 }
 
 impl std::fmt::Debug for AppMessage {
@@ -187,6 +202,7 @@ impl std::fmt::Debug for AppMessage {
         match self {
             Self::Tick(seconds) => write!(f, "Tick({seconds})"),
             Self::ToScreen(id, _) => write!(f, "ToScreen({id:?})"),
+            Self::EditorAction(action) => write!(f, "EditorAction({action:?})"),
         }
     }
 }

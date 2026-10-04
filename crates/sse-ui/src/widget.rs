@@ -135,6 +135,7 @@ struct Node {
     parent: Option<WidgetId>,
     rect: Rect,
     visible: bool,
+    enabled: bool,
     scroll_y: i32,
     clip_children: bool,
 }
@@ -342,6 +343,7 @@ impl Tree {
             parent,
             rect: Rect::new(0, 0, 0, 0),
             visible: true,
+            enabled: true,
             scroll_y: 0,
             clip_children: false,
         });
@@ -520,6 +522,30 @@ impl Tree {
             if self.modal_dialog.is_some_and(|dialog| self.within_subtree(dialog, id)) {
                 self.modal_dialog = None;
                 self.previous_dialog_focus = None;
+            }
+        }
+        self.restyle(id)
+    }
+
+    /// Enables or disables pointer and keyboard interaction for a widget.
+    ///
+    /// # Errors
+    /// Returns an error for an unknown widget.
+    pub fn set_enabled(&mut self, id: WidgetId, enabled: bool) -> Result<()> {
+        let node = self.node_mut(id)?;
+        if node.enabled == enabled {
+            return Ok(());
+        }
+        node.enabled = enabled;
+        if !enabled {
+            if self.focused == Some(id) {
+                self.change_focus(None);
+            }
+            if self.pressed == Some(id) {
+                self.pressed = None;
+            }
+            if self.hover == Some(id) {
+                self.hover = None;
             }
         }
         self.restyle(id)
@@ -732,7 +758,7 @@ impl Tree {
         (0..self.nodes.len()).rev().map(WidgetId).find(|id| {
             self.nodes
                 .get(id.0)
-                .is_some_and(|node| node.content.interactive() && contains(node.rect, x, y))
+                .is_some_and(|node| node.enabled && node.content.interactive() && contains(node.rect, x, y))
                 && self.shown(*id)
                 && self.clip_for(*id).is_none_or(|clip| contains(clip, x, y))
                 && self.modal_dialog.is_none_or(|dialog| self.within_subtree(*id, dialog))
@@ -797,7 +823,9 @@ impl Tree {
     }
 
     fn is_focusable(&self, id: WidgetId) -> bool {
-        self.nodes.get(id.0).is_some_and(|node| node.content.interactive())
+        self.nodes
+            .get(id.0)
+            .is_some_and(|node| node.enabled && node.content.interactive())
             && self.shown(id)
             && self.modal_dialog.is_none_or(|dialog| self.within_subtree(id, dialog))
     }
@@ -1230,6 +1258,18 @@ mod tests {
         assert!(tree.edit_focused_input(0, Some(" вставка"))?);
         assert_eq!(tree.input_text(input)?, "a вставка");
         assert_eq!(tree.take_changed_inputs(), vec![input]);
+        Ok(())
+    }
+
+    #[test]
+    fn disabled_widget_cannot_be_focused_or_clicked() -> sse_core::Result<()> {
+        let (mut tree, background, _, _) = dialog_tree()?;
+        tree.set_focus(Some(background))?;
+        tree.set_enabled(background, false)?;
+        assert_ne!(tree.focused(), Some(background));
+        assert!(tree.set_focus(Some(background)).is_err());
+        let rect = tree.rect(background)?;
+        assert_eq!(tree.hit(rect.x + 1, rect.y + 1), None);
         Ok(())
     }
 }
