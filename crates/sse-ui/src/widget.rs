@@ -770,7 +770,7 @@ impl Tree {
             let Some(node) = self.nodes.get(index) else { continue };
             let clipped_area = self
                 .clip_for(id)
-                .and_then(|clip| intersection(area, clip))
+                .and_then(|clip| intersection(&area, clip))
                 .unwrap_or(area);
             if node.rect.width == 0 || node.rect.height == 0 || !touches(node.rect, clipped_area) {
                 continue;
