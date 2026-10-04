@@ -15,7 +15,12 @@ const ROWS: usize = 8;
 
 #[must_use]
 pub fn screens() -> Vec<Box<dyn Screen>> {
-    vec![Box::new(Companion::default()), Box::new(Achievements::default()), Box::new(Cloud::default()), Box::new(Updates::default())]
+    vec![
+        Box::new(Companion::default()),
+        Box::new(Achievements::default()),
+        Box::new(Cloud::default()),
+        Box::new(Updates::default()),
+    ]
 }
 
 fn app_id(game: &str) -> Option<u32> {
@@ -70,24 +75,65 @@ fn installed_version(root: &Path) -> Option<String> {
 }
 
 fn worker(request: &Request) -> std::result::Result<Vec<u8>, String> {
-    let Response { ok, payload } = sse_steam::worker::run_sibling_worker(request, TIMEOUT).map_err(|e| e.to_string())?;
-    if ok { Ok(payload) } else { Err(String::from_utf8(payload).unwrap_or_else(|_| "Steam worker failed".to_owned())) }
+    let Response { ok, payload } =
+        sse_steam::worker::run_sibling_worker(request, TIMEOUT).map_err(|e| e.to_string())?;
+    if ok {
+        Ok(payload)
+    } else {
+        Err(String::from_utf8(payload).unwrap_or_else(|_| "Steam worker failed".to_owned()))
+    }
 }
 
-struct Cursor<'a> { bytes: &'a [u8], pos: usize }
+struct Cursor<'a> {
+    bytes: &'a [u8],
+    pos: usize,
+}
 impl<'a> Cursor<'a> {
-    fn new(bytes: &'a [u8]) -> Self { Self { bytes, pos: 0 } }
-    fn take(&mut self, n: usize) -> std::result::Result<&'a [u8], String> {
-        let end = self.pos.checked_add(n).ok_or_else(|| "Steam response overflow".to_owned())?;
-        let value = self.bytes.get(self.pos..end).ok_or_else(|| "Truncated Steam response".to_owned())?;
-        self.pos = end; Ok(value)
+    fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, pos: 0 }
     }
-    fn u8(&mut self) -> std::result::Result<u8, String> { self.take(1)?.first().copied().ok_or_else(|| "Truncated Steam response".to_owned()) }
-    fn u16(&mut self) -> std::result::Result<u16, String> { let mut b=[0;2]; b.copy_from_slice(self.take(2)?); Ok(u16::from_le_bytes(b)) }
-    fn u32(&mut self) -> std::result::Result<u32, String> { let mut b=[0;4]; b.copy_from_slice(self.take(4)?); Ok(u32::from_le_bytes(b)) }
-    fn u64(&mut self) -> std::result::Result<u64, String> { let mut b=[0;8]; b.copy_from_slice(self.take(8)?); Ok(u64::from_le_bytes(b)) }
-    fn i64(&mut self) -> std::result::Result<i64, String> { let mut b=[0;8]; b.copy_from_slice(self.take(8)?); Ok(i64::from_le_bytes(b)) }
-    fn string(&mut self) -> std::result::Result<String, String> { let n=usize::from(self.u16()?); String::from_utf8(self.take(n)?.to_vec()).map_err(|_| "Steam response is not UTF-8".to_owned()) }
+    fn take(&mut self, n: usize) -> std::result::Result<&'a [u8], String> {
+        let end = self
+            .pos
+            .checked_add(n)
+            .ok_or_else(|| "Steam response overflow".to_owned())?;
+        let value = self
+            .bytes
+            .get(self.pos..end)
+            .ok_or_else(|| "Truncated Steam response".to_owned())?;
+        self.pos = end;
+        Ok(value)
+    }
+    fn u8(&mut self) -> std::result::Result<u8, String> {
+        self.take(1)?
+            .first()
+            .copied()
+            .ok_or_else(|| "Truncated Steam response".to_owned())
+    }
+    fn u16(&mut self) -> std::result::Result<u16, String> {
+        let mut b = [0; 2];
+        b.copy_from_slice(self.take(2)?);
+        Ok(u16::from_le_bytes(b))
+    }
+    fn u32(&mut self) -> std::result::Result<u32, String> {
+        let mut b = [0; 4];
+        b.copy_from_slice(self.take(4)?);
+        Ok(u32::from_le_bytes(b))
+    }
+    fn u64(&mut self) -> std::result::Result<u64, String> {
+        let mut b = [0; 8];
+        b.copy_from_slice(self.take(8)?);
+        Ok(u64::from_le_bytes(b))
+    }
+    fn i64(&mut self) -> std::result::Result<i64, String> {
+        let mut b = [0; 8];
+        b.copy_from_slice(self.take(8)?);
+        Ok(i64::from_le_bytes(b))
+    }
+    fn string(&mut self) -> std::result::Result<String, String> {
+        let n = usize::from(self.u16()?);
+        String::from_utf8(self.take(n)?.to_vec()).map_err(|_| "Steam response is not UTF-8".to_owned())
+    }
 }
 
 fn cloud_files(bytes: &[u8]) -> std::result::Result<Vec<CloudFile>, String> {
@@ -99,11 +145,21 @@ fn cloud_files(bytes: &[u8]) -> std::result::Result<Vec<CloudFile>, String> {
 }
 
 fn achievement_list(bytes: &[u8]) -> std::result::Result<Vec<Achievement>, String> {
-    let mut c=Cursor::new(bytes); let count=usize::try_from(c.u32()?).map_err(|_| "Achievement count overflow".to_owned())?;
-    if count>10_000 { return Err("Achievement response exceeds 10,000 entries".to_owned()); }
-    let mut out=Vec::with_capacity(count);
+    let mut c = Cursor::new(bytes);
+    let count = usize::try_from(c.u32()?).map_err(|_| "Achievement count overflow".to_owned())?;
+    if count > 10_000 {
+        return Err("Achievement response exceeds 10,000 entries".to_owned());
+    }
+    let mut out = Vec::with_capacity(count);
     for _ in 0..count {
-        out.push(Achievement{name:c.string()?,display_name:c.string()?,description:c.string()?,hidden:c.u8()?!=0,achieved:c.u8()?!=0,unlock_time:c.u32()?});
+        out.push(Achievement {
+            name: c.string()?,
+            display_name: c.string()?,
+            description: c.string()?,
+            hidden: c.u8()? != 0,
+            achieved: c.u8()? != 0,
+            unlock_time: c.u32()?,
+        });
     }
     Ok(out)
 }
@@ -113,18 +169,33 @@ fn clip(text: &str) -> String {
 }
 
 #[derive(Debug)]
-enum CompanionReply { Status(std::result::Result<Option<String>,String>), Changed(std::result::Result<String,String>) }
+enum CompanionReply {
+    Status(std::result::Result<Option<String>, String>),
+    Changed(std::result::Result<String, String>),
+}
 
 #[derive(Default)]
-struct Companion { status:Option<WidgetId>, version:Option<WidgetId>, install:Option<WidgetId>, remove:Option<WidgetId> }
+struct Companion {
+    status: Option<WidgetId>,
+    version: Option<WidgetId>,
+    install: Option<WidgetId>,
+    remove: Option<WidgetId>,
+}
 
 impl Companion {
-    fn refresh(&self,cx:&mut Context<'_>) {
-        let Some(proxy)=cx.proxy.cloned() else{return};
-        let game=cx.app.selected_game().map(str::to_owned); let dir=cx.app.game_dir().map(Path::to_path_buf);
-        std::thread::spawn(move||{
-            let result=match(game.as_deref(),dir.as_deref()){(Some(g),Some(d))=>companion_root(g,d).map(|r|installed_version(&r)),_=>Err("Сначала выберите установленную игру в «Обзоре игр»".to_owned())};
-            proxy.send(AppMessage::ToScreen(ScreenId::Companion,Box::new(CompanionReply::Status(result))));
+    fn refresh(&self, cx: &mut Context<'_>) {
+        let Some(proxy) = cx.proxy.cloned() else { return };
+        let game = cx.app.selected_game().map(str::to_owned);
+        let dir = cx.app.game_dir().map(Path::to_path_buf);
+        std::thread::spawn(move || {
+            let result = match (game.as_deref(), dir.as_deref()) {
+                (Some(g), Some(d)) => companion_root(g, d).map(|r| installed_version(&r)),
+                _ => Err("Сначала выберите установленную игру в «Обзоре игр»".to_owned()),
+            };
+            proxy.send(AppMessage::ToScreen(
+                ScreenId::Companion,
+                Box::new(CompanionReply::Status(result)),
+            ));
         });
     }
 }
@@ -143,31 +214,88 @@ impl Screen for Companion {
         }
         Ok(())
     }
-    fn shown(&mut self,cx:&mut Context<'_>)->Result<()>{self.refresh(cx);Ok(())}
-    fn message(&mut self,cx:&mut Context<'_>,message:&Message<AppMessage>,clicked:Option<WidgetId>)->Result<()> {
-        if clicked==self.install||clicked==self.remove {
-            let install=clicked==self.install; let Some(proxy)=cx.proxy.cloned() else{return Ok(())};
-            let game=cx.app.selected_game().map(str::to_owned); let dir=cx.app.game_dir().map(Path::to_path_buf);
-            std::thread::spawn(move||{
-                let result=(||{
-                    let game=game.ok_or_else(||"Игра не выбрана".to_owned())?; let dir=dir.ok_or_else(||"Папка игры не выбрана".to_owned())?; let root=companion_root(&game,&dir)?;
+    fn shown(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        self.refresh(cx);
+        Ok(())
+    }
+    fn message(
+        &mut self,
+        cx: &mut Context<'_>,
+        message: &Message<AppMessage>,
+        clicked: Option<WidgetId>,
+    ) -> Result<()> {
+        if clicked == self.install || clicked == self.remove {
+            let install = clicked == self.install;
+            let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
+            let game = cx.app.selected_game().map(str::to_owned);
+            let dir = cx.app.game_dir().map(Path::to_path_buf);
+            std::thread::spawn(move || {
+                let result = (|| {
+                    let game = game.ok_or_else(|| "Игра не выбрана".to_owned())?;
+                    let dir = dir.ok_or_else(|| "Папка игры не выбрана".to_owned())?;
+                    let root = companion_root(&game, &dir)?;
                     if install {
-                        if let Some(target)=xray_game(&game){sse_companion::installer::install_bundled(&root,target).map_err(|e|e.to_string())?;} else {sse_companion::installer::install_stalker2(&root).map_err(|e|e.to_string())?;}
+                        if let Some(target) = xray_game(&game) {
+                            sse_companion::installer::install_bundled(&root, target).map_err(|e| e.to_string())?;
+                        } else {
+                            sse_companion::installer::install_stalker2(&root).map_err(|e| e.to_string())?;
+                        }
                         Ok("Компаньон установлен".to_owned())
                     } else {
-                        let id=if matches!(game.as_str(),"s2"|"stalker2"){"s2"}else if game.contains("soc"){"soc"}else if game.contains("cs")||game=="clear_sky"{"cs"}else{"cop"};
-                        let removed=sse_companion::installer::uninstall(&root,id).map_err(|e|e.to_string())?; Ok(if removed{"Компаньон удалён; исходные файлы восстановлены"}else{"Компаньон не был установлен"}.to_owned())
+                        let id = if matches!(game.as_str(), "s2" | "stalker2") {
+                            "s2"
+                        } else if game.contains("soc") {
+                            "soc"
+                        } else if game.contains("cs") || game == "clear_sky" {
+                            "cs"
+                        } else {
+                            "cop"
+                        };
+                        let removed = sse_companion::installer::uninstall(&root, id).map_err(|e| e.to_string())?;
+                        Ok(if removed {
+                            "Компаньон удалён; исходные файлы восстановлены"
+                        } else {
+                            "Компаньон не был установлен"
+                        }
+                        .to_owned())
                     }
                 })();
-                proxy.send(AppMessage::ToScreen(ScreenId::Companion,Box::new(CompanionReply::Changed(result))));
+                proxy.send(AppMessage::ToScreen(
+                    ScreenId::Companion,
+                    Box::new(CompanionReply::Changed(result)),
+                ));
             });
         }
-        if let Message::User(AppMessage::ToScreen(ScreenId::Companion,payload))=message {
-            if let Some(reply)=payload.downcast_ref::<CompanionReply>() { match reply {
-                CompanionReply::Status(Ok(version))=>{if let Some(id)=self.status{cx.tree.set_text(id,if version.is_some(){"Установлен"}else{"Не установлен"})?;}if let Some(id)=self.version{cx.tree.set_text(id,&format!("Версия: {}",version.as_deref().unwrap_or("—")))?;}},
-                CompanionReply::Status(Err(e))|CompanionReply::Changed(Err(e))=>{if let Some(id)=self.status{cx.tree.set_text(id,&clip(e))?;}},
-                CompanionReply::Changed(Ok(text))=>{cx.status=Some(text.clone());self.refresh(cx);}
-            }}
+        if let Message::User(AppMessage::ToScreen(ScreenId::Companion, payload)) = message {
+            if let Some(reply) = payload.downcast_ref::<CompanionReply>() {
+                match reply {
+                    CompanionReply::Status(Ok(version)) => {
+                        if let Some(id) = self.status {
+                            cx.tree.set_text(
+                                id,
+                                if version.is_some() {
+                                    "Установлен"
+                                } else {
+                                    "Не установлен"
+                                },
+                            )?;
+                        }
+                        if let Some(id) = self.version {
+                            cx.tree
+                                .set_text(id, &format!("Версия: {}", version.as_deref().unwrap_or("—")))?;
+                        }
+                    }
+                    CompanionReply::Status(Err(e)) | CompanionReply::Changed(Err(e)) => {
+                        if let Some(id) = self.status {
+                            cx.tree.set_text(id, &clip(e))?;
+                        }
+                    }
+                    CompanionReply::Changed(Ok(text)) => {
+                        cx.status = Some(text.clone());
+                        self.refresh(cx);
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -184,14 +312,108 @@ impl Achievements {
 }
 
 impl Screen for Achievements {
-    fn id(&self)->ScreenId{ScreenId::Achievements} fn subtitle(&self)->&str{"Достижения выбранной игры и прогресс Steam"}
-    fn build(&mut self,cx:&mut Context<'_>,host:WidgetId)->Result<()> {let card=style::card(cx.tree,host)?;style::label(cx.tree,card,"ДОСТИЖЕНИЯ",Text::Heading)?;self.status=Some(style::label(cx.tree,card,"Загрузка…",Text::Note)?);for _ in 0..ROWS{let r=style::button(cx.tree,card,"",Button::Secondary)?;cx.tree.set_visible(r,false)?;self.rows.push(r);}let row=style::row(cx.tree,card)?;self.set=Some(style::button(cx.tree,row,"Разблокировать",Button::Primary)?);self.clear=Some(style::button(cx.tree,row,"Сбросить",Button::Secondary)?);Ok(())}
-    fn shown(&mut self,cx:&mut Context<'_>)->Result<()>{self.load(cx);Ok(())}
-    fn message(&mut self,cx:&mut Context<'_>,message:&Message<AppMessage>,clicked:Option<WidgetId>)->Result<()> {
-        for(i,row)in self.rows.iter().copied().enumerate(){if clicked==Some(row)&&self.items.get(i).is_some(){self.selected=Some(i);self.confirm=None;cx.status=self.items.get(i).map(|a|a.description.clone());}}
-        let change=if clicked==self.set{Some(true)}else if clicked==self.clear{Some(false)}else{None};
-        if let Some(set)=change {let Some(i)=self.selected else{cx.status=Some("Сначала выберите достижение".to_owned());return Ok(())};if self.confirm!=Some(set){self.confirm=Some(set);cx.status=Some("Подтвердите действие повторным нажатием".to_owned());return Ok(())}self.confirm=None;let Some(item)=self.items.get(i)else{return Ok(())};let Some(app_id)=cx.app.selected_game().and_then(app_id)else{return Ok(())};let name=item.name.clone();let Some(proxy)=cx.proxy.cloned()else{return Ok(())};std::thread::spawn(move||{let req=if set{Request::SetAchievement{app_id,name,confirmed:true}}else{Request::ClearAchievement{app_id,name,confirmed:true}};let result=worker(&req).map(|_|());proxy.send(AppMessage::ToScreen(ScreenId::Achievements,Box::new(AchReply::Changed(result))));});}
-        if let Message::User(AppMessage::ToScreen(ScreenId::Achievements,payload))=message{if let Some(reply)=payload.downcast_ref::<AchReply>(){match reply{AchReply::List(Ok(items))=>{self.items.clone_from(items);self.render(cx)?},AchReply::List(Err(e))=>{if let Some(id)=self.status{cx.tree.set_text(id,&clip(e))?;}},AchReply::Changed(Ok(()))=>{cx.status=Some("Steam подтвердил изменение достижения".to_owned());self.load(cx)},AchReply::Changed(Err(e))=>cx.status=Some(format!("Steam: {e}")),}}}
+    fn id(&self) -> ScreenId {
+        ScreenId::Achievements
+    }
+    fn subtitle(&self) -> &str {
+        "Достижения выбранной игры и прогресс Steam"
+    }
+    fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
+        let card = style::card(cx.tree, host)?;
+        style::label(cx.tree, card, "ДОСТИЖЕНИЯ", Text::Heading)?;
+        self.status = Some(style::label(cx.tree, card, "Загрузка…", Text::Note)?);
+        for _ in 0..ROWS {
+            let r = style::button(cx.tree, card, "", Button::Secondary)?;
+            cx.tree.set_visible(r, false)?;
+            self.rows.push(r);
+        }
+        let row = style::row(cx.tree, card)?;
+        self.set = Some(style::button(cx.tree, row, "Разблокировать", Button::Primary)?);
+        self.clear = Some(style::button(cx.tree, row, "Сбросить", Button::Secondary)?);
+        Ok(())
+    }
+    fn shown(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        self.load(cx);
+        Ok(())
+    }
+    fn message(
+        &mut self,
+        cx: &mut Context<'_>,
+        message: &Message<AppMessage>,
+        clicked: Option<WidgetId>,
+    ) -> Result<()> {
+        for (i, row) in self.rows.iter().copied().enumerate() {
+            if clicked == Some(row) && self.items.get(i).is_some() {
+                self.selected = Some(i);
+                self.confirm = None;
+                cx.status = self.items.get(i).map(|a| a.description.clone());
+            }
+        }
+        let change = if clicked == self.set {
+            Some(true)
+        } else if clicked == self.clear {
+            Some(false)
+        } else {
+            None
+        };
+        if let Some(set) = change {
+            let Some(i) = self.selected else {
+                cx.status = Some("Сначала выберите достижение".to_owned());
+                return Ok(());
+            };
+            if self.confirm != Some(set) {
+                self.confirm = Some(set);
+                cx.status = Some("Подтвердите действие повторным нажатием".to_owned());
+                return Ok(());
+            }
+            self.confirm = None;
+            let Some(item) = self.items.get(i) else { return Ok(()) };
+            let Some(app_id) = cx.app.selected_game().and_then(app_id) else {
+                return Ok(());
+            };
+            let name = item.name.clone();
+            let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
+            std::thread::spawn(move || {
+                let req = if set {
+                    Request::SetAchievement {
+                        app_id,
+                        name,
+                        confirmed: true,
+                    }
+                } else {
+                    Request::ClearAchievement {
+                        app_id,
+                        name,
+                        confirmed: true,
+                    }
+                };
+                let result = worker(&req).map(|_| ());
+                proxy.send(AppMessage::ToScreen(
+                    ScreenId::Achievements,
+                    Box::new(AchReply::Changed(result)),
+                ));
+            });
+        }
+        if let Message::User(AppMessage::ToScreen(ScreenId::Achievements, payload)) = message {
+            if let Some(reply) = payload.downcast_ref::<AchReply>() {
+                match reply {
+                    AchReply::List(Ok(items)) => {
+                        self.items.clone_from(items);
+                        self.render(cx)?
+                    }
+                    AchReply::List(Err(e)) => {
+                        if let Some(id) = self.status {
+                            cx.tree.set_text(id, &clip(e))?;
+                        }
+                    }
+                    AchReply::Changed(Ok(())) => {
+                        cx.status = Some("Steam подтвердил изменение достижения".to_owned());
+                        self.load(cx)
+                    }
+                    AchReply::Changed(Err(e)) => cx.status = Some(format!("Steam: {e}")),
+                }
+            }
+        }
         Ok(())
     }
 }
@@ -207,13 +429,121 @@ impl Cloud {
 }
 
 impl Screen for Cloud {
-    fn id(&self)->ScreenId{ScreenId::Cloud} fn subtitle(&self)->&str{"Steam Cloud: список, локальная копия и транзакционная загрузка"}
-    fn build(&mut self,cx:&mut Context<'_>,host:WidgetId)->Result<()> {let card=style::card(cx.tree,host)?;style::label(cx.tree,card,"STEAM CLOUD",Text::Heading)?;self.status=Some(style::label(cx.tree,card,"Загрузка…",Text::Note)?);for _ in 0..ROWS{let r=style::button(cx.tree,card,"",Button::Secondary)?;cx.tree.set_visible(r,false)?;self.rows.push(r);}let row=style::row(cx.tree,card)?;self.download=Some(style::button(cx.tree,row,"Скачать в текущий сейв",Button::Secondary)?);self.upload=Some(style::button(cx.tree,row,"Загрузить текущий сейв",Button::Primary)?);Ok(())}
-    fn shown(&mut self,cx:&mut Context<'_>)->Result<()>{self.load(cx);Ok(())}
-    fn message(&mut self,cx:&mut Context<'_>,message:&Message<AppMessage>,clicked:Option<WidgetId>)->Result<()> {
-        for(i,row)in self.rows.iter().copied().enumerate(){if clicked==Some(row)&&self.items.get(i).is_some(){self.selected=Some(i);cx.status=self.items.get(i).map(|f|format!("Выбран {}",f.name));}}
-        if clicked==self.download||clicked==self.upload {let upload=clicked==self.upload;let Some(i)=self.selected else{cx.status=Some("Сначала выберите файл Steam Cloud".to_owned());return Ok(())};let Some(item)=self.items.get(i)else{return Ok(())};let Some(app_id)=cx.app.selected_game().and_then(app_id)else{return Ok(())};let Some(local)=cx.app.current_save().map(Path::to_path_buf)else{cx.status=Some("Сначала откройте локальный сейв".to_owned());return Ok(())};let remote=item.name.clone();let Some(proxy)=cx.proxy.cloned()else{return Ok(())};std::thread::spawn(move||{let result=(||{let source=worker(&Request::Read{app_id,remote_name:remote.clone()})?;if upload{let output=std::fs::read(&local).map_err(|e|e.to_string())?;let artifacts=local.parent().unwrap_or_else(||Path::new(".")).join("steam-cloud-backups");let expected=sse_codecs::sha256::sha256(&source);worker(&Request::Write{app_id,remote_name:remote,expected_source_sha256:expected,artifact_directory:artifacts,output})?;Ok("Steam Cloud обновлён транзакционно; бэкап сохранён".to_owned())}else{let backup=local.with_extension("cloud-backup");if local.is_file(){std::fs::copy(&local,&backup).map_err(|e|e.to_string())?;}let temp=local.with_extension("cloud-download.tmp");std::fs::write(&temp,&source).map_err(|e|e.to_string())?;std::fs::rename(&temp,&local).map_err(|e|e.to_string())?;Ok(format!("Скачано; локальный бэкап: {}",backup.display()))}})();proxy.send(AppMessage::ToScreen(ScreenId::Cloud,Box::new(CloudReply::Done(result))));});}
-        if let Message::User(AppMessage::ToScreen(ScreenId::Cloud,payload))=message{if let Some(reply)=payload.downcast_ref::<CloudReply>(){match reply{CloudReply::List(Ok(items))=>{self.items.clone_from(items);self.render(cx)?},CloudReply::List(Err(e))=>{if let Some(id)=self.status{cx.tree.set_text(id,&clip(e))?;}},CloudReply::Done(Ok(text))=>{cx.status=Some(text.clone());self.load(cx)},CloudReply::Done(Err(e))=>cx.status=Some(format!("Steam Cloud: {e}")),}}}
+    fn id(&self) -> ScreenId {
+        ScreenId::Cloud
+    }
+    fn subtitle(&self) -> &str {
+        "Steam Cloud: список, локальная копия и транзакционная загрузка"
+    }
+    fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
+        let card = style::card(cx.tree, host)?;
+        style::label(cx.tree, card, "STEAM CLOUD", Text::Heading)?;
+        self.status = Some(style::label(cx.tree, card, "Загрузка…", Text::Note)?);
+        for _ in 0..ROWS {
+            let r = style::button(cx.tree, card, "", Button::Secondary)?;
+            cx.tree.set_visible(r, false)?;
+            self.rows.push(r);
+        }
+        let row = style::row(cx.tree, card)?;
+        self.download = Some(style::button(
+            cx.tree,
+            row,
+            "Скачать в текущий сейв",
+            Button::Secondary,
+        )?);
+        self.upload = Some(style::button(cx.tree, row, "Загрузить текущий сейв", Button::Primary)?);
+        Ok(())
+    }
+    fn shown(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        self.load(cx);
+        Ok(())
+    }
+    fn message(
+        &mut self,
+        cx: &mut Context<'_>,
+        message: &Message<AppMessage>,
+        clicked: Option<WidgetId>,
+    ) -> Result<()> {
+        for (i, row) in self.rows.iter().copied().enumerate() {
+            if clicked == Some(row) && self.items.get(i).is_some() {
+                self.selected = Some(i);
+                cx.status = self.items.get(i).map(|f| format!("Выбран {}", f.name));
+            }
+        }
+        if clicked == self.download || clicked == self.upload {
+            let upload = clicked == self.upload;
+            let Some(i) = self.selected else {
+                cx.status = Some("Сначала выберите файл Steam Cloud".to_owned());
+                return Ok(());
+            };
+            let Some(item) = self.items.get(i) else { return Ok(()) };
+            let Some(app_id) = cx.app.selected_game().and_then(app_id) else {
+                return Ok(());
+            };
+            let Some(local) = cx.app.current_save().map(Path::to_path_buf) else {
+                cx.status = Some("Сначала откройте локальный сейв".to_owned());
+                return Ok(());
+            };
+            let remote = item.name.clone();
+            let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
+            std::thread::spawn(move || {
+                let result = (|| {
+                    let source = worker(&Request::Read {
+                        app_id,
+                        remote_name: remote.clone(),
+                    })?;
+                    if upload {
+                        let output = std::fs::read(&local).map_err(|e| e.to_string())?;
+                        let artifacts = local
+                            .parent()
+                            .unwrap_or_else(|| Path::new("."))
+                            .join("steam-cloud-backups");
+                        let expected = sse_codecs::sha256::sha256(&source);
+                        worker(&Request::Write {
+                            app_id,
+                            remote_name: remote,
+                            expected_source_sha256: expected,
+                            artifact_directory: artifacts,
+                            output,
+                        })?;
+                        Ok("Steam Cloud обновлён транзакционно; бэкап сохранён".to_owned())
+                    } else {
+                        let backup = local.with_extension("cloud-backup");
+                        if local.is_file() {
+                            std::fs::copy(&local, &backup).map_err(|e| e.to_string())?;
+                        }
+                        let temp = local.with_extension("cloud-download.tmp");
+                        std::fs::write(&temp, &source).map_err(|e| e.to_string())?;
+                        std::fs::rename(&temp, &local).map_err(|e| e.to_string())?;
+                        Ok(format!("Скачано; локальный бэкап: {}", backup.display()))
+                    }
+                })();
+                proxy.send(AppMessage::ToScreen(
+                    ScreenId::Cloud,
+                    Box::new(CloudReply::Done(result)),
+                ));
+            });
+        }
+        if let Message::User(AppMessage::ToScreen(ScreenId::Cloud, payload)) = message {
+            if let Some(reply) = payload.downcast_ref::<CloudReply>() {
+                match reply {
+                    CloudReply::List(Ok(items)) => {
+                        self.items.clone_from(items);
+                        self.render(cx)?
+                    }
+                    CloudReply::List(Err(e)) => {
+                        if let Some(id) = self.status {
+                            cx.tree.set_text(id, &clip(e))?;
+                        }
+                    }
+                    CloudReply::Done(Ok(text)) => {
+                        cx.status = Some(text.clone());
+                        self.load(cx)
+                    }
+                    CloudReply::Done(Err(e)) => cx.status = Some(format!("Steam Cloud: {e}")),
+                }
+            }
+        }
         Ok(())
     }
 }
