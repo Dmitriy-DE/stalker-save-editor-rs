@@ -11,6 +11,7 @@ const QUERY_FLAG_NUMBER: u32 = 0x2000_0000;
 const QUERY_FLAG_NUMBER64: u32 = 0x0800_0000;
 const OPTION_URL: u32 = 34;
 const OPTION_REDIRECT_POLICY: u32 = 88;
+const OPTION_MAX_HTTP_AUTOMATIC_REDIRECTS: u32 = 89;
 const REDIRECT_POLICY_DISALLOW_HTTPS_TO_HTTP: u32 = 1;
 
 #[link(name = "winhttp")]
@@ -224,6 +225,19 @@ pub(super) fn get(
     } == 0
     {
         return Err(Error::System("WinHTTP redirect policy failed".to_owned()));
+    }
+    let max_redirects = 8_u32;
+    // SAFETY: request is live and option buffer points to a DWORD redirect limit.
+    if unsafe {
+        WinHttpSetOption(
+            request.0,
+            OPTION_MAX_HTTP_AUTOMATIC_REDIRECTS,
+            (&max_redirects as *const u32).cast(),
+            u32::try_from(std::mem::size_of::<u32>()).unwrap_or_default(),
+        )
+    } == 0
+    {
+        return Err(Error::System("WinHTTP redirect limit configuration failed".to_owned()));
     }
     let range = if range_from == 0 {
         None
