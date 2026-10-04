@@ -159,7 +159,7 @@ pub struct Theme {
 }
 
 /// Stable C# appearance ids.
-pub const THEMES: [(&str, &str); 3] = [("zone", "Тёмная"), ("day", "Светлая"), ("clear-sky", "Бирюзовая")];
+pub const THEMES: [(&str, &str); 3] = [("zone", "Зона (тёмная)"), ("clear-sky", "Чистое небо"), ("day", "День")];
 /// Stable C# accent ids.
 pub const ACCENT_IDS: [&str; 4] = ["amber", "teal", "blue", "rust"];
 
