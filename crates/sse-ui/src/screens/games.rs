@@ -1174,7 +1174,7 @@ impl GameFixes {
                     .ok_or_else(|| "Выбранная игра не поддерживается каталогом фиксов".to_owned())?;
                 let directory = directory.ok_or_else(|| "Сначала выберите установленную игру".to_owned())?;
                 let engine = sse_fixes::GameFixEngine::new();
-                let installed = engine.list_installed(&directory).map_err(|e| e.to_string())?;
+                let installed = engine.list_installed(&directory, None).map_err(|e| e.to_string())?;
                 let rows = sse_fixes::GameFixCatalog::for_game(target)
                     .into_iter()
                     .map(|definition| {
