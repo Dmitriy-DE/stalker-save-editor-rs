@@ -492,6 +492,12 @@ enum AchReply {
     List(std::result::Result<Vec<Achievement>, String>),
     Changed(std::result::Result<(), String>),
 }
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct AchievementIntent {
+    app_id: u32,
+    name: String,
+    set: bool,
+}
 #[derive(Default)]
 struct Achievements {
     status: Option<WidgetId>,
@@ -502,7 +508,10 @@ struct Achievements {
     clear: Option<WidgetId>,
     refresh: Option<WidgetId>,
     progress: Option<WidgetId>,
-    confirm: Option<bool>,
+    confirm_card: Option<WidgetId>,
+    confirm_write: Option<WidgetId>,
+    confirm_cancel: Option<WidgetId>,
+    intent: Option<AchievementIntent>,
     pending_set: Option<bool>,
 }
 
@@ -578,6 +587,14 @@ impl Screen for Achievements {
         let row = style::row(cx.tree, card)?;
         self.set = Some(style::button(cx.tree, row, "Разблокировать", Button::Primary)?);
         self.clear = Some(style::button(cx.tree, row, "Сбросить", Button::Secondary)?);
+        let confirm = style::card(cx.tree, host)?;
+        self.confirm_card = Some(confirm);
+        style::label(cx.tree, confirm, "ПОДТВЕРЖДЕНИЕ ДОСТИЖЕНИЯ", Text::Heading)?;
+        style::label(cx.tree, confirm, "Изменение будет отправлено в Steam для выбранной игры и достижения.", Text::Note)?;
+        let actions = style::row(cx.tree, confirm)?;
+        self.confirm_write = Some(style::button(cx.tree, actions, "ПОДТВЕРДИТЬ", Button::Primary)?);
+        self.confirm_cancel = Some(style::button(cx.tree, actions, "ОТМЕНА", Button::Secondary)?);
+        cx.tree.set_visible(confirm, false)?;
         Ok(())
     }
     fn shown(&mut self, cx: &mut Context<'_>) -> Result<()> {
@@ -597,7 +614,8 @@ impl Screen for Achievements {
         for (i, row) in self.rows.iter().copied().enumerate() {
             if clicked == Some(row) && self.items.get(i).is_some() {
                 self.selected = Some(i);
-                self.confirm = None;
+                self.intent = None;
+                if self.confirm_card.is_some_and(|card| cx.tree.dialog() == Some(card)) { let _ = cx.tree.close_dialog()?; }
                 cx.status = self.items.get(i).map(|a| a.description.clone());
             }
         }
@@ -615,27 +633,29 @@ impl Screen for Achievements {
                 cx.status = Some("Сначала выберите достижение".to_owned());
                 return Ok(());
             };
-            if self.confirm != Some(set) {
-                self.confirm = Some(set);
-                cx.status = self.items.get(i).map(|a| {
-                    if set {
-                        format!(
-                            "РАЗБЛОКИРОВАТЬ ДОСТИЖЕНИЕ: подтвердите «{}» повторным нажатием.",
-                            a.display_name
-                        )
-                    } else {
-                        format!("СНЯТЬ ДОСТИЖЕНИЕ: подтвердите «{}» повторным нажатием.", a.display_name)
-                    }
-                });
+            let Some(item) = self.items.get(i) else { return Ok(()) };
+            let Some(app_id) = cx.app.selected_game().and_then(app_id) else { return Ok(()) };
+            self.intent = Some(AchievementIntent { app_id, name: item.name.clone(), set });
+            if let Some(card) = self.confirm_card { cx.tree.open_dialog(card)?; }
+            return Ok(());
+        }
+        if clicked.is_some() && clicked == self.confirm_cancel {
+            self.intent = None;
+            let _ = cx.tree.close_dialog()?;
+            return Ok(());
+        }
+        if clicked.is_some() && clicked == self.confirm_write {
+            let Some(intent) = self.intent.take() else { return Ok(()) };
+            if cx.app.selected_game().and_then(app_id) != Some(intent.app_id) {
+                let _ = cx.tree.close_dialog()?;
+                cx.status = Some("Выбранная игра изменилась; подтверждение отменено.".to_owned());
                 return Ok(());
             }
-            self.confirm = None;
-            self.pending_set = Some(set);
-            let Some(item) = self.items.get(i) else { return Ok(()) };
-            let Some(app_id) = cx.app.selected_game().and_then(app_id) else {
-                return Ok(());
-            };
-            let name = item.name.clone();
+            self.pending_set = Some(intent.set);
+            let app_id = intent.app_id;
+            let name = intent.name;
+            let set = intent.set;
+            let _ = cx.tree.close_dialog()?;
             let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
             std::thread::spawn(move || {
                 let req = if set {
@@ -662,6 +682,8 @@ impl Screen for Achievements {
             if let Some(reply) = payload.downcast_ref::<AchReply>() {
                 match reply {
                     AchReply::List(Ok(items)) => {
+                        self.intent = None;
+                        if self.confirm_card.is_some_and(|card| cx.tree.dialog() == Some(card)) { let _ = cx.tree.close_dialog()?; }
                         self.items.clone_from(items);
                         self.render(cx)?
                     }
