@@ -187,7 +187,7 @@ impl Wizard {
                 .checked_rem(crate::strings::LANGUAGES.len())
                 .unwrap_or(0);
             if let Some(value) = self.language_value {
-                cx.tree.set_text(value, LANGUAGE_NAMES[self.language])?;
+                cx.tree.set_text(value, language_name(self.language))?;
             }
         }
 
