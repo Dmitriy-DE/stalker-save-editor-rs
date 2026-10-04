@@ -132,12 +132,12 @@ impl Screen for Capabilities {
     }
 
     fn subtitle(&self) -> &str {
-        "Игра × возможность: запись, чтение и причины ограничений"
+        crate::strings::t("Игра × возможность: запись, чтение и причины ограничений")
     }
 
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
         let card = style::card(cx.tree, host)?;
-        style::label(cx.tree, card, "МАТРИЦА ВОЗМОЖНОСТЕЙ", Text::Heading)?;
+        style::label(cx.tree, card, crate::strings::t("МАТРИЦА ВОЗМОЖНОСТЕЙ"), Text::Heading)?;
         style::label(
             cx.tree,
             card,
@@ -179,6 +179,7 @@ impl Screen for Capabilities {
 }
 
 const SCALES: [&str; 4] = ["100 %", "125 %", "150 %", "200 %"];
+const LANGUAGE_NAMES: [&str; 15] = ["Русский", "Українська", "English", "Deutsch", "Français", "Italiano", "Español", "Polski", "Čeština", "Português (Brasil)", "Türkçe", "日本語", "한국어", "简体中文", "繁體中文"];
 
 /// Result of the background check started by the settings screen.
 struct Checked(String);
@@ -186,11 +187,15 @@ struct Checked(String);
 /// Settings screen.
 #[derive(Default)]
 pub struct Settings {
+    language_value: Option<WidgetId>,
+    language_button: Option<WidgetId>,
     scale_value: Option<WidgetId>,
     scale_button: Option<WidgetId>,
     check_button: Option<WidgetId>,
     check_result: Option<WidgetId>,
     scale: usize,
+    language: usize,
+    settings: sse_app::AppSettings,
 }
 
 impl Screen for Settings {
@@ -199,22 +204,30 @@ impl Screen for Settings {
     }
 
     fn subtitle(&self) -> &str {
-        "Язык, тема, масштаб, обновления"
+        crate::strings::t("Язык, тема, масштаб, обновления")
     }
 
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
+        self.settings = sse_app::AppSettings::load(&sse_app::default_settings_path());
+        crate::strings::set_language(self.settings.language.as_deref());
+        self.language = crate::strings::language_index(crate::strings::current_language());
+
         let view = style::card(cx.tree, host)?;
-        style::label(cx.tree, view, "ВИД", Text::Heading)?;
+        style::label(cx.tree, view, crate::strings::t("ВИД"), Text::Heading)?;
+        let language_line = style::row(cx.tree, view)?;
+        style::label(cx.tree, language_line, crate::strings::t("Язык:"), Text::Body)?;
+        self.language_value = Some(style::label(cx.tree, language_line, LANGUAGE_NAMES[self.language], Text::Value)?);
+        self.language_button = Some(style::button(cx.tree, language_line, crate::strings::t("Изменить"), Button::Secondary)?);
         let line = style::row(cx.tree, view)?;
-        style::label(cx.tree, line, "Масштаб интерфейса:", Text::Body)?;
+        style::label(cx.tree, line, crate::strings::t("Масштаб интерфейса:"), Text::Body)?;
         self.scale_value = Some(style::label(cx.tree, line, SCALES[0], Text::Value)?);
-        self.scale_button = Some(style::button(cx.tree, line, "Изменить", Button::Secondary)?);
+        self.scale_button = Some(style::button(cx.tree, line, crate::strings::t("Изменить"), Button::Secondary)?);
 
         let updates = style::card(cx.tree, host)?;
-        style::label(cx.tree, updates, "ОБНОВЛЕНИЯ", Text::Heading)?;
+        style::label(cx.tree, updates, crate::strings::t("ОБНОВЛЕНИЯ"), Text::Heading)?;
         let line = style::row(cx.tree, updates)?;
-        self.check_button = Some(style::button(cx.tree, line, "Проверить", Button::Primary)?);
-        self.check_result = Some(style::label(cx.tree, line, "Ещё не проверяли", Text::Note)?);
+        self.check_button = Some(style::button(cx.tree, line, crate::strings::t("Проверить"), Button::Primary)?);
+        self.check_result = Some(style::label(cx.tree, line, crate::strings::t("Ещё не проверяли"), Text::Note)?);
         Ok(())
     }
 
@@ -224,6 +237,17 @@ impl Screen for Settings {
         message: &Message<AppMessage>,
         clicked: Option<WidgetId>,
     ) -> Result<()> {
+        if clicked.is_some() && clicked == self.language_button {
+            self.language = self.language.saturating_add(1).checked_rem(crate::strings::LANGUAGES.len()).unwrap_or(0);
+            let code = crate::strings::LANGUAGES[self.language];
+            crate::strings::set_language(Some(code));
+            self.settings.language = Some(code.to_owned());
+            self.settings.save(&sse_app::default_settings_path())?;
+            if let Some(value) = self.language_value {
+                cx.tree.set_text(value, LANGUAGE_NAMES[self.language])?;
+            }
+            cx.status = Some(crate::strings::t("Готово").to_owned());
+        }
         if clicked.is_some() && clicked == self.scale_button {
             self.scale = self.scale.saturating_add(1).checked_rem(SCALES.len()).unwrap_or(0);
             if let (Some(value), Some(text)) = (self.scale_value, SCALES.get(self.scale)) {
@@ -233,7 +257,7 @@ impl Screen for Settings {
         }
         if clicked.is_some() && clicked == self.check_button {
             if let Some(result) = self.check_result {
-                cx.tree.set_text(result, "Проверяю…")?;
+                cx.tree.set_text(result, crate::strings::t("Проверяю…"))?;
             }
             // Slow work never runs on the UI thread: a worker answers through the proxy.
             if let Some(proxy) = cx.proxy.cloned() {
