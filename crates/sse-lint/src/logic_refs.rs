@@ -152,8 +152,13 @@ fn extract_scheme_refs(val: &str) -> Vec<String> {
     refs
 }
 
-/// Runs logic references check on an `.ltx` file.
-pub fn check_logic_refs_text(path: &str, text: &str, findings: &mut Vec<LintFinding>) {
+/// Runs logic references check on an `.ltx` file with optional external/global sections.
+pub fn check_logic_refs_with_known(
+    path: &str,
+    text: &str,
+    known_sections: Option<&HashSet<String>>,
+    findings: &mut Vec<LintFinding>,
+) {
     let sections = extract_sections(text);
 
     for (line_idx, line) in text.lines().enumerate() {
@@ -173,16 +178,24 @@ pub fn check_logic_refs_text(path: &str, text: &str, findings: &mut Vec<LintFind
         }
 
         for r in extract_scheme_refs(val_part) {
-            if r.contains('@') && !sections.contains(&r) {
-                let snippet = trimmed.chars().take(140).collect::<String>();
-                findings.push(LintFinding {
-                    checker: "check_logic_refs".to_string(),
-                    file: path.to_string(),
-                    line: line_num,
-                    severity: LintSeverity::Error,
-                    message: format!("missing section [{r}]  <- {snippet}"),
-                });
+            if r.contains('@') {
+                let found = sections.contains(&r) || known_sections.is_some_and(|k| k.contains(&r.to_ascii_lowercase()));
+                if !found {
+                    let snippet = trimmed.chars().take(140).collect::<String>();
+                    findings.push(LintFinding {
+                        checker: "check_logic_refs".to_string(),
+                        file: path.to_string(),
+                        line: line_num,
+                        severity: LintSeverity::Error,
+                        message: format!("missing section [{r}]  <- {snippet}"),
+                    });
+                }
             }
         }
     }
+}
+
+/// Runs logic references check on an `.ltx` file.
+pub fn check_logic_refs_text(path: &str, text: &str, findings: &mut Vec<LintFinding>) {
+    check_logic_refs_with_known(path, text, None, findings);
 }

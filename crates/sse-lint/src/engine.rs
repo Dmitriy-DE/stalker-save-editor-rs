@@ -10,7 +10,7 @@ use crate::condlists::check_condlists_text;
 use crate::dialogs::check_all_dialogs;
 use crate::globals::LuaGlobalsAnalyzer;
 use crate::infos::InfoPortionIndex;
-use crate::logic_refs::check_logic_refs_text;
+use crate::logic_refs::check_logic_refs_with_known;
 use crate::models::LintReport;
 use crate::module_calls::{analyze_script_module, check_script_module_calls, check_xml_module_refs, ScriptModuleInfo};
 use crate::trade_items::check_trade_file;
@@ -98,7 +98,7 @@ impl LintEngine {
         // --- CHECKER 2: check_logic_refs ---
         if checker_filter.is_none() || checker_filter == Some("check_logic_refs") {
             for (path, text) in &ltx_files {
-                check_logic_refs_text(path, text, &mut findings);
+                check_logic_refs_with_known(path, text, Some(&config_sections), &mut findings);
             }
         }
 

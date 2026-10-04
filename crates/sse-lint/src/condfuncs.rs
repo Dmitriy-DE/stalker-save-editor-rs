@@ -11,34 +11,41 @@ use std::collections::HashSet;
 pub fn extract_lua_function_defs(source: &[u8]) -> HashSet<String> {
     let mut lexer = LuaLexer::new(source);
     let mut defs = HashSet::new();
+    let tokens = lexer.tokenize_all();
 
-    let mut prev_is_local = false;
-    let mut prev_is_function = false;
-
-    loop {
-        let tok = lexer.next_token();
-        match &tok.kind {
-            TokenKind::Eof => break,
-            TokenKind::Keyword(kw) if kw == "local" => {
-                prev_is_local = true;
-                prev_is_function = false;
-            }
-            TokenKind::Keyword(kw) if kw == "function" => {
-                prev_is_function = true;
-            }
-            TokenKind::Identifier(name) if prev_is_function => {
-                // If not preceded by 'local', or even if it is local, collect it
-                if !prev_is_local {
-                    defs.insert(name.clone());
+    let mut i = 0;
+    while i < tokens.len() {
+        if let Some(tok) = tokens.get(i) {
+            match &tok.kind {
+                TokenKind::Keyword(kw) if kw == "local" => {
+                    // Skip local declaration or local function
+                    if let Some(next) = tokens.get(i.saturating_add(1)) {
+                        if next.kind == TokenKind::Keyword("function".to_string()) {
+                            i = i.saturating_add(2);
+                        } else {
+                            i = i.saturating_add(1);
+                        }
+                    }
                 }
-                prev_is_function = false;
-                prev_is_local = false;
-            }
-            _ => {
-                prev_is_function = false;
-                prev_is_local = false;
+                TokenKind::Keyword(kw) if kw == "function" => {
+                    if let Some(next) = tokens.get(i.saturating_add(1)) {
+                        if let TokenKind::Identifier(fn_name) = &next.kind {
+                            defs.insert(fn_name.clone());
+                        }
+                    }
+                }
+                TokenKind::Identifier(id) => {
+                    // Check top-level assignment: `name = ...`
+                    if let Some(eq_tok) = tokens.get(i.saturating_add(1)) {
+                        if eq_tok.kind == TokenKind::Symbol("=".to_string()) {
+                            defs.insert(id.clone());
+                        }
+                    }
+                }
+                _ => {}
             }
         }
+        i = i.saturating_add(1);
     }
 
     defs
