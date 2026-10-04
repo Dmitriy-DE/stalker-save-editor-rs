@@ -1,7 +1,9 @@
 //! Secure filesystem primitives for files that may be executed by privileged helpers.
 
 use sse_core::{Error, Result};
-use std::fs::{File, OpenOptions};
+use std::fs::File;
+#[cfg(target_os = "linux")]
+use std::fs::OpenOptions;
 use std::path::Path;
 
 /// Opens a regular file owned by the current user.
