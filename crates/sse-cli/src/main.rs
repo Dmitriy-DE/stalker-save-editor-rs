@@ -17,6 +17,7 @@ mod update;
 
 const USAGE: &str = "Usage: stalker-save <version|info|inventory|set-money|set-stack|edit|backups|fixes|update|lint|audit> ...\n\
 Exit codes: 0 done, 2 wrong arguments, 3 refused (unsupported or unsafe), 4 unreadable or damaged input, 5 file or system error.";
+const S2_LEGACY_WARNING: &str = "Сохранение записано игрой версии 1.0.x: показаны деньги и предметы в сетке рюкзака; надетое снаряжение и состояние предметов не читаются, правка недоступна.";
 
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -670,7 +671,7 @@ fn read_info(path: Option<&String>) -> sse_core::Result<()> {
         print_lines(s2_info_lines(&save, packed.as_slice()));
         return Ok(());
     }
-    let save = Save::read(packed.as_slice())?;
+    let save = read_xray_or_unsupported(packed.as_slice())?;
     println!("Integrity: X-Ray LZO/container OK");
     println!("Format: {}", save.format().id());
     println!("Packed: {}", packed.len());
@@ -688,7 +689,7 @@ fn read_inventory(path: Option<&String>) -> sse_core::Result<()> {
         print_lines(s2_inventory_lines(&save));
         return Ok(());
     }
-    let save = Save::read(packed.as_slice())?;
+    let save = read_xray_or_unsupported(packed.as_slice())?;
     println!("Format: {}", save.format().id());
     println!("POS        TYPE                 KEY                       COUNT   HANDLE");
     for item in save.inventory()? {
@@ -702,6 +703,16 @@ fn read_inventory(path: Option<&String>) -> sse_core::Result<()> {
         );
     }
     Ok(())
+}
+
+fn read_xray_or_unsupported(packed: &[u8]) -> sse_core::Result<Save> {
+    Save::read(packed).map_err(|error| {
+        if packed.starts_with(&u32::MAX.to_le_bytes()) {
+            error
+        } else {
+            Error::damaged("Unknown or unsupported save format.")
+        }
+    })
 }
 
 fn print_lines(lines: Vec<String>) {
@@ -727,8 +738,21 @@ fn s2_info_lines(save: &sse_s2::S2Save, packed: &[u8]) -> Vec<String> {
         format!("Inventory objects: {}", items.len()),
         format!("Orphans: {}", orphans.len()),
     ];
-    lines.extend(save.warnings().iter().map(|warning| format!("Warning: {warning}")));
+    lines.extend(s2_cli_warnings(save.index().is_legacy(), save.warnings()));
     lines
+}
+
+fn s2_cli_warnings(is_legacy: bool, warnings: &[String]) -> Vec<String> {
+    if is_legacy {
+        return vec![S2_LEGACY_WARNING.to_owned()];
+    }
+    warnings
+        .iter()
+        .filter(|warning| {
+            !(warning.contains("object kind=3") && (warning.contains("неизвестный") || warning.contains("unknown")))
+        })
+        .map(|warning| format!("Warning: {warning}"))
+        .collect()
 }
 
 fn s2_inventory_lines(save: &sse_s2::S2Save) -> Vec<String> {
@@ -744,10 +768,7 @@ fn s2_inventory_lines(save: &sse_s2::S2Save) -> Vec<String> {
         } else {
             "экипировано"
         };
-        let key = format!(
-            "{:02X}{:02X}{:02X}",
-            item.type_key[0], item.type_key[1], item.type_key[2]
-        );
+        let key = s2_type_key(item.type_key);
         let category = s2_category_name(item.kind_code, item.display_name.as_deref());
         format!(
             "{position:<10} {category:<20} {key:<25} {:>7}  0x{:08X}",
@@ -755,6 +776,10 @@ fn s2_inventory_lines(save: &sse_s2::S2Save) -> Vec<String> {
         )
     }));
     lines
+}
+
+fn s2_type_key(key: [u8; 3]) -> String {
+    format!("{:02x}{:02x}{:02x}", key[0], key[1], key[2])
 }
 
 fn s2_category_name(kind: u8, display_name: Option<&str>) -> String {
@@ -870,7 +895,9 @@ mod tests {
 #[cfg(test)]
 #[allow(clippy::arithmetic_side_effects, clippy::expect_used, clippy::indexing_slicing)]
 mod write_tests {
-    use super::{run, s2_info_lines, s2_inventory_lines, writer, Save};
+    use super::{
+        read_info, read_inventory, run, s2_cli_warnings, s2_info_lines, s2_inventory_lines, s2_type_key, writer, Save,
+    };
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -1025,6 +1052,50 @@ mod write_tests {
 
         assert_eq!(run(&["info".to_owned(), path.clone()]), 0);
         assert_eq!(run(&["inventory".to_owned(), path]), 0);
+    }
+
+    #[test]
+    fn s2_type_keys_use_lowercase_hex_like_the_reference() {
+        assert_eq!(s2_type_key([0x05, 0x4c, 0x00]), "054c00");
+    }
+
+    #[test]
+    fn s2_warning_lines_match_the_legacy_text_and_hide_kind_three() {
+        assert_eq!(
+            s2_cli_warnings(true, &["Save uses the game 1.0.x layout".to_owned()]),
+            vec!["Сохранение записано игрой версии 1.0.x: показаны деньги и предметы в сетке рюкзака; надетое снаряжение и состояние предметов не читаются, правка недоступна.".to_owned()]
+        );
+        assert_eq!(
+            s2_cli_warnings(
+                false,
+                &[
+                    "Handle 0x30000001: неизвестный object kind=3, только read-only".to_owned(),
+                    "Handle 0x30000002: неизвестный orphan object kind=3, только read-only".to_owned(),
+                    "Handle 0x30000003: неизвестный orphan object kind=99, только read-only".to_owned(),
+                ]
+            ),
+            vec!["Warning: Handle 0x30000003: неизвестный orphan object kind=99, только read-only".to_owned()]
+        );
+    }
+
+    #[test]
+    fn non_save_image_reports_reference_unknown_format_error() {
+        let temporary = TempDirectory::new();
+        let image = temporary.0.join("thumbnail.png");
+        let png_header = [137_u8, 80, 78, 71, 13, 10, 26, 10];
+        fs::write(&image, png_header).expect("write synthetic thumbnail header");
+        let path = image.display().to_string();
+
+        let result = read_info(Some(&path));
+
+        assert_eq!(
+            result,
+            Err(super::Error::damaged("Unknown or unsupported save format."))
+        );
+        assert_eq!(
+            read_inventory(Some(&path)),
+            Err(super::Error::damaged("Unknown or unsupported save format."))
+        );
     }
 
     #[test]
