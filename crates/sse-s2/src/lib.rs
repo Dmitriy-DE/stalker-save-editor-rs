@@ -224,6 +224,55 @@ impl S2Save {
         S2StashLayout::locate(self.container.image(), &self.index)
     }
 
+    /// Reads item records referenced by the validated save-resident stash.
+    ///
+    /// # Errors
+    /// Returns an error when the stash or any live stash item cannot be uniquely indexed.
+    pub fn stash_items(&self) -> Result<Vec<S2StashItem>> {
+        let stash = self.stash()?;
+        let mut items = Vec::with_capacity(stash.live_handles().len());
+        for handle in stash.live_handles() {
+            let record = self
+                .objects
+                .unique(*handle)
+                .ok_or_else(|| Error::Refused(format!("S2 stash item 0x{handle:08X} is missing or ambiguous")))?;
+            let mut cells = stash
+                .grid_cells()
+                .iter()
+                .filter(|cell| cell.handle == *handle)
+                .copied()
+                .collect::<Vec<_>>();
+            if cells.is_empty() {
+                return Err(Error::damaged(format!(
+                    "S2 stash item 0x{handle:08X} has no grid cells"
+                )));
+            }
+            cells.sort_by_key(|cell| (cell.y, cell.x));
+            let x = cells.iter().map(|cell| cell.x).min().unwrap_or_default();
+            let y = cells.iter().map(|cell| cell.y).min().unwrap_or_default();
+            let max_x = cells.iter().map(|cell| cell.x).max().unwrap_or_default();
+            let max_y = cells.iter().map(|cell| cell.y).max().unwrap_or_default();
+            items.push(S2StashItem {
+                handle: *handle,
+                x,
+                y,
+                width: max_x.saturating_sub(x).saturating_add(1),
+                height: max_y.saturating_sub(y).saturating_add(1),
+                cells,
+                count: record.count,
+                total_weight: record.total_weight,
+                kind_code: record.kind_code,
+                type_key: record.type_key,
+                display_name: self
+                    .names
+                    .as_ref()
+                    .and_then(|names| names.resolve(&record.type_key))
+                    .map(str::to_owned),
+            });
+        }
+        Ok(items)
+    }
+
     /// Whether this S2 layout can be written with the safe RLE Kraken encoder.
     #[must_use]
     pub const fn can_write(&self) -> bool {
@@ -313,6 +362,33 @@ pub struct S2InventoryItem {
     pub record_offset: usize,
     /// Stack-count offset in the unpacked image.
     pub count_offset: usize,
+}
+
+/// One uniquely indexed item from a validated S2 stash.
+#[derive(Debug, Clone, PartialEq)]
+pub struct S2StashItem {
+    /// Object handle.
+    pub handle: u32,
+    /// Leftmost stash grid column.
+    pub x: u16,
+    /// Topmost stash grid row.
+    pub y: u16,
+    /// Width of the occupied bounding box.
+    pub width: u16,
+    /// Height of the occupied bounding box.
+    pub height: u16,
+    /// Occupied stash cells.
+    pub cells: Vec<S2GridCell>,
+    /// Stack count from the uniquely indexed object record.
+    pub count: u32,
+    /// Total weight from the uniquely indexed object record.
+    pub total_weight: f32,
+    /// Object kind.
+    pub kind_code: u8,
+    /// Three-byte save-local name key.
+    pub type_key: [u8; 3],
+    /// Name resolved from the save's name tables.
+    pub display_name: Option<String>,
 }
 
 /// Owned object record not mapped to the backpack grid.
@@ -1798,7 +1874,7 @@ fn move_stash_item_to_backpack(
     let player_end = save.index.grid_end_offset.saturating_add(inserted_bytes);
     let stash_start = stash.owned_count_offset.saturating_add(inserted_bytes);
     let stash_end = stash
-        .grid_offset
+        .grid_end_offset
         .saturating_add(inserted_bytes)
         .saturating_sub(removed_bytes);
     changed_ranges.push(save.index.owned_count_offset..player_end);
@@ -2012,6 +2088,8 @@ mod tests {
         include_bytes!("../../../fixtures/synthetic/writer-s2-stash/s2-stash-source.raw");
     const WRITER_S2_STASH_EXPECTED: &[u8] =
         include_bytes!("../../../fixtures/synthetic/writer-s2-stash/s2-stash-expected.raw");
+    const WRITER_S2_STASH_PACKED_SOURCE: &[u8] =
+        include_bytes!("../../../fixtures/synthetic/writer-s2-stash/s2-stash-source.sav");
 
     #[test]
     fn public_s2_writer_round_trips_money_stack_and_crc() {
@@ -2204,6 +2282,27 @@ mod tests {
         let Ok(parsed) = parsed else { return };
         let result = apply_changes_to_image(&parsed, &[S2Change::MoveStashToBackpack { handle: 0x3000_0010 }]);
         assert_eq!(result.map(|(image, _)| image), Ok(WRITER_S2_STASH_EXPECTED.to_vec()));
+    }
+
+    #[test]
+    fn public_stash_reader_exposes_the_verified_item_and_move_read_back() -> Result<(), Error> {
+        let save = S2Save::from_bytes(WRITER_S2_STASH_PACKED_SOURCE)?;
+        assert_eq!(save.container().image(), WRITER_S2_STASH_SOURCE);
+        let items = save.stash_items()?;
+        assert_eq!(items.len(), 1);
+        let item = items.first().ok_or_else(|| Error::damaged("stash item is missing"))?;
+        assert_eq!(item.handle, 0x3000_0010);
+        assert!(!item.cells.is_empty());
+        assert!(item.count > 0);
+
+        let packed = save.write_changes(&[S2Change::MoveStashToBackpack { handle: item.handle }])?;
+        let moved = S2Save::from_bytes(&packed)?;
+        assert!(moved.stash_items()?.is_empty());
+        assert!(moved
+            .items()
+            .iter()
+            .any(|backpack_item| backpack_item.handle == item.handle));
+        Ok(())
     }
 
     #[test]
