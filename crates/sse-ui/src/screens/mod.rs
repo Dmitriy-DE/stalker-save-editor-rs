@@ -224,6 +224,14 @@ pub trait Screen {
         Ok(())
     }
 
+    /// Opens a save supplied by a developer-only headless workflow, when supported.
+    ///
+    /// # Errors
+    /// Returns an error when the requested file cannot be read or parsed.
+    fn open_save(&mut self, _cx: &mut Context<'_>, _path: &std::path::Path) -> Result<bool> {
+        Ok(false)
+    }
+
     /// A message while the screen is built. `clicked` is a widget clicked anywhere; ignore what is not yours.
     ///
     /// # Errors
@@ -242,8 +250,9 @@ pub trait Screen {
 #[must_use]
 pub fn registry() -> Vec<Box<dyn Screen>> {
     let mut screens: Vec<Box<dyn Screen>> = Vec::new();
-    screens.extend(saves::screens());
-    screens.extend(history::screens());
+    let save_workspace = saves::Workspace::default();
+    screens.extend(saves::screens_with_workspace(save_workspace.clone()));
+    screens.extend(history::screens_with_workspace(save_workspace));
     screens.extend(games::screens());
     screens.extend(services::screens());
     screens.extend(app::screens());

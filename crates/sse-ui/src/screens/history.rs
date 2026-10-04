@@ -1,5 +1,6 @@
 //! S3 screens: verified backups, bounded save comparison, history, and read-only diagnostics.
 
+use super::saves::Workspace;
 use super::style::{self, Button, Text};
 use super::{AppMessage, Context, Screen, ScreenId};
 use crate::event_loop::Message;
@@ -15,6 +16,10 @@ const MAXIMUM_COMPARE_RANGES: usize = MAXIMUM_VISIBLE_ENTRIES;
 /// Screens owned by S3.
 #[must_use]
 pub fn screens() -> Vec<Box<dyn Screen>> {
+    screens_with_workspace(Workspace::default())
+}
+
+pub(crate) fn screens_with_workspace(workspace: Workspace) -> Vec<Box<dyn Screen>> {
     [
         (ScreenId::Backups, "Резервные копии и восстановление"),
         (ScreenId::Compare, "Сравнение двух сохранений"),
@@ -22,7 +27,7 @@ pub fn screens() -> Vec<Box<dyn Screen>> {
         (ScreenId::SaveDoctor, "Проверка структуры и целостности"),
     ]
     .into_iter()
-    .map(|(id, subtitle)| Box::new(HistoryScreen::new(id, subtitle)) as Box<dyn Screen>)
+    .map(|(id, subtitle)| Box::new(HistoryScreen::new(id, subtitle, workspace.clone())) as Box<dyn Screen>)
     .collect()
 }
 
@@ -69,6 +74,7 @@ struct CompareReport {
 pub struct HistoryScreen {
     id: ScreenId,
     subtitle: &'static str,
+    workspace: Workspace,
     results: Option<WidgetId>,
     refresh: Option<WidgetId>,
     previous_page: Option<WidgetId>,
@@ -83,10 +89,11 @@ pub struct HistoryScreen {
 }
 
 impl HistoryScreen {
-    fn new(id: ScreenId, subtitle: &'static str) -> Self {
+    fn new(id: ScreenId, subtitle: &'static str, workspace: Workspace) -> Self {
         Self {
             id,
             subtitle,
+            workspace,
             results: None,
             refresh: None,
             previous_page: None,
@@ -106,7 +113,10 @@ impl HistoryScreen {
             return;
         };
         let id = self.id;
-        std::thread::spawn(move || {
+        self.workspace.spawn("history-refresh", move |context| {
+            if context.is_cancelled() {
+                return;
+            }
             let result = match id {
                 ScreenId::Backups | ScreenId::Timeline => HistoryResult::Backups(
                     transaction::list_backups(&default_backup_directory()).map_err(|error| error.to_string()),
@@ -125,7 +135,10 @@ impl HistoryScreen {
             return;
         };
         let id = self.id;
-        std::thread::spawn(move || {
+        self.workspace.spawn("save-compare", move |context| {
+            if context.is_cancelled() {
+                return;
+            }
             let result = compare_saves(&first, &second);
             proxy.send(AppMessage::ToScreen(id, Box::new(HistoryResult::Compare(result))));
         });
@@ -141,7 +154,10 @@ impl HistoryScreen {
             return;
         };
         let id = self.id;
-        std::thread::spawn(move || {
+        self.workspace.spawn("save-diagnosis", move |context| {
+            if context.is_cancelled() {
+                return;
+            }
             let result = diagnose_save(&path, format_id.as_deref());
             proxy.send(AppMessage::ToScreen(id, Box::new(HistoryResult::Diagnosis(result))));
         });
@@ -152,7 +168,10 @@ impl HistoryScreen {
             return;
         };
         let id = self.id;
-        std::thread::spawn(move || {
+        self.workspace.spawn("save-restore", move |context| {
+            if context.is_cancelled() {
+                return;
+            }
             let result = restore_to_new_path(&journal, &source);
             proxy.send(AppMessage::ToScreen(id, Box::new(HistoryResult::Restored(result))));
         });
@@ -385,6 +404,17 @@ impl Screen for HistoryScreen {
         self.subtitle
     }
 
+    fn shown(&mut self, _cx: &mut Context<'_>) -> Result<()> {
+        self.workspace.poll_tasks();
+        if self.id == ScreenId::Compare {
+            let selected = self.workspace.current_save_path();
+            if self.compare_selection.first().cloned() != selected {
+                self.compare_selection = selected.into_iter().collect();
+            }
+        }
+        Ok(())
+    }
+
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
         let card = style::card(cx.tree, host)?;
         let title = match self.id {
@@ -448,6 +478,7 @@ impl Screen for HistoryScreen {
         message: &Message<AppMessage>,
         clicked: Option<WidgetId>,
     ) -> Result<()> {
+        self.workspace.poll_tasks();
         if clicked == self.refresh {
             if cx.proxy.is_none() {
                 self.set_summary(cx.tree, "В режиме headless screenshot диски не сканируются.")?;

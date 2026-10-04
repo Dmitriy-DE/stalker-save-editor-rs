@@ -1,7 +1,7 @@
 //! U1 shell: the editor frame (sidebar, header, content, status bar) on the own toolkit.
 //!
-//! `sse-shell` opens a window (X11). `sse-shell --screenshot out.png [WIDTHxHEIGHT]` renders headless and writes a
-//! PNG without opening a window or playing sounds; `--bench` reports paint timings.
+//! `sse-shell` opens a window (X11). `sse-shell --screenshot out.png [WIDTHxHEIGHT] [NAV] [--open SAVE]` renders
+//! headless and writes a PNG without opening a window or playing sounds; `--bench` reports paint timings.
 
 use sse_core::{Error, Result};
 use sse_ui::event_loop::channel_pair;
@@ -30,26 +30,49 @@ fn main() {
     }
 }
 
-fn parse_size(text: Option<&String>) -> (u32, u32) {
-    text.and_then(|value| {
-        let (w, h) = value.split_once('x')?;
-        Some((w.parse().ok()?, h.parse().ok()?))
-    })
-    .unwrap_or((1280, 800))
-}
-
 fn screenshot(args: &[String]) -> Result<()> {
     let path = args
         .get(1)
-        .ok_or_else(|| Error::Refused("usage: --screenshot OUT.png [WxH] [NAV]".to_owned()))?;
-    let (width, height) = parse_size(args.get(2));
+        .ok_or_else(|| Error::Refused("usage: --screenshot OUT.png [WxH] [NAV] [--open SAVE]".to_owned()))?;
+    let mut size: Option<(u32, u32)> = None;
+    let mut nav: Option<usize> = None;
+    let mut open_save = None;
+    let mut index = 2;
+    while index < args.len() {
+        match args.get(index).map(String::as_str) {
+            Some("--open") => {
+                index = index.saturating_add(1);
+                open_save = Some(
+                    args.get(index)
+                        .ok_or_else(|| Error::Refused("--open requires a save path".to_owned()))?,
+                );
+            }
+            Some(value) if value.contains('x') && size.is_none() => {
+                let (width, height) = value
+                    .split_once('x')
+                    .and_then(|(width, height)| Some((width.parse().ok()?, height.parse().ok()?)))
+                    .ok_or_else(|| Error::Refused("screenshot size must be WxH".to_owned()))?;
+                size = Some((width, height));
+            }
+            Some(value) if nav.is_none() => {
+                nav = Some(
+                    value
+                        .parse::<usize>()
+                        .map_err(|_| Error::Refused("screenshot NAV must be a screen index".to_owned()))?,
+                );
+            }
+            Some(_) => return Err(Error::Refused("unexpected screenshot argument".to_owned())),
+            None => return Err(Error::Refused("invalid screenshot arguments".to_owned())),
+        }
+        index = index.saturating_add(1);
+    }
+    let (width, height) = size.unwrap_or((1280, 800));
     let mut tree = Tree::new(Fonts::bundled()?, rgb(BG_BASE));
     let mut shell = Shell::build(&mut tree, None)?;
-    if let Some(id) = args
-        .get(3)
-        .and_then(|value| value.parse::<usize>().ok())
-        .and_then(|i| ScreenId::ALL.get(i))
-    {
+    if let Some(save_path) = open_save {
+        shell.open_save(&mut tree, std::path::Path::new(save_path))?;
+    }
+    if let Some(id) = nav.and_then(|i| ScreenId::ALL.get(i)) {
         shell.open(&mut tree, *id)?;
     }
     tree.resize(width, height);
