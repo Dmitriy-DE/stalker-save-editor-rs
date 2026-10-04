@@ -1126,13 +1126,3 @@ impl Metrics for PathMetrics {
         0.0
     }
 }
-
-fn short_text(text: &str, max_chars: usize) -> String {
-    if text.chars().count() <= max_chars {
-        return text.to_owned();
-    }
-    let keep = max_chars.saturating_sub(1);
-    let mut result = text.chars().take(keep).collect::<String>();
-    result.push('…');
-    result
-}
