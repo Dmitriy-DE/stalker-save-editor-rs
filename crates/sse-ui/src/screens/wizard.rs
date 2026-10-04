@@ -55,7 +55,12 @@ impl Wizard {
             NodeKind::Leaf,
             Style {
                 min: Size::new(320.0, crate::theme::BUTTON_HEIGHT),
-                padding: Edges { left: 12.0, top: 0.0, right: 12.0, bottom: 0.0 },
+                padding: Edges {
+                    left: 12.0,
+                    top: 0.0,
+                    right: 12.0,
+                    bottom: 0.0,
+                },
                 ..Style::default()
             },
             Content::Label {
