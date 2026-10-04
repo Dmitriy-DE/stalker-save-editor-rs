@@ -22,7 +22,7 @@ pub fn screens() -> Vec<Box<dyn Screen>> {
         Box::new(GamesOverview::new(workspace)),
         Box::new(Placeholder::new(ScreenId::GameFixes, "Исправления вылетов и ошибок")),
         Box::new(Placeholder::new(ScreenId::GameDoctor, "Проверка установки игры")),
-        Box::new(Placeholder::new(ScreenId::Environment, "Инструменты и среда игры")),
+        Box::new(Environment::default()),
         Box::new(Placeholder::new(ScreenId::Encyclopedia, "Предметы, персонажи, локации")),
     ]
 }
@@ -1124,5 +1124,130 @@ impl Metrics for PathMetrics {
 
     fn kerning(&self, _left: char, _right: char) -> f32 {
         0.0
+    }
+}
+
+#[derive(Debug)]
+struct EnvironmentResult {
+    lines: Vec<String>,
+}
+
+#[derive(Default)]
+struct Environment {
+    status: Option<WidgetId>,
+    lines: Vec<WidgetId>,
+}
+
+impl Environment {
+    fn inspect(cx: &Context<'_>) -> std::result::Result<(sse_content::CompanionGame, PathBuf), String> {
+        let game = cx
+            .app
+            .selected_game()
+            .ok_or_else(|| "Сначала выберите игру в «Обзоре игр»".to_owned())?;
+        let directory = cx
+            .app
+            .game_dir()
+            .map(Path::to_path_buf)
+            .ok_or_else(|| "Папка игры не выбрана".to_owned())?;
+        let target = match game {
+            "soc" | "stalker-soc" | "soc-ee" | "stalker-soc-ee" => sse_content::CompanionGame::ShadowOfChernobyl,
+            "cs" | "clear_sky" | "stalker-cs" | "cs-ee" | "stalker-cs-ee" => sse_content::CompanionGame::ClearSky,
+            "cop" | "stalker-cop" | "cop-ee" | "stalker-cop-ee" => sse_content::CompanionGame::CallOfPripyat,
+            _ => return Err("Среда X-Ray для выбранной игры не применяется".to_owned()),
+        };
+        Ok((target, directory))
+    }
+
+    fn start(&self, cx: &mut Context<'_>) {
+        let Ok((game, directory)) = Self::inspect(cx) else {
+            if let Some(id) = self.status {
+                let _ = cx.tree.set_text(id, "Сначала выберите X-Ray игру в «Обзоре игр»");
+            }
+            return;
+        };
+        let Some(proxy) = cx.proxy.cloned() else { return };
+        std::thread::spawn(move || {
+            let search = sse_content::CompanionArchiveLocator::discover(&directory, &["fsgame.ltx"], game);
+            let gamedata = search.game_data_directory.as_ref().is_some_and(|path| path.is_dir());
+            let mods = directory.join("mods");
+            let unpacked = search.game_data_directory.as_ref().map_or(0_usize, |root| {
+                std::fs::read_dir(root).map_or(0, |entries| entries.flatten().count())
+            });
+            let mut lines = vec![
+                format!(
+                    "fsgame.ltx: {}",
+                    search
+                        .fsgame_path
+                        .as_ref()
+                        .map_or("не найден".to_owned(), |p| p.display().to_string())
+                ),
+                format!("gamedata: {}", if gamedata { "найдена" } else { "нет" }),
+                format!(
+                    "mods: {}",
+                    if mods.is_dir() {
+                        mods.display().to_string()
+                    } else {
+                        "нет".to_owned()
+                    }
+                ),
+                format!("распакованные файлы/папки в gamedata: {unpacked}"),
+                format!("архивов обнаружено: {}", search.archive_paths.len()),
+            ];
+            lines.extend(search.issues.into_iter().map(|issue| format!("⚠ {issue}")));
+            proxy.send(AppMessage::ToScreen(
+                ScreenId::Environment,
+                Box::new(EnvironmentResult { lines }),
+            ));
+        });
+    }
+}
+
+impl Screen for Environment {
+    fn id(&self) -> ScreenId {
+        ScreenId::Environment
+    }
+    fn subtitle(&self) -> &str {
+        "Что найдено в установке; экран ничего не изменяет"
+    }
+
+    fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
+        let card = style::card(cx.tree, host)?;
+        style::label(cx.tree, card, "СРЕДА ИГРЫ", Text::Heading)?;
+        self.status = Some(style::label(cx.tree, card, "Выберите игру", Text::Note)?);
+        for _ in 0..10 {
+            let line = style::label(cx.tree, card, "", Text::Body)?;
+            cx.tree.set_visible(line, false)?;
+            self.lines.push(line);
+        }
+        Ok(())
+    }
+
+    fn shown(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        self.start(cx);
+        Ok(())
+    }
+
+    fn message(
+        &mut self,
+        cx: &mut Context<'_>,
+        message: &Message<AppMessage>,
+        _clicked: Option<WidgetId>,
+    ) -> Result<()> {
+        if let Message::User(AppMessage::ToScreen(ScreenId::Environment, payload)) = message {
+            if let Some(result) = payload.downcast_ref::<EnvironmentResult>() {
+                if let Some(status) = self.status {
+                    cx.tree.set_text(status, "Только чтение · проверка завершена")?;
+                }
+                for (index, widget) in self.lines.iter().copied().enumerate() {
+                    if let Some(line) = result.lines.get(index) {
+                        cx.tree.set_visible(widget, true)?;
+                        cx.tree.set_text(widget, line)?;
+                    } else {
+                        cx.tree.set_visible(widget, false)?;
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 }
