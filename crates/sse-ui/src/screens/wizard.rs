@@ -3,7 +3,10 @@ use super::style::{self, Button, Text};
 use super::ScreenId;
 use crate::edit::{Clipboard, EditConfig, FieldMode, InputFilter, Key, Modifiers};
 use crate::event_loop::{Message, WindowEvent};
-use crate::widget::{Tree, WidgetId};
+use crate::glyphs::{Face, TextStyle};
+use crate::layout::{Edges, NodeKind, Size, Style};
+use crate::raster::Color;
+use crate::widget::{Content, Look, Tree, WidgetId};
 use crate::widgets::text_input::TextInput;
 use sse_core::Result;
 use sse_storage::discovery::SaveDirectoryLocator;
@@ -20,7 +23,7 @@ impl Clipboard for EmptyClipboard {
 /// Session-scoped first-run wizard. Skip is intentionally not persisted.
 pub struct Wizard {
     host: WidgetId,
-    path_label: WidgetId,
+    path_input: WidgetId,
     auto: WidgetId,
     browse: WidgetId,
     add: WidgetId,
@@ -34,10 +37,39 @@ impl Wizard {
     pub fn build(tree: &mut Tree, parent: WidgetId) -> Result<Self> {
         let host = style::card(tree, parent)?;
         style::label(tree, host, "МАСТЕР ПЕРВОГО ЗАПУСКА", Text::Heading)?;
-        style::label(tree, host, "Сохранения S.T.A.L.K.E.R. не были найдены в стандартных каталогах.\nУкажите папку с файлами сохранений (savedgames или SaveGames) или запустите автоматический поиск на диске.", Text::Body)?;
+        tree.add(
+            Some(host),
+            NodeKind::Leaf,
+            Style { max: Size::new(720.0, f32::INFINITY), ..Style::default() },
+            Content::Paragraph {
+                text: "Сохранения S.T.A.L.K.E.R. не были найдены в стандартных каталогах.\nУкажите папку с файлами сохранений (savedgames или SaveGames) или запустите автоматический поиск на диске.".to_owned(),
+                style: Text::Body.style(),
+            },
+            Look { text: Text::Body.color(), ..Look::default() },
+        )?;
         let auto = style::button(tree, host, "АВТОПОИСК ПАПОК НА ДИСКЕ", Button::Primary)?;
         style::label(tree, host, "— ИЛИ УКАЖИТЕ ПУТЬ ВРУЧНУЮ —", Text::Note)?;
-        let path_label = style::button(tree, host, "Путь к папке с сейвами…", Button::Secondary)?;
+        let colors = crate::theme::current().colors;
+        let path_input = tree.add(
+            Some(host),
+            NodeKind::Leaf,
+            Style {
+                min: Size::new(320.0, crate::theme::BUTTON_HEIGHT),
+                padding: Edges { left: 12.0, top: 0.0, right: 12.0, bottom: 0.0 },
+                ..Style::default()
+            },
+            Content::Label {
+                text: "Путь к папке с сейвами…".to_owned(),
+                style: TextStyle::new(Face::Body, 16.0),
+            },
+            Look {
+                fill: Some(style::rgb(colors.background[4])),
+                border: Some((style::rgb(colors.borders[1]), 1.0)),
+                radius: crate::theme::BUTTON_RADIUS,
+                text: style::rgb(colors.text[2]),
+                ..Look::default()
+            },
+        )?;
         let actions = style::row(tree, host)?;
         let browse = style::button(tree, actions, "Обзор…", Button::Secondary)?;
         let add = style::button(tree, actions, "Добавить", Button::Primary)?;
@@ -46,7 +78,7 @@ impl Wizard {
         tree.set_visible(host, false)?;
         Ok(Self {
             host,
-            path_label,
+            path_input,
             auto,
             browse,
             add,
@@ -123,7 +155,7 @@ impl Wizard {
         clicked: Option<WidgetId>,
         status: &mut Option<String>,
     ) -> Result<Option<ScreenId>> {
-        if clicked.is_some() && clicked == Some(self.path_label) {
+        if clicked.is_some() && clicked == Some(self.path_input) {
             self.input.focus(true, 0);
         }
         if clicked.is_some() && clicked == Some(self.auto) {
@@ -147,7 +179,7 @@ impl Wizard {
                         filter: InputFilter::Any,
                     },
                 )?;
-                tree.set_text(self.path_label, "Путь к папке с сейвами…")?;
+                tree.set_text(self.path_input, "Путь к папке с сейвами…")?;
             }
         }
         if clicked.is_some() && clicked == Some(self.browse) {
