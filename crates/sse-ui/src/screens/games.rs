@@ -1558,6 +1558,7 @@ struct GameDoctor {
     status: Option<WidgetId>,
     start: Option<WidgetId>,
     cancel: Option<WidgetId>,
+    toggle_s2_mods: Option<WidgetId>,
     rows: Vec<WidgetId>,
     findings: Vec<DoctorFinding>,
     cancellation: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
@@ -1688,6 +1689,7 @@ impl Screen for GameDoctor {
         let actions = style::row(cx.tree, card)?;
         self.start = Some(style::button(cx.tree, actions, "Проверить", Button::Primary)?);
         self.cancel = Some(style::button(cx.tree, actions, "Отмена", Button::Secondary)?);
+        self.toggle_s2_mods = Some(style::button(cx.tree, actions, "ВРЕМЕННО ОТКЛЮЧИТЬ / ВОССТАНОВИТЬ КАСТОМНЫЕ МОДЫ", Button::Secondary)?);
         style::label(cx.tree, card, "ФАЙЛ · ТЯЖЕСТЬ · НАХОДКА", Text::Value)?;
         for _ in 0..10 {
             let row = style::label(cx.tree, card, "", Text::Body)?;
@@ -1705,6 +1707,20 @@ impl Screen for GameDoctor {
     ) -> Result<()> {
         if clicked.is_some() && clicked == self.start {
             self.run(cx);
+        }
+        if clicked.is_some() && clicked == self.toggle_s2_mods {
+            let is_s2 = cx.app.selected_game().is_some_and(|g| matches!(g, "s2" | "stalker2"));
+            let directory = cx.app.game_dir().map(Path::to_path_buf);
+            if !is_s2 {
+                cx.status = Some("Переключение модов доступно только для S.T.A.L.K.E.R. 2.".to_owned());
+            } else if let Some(directory) = directory {
+                match sse_fixes::toolkit::Stalker2ModToggle::toggle(&directory) {
+                    Ok(result) => cx.status = Some(format!("S2 mods: {result:?}")),
+                    Err(error) => cx.status = Some(error.to_string()),
+                }
+            } else {
+                cx.status = Some("ВЫБЕРИТЕ ИГРУ И ПАПКУ УСТАНОВКИ ДЛЯ ПРОВЕРКИ.".to_owned());
+            }
         }
         if clicked.is_some() && clicked == self.cancel {
             if let Some(cancelled) = &self.cancellation {
