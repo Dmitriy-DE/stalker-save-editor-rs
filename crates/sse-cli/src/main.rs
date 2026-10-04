@@ -18,6 +18,7 @@ mod update;
 const USAGE: &str = "Usage: stalker-save <version|info|inventory|set-money|set-stack|edit|backups|fixes|update|lint|audit> ...\n\
 Exit codes: 0 done, 2 wrong arguments, 3 refused (unsupported or unsafe), 4 unreadable or damaged input, 5 file or system error.";
 const S2_LEGACY_WARNING: &str = "Сохранение записано игрой версии 1.0.x: показаны деньги и предметы в сетке рюкзака; надетое снаряжение и состояние предметов не читаются, правка недоступна.";
+const S2_LEGACY_EDIT_REFUSAL: &str = "This save was written by game version 1.0.x. It can be read, but its layout is not supported for editing; load it in the current game and save again.";
 
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -192,6 +193,9 @@ fn prepare_and_export(arguments: &[String]) -> Result<(), WriteFailure> {
     }
 
     let source = SaveBuffer::read(&path)?;
+    if let Ok(s2_save) = sse_s2::S2Save::from_bytes(source.as_slice()) {
+        return prepare_and_export_s2(&path, source.as_slice(), &s2_save, &options);
+    }
     let save = Save::read(source.as_slice())?;
     let stack_count = options.stacks.len();
     let change_count = stack_count
@@ -433,6 +437,88 @@ fn prepare_and_export(arguments: &[String]) -> Result<(), WriteFailure> {
         println!("Remove 0x{handle:04X}");
     }
     Ok(())
+}
+
+fn prepare_and_export_s2(
+    path: &Path,
+    source: &[u8],
+    save: &sse_s2::S2Save,
+    options: &WriteOptions,
+) -> Result<(), WriteFailure> {
+    if save.index().is_legacy() {
+        return Err(WriteFailure::Core(s2_legacy_write_error()));
+    }
+    if !options.additions.is_empty()
+        || !options.durability.is_empty()
+        || !options.upgrades.is_empty()
+        || !options.placements.is_empty()
+        || !options.moves.is_empty()
+        || !options.removals.is_empty()
+        || !options.unsupported_operations.is_empty()
+    {
+        return Err(WriteFailure::Core(Error::Refused(
+            "S2 CLI currently supports only money and stack-count edits.".to_owned(),
+        )));
+    }
+
+    let stack_count = options.stacks.len();
+    let change_count = stack_count.saturating_add(usize::from(options.money.is_some()));
+    let mut changes = Vec::with_capacity(change_count);
+    let mut stack_output = Vec::with_capacity(stack_count);
+    if let Some(amount) = options.money {
+        changes.push(sse_s2::S2Change::SetMoney(amount));
+    }
+    for handle in &options.stack_order {
+        let count = options
+            .stacks
+            .get(handle)
+            .copied()
+            .ok_or_else(|| WriteFailure::Core(Error::damaged("missing parsed S2 stack option")))?;
+        changes.push(sse_s2::S2Change::SetStackCount { handle: *handle, count });
+        stack_output.push((*handle, count));
+    }
+
+    let output = save.write_changes(&changes)?;
+    let source_sha256 = sse_codecs::sha256::sha256_hex(source);
+    let output_path = options.output.clone().unwrap_or_else(|| default_output_path(path));
+    let backup_directory = options
+        .backup_directory
+        .clone()
+        .unwrap_or_else(default_backup_directory);
+    let receipt = sse_storage::transaction::export_transaction(
+        path,
+        &source_sha256,
+        &output,
+        &output_path,
+        &backup_directory,
+        sse_storage::transaction::EditSummary {
+            money: options.money,
+            stack_count,
+            ..sse_storage::transaction::EditSummary::default()
+        },
+    )?;
+    let read_back = std::fs::read(&receipt.output_path)?;
+    if read_back.as_slice() != output.as_slice() || sse_codecs::sha256::sha256_hex(&read_back) != receipt.output_sha256
+    {
+        return Err(WriteFailure::Core(Error::System(
+            "export read-back did not match the prepared save".to_owned(),
+        )));
+    }
+    println!("Output: {}", receipt.output_path.display());
+    println!("Size: {}", read_back.len());
+    println!("Backup: {}", receipt.backup_path.display());
+    println!("SHA256: {}", receipt.output_sha256);
+    if let Some(money) = options.money {
+        println!("Money: {money}");
+    }
+    for (handle, count) in stack_output {
+        println!("Stack 0x{handle:08X}: {count}");
+    }
+    Ok(())
+}
+
+fn s2_legacy_write_error() -> Error {
+    Error::Refused(S2_LEGACY_EDIT_REFUSAL.to_owned())
 }
 
 fn write_argument(arguments: &[String], index: usize) -> Result<&str, WriteFailure> {
@@ -898,6 +984,7 @@ mod write_tests {
     use super::{
         read_info, read_inventory, run, s2_cli_warnings, s2_info_lines, s2_inventory_lines, s2_type_key, writer, Save,
     };
+    use super::s2_legacy_write_error;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -989,6 +1076,89 @@ mod write_tests {
         assert_eq!(result, 0);
         assert_eq!(fs::read(&source).expect("source remains readable"), source_bytes);
         assert_eq!(fs::read(&output).expect("export exists"), expected);
+    }
+
+    #[test]
+    fn s2_set_money_exports_the_csharp_image_and_original_backup() {
+        let temporary = TempDirectory::new();
+        let saves = temporary.0.join("saves");
+        fs::create_dir(&saves).expect("create save directory");
+        let source = saves.join("source.sav");
+        let output = saves.join("edited.sav");
+        let backups = temporary.0.join("backups");
+        let source_bytes = include_bytes!("../../../fixtures/synthetic/writer-s2-money/s2-money-source.sav");
+        fs::write(&source, source_bytes).expect("write S2 source fixture");
+
+        let result = run(&arguments("set-money", &source, "876543", &output, &backups));
+
+        assert_eq!(result, 0);
+        assert_eq!(fs::read(&source).expect("source remains readable"), source_bytes);
+        let actual = fs::read(&output).expect("S2 export exists");
+        let verified = sse_s2::S2Save::from_bytes(&actual).expect("read back S2 export");
+        assert_eq!(
+            verified.container().image(),
+            include_bytes!("../../../fixtures/synthetic/writer-s2-money/s2-money-expected.raw")
+        );
+        let entry = sse_storage::transaction::list_backups(&backups)
+            .expect("list S2 backups")
+            .into_iter()
+            .next()
+            .expect("S2 export journal exists");
+        assert_eq!(entry.status, sse_storage::transaction::BackupStatus::Verified);
+        assert_eq!(fs::read(entry.backup_path).expect("S2 source backup"), source_bytes);
+    }
+
+    #[test]
+    fn s2_set_stack_exports_the_csharp_image_and_original_backup() {
+        let temporary = TempDirectory::new();
+        let saves = temporary.0.join("saves");
+        fs::create_dir(&saves).expect("create save directory");
+        let source = saves.join("source.sav");
+        let output = saves.join("edited.sav");
+        let backups = temporary.0.join("backups");
+        let source_bytes = include_bytes!("../../../fixtures/synthetic/writer-s2-stacks/s2-stacks-source.sav");
+        fs::write(&source, source_bytes).expect("write S2 source fixture");
+        let mut args = vec![
+            "set-stack".to_owned(),
+            source.display().to_string(),
+            "0x30000001".to_owned(),
+            "7".to_owned(),
+        ];
+        args.extend([
+            "-o".to_owned(),
+            output.display().to_string(),
+            "--backup-dir".to_owned(),
+            backups.display().to_string(),
+        ]);
+
+        let result = run(&args);
+
+        assert_eq!(result, 0);
+        assert_eq!(fs::read(&source).expect("source remains readable"), source_bytes);
+        let actual = fs::read(&output).expect("S2 export exists");
+        let verified = sse_s2::S2Save::from_bytes(&actual).expect("read back S2 export");
+        assert_eq!(
+            verified.container().image(),
+            include_bytes!("../../../fixtures/synthetic/writer-s2-stacks/s2-stacks-expected.raw")
+        );
+        let entry = sse_storage::transaction::list_backups(&backups)
+            .expect("list S2 backups")
+            .into_iter()
+            .next()
+            .expect("S2 export journal exists");
+        assert_eq!(entry.status, sse_storage::transaction::BackupStatus::Verified);
+        assert_eq!(fs::read(entry.backup_path).expect("S2 source backup"), source_bytes);
+    }
+
+    #[test]
+    fn legacy_s2_write_refusal_uses_the_reference_text_and_exit_code() {
+        let error = s2_legacy_write_error();
+
+        assert_eq!(
+            error.to_string(),
+            "This save was written by game version 1.0.x. It can be read, but its layout is not supported for editing; load it in the current game and save again."
+        );
+        assert_eq!(error.exit_code() as u8, 3);
     }
 
     #[test]

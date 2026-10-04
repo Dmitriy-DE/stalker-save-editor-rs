@@ -446,8 +446,17 @@ fn append_rle_chunk(source: &[u8], encoded: &mut Vec<u8>, tokens: &mut Vec<u16>)
         .len()
         .checked_sub(body_offset)
         .ok_or_else(|| Error::damaged("Kraken RLE body size underflow"))?;
-    if encoded_body_size > 0x3ffff {
-        return Err(Error::damaged("Kraken RLE body exceeds its size field"));
+    if encoded_body_size > 0x3ffff || encoded_body_size >= source.len() {
+        encoded.truncate(header_offset);
+        let raw_length = u32::try_from(source.len())
+            .map_err(|_| Error::damaged("Kraken raw entropy length does not fit its header"))?;
+        let length_bytes = raw_length.to_be_bytes();
+        let header = length_bytes
+            .get(1..)
+            .ok_or_else(|| Error::damaged("Kraken raw entropy length header is truncated"))?;
+        encoded.extend_from_slice(header);
+        encoded.extend_from_slice(source);
+        return Ok(());
     }
     let decoded_size = source
         .len()
@@ -881,6 +890,21 @@ mod tests {
 
         assert_eq!(decompress_into(&encoded, &mut output), Ok(()));
         assert_eq!(output, payload);
+    }
+
+    #[test]
+    fn rle_encoder_uses_stored_entropy_when_a_subblock_expands() {
+        let half = KRAKEN_QUANTUM_SIZE / 2;
+        let mut payload = vec![0_u8; KRAKEN_QUANTUM_SIZE];
+        for (index, byte) in payload.get_mut(half..).unwrap_or_default().iter_mut().enumerate() {
+            *byte = u8::try_from(index % 251 + 1).unwrap_or_default();
+        }
+        let encoded = compress(&payload);
+        let mut output = vec![0_u8; payload.len()];
+
+        assert_eq!(crate::kraken::decompress_into(&encoded, &mut output), Ok(()));
+        assert_eq!(output, payload);
+        assert!(encoded.starts_with(&[0x8c, 0x06]));
     }
 
     #[test]
