@@ -49,6 +49,7 @@ fn round_trip_settings_json() {
         navigation_collapsed: Some(true),
         send_reports: false,
         reports_notice_shown: true,
+        first_run_completed: true,
         last_report_utc: Some("2026-10-04T00:30:00Z".to_owned()),
     };
 
