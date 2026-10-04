@@ -20,10 +20,12 @@ fn save_overview_exposes_an_interactive_action_without_scanning_on_screenshot() 
     let Some(mut screen) = saves::screens().into_iter().next() else {
         return Err(sse_core::Error::damaged("save screen registry is empty"));
     };
+    let mut app_state = sse_app::state::AppState::new();
     let mut context = Context {
         tree: &mut tree,
         proxy: None,
         status: None,
+        app: &mut app_state,
     };
     screen.build(&mut context, host)?;
     tree.resize(1280, 800);

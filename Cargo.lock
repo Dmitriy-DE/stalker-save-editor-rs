@@ -118,11 +118,19 @@ dependencies = [
 name = "sse-ui"
 version = "2.0.0-dev"
 dependencies = [
+ "sse-app",
+ "sse-catalog",
  "sse-codecs",
+ "sse-companion",
+ "sse-content",
  "sse-core",
+ "sse-fixes",
+ "sse-lint",
  "sse-s2",
+ "sse-steam",
  "sse-storage",
  "sse-sys",
+ "sse-update",
  "sse-xray",
 ]
 
