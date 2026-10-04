@@ -224,25 +224,17 @@ impl S2Save {
         S2StashLayout::locate(self.container.image(), &self.index)
     }
 
-    /// Whether S2 writes may currently be committed to a packed save.
-    ///
-    /// The capability stays disabled until Kraken fixture compatibility has been accepted.
+    /// Whether this S2 layout can be written with the safe RLE Kraken encoder.
     #[must_use]
     pub const fn can_write(&self) -> bool {
-        false
+        true
     }
 
-    /// Applies supported changes and encodes a packed S2 save when the writer capability is enabled.
+    /// Applies supported changes and encodes a packed S2 save with a CRC-checked read-back.
     ///
     /// # Errors
-    /// Returns [`Error::Refused`] while the Kraken writer capability is disabled, and reports invalid,
-    /// ambiguous, or unsupported edit requests without modifying this parsed save.
+    /// Reports invalid, ambiguous, or unsupported edit requests without modifying this parsed save.
     pub fn write_changes(&self, changes: &[S2Change]) -> Result<Vec<u8>> {
-        if !self.can_write() {
-            return Err(Error::Refused(
-                "S2 writes are disabled until the Kraken encoder passes fixture compatibility".to_owned(),
-            ));
-        }
         let (image, changed_ranges) = apply_changes_to_image(self, changes)?;
         pack_and_verify_s2_image(&image, &changed_ranges)
     }
@@ -1830,6 +1822,11 @@ fn pack_and_verify_s2_image(image: &[u8], changed_ranges: &[Range<usize>]) -> Re
     }
     let unpacked_size =
         u32::try_from(image.len()).map_err(|_| Error::Refused("S2 image exceeds u32 length".to_owned()))?;
+    for range in changed_ranges {
+        if image.get(range.clone()).is_none() {
+            return Err(Error::damaged("S2 changed range is out of bounds"));
+        }
+    }
     let compressed = sse_codecs::kraken_c3a::compress(image);
     if compressed.is_empty() {
         return Err(Error::Refused("Kraken encoder refused the S2 image".to_owned()));
@@ -1844,18 +1841,9 @@ fn pack_and_verify_s2_image(image: &[u8], changed_ranges: &[Range<usize>]) -> Re
     let crc = sse_codecs::crc32::crc32(&packed);
     packed.extend_from_slice(&crc.to_le_bytes());
 
-    let mut verified = vec![0_u8; image.len()];
-    sse_codecs::kraken_c3a::decompress_into(&compressed, &mut verified)?;
-    for range in changed_ranges {
-        let expected = image
-            .get(range.clone())
-            .ok_or_else(|| Error::damaged("S2 changed range is out of bounds"))?;
-        let actual = verified
-            .get(range.clone())
-            .ok_or_else(|| Error::damaged("S2 verified changed range is out of bounds"))?;
-        if expected != actual {
-            return Err(Error::damaged("S2 write verification differs in a changed range"));
-        }
+    let verified = S2Container::from_bytes(&packed)?;
+    if verified.image() != image {
+        return Err(Error::damaged("S2 write verification differs from the complete image"));
     }
     Ok(packed)
 }
@@ -2026,17 +2014,87 @@ mod tests {
         include_bytes!("../../../fixtures/synthetic/writer-s2-stash/s2-stash-expected.raw");
 
     #[test]
-    fn s2_money_writer_matches_the_reference_image_and_stays_capability_gated() {
+    fn public_s2_writer_round_trips_money_stack_and_crc() {
+        let parsed = S2Save::from_bytes(WRITER_S2_STACK_SOURCE);
+        assert!(parsed.is_ok());
+        let Ok(parsed) = parsed else { return };
+        let original_image = parsed.container().image().to_vec();
+        let original_sha = sse_codecs::sha256::sha256_hex(WRITER_S2_STACK_SOURCE);
+        let changes = [
+            S2Change::SetMoney(876_543),
+            S2Change::SetStackCount {
+                handle: 0x3000_0001,
+                count: 7,
+            },
+        ];
+
+        let packed = parsed.write_changes(&changes);
+        assert!(packed.is_ok(), "writer returned {packed:?}");
+        let Ok(packed) = packed else { return };
+        let verified = S2Save::from_bytes(&packed);
+        assert!(verified.is_ok());
+        let Ok(verified) = verified else { return };
+        assert_eq!(verified.money(), 876_543);
+        assert_eq!(
+            verified
+                .items()
+                .iter()
+                .find(|item| item.handle == 0x3000_0001)
+                .map(|item| item.count),
+            Some(7)
+        );
+        let trailer_offset = packed.len().saturating_sub(4);
+        let stored_crc = super::read_u32(&packed, trailer_offset);
+        let computed_crc = packed.get(..trailer_offset).map(crc32::crc32);
+        assert!(matches!((stored_crc, computed_crc), (Ok(stored), Some(computed)) if stored == computed));
+        assert_eq!(parsed.container().image(), original_image);
+        assert_eq!(sse_codecs::sha256::sha256_hex(WRITER_S2_STACK_SOURCE), original_sha);
+    }
+
+    #[test]
+    #[ignore = "manual Release packed S2 writer throughput measurement"]
+    fn release_s2_packed_writer_throughput_measurement() {
+        let parsed = S2Save::from_bytes(WRITER_S2_STACK_SOURCE);
+        assert!(parsed.is_ok());
+        let Ok(parsed) = parsed else { return };
+        let iterations = 10_000_u32;
+        let started = std::time::Instant::now();
+        let mut checksum = 0_u64;
+        for value in 0..iterations {
+            let packed = parsed.write_changes(&[
+                S2Change::SetMoney(value),
+                S2Change::SetStackCount {
+                    handle: 0x3000_0001,
+                    count: 7,
+                },
+            ]);
+            assert!(packed.is_ok());
+            let Ok(packed) = packed else { return };
+            checksum = checksum.wrapping_add(u64::try_from(packed.len()).unwrap_or(u64::MAX));
+        }
+        let elapsed = started.elapsed();
+        println!(
+            "S2 packed writer: {iterations} money+stack edits of 350 bytes in {elapsed:?}; {:.3} us/edit; output bytes {checksum}",
+            elapsed.as_secs_f64() * 1_000_000.0 / f64::from(iterations)
+        );
+        assert!(checksum > 0);
+    }
+
+    #[test]
+    fn s2_money_writer_matches_the_reference_image_and_writes_a_container() {
         let parsed = S2Save::from_bytes(WRITER_S2_MONEY_SOURCE);
         assert!(parsed.is_ok());
         let Ok(parsed) = parsed else { return };
         let result = apply_changes_to_image(&parsed, &[S2Change::SetMoney(876_543)]);
         assert_eq!(result.map(|(image, _)| image), Ok(WRITER_S2_MONEY_EXPECTED.to_vec()));
-        assert!(!parsed.can_write());
-        assert!(matches!(
-            parsed.write_changes(&[S2Change::SetMoney(876_543)]),
-            Err(Error::Refused(_))
-        ));
+        assert!(parsed.can_write());
+        let packed = parsed.write_changes(&[S2Change::SetMoney(876_543)]);
+        assert!(packed.is_ok());
+        let Ok(packed) = packed else { return };
+        let verified = S2Save::from_bytes(&packed);
+        assert!(verified.is_ok());
+        let Ok(verified) = verified else { return };
+        assert_eq!(verified.money(), 876_543);
         assert_eq!(parsed.money(), 100);
     }
 
