@@ -1903,7 +1903,8 @@ fn pack_and_verify_s2_image(image: &[u8], changed_ranges: &[Range<usize>]) -> Re
             return Err(Error::damaged("S2 changed range is out of bounds"));
         }
     }
-    let compressed = sse_codecs::kraken_c3a::compress(image);
+    // The LZ+Huffman encoder: its streams decode in the reference ooz (33/33 real saves); the old RLE encoder's did not.
+    let compressed = sse_codecs::kraken_encode::compress(image);
     if compressed.is_empty() {
         return Err(Error::Refused("Kraken encoder refused the S2 image".to_owned()));
     }
