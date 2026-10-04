@@ -772,7 +772,7 @@ pub enum CrashAdvice {
     RepairInstallation,
 }
 
-/// One literal signature from the checked-in diagnostic subset.
+/// One crash signature from the C# diagnostic catalog.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CrashSignature {
     /// Stable signature identifier.
@@ -783,114 +783,553 @@ pub struct CrashSignature {
     pub title: &'static str,
     /// Recommended next action.
     pub advice: CrashAdvice,
-    /// Literal text searched for, case-insensitively.
+    /// Evidence and cause description.
+    pub explanation: &'static str,
+    /// C# regular-expression pattern, matched case-insensitively by the bounded safe matcher.
     pub pattern: &'static str,
-    /// Evidence note or reference.
+    /// Evidence note or reference from the C# catalog.
     pub source: &'static str,
+    /// Linked fix identifier, when the crash has an applicable bundled fix.
+    pub fix_id: Option<&'static str>,
+    /// Linked Quest Doctor rule, when the crash has a validated save repair.
+    pub quest_rule_id: Option<&'static str>,
 }
 
-const SIGNATURES: [CrashSignature; 11] = [
+const CRASH_SOURCE_SRP: &str = "https://github.com/Decane/SRP/blob/master/SRP%20v1.1.5%20-%20Version%20History.txt";
+const CRASH_SOURCE_ZRP: &str = "ZRP 1.09 XR3a, gamedata/docs/CrashesStillInTheGame.txt (metacognix.com)";
+const CRASH_SOURCE_PLAYERS: &str = "Players' crash logs, Steam discussions of the three games (2026-10)";
+
+const SIGNATURES: [CrashSignature; 47] = [
     CrashSignature {
         id: "cs.wrong-target-wild-napr",
         game: "cs",
         title: "Task targets Wild Napr after his death",
         advice: CrashAdvice::RepairSave,
-        pattern: "wrong target for storyline quest: logic@work5,gar_smart_terrain_6_3",
-        source: "SRP v1.1.5 Version History",
+        explanation: "A Flea Market task was given with Wild Napr as its target after he died offline.",
+        pattern: "wrong target for storyline quest:\\s*logic@work5,\\s*gar_smart_terrain_6_3",
+        source: CRASH_SOURCE_SRP,
+        fix_id: Some("cs.quest.dead-wild-napr"),
+        quest_rule_id: Some("cs.wild-napr-dead"),
     },
     CrashSignature {
         id: "cs.insufficient-smart-jobs",
         game: "cs",
         title: "Too many stalkers for one camp",
         advice: CrashAdvice::InstallFix,
-        pattern: "insufficient smart_terrain jobs",
-        source: "SRP v1.1.5 Version History",
+        explanation: "More squads were sent to a smart terrain than it has jobs (Dark Valley wagon, Army Warehouses rocks and others).",
+        pattern: "Insufficient smart_terrain jobs",
+        source: CRASH_SOURCE_SRP,
+        fix_id: Some("cs.crash.smart-terrain-no-free-job"),
+        quest_rule_id: None,
     },
     CrashSignature {
         id: "cs.hospital-jump-down-animation",
         game: "cs",
-        title: "Hospital jump animation is missing",
+        title: "Hospital enemy jumps down with a weapon the animation is not listed for",
         advice: CrashAdvice::InstallFix,
+        explanation: "The jump animation of one Limansk hospital enemy is listed for a single weapon type; with any other weapon the script stops the game.",
         pattern: "cant find animation for slot",
-        source: "Clear Sky crash report reference",
+        source: "https://steamcommunity.com/app/20510/discussions/0/3132792921893743264/",
+        fix_id: Some("cs.crash.hospital-jump-down-animation"),
+        quest_rule_id: None,
     },
     CrashSignature {
-        id: "cs.sim-combat-actor-nil",
+        id: "cs.squad-hint-unknown-target",
         game: "cs",
-        title: "Loading during a squad fight",
+        title: "Map hint of an attacking squad whose target camp is unknown",
         advice: CrashAdvice::InstallFix,
-        pattern: "attempt to index field 'actor' (a nil value)",
-        source: "SRP v1.1.5 Version History",
+        explanation: "The hint of a squad on its way to attack names the target camp; when the camp is not in the simulation table the script stops the game.",
+        pattern: "sim_squad_generic\\.script:\\d+:\\s*attempt to index field '\\?' \\(a nil value\\)",
+        source: "https://steamcommunity.com/app/20510/discussions/0/1471967529575318261/",
+        fix_id: Some("cs.crash.squad-action-finished-twice"),
+        quest_rule_id: None,
     },
     CrashSignature {
         id: "cs.pstor-unknown-type",
         game: "cs",
-        title: "Saved object data has an unknown type",
+        title: "Saved NPC data cannot be read back",
         advice: CrashAdvice::CorruptSave,
-        pattern: "pstor_load_all: not registered type n",
-        source: "Clear Sky save-load error reports",
+        explanation: "While loading, the stored variables of an object contain a value type the game does not know: the save holds another object's data at this place.",
+        pattern: "pstor_load_all: not registered type N \\d+ encountered",
+        source: "https://steamcommunity.com/app/20510/discussions/0/558747922713833080",
+        fix_id: None,
+        quest_rule_id: None,
+    },
+    CrashSignature {
+        id: "cs.sim-combat-actor-nil",
+        game: "cs",
+        title: "Loading a save during a squad fight",
+        advice: CrashAdvice::InstallFix,
+        explanation: "sim_combat.script reads the actor before it exists right after a save is loaded; loading again usually works.",
+        pattern: "sim_combat\\.script:\\d+:\\s*attempt to index field 'actor' \\(a nil value\\)",
+        source: CRASH_SOURCE_SRP,
+        fix_id: Some("cs.crash.sim-combat"),
+        quest_rule_id: None,
+    },
+    CrashSignature {
+        id: "cs.sim-combat-attack-squad-nil",
+        game: "cs",
+        title: "Help task for a squad that no longer exists",
+        advice: CrashAdvice::InstallFix,
+        explanation: "The game evaluated a 'help' task for an attacking squad that was already gone.",
+        pattern: "sim_combat\\.script:\\d+:\\s*attempt to index local 'attack_squad_obj'",
+        source: CRASH_SOURCE_SRP,
+        fix_id: Some("cs.crash.sim-combat"),
+        quest_rule_id: None,
+    },
+    CrashSignature {
+        id: "cs.squad-current-action-nil",
+        game: "cs",
+        title: "Smart terrain captured by a squad without an action",
+        advice: CrashAdvice::InstallFix,
+        explanation: "A squad captured a smart terrain while it had no current action.",
+        pattern: "sim_squad_generic\\.script:\\d+:\\s*attempt to index field 'current_action'",
+        source: CRASH_SOURCE_SRP,
+        fix_id: Some("cs.crash.squad-action-finished-twice"),
+        quest_rule_id: None,
+    },
+    CrashSignature {
+        id: "cs.squad-help-task-nil",
+        game: "cs",
+        title: "'Help' task with nothing to offer",
+        advice: CrashAdvice::InstallFix,
+        explanation: "The game tried to offer a delayed defence ('help') task, but no task fitted.",
+        pattern: "sim_squad_generic\\.script:\\d+:\\s*attempt to index local 'task' \\(a nil value\\)",
+        source: CRASH_SOURCE_SRP,
+        fix_id: Some("cs.crash.squad-action-finished-twice"),
+        quest_rule_id: None,
+    },
+    CrashSignature {
+        id: "cs.monster-squad-missing",
+        game: "cs",
+        title: "Mutant whose squad no longer exists",
+        advice: CrashAdvice::InstallFix,
+        explanation: "A mutant went online, offline or died after its squad had been removed.",
+        pattern: "se_monster\\.script:\\d+:\\s*attempt to index local 'squad' \\(a nil value\\)",
+        source: CRASH_SOURCE_SRP,
+        fix_id: Some("cs.crash.monster-squad-missing"),
+        quest_rule_id: None,
+    },
+    CrashSignature {
+        id: "cs.heli-save-search",
+        game: "cs",
+        title: "Saving while a helicopter searches for you",
+        advice: CrashAdvice::InstallFix,
+        explanation: "The helicopter's search timers were not set yet when the game was saved.",
+        pattern: "heli_combat\\.script:\\d+:\\s*attempt to perform arithmetic on field 'change_(?:dir|pos)_time'",
+        source: CRASH_SOURCE_SRP,
+        fix_id: Some("cs.crash.heli-save-search"),
+        quest_rule_id: None,
+    },
+    CrashSignature {
+        id: "cs.marsh-creature-no-squad",
+        game: "cs",
+        title: "Marsh creature attacked a stalker without a squad",
+        advice: CrashAdvice::InstallFix,
+        explanation: "The marsh creature ambush tried to make the victim's squad react, but the victim had no squad.",
+        pattern: "sr_bloodsucker\\.script:\\d+:\\s*attempt to index field 'npc_squad'",
+        source: CRASH_SOURCE_SRP,
+        fix_id: Some("cs.crash.marsh-creature-no-squad"),
+        quest_rule_id: None,
+    },
+    CrashSignature {
+        id: "cs.agroprom-orest-path",
+        game: "cs",
+        title: "Orest left his spot at the Agroprom loner base",
+        advice: CrashAdvice::InstallFix,
+        explanation: "Orest's movement restrictor does not contain his own patrol path.",
+        pattern: "patrol path \\[agr_stalker_leader_walk\\] is inaccessible",
+        source: CRASH_SOURCE_SRP,
+        fix_id: Some("cs.crash.agroprom-orest-path"),
+        quest_rule_id: None,
+    },
+    CrashSignature {
+        id: "cs.all-spawn-cordon-waypoint",
+        game: "cs",
+        title: "Waypoint off the AI map at the Cordon bonfire",
+        advice: CrashAdvice::InstallFix,
+        explanation: "A waypoint of the 'Bonfire in forest' camp lies outside the AI map.",
+        pattern: "esc_smart_terrain_3_7_walker_1_walk",
+        source: CRASH_SOURCE_SRP,
+        fix_id: Some("cs.crash.all-spawn-errors"),
+        quest_rule_id: None,
+    },
+    CrashSignature {
+        id: "cs.storyline-task-missing-npc",
+        game: "cs",
+        title: "Story task for an NPC who is not there (Wild Napr)",
+        advice: CrashAdvice::InstallFix,
+        explanation: "The game tried to give a story task whose target NPC is fighting or has died offline.",
+        pattern: "wrong target for storyline quest",
+        source: CRASH_SOURCE_SRP,
+        fix_id: Some("cs.crash.capture-task-missing-squad"),
+        quest_rule_id: None,
+    },
+    CrashSignature {
+        id: "cs.all-spawn-jobs-mil-2-1",
+        game: "cs",
+        title: "Too many squads for the Army Warehouses 'Camp amidst rocks'",
+        advice: CrashAdvice::InstallFix,
+        explanation: "The camp accepts more squads than it has jobs. The fix applies in a new game.",
+        pattern: "Insufficient smart_terrain jobs mil_smart_terrain_2_1",
+        source: CRASH_SOURCE_SRP,
+        fix_id: Some("cs.crash.all-spawn-errors"),
+        quest_rule_id: None,
+    },
+    CrashSignature {
+        id: "cs.all-spawn-mil-path",
+        game: "cs",
+        title: "Missing path between Army Warehouses camps",
+        advice: CrashAdvice::InstallFix,
+        explanation: "A camp's list of neighbours misses a link that mutant attacks use. The fix applies in a new game.",
+        pattern: "Path between \\[mil_smart_terrain_7_11\\] and \\[mil_smart_terrain_7_10\\] doesnt exist",
+        source: CRASH_SOURCE_SRP,
+        fix_id: Some("cs.crash.all-spawn-errors"),
+        quest_rule_id: None,
+    },
+    CrashSignature {
+        id: "cs.missing-backpack-model",
+        game: "cs",
+        title: "Missing backpack model",
+        advice: CrashAdvice::InstallFix,
+        explanation: "The stalker corpse model points at a file Clear Sky does not ship.",
+        pattern: "Can't find model file 'dynamics\\\\equipments\\\\item_rukzak\\.ogf'",
+        source: CRASH_SOURCE_SRP,
+        fix_id: Some("cs.crash.missing-backpack-model"),
+        quest_rule_id: None,
+    },
+    CrashSignature {
+        id: "cs.kamp-empty-interval",
+        game: "cs",
+        title: "Campfire with nobody to talk",
+        advice: CrashAdvice::InstallFix,
+        explanation: "The campfire story scheme picked a random speaker from an empty list.",
+        pattern: "xr_kamp\\.script:\\d+:\\s*bad argument #1 to 'random' \\(interval is empty\\)",
+        source: CRASH_SOURCE_SRP,
+        fix_id: Some("cs.crash.kamp-no-animation"),
+        quest_rule_id: None,
+    },
+    CrashSignature {
+        id: "cs.robbery-squad-left",
+        game: "cs",
+        title: "Robbers left during a hold-up",
+        advice: CrashAdvice::InstallFix,
+        explanation: "A robber squad walked off to another camp in the middle of a hold-up.",
+        pattern: "sr_robbery\\.script:\\d+:\\s*attempt to index field '\\?' \\(a nil value\\)",
+        source: CRASH_SOURCE_SRP,
+        fix_id: Some("cs.crash.robbery-squad-left"),
+        quest_rule_id: None,
+    },
+    CrashSignature {
+        id: "cs.robbery-manager-nil",
+        game: "cs",
+        title: "Robbery leader chosen from a squad that already left",
+        advice: CrashAdvice::InstallFix,
+        explanation: "The robbery scheme still counted a squad that had left the camp when it picked the leader.",
+        pattern: "actor_reaction\\.script:\\d+:\\s*attempt to index local 'manager'",
+        source: CRASH_SOURCE_SRP,
+        fix_id: Some("cs.crash.robbery-leader-offline"),
+        quest_rule_id: None,
+    },
+    CrashSignature {
+        id: "cs.capture-task-missing-squad",
+        game: "cs",
+        title: "Capture task for a squad that does not exist",
+        advice: CrashAdvice::InstallFix,
+        explanation: "The game tried to give a 'capture' task to a squad that no longer exists.",
+        pattern: "task_objects\\.script:\\d+:\\s*attempt to index field '\\?' \\(a nil value\\)",
+        source: CRASH_SOURCE_SRP,
+        fix_id: Some("cs.crash.capture-task-missing-squad"),
+        quest_rule_id: None,
+    },
+    CrashSignature {
+        id: "cs.anomaly-art-nil",
+        game: "cs",
+        title: "Artefact spawn in an anomaly field",
+        advice: CrashAdvice::InstallFix,
+        explanation: "An anomaly field referenced an artefact that was already gone.",
+        pattern: "bind_anomaly_zone\\.script:\\d+:\\s*attempt to index local 'art'",
+        source: CRASH_SOURCE_SRP,
+        fix_id: Some("cs.crash.anomaly-zone-missing-artefact"),
+        quest_rule_id: None,
+    },
+    CrashSignature {
+        id: "cs.saving-too-much",
+        game: "cs",
+        title: "Save data too large",
+        advice: CrashAdvice::CommunityPatch,
+        explanation: "The scripts wrote more data into a save packet than the engine allows.",
+        pattern: "You are saving too much",
+        source: CRASH_SOURCE_SRP,
+        fix_id: None,
+        quest_rule_id: None,
+    },
+    CrashSignature {
+        id: "cs.patrol-point-cordon-bonfire",
+        game: "cs",
+        title: "Patrol point at the Cordon forest bonfire",
+        advice: CrashAdvice::InstallFix,
+        explanation: "A stalker patrolling the 'Bonfire in forest' reached a waypoint that is not on the level graph.",
+        pattern: "patrol path\\s*\\[esc_smart_terrain_3_7_walker_1_walk\\]",
+        source: CRASH_SOURCE_SRP,
+        fix_id: Some("cs.crash.all-spawn-errors"),
+        quest_rule_id: None,
+    },
+    CrashSignature {
+        id: "cs.patrol-red-forest-trader",
+        game: "cs",
+        title: "Red Forest mine trader left his desk",
+        advice: CrashAdvice::InstallFix,
+        explanation: "The trader in the mine strayed from his spot and his patrol path became unreachable.",
+        pattern: "patrol path\\s*\\[red_smart_terrain_3_2_patrol_1_walk\\] is inaccessible",
+        source: CRASH_SOURCE_SRP,
+        fix_id: Some("cs.crash.red-forest-mine-trader-path"),
+        quest_rule_id: None,
+    },
+    CrashSignature {
+        id: "cs.patrol-agroprom-orest",
+        game: "cs",
+        title: "Orest displaced in Agroprom",
+        advice: CrashAdvice::InstallFix,
+        explanation: "Orest was pushed out of his space restrictor and his walk path became unreachable.",
+        pattern: "patrol path\\s*\\[agr_stalker_leader_walk\\] is inaccessible",
+        source: CRASH_SOURCE_SRP,
+        fix_id: Some("cs.crash.agroprom-orest-path"),
+        quest_rule_id: None,
+    },
+    CrashSignature {
+        id: "cs.missing-rukzak-model",
+        game: "cs",
+        title: "Missing backpack model",
+        advice: CrashAdvice::InstallFix,
+        explanation: "The game referenced a backpack mesh that is not shipped.",
+        pattern: "Can't find model file 'dynamics\\\\equipments\\\\item_rukzak\\.ogf'",
+        source: CRASH_SOURCE_SRP,
+        fix_id: Some("cs.crash.missing-backpack-model"),
+        quest_rule_id: None,
+    },
+    CrashSignature {
+        id: "cs.treasure-box-in-use",
+        game: "cs",
+        title: "Stash refilled while Stringov is alive",
+        advice: CrashAdvice::InstallFix,
+        explanation: "Re-entering the Garbage tried to fill a stash that was already filled.",
+        pattern: "Unable to give treasure \\[gar_treasure_quest_smuggler_weapons\\]",
+        source: CRASH_SOURCE_SRP,
+        fix_id: Some("cs.crash.treasure-given-twice"),
+        quest_rule_id: None,
+    },
+    CrashSignature {
+        id: "cs.red-forest-missing-squad",
+        game: "cs",
+        title: "Witch Circle ambush squad already dead",
+        advice: CrashAdvice::InstallFix,
+        explanation: "Following Strelok's helper into the ambush after the ambush squad was killed.",
+        pattern: "There is no squad \\[red_pursuit_bounty_hunters_squad_\\d+\\] in sim_board",
+        source: CRASH_SOURCE_SRP,
+        fix_id: Some("cs.crash.relation-to-missing-squad"),
+        quest_rule_id: None,
+    },
+    CrashSignature {
+        id: "cs.military-dogs-path",
+        game: "cs",
+        title: "Army Warehouses mutant attack path",
+        advice: CrashAdvice::InstallFix,
+        explanation: "A mutant squad attacking the military base had no path between two smart terrains (new game needed after the patch).",
+        pattern: "Path between \\[mil_smart_terrain_7_11\\] and \\[mil_smart_terrain_7_10\\] doesnt exist",
+        source: CRASH_SOURCE_SRP,
+        fix_id: Some("cs.crash.all-spawn-errors"),
+        quest_rule_id: None,
+    },
+    CrashSignature {
+        id: "soc.gulag-job-nil",
+        game: "soc",
+        title: "Camp member without a job",
+        advice: CrashAdvice::InstallFix,
+        explanation: "A camp checked a job swap for a member that had no job at that moment.",
+        pattern: "xr_gulag\\.script:\\d+:\\s*attempt to index local 'job' \\(a nil value\\)",
+        source: CRASH_SOURCE_ZRP,
+        fix_id: Some("soc.crash.gulag-job-nil"),
+        quest_rule_id: None,
+    },
+    CrashSignature {
+        id: "soc.heli-save-search",
+        game: "soc",
+        title: "Saving while a helicopter searches for you",
+        advice: CrashAdvice::InstallFix,
+        explanation: "The helicopter's search timers were not set yet when the game was saved.",
+        pattern: "heli_combat\\.script:\\d+:\\s*attempt to perform arithmetic on field 'change_(?:dir|pos)_time'",
+        source: CRASH_SOURCE_ZRP,
+        fix_id: Some("soc.crash.heli-save-search"),
+        quest_rule_id: None,
+    },
+    CrashSignature {
+        id: "soc.kamp-remove-unseated",
+        game: "soc",
+        title: "Campfire with more stalkers than places",
+        advice: CrashAdvice::InstallFix,
+        explanation: "A stalker joined a full campfire and got no place.",
+        pattern: "xr_kamp\\.script:\\d+:\\s*attempt to index field '\\?' \\(a nil value\\)|get dest Vertex: nil",
+        source: CRASH_SOURCE_ZRP,
+        fix_id: Some("soc.crash.kamp-remove-unseated"),
+        quest_rule_id: None,
+    },
+    CrashSignature {
+        id: "soc.danger-ignore-types",
+        game: "soc",
+        title: "NPC without danger settings",
+        advice: CrashAdvice::InstallFix,
+        explanation: "An NPC whose danger settings were never set up noticed a grenade, a body, a hit or a sound.",
+        pattern: "xr_danger\\.script:\\d+:\\s*attempt to index field 'ignore_types' \\(a nil value\\)",
+        source: CRASH_SOURCE_ZRP,
+        fix_id: Some("soc.crash.danger-ignore-types"),
+        quest_rule_id: None,
+    },
+    CrashSignature {
+        id: "soc.garbage-robbers-dead-bandit",
+        game: "soc",
+        title: "Garbage robbery with the first robber dead",
+        advice: CrashAdvice::InstallFix,
+        explanation: "The fight at the Garbage entrance used a robber who was already dead.",
+        pattern: "xr_effects\\.script:\\d+:\\s*attempt to index local 'bandit1' \\(a nil value\\)",
+        source: CRASH_SOURCE_ZRP,
+        fix_id: Some("soc.crash.garbage-robbers-and-duty-raid"),
+        quest_rule_id: None,
+    },
+    CrashSignature {
+        id: "soc.controller-body-state",
+        game: "soc",
+        title: "Controller animation crash",
+        advice: CrashAdvice::ReloadEarlierSave,
+        explanation: "A bad controller animation, usually while it is under attack. Kill controllers before they reach this state.",
+        pattern: "dBodyStateValide\\(b\\)",
+        source: CRASH_SOURCE_ZRP,
+        fix_id: None,
+        quest_rule_id: None,
     },
     CrashSignature {
         id: "soc.entity-not-found",
         game: "soc",
-        title: "A referenced entity does not exist",
-        advice: CrashAdvice::InstallFix,
-        pattern: "entity not found. id_parent=",
-        source: "ZRP 1.09 CrashesStillInTheGame",
+        title: "Dropped weapon vanished while an NPC evaluated it",
+        advice: CrashAdvice::ReloadEarlierSave,
+        explanation: "A killed NPC's weapon was destroyed or fell through the ground while another NPC considered picking it up.",
+        pattern: "entity not found\\.\\s*id_parent=\\d+\\s*id_entity=\\d+",
+        source: CRASH_SOURCE_ZRP,
+        fix_id: None,
+        quest_rule_id: None,
     },
     CrashSignature {
         id: "soc.map-location-dead-object",
         game: "soc",
-        title: "Map location refers to a missing object",
-        advice: CrashAdvice::InstallFix,
-        pattern: "smaplocation binded to non-existent object id=",
-        source: "ZRP 1.09 CrashesStillInTheGame",
+        title: "Map spot bound to a destroyed body",
+        advice: CrashAdvice::CorruptSave,
+        explanation: "The game destroyed a body but kept its map spot; every later save carries the damage.",
+        pattern: "(?:SMapLocation|CMapLocation::UpdateSpot) binded to non-existent object",
+        source: CRASH_SOURCE_ZRP,
+        fix_id: None,
+        quest_rule_id: None,
+    },
+    CrashSignature {
+        id: "soc.no-level-in-graph",
+        game: "soc",
+        title: "Creature spawned outside the level",
+        advice: CrashAdvice::ReloadEarlierSave,
+        explanation: "A mutant or NPC was spawned outside the level or below it.",
+        pattern: "there is no specified level in the game graph|There is no proper graph point neighbour",
+        source: CRASH_SOURCE_ZRP,
+        fix_id: None,
+        quest_rule_id: None,
+    },
+    CrashSignature {
+        id: "soc.unknown-weapon-rank",
+        game: "soc",
+        title: "Weapon missing from the rank table",
+        advice: CrashAdvice::CommunityPatch,
+        explanation: "A weapon (usually from a mod) has no entry in the weapon rank table.",
+        pattern: "cannot find rank for",
+        source: CRASH_SOURCE_ZRP,
+        fix_id: None,
+        quest_rule_id: None,
+    },
+    CrashSignature {
+        id: "soc.format-no-value",
+        game: "soc",
+        title: "Script string formatting error",
+        advice: CrashAdvice::CommunityPatch,
+        explanation: "A script passed nothing to string.format; usually an incompatible mod.",
+        pattern: "bad argument #2 to 'format' \\(string expected, got no value\\)",
+        source: CRASH_SOURCE_ZRP,
+        fix_id: None,
+        quest_rule_id: None,
     },
     CrashSignature {
         id: "any.missing-model",
         game: "any",
         title: "A model file is missing",
         advice: CrashAdvice::RepairInstallation,
-        pattern: "can't find model file",
-        source: "Game installation diagnostic signature",
+        explanation: "The game asked for a model that is not on disk: files left by a removed mod name it, or game files are missing.",
+        pattern: "Can't find model file '",
+        source: CRASH_SOURCE_PLAYERS,
+        fix_id: None,
+        quest_rule_id: None,
+    },
+    CrashSignature {
+        id: "any.missing-section",
+        game: "any",
+        title: "A config section is missing",
+        advice: CrashAdvice::RepairInstallation,
+        explanation: "A config names a section no file defines: loose configs of a mod do not match the rest of the game.",
+        pattern: "Can't open section '",
+        source: CRASH_SOURCE_PLAYERS,
+        fix_id: None,
+        quest_rule_id: None,
     },
     CrashSignature {
         id: "any.missing-config-value",
         game: "any",
-        title: "A configuration value is missing",
+        title: "A config value is missing",
         advice: CrashAdvice::RepairInstallation,
-        pattern: "can't find variable ",
-        source: "Game installation diagnostic signature",
+        explanation: "A section lacks a value the engine needs: the config comes from another version of the game or from a mod.",
+        pattern: "Can't find variable \\S+ in \\[",
+        source: CRASH_SOURCE_PLAYERS,
+        fix_id: None,
+        quest_rule_id: None,
     },
     CrashSignature {
         id: "any.missing-string-table",
         game: "any",
-        title: "A string-table file is missing",
+        title: "Text files are missing",
         advice: CrashAdvice::RepairInstallation,
+        explanation: "The list of text files was not found: the language set in localization.ltx is not installed, or game files are missing.",
         pattern: "string table xml file not found",
-        source: "Game installation diagnostic signature",
+        source: CRASH_SOURCE_PLAYERS,
+        fix_id: None,
+        quest_rule_id: None,
     },
     CrashSignature {
-        id: "cs.missing-backpack-model",
-        game: "cs",
-        title: "Clear Sky references a missing backpack model",
-        advice: CrashAdvice::InstallFix,
-        pattern: "can't find model file 'dynamics\\equipments\\item_rukzak.ogf'",
-        source: "SRP v1.1.5 Version History",
+        id: "any.config-not-opened",
+        game: "any",
+        title: "A game file could not be opened",
+        advice: CrashAdvice::RepairInstallation,
+        explanation: "A file the game needs was not opened (hFile>0): it is missing, locked or damaged by an edit.",
+        pattern: "Expression\\s*:\\s*hFile>0",
+        source: CRASH_SOURCE_PLAYERS,
+        fix_id: None,
+        quest_rule_id: None,
     },
 ];
 
-/// Compiled crash catalog; patterns are matched in one byte pass.
+/// Compiled crash catalog; literal prefixes are scanned together, then candidates are checked by a bounded regex NFA.
 pub struct CrashSignatureCatalog;
 
 impl CrashSignatureCatalog {
-    /// Returns the signatures currently ported from the C# catalog.
+    /// Returns the signatures in the C# 1.3.1 catalog.
     #[must_use]
     pub const fn all() -> &'static [CrashSignature] {
         &SIGNATURES
     }
 
-    /// Finds the most specific known literal, optionally restricting matches to one game.
+    /// Finds the first C# catalog match, optionally restricting matches to one game.
     #[must_use]
     pub fn match_log(text: &str, game: Option<&str>) -> Option<&'static CrashSignature> {
         AUTOMATON.get_or_init(build_automaton).find(text.as_bytes(), game)
@@ -1156,10 +1595,345 @@ fn contains_ascii_case_insensitive(text: &str, needle: &str) -> bool {
 const ALPHABET_SIZE: usize = 128;
 const MISSING_STATE: u32 = u32::MAX;
 
+#[derive(Clone, Copy)]
+enum RegexCharacter {
+    Literal(u8),
+    Any,
+    Digit,
+    Whitespace,
+    NonWhitespace,
+}
+
+impl RegexCharacter {
+    fn matches(self, byte: u8) -> bool {
+        match self {
+            Self::Literal(expected) => byte.eq_ignore_ascii_case(&expected),
+            Self::Any => true,
+            Self::Digit => byte.is_ascii_digit(),
+            Self::Whitespace => matches!(byte, b' ' | b'\t' | b'\r' | b'\n' | 0x0b | 0x0c),
+            Self::NonWhitespace => !matches!(byte, b' ' | b'\t' | b'\r' | b'\n' | 0x0b | 0x0c),
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RegexQuantifier {
+    One,
+    Optional,
+    ZeroOrMore,
+    OneOrMore,
+}
+
+#[derive(Clone, Copy)]
+struct RegexToken {
+    character: RegexCharacter,
+    quantifier: RegexQuantifier,
+}
+
+struct NfaTransition {
+    character: RegexCharacter,
+    target: usize,
+}
+
+#[derive(Default)]
+struct NfaState {
+    epsilon: Vec<usize>,
+    transitions: Vec<NfaTransition>,
+}
+
+struct RegexVariant {
+    anchor: Vec<u8>,
+    #[cfg(test)]
+    example: Vec<u8>,
+    states: Vec<NfaState>,
+    epsilon_closures: Vec<Vec<usize>>,
+    accept: usize,
+}
+
+impl RegexVariant {
+    fn compile(tokens: &[RegexToken]) -> Option<Self> {
+        let mut states = vec![NfaState::default()];
+        let mut current = 0_usize;
+        for token in tokens {
+            match token.quantifier {
+                RegexQuantifier::One => {
+                    let next = append_nfa_state(&mut states);
+                    states.get_mut(current)?.transitions.push(NfaTransition {
+                        character: token.character,
+                        target: next,
+                    });
+                    current = next;
+                }
+                RegexQuantifier::Optional => {
+                    let next = append_nfa_state(&mut states);
+                    let state = states.get_mut(current)?;
+                    state.epsilon.push(next);
+                    state.transitions.push(NfaTransition {
+                        character: token.character,
+                        target: next,
+                    });
+                    current = next;
+                }
+                RegexQuantifier::ZeroOrMore => {
+                    let next = append_nfa_state(&mut states);
+                    let state = states.get_mut(current)?;
+                    state.epsilon.push(next);
+                    state.transitions.push(NfaTransition {
+                        character: token.character,
+                        target: current,
+                    });
+                    current = next;
+                }
+                RegexQuantifier::OneOrMore => {
+                    let repeated = append_nfa_state(&mut states);
+                    let next = append_nfa_state(&mut states);
+                    states.get_mut(current)?.transitions.push(NfaTransition {
+                        character: token.character,
+                        target: repeated,
+                    });
+                    let repeated_state = states.get_mut(repeated)?;
+                    repeated_state.epsilon.push(next);
+                    repeated_state.transitions.push(NfaTransition {
+                        character: token.character,
+                        target: repeated,
+                    });
+                    current = next;
+                }
+            }
+        }
+
+        let anchor = tokens
+            .iter()
+            .take_while(|token| token.quantifier == RegexQuantifier::One)
+            .map(|token| match token.character {
+                RegexCharacter::Literal(byte) => Some(byte.to_ascii_lowercase()),
+                RegexCharacter::Any
+                | RegexCharacter::Digit
+                | RegexCharacter::Whitespace
+                | RegexCharacter::NonWhitespace => None,
+            })
+            .collect::<Option<Vec<_>>>()?;
+        if anchor.is_empty() {
+            return None;
+        }
+        #[cfg(test)]
+        let example = tokens
+            .iter()
+            .map(|token| match token.character {
+                RegexCharacter::Literal(byte) => byte,
+                RegexCharacter::Any | RegexCharacter::NonWhitespace => b'x',
+                RegexCharacter::Digit => b'7',
+                RegexCharacter::Whitespace => b' ',
+            })
+            .collect();
+
+        let mut epsilon_closures = Vec::with_capacity(states.len());
+        for start in 0..states.len() {
+            let mut visited = vec![false; states.len()];
+            let mut pending = vec![start];
+            let mut closure = Vec::new();
+            while let Some(state_index) = pending.pop() {
+                if visited.get(state_index).copied().unwrap_or(true) {
+                    continue;
+                }
+                if let Some(visited_state) = visited.get_mut(state_index) {
+                    *visited_state = true;
+                }
+                closure.push(state_index);
+                if let Some(state) = states.get(state_index) {
+                    pending.extend(state.epsilon.iter().copied());
+                }
+            }
+            epsilon_closures.push(closure);
+        }
+
+        Some(Self {
+            anchor,
+            #[cfg(test)]
+            example,
+            states,
+            epsilon_closures,
+            accept: current,
+        })
+    }
+
+    fn matches_at(&self, text: &[u8], start: usize) -> bool {
+        let mut active = vec![false; self.states.len()];
+        let Some(start_closure) = self.epsilon_closures.first() else {
+            return false;
+        };
+        for state in start_closure {
+            if let Some(slot) = active.get_mut(*state) {
+                *slot = true;
+            }
+        }
+        if active.get(self.accept).copied().unwrap_or(false) {
+            return true;
+        }
+
+        let Some(input) = text.get(start..) else {
+            return false;
+        };
+        let mut next = vec![false; self.states.len()];
+        for byte in input {
+            next.fill(false);
+            for (state_index, is_active) in active.iter().enumerate() {
+                if !is_active {
+                    continue;
+                }
+                let Some(state) = self.states.get(state_index) else {
+                    continue;
+                };
+                for transition in &state.transitions {
+                    if !transition.character.matches(*byte) {
+                        continue;
+                    }
+                    if let Some(closure) = self.epsilon_closures.get(transition.target) {
+                        for destination in closure {
+                            if let Some(slot) = next.get_mut(*destination) {
+                                *slot = true;
+                            }
+                        }
+                    }
+                }
+            }
+            std::mem::swap(&mut active, &mut next);
+            if active.get(self.accept).copied().unwrap_or(false) {
+                return true;
+            }
+            if !active.iter().any(|is_active| *is_active) {
+                return false;
+            }
+        }
+        false
+    }
+}
+
+fn append_nfa_state(states: &mut Vec<NfaState>) -> usize {
+    states.push(NfaState::default());
+    states.len().saturating_sub(1)
+}
+
+struct RegexProgram {
+    variants: Vec<RegexVariant>,
+}
+
+impl RegexProgram {
+    fn compile(pattern: &str) -> Option<Self> {
+        if pattern.is_empty() || pattern.len() > 4096 {
+            return None;
+        }
+        let bytes = pattern.as_bytes();
+        let mut cursor = 0_usize;
+        let variants = parse_regex_expression(bytes, &mut cursor, false)?;
+        if cursor != bytes.len() {
+            return None;
+        }
+        let variants = variants
+            .iter()
+            .map(|tokens| RegexVariant::compile(tokens))
+            .collect::<Option<Vec<_>>>()?;
+        Some(Self { variants })
+    }
+}
+
+fn parse_regex_expression(bytes: &[u8], cursor: &mut usize, grouped: bool) -> Option<Vec<Vec<RegexToken>>> {
+    let mut branches = vec![Vec::new()];
+    let mut active_branch_start = 0_usize;
+    while let Some(byte) = bytes.get(*cursor).copied() {
+        if byte == b'|' {
+            *cursor = cursor.checked_add(1)?;
+            active_branch_start = branches.len();
+            branches.push(Vec::new());
+            continue;
+        }
+        if byte == b')' {
+            if !grouped {
+                return None;
+            }
+            *cursor = cursor.checked_add(1)?;
+            return Some(branches);
+        }
+        let alternatives = parse_regex_atom(bytes, cursor)?;
+        let quantifier = match bytes.get(*cursor).copied() {
+            Some(b'?') => RegexQuantifier::Optional,
+            Some(b'*') => RegexQuantifier::ZeroOrMore,
+            Some(b'+') => RegexQuantifier::OneOrMore,
+            _ => RegexQuantifier::One,
+        };
+        if quantifier != RegexQuantifier::One {
+            *cursor = cursor.checked_add(1)?;
+        }
+        let mut alternatives = alternatives;
+        if quantifier != RegexQuantifier::One {
+            if alternatives.iter().any(|variant| variant.len() != 1) {
+                return None;
+            }
+            for variant in &mut alternatives {
+                if let Some(token) = variant.first_mut() {
+                    token.quantifier = quantifier;
+                }
+            }
+        }
+        let mut combined = branches.iter().take(active_branch_start).cloned().collect::<Vec<_>>();
+        for prefix in branches.iter().skip(active_branch_start) {
+            for suffix in &alternatives {
+                let mut variant = prefix.clone();
+                variant.extend_from_slice(suffix);
+                combined.push(variant);
+            }
+        }
+        branches = combined;
+    }
+    if grouped {
+        None
+    } else {
+        Some(branches)
+    }
+}
+
+fn parse_regex_atom(bytes: &[u8], cursor: &mut usize) -> Option<Vec<Vec<RegexToken>>> {
+    let byte = bytes.get(*cursor).copied()?;
+    if byte == b'(' {
+        let marker_end = cursor.checked_add(3)?;
+        if bytes.get(*cursor..marker_end) != Some(b"(?:") {
+            return None;
+        }
+        *cursor = marker_end;
+        return parse_regex_expression(bytes, cursor, true);
+    }
+    *cursor = cursor.checked_add(1)?;
+    let character = if byte == b'\\' {
+        let escaped = bytes.get(*cursor).copied()?;
+        *cursor = cursor.checked_add(1)?;
+        match escaped {
+            b'd' => RegexCharacter::Digit,
+            b's' => RegexCharacter::Whitespace,
+            b'S' => RegexCharacter::NonWhitespace,
+            other => RegexCharacter::Literal(other),
+        }
+    } else if byte == b'.' {
+        RegexCharacter::Any
+    } else {
+        RegexCharacter::Literal(byte)
+    };
+    Some(vec![vec![RegexToken {
+        character,
+        quantifier: RegexQuantifier::One,
+    }]])
+}
+
 struct AutomatonNode {
     transitions: [u32; ALPHABET_SIZE],
     failure: u32,
-    outputs: Vec<usize>,
+    outputs: Vec<AutomatonOutput>,
+}
+
+#[derive(Clone, Copy)]
+struct AutomatonOutput {
+    signature_index: usize,
+    variant_index: usize,
+    anchor_len: usize,
 }
 
 impl AutomatonNode {
@@ -1174,6 +1948,7 @@ impl AutomatonNode {
 
 struct Automaton {
     nodes: Vec<AutomatonNode>,
+    programs: Vec<RegexProgram>,
 }
 
 static AUTOMATON: OnceLock<Automaton> = OnceLock::new();
@@ -1181,8 +1956,8 @@ static AUTOMATON: OnceLock<Automaton> = OnceLock::new();
 impl Automaton {
     fn find(&self, text: &[u8], game: Option<&str>) -> Option<&'static CrashSignature> {
         let mut state = 0_u32;
-        let mut best: Option<(usize, usize)> = None;
-        for &byte in text {
+        let mut best: Option<usize> = None;
+        for (offset, &byte) in text.iter().enumerate() {
             let symbol = usize::from(byte.to_ascii_lowercase());
             if symbol >= ALPHABET_SIZE {
                 state = 0;
@@ -1198,20 +1973,28 @@ impl Automaton {
             let Some(node) = self.nodes.get(state_index(state)) else {
                 continue;
             };
-            for signature_index in &node.outputs {
-                let Some(signature) = SIGNATURES.get(*signature_index) else {
+            for output in &node.outputs {
+                let Some(signature) = SIGNATURES.get(output.signature_index) else {
                     continue;
                 };
                 if !game_matches(signature.game, game) {
                     continue;
                 }
-                let length = signature.pattern.len();
-                if best.is_none_or(|(_, best_length)| length > best_length) {
-                    best = Some((*signature_index, length));
+                let Some(program) = self.programs.get(output.signature_index) else {
+                    continue;
+                };
+                let Some(variant) = program.variants.get(output.variant_index) else {
+                    continue;
+                };
+                let anchor_end = offset.saturating_add(1);
+                let start = anchor_end.saturating_sub(output.anchor_len);
+                if variant.matches_at(text, start) && best.is_none_or(|best_index| output.signature_index < best_index)
+                {
+                    best = Some(output.signature_index);
                 }
             }
         }
-        best.and_then(|(signature_index, _)| SIGNATURES.get(signature_index))
+        best.and_then(|signature_index| SIGNATURES.get(signature_index))
     }
 }
 
@@ -1246,37 +2029,49 @@ fn normalize_crash_game(game: &str) -> Option<&'static str> {
 
 fn build_automaton() -> Automaton {
     let mut nodes = vec![AutomatonNode::new()];
+    let mut programs = Vec::with_capacity(SIGNATURES.len());
     for (signature_index, signature) in SIGNATURES.iter().enumerate() {
-        let mut state = 0_u32;
-        for byte in signature.pattern.bytes().map(|value| value.to_ascii_lowercase()) {
-            let symbol = usize::from(byte);
-            if symbol >= ALPHABET_SIZE {
-                break;
+        let Some(program) = RegexProgram::compile(signature.pattern) else {
+            programs.push(RegexProgram { variants: Vec::new() });
+            continue;
+        };
+        for (variant_index, variant) in program.variants.iter().enumerate() {
+            let mut state = 0_u32;
+            for byte in &variant.anchor {
+                let symbol = usize::from(*byte);
+                if symbol >= ALPHABET_SIZE {
+                    break;
+                }
+                let existing = nodes
+                    .get(state_index(state))
+                    .and_then(|node| node.transitions.get(symbol))
+                    .copied()
+                    .unwrap_or(MISSING_STATE);
+                if existing != MISSING_STATE {
+                    state = existing;
+                    continue;
+                }
+                let Ok(new_state) = u32::try_from(nodes.len()) else {
+                    break;
+                };
+                if let Some(transition) = nodes
+                    .get_mut(state_index(state))
+                    .and_then(|node| node.transitions.get_mut(symbol))
+                {
+                    *transition = new_state;
+                }
+                nodes.push(AutomatonNode::new());
+                state = new_state;
             }
-            let existing = nodes
-                .get(state_index(state))
-                .and_then(|node| node.transitions.get(symbol))
-                .copied()
-                .unwrap_or(MISSING_STATE);
-            if existing != MISSING_STATE {
-                state = existing;
-                continue;
+            if let Some(node) = nodes.get_mut(state_index(state)) {
+                node.outputs.push(AutomatonOutput {
+                    signature_index,
+                    variant_index,
+                    anchor_len: variant.anchor.len(),
+                });
             }
-            let Ok(new_state) = u32::try_from(nodes.len()) else {
-                break;
-            };
-            if let Some(transition) = nodes
-                .get_mut(state_index(state))
-                .and_then(|node| node.transitions.get_mut(symbol))
-            {
-                *transition = new_state;
-            }
-            nodes.push(AutomatonNode::new());
-            state = new_state;
         }
-        if let Some(node) = nodes.get_mut(state_index(state)) {
-            node.outputs.push(signature_index);
-        }
+        programs.push(program);
     }
 
     let mut queue = VecDeque::new();
@@ -1332,7 +2127,7 @@ fn build_automaton() -> Automaton {
             queue.push_back(child);
         }
     }
-    Automaton { nodes }
+    Automaton { nodes, programs }
 }
 
 #[cfg(test)]

@@ -8,6 +8,81 @@ use crate::{
 const SYNTHETIC_XRAY_SAVE: &[u8] = include_bytes!("../../../fixtures/synthetic/xray-soc.sav");
 
 #[test]
+fn crash_signature_catalog_contains_every_reference_entry() {
+    let signatures = CrashSignatureCatalog::all();
+    assert_eq!(
+        signatures.len(),
+        47,
+        "the checked-in C# 1.3.1 source has 47 catalog entries"
+    );
+    assert!(signatures.iter().any(|signature| signature.game == "cs"));
+    assert!(signatures.iter().any(|signature| signature.game == "soc"));
+    assert!(signatures.iter().any(|signature| signature.game == "any"));
+    for (index, signature) in signatures.iter().enumerate() {
+        assert!(signatures.iter().take(index).all(|other| other.id != signature.id));
+        assert!(!signature.pattern.is_empty());
+    }
+}
+
+#[test]
+fn every_reference_regex_branch_compiles_and_matches_its_synthetic_example() {
+    let automaton = super::AUTOMATON.get_or_init(super::build_automaton);
+    assert_eq!(automaton.programs.len(), CrashSignatureCatalog::all().len());
+    for (signature_index, program) in automaton.programs.iter().enumerate() {
+        let Some(signature) = CrashSignatureCatalog::all().get(signature_index) else {
+            return;
+        };
+        assert!(
+            !program.variants.is_empty(),
+            "signature {signature_index} did not compile"
+        );
+        for (variant_index, variant) in program.variants.iter().enumerate() {
+            assert!(
+                !variant.anchor.is_empty(),
+                "signature {signature_index} has no literal prefix"
+            );
+            assert!(
+                variant.matches_at(&variant.example, 0),
+                "signature {signature_index} pattern did not match its generated branch example"
+            );
+            let Some(state) = variant.anchor.iter().try_fold(0_u32, |state, byte| {
+                automaton
+                    .nodes
+                    .get(super::state_index(state))
+                    .and_then(|node| node.transitions.get(usize::from(*byte)))
+                    .copied()
+            }) else {
+                panic!("signature {} has no automaton path", signature.id);
+            };
+            assert!(
+                automaton.nodes.get(super::state_index(state)).is_some_and(|node| {
+                    node.outputs.iter().any(|output| {
+                        output.signature_index == signature_index && output.variant_index == variant_index
+                    })
+                }),
+                "signature {} was not reachable from its automaton anchor",
+                signature.id
+            );
+        }
+    }
+}
+
+#[test]
+fn reference_regexes_reject_malformed_variable_fields() {
+    assert!(CrashSignatureCatalog::match_log(
+        "sim_combat.script:not-a-line: attempt to index field 'actor' (a nil value)",
+        Some("cs")
+    )
+    .is_none());
+    assert!(CrashSignatureCatalog::match_log(
+        "There is no squad [red_pursuit_bounty_hunters_squad_x] in sim_board",
+        Some("cs")
+    )
+    .is_none());
+    assert!(CrashSignatureCatalog::match_log("entity not found. id_parent=x id_entity=2", Some("soc")).is_none());
+}
+
+#[test]
 fn documented_crash_signatures_match_case_insensitively_and_filter_by_game() {
     let line = "! [LUA][ERROR] ERROR: wrong target for storyline quest: logic@work5,gar_smart_terrain_6_3";
     let matched = CrashSignatureCatalog::match_log(line, Some("cs"));
@@ -20,6 +95,104 @@ fn documented_crash_signatures_match_case_insensitively_and_filter_by_game() {
         Some("cs.wrong-target-wild-napr")
     );
     assert!(CrashSignatureCatalog::match_log(line, Some("future game")).is_none());
+}
+
+#[test]
+fn every_documented_csharp_catalog_example_resolves_to_the_same_signature() {
+    let examples = [
+        (
+            "[error]Arguments     : LUA error: ...\\sim_combat.script:419: attempt to index field 'actor' (a nil value)",
+            Some("cs"),
+            "cs.sim-combat-actor-nil",
+        ),
+        (
+            "smart_terrain.script:483: Insufficient smart_terrain jobs val_smart_terrain_9_6",
+            Some("cs"),
+            "cs.insufficient-smart-jobs",
+        ),
+        (
+            "ERROR: cant find animation for slot 8",
+            Some("cs"),
+            "cs.hospital-jump-down-animation",
+        ),
+        (
+            "LUA error: ... clear sky\\gamedata\\scripts\\sim_squad_generic.script:1184: attempt to index field '?' (a nil value)",
+            Some("cs"),
+            "cs.squad-hint-unknown-target",
+        ),
+        (
+            "LUA error: xr_logic: pstor_load_all: not registered type N 147 encountered",
+            Some("cs"),
+            "cs.pstor-unknown-type",
+        ),
+        (
+            "[error]Description   : entity not found. id_parent=1350 id_entity=1312 frame=11471",
+            Some("soc"),
+            "soc.entity-not-found",
+        ),
+        (
+            "- Critical: SMapLocation binded to non-existent object id=4242",
+            Some("soc"),
+            "soc.map-location-dead-object",
+        ),
+        (
+            "Can't find model file 'monsters\\up_monsters\\pseudodog_noah.ogf'.",
+            Some("cop"),
+            "any.missing-model",
+        ),
+        (
+            "Can't open section 'wpn_pm_actor'",
+            Some("cop"),
+            "any.missing-section",
+        ),
+        (
+            "Can't find variable night_vision in [device_torch]",
+            Some("soc"),
+            "any.missing-config-value",
+        ),
+        (
+            "[error]Arguments : string table xml file not found string_table_includes.xml",
+            Some("soc"),
+            "any.missing-string-table",
+        ),
+        (
+            "[error]Expression    : hFile>0\n[error]Function      : FileDownload",
+            Some("cs"),
+            "any.config-not-opened",
+        ),
+    ];
+
+    for (log, game, expected_id) in examples {
+        let signatures = CrashSignatureCatalog::all();
+        let signature_index = signatures.iter().position(|signature| signature.id == expected_id);
+        assert!(
+            signature_index.is_some(),
+            "documented C# signature exists in the Rust catalog"
+        );
+        let signature_index = signature_index.unwrap_or_default();
+        let automaton = super::AUTOMATON.get_or_init(super::build_automaton);
+        let regex_matches = automaton.programs.get(signature_index).is_some_and(|program| {
+            program.variants.iter().any(|variant| {
+                log.as_bytes()
+                    .windows(variant.anchor.len())
+                    .enumerate()
+                    .any(|(start, window)| {
+                        window.eq_ignore_ascii_case(&variant.anchor) && variant.matches_at(log.as_bytes(), start)
+                    })
+            })
+        });
+        assert!(regex_matches, "reference regex did not match: {expected_id}: {log}");
+        assert_eq!(
+            CrashSignatureCatalog::match_log(log, game).map(|signature| signature.id),
+            Some(expected_id),
+            "game {game:?}: {log}"
+        );
+        assert_eq!(
+            CrashSignatureCatalog::match_log(log, None).map(|signature| signature.id),
+            Some(expected_id),
+            "game agnostic: {log}"
+        );
+    }
 }
 
 #[test]
