@@ -321,11 +321,13 @@ impl Screen for Settings {
                 .checked_rem(crate::theme::THEMES.len())
                 .unwrap_or(0);
             let old = crate::theme::current();
-            self.settings.theme_id = crate::theme::THEMES[self.theme].0.to_owned();
-            crate::theme::apply_appearance(&self.settings.theme_id, crate::theme::ACCENT_IDS[self.accent]);
+            let (theme_id, theme_name) = crate::theme::THEMES.get(self.theme).copied().unwrap_or(crate::theme::THEMES[0]);
+            let accent_id = crate::theme::ACCENT_IDS.get(self.accent).copied().unwrap_or("amber");
+            self.settings.theme_id = theme_id.to_owned();
+            crate::theme::apply_appearance(&self.settings.theme_id, accent_id);
             repaint_theme(cx.tree, old, crate::theme::current());
             if let Some(value) = self.theme_value {
-                cx.tree.set_text(value, crate::theme::THEMES[self.theme].1)?;
+                cx.tree.set_text(value, theme_name)?;
             }
             match save_settings(&self.settings) {
                 Ok(()) => cx.status = Some("Настройки сохранены.".to_owned()),
@@ -339,11 +341,13 @@ impl Screen for Settings {
                 .checked_rem(crate::theme::ACCENT_IDS.len())
                 .unwrap_or(0);
             let old = crate::theme::current();
-            self.settings.accent_id = crate::theme::ACCENT_IDS[self.accent].to_owned();
-            crate::theme::apply_appearance(crate::theme::THEMES[self.theme].0, &self.settings.accent_id);
+            let accent_id = crate::theme::ACCENT_IDS.get(self.accent).copied().unwrap_or("amber");
+            let theme_id = crate::theme::THEMES.get(self.theme).map_or("zone", |entry| entry.0);
+            self.settings.accent_id = accent_id.to_owned();
+            crate::theme::apply_appearance(theme_id, &self.settings.accent_id);
             repaint_theme(cx.tree, old, crate::theme::current());
             if let Some(value) = self.accent_value {
-                cx.tree.set_text(value, crate::theme::ACCENT_IDS[self.accent])?;
+                cx.tree.set_text(value, accent_id)?;
             }
             match save_settings(&self.settings) {
                 Ok(()) => cx.status = Some("Настройки сохранены.".to_owned()),
@@ -352,7 +356,7 @@ impl Screen for Settings {
         }
         if clicked.is_some() && clicked == self.scale_button {
             self.scale = self.scale.saturating_add(1).checked_rem(SCALES.len()).unwrap_or(0);
-            let percent = SCALES[self.scale];
+            let percent = SCALES.get(self.scale).copied().unwrap_or(100);
             self.settings.ui_scale_percent = percent;
             cx.tree
                 .set_scale(if percent == 0 { 1.0 } else { percent as f32 / 100.0 });
