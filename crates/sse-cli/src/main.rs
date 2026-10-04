@@ -1071,7 +1071,7 @@ mod write_tests {
             ),
             vec![
                 "Warning: Handle 0x30000001: неизвестный object kind=3, только read-only".to_owned(),
-                format!("Warning: {super::S2_LEGACY_WARNING}"),
+                format!("Warning: {}", super::S2_LEGACY_WARNING),
             ]
         );
     }
