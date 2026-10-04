@@ -53,14 +53,28 @@ pub fn check_all_dialogs(files: &[(&str, &str)], findings: &mut Vec<LintFinding>
             let body = text.get(tag_close_abs.saturating_add(1)..dialog_end_abs).unwrap_or("");
             let line_num = count_lines_up_to(text, abs_start);
 
-            let entry = dialogs.entry(dialog_id).or_insert_with(|| DialogEntry {
+            let entry = dialogs.entry(dialog_id.clone()).or_insert_with(|| DialogEntry {
                 path: path.to_string(),
                 line: line_num,
                 phrase_counts: HashMap::new(),
                 all_phrase_nexts: Vec::new(),
             });
 
-            parse_phrases_into(body, entry);
+            // Parse phrases for this declaration block
+            let mut block_counts = HashMap::new();
+            parse_phrases_into(body, entry, &mut block_counts);
+
+            for (id, count) in block_counts {
+                if count > 1 {
+                    findings.push(LintFinding {
+                        checker: "check_dialogs".to_string(),
+                        file: path.to_string(),
+                        line: line_num,
+                        severity: LintSeverity::Error,
+                        message: format!("{dialog_id}: duplicate phrase id {id}"),
+                    });
+                }
+            }
 
             dialog_start_pos = dialog_end_abs.saturating_add("</dialog>".len());
         }
@@ -70,20 +84,7 @@ pub fn check_all_dialogs(files: &[(&str, &str)], findings: &mut Vec<LintFinding>
     for (dialog_id, entry) in dialogs {
         let defined_ids: HashSet<&str> = entry.phrase_counts.keys().map(String::as_str).collect();
 
-        // 1. Duplicate phrase IDs
-        for (id, &count) in &entry.phrase_counts {
-            if count > 1 {
-                findings.push(LintFinding {
-                    checker: "check_dialogs".to_string(),
-                    file: entry.path.clone(),
-                    line: entry.line,
-                    severity: LintSeverity::Error,
-                    message: format!("{dialog_id}: duplicate phrase id {id}"),
-                });
-            }
-        }
-
-        // 2. Missing start phrase 0
+        // Missing start phrase 0
         if !entry.phrase_counts.is_empty() && !defined_ids.contains("0") {
             findings.push(LintFinding {
                 checker: "check_dialogs".to_string(),
@@ -117,7 +118,7 @@ pub fn check_dialogs_xml(path: &str, text: &str, findings: &mut Vec<LintFinding>
 }
 
 /// Helper to parse phrases from a dialog body and accumulate into a DialogEntry.
-fn parse_phrases_into(body: &str, entry: &mut DialogEntry) {
+fn parse_phrases_into(body: &str, entry: &mut DialogEntry, block_counts: &mut HashMap<String, usize>) {
     let mut pos = 0;
     while let Some(start_idx) = body.get(pos..).and_then(|t| t.find("<phrase")) {
         let abs_start = pos.saturating_add(start_idx);
@@ -144,6 +145,8 @@ fn parse_phrases_into(body: &str, entry: &mut DialogEntry) {
         if !phrase_id.is_empty() {
             let count = entry.phrase_counts.entry(phrase_id.clone()).or_insert(0);
             *count = count.saturating_add(1);
+            let b_count = block_counts.entry(phrase_id.clone()).or_insert(0);
+            *b_count = b_count.saturating_add(1);
         }
 
         // Find closing tag `</phrase>`

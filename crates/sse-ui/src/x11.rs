@@ -607,6 +607,13 @@ impl<T: Transport> Connection<T> {
 
     /// Parses a QueryExtension reply and records the opcode when present.
     pub fn parse_query_extension_reply(&mut self, name: &[u8], packet: &[u8]) -> Result<Option<u8>> {
+        Ok(self
+            .parse_query_extension_reply_details(name, packet)?
+            .map(|(opcode, _)| opcode))
+    }
+
+    /// Parses a QueryExtension reply and returns its major opcode and first event type.
+    pub fn parse_query_extension_reply_details(&mut self, name: &[u8], packet: &[u8]) -> Result<Option<(u8, u8)>> {
         ensure_reply(packet)?;
         let present = *packet
             .get(8)
@@ -615,12 +622,20 @@ impl<T: Transport> Connection<T> {
         let opcode = *packet
             .get(9)
             .ok_or_else(|| Error::damaged("short QueryExtension reply"))?;
+        let first_event = *packet
+            .get(10)
+            .ok_or_else(|| Error::damaged("short QueryExtension reply"))?;
         if present {
             self.set_extension_opcode(name, opcode);
-            Ok(Some(opcode))
+            Ok(Some((opcode, first_event)))
         } else {
             Ok(None)
         }
+    }
+
+    /// Sends GetInputFocus as a reply barrier after an asynchronous extension request.
+    pub fn get_input_focus(&mut self) -> Result<u16> {
+        self.send_request(request_header(43, 0, 4, self.order)?)
     }
 
     /// Sends BIG-REQUESTS Enable after QueryExtension discovered its opcode.
@@ -869,6 +884,14 @@ impl<T: Transport> Connection<T> {
         push_u32(&mut req, self.order, shmid);
         req.push(u8::from(read_only));
         req.extend_from_slice(&[0, 0, 0]);
+        self.send_request(req)
+    }
+
+    /// MIT-SHM Detach request.
+    pub fn shm_detach(&mut self, shmseg: ShmSeg) -> Result<u16> {
+        let opcode = self.extension_opcode(b"MIT-SHM")?;
+        let mut req = request_header(opcode, 2, 8, self.order)?;
+        push_u32(&mut req, self.order, shmseg.0);
         self.send_request(req)
     }
 
@@ -1914,6 +1937,35 @@ mod tests {
         assert_eq!(bytes.first().copied(), Some(b'l'));
         assert_eq!(read_u16_at(&bytes, 2, ByteOrder::Little), Ok(11));
         assert_eq!(bytes.len() % 4, 0);
+    }
+
+    #[test]
+    fn query_extension_reply_exposes_opcode_and_first_event() {
+        let mut connection = Connection::new(FakeTransport::default(), ByteOrder::Little, &minimal_setup());
+        let mut reply = vec![0_u8; 32];
+        for (slot, value) in reply.iter_mut().zip([1_u8, 0, 0, 0, 0, 0, 0, 0, 1, 130, 64]) {
+            *slot = value;
+        }
+        assert_eq!(
+            connection.parse_query_extension_reply_details(b"MIT-SHM", &reply),
+            Ok(Some((130, 64)))
+        );
+        assert_eq!(connection.extension_opcode(b"MIT-SHM"), Ok(130));
+    }
+
+    #[test]
+    fn shm_attach_detach_and_input_focus_use_expected_request_codes() {
+        let mut connection = Connection::new(FakeTransport::default(), ByteOrder::Little, &minimal_setup());
+        connection.set_extension_opcode(b"MIT-SHM", 130);
+        assert!(connection.shm_attach(ShmSeg(0x1122_3344), 17, false).is_ok());
+        assert!(connection.get_input_focus().is_ok());
+        assert!(connection.shm_detach(ShmSeg(0x1122_3344)).is_ok());
+        let requests = connection.into_inner().sent;
+        assert_eq!(requests.len(), 3);
+        assert_eq!(requests.first().and_then(|request| request.first()).copied(), Some(130));
+        assert_eq!(requests.get(1).and_then(|request| request.first()).copied(), Some(43));
+        assert_eq!(requests.get(2).and_then(|request| request.first()).copied(), Some(130));
+        assert_eq!(requests.get(2).and_then(|request| request.get(1)).copied(), Some(2));
     }
 
     #[test]

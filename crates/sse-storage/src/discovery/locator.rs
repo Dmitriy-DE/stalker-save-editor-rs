@@ -872,6 +872,14 @@ pub fn resolve_links(path: &Path) -> PathBuf {
     resolve_links_internal(path, 0)
 }
 
+pub(super) fn resolve_entry_path(directory_identity: &Path, entry: &fs::DirEntry) -> PathBuf {
+    let path = normalize_full_path(&directory_identity.join(entry.file_name()));
+    match entry.file_type() {
+        Ok(file_type) if !file_type.is_symlink() => path,
+        Ok(_) | Err(_) => resolve_links(&path),
+    }
+}
+
 fn resolve_links_internal(path: &Path, depth: usize) -> PathBuf {
     if depth >= 16 {
         return path.to_path_buf();

@@ -5,6 +5,11 @@ pub mod bc;
 /// LZO1X as the X-Ray engine uses it for saves.
 pub mod lzo1x;
 
+/// Independent safe Rust Kraken decoder retained for cross-checking the main implementation.
+pub mod kraken_c3a;
+mod kraken_c3a_entropy;
+mod kraken_c3a_lz;
+
 /// X-Ray archive LZHUF decoding and header descrambling.
 pub mod lzhuf;
 
@@ -33,6 +38,8 @@ pub mod zip;
 
 /// PNG decoder to RGBA8.
 pub mod png;
+/// Minimal deterministic RGBA8 PNG encoder for golden tests.
+pub mod png_encode;
 /// SHA-256 (FIPS 180-4).
 pub mod sha256;
 

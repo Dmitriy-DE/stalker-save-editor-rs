@@ -87,6 +87,13 @@ pub enum Content {
         /// Font face and size.
         style: TextStyle,
     },
+    /// Multi-line text wrapped to the arranged width.
+    Paragraph {
+        /// Text.
+        text: String,
+        /// Font face and size.
+        style: TextStyle,
+    },
     /// A clickable box with one line of text.
     Button {
         /// Text.
@@ -100,7 +107,9 @@ impl Content {
     fn text(&self) -> Option<(&str, TextStyle)> {
         match self {
             Self::Panel => None,
-            Self::Label { text, style } | Self::Button { text, style } => Some((text.as_str(), *style)),
+            Self::Label { text, style } | Self::Paragraph { text, style } | Self::Button { text, style } => {
+                Some((text.as_str(), *style))
+            }
         }
     }
 
@@ -205,7 +214,11 @@ impl Tree {
     pub fn set_text(&mut self, id: WidgetId, text: &str) -> Result<()> {
         let node = self.node_mut(id)?;
         match &mut node.content {
-            Content::Label { text: old, .. } | Content::Button { text: old, .. } if old != text => {
+            Content::Label { text: old, .. }
+            | Content::Paragraph { text: old, .. }
+            | Content::Button { text: old, .. }
+                if old != text =>
+            {
                 text.clone_into(old);
             }
             _ => return Ok(()),
@@ -255,6 +268,23 @@ impl Tree {
             self.needs_layout = true;
             self.damage_all();
         }
+    }
+
+    /// Sets the logical-to-framebuffer scale reported by the native window.
+    ///
+    /// Invalid, non-positive scales are ignored so a malformed platform event cannot poison layout geometry.
+    pub fn set_scale(&mut self, scale: f32) {
+        if scale.is_finite() && scale > 0.0 && self.scale != scale {
+            self.scale = scale;
+            self.needs_layout = true;
+            self.damage_all();
+        }
+    }
+
+    /// Current logical-to-framebuffer scale used to snap layout boundaries.
+    #[must_use]
+    pub const fn scale(&self) -> f32 {
+        self.scale
     }
 
     /// Current window size.
@@ -467,11 +497,29 @@ impl Tree {
     /// The caller's style with the text size folded into the preferred size.
     fn text_style(&self, content: &Content, mut style: Style) -> Style {
         if let Some((text, text_style)) = content.text() {
-            let width = self.fonts.measure(text, text_style) + style.padding.left + style.padding.right;
-            let height = self.fonts.line_height(text_style) + style.padding.top + style.padding.bottom;
-            style.preferred.width = style.preferred.width.max(width.ceil());
-            style.preferred.height = style.preferred.height.max(height.ceil());
-            style.min.height = style.min.height.max(height.ceil());
+            let line_height = self.fonts.line_height(text_style);
+            if matches!(content, Content::Paragraph { .. }) {
+                let constrained = if style.preferred.width.is_finite() && style.preferred.width > 0.0 {
+                    style.preferred.width
+                } else if style.max.width.is_finite() {
+                    style.max.width
+                } else {
+                    self.fonts.measure(text, text_style) + style.padding.left + style.padding.right
+                };
+                let inner = (constrained - style.padding.left - style.padding.right).max(1.0);
+                let lines = crate::text::break_lines(text, inner, &self.fonts.metrics(text_style));
+                let count = u16::try_from(lines.len().max(1)).map_or(f32::from(u16::MAX), f32::from);
+                let height = line_height * count + style.padding.top + style.padding.bottom;
+                style.preferred.width = style.preferred.width.max(constrained.ceil());
+                style.preferred.height = style.preferred.height.max(height.ceil());
+                style.min.height = style.min.height.max(height.ceil());
+            } else {
+                let width = self.fonts.measure(text, text_style) + style.padding.left + style.padding.right;
+                let height = line_height + style.padding.top + style.padding.bottom;
+                style.preferred.width = style.preferred.width.max(width.ceil());
+                style.preferred.height = style.preferred.height.max(height.ceil());
+                style.min.height = style.min.height.max(height.ceil());
+            }
         }
         style
     }
@@ -528,9 +576,25 @@ fn paint_node(
     } else {
         look.text
     };
-    let text_width = fonts.measure(text, style);
     let line = fonts.line_height(style);
     let left = i32_to_f32(rect.x) + padding.left;
+    if matches!(content, Content::Paragraph { .. }) {
+        let inner_width = (u32_to_f32(rect.width) - padding.left - padding.right).max(1.0);
+        let lines = crate::text::break_lines(text, inner_width, &fonts.metrics(style));
+        let mut baseline = i32_to_f32(rect.y) + padding.top + fonts.ascent(style);
+        for wrapped in lines {
+            if let Some(slice) = text.get(wrapped.start..wrapped.end) {
+                fonts.draw(surface, slice, left, baseline, style, look.text);
+                if wrapped.append_hyphen {
+                    let x = left + fonts.measure(slice, style);
+                    fonts.draw(surface, "-", x, baseline, style, look.text);
+                }
+            }
+            baseline += line;
+        }
+        return;
+    }
+    let text_width = fonts.measure(text, style);
     let right = i32_to_f32(rect.x) + u32_to_f32(rect.width) - padding.right;
     let x = match look.align {
         TextAlign::Start => left,

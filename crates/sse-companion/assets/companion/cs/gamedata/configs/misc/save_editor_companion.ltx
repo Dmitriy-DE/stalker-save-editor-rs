@@ -1,0 +1,68 @@
+; Save Editor companion item: Clear Sky.
+; Using it opens the companion menu over the game.
+; Based on II_ANTIR class (usable item) so the game fires use_object;
+; the mod gives a fresh one back right after use.
+
+[se_companion_pda]:identity_immunities
+GroupControlSection	= spawn_group
+discovery_dependency=
+$spawn 				= "devices\se_companion_pda"
+$prefetch 			= 32
+class				= II_ANTIR
+cform				= skeleton
+visual				= dynamics\devices\dev_pda\dev_pda.ogf
+description			= Открывает меню компаньона Save Editor поверх игры. Нельзя продать или выбросить.
+inv_name			= КПК компаньона
+inv_name_short		= КПК компаньона
+inv_weight			= 0.0
+inv_grid_width		= 1
+inv_grid_height		= 1
+inv_grid_x			= 6
+inv_grid_y			= 13
+cost				= 0
+can_trade			= false
+quest_item			= true
+eat_portions_num	= 1
+
+; Quick action items: usable from inventory or companion menu.
+[se_act_heal]:se_companion_pda
+description			= Быстрое действие компаньона: лечение (здоровье, выносливость, радиация).
+inv_name			= Действие: лечение
+inv_name_short		= Лечение
+inv_grid_x			= 3
+inv_grid_y			= 18
+
+[se_act_repair]:se_companion_pda
+description			= Быстрое действие компаньона: починить надетое оружие и броню.
+inv_name			= Действие: починка
+inv_name_short		= Починка
+
+[se_act_mark]:se_companion_pda
+description			= Быстрое действие компаньона: запомнить место, где ты стоишь.
+inv_name			= Действие: метка
+inv_name_short		= Метка
+
+[se_act_return]:se_companion_pda
+description			= Быстрое действие компаньона: перенестись к последней метке.
+inv_name			= Действие: к метке
+inv_name_short		= К метке
+
+[se_act_save]:se_companion_pda
+description			= Быстрое действие компаньона: быстрое сохранение в любом месте.
+inv_name			= Действие: сейв
+inv_name_short		= Сейв
+
+; Worn on the belt: carry weight and no hunger.
+; CArtefact in Clear Sky natively supports additional_inventory_weight and satiety.
+[se_companion_amulet]:af_medusa
+description			= Амулет компаньона: +500 кг к переносимому весу, без голода. Работает на поясе.
+inv_name			= Амулет компаньона
+inv_name_short		= Амулет компаньона
+cost				= 0
+can_trade			= false
+quest_item			= true
+jump_height			= 0
+radiation_restore_speed		= 0
+satiety_restore_speed		= 0.1
+additional_inventory_weight	= 500
+additional_inventory_weight2	= 500

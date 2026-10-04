@@ -1,0 +1,1214 @@
+--[[
+  S.T.A.L.K.E.R. Save Editor — in-game companion (protocol v1).
+  One script for Shadow of Chernobyl, Clear Sky, Call of Pripyat and their
+  Enhanced Editions: every engine call below is present in all three
+  engines' script exports (vanilla lua_help.script dumps:
+  https://github.com/ixray-team/ixray-1.6-stcop/blob/main/gamedata_soc/scripts/lua_help.script
+  https://github.com/ixray-team/ixray-1.6-stcop/blob/main/gamedata_cs/scripts/lua_help.script
+  https://github.com/ixray-team/ixray-1.6-stcop/blob/main/gamedata/scripts/lua_help.script).
+  io/os are opened by the engine script storage (CS source:
+  https://github.com/OpenXRay/xray-15/blob/master/cs/engine/xrServerEntities/script_storage.cpp#L264-L270,
+  CoP: https://github.com/OpenXRay/xray-16/blob/master/src/xrScriptEngine/script_engine.cpp#L903-L909).
+
+  Exchange (all in $app_data_root$, the game's user-data folder):
+    editor writes save_editor_cmd.tmp, then renames it to save_editor_cmd.txt
+    mod reads and deletes save_editor_cmd.txt, writes save_editor_out.tmp,
+    then renames it to save_editor_out.txt
+  Command line:  v1 <id> <command> [args...]
+  Reply line:    v1 <id> ok|error|unsupported <text>
+  See docs/COMPANION.md.
+
+  Hook: vanilla X-Ray has no plugin loader, so bind_stalker.script needs one
+  line in actor_binder:update(delta):
+      if save_editor_companion then save_editor_companion.update() end
+--]]
+
+local PROTOCOL = "v1"
+-- Bump on every change of the mod files: the editor compares it with the build it installs.
+local MOD_BUILD = "2026.09.28.2"
+local POLL_MS_DEFAULT = 2000
+local POLL_MS_HOTKEYS = 250
+local MAX_GIVE = 100
+local SLOT_LIMIT = 13 -- highest slot index is below this in all three games
+
+local next_poll = 0
+local pending_release = nil -- {id, at}: temporary level changer to remove
+local cmd_path, tmp_out_path, out_path
+
+local function paths()
+	if cmd_path == nil then
+		local fs = getFS()
+		cmd_path = fs:update_path("$app_data_root$", "save_editor_cmd.txt")
+		tmp_out_path = fs:update_path("$app_data_root$", "save_editor_out.tmp")
+		out_path = fs:update_path("$app_data_root$", "save_editor_out.txt")
+	end
+	return cmd_path, tmp_out_path, out_path
+end
+
+local function one_line(text)
+	return (string.gsub(tostring(text or ""), "[\r\n]+", " "))
+end
+
+local function reply(id, status, text)
+	local _, tmp, out = paths()
+	local f = io.open(tmp, "w")
+	if f == nil then
+		return
+	end
+	f:write(PROTOCOL, " ", id, " ", status, " ", one_line(text), "\n")
+	f:close()
+	os.remove(out)
+	os.rename(tmp, out)
+end
+
+local function split(line)
+	local words = {}
+	for word in string.gmatch(line, "%S+") do
+		table.insert(words, word)
+	end
+	return words
+end
+
+local function count_arg(value, default, limit)
+	local n = tonumber(value or default)
+	if n == nil or n ~= math.floor(n) or n < 1 or n > limit then
+		return nil
+	end
+	return n
+end
+
+local handlers = {}
+
+function handlers.ping()
+	return "ok", "pong " .. MOD_BUILD
+end
+
+function handlers.info()
+	local p = db.actor:position()
+	return "ok", string.format(
+		"level=%s x=%.3f y=%.3f z=%.3f money=%d",
+		level.name(), p.x, p.y, p.z, db.actor:money()
+	)
+end
+
+function handlers.give(args)
+	local section = args[1]
+	local count = count_arg(args[2], 1, MAX_GIVE)
+	if section == nil or count == nil then
+		return "error", "usage: give <section> [1-" .. MAX_GIVE .. "]"
+	end
+	if not system_ini():section_exist(section) then
+		return "error", "unknown section " .. section
+	end
+	local actor = db.actor
+	for _ = 1, count do
+		alife():create(section, actor:position(), actor:level_vertex_id(), actor:game_vertex_id(), actor:id())
+	end
+	return "ok", string.format("gave %d %s", count, section)
+end
+
+function handlers.money(args)
+	local delta = tonumber(args[1])
+	if delta == nil or delta ~= math.floor(delta) then
+		return "error", "usage: money <integer delta>"
+	end
+	if db.actor:money() + delta < 0 then
+		return "error", "balance would go below zero"
+	end
+	db.actor:give_money(delta)
+	return "ok", "money=" .. db.actor:money()
+end
+
+-- Assigning these actor properties adds the value and the engine clamps it
+-- (vanilla scripts heal with db.actor.health = 1).
+function handlers.heal()
+	local actor = db.actor
+	actor.health = 1
+	actor.power = 1
+	actor.psy_health = 1
+	actor.radiation = -1
+	return "ok", "healed"
+end
+
+function handlers.repair_equipped()
+	local repaired = 0
+	for slot = 0, SLOT_LIMIT - 1 do
+		local item = db.actor:item_in_slot(slot)
+		if item ~= nil then
+			item:set_condition(1)
+			repaired = repaired + 1
+		end
+	end
+	return "ok", "repaired=" .. repaired
+end
+
+function handlers.teleport(args)
+	local x, y, z = tonumber(args[1]), tonumber(args[2]), tonumber(args[3])
+	if x == nil or y == nil or z == nil then
+		return "error", "usage: teleport <x> <y> <z> (current level only)"
+	end
+	db.actor:set_actor_position(vector():set(x, y, z))
+	return "ok", string.format("at %.3f %.3f %.3f", x, y, z)
+end
+
+function handlers.list_inventory()
+	local items = {}
+	db.actor:inventory_for_each(function(item)
+		table.insert(items, item:section() .. ":" .. item:id())
+	end)
+	return "ok", table.concat(items, ",")
+end
+
+function handlers.weather(args)
+	local weather = args and args[1]
+	if weather == nil or weather == "" then
+		local current = level.get_weather and level.get_weather() or "unknown"
+		return "ok", "weather=" .. current
+	end
+	if level.set_weather == nil then
+		return "error", "level.set_weather unavailable"
+	end
+	local now = true
+	if args[2] == "false" or args[2] == "0" then
+		now = false
+	end
+	level.set_weather(weather, now)
+	if level_weathers and level_weathers.get_weather_manager then
+		local mgr = level_weathers.get_weather_manager()
+		if mgr and mgr.state then
+			local sub = string.gsub(weather, "^default_", "")
+			for _, st in pairs(mgr.state) do
+				if st.graph and st.graph[sub] then
+					st.current_state = sub
+					st.next_state = sub
+				end
+			end
+		end
+	end
+	return "ok", "weather=" .. weather
+end
+
+-- Smart terrains are the game's own named places; their positions come from
+-- the running game, so no coordinate tables are needed. Same approach as the
+-- «Повелитель Зоны 5.0» trainer (ui_god_dialog.script, mode "level"):
+-- https://github.com/xray-storage/so-xray/blob/master/gamedata/scripts/ui_god_dialog.script
+local MAX_OBJECT_ID = 65534
+local COP_LEVELS = { zaton = true, jupiter = true, jupiter_underground = true, pripyat = true, labx8 = true }
+
+local function level_of(se_obj)
+	return alife():level_name(game_graph():vertex(se_obj.m_game_vertex_id):level_id())
+end
+
+local function find_smart(name)
+	local sim = alife()
+	for id = 1, MAX_OBJECT_ID do
+		local obj = sim:object(id)
+		if obj ~= nil and obj:section_name() == "smart_terrain" and obj:name() == name then
+			return obj
+		end
+	end
+	return nil
+end
+
+function handlers.smarts(args)
+	local only_level = args[1]
+	local names = {}
+	-- the trainer shows the same st_<smart>_name strings (god_tbl.script)
+	for _, smart in ipairs(all_smarts()) do
+		if only_level == nil or only_level == smart.level then
+			table.insert(names, smart.name .. "@" .. smart.level .. "=" .. string.gsub(smart.title, "[,=]", " "))
+		end
+	end
+	return "ok", table.concat(names, ",")
+end
+
+-- Cross-level jump: a temporary level_changer under the actor that points at
+-- the target, removed right after it fires. Packet layout of
+-- se_level_changer as written by the trainer's god.spawn_lc (CoP layout):
+-- https://github.com/xray-storage/so-xray/blob/master/gamedata/scripts/god.script
+local function spawn_level_changer(dest_level, dest_pos, dest_gv)
+	local actor = db.actor
+	local obj = alife():create("level_changer", actor:position(), 1, actor:game_vertex_id())
+	local packet = net_packet()
+	packet:w_begin(0)
+	obj:STATE_Write(packet)
+	packet:r_seek(2)
+	local game_vertex_id = packet:r_u16()
+	local unk1 = packet:r_float()
+	local unk2 = packet:r_s32()
+	local level_vertex_id = packet:r_s32()
+	local object_flags = packet:r_s32()
+	local custom_data = packet:r_stringZ()
+	local story_id = packet:r_s32()
+	local unk3 = packet:r_s32()
+	local shape_count = packet:r_u8()
+	for _ = 1, shape_count do
+		if packet:r_u8() == 0 then
+			packet:r_vec3()
+			packet:r_float()
+		else
+			packet:r_vec3()
+			packet:r_vec3()
+			packet:r_vec3()
+			packet:r_vec3()
+		end
+	end
+	local restrictor_type = packet:r_u8()
+	packet:r_u16()
+	packet:r_s32()
+	packet:r_vec3()
+	local dest_direction = packet:r_vec3()
+	packet:r_stringZ()
+	local dest_graph_point = packet:r_stringZ()
+	packet:r_u8()
+	local enabled = packet:r_u8()
+	local hint = packet:r_stringZ()
+	local marker = packet:r_u16()
+
+	packet:w_u16(game_vertex_id)
+	packet:w_float(unk1)
+	packet:w_s32(unk2)
+	packet:w_s32(level_vertex_id)
+	packet:w_s32(object_flags)
+	packet:w_stringZ(custom_data)
+	packet:w_s32(story_id)
+	packet:w_s32(unk3)
+	packet:w_u8(1) -- one sphere of radius 2 around the actor
+	packet:w_u8(0)
+	packet:w_vec3(vector():set(0, 0, 0))
+	packet:w_float(2)
+	packet:w_u8(restrictor_type)
+	packet:w_u16(dest_gv)
+	packet:w_s32(1)
+	packet:w_vec3(dest_pos)
+	packet:w_vec3(dest_direction)
+	packet:w_stringZ(dest_level)
+	packet:w_stringZ(dest_graph_point)
+	packet:w_u8(1) -- silent mode: no confirmation dialog
+	packet:w_u8(enabled)
+	packet:w_stringZ(hint)
+	packet:w_u16(marker)
+	obj:STATE_Read(packet, packet:w_tell() - packet:r_tell())
+	return obj
+end
+
+-- Jump to a place given by level name, position and game vertex. Same level:
+-- move the actor; another level: temporary level changer (via save_editor_level_changer).
+function jump_to(target_level, pos, gv, label)
+	if target_level == level.name() then
+		db.actor:set_actor_position(pos)
+		return "ok", "at " .. label
+	end
+	local lc
+	if save_editor_level_changer ~= nil and save_editor_level_changer.spawn_level_changer ~= nil then
+		lc = save_editor_level_changer.spawn_level_changer(target_level, pos, gv)
+	elseif spawn_level_changer ~= nil then
+		if not (COP_LEVELS[level.name()] and COP_LEVELS[target_level]) then
+			return "unsupported", "cross-level jump is only proven in Call of Pripyat"
+		end
+		lc = spawn_level_changer(target_level, pos, gv)
+	else
+		return "unsupported", "no level changer module found"
+	end
+	pending_release = { id = lc.id, at = time_global() + 300 }
+	return "ok", "jumping to " .. label .. "@" .. target_level
+end
+
+-- Every smart terrain as {name, level, title}; title is the in-game place name
+-- or "" when the game has none.
+function all_smarts()
+	local sim = alife()
+	local result = {}
+	for id = 1, MAX_OBJECT_ID do
+		local obj = sim:object(id)
+		if obj ~= nil and obj:section_name() == "smart_terrain" then
+			local key = "st_" .. obj:name() .. "_name"
+			local title = game.translate_string(key)
+			if title == key then
+				title = ""
+			end
+			if title == "" and save_editor_places ~= nil and save_editor_places.names ~= nil and save_editor_places.names[obj:name()] ~= nil then
+				title = game.translate_string(save_editor_places.names[obj:name()])
+			end
+			table.insert(result, { name = obj:name(), level = level_of(obj), title = title, obj = obj })
+		end
+	end
+	return result
+end
+
+function handlers.jump(args)
+	local name = args[1]
+	if name == nil then
+		return "error", "usage: jump <smart_terrain name> (see: smarts)"
+	end
+	local target = find_smart(name)
+	if target == nil then
+		return "error", "no smart terrain " .. name
+	end
+	return jump_to(level_of(target), target.position, target.m_game_vertex_id, name)
+end
+
+function handlers.mark(args)
+	return mark_here()
+end
+
+function handlers.jump_last(args)
+	return jump_last()
+end
+
+function handlers.quicksave(args)
+	local name = args and args[1]
+	if name ~= nil and name ~= "" then
+		if get_console ~= nil then
+			get_console():execute("save " .. name)
+			return "ok", name
+		end
+	end
+	return quick_save()
+end
+
+local hotkeys_active = false
+function handlers.hotkeys(args)
+	local mode = args and args[1]
+	if mode == "on" or mode == "1" then
+		hotkeys_active = true
+	elseif mode == "off" or mode == "0" then
+		hotkeys_active = false
+	else
+		hotkeys_active = not hotkeys_active
+	end
+	if news_manager ~= nil and news_manager.send_tip ~= nil and db.actor ~= nil then
+		pcall(function()
+			news_manager.send_tip(db.actor, "ХОТКЕИ: " .. (hotkeys_active and "ВКЛЮЧЕНЫ" or "ВЫКЛЮЧЕНЫ"), nil, nil, 3000)
+		end)
+	end
+	return "ok", "hotkeys=" .. (hotkeys_active and "on" or "off")
+end
+
+-- Run one protocol command from the in-game menu; returns status, text.
+function run(command, args)
+	local handler = handlers[command]
+	if handler == nil then
+		return "unsupported", command
+	end
+	local ok, status, text = pcall(handler, args)
+	if not ok then
+		return "error", status
+	end
+	return status, text
+end
+
+-- Toggles from the in-game menu, kept in $app_data_root$ between sessions.
+-- Actor properties are deltas (conditions().ChangeHealth/ChangePower/
+-- ChangeBleeding in script_game_object3.cpp), so assigning 1 tops them up:
+-- https://github.com/OpenXRay/xray-16/blob/master/src/xrGame/script_game_object3.cpp
+TOGGLES = { "god", "stamina", "bleeding", "repair", "ammo", "life" }
+local toggles = nil
+local next_toggle_tick = 0
+local TOGGLE_TICK_MS = 250
+
+local function toggles_path()
+	return getFS():update_path("$app_data_root$", "save_editor_settings.txt")
+end
+
+function get_toggles()
+	if toggles == nil then
+		toggles = {}
+		local f = io.open(toggles_path(), "r")
+		if f ~= nil then
+			for line in f:lines() do
+				local key, value = string.match(line, "^(%w+)=(%w+)")
+				if key ~= nil then
+					toggles[key] = value == "1"
+				end
+			end
+			f:close()
+		end
+	end
+	return toggles
+end
+
+function set_toggle(key, value)
+	get_toggles()[key] = value and true or false
+	local f = io.open(toggles_path(), "w")
+	if f ~= nil then
+		for _, name in ipairs(TOGGLES) do
+			f:write(name, "=", toggles[name] and "1" or "0", "\n")
+		end
+		f:close()
+	end
+end
+
+local function refill_ammo(item)
+	if item == nil then
+		return
+	end
+	local section = item:section()
+	local ini = system_ini()
+	if not ini:line_exist(section, "ammo_mag_size") then
+		return
+	end
+	local size = ini:r_u32(section, "ammo_mag_size")
+	if size > 0 and item:get_ammo_in_magazine() < size then
+		item:set_ammo_elapsed(size)
+	end
+end
+
+local function apply_toggles()
+	local t = get_toggles()
+	local actor = db.actor
+	if t.god then
+		actor.health = 1
+		actor.psy_health = 1
+	end
+	-- One spare life: the first time health drops near zero it is restored,
+	-- then the toggle switches itself off. Checked every 250 ms, so a single
+	-- hit larger than the remaining health still kills.
+	if t.life and actor.health < 0.15 then
+		actor.health = 1
+		set_toggle("life", false)
+	end
+	if t.stamina then
+		actor.power = 1
+	end
+	if t.bleeding then
+		stop_bleeding(actor)
+	end
+	if t.repair then
+		for slot = 0, SLOT_LIMIT - 1 do
+			local item = actor:item_in_slot(slot)
+			if item ~= nil and item:condition() < 1 then
+				item:set_condition(1)
+			end
+		end
+	end
+	if t.ammo then
+		refill_ammo(actor:active_item())
+	end
+end
+
+-- Spawn a whole squad a few metres in front of the actor (Call of Pripyat).
+local function is_cs()
+	return sim_board ~= nil and sim_board.squad_ltx ~= nil
+end
+
+local function is_cop()
+	return sim_board ~= nil and sim_board.squad_ltx == nil
+end
+
+local function spawn_squad_cop(squad_id, single)
+	local ini = system_ini()
+	if not ini:section_exist(squad_id) then
+		return "error", "unknown squad " .. squad_id
+	end
+	local actor = db.actor
+	local nearest, best = nil, nil
+	for _, smart in ipairs(all_smarts()) do
+		if smart.level == level.name() then
+			local d = smart.obj.position:distance_to(actor:position())
+			if best == nil or d < best then
+				nearest, best = smart.obj, d
+			end
+		end
+	end
+	if nearest == nil then
+		return "error", "no smart terrain on this level"
+	end
+	local pos = vector():set(actor:position()):mad(actor:direction(), 4)
+	local lvid, gvid = actor:level_vertex_id(), actor:game_vertex_id()
+	local board = sim_board.get_sim_board()
+	local squad = alife():create(squad_id, pos, lvid, gvid)
+	local fixed = utils.parse_names(utils.cfg_get_string(ini, squad_id, "npc", squad, false, "", ""))
+	local random_pool = utils.cfg_get_string(ini, squad_id, "npc_random", squad, false, "", nil)
+	if single then
+		local pool = #fixed > 0 and fixed or utils.parse_names(random_pool or "")
+		local index = #fixed > 0 and 1 or math.random(1, #pool)
+		squad:add_squad_member(pool[index], pos, lvid, gvid, index)
+		random_pool = nil
+		fixed = {}
+	end
+	for k, section in pairs(fixed) do
+		squad:add_squad_member(section, pos, lvid, gvid, k)
+	end
+	if random_pool ~= nil then
+		random_pool = utils.parse_names(random_pool)
+		local low, high = utils.r_2nums(ini, squad_id, "npc_in_squad", 1, 2)
+		for _ = 1, math.random(low, math.max(low, high)) do
+			local index = math.random(1, #random_pool)
+			squad:add_squad_member(random_pool[index], pos, lvid, gvid, index)
+		end
+	end
+	squad.smart_id = nearest.id
+	squad:refresh()
+	squad:set_squad_relation()
+	board:assign_squad_to_smart(squad, nearest.id)
+	for member in squad:squad_members() do
+		board:setup_squad_and_group(member.object)
+	end
+	return "ok", "spawned " .. squad_id
+end
+
+local function spawn_squad_cs(squad_id, single)
+	local actor = db.actor
+	local pos = vector():set(actor:position()):mad(actor:direction(), 4)
+	local lvid, gvid = actor:level_vertex_id(), actor:game_vertex_id()
+	local ltx = sim_board.squad_ltx
+	local board = sim_board.get_sim_board()
+
+	-- Direct NPC spawn section (e.g. story character from spawn_sections_*.ltx)
+	if not ltx:section_exist(squad_id) then
+		if system_ini():section_exist(squad_id) then
+			local obj = alife():create(squad_id, pos, lvid, gvid)
+			board:setup_squad_and_group(obj)
+			return "ok", "spawned " .. squad_id
+		end
+		return "error", "unknown squad " .. squad_id
+	end
+
+	local player_name = utils.cfg_get_string(ltx, squad_id, "faction", nil, false, "", "")
+	local player = board.players[player_name]
+	if player == nil then
+		return "error", "unknown faction " .. tostring(player_name)
+	end
+
+	local nearest, best = nil, nil
+	for _, smart in ipairs(all_smarts()) do
+		if smart.level == level.name() then
+			local d = smart.obj.position:distance_to(actor:position())
+			if best == nil or d < best then
+				nearest, best = smart.obj, d
+			end
+		end
+	end
+	if nearest == nil then
+		return "error", "no smart terrain on this level"
+	end
+
+	local auto_id = tostring(board.id_generator:get_id())
+	local squad = sim_squad_scripted.sim_squad_scripted(board, player.player_name, auto_id, squad_id)
+	squad:init_squad(nearest)
+	board.squads[auto_id] = squad
+
+	local spawn_sections = utils.parse_names(utils.cfg_get_string(ltx, squad_id, "npc", squad, false, "", ""))
+	if #spawn_sections == 0 then
+		local pool = utils.cfg_get_string(ltx, squad_id, "npc_random", squad, false, "", "")
+		spawn_sections = utils.parse_names(pool)
+	end
+
+	if single and #spawn_sections > 0 then
+		spawn_sections = { spawn_sections[1] }
+	end
+
+	for _, sec in pairs(spawn_sections) do
+		local p = vector():set(pos)
+		p.x = p.x + math.random(-2, 2)
+		p.z = p.z + math.random(-2, 2)
+		local obj = alife():create(sec, p, lvid, gvid)
+		obj.squad_id = squad.squad_id
+		squad.squad_npc[obj.id] = obj.id
+		squad.sound_manager:register_npc(obj.id)
+		if squad.commander_id == nil then
+			squad.commander_id = obj.id
+		end
+		squad.npc_count = squad.npc_count + 1
+		squad.squad_power = squad.squad_power + 5 * obj:rank() / 1000
+	end
+
+	squad.smart_id = nearest.id
+	squad:refresh()
+	squad:set_squad_sympathy()
+	squad:set_squad_relation()
+	board:assign_squad_to_smart(squad, nearest.id)
+	for k, _ in pairs(squad.squad_npc) do
+		local obj = alife():object(k)
+		board:setup_squad_and_group(obj)
+	end
+	player:register_squad(squad)
+	player:faction_brain_update()
+	squad:update()
+	return "ok", "spawned " .. squad_id
+end
+
+local function spawn_squad_soc(squad_id, single)
+	local actor = db.actor
+	local pos = vector():set(actor:position()):mad(actor:direction(), 4)
+	local lvid, gvid = actor:level_vertex_id(), actor:game_vertex_id()
+
+	-- Case A: section exists in system_ini (spawn_sections.ltx, creatures/monsters.ltx, etc.)
+	if system_ini():section_exist(squad_id) then
+		local count = 1
+		if not single and not string.find(squad_id, "gigant") and not string.find(squad_id, "controller") and not string.find(squad_id, "boss") then
+			count = 3
+		end
+		for i = 1, count do
+			local p = vector():set(pos)
+			if i > 1 then
+				p.x = p.x + math.random(-2, 2)
+				p.z = p.z + math.random(-2, 2)
+			end
+			alife():create(squad_id, p, lvid, gvid)
+		end
+		return "ok", "spawned " .. squad_id
+	end
+
+	-- Case B: specific_character profile (character_desc_*.xml)
+	local obj = alife():create("stalker", pos, lvid, gvid)
+	if obj == nil then
+		return "error", "failed to create stalker for " .. squad_id
+	end
+
+	local packet = net_packet()
+	packet:w_begin(0)
+	obj:STATE_Write(packet)
+	packet:r_seek(2)
+	local money = packet:r_u32()
+	packet:r_stringZ()
+	local trader_flags = packet:r_u32()
+	packet:r_stringZ()
+	local community_index = packet:r_s32()
+	local rank = packet:r_s32()
+	local reputation = packet:r_s32()
+	local char_name = packet:r_stringZ()
+	local deadbody_can_take = packet:r_u8()
+	local deadbody_closed = packet:r_u8()
+
+	local new_packet = net_packet()
+	new_packet:w_begin(0)
+	new_packet:w_u32(money)
+	new_packet:w_stringZ(squad_id)
+	new_packet:w_u32(trader_flags)
+	new_packet:w_stringZ(squad_id)
+	new_packet:w_s32(community_index)
+	new_packet:w_s32(rank)
+	new_packet:w_s32(reputation)
+	new_packet:w_stringZ(char_name)
+	new_packet:w_u8(deadbody_can_take)
+	new_packet:w_u8(deadbody_closed)
+
+	while not packet:r_eof() do
+		new_packet:w_u8(packet:r_u8())
+	end
+
+	new_packet:r_seek(2)
+	obj:STATE_Read(new_packet, new_packet:w_tell() - new_packet:r_tell())
+	return "ok", "spawned " .. squad_id
+end
+
+-- Spawn a squad or creature/NPC in front of the actor (CoP, CS, SoC).
+function spawn_squad(squad_id, single)
+	if is_cop() then
+		return spawn_squad_cop(squad_id, single)
+	elseif is_cs() then
+		return spawn_squad_cs(squad_id, single)
+	else
+		return spawn_squad_soc(squad_id, single)
+	end
+end
+
+function handlers.squad(args)
+	if args[1] == nil then
+		return "error", "usage: squad <squad section>"
+	end
+	return spawn_squad(args[1])
+end
+
+-- The companion PDA item (configs\misc\save_editor_companion.ltx, CoP).
+-- Using it opens the menu over the running game; the used copy is replaced
+-- at once. If it is missing (lost, or taken by a scripted scene) it comes
+-- back only while the actor still carries a normal inventory, so scenes that
+-- strip the player are not undone; Esc then F1 always works regardless.
+PDA_SECTION = "se_companion_pda"
+local PDA_CHECK_MS = 5000
+local MIN_ITEMS_FOR_RETURN = 5
+local next_pda_check = 0
+local pending_menu = false
+pending_action = nil
+
+local function pda_available()
+	return system_ini():section_exist(PDA_SECTION)
+end
+
+local function give_pda()
+	local actor = db.actor
+	alife():create(PDA_SECTION, actor:position(), actor:level_vertex_id(), actor:game_vertex_id(), actor:id())
+end
+
+local function keep_pda()
+	if not pda_available() then
+		return
+	end
+	if db.actor:object(PDA_SECTION) ~= nil then
+		return
+	end
+	local count = 0
+	db.actor:inventory_for_each(function() count = count + 1 end)
+	if count >= MIN_ITEMS_FOR_RETURN then
+		give_pda()
+	end
+end
+
+-- Called from actor_binder:use_inventory_item (one line in bind_stalker.script).
+function on_use(obj)
+	if obj == nil then
+		return
+	end
+	local action = ACTION_ITEMS[obj:section()]
+	if action ~= nil then
+		give_section(obj:section())
+		pending_action = action -- run on the next update, outside the use callback
+		return
+	end
+	if obj:section() == PDA_SECTION then
+		give_pda()
+		pending_menu = true -- open on the next update, outside the use callback
+	end
+end
+
+-- ------------------------------------------------------------ extra actions
+-- Everything below is Call of Pripyat API (checked against its
+-- lua_help.script); menus for other games call only what their engine has.
+
+local QUICK_SAVE = "se_quick"
+local MARKS = {} -- map spot ids we added, so they can be removed again
+
+function points_path()
+	return getFS():update_path("$app_data_root$", "save_editor_points.txt")
+end
+
+-- Last saved point from the points file (the menu writes the same file).
+local function last_point()
+	local f = io.open(points_path(), "r")
+	if f == nil then
+		return nil
+	end
+	local last = nil
+	for line in f:lines() do
+		local lvl, x, y, z, gv, name = string.match(line, "^([^|]+)|([^|]+)|([^|]+)|([^|]+)|([^|]+)|(.*)$")
+		if lvl ~= nil then
+			last = { level = lvl, pos = vector():set(tonumber(x), tonumber(y), tonumber(z)), gv = tonumber(gv), name = name }
+		end
+	end
+	f:close()
+	return last
+end
+
+function mark_here()
+	local actor = db.actor
+	local count = 0
+	local f = io.open(points_path(), "r")
+	if f ~= nil then
+		for _ in f:lines() do
+			count = count + 1
+		end
+		f:close()
+	end
+	local name = game.translate_string(level.name()) .. " #" .. (count + 1)
+	f = io.open(points_path(), "a")
+	if f == nil then
+		return "error", "cannot write points"
+	end
+	local p = actor:position()
+	f:write(string.format("%s|%.3f|%.3f|%.3f|%d|%s\n", level.name(), p.x, p.y, p.z, actor:game_vertex_id(), name))
+	f:close()
+	return "ok", name
+end
+
+function jump_last()
+	local p = last_point()
+	if p == nil then
+		return "error", "no saved point yet"
+	end
+	return jump_to(p.level, p.pos, p.gv, p.name)
+end
+
+function quick_save()
+	get_console():execute("save " .. QUICK_SAVE)
+	return "ok", QUICK_SAVE
+end
+
+function quick_load()
+	get_console():execute("load " .. QUICK_SAVE)
+	return "ok", QUICK_SAVE
+end
+
+local fast_forward_hour = nil
+local saved_time_factor = nil
+
+-- Time of day: advance game time to the next given hour (CoP change_game_time or SoC/CS rewind).
+function set_hour(hour)
+	local now = level.get_time_hours()
+	local delta = (hour - now) % 24
+	if delta == 0 then
+		delta = 24
+	end
+	if level.change_game_time ~= nil then
+		level.change_game_time(0, delta, 0)
+		return "ok", string.format("%02d:00", hour)
+	else
+		fast_forward_hour = hour
+		if saved_time_factor == nil and level.get_time_factor ~= nil then
+			saved_time_factor = level.get_time_factor()
+		end
+		level.set_time_factor(5000)
+		return "ok", string.format("%02d:00 (rewinding)", hour)
+	end
+end
+
+function start_surge()
+	if surge_manager ~= nil and surge_manager.get_surge_manager ~= nil then
+		local m = surge_manager.get_surge_manager()
+		if m.start_surge ~= nil then
+			m:start_surge()
+			return "ok", "surge started"
+		end
+	elseif surge_manager ~= nil and surge_manager.start_surge ~= nil then
+		surge_manager.start_surge()
+		return "ok", "surge started"
+	elseif xr_surge_hide ~= nil and xr_surge_hide.activate_surge ~= nil then
+		xr_surge_hide.activate_surge(xr_surge_hide.time_before_surge or 1)
+		return "ok", "surge started"
+	end
+	return "unsupported", "no surge in this game"
+end
+
+function stop_surge()
+	if surge_manager ~= nil and surge_manager.get_surge_manager ~= nil then
+		local m = surge_manager.get_surge_manager()
+		if not m.started then
+			return "error", "no surge running"
+		end
+		m:end_surge(true)
+		return "ok", "surge stopped"
+	elseif xr_surge_hide ~= nil then
+		if not xr_surge_hide.surge_activated and not xr_surge_hide.start_surge then
+			return "error", "no surge running"
+		end
+		xr_surge_hide.phase = 0
+		xr_surge_hide.start_surge = false
+		xr_surge_hide.surge_activated = false
+		xr_surge_hide.surge_finished = true
+		if level.stop_weather_fx ~= nil then
+			level.stop_weather_fx()
+		end
+		return "ok", "surge stopped"
+	end
+	return "unsupported", "no surge in this game"
+end
+
+-- Online NPCs and monsters around the actor.
+local function around(radius, want)
+	local result = {}
+	local actor = db.actor
+	local sim = alife()
+	for id = 1, MAX_OBJECT_ID do
+		local se = sim:object(id)
+		if se ~= nil and se.online and id ~= actor:id() then
+			local obj = level.object_by_id(id)
+			if obj ~= nil and obj:position():distance_to(actor:position()) <= radius and want(obj, se) then
+				table.insert(result, obj)
+			end
+		end
+	end
+	return result
+end
+
+local function is_creature(obj)
+	return IsStalker(obj) or IsMonster(obj)
+end
+
+local function is_story(obj)
+	if get_object_story_id ~= nil then
+		return get_object_story_id(obj:id()) ~= nil
+	end
+	if obj.story_id ~= nil then
+		local ok, sid = pcall(function() return obj:story_id() end)
+		if ok and sid ~= nil and sid ~= 4294967295 and sid ~= -1 then
+			return true
+		end
+	end
+	local se = alife():object(obj:id())
+	if se ~= nil and se.m_story_id ~= nil and se.m_story_id ~= 4294967295 and se.m_story_id ~= -1 then
+		return true
+	end
+	return false
+end
+
+function remove_corpses(radius)
+	local removed = 0
+	for _, obj in ipairs(around(radius, function(o) return is_creature(o) and not o:alive() end)) do
+		if not is_story(obj) then -- never touch quest bodies
+			alife():release(alife():object(obj:id()), true)
+			removed = removed + 1
+		end
+	end
+	return "ok", "removed=" .. removed
+end
+
+function kill_enemies(radius)
+	local actor = db.actor
+	local killed = 0
+	for _, obj in ipairs(around(radius, function(o) return is_creature(o) and o:alive() end)) do
+		if obj:relation(actor) == game_object.enemy and not is_story(obj) then
+			obj:kill(actor)
+			killed = killed + 1
+		end
+	end
+	return "ok", "killed=" .. killed
+end
+
+local function nearest_stalker(radius)
+	local best, dist = nil, nil
+	for _, obj in ipairs(around(radius, function(o) return IsStalker(o) and o:alive() end)) do
+		local d = obj:position():distance_to(db.actor:position())
+		if dist == nil or d < dist then
+			best, dist = obj, d
+		end
+	end
+	return best
+end
+
+function call_nearest(radius)
+	local npc = nearest_stalker(radius)
+	if npc == nil then
+		return "error", "nobody within " .. radius .. " m"
+	end
+	if npc.set_npc_position ~= nil then
+		npc:set_npc_position(vector():set(db.actor:position()):mad(db.actor:direction(), 2))
+		return "ok", npc:character_name()
+	end
+	return "unsupported", "set_npc_position is not supported by engine"
+end
+
+function befriend_nearest_squad(radius)
+	local npc = nearest_stalker(radius)
+	if npc == nil then
+		return "error", "nobody within " .. radius .. " m"
+	end
+	local squad = nil
+	if get_object_squad ~= nil then
+		squad = get_object_squad(npc)
+	end
+	local count = 0
+	if squad ~= nil and squad.squad_members ~= nil then
+		for member in squad:squad_members() do
+			local obj = level.object_by_id(member.id)
+			if obj ~= nil then
+				obj:set_relation(game_object.friend, db.actor)
+				count = count + 1
+			end
+		end
+	else
+		npc:set_relation(game_object.friend, db.actor)
+		count = 1
+	end
+	return "ok", "friends=" .. count
+end
+
+COMMUNITIES = { "stalker", "dolg", "freedom", "bandit", "army", "monolith", "killer", "ecolog", "zombied" }
+
+function community_goodwill(community)
+	return relation_registry.community_goodwill(community, db.actor:id())
+end
+
+function change_goodwill(community, delta)
+	relation_registry.change_community_goodwill(community, db.actor:id(), delta)
+	return "ok", tostring(community_goodwill(community))
+end
+
+-- Map: every stash the game knows (treasure_manager), artefacts on this level.
+function mark_stashes()
+	if treasure_manager == nil then
+		return "unsupported", "no treasure manager"
+	end
+	local added = 0
+	if treasure_manager.get_treasure_manager ~= nil then
+		local tm = treasure_manager.get_treasure_manager()
+		if tm.secret_restrs ~= nil then
+			for _, id in pairs(tm.secret_restrs) do
+				if not level.map_has_object_spot(id, "treasure") then
+					level.map_add_object_spot(id, "treasure", "")
+					table.insert(MARKS, { id = id, spot = "treasure" })
+					added = added + 1
+				end
+			end
+			return "ok", "stashes=" .. added
+		elseif tm.treasure_info ~= nil then
+			for _, v in pairs(tm.treasure_info) do
+				local obj = alife():story_object(v.target)
+				if obj ~= nil and not level.map_has_object_spot(obj.id, "treasure") then
+					level.map_add_object_spot(obj.id, "treasure", "")
+					table.insert(MARKS, { id = obj.id, spot = "treasure" })
+					added = added + 1
+				end
+			end
+			return "ok", "stashes=" .. added
+		end
+	end
+	if treasure_manager.treasures ~= nil then
+		for _, v in pairs(treasure_manager.treasures) do
+			local obj = alife():object(v.target)
+			if obj ~= nil and not level.map_has_object_spot(obj.id, "treasure") then
+				level.map_add_object_spot(obj.id, "treasure", "")
+				table.insert(MARKS, { id = obj.id, spot = "treasure" })
+				added = added + 1
+			end
+		end
+		return "ok", "stashes=" .. added
+	end
+	return "unsupported", "unknown treasure manager layout"
+end
+
+local artefact_sections = nil
+local function is_artefact_section(section)
+	if artefact_sections == nil then
+		artefact_sections = {}
+		if save_editor_catalog ~= nil then
+			for _, s in ipairs(save_editor_catalog.items.artifact or {}) do
+				artefact_sections[s] = true
+			end
+		end
+	end
+	return artefact_sections[section] == true
+end
+
+local function artefact_spot()
+	if is_cop ~= nil and is_cop() then
+		return "primary_object_spot"
+	end
+	return "green_location"
+end
+
+function mark_artefacts()
+	local sim = alife()
+	local added = 0
+	local spot = artefact_spot()
+	for id = 1, MAX_OBJECT_ID do
+		local se = sim:object(id)
+		if se ~= nil and se.parent_id == 65535 and is_artefact_section(se:section_name()) and level_of(se) == level.name()
+			and not level.map_has_object_spot(id, spot) then
+			level.map_add_object_spot(id, spot, "")
+			table.insert(MARKS, { id = id, spot = spot })
+			added = added + 1
+		end
+	end
+	return "ok", "artefacts=" .. added
+end
+
+function clear_marks()
+	for _, mark in ipairs(MARKS) do
+		level.map_remove_object_spot(mark.id, mark.spot)
+	end
+	local n = #MARKS
+	MARKS = {}
+	return "ok", "removed=" .. n
+end
+
+-- actor.bleeding exists only in CoP (SoC/CS lua_help has no such property).
+function stop_bleeding(actor)
+	pcall(function() actor.bleeding = 1 end)
+end
+
+-- Quick-slot items: section -> action. Using one runs it and gives it back.
+ACTION_ITEMS = {
+	se_act_heal = function()
+		run("heal", {})
+		stop_bleeding(db.actor)
+	end,
+	se_act_repair = function() run("repair_equipped", {}) end,
+	se_act_mark = function() mark_here() end,
+	se_act_return = function() jump_last() end,
+	se_act_save = function() quick_save() end,
+}
+
+function give_section(section)
+	local actor = db.actor
+	alife():create(section, actor:position(), actor:level_vertex_id(), actor:game_vertex_id(), actor:id())
+end
+
+function give_action_items()
+	local given = 0
+	for section in pairs(ACTION_ITEMS) do
+		if system_ini():section_exist(section) and db.actor:object(section) == nil then
+			give_section(section)
+			given = given + 1
+		end
+	end
+	return "ok", "given=" .. given
+end
+
+local function execute(line)
+	local words = split(line)
+	local version, id, command = words[1], words[2], words[3]
+	if version ~= PROTOCOL or id == nil or command == nil then
+		reply(id or "0", "error", "expected: " .. PROTOCOL .. " <id> <command> [args]")
+		return
+	end
+	local handler = handlers[command]
+	if handler == nil then
+		reply(id, "unsupported", command)
+		return
+	end
+	local args = {}
+	for i = 4, #words do
+		table.insert(args, words[i])
+	end
+	local ok, status, text = pcall(handler, args)
+	if not ok then
+		reply(id, "error", status)
+	else
+		reply(id, status, text)
+	end
+end
+
+function update()
+	if pending_release ~= nil and db.actor ~= nil and time_global() >= pending_release.at then
+		local lc = alife():object(pending_release.id)
+		pending_release = nil
+		if lc ~= nil then
+			alife():release(lc, true)
+		end
+	end
+	if db.actor ~= nil and pending_action ~= nil then
+		local action = pending_action
+		pending_action = nil
+		pcall(action)
+	end
+	if db.actor ~= nil and pending_menu then
+		pending_menu = false
+		if save_editor_companion_ui ~= nil and save_editor_companion_ui.open_overlay ~= nil then
+			save_editor_companion_ui.open_overlay()
+		end
+	end
+	if db.actor ~= nil and time_global() >= next_pda_check then
+		next_pda_check = time_global() + PDA_CHECK_MS
+		keep_pda()
+	end
+	if db.actor ~= nil and time_global() >= next_toggle_tick then
+		next_toggle_tick = time_global() + TOGGLE_TICK_MS
+		apply_toggles()
+	end
+	if db.actor ~= nil and fast_forward_hour ~= nil then
+		if level.get_time_hours() == fast_forward_hour then
+			fast_forward_hour = nil
+			local restore_factor = saved_time_factor or 10
+			saved_time_factor = nil
+			level.set_time_factor(restore_factor)
+		end
+	end
+	if db.actor == nil or time_global() < next_poll then
+		return
+	end
+	local poll_interval = hotkeys_active and POLL_MS_HOTKEYS or POLL_MS_DEFAULT
+	next_poll = time_global() + poll_interval
+	local cmd = paths()
+	local f = io.open(cmd, "r")
+	if f == nil then
+		return
+	end
+	local line = f:read("*l")
+	f:close()
+	os.remove(cmd)
+	if line ~= nil then
+		execute(line)
+	end
+end

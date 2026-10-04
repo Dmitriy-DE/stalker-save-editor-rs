@@ -3,6 +3,15 @@
 version = 4
 
 [[package]]
+name = "sse-app"
+version = "2.0.0-dev"
+dependencies = [
+ "sse-codecs",
+ "sse-core",
+ "sse-storage",
+]
+
+[[package]]
 name = "sse-catalog"
 version = "2.0.0-dev"
 dependencies = [
@@ -20,6 +29,8 @@ dependencies = [
  "sse-core",
  "sse-fixes",
  "sse-lint",
+ "sse-s2",
+ "sse-steam",
  "sse-storage",
  "sse-update",
  "sse-xray",
@@ -30,6 +41,14 @@ name = "sse-codecs"
 version = "2.0.0-dev"
 dependencies = [
  "sse-core",
+]
+
+[[package]]
+name = "sse-companion"
+version = "2.0.0-dev"
+dependencies = [
+ "sse-codecs",
+ "sse-content",
 ]
 
 [[package]]
@@ -73,6 +92,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "sse-steam"
+version = "2.0.0-dev"
+dependencies = [
+ "sse-codecs",
+ "sse-core",
+]
+
+[[package]]
 name = "sse-storage"
 version = "2.0.0-dev"
 dependencies = [
@@ -93,6 +120,10 @@ version = "2.0.0-dev"
 dependencies = [
  "sse-codecs",
  "sse-core",
+ "sse-s2",
+ "sse-storage",
+ "sse-sys",
+ "sse-xray",
 ]
 
 [[package]]

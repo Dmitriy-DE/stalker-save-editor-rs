@@ -7,12 +7,16 @@ use crate::event_loop::{Present, Proxy, WindowEvent};
 use crate::raster::Rect;
 use crate::x11::{
     find_mit_cookie, keysym_to_char, parse_setup_reply, parse_xauthority, Atom, ByteOrder, Connection, Drawable, Event,
-    Gc, Packet, Transport, Window,
+    Gc, Packet, ShmSeg, Transport, Window,
 };
 use sse_core::{Error, Result};
+#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+use sse_sys::shm::SharedMemory;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
+#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+use std::sync::mpsc;
 
 const ORDER: ByteOrder = ByteOrder::Little;
 const CW_BACK_PIXEL: u32 = 1 << 1;
@@ -32,6 +36,8 @@ const ZPIXMAP: u8 = 2;
 const LEAVE_NOTIFY: u8 = 8;
 const SHIFT_MASK: u16 = 1;
 const CONTROL_MASK: u16 = 4;
+#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+const MAX_SHM_SEGMENT_BYTES: usize = 128 * 1024 * 1024;
 
 struct Stream(UnixStream);
 
@@ -64,7 +70,40 @@ pub struct X11Window {
     window: Window,
     gc: Gc,
     depth: u8,
+    scanline_pad: u8,
     scratch: Vec<u8>,
+    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    shm: Option<ShmBuffer>,
+}
+
+#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+struct ShmBuffer {
+    memory: SharedMemory,
+    segment: ShmSeg,
+    event_base: u8,
+    completion_rx: mpsc::Receiver<u32>,
+    capacity_width: u16,
+    capacity_height: u16,
+    scanline_pad: u8,
+    offsets: [u32; 2],
+    pending: [usize; 2],
+    next_slot: usize,
+}
+
+#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+struct FrameView<'a> {
+    pixels: &'a [u32],
+    stride: usize,
+    width: u32,
+    height: u32,
+}
+
+#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+struct X11Target<'a> {
+    connection: &'a mut Connection<Stream>,
+    window: Window,
+    gc: Gc,
+    depth: u8,
 }
 
 impl X11Window {
@@ -107,14 +146,15 @@ impl X11Window {
             .first()
             .ok_or_else(|| Error::Refused("X server has no screens".to_owned()))?;
         let depth = screen.root_depth;
-        if !setup
+        let image_format = setup
             .pixmap_formats
             .iter()
-            .any(|f| f.depth == depth && f.bits_per_pixel == 32)
-            || depth < 24
-        {
+            .find(|format| format.depth == depth && format.bits_per_pixel == 32)
+            .ok_or_else(|| Error::Refused("X screen has no 32-bit pixel format".to_owned()))?;
+        if depth < 24 {
             return Err(Error::Refused("X screen is not 24/32-bit TrueColor".to_owned()));
         }
+        let scanline_pad = image_format.scanline_pad;
         let (root, visual) = (screen.root, screen.root_visual);
 
         let mut connection = Connection::new(writer, ORDER, &setup);
@@ -139,6 +179,18 @@ impl X11Window {
         let keymap = connection.parse_keyboard_mapping_reply(&keymap_reply, usize::from(count))?;
 
         let base = setup.resource_id_base;
+        #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+        let (completion_tx, completion_rx) = mpsc::channel();
+        #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+        let shm = try_enable_shm(
+            &mut connection,
+            &mut reader,
+            base,
+            width,
+            height,
+            scanline_pad,
+            completion_rx,
+        );
         let window = Window(base | 1);
         let gc = Gc(base | 2);
         connection.create_window(
@@ -165,6 +217,8 @@ impl X11Window {
         connection.map_window(window)?;
 
         let decoder = Connection::new(Silent, ORDER, &setup);
+        #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+        let shm_event_base = shm.as_ref().map(|buffer| buffer.event_base);
         let thread = Reader {
             stream: reader,
             decoder,
@@ -173,6 +227,10 @@ impl X11Window {
             keymap,
             min_keycode,
             size: (width, height),
+            #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+            completion_tx,
+            #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+            shm_event_base,
         };
         std::thread::Builder::new()
             .name("x11-events".to_owned())
@@ -183,13 +241,48 @@ impl X11Window {
             window,
             gc,
             depth,
+            scanline_pad,
             scratch: Vec::new(),
+            #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+            shm,
         })
+    }
+
+    /// Returns whether MIT-SHM is active for this window.
+    #[must_use]
+    pub fn uses_mit_shm(&self) -> bool {
+        #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+        {
+            self.shm.is_some()
+        }
+        #[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))))]
+        {
+            false
+        }
     }
 }
 
 impl Present for X11Window {
     fn present(&mut self, frame: &[u32], stride: usize, width: u32, height: u32, rects: &[Rect]) -> Result<()> {
+        #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+        if let Some(shm) = self.shm.as_mut() {
+            if shm.supports(width, height) {
+                let frame = FrameView {
+                    pixels: frame,
+                    stride,
+                    width,
+                    height,
+                };
+                let mut target = X11Target {
+                    connection: &mut self.connection,
+                    window: self.window,
+                    gc: self.gc,
+                    depth: self.depth,
+                };
+                return shm.present(frame, rects, &mut target);
+            }
+        }
+
         for rect in rects {
             let (Ok(x), Ok(y), Ok(w), Ok(h)) = (
                 usize::try_from(rect.x),
@@ -205,6 +298,8 @@ impl Present for X11Window {
             if y.saturating_add(h) > usize::try_from(height).unwrap_or(0) {
                 continue;
             }
+            let bytes_per_row = padded_row_bytes(w, self.scanline_pad)
+                .ok_or_else(|| Error::damaged("unsupported X11 scanline padding"))?;
             self.scratch.clear();
             for row in y..y.saturating_add(h) {
                 let start = row.saturating_mul(stride).saturating_add(x);
@@ -214,6 +309,12 @@ impl Present for X11Window {
                 for pixel in pixels {
                     self.scratch.extend_from_slice(&pixel.to_le_bytes());
                 }
+                let row_end = self
+                    .scratch
+                    .len()
+                    .checked_add(bytes_per_row.saturating_sub(w.saturating_mul(4)))
+                    .ok_or_else(|| Error::damaged("X11 row size overflow"))?;
+                self.scratch.resize(row_end, 0);
             }
             self.connection.put_image(
                 ZPIXMAP,
@@ -225,11 +326,194 @@ impl Present for X11Window {
                 i16::try_from(y).unwrap_or(i16::MAX),
                 0,
                 self.depth,
-                w.saturating_mul(4),
+                bytes_per_row,
                 &self.scratch,
             )?;
         }
         Ok(())
+    }
+}
+
+#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+impl ShmBuffer {
+    fn supports(&self, width: u32, height: u32) -> bool {
+        width <= u32::from(self.capacity_width) && height <= u32::from(self.capacity_height)
+    }
+
+    fn present(&mut self, frame: FrameView<'_>, rects: &[Rect], target: &mut X11Target<'_>) -> Result<()> {
+        if rects.is_empty() {
+            return Ok(());
+        }
+        let width_usize = usize::try_from(frame.width).map_err(|_| Error::damaged("X11 width overflow"))?;
+        let height_usize = usize::try_from(frame.height).map_err(|_| Error::damaged("X11 height overflow"))?;
+        if frame.stride < width_usize {
+            return Err(Error::damaged("frame stride shorter than its width"));
+        }
+        let image_stride = padded_row_bytes(width_usize, self.scanline_pad)
+            .ok_or_else(|| Error::damaged("unsupported X11 scanline padding"))?;
+        let slot = self.next_slot;
+        self.wait_until_free(slot)?;
+        let shm_offset = self
+            .offsets
+            .get(slot)
+            .copied()
+            .ok_or_else(|| Error::damaged("MIT-SHM slot out of range"))?;
+        let base_offset = usize::try_from(shm_offset).map_err(|_| Error::damaged("MIT-SHM offset overflow"))?;
+        let mut sent = false;
+
+        for rect in rects {
+            let (Ok(x), Ok(y), Ok(w), Ok(h)) = (
+                usize::try_from(rect.x),
+                usize::try_from(rect.y),
+                usize::try_from(rect.width),
+                usize::try_from(rect.height),
+            ) else {
+                continue;
+            };
+            if w == 0 || h == 0 || x.checked_add(w).is_none_or(|end| end > width_usize) {
+                continue;
+            }
+            if y.checked_add(h).is_none_or(|end| end > height_usize) {
+                continue;
+            }
+            let (Ok(src_x), Ok(src_y), Ok(src_width), Ok(src_height), Ok(dst_x), Ok(dst_y)) = (
+                u16::try_from(x),
+                u16::try_from(y),
+                u16::try_from(w),
+                u16::try_from(h),
+                i16::try_from(x),
+                i16::try_from(y),
+            ) else {
+                continue;
+            };
+
+            for row in y..y.saturating_add(h) {
+                let start = row
+                    .checked_mul(frame.stride)
+                    .and_then(|value| value.checked_add(x))
+                    .ok_or_else(|| Error::damaged("frame pixel offset overflow"))?;
+                let end = start
+                    .checked_add(w)
+                    .ok_or_else(|| Error::damaged("frame row length overflow"))?;
+                let pixels = frame
+                    .pixels
+                    .get(start..end)
+                    .ok_or_else(|| Error::damaged("frame shorter than its size"))?;
+                let pixel_offset = row
+                    .checked_mul(image_stride)
+                    .and_then(|value| x.checked_mul(4).and_then(|column| value.checked_add(column)))
+                    .and_then(|value| value.checked_add(base_offset))
+                    .ok_or_else(|| Error::damaged("MIT-SHM row offset overflow"))?;
+                self.memory.write_u32_le(pixel_offset, pixels).map_err(io)?;
+            }
+            target.connection.shm_put_image(
+                Drawable(target.window.0),
+                target.gc,
+                u16::try_from(frame.width).map_err(|_| Error::damaged("X11 width exceeds protocol limit"))?,
+                u16::try_from(frame.height).map_err(|_| Error::damaged("X11 height exceeds protocol limit"))?,
+                src_x,
+                src_y,
+                src_width,
+                src_height,
+                dst_x,
+                dst_y,
+                target.depth,
+                ZPIXMAP,
+                true,
+                self.segment,
+                shm_offset,
+            )?;
+            let pending = self
+                .pending
+                .get_mut(slot)
+                .ok_or_else(|| Error::damaged("MIT-SHM slot out of range"))?;
+            *pending = pending.saturating_add(1);
+            sent = true;
+        }
+        if sent {
+            self.next_slot = if slot == 0 { 1 } else { 0 };
+        }
+        Ok(())
+    }
+
+    fn wait_until_free(&mut self, slot: usize) -> Result<()> {
+        while self.pending.get(slot).copied().unwrap_or_default() > 0 {
+            let offset = self
+                .completion_rx
+                .recv()
+                .map_err(|error| Error::System(format!("MIT-SHM completion channel: {error}")))?;
+            if let Some(completed_slot) = self.offsets.iter().position(|base| *base == offset) {
+                if let Some(pending) = self.pending.get_mut(completed_slot) {
+                    *pending = pending.saturating_sub(1);
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+fn try_enable_shm(
+    connection: &mut Connection<Stream>,
+    reader: &mut UnixStream,
+    resource_base: u32,
+    width: u16,
+    height: u16,
+    scanline_pad: u8,
+    completion_rx: mpsc::Receiver<u32>,
+) -> Option<ShmBuffer> {
+    let image_stride = padded_row_bytes(usize::from(width), scanline_pad)?;
+    let slot_bytes = image_stride.checked_mul(usize::from(height))?;
+    let segment_bytes = slot_bytes.checked_mul(2)?;
+    if slot_bytes == 0 || segment_bytes > MAX_SHM_SEGMENT_BYTES {
+        return None;
+    }
+    let second_offset = u32::try_from(slot_bytes).ok()?;
+
+    connection.query_extension(b"MIT-SHM").ok()?;
+    let reply = read_reply(reader).ok()?;
+    let (_, event_base) = connection
+        .parse_query_extension_reply_details(b"MIT-SHM", &reply)
+        .ok()??;
+    if event_base == 0 {
+        return None;
+    }
+
+    let segment = ShmSeg(resource_base | 3);
+    let mut memory = SharedMemory::new(segment_bytes).ok()?;
+    let shmid = u32::try_from(memory.id()).ok()?;
+    if connection.shm_attach(segment, shmid, false).is_err() {
+        return None;
+    }
+    if connection.get_input_focus().is_err() || read_reply(reader).is_err() {
+        let _ = connection.shm_detach(segment);
+        return None;
+    }
+    if memory.request_removal().is_err() {
+        let _ = connection.shm_detach(segment);
+        return None;
+    }
+
+    Some(ShmBuffer {
+        memory,
+        segment,
+        event_base,
+        completion_rx,
+        capacity_width: width,
+        capacity_height: height,
+        scanline_pad,
+        offsets: [0, second_offset],
+        pending: [0, 0],
+        next_slot: 0,
+    })
+}
+
+#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+impl Drop for X11Window {
+    fn drop(&mut self) {
+        if let Some(shm) = self.shm.as_ref() {
+            let _ = self.connection.shm_detach(shm.segment);
+        }
     }
 }
 
@@ -241,6 +525,10 @@ struct Reader {
     keymap: Vec<Vec<u32>>,
     min_keycode: u8,
     size: (u16, u16),
+    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    completion_tx: mpsc::Sender<u32>,
+    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    shm_event_base: Option<u8>,
 }
 
 impl Reader {
@@ -252,6 +540,13 @@ impl Reader {
                 return;
             }
             let kind = packet[0] & 0x7f;
+            #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+            if let Some(event_base) = self.shm_event_base {
+                if let Some(offset) = shm_completion_offset(&packet, event_base) {
+                    let _ = self.completion_tx.send(offset);
+                    continue;
+                }
+            }
             // Replies and generic events carry a payload after the fixed 32 bytes; skip it.
             if kind == 1 || kind == 35 {
                 let extra = u32::from_le_bytes([packet[4], packet[5], packet[6], packet[7]]);
@@ -413,4 +708,53 @@ fn xauthority_path() -> Option<PathBuf> {
 
 fn io(error: std::io::Error) -> Error {
     Error::System(format!("X11 connection: {error}"))
+}
+
+fn shm_completion_offset(packet: &[u8], event_base: u8) -> Option<u32> {
+    if packet.first().copied()? & 0x7f != event_base {
+        return None;
+    }
+    let bytes: [u8; 4] = packet.get(16..20)?.try_into().ok()?;
+    Some(u32::from_le_bytes(bytes))
+}
+
+fn padded_row_bytes(width: usize, scanline_pad: u8) -> Option<usize> {
+    let pad_bits = usize::from(scanline_pad);
+    if pad_bits == 0 || pad_bits.checked_rem(8)? != 0 {
+        return None;
+    }
+    let pad_bytes = pad_bits.checked_div(8)?;
+    let row_bytes = width.checked_mul(4)?;
+    let rounded = row_bytes.checked_add(pad_bytes.checked_sub(1)?)?;
+    rounded.checked_div(pad_bytes)?.checked_mul(pad_bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{padded_row_bytes, shm_completion_offset};
+
+    #[test]
+    fn completion_event_reads_offset_and_ignores_sent_event_bit() {
+        let mut packet = [0_u8; 32];
+        if let Some(kind) = packet.first_mut() {
+            *kind = 0xc0;
+        }
+        for (slot, byte) in packet.iter_mut().skip(16).take(4).zip(0x1234_5678_u32.to_le_bytes()) {
+            *slot = byte;
+        }
+        assert_eq!(shm_completion_offset(&packet, 64), Some(0x1234_5678));
+    }
+
+    #[test]
+    fn completion_event_rejects_other_types_and_short_packets() {
+        assert_eq!(shm_completion_offset(&[64_u8; 19], 64), None);
+        assert_eq!(shm_completion_offset(&[63_u8; 32], 64), None);
+    }
+
+    #[test]
+    fn image_rows_follow_the_server_scanline_padding() {
+        assert_eq!(padded_row_bytes(3, 32), Some(12));
+        assert_eq!(padded_row_bytes(3, 64), Some(16));
+        assert_eq!(padded_row_bytes(3, 0), None);
+    }
 }

@@ -8,8 +8,9 @@ use sse_core::{Error, Result};
 
 const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1A\n";
 const MAX_DIMENSION: u32 = 16_384;
-const MAX_PIXELS: usize = 268_435_456;
-const MAX_CHUNK: usize = 256 * 1024 * 1024;
+const MAX_PIXELS: usize = 16_777_216;
+const MAX_CHUNK: usize = 32 * 1024 * 1024;
+const MAX_IDAT_SIZE: usize = 32 * 1024 * 1024;
 
 /// Decoded PNG pixels in row-major RGBA8.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -108,8 +109,8 @@ pub fn decode(input: &[u8]) -> Result<Image> {
                     .len()
                     .checked_add(data.len())
                     .ok_or_else(|| Error::damaged("PNG IDAT size overflow"))?;
-                if wanted > input.len() {
-                    return Err(Error::damaged("PNG IDAT aggregate exceeds file size"));
+                if wanted > input.len() || wanted > MAX_IDAT_SIZE {
+                    return Err(Error::damaged("PNG IDAT aggregate exceeds its size limit"));
                 }
                 idat.extend_from_slice(data);
                 saw_idat = true;
@@ -142,12 +143,6 @@ pub fn decode(input: &[u8]) -> Result<Image> {
         return Err(Error::damaged("PNG is missing final IEND or has trailing bytes"));
     }
     let header = header.ok_or_else(|| Error::damaged("PNG has no IHDR"))?;
-    let filtered_size = filtered_size(header)?;
-    let filtered = inflate_zlib(&idat, filtered_size)?;
-    if filtered.len() != filtered_size {
-        return Err(Error::damaged("PNG inflated scanline size mismatch"));
-    }
-
     let pixels_count = usize::try_from(header.width)
         .ok()
         .and_then(|width| {
@@ -159,6 +154,12 @@ pub fn decode(input: &[u8]) -> Result<Image> {
     if pixels_count > MAX_PIXELS {
         return Err(Error::damaged("PNG pixel count exceeds limit"));
     }
+    let filtered_size = filtered_size(header)?;
+    let filtered = inflate_zlib(&idat, filtered_size)?;
+    if filtered.len() != filtered_size {
+        return Err(Error::damaged("PNG inflated scanline size mismatch"));
+    }
+
     let pixel_bytes = pixels_count
         .checked_mul(4)
         .ok_or_else(|| Error::damaged("PNG RGBA size overflow"))?;
