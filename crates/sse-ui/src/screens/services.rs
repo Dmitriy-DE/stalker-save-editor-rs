@@ -1365,7 +1365,8 @@ impl Screen for Updates {
                             downloaded.saturating_mul(100).checked_div(*total).unwrap_or(0).min(100)
                         };
                         if let Some(id) = self.status {
-                            cx.tree.set_text(id, &format!("Скачивание пакета обновления... {percent}%"))?;
+                            cx.tree
+                                .set_text(id, &format!("Скачивание пакета обновления... {percent}%"))?;
                         }
                     }
                     return Ok(());
