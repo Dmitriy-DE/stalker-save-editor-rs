@@ -398,7 +398,7 @@ impl Screen for Companion {
         }
         if clicked.is_some() && clicked == self.confirm_cancel {
             self.intent = None;
-            if let Some(card) = self.confirm_card { cx.tree.close_dialog(card)?; }
+            if let Some(card) = self.confirm_card { cx.tree.close_dialog()?; }
             return Ok(());
         }
         if clicked.is_some() && clicked == self.confirm_write {
@@ -406,11 +406,11 @@ impl Screen for Companion {
             let current_game = cx.app.selected_game();
             let current_dir = cx.app.game_dir();
             if current_game != Some(intent.game.as_str()) || current_dir != Some(intent.directory.as_path()) {
-                if let Some(card) = self.confirm_card { cx.tree.close_dialog(card)?; }
+                if let Some(card) = self.confirm_card { cx.tree.close_dialog()?; }
                 cx.status = Some("Выбор игры изменился; подтверждение отменено.".to_owned());
                 return Ok(());
             }
-            if let Some(card) = self.confirm_card { cx.tree.close_dialog(card)?; }
+            if let Some(card) = self.confirm_card { cx.tree.close_dialog()?; }
             let install = intent.install;
             let game = Some(intent.game);
             let dir = Some(intent.directory);
