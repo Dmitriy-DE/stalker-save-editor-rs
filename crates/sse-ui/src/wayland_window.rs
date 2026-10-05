@@ -46,9 +46,17 @@ impl WaylandWindow {
         let compositor = bind(&mut stream, globals.compositor, "wl_compositor", 4, 4)?;
         let shm = bind(&mut stream, globals.shm, "wl_shm", 1, 5)?;
         let wm = bind(&mut stream, globals.wm_base, "xdg_wm_base", 1, 6)?;
-        if let Some(seat) = globals.seat {
-            let _ = bind(&mut stream, Some(seat), "wl_seat", seat.1.min(7), 7)?;
-        }
+        let seat = if let Some(seat_global) = globals.seat {
+            Some(bind(
+                &mut stream,
+                Some(seat_global),
+                "wl_seat",
+                seat_global.1.min(7),
+                7,
+            )?)
+        } else {
+            None
+        };
 
         let surface = 8;
         send(&mut stream, compositor, 0, &u32s(&[surface]))?;
@@ -91,7 +99,18 @@ impl WaylandWindow {
         let reader_closed = Arc::clone(&closed);
         std::thread::Builder::new()
             .name("wayland-events".to_owned())
-            .spawn(move || event_reader(reader, xdg_surface, toplevel, wm, proxy, reader_closed))
+            .spawn(move || {
+                event_reader(
+                    reader,
+                    xdg_surface,
+                    toplevel,
+                    wm,
+                    seat,
+                    surface,
+                    proxy,
+                    reader_closed,
+                )
+            })
             .map_err(io)?;
         Ok(Self {
             stream,
@@ -157,31 +176,222 @@ fn event_reader<U: Send + 'static>(
     xdg_surface: u32,
     toplevel: u32,
     wm: u32,
+    seat: Option<u32>,
+    surface: u32,
     proxy: Proxy<U>,
     closed: Arc<Mutex<bool>>,
 ) {
+    const POINTER_ID: u32 = 13;
+    const KEYBOARD_ID: u32 = 14;
+    const SEAT_CAP_POINTER: u32 = 1;
+    const SEAT_CAP_KEYBOARD: u32 = 2;
+
+    let mut pointer = None;
+    let mut keyboard = None;
+    let mut pointer_position = (0_i32, 0_i32);
+    let mut ctrl = false;
+    let mut shift = false;
+
     loop {
-        if closed.lock().map(|v| *v).unwrap_or(true) {
+        if closed.lock().map(|value| *value).unwrap_or(true) {
             return;
         }
         let Ok((object, opcode, payload)) = read_message(&mut stream) else {
             let _ = proxy.window(WindowEvent::Disconnected);
             return;
         };
-        if object == xdg_surface && opcode == 0 && payload.len() >= 4 {
+
+        if object == xdg_surface && opcode == 0 {
             if let Some(serial) = read_u32(&payload, 0) {
                 let _ = send(&mut stream, xdg_surface, 4, &u32s(&[serial]));
-                let _ = stream.flush();
             }
         } else if object == toplevel && opcode == 1 {
             let _ = proxy.window(WindowEvent::CloseRequested);
-        } else if object == wm && opcode == 0 && payload.len() >= 4 {
+        } else if object == wm && opcode == 0 {
             if let Some(serial) = read_u32(&payload, 0) {
                 let _ = send(&mut stream, wm, 3, &u32s(&[serial]));
-                let _ = stream.flush();
+            }
+        } else if Some(object) == seat && opcode == 0 {
+            if let Some(capabilities) = read_u32(&payload, 0) {
+                if capabilities & SEAT_CAP_POINTER != 0 && pointer.is_none() {
+                    if send(&mut stream, object, 0, &u32s(&[POINTER_ID])).is_ok() {
+                        pointer = Some(POINTER_ID);
+                    }
+                }
+                if capabilities & SEAT_CAP_KEYBOARD != 0 && keyboard.is_none() {
+                    if send(&mut stream, object, 1, &u32s(&[KEYBOARD_ID])).is_ok() {
+                        keyboard = Some(KEYBOARD_ID);
+                    }
+                }
+            }
+        } else if Some(object) == pointer {
+            if let Some(event) = parse_pointer_event(opcode, &payload, surface, &mut pointer_position) {
+                let _ = proxy.window(event);
+            }
+        } else if Some(object) == keyboard {
+            match opcode {
+                1 => {
+                    if read_u32(&payload, 4) == Some(surface) {
+                        let _ = proxy.window(WindowEvent::Focus(true));
+                    }
+                }
+                2 => {
+                    if read_u32(&payload, 4) == Some(surface) {
+                        let _ = proxy.window(WindowEvent::Focus(false));
+                    }
+                }
+                3 => {
+                    if let (Some(key), Some(state)) = (read_u32(&payload, 8), read_u32(&payload, 12)) {
+                        if let Some(event) = keyboard_event(key, state != 0, ctrl, shift) {
+                            let _ = proxy.window(event);
+                        }
+                    }
+                }
+                4 => {
+                    let depressed = read_u32(&payload, 4).unwrap_or(0);
+                    let latched = read_u32(&payload, 8).unwrap_or(0);
+                    let locked = read_u32(&payload, 12).unwrap_or(0);
+                    let active = depressed | latched | locked;
+                    shift = active & 1 != 0;
+                    ctrl = active & 4 != 0;
+                }
+                _ => {}
             }
         }
+
+        let _ = stream.flush();
     }
+}
+
+fn parse_pointer_event(
+    opcode: u16,
+    payload: &[u8],
+    surface: u32,
+    position: &mut (i32, i32),
+) -> Option<WindowEvent> {
+    match opcode {
+        0 if read_u32(payload, 4) == Some(surface) => {
+            let x = fixed_to_pixel(read_i32(payload, 8)?);
+            let y = fixed_to_pixel(read_i32(payload, 12)?);
+            *position = (x, y);
+            Some(WindowEvent::PointerMoved { x, y })
+        }
+        1 if read_u32(payload, 4) == Some(surface) => Some(WindowEvent::PointerLeft),
+        2 => {
+            let x = fixed_to_pixel(read_i32(payload, 4)?);
+            let y = fixed_to_pixel(read_i32(payload, 8)?);
+            *position = (x, y);
+            Some(WindowEvent::PointerMoved { x, y })
+        }
+        3 => {
+            let button = match read_u32(payload, 8)? {
+                272 => 1,
+                274 => 2,
+                273 => 3,
+                _ => return None,
+            };
+            Some(WindowEvent::Button {
+                button,
+                pressed: read_u32(payload, 12)? != 0,
+                x: position.0,
+                y: position.1,
+            })
+        }
+        4 if read_u32(payload, 8) == Some(0) => {
+            let raw = read_i32(payload, 12)?;
+            let delta = match raw.cmp(&0) {
+                std::cmp::Ordering::Less => -1,
+                std::cmp::Ordering::Equal => 0,
+                std::cmp::Ordering::Greater => 1,
+            };
+            (delta != 0).then_some(WindowEvent::Wheel { delta })
+        }
+        _ => None,
+    }
+}
+
+fn keyboard_event(key: u32, pressed: bool, ctrl: bool, shift: bool) -> Option<WindowEvent> {
+    let (keysym, character) = evdev_key(key, shift)?;
+    Some(WindowEvent::Key {
+        pressed,
+        keysym,
+        text: (pressed && !ctrl).then_some(character).flatten(),
+        ctrl,
+        shift,
+    })
+}
+
+fn evdev_key(key: u32, shift: bool) -> Option<(u32, Option<char>)> {
+    let special = match key {
+        1 => Some((0xff1b, None)),
+        14 => Some((0xff08, None)),
+        15 => Some((0xff09, Some('\t'))),
+        28 => Some((0xff0d, Some('\n'))),
+        102 => Some((0xff50, None)),
+        103 => Some((0xff52, None)),
+        104 => Some((0xff55, None)),
+        105 => Some((0xff51, None)),
+        106 => Some((0xff53, None)),
+        107 => Some((0xff57, None)),
+        108 => Some((0xff54, None)),
+        109 => Some((0xff56, None)),
+        111 => Some((0xffff, None)),
+        _ => None,
+    };
+    if special.is_some() {
+        return special;
+    }
+
+    let base = match key {
+        2 => '1',
+        3 => '2',
+        4 => '3',
+        5 => '4',
+        6 => '5',
+        7 => '6',
+        8 => '7',
+        9 => '8',
+        10 => '9',
+        11 => '0',
+        16 => 'q',
+        17 => 'w',
+        18 => 'e',
+        19 => 'r',
+        20 => 't',
+        21 => 'y',
+        22 => 'u',
+        23 => 'i',
+        24 => 'o',
+        25 => 'p',
+        30 => 'a',
+        31 => 's',
+        32 => 'd',
+        33 => 'f',
+        34 => 'g',
+        35 => 'h',
+        36 => 'j',
+        37 => 'k',
+        38 => 'l',
+        44 => 'z',
+        45 => 'x',
+        46 => 'c',
+        47 => 'v',
+        48 => 'b',
+        49 => 'n',
+        50 => 'm',
+        57 => ' ',
+        _ => return None,
+    };
+    let character = if shift {
+        base.to_ascii_uppercase()
+    } else {
+        base
+    };
+    Some((u32::from(character), Some(character)))
+}
+
+fn fixed_to_pixel(raw: i32) -> i32 {
+    raw.checked_div(256).unwrap_or_default()
 }
 
 fn bind(
@@ -234,19 +444,26 @@ fn read_message(stream: &mut UnixStream) -> Result<(u32, u16, Vec<u8>)> {
     let object = u32::from_ne_bytes(head[..4].try_into().map_err(|_| Error::damaged("Wayland header"))?);
     let word = u32::from_ne_bytes(head[4..].try_into().map_err(|_| Error::damaged("Wayland header"))?);
     let size = usize::try_from(word >> 16).map_err(|_| Error::damaged("Wayland size"))?;
-    if size < 8 || size > 1024 * 1024 {
+    if !(8..=1_048_576).contains(&size) {
         return Err(Error::damaged("invalid Wayland message size"));
     }
-    let mut payload = vec![0u8; size - 8];
+    let payload_len = size
+        .checked_sub(8)
+        .ok_or_else(|| Error::damaged("Wayland payload size underflow"))?;
+    let mut payload = vec![0u8; payload_len];
     stream.read_exact(&mut payload).map_err(io)?;
-    Ok((object, (word & 0xffff) as u16, payload))
+    let opcode = u16::try_from(word & 0xffff).map_err(|_| Error::damaged("Wayland opcode"))?;
+    Ok((object, opcode, payload))
 }
 fn send(stream: &mut UnixStream, object: u32, opcode: u16, payload: &[u8]) -> Result<()> {
     let size = 8usize
         .checked_add(payload.len())
         .ok_or_else(|| Error::damaged("Wayland message overflow"))?;
-    let word =
-        (u32::try_from(size).map_err(|_| Error::damaged("Wayland message too large"))? << 16) | u32::from(opcode);
+    let size_word = u32::try_from(size)
+        .map_err(|_| Error::damaged("Wayland message too large"))?
+        .checked_shl(16)
+        .ok_or_else(|| Error::damaged("Wayland message size shift overflow"))?;
+    let word = size_word | u32::from(opcode);
     stream.write_all(&object.to_ne_bytes()).map_err(io)?;
     stream.write_all(&word.to_ne_bytes()).map_err(io)?;
     stream.write_all(payload).map_err(io)
@@ -258,8 +475,11 @@ fn send_with_fd(stream: &UnixStream, object: u32, opcode: u16, payload: &[u8], f
     let size = 8usize
         .checked_add(payload.len())
         .ok_or_else(|| Error::damaged("Wayland fd message overflow"))?;
-    let word =
-        (u32::try_from(size).map_err(|_| Error::damaged("Wayland message too large"))? << 16) | u32::from(opcode);
+    let size_word = u32::try_from(size)
+        .map_err(|_| Error::damaged("Wayland message too large"))?
+        .checked_shl(16)
+        .ok_or_else(|| Error::damaged("Wayland message size shift overflow"))?;
+    let word = size_word | u32::from(opcode);
     let mut bytes = Vec::with_capacity(size);
     bytes.extend_from_slice(&object.to_ne_bytes());
     bytes.extend_from_slice(&word.to_ne_bytes());
@@ -271,7 +491,12 @@ fn wire_string(value: &str) -> Vec<u8> {
     let mut out = u32s(&[u32::try_from(len).unwrap_or(u32::MAX)]);
     out.extend_from_slice(value.as_bytes());
     out.push(0);
-    out.resize(out.len().saturating_add((4 - out.len() % 4) % 4), 0);
+    let remainder = out.len().checked_rem(4).unwrap_or(0);
+    let padding = 4_usize
+        .saturating_sub(remainder)
+        .checked_rem(4)
+        .unwrap_or(0);
+    out.resize(out.len().saturating_add(padding), 0);
     out
 }
 fn u32s(values: &[u32]) -> Vec<u8> {
@@ -281,7 +506,12 @@ fn i32s(values: &[i32]) -> Vec<u8> {
     values.iter().flat_map(|v| v.to_ne_bytes()).collect()
 }
 fn read_u32(bytes: &[u8], offset: usize) -> Option<u32> {
-    Some(u32::from_ne_bytes(bytes.get(offset..offset + 4)?.try_into().ok()?))
+    let end = offset.checked_add(4)?;
+    Some(u32::from_ne_bytes(bytes.get(offset..end)?.try_into().ok()?))
+}
+fn read_i32(bytes: &[u8], offset: usize) -> Option<i32> {
+    let end = offset.checked_add(4)?;
+    Some(i32::from_ne_bytes(bytes.get(offset..end)?.try_into().ok()?))
 }
 fn align4(value: usize) -> usize {
     value.saturating_add(3) & !3
@@ -291,7 +521,7 @@ fn frame_bytes(width: u32, height: u32) -> Result<usize> {
         .ok()
         .and_then(|w| usize::try_from(height).ok().and_then(|h| w.checked_mul(h)))
         .and_then(|p| p.checked_mul(4))
-        .filter(|n| *n > 0 && *n <= 128 * 1024 * 1024)
+        .filter(|n| *n > 0 && *n <= 134_217_728)
         .ok_or_else(|| Error::Refused("Wayland frame size outside limit".to_owned()))
 }
 fn io(error: std::io::Error) -> Error {
