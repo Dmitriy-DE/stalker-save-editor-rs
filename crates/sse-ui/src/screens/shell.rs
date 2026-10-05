@@ -564,13 +564,13 @@ impl Shell {
             NodeKind::Leaf,
             Style { grow: 1.0, shrink: 1.0, preferred: Size::new(420.0, 0.0), max: Size::new(560.0, f32::INFINITY), ..Style::default() },
             Content::Paragraph {
-                text: "Редактор раз в сутки и после сбоя отправляет разработчику журнал работы, чтобы находить ошибки. Пути, имена и Steam ID из него вырезаются, сейвы не отправляются.".to_owned(),
+                text: "Диагностика работает только локально: редактор ничего не отправляет по сети. Обезличенный отчёт можно сохранить вручную в Настройках → Инструменты для поддержки.".to_owned(),
                 style: Text::Note.style(),
             },
             Look { text: rgb(style::TEXT_MUTED), ..Look::default() },
         )?;
         let reports_ok = style::button(tree, reports_banner, "Понятно", style::Button::Secondary)?;
-        let reports_off = style::button(tree, reports_banner, "Не отправлять", style::Button::Secondary)?;
+        let reports_off = style::button(tree, reports_banner, "Не показывать", style::Button::Secondary)?;
         tree.set_visible(reports_banner, !settings.reports_notice_shown)?;
 
         let viewport = tree.add(
@@ -1368,10 +1368,10 @@ impl Shell {
         }
         if clicked.is_some() && clicked == Some(self.reports_off) {
             let _ = sse_app::settings_writer::submit(sse_app::settings_writer::SettingsPatch::ReportsNotice {
-                send_reports: Some(false),
+                send_reports: None,
             });
             tree.set_visible(self.reports_banner, false)?;
-            tree.set_text(self.status, "Отправка отчётов отключена.")?;
+            tree.set_text(self.status, "Уведомление о локальной диагностике скрыто.")?;
             return Ok(Flow::Continue);
         }
         let editor_action = if clicked.is_some() && clicked == Some(self.undo) {
