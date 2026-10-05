@@ -139,3 +139,38 @@ fn forward_compatibility_unknown_fields_ignored() {
     assert_eq!(settings.sound_volume, 65);
     assert_eq!(settings.theme_id, "zone");
 }
+
+
+#[test]
+fn reads_csharp_snake_case_settings_snapshot() {
+    let csharp = br#"{
+  "save_directories": [
+    "C:\\\\Games\\\\Saves",
+    "/home/user/.local/share/saves"
+  ],
+  "backup_directory": "/tmp/backups",
+  "language": "uk",
+  "sound_enabled": false,
+  "sound_volume": 35,
+  "music_enabled": true,
+  "theme_id": "zone",
+  "accent_id": "amber",
+  "ui_scale_percent": 125,
+  "navigation_collapsed": false,
+  "send_reports": false,
+  "reports_notice_shown": true,
+  "last_report_utc": "2026-10-05T18:30:00Z"
+}"#;
+    let settings = AppSettings::from_json_slice(csharp).expect("C# settings snapshot should parse");
+    assert_eq!(settings.save_directories.as_ref().map(Vec::len), Some(2));
+    assert_eq!(settings.backup_directory, Some(PathBuf::from("/tmp/backups")));
+    assert_eq!(settings.language.as_deref(), Some("uk"));
+    assert!(!settings.sound_enabled);
+    assert_eq!(settings.sound_volume, 35);
+    assert!(settings.music_enabled);
+    assert_eq!(settings.ui_scale_percent, 125);
+    assert_eq!(settings.navigation_collapsed, Some(false));
+    assert!(!settings.send_reports);
+    assert!(settings.reports_notice_shown);
+    assert_eq!(settings.last_report_utc.as_deref(), Some("2026-10-05T18:30:00Z"));
+}
