@@ -283,8 +283,12 @@ impl Companion {
                 .and_then(|directory| {
                     sse_companion::protocol::CompanionClient::new(directory)
                         .send(command, argument.as_slice(), Duration::from_secs(3))
-                        .map(|reply| reply.text)
                         .map_err(|e| e.to_string())
+                        .and_then(|reply| match reply.status {
+                            sse_companion::protocol::ReplyStatus::Ok => Ok(reply.text),
+                            sse_companion::protocol::ReplyStatus::Error => Err(format!("Game returned error: {}", reply.text)),
+                            sse_companion::protocol::ReplyStatus::Unsupported => Err(format!("Game returned unsupported: {}", reply.text)),
+                        })
                 });
             proxy.send(AppMessage::ToScreen(
                 ScreenId::Companion,
