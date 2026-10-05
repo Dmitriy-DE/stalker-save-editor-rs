@@ -766,7 +766,7 @@ impl Screen for Achievements {
         }
         let row = style::row(cx.tree, card)?;
         self.set = Some(style::button(cx.tree, row, "Разблокировать", Button::Primary)?);
-        self.clear = Some(style::button(cx.tree, row, "Сбросить", Button::Secondary)?);
+        self.clear = Some(style::button(cx.tree, row, crate::strings::t("Сбросить"), Button::Secondary)?);
         let confirm = style::card(cx.tree, host)?;
         self.confirm_card = Some(confirm);
         style::label(cx.tree, confirm, "ПОДТВЕРЖДЕНИЕ ДОСТИЖЕНИЯ", Text::Heading)?;
