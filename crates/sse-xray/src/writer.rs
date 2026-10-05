@@ -237,6 +237,14 @@ enum UndoPatch {
     },
 }
 
+struct AddedObjectExpectation {
+    object_id: u16,
+    template_object_id: u16,
+    parent_id: u16,
+    expected_count: Option<u16>,
+    serialized_record: Vec<u8>,
+}
+
 /// Applies a supported change set, repacks once, and verifies the unpacked result.
 pub fn apply(save: &Save, changes: &ChangeSet) -> Result<SaveBuffer> {
     let bundle = CatalogBundleReader::load_embedded().get(save.format().id());
@@ -380,7 +388,6 @@ fn apply_with_catalog_internal(
     let mut seen_relocation = false;
     let mut removed_objects = Vec::new();
     let mut added_objects = Vec::new();
-    let mut added_records = Vec::new();
     let mut seen_additions = HashSet::new();
     let mut object_replacements = HashMap::new();
     let mut deferred_upgrade_vectors = Vec::new();
@@ -753,8 +760,13 @@ fn apply_with_catalog_internal(
                     ));
                 }
                 let record = clone_template_record(save, template, item_key, *object_id, *quantity)?;
-                added_records.push(record);
-                added_objects.push((*object_id, save.actor_id(), ammunition.then_some(*quantity)));
+                added_objects.push(AddedObjectExpectation {
+                    object_id: *object_id,
+                    template_object_id: *template_object,
+                    parent_id: save.actor_id(),
+                    expected_count: ammunition.then_some(*quantity),
+                    serialized_record: record,
+                });
             }
             Change::SetPlayerFaction {
                 target_object,
@@ -1020,7 +1032,7 @@ fn apply_with_catalog_internal(
     }
 
     let has_object_changes =
-        !removed_objects.is_empty() || !added_records.is_empty() || !object_replacements.is_empty();
+        !removed_objects.is_empty() || !added_objects.is_empty() || !object_replacements.is_empty();
     let mut object_payload = None;
     if has_object_changes {
         let object_bytes = save.object_chunk_bytes(&working)?;
@@ -1037,7 +1049,7 @@ fn apply_with_catalog_internal(
             .ok_or_else(|| Error::Refused("removal count exceeds the OBJECT registry".to_owned()))?;
         let new_count = after_removals
             .checked_add(
-                u32::try_from(added_records.len())
+                u32::try_from(added_objects.len())
                     .map_err(|_| Error::Refused("too many X-Ray additions".to_owned()))?,
             )
             .filter(|count| *count > 0 && *count <= 1_000_000)
@@ -1058,9 +1070,9 @@ fn apply_with_catalog_internal(
             .values()
             .try_fold(0_usize, |sum, record| sum.checked_add(record.len()))
             .ok_or_else(|| Error::Refused("replacement X-Ray record length overflow".to_owned()))?;
-        let added_length = added_records
+        let added_length = added_objects
             .iter()
-            .try_fold(0_usize, |sum, record| sum.checked_add(record.len()))
+            .try_fold(0_usize, |sum, added| sum.checked_add(added.serialized_record.len()))
             .ok_or_else(|| Error::Refused("added X-Ray record length overflow".to_owned()))?;
         let capacity = object_bytes
             .len()
@@ -1091,8 +1103,8 @@ fn apply_with_catalog_internal(
         if offset != object_bytes.len() {
             return Err(Error::damaged("X-Ray OBJECT records do not consume their chunk"));
         }
-        for record in &added_records {
-            payload.extend_from_slice(record);
+        for added in &added_objects {
+            payload.extend_from_slice(&added.serialized_record);
         }
         object_payload = Some(payload);
     }
@@ -1259,15 +1271,57 @@ fn apply_with_catalog_internal(
             "removed X-Ray object remains in the registry after read-back".to_owned(),
         ));
     }
-    for (object_id, parent_id, expected_count) in &added_objects {
+    verify_no_new_story_id_occurrences(
+        save.registry_objects().iter().map(|record| record.story_id),
+        verified.registry_objects().iter().map(|record| record.story_id),
+    )?;
+    for added in &added_objects {
         let record = verified
             .registry_objects()
             .iter()
-            .find(|record| record.object_id == *object_id)
-            .ok_or_else(|| Error::Refused(format!("added object 0x{object_id:04X} is missing after read-back")))?;
-        if record.parent_id != *parent_id {
+            .find(|record| record.object_id == added.object_id)
+            .ok_or_else(|| {
+                Error::Refused(format!(
+                    "added object 0x{:04X} is missing after read-back",
+                    added.object_id
+                ))
+            })?;
+        if record.parent_id != added.parent_id {
             return Err(Error::Refused(format!(
-                "added object 0x{object_id:04X} has the wrong parent after read-back"
+                "added object 0x{:04X} has the wrong parent after read-back",
+                added.object_id
+            )));
+        }
+        if registry_record_bytes(&verified, record)? != added.serialized_record.as_slice() {
+            return Err(Error::Refused(format!(
+                "added object 0x{:04X} differs from its prepared template clone",
+                added.object_id
+            )));
+        }
+        let template_before = save
+            .registry_objects()
+            .iter()
+            .find(|record| record.object_id == added.template_object_id)
+            .ok_or_else(|| {
+                Error::Refused(format!(
+                    "template object 0x{:04X} disappeared from the source registry",
+                    added.template_object_id
+                ))
+            })?;
+        let template_after = verified
+            .registry_objects()
+            .iter()
+            .find(|record| record.object_id == added.template_object_id)
+            .ok_or_else(|| {
+                Error::Refused(format!(
+                    "template object 0x{:04X} disappeared after read-back",
+                    added.template_object_id
+                ))
+            })?;
+        if registry_record_bytes(save, template_before)? != registry_record_bytes(&verified, template_after)? {
+            return Err(Error::Refused(format!(
+                "template object 0x{:04X} changed during item addition",
+                added.template_object_id
             )));
         }
         if !record.name_replace.is_empty()
@@ -1277,22 +1331,25 @@ fn apply_with_catalog_internal(
             || verified.custom_data(record) != Some(&[][..])
         {
             return Err(Error::Refused(format!(
-                "added object 0x{object_id:04X} retained template-bound SPAWN/STATE metadata"
+                "added object 0x{:04X} retained template-bound SPAWN/STATE metadata",
+                added.object_id
             )));
         }
-        if let Some(expected_count) = expected_count {
+        if let Some(expected_count) = added.expected_count {
             let item = verified
                 .inventory()?
                 .into_iter()
-                .find(|item| item.handle == *object_id)
+                .find(|item| item.handle == added.object_id)
                 .ok_or_else(|| {
                     Error::Refused(format!(
-                        "added ammo 0x{object_id:04X} is not actor-owned after read-back"
+                        "added ammo 0x{:04X} is not actor-owned after read-back",
+                        added.object_id
                     ))
                 })?;
-            if item.count != Some(*expected_count) {
+            if item.count != Some(expected_count) {
                 return Err(Error::Refused(format!(
-                    "added ammo count read-back failed for 0x{object_id:04X}"
+                    "added ammo count read-back failed for 0x{:04X}",
+                    added.object_id
                 )));
             }
         }
@@ -1441,6 +1498,44 @@ fn validate_slot_occupancy(inventory: &[crate::InventoryItem], changes: &ChangeS
                 item.handle
             )));
         }
+    }
+    Ok(())
+}
+
+fn registry_record_bytes<'a>(save: &'a Save, record: &crate::RegistryObject) -> Result<&'a [u8]> {
+    let end = record
+        .record_offset
+        .checked_add(record.record_length)
+        .ok_or_else(|| Error::damaged("X-Ray registry record range overflow"))?;
+    save.raw_image()
+        .get(record.record_offset..end)
+        .ok_or_else(|| Error::damaged("X-Ray registry record is outside the unpacked image"))
+}
+
+fn verify_no_new_story_id_occurrences(
+    before: impl IntoIterator<Item = Option<u32>>,
+    after: impl IntoIterator<Item = Option<u32>>,
+) -> Result<()> {
+    fn counts(story_ids: impl IntoIterator<Item = Option<u32>>) -> Result<HashMap<u32, usize>> {
+        let mut counts = HashMap::new();
+        for story_id in story_ids.into_iter().flatten().filter(|id| *id != u32::MAX) {
+            let count = counts.entry(story_id).or_insert(0_usize);
+            *count = count
+                .checked_add(1)
+                .ok_or_else(|| Error::Refused("X-Ray story-id occurrence count overflow".to_owned()))?;
+        }
+        Ok(counts)
+    }
+
+    let before = counts(before)?;
+    let after = counts(after)?;
+    if let Some((story_id, _)) = after
+        .iter()
+        .find(|(story_id, count)| **count > 1 && **count > before.get(story_id).copied().unwrap_or_default())
+    {
+        return Err(Error::Refused(format!(
+            "X-Ray read-back introduced a duplicate story_id 0x{story_id:08X}"
+        )));
     }
     Ok(())
 }
@@ -2649,14 +2744,29 @@ fn write_u16(bytes: &mut [u8], offset: usize, value: u16) -> Result<()> {
 mod tests {
     use super::{
         actor_spawn_position_offset, apply, apply_inverse, apply_with_catalog, apply_with_undo, capability,
-        encode_condition_q8, read_u16, read_u32, read_vector, verify_changed_image_ranges, write_u16, write_u32,
-        Capability, Change, ChangeKind, ChangeSet, PendingWrite, Placement,
+        encode_condition_q8, read_u16, read_u32, read_vector, verify_changed_image_ranges,
+        verify_no_new_story_id_occurrences, write_u16, write_u32, Capability, Change, ChangeKind, ChangeSet,
+        PendingWrite, Placement,
     };
     use crate::{Format, Save};
     use sse_catalog::{CatalogBundleReader, UpgradeCatalog, UpgradeDefinition};
     use sse_core::Cursor;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    #[test]
+    fn read_back_rejects_new_story_id_duplicates_but_allows_existing_ones() -> TestResult {
+        let original = [Some(73), Some(73), Some(u32::MAX), None];
+        let unchanged = [Some(73), Some(73), Some(u32::MAX), None];
+        verify_no_new_story_id_occurrences(original, unchanged)?;
+        verify_no_new_story_id_occurrences(original, [Some(73), Some(73), Some(91)])?;
+
+        let duplicated = [Some(73), Some(73), Some(73), Some(u32::MAX), None];
+        let error = verify_no_new_story_id_occurrences(original, duplicated)
+            .expect_err("a new occurrence of an existing story_id must be rejected");
+        assert!(error.to_string().contains("duplicate story_id"));
+        Ok(())
+    }
 
     #[test]
     fn money_writer_rejects_a_collateral_image_change() -> TestResult {
@@ -2692,6 +2802,15 @@ mod tests {
             .iter()
             .find(|record| record.object_id == 4660)
             .ok_or("seeded template should remain in the registry")?;
+        let template_end = seeded_template
+            .record_offset
+            .checked_add(seeded_template.record_length)
+            .ok_or("seeded template record range should not overflow")?;
+        let template_bytes = source
+            .raw_image()
+            .get(seeded_template.record_offset..template_end)
+            .ok_or("seeded template record should be in the source image")?
+            .to_vec();
         assert_eq!(seeded_template.story_id, Some(73));
         assert_eq!(seeded_template.spawn_story_id, Some(91));
         assert_eq!(seeded_template.spawn_id, Some(0x1234));
@@ -2724,6 +2843,48 @@ mod tests {
         assert_eq!(cloned.spawn_id, Some(u16::MAX));
         assert_eq!(cloned.name_replace, "");
         assert_eq!(read_back.custom_data(cloned), Some(&[][..]));
+        let verified_template = read_back
+            .registry_objects()
+            .iter()
+            .find(|record| record.object_id == 4660)
+            .ok_or("template should remain in the read-back registry")?;
+        let verified_template_end = verified_template
+            .record_offset
+            .checked_add(verified_template.record_length)
+            .ok_or("verified template record range should not overflow")?;
+        assert_eq!(
+            read_back
+                .raw_image()
+                .get(verified_template.record_offset..verified_template_end)
+                .ok_or("verified template record should be in the read-back image")?,
+            template_bytes.as_slice()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn addition_refuses_to_mutate_its_template() -> TestResult {
+        let packed = include_bytes!("../../../fixtures/synthetic/writer-add/xray-add-soc-ammo-source.sav");
+        let source = Save::read(packed)?;
+        let changes = ChangeSet::new(vec![
+            Change::SetStack {
+                target_object: 4660,
+                old_value: 30,
+                new_value: 29,
+            },
+            Change::AddItem {
+                template_object: 4660,
+                item_key: "ammo_9x39_pab9".to_owned(),
+                object_id: 4662,
+                quantity: 17,
+            },
+        ]);
+
+        let error = match apply(&source, &changes) {
+            Ok(_) => return Err("an item-add operation must not mutate its template".into()),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("template"), "{error}");
         Ok(())
     }
 
@@ -4360,6 +4521,61 @@ mod tests {
                 target_object: object_id,
             }]);
             assert_eq!(apply(&actual_raw, &inverse)?.as_slice(), source_bytes);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn item_addition_preserves_non_ammo_durability_in_clear_sky_and_call_of_pripyat() -> TestResult {
+        let cases: [(&[u8], &str); 2] = [
+            (
+                include_bytes!("../../../fixtures/synthetic/writer-durability/xray-durability-cs-source.sav"),
+                "Clear Sky",
+            ),
+            (
+                include_bytes!("../../../fixtures/synthetic/writer-durability/xray-durability-cop-source.sav"),
+                "Call of Pripyat",
+            ),
+        ];
+        for (packed, game) in cases {
+            let source = Save::read(packed)?;
+            let template = source
+                .registry_objects()
+                .iter()
+                .find(|record| record.object_id == 13398)
+                .ok_or_else(|| std::io::Error::other(format!("{game} weapon template should exist")))?;
+            let template_item = source
+                .inventory()?
+                .into_iter()
+                .find(|item| item.handle == template.object_id)
+                .ok_or_else(|| std::io::Error::other(format!("{game} weapon should be actor-owned")))?;
+            let condition = template_item
+                .condition
+                .ok_or_else(|| std::io::Error::other(format!("{game} weapon condition should be indexed")))?;
+            let object_id = (1..u16::MAX)
+                .find(|candidate| {
+                    !source
+                        .registry_objects()
+                        .iter()
+                        .any(|record| record.object_id == *candidate)
+                })
+                .ok_or_else(|| std::io::Error::other(format!("{game} fixture has no free object id")))?;
+            let output = apply(
+                &source,
+                &ChangeSet::new(vec![Change::AddItem {
+                    template_object: template.object_id,
+                    item_key: template.name.clone(),
+                    object_id,
+                    quantity: 1,
+                }]),
+            )?;
+            let verified = Save::read(output.as_slice())?;
+            let added_condition = verified
+                .inventory()?
+                .into_iter()
+                .find(|item| item.handle == object_id)
+                .and_then(|item| item.condition);
+            assert_eq!(added_condition, Some(condition), "{game}");
         }
         Ok(())
     }
