@@ -10,7 +10,7 @@ use sse_sys::memfd::MappedFile;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 
 const WL_DISPLAY: u32 = 1;
 const WL_REGISTRY: u32 = 2;
@@ -54,7 +54,7 @@ pub struct WaylandWindow {
     buffers: [BufferSlot; 2],
     size: (u32, u32),
     next_object_id: u32,
-    sync: Arc<Mutex<BufferSync>>,
+    sync: Arc<(Mutex<BufferSync>, Condvar)>,
     closed: Arc<Mutex<bool>>,
 }
 
@@ -179,42 +179,30 @@ impl Present for WaylandWindow {
         if rects.is_empty() {
             return Ok(());
         }
-        if stride != usize::try_from(width).unwrap_or(0) {
-            return Err(Error::Refused("Wayland frame stride does not match width".to_owned()));
+        let configured = self
+            .sync
+            .0
+            .lock()
+            .map(|state| state.configured_size)
+            .unwrap_or(None);
+        let target = configured.unwrap_or((width, height));
+        if target != self.size {
+            self.recreate_buffers(target.0, target.1)?;
         }
-        if (width, height) != self.size {
-            self.recreate_buffers(width, height)?;
+        if (width, height) != self.size || stride != usize::try_from(width).unwrap_or(0) {
+            return Ok(());
         }
 
-        let slot_index = {
-            let mut sync = self
-                .sync
-                .lock()
-                .map_err(|_| Error::System("Wayland buffer state lock poisoned".to_owned()))?;
-            let Some(index) = sync.released.iter().position(|released| *released) else {
-                return Ok(());
-            };
-            if let Some(released) = sync.released.get_mut(index) {
-                *released = false;
-            }
-            index
-        };
-
-        let slot = self
-            .buffers
-            .get_mut(slot_index)
-            .ok_or_else(|| Error::damaged("Wayland buffer slot is missing"))?;
-        if let Err(error) = slot.memory.write_u32_le(frame).map_err(io) {
-            self.release_slot(slot_index);
-            return Err(error);
-        }
-        if let Err(error) = send_shared(&self.writer, self.surface, 1, &u32s(&[slot.buffer, 0, 0])) {
-            self.release_slot(slot_index);
-            return Err(error);
-        }
+        let slot = self.acquire_buffer()?;
+        self.buffers[slot].memory.write_u32_le(frame).map_err(io)?;
+        let mut writer = self
+            .writer
+            .lock()
+            .map_err(|_| Error::System("Wayland writer lock poisoned".to_owned()))?;
+        send(&mut writer, self.surface, 1, &u32s(&[self.buffers[slot].buffer, 0, 0]))?;
         for rect in rects {
-            if let Err(error) = send_shared(
-                &self.writer,
+            send(
+                &mut writer,
                 self.surface,
                 2,
                 &i32s(&[
@@ -223,16 +211,73 @@ impl Present for WaylandWindow {
                     i32::try_from(rect.width).unwrap_or(i32::MAX),
                     i32::try_from(rect.height).unwrap_or(i32::MAX),
                 ]),
-            ) {
-                self.release_slot(slot_index);
-                return Err(error);
-            }
+            )?;
         }
-        if let Err(error) = send_shared(&self.writer, self.surface, 6, &[]) {
-            self.release_slot(slot_index);
-            return Err(error);
+        send(&mut writer, self.surface, 6, &[])?;
+        writer.flush().map_err(io)
+    }
+}
+
+impl WaylandWindow {
+    fn acquire_buffer(&self) -> Result<usize> {
+        let (lock, ready) = &*self.sync;
+        let state = lock
+            .lock()
+            .map_err(|_| Error::System("Wayland buffer lock poisoned".to_owned()))?;
+        let (mut state, _) = ready
+            .wait_timeout_while(state, std::time::Duration::from_millis(100), |state| {
+                !state.released.iter().any(|released| *released)
+            })
+            .map_err(|_| Error::System("Wayland buffer wait poisoned".to_owned()))?;
+        let slot = state
+            .released
+            .iter()
+            .position(|released| *released)
+            .ok_or_else(|| Error::System("Wayland compositor did not release a frame buffer".to_owned()))?;
+        state.released[slot] = false;
+        Ok(slot)
+    }
+
+    fn recreate_buffers(&mut self, width: u32, height: u32) -> Result<()> {
+        if width == 0 || height == 0 {
+            return Ok(());
         }
-        Ok(())
+        let first_pool = self.allocate_object_pair()?;
+        let second_pool = self.allocate_object_pair()?;
+        let first = create_buffer(&self.writer, self.shm, width, height, first_pool.0, first_pool.1)?;
+        let second = create_buffer(&self.writer, self.shm, width, height, second_pool.0, second_pool.1)?;
+        let old = std::mem::replace(&mut self.buffers, [first, second]);
+        {
+            let mut state = self
+                .sync
+                .0
+                .lock()
+                .map_err(|_| Error::System("Wayland buffer lock poisoned".to_owned()))?;
+            state.ids = [self.buffers[0].buffer, self.buffers[1].buffer];
+            state.released = [true, true];
+            state.configured_size = None;
+        }
+        self.size = (width, height);
+        let mut writer = self
+            .writer
+            .lock()
+            .map_err(|_| Error::System("Wayland writer lock poisoned".to_owned()))?;
+        for slot in old {
+            let _ = send(&mut writer, slot.buffer, 0, &[]);
+            let _ = send(&mut writer, slot.pool, 1, &[]);
+        }
+        writer.flush().map_err(io)
+    }
+
+    fn allocate_object_pair(&mut self) -> Result<(u32, u32)> {
+        let pool = self.next_object_id;
+        let buffer = pool
+            .checked_add(1)
+            .ok_or_else(|| Error::Refused("Wayland object id overflow".to_owned()))?;
+        self.next_object_id = buffer
+            .checked_add(1)
+            .ok_or_else(|| Error::Refused("Wayland object id overflow".to_owned()))?;
+        Ok((pool, buffer))
     }
 }
 
