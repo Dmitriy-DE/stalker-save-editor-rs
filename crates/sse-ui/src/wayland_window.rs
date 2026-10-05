@@ -297,8 +297,8 @@ fn parse_pointer_event(
                 y: position.1,
             })
         }
-        4 if read_u32(payload, 8) == Some(0) => {
-            let raw = read_i32(payload, 12)?;
+        4 if read_u32(payload, 4) == Some(0) => {
+            let raw = read_i32(payload, 8)?;
             let delta = match raw.cmp(&0) {
                 std::cmp::Ordering::Less => -1,
                 std::cmp::Ordering::Equal => 0,
