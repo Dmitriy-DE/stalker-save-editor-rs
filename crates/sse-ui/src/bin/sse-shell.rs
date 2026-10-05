@@ -17,8 +17,11 @@ use sse_ui::widget::Tree;
 use std::time::Duration;
 use std::time::Instant;
 
-fn main() {
+fn main() -> std::process::ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(exit) = sse_steam::worker::run_if_worker(&args) {
+        return exit;
+    }
     let result = match args.first().map(String::as_str) {
         Some("--screenshot") => screenshot(&args),
         Some("--bench") => bench(&args),
@@ -28,8 +31,9 @@ fn main() {
     };
     if let Err(error) = result {
         eprintln!("sse-shell: {error}");
-        std::process::exit(1);
+        return std::process::ExitCode::FAILURE;
     }
+    std::process::ExitCode::SUCCESS
 }
 
 fn companion_command(args: &[String]) -> Result<()> {
