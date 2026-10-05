@@ -535,20 +535,8 @@ impl GameFixEngine {
             return self.install(definition, game_dir);
         }
 
-        let parse_version = |value: &str| -> Result<Vec<u64>> {
-            value
-                .split('.')
-                .map(|part| {
-                    if part.is_empty() {
-                        return Err(Error::Refused("Fix version contains an empty numeric part".to_owned()));
-                    }
-                    part.parse::<u64>()
-                        .map_err(|_| Error::Refused(format!("Fix version is not numeric: {value}")))
-                })
-                .collect()
-        };
-        let old_v = parse_version(&old_manifest.version)?;
-        let new_v = parse_version(&definition.version)?;
+        let old_v = parse_numeric_version(&old_manifest.version)?;
+        let new_v = parse_numeric_version(&definition.version)?;
         if new_v <= old_v {
             return Err(Error::Refused(
                 "Fix updates must use an increasing numeric version".to_string(),
@@ -1982,6 +1970,19 @@ fn is_valid_id(id: &str) -> bool {
         .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '-')
 }
 
+fn parse_numeric_version(value: &str) -> Result<Vec<u64>> {
+    value
+        .split('.')
+        .map(|part| {
+            if part.is_empty() {
+                return Err(Error::Refused("Fix version contains an empty numeric part".to_owned()));
+            }
+            part.parse::<u64>()
+                .map_err(|_| Error::Refused(format!("Fix version is not numeric: {value}")))
+        })
+        .collect()
+}
+
 fn validate_definition(def: &GameFixDefinition) -> Result<()> {
     if !is_valid_id(&def.id) {
         return Err(Error::damaged(format!("Invalid fix ID '{}'", def.id)));
@@ -2128,6 +2129,13 @@ mod g13_tests {
             overlays: Vec::new(),
             spawn_edits: Vec::new(),
         }
+    }
+
+    #[test]
+    fn update_versions_must_be_fully_numeric() {
+        assert_eq!(parse_numeric_version("1.2.3").ok(), Some(vec![1, 2, 3]));
+        assert!(parse_numeric_version("1.beta.3").is_err());
+        assert!(parse_numeric_version("1..3").is_err());
     }
 
     #[test]
