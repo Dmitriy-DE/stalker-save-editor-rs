@@ -26,6 +26,7 @@ fn main() -> std::process::ExitCode {
         Some("--screenshot") => screenshot(&args),
         Some("--bench") => bench(&args),
         Some("--ci-budget") => ci_budget(),
+        Some("--ci-i18n-buttons") => ci_i18n_buttons(),
         Some("--companion") => companion_command(&args),
         Some("--hotkey-helper") => hotkey_helper(),
         _ => {
@@ -311,6 +312,42 @@ fn bench(args: &[String]) -> Result<()> {
         pixels.checked_div(200).unwrap_or(0)
     );
     println!("hover move repaint {per_hover:?}");
+    Ok(())
+}
+
+fn ci_i18n_buttons() -> Result<()> {
+    let previous = std::env::var_os("STALKER_EDITOR_LANG");
+    let mut total = 0_usize;
+    for language in sse_ui::strings::LANGUAGES {
+        std::env::set_var("STALKER_EDITOR_LANG", language);
+        let mut tree = Tree::new(Fonts::bundled()?, rgb(BG_BASE));
+        let mut shell = Shell::build(&mut tree, None)?;
+        let (width, height) = (940_u32, 600_u32);
+        tree.resize(width, height);
+        shell.message(
+            &mut tree,
+            &Message::Window(sse_ui::event_loop::WindowEvent::Resized { width, height }),
+            None,
+        )?;
+        let mut frame = vec![0_u32; 940 * 600];
+        let mut labels = std::collections::BTreeSet::new();
+        for id in ScreenId::ALL {
+            shell.open(&mut tree, id)?;
+            tree.paint(&mut frame, 940)?;
+            labels.extend(tree.ellipsized_button_labels()?);
+        }
+        total = total.saturating_add(labels.len());
+        println!("language={language} ellipsized_buttons={}", labels.len());
+        for label in labels {
+            println!("  {label}");
+        }
+    }
+    if let Some(value) = previous {
+        std::env::set_var("STALKER_EDITOR_LANG", value);
+    } else {
+        std::env::remove_var("STALKER_EDITOR_LANG");
+    }
+    println!("ellipsized_buttons_total={total}");
     Ok(())
 }
 
