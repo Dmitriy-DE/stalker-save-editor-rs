@@ -80,8 +80,8 @@ impl HotkeyRuntime {
 
         let mut by_id = Vec::new();
         for (index, (action, gesture)) in layout.bindings().enumerate() {
-            let id = u32::try_from(index.saturating_add(1))
-                .map_err(|_| HotkeyError::new("too many hotkey bindings"))?;
+            let id =
+                u32::try_from(index.saturating_add(1)).map_err(|_| HotkeyError::new("too many hotkey bindings"))?;
             let modifiers = u8::from(gesture.modifiers.control)
                 | u8::from(gesture.modifiers.alt).wrapping_shl(1)
                 | u8::from(gesture.modifiers.shift).wrapping_shl(2);
@@ -99,13 +99,11 @@ impl HotkeyRuntime {
             .map_err(|error| HotkeyError::new(error.to_string()))?;
         let answer = answer.trim_end();
         if answer != "ready" {
-            let reason = answer
-                .strip_prefix("error ")
-                .unwrap_or(if answer.is_empty() {
-                    "The hotkey helper ended before it was ready."
-                } else {
-                    answer
-                });
+            let reason = answer.strip_prefix("error ").unwrap_or(if answer.is_empty() {
+                "The hotkey helper ended before it was ready."
+            } else {
+                answer
+            });
             let _ = child.kill();
             let _ = child.wait();
             disable_polling(&exchange_directory);
@@ -140,11 +138,7 @@ impl HotkeyRuntime {
                     let result = client.send(command, &[], Duration::from_secs(3));
                     let message = match result {
                         Ok(reply) if reply.status == ReplyStatus::Ok => None,
-                        Ok(reply) => Some(format!(
-                            "Game returned {}: {}",
-                            status_name(reply.status),
-                            reply.text
-                        )),
+                        Ok(reply) => Some(format!("Game returned {}: {}", status_name(reply.status), reply.text)),
                         Err(error) => Some(error.to_string()),
                     };
                     if let Ok(mut last_error) = reader_errors.lock() {
