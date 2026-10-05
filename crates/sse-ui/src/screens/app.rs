@@ -444,7 +444,8 @@ fn load_settings() -> sse_app::AppSettings {
 }
 
 fn save_settings(settings: &sse_app::AppSettings) -> Result<()> {
-    settings.save(&sse_app::default_settings_path())
+    let _ = sse_app::settings_writer::submit(sse_app::settings_writer::SettingsPatch::Replace(settings.clone()));
+    Ok(())
 }
 
 const LANGUAGE_NAMES: [&str; 15] = [
