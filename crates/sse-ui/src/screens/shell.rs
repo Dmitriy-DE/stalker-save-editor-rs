@@ -1222,9 +1222,7 @@ impl Shell {
                 self.sync_saving_overlay(tree)?;
                 return Ok(Flow::Continue);
             }
-            Message::Window(WindowEvent::CloseRequested)
-                if sse_app::tasks::named_task_active("save-restore") =>
-            {
+            Message::Window(WindowEvent::CloseRequested) if sse_app::tasks::named_task_active("save-restore") => {
                 tree.set_text(self.status, "Дождитесь завершения восстановления, чтобы закрыть окно.")?;
                 return Ok(Flow::Continue);
             }
