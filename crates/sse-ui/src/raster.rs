@@ -380,7 +380,18 @@ impl<'a> Surface<'a> {
         .normalised(inner.width().max(0.0), inner.height().max(0.0));
 
         let source = color.to_u32();
-        self.for_each_pixel(bounds, |x, y, pixel| {
+        let top_depth = border_depth(width, outer_radii.top_left, outer_radii.top_right);
+        let bottom_depth = border_depth(width, outer_radii.bottom_left, outer_radii.bottom_right);
+        let left_depth = border_depth(width, outer_radii.top_left, outer_radii.bottom_left);
+        let right_depth = border_depth(width, outer_radii.top_right, outer_radii.bottom_right);
+        let top_end = rect
+            .y
+            .saturating_add(i32::try_from(top_depth.min(rect.height)).unwrap_or(i32::MAX));
+        let bottom_start = rect.bottom().saturating_sub(i64::from(bottom_depth.min(rect.height)));
+        let middle_top = i64::from(top_end).min(rect.bottom());
+        let middle_bottom = bottom_start.max(middle_top).min(rect.bottom());
+
+        let paint = |x: i32, y: i32, pixel: &mut u32| {
             let outer_coverage = rounded_coverage(outer, outer_radii, x, y);
             let inner_coverage = if inner.is_empty() {
                 0.0
@@ -391,7 +402,34 @@ impl<'a> Surface<'a> {
             if coverage != 0 {
                 *pixel = blend_covered(*pixel, source, coverage);
             }
-        });
+        };
+
+        let top_bounds = intersect_rect(
+            Rect::new(rect.x, rect.y, rect.width, top_depth.min(rect.height)),
+            bounds,
+        );
+        self.for_each_pixel(top_bounds, paint);
+
+        let bottom_height = u32::try_from(rect.bottom().saturating_sub(middle_bottom))
+            .unwrap_or_default()
+            .min(rect.height);
+        let bottom_y = i32::try_from(middle_bottom).unwrap_or(rect.y);
+        let bottom_bounds = intersect_rect(Rect::new(rect.x, bottom_y, rect.width, bottom_height), bounds);
+        self.for_each_pixel(bottom_bounds, paint);
+
+        let middle_height = u32::try_from(middle_bottom.saturating_sub(middle_top)).unwrap_or_default();
+        if middle_height != 0 {
+            let middle_y = i32::try_from(middle_top).unwrap_or(rect.y);
+            let left_bounds = intersect_rect(
+                Rect::new(rect.x, middle_y, left_depth.min(rect.width), middle_height),
+                bounds,
+            );
+            self.for_each_pixel(left_bounds, paint);
+            let right_width = right_depth.min(rect.width);
+            let right_x = i32::try_from(rect.right().saturating_sub(i64::from(right_width))).unwrap_or(rect.x);
+            let right_bounds = intersect_rect(Rect::new(right_x, middle_y, right_width, middle_height), bounds);
+            self.for_each_pixel(right_bounds, paint);
+        }
     }
 
     /// Blits an 8-bit coverage mask using `color`.
@@ -406,11 +444,7 @@ impl<'a> Surface<'a> {
             self.blit_black_mask(mask, destination, bounds, color.a, None);
             return;
         }
-        let mut table = [CoveredSource::default(); 256];
-        for (coverage, entry) in table.iter_mut().enumerate() {
-            *entry = CoveredSource::new(source, u8::try_from(coverage).unwrap_or_default());
-        }
-        self.blit_coverage_mask(mask, destination, bounds, &table);
+        self.blit_coverage_mask(mask, destination, bounds, source);
     }
 
     /// Scales and blits a premultiplied BGRA image into `destination`.
@@ -816,7 +850,7 @@ impl<'a> Surface<'a> {
         });
     }
 
-    fn blit_coverage_mask(&mut self, mask: MaskRef<'_>, destination: Rect, bounds: Rect, table: &[CoveredSource; 256]) {
+    fn blit_coverage_mask(&mut self, mask: MaskRef<'_>, destination: Rect, bounds: Rect, source: u32) {
         let Some((start_y, end_y)) = rect_y_range(bounds) else {
             return;
         };
@@ -870,10 +904,7 @@ impl<'a> Surface<'a> {
             let mut source_chunks = source_row.chunks_exact(8);
             for (destination_chunk, source_chunk) in destination_chunks.by_ref().zip(source_chunks.by_ref()) {
                 for (destination_pixel, coverage) in destination_chunk.iter_mut().zip(source_chunk) {
-                    *destination_pixel = blend_prepared(
-                        *destination_pixel,
-                        table.get(usize::from(*coverage)).copied().unwrap_or_default(),
-                    );
+                    *destination_pixel = blend_covered(*destination_pixel, source, *coverage);
                 }
             }
             for (destination_pixel, coverage) in destination_chunks
@@ -881,10 +912,7 @@ impl<'a> Surface<'a> {
                 .iter_mut()
                 .zip(source_chunks.remainder())
             {
-                *destination_pixel = blend_prepared(
-                    *destination_pixel,
-                    table.get(usize::from(*coverage)).copied().unwrap_or_default(),
-                );
+                *destination_pixel = blend_covered(*destination_pixel, source, *coverage);
             }
             surface_y = surface_y.saturating_add(1);
         }
@@ -1993,6 +2021,17 @@ fn gradient_pixel(rect: Rect, gradient: Gradient, x: i32, y: i32) -> u32 {
         position.min(denominator),
         denominator,
     )
+}
+
+fn border_depth(width: f64, first_radius: f64, second_radius: f64) -> u32 {
+    let extent = width.max(first_radius).max(second_radius).ceil();
+    if !extent.is_finite() || extent <= 0.0 {
+        return 0;
+    }
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    {
+        extent.min(f64::from(u32::MAX)) as u32
+    }
 }
 
 fn rounded_extent(radius: f64) -> i64 {
