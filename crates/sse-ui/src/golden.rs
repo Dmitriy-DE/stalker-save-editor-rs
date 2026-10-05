@@ -117,4 +117,34 @@ mod tests {
         assert_eq!(c.differing_pixels, 1);
         assert!(sse_codecs::png::decode(&diff_png(&c).unwrap_or_else(|error| panic!("{error:?}"))).is_ok());
     }
+
+    #[test]
+    fn all_shell_screens_match_golden_fingerprints() -> sse_core::Result<()> {
+        use crate::glyphs::Fonts;
+        use crate::screens::shell::Shell;
+        use crate::screens::ScreenId;
+        use crate::theme::BG_BASE;
+        use crate::widget::Tree;
+
+        const EXPECTED: [&str; 20] = [""; 20];
+        assert_eq!(ScreenId::ALL.len(), EXPECTED.len(), "golden set must cover every menu screen");
+        let mut actual = Vec::with_capacity(ScreenId::ALL.len());
+        for (index, id) in ScreenId::ALL.iter().enumerate() {
+            let mut tree = Tree::new(Fonts::bundled()?, crate::screens::style::rgb(BG_BASE));
+            let mut shell = Shell::build(&mut tree, None)?;
+            shell.open(&mut tree, *id)?;
+            tree.resize(1280, 800);
+            let mut frame = vec![0_u32; 1280 * 800];
+            tree.paint(&mut frame, 1280)?;
+            let mut bytes = Vec::with_capacity(frame.len() * 4);
+            for pixel in frame {
+                bytes.extend_from_slice(&pixel.to_le_bytes());
+            }
+            let digest = sse_codecs::sha256::sha256_hex(&bytes);
+            actual.push(digest.clone());
+            assert_eq!(digest, EXPECTED[index], "golden mismatch for {id:?}; actual set: {actual:?}");
+        }
+        Ok(())
+    }
+
 }
