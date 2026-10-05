@@ -6,7 +6,7 @@
 
 use crate::win32_ffi as w;
 use sse_core::{Error, Result};
-use std::{collections::VecDeque, ffi::c_void, mem, ptr, sync::Arc, time::Duration};
+use std::{\n    collections::VecDeque,\n    ffi::c_void,\n    mem, ptr,\n    sync::{Arc, Mutex, MutexGuard},\n    time::Duration,\n};
 
 const WM_DESTROY: u32 = 2;
 const WM_SIZE: u32 = 5;
@@ -260,7 +260,7 @@ impl Win32Window {
             small_icon: ptr::null_mut(),
         }; // SAFETY: WNDCLASSEX and UTF-16 name are valid for this call.
         let _ = unsafe { w::RegisterClassExW(&wc) };
-        let mut state = Box::new(State {
+        let state = Box::into_raw(Box::new(Mutex::new(State {
             frame: Vec::new(),
             width: options.width,
             height: options.height,
@@ -269,7 +269,7 @@ impl Win32Window {
             min_h: options.min_height,
             high: None,
             cursor: CursorShape::Arrow,
-        });
+        })));
         let width = i32::try_from(options.width).map_err(|_| Error::Refused("window width too large".to_owned()))?;
         let height = i32::try_from(options.height).map_err(|_| Error::Refused("window height too large".to_owned()))?; // SAFETY: registered class, stable Box pointer, NUL-terminated strings.
         let hwnd = unsafe {
@@ -285,13 +285,16 @@ impl Win32Window {
                 ptr::null_mut(),
                 ptr::null_mut(),
                 ptr::null_mut(),
-                state.as_mut() as *mut State as *mut c_void,
+                state.cast::<c_void>(),
             )
         };
         if hwnd.is_null() {
+            // SAFETY: CreateWindowExW failed, so no HWND can retain the raw Box allocation.
+            drop(unsafe { Box::from_raw(state) });
             return Err(Error::System("CreateWindowExW failed".to_owned()));
-        } // SAFETY: state remains boxed for HWND lifetime.
-        unsafe { w::SetWindowLongPtrW(hwnd, GWLP_USERDATA, state.as_mut() as *mut State as isize) };
+        }
+        // SAFETY: state came from Box::into_raw and remains allocated until Win32Window::drop.
+        unsafe { w::SetWindowLongPtrW(hwnd, GWLP_USERDATA, state as isize) };
         let dark: i32 = 1; // SAFETY: attribute 20 consumes a BOOL-sized value.
         let _ = unsafe {
             w::DwmSetWindowAttribute(
@@ -310,9 +313,17 @@ impl Win32Window {
             state,
             wake,
             hotkeys: Vec::new(),
+            icons: Vec::new(),
             com,
         })
     }
+    fn state(&self) -> MutexGuard<'_, State> {
+        // SAFETY: state is a Box::into_raw allocation owned by this window and reclaimed only after HWND destruction.
+        unsafe { &*self.state }
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     /// Handle suitable for worker threads.
     #[must_use]
     pub fn wake_handle(&self) -> WakeHandle {
@@ -347,8 +358,17 @@ impl Win32Window {
                     .unwrap_or(0)
             )
         ];
+        // SAFETY: CreateBitmap copies the live monochrome mask bytes during the call.
         let mono = unsafe { w::CreateBitmap(wi, hi, 1, 1, mask.as_ptr().cast()) };
         if color.is_null() || mono.is_null() {
+            if !color.is_null() {
+                // SAFETY: color is an owned HBITMAP returned by CreateBitmap and was not transferred.
+                let _ = unsafe { w::DeleteObject(color) };
+            }
+            if !mono.is_null() {
+                // SAFETY: mono is an owned HBITMAP returned by CreateBitmap and was not transferred.
+                let _ = unsafe { w::DeleteObject(mono) };
+            }
             return Err(Error::System("icon bitmap creation failed".to_owned()));
         }
         let info = w::IconInfo {
@@ -366,10 +386,12 @@ impl Win32Window {
         if icon.is_null() {
             return Err(Error::System("CreateIconIndirect failed".to_owned()));
         } // SAFETY: WM_SETICON accepts HICON in lParam.
+        // SAFETY: WM_SETICON accepts the live HICON in lParam; ownership remains with this window.
         unsafe {
             w::PostMessageW(self.hwnd, 0x80, 1, icon as isize);
             w::PostMessageW(self.hwnd, 0x80, 0, icon as isize);
         }
+        self.icons.push(icon);
         Ok(())
     }
     fn dialog(&mut self, folders: bool) -> Result<Option<String>> {
@@ -379,12 +401,28 @@ impl Win32Window {
 impl Drop for Win32Window {
     fn drop(&mut self) {
         for id in &self.hotkeys {
+            // SAFETY: hwnd is live until DestroyWindow below and each id was registered on it.
             let _ = unsafe { w::UnregisterHotKey(self.hwnd, *id) };
         }
         if !self.hwnd.is_null() {
+            // SAFETY: clearing GWLP_USERDATA prevents destruction callbacks from observing the state allocation.
+            unsafe { w::SetWindowLongPtrW(self.hwnd, GWLP_USERDATA, 0) };
+            // SAFETY: hwnd is owned by this Win32Window and is destroyed exactly once.
             let _ = unsafe { w::DestroyWindow(self.hwnd) };
         }
+        for icon in self.icons.drain(..) {
+            if !icon.is_null() {
+                // SAFETY: each icon was created by CreateIconIndirect and ownership was retained by this window.
+                let _ = unsafe { w::DestroyIcon(icon) };
+            }
+        }
+        if !self.state.is_null() {
+            // SAFETY: state came from Box::into_raw, GWLP_USERDATA is cleared, and the HWND is already destroyed.
+            drop(unsafe { Box::from_raw(self.state) });
+            self.state = ptr::null_mut();
+        }
         if self.com {
+            // SAFETY: this thread successfully initialized COM in Win32Window::new.
             unsafe { w::CoUninitialize() };
         }
     }
@@ -399,10 +437,13 @@ impl Window for Win32Window {
         if frame.len() != bytes {
             return Err(Error::Refused("BGRA frame size mismatch".to_owned()));
         }
-        self.state.frame.clear();
-        self.state.frame.extend_from_slice(frame);
-        self.state.width = width;
-        self.state.height = height;
+        {
+            let mut state = self.state();
+            state.frame.clear();
+            state.frame.extend_from_slice(frame);
+            state.width = width;
+            state.height = height;
+        }
         for d in damage {
             let r = w::Rect {
                 left: i32::try_from(d.x).unwrap_or_default(),
@@ -422,7 +463,7 @@ impl Window for Win32Window {
         Ok(())
     }
     fn next_event(&mut self, timeout: Option<Duration>) -> Event {
-        if let Some(e) = self.state.events.pop_front() {
+        if let Some(e) = self.state().events.pop_front() {
             return e;
         }
         let ms = timeout.map_or(INFINITE, |d| u32::try_from(d.as_millis()).unwrap_or(u32::MAX));
@@ -451,14 +492,14 @@ impl Window for Win32Window {
                 w::TranslateMessage(&msg);
                 w::DispatchMessageW(&msg);
             }
-            if let Some(e) = self.state.events.pop_front() {
+            if let Some(e) = self.state().events.pop_front() {
                 return e;
             }
         }
         Event::Timeout
     }
     fn set_cursor(&mut self, c: CursorShape) {
-        self.state.cursor = c;
+        self.state().cursor = c;
         let h = cursor_handle(c);
         if !h.is_null() {
             unsafe {
@@ -481,8 +522,12 @@ impl Window for Win32Window {
             unsafe { w::CloseClipboard() };
             return Err(Error::System("GlobalAlloc failed".to_owned()));
         }
+        // SAFETY: mem is the movable global allocation created above.
         let dst = unsafe { w::GlobalLock(mem) };
         if dst.is_null() {
+            // SAFETY: SetClipboardData has not taken ownership, so this allocation is still ours.
+            let _ = unsafe { w::GlobalFree(mem) };
+            // SAFETY: this call closes the clipboard opened above.
             unsafe { w::CloseClipboard() };
             return Err(Error::System("GlobalLock failed".to_owned()));
         }
@@ -490,9 +535,13 @@ impl Window for Win32Window {
             ptr::copy_nonoverlapping(data.as_ptr().cast::<u8>(), dst.cast::<u8>(), bytes);
             w::GlobalUnlock(mem);
         }
+        // SAFETY: mem contains a NUL-terminated UTF-16 buffer and remains owned by us until this succeeds.
         let set = unsafe { w::SetClipboardData(CF_UNICODETEXT, mem) };
+        // SAFETY: this call closes the clipboard opened above.
         unsafe { w::CloseClipboard() };
         if set.is_null() {
+            // SAFETY: failed SetClipboardData did not transfer ownership of mem.
+            let _ = unsafe { w::GlobalFree(mem) };
             Err(Error::System("SetClipboardData failed".to_owned()))
         } else {
             Ok(())
