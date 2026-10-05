@@ -231,9 +231,10 @@ struct State {
 /// Win32 implementation.
 pub struct Win32Window {
     hwnd: w::Hwnd,
-    state: Box<State>,
+    state: *mut Mutex<State>,
     wake: WakeHandle,
     hotkeys: Vec<i32>,
+    icons: Vec<w::Hicon>,
     com: bool,
 }
 impl Win32Window {
