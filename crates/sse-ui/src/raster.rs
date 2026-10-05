@@ -406,11 +406,7 @@ impl<'a> Surface<'a> {
             self.blit_black_mask(mask, destination, bounds, color.a, None);
             return;
         }
-        let mut table = [CoveredSource::default(); 256];
-        for (coverage, entry) in table.iter_mut().enumerate() {
-            *entry = CoveredSource::new(source, u8::try_from(coverage).unwrap_or_default());
-        }
-        self.blit_coverage_mask(mask, destination, bounds, &table);
+        self.blit_coverage_mask(mask, destination, bounds, source);
     }
 
     /// Scales and blits a premultiplied BGRA image into `destination`.
@@ -816,7 +812,7 @@ impl<'a> Surface<'a> {
         });
     }
 
-    fn blit_coverage_mask(&mut self, mask: MaskRef<'_>, destination: Rect, bounds: Rect, table: &[CoveredSource; 256]) {
+    fn blit_coverage_mask(&mut self, mask: MaskRef<'_>, destination: Rect, bounds: Rect, source: u32) {
         let Some((start_y, end_y)) = rect_y_range(bounds) else {
             return;
         };
@@ -870,10 +866,7 @@ impl<'a> Surface<'a> {
             let mut source_chunks = source_row.chunks_exact(8);
             for (destination_chunk, source_chunk) in destination_chunks.by_ref().zip(source_chunks.by_ref()) {
                 for (destination_pixel, coverage) in destination_chunk.iter_mut().zip(source_chunk) {
-                    *destination_pixel = blend_prepared(
-                        *destination_pixel,
-                        table.get(usize::from(*coverage)).copied().unwrap_or_default(),
-                    );
+                    *destination_pixel = blend_covered(*destination_pixel, source, *coverage);
                 }
             }
             for (destination_pixel, coverage) in destination_chunks
