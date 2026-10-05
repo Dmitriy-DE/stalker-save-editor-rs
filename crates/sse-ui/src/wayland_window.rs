@@ -99,18 +99,7 @@ impl WaylandWindow {
         let reader_closed = Arc::clone(&closed);
         std::thread::Builder::new()
             .name("wayland-events".to_owned())
-            .spawn(move || {
-                event_reader(
-                    reader,
-                    xdg_surface,
-                    toplevel,
-                    wm,
-                    seat,
-                    surface,
-                    proxy,
-                    reader_closed,
-                )
-            })
+            .spawn(move || event_reader(reader, xdg_surface, toplevel, wm, seat, surface, proxy, reader_closed))
             .map_err(io)?;
         Ok(Self {
             stream,
@@ -263,12 +252,7 @@ fn event_reader<U: Send + 'static>(
     }
 }
 
-fn parse_pointer_event(
-    opcode: u16,
-    payload: &[u8],
-    surface: u32,
-    position: &mut (i32, i32),
-) -> Option<WindowEvent> {
+fn parse_pointer_event(opcode: u16, payload: &[u8], surface: u32, position: &mut (i32, i32)) -> Option<WindowEvent> {
     match opcode {
         0 if read_u32(payload, 4) == Some(surface) => {
             let x = fixed_to_pixel(read_i32(payload, 8)?);
@@ -382,11 +366,7 @@ fn evdev_key(key: u32, shift: bool) -> Option<(u32, Option<char>)> {
         57 => ' ',
         _ => return None,
     };
-    let character = if shift {
-        base.to_ascii_uppercase()
-    } else {
-        base
-    };
+    let character = if shift { base.to_ascii_uppercase() } else { base };
     Some((u32::from(character), Some(character)))
 }
 
@@ -492,10 +472,7 @@ fn wire_string(value: &str) -> Vec<u8> {
     out.extend_from_slice(value.as_bytes());
     out.push(0);
     let remainder = out.len().checked_rem(4).unwrap_or(0);
-    let padding = 4_usize
-        .saturating_sub(remainder)
-        .checked_rem(4)
-        .unwrap_or(0);
+    let padding = 4_usize.saturating_sub(remainder).checked_rem(4).unwrap_or(0);
     out.resize(out.len().saturating_add(padding), 0);
     out
 }
