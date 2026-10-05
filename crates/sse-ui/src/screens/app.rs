@@ -479,6 +479,10 @@ const LANGUAGE_NAMES: [&str; 15] = [
 /// Result of the background check started by the settings screen.
 struct Checked(String);
 
+struct DiagnosticsChecked(Vec<sse_app::diagnostics::EnvironmentCheck>);
+
+struct ReportSaved(Result<std::path::PathBuf, String>);
+
 /// Settings screen.
 #[derive(Default)]
 pub struct Settings {
@@ -488,8 +492,9 @@ pub struct Settings {
     sound_button: Option<WidgetId>,
     music_button: Option<WidgetId>,
     volume_button: Option<WidgetId>,
-    reports_button: Option<WidgetId>,
-    send_report_button: Option<WidgetId>,
+    support_check_button: Option<WidgetId>,
+    support_result: Option<WidgetId>,
+    save_report_button: Option<WidgetId>,
     backup_input: Option<WidgetId>,
     scale_value: Option<WidgetId>,
     scale_button: Option<WidgetId>,
@@ -508,6 +513,7 @@ pub struct Settings {
     accent: usize,
     settings: sse_app::AppSettings,
     backup_workspace: Option<super::saves::Workspace>,
+    last_checks: Vec<sse_app::diagnostics::EnvironmentCheck>,
 }
 
 impl Settings {
@@ -759,32 +765,40 @@ impl Screen for Settings {
             "Диагностика не нужна для обычного использования, но полезна для отчётов об ошибках.",
             Text::Body,
         )?;
-        style::label(cx.tree, support, "Проверка окружения подключена к кнопке «Проверить» в разделе обновлений; CrashReporter/report bundle API в sse-app пока отсутствует.", Text::Note)?;
+        let support_actions = style::row(cx.tree, support)?;
+        self.support_check_button = Some(style::button(
+            cx.tree,
+            support_actions,
+            "Проверить окружение",
+            Button::Primary,
+        )?);
+        self.save_report_button = Some(style::button(
+            cx.tree,
+            support_actions,
+            "Сохранить отчёт",
+            Button::Secondary,
+        )?);
+        self.support_result = Some(style::label(cx.tree, support, "Проверка ещё не запускалась.", Text::Note)?);
+        style::label(
+            cx.tree,
+            support,
+            "Отчёт сохраняется локально как save-editor-report.txt.gz; пути и имена пользователя вырезаются.",
+            Text::Note,
+        )?;
         self.section_panels.push(support);
 
         let reports = style::card(cx.tree, content)?;
-        style::label(cx.tree, reports, "ОТЧЁТЫ ОБ ОШИБКАХ", Text::Heading)?;
-        self.reports_button = Some(style::button(
-            cx.tree,
-            reports,
-            if self.settings.send_reports {
-                "Отправлять отчёты: ВКЛ"
-            } else {
-                "Отправлять отчёты: ВЫКЛ"
-            },
-            Button::Secondary,
-        )?);
-        self.send_report_button = None;
+        style::label(cx.tree, reports, "ОТЧЁТЫ И ПРИВАТНОСТЬ", Text::Heading)?;
         style::label(
             cx.tree,
             reports,
-            "Ручная отправка отчёта отключена в Rust-версии.",
-            Text::Note,
+            "Отправка диагностики по сети отключена в Rust-версии. Сейвы и отчёты автоматически не отправляются.",
+            Text::Body,
         )?;
         style::label(
             cx.tree,
             reports,
-            "Отправить обезличенные журналы и отчёт окружения. Сохранения не отправляются.",
+            "Для обращения в поддержку сохраните локальный обезличенный отчёт в разделе «Инструменты для поддержки».",
             Text::Note,
         )?;
         self.section_panels.push(reports);
@@ -852,10 +866,6 @@ impl Screen for Settings {
                 "Громкость: {}%. Нажмите «Сохранить настройки».",
                 self.settings.sound_volume
             ));
-        }
-        if clicked.is_some() && clicked == self.reports_button {
-            self.settings.send_reports = !self.settings.send_reports;
-            cx.status = Some("Настройка отчётов изменена; нажмите «Сохранить настройки».".to_owned());
         }
         if clicked.is_some() && clicked == self.theme_button {
             self.theme = self
@@ -958,6 +968,42 @@ impl Screen for Settings {
             }
         }
 
+        if clicked.is_some() && clicked == self.support_check_button {
+            if let Some(result) = self.support_result {
+                cx.tree.set_text(result, "Проверяю…")?;
+            }
+            if let Some(proxy) = cx.proxy.cloned() {
+                let _ = std::thread::Builder::new()
+                    .name("diagnostics-check".to_owned())
+                    .spawn(move || {
+                        let checks = sse_app::diagnostics::run();
+                        proxy.send(AppMessage::ToScreen(
+                            ScreenId::Settings,
+                            Box::new(DiagnosticsChecked(checks)),
+                        ));
+                    });
+            }
+        }
+        if clicked.is_some() && clicked == self.save_report_button {
+            let checks = if self.last_checks.is_empty() {
+                sse_app::diagnostics::run()
+            } else {
+                self.last_checks.clone()
+            };
+            if let Some(proxy) = cx.proxy.cloned() {
+                let _ = std::thread::Builder::new()
+                    .name("diagnostics-report".to_owned())
+                    .spawn(move || {
+                        let result = sse_app::diagnostics::save_default_report(&checks)
+                            .map_err(|error| error.to_string());
+                        proxy.send(AppMessage::ToScreen(
+                            ScreenId::Settings,
+                            Box::new(ReportSaved(result)),
+                        ));
+                    });
+            }
+        }
+
         if clicked.is_some() && clicked == self.check_button {
             if let Some(result) = self.check_result {
                 cx.tree.set_text(result, "Проверяю…")?;
@@ -974,6 +1020,18 @@ impl Screen for Settings {
         if let Message::User(AppMessage::ToScreen(_, payload)) = message {
             if let (Some(Checked(text)), Some(result)) = (payload.downcast_ref::<Checked>(), self.check_result) {
                 cx.tree.set_text(result, text)?;
+            }
+            if let Some(DiagnosticsChecked(checks)) = payload.downcast_ref::<DiagnosticsChecked>() {
+                self.last_checks = checks.clone();
+                if let Some(result) = self.support_result {
+                    cx.tree.set_text(result, &sse_app::diagnostics::summary(checks))?;
+                }
+            }
+            if let Some(ReportSaved(result)) = payload.downcast_ref::<ReportSaved>() {
+                cx.status = Some(match result {
+                    Ok(path) => format!("Отчёт сохранён: {}", path.display()),
+                    Err(error) => format!("Не удалось сохранить отчёт: {error}"),
+                });
             }
         }
         Ok(())
