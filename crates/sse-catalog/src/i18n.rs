@@ -472,27 +472,6 @@ impl I18nCompletenessChecker {
             };
         }
 
-        let required_languages = &["en", "uk"];
-        for &lang in required_languages {
-            if let Ok(catalog) = svc.get_catalog(lang) {
-                let missing: Vec<&String> = master_keys
-                    .iter()
-                    .filter(|key| {
-                        !catalog.contains_key(*key) || catalog.get(*key).is_some_and(|v| matches!(v, JsonValue::Null))
-                    })
-                    .collect();
-                if !missing.is_empty() {
-                    errors.push(format!(
-                        "Language '{lang}' is missing {} required translations. First missing: '{}'",
-                        missing.len(),
-                        missing.first().map(|s| s.as_str()).unwrap_or("")
-                    ));
-                }
-            } else {
-                errors.push(format!("Could not load catalog for required language '{lang}'."));
-            }
-        }
-
         let all_languages: Vec<&str> = SUPPORTED_LANGUAGES
             .iter()
             .map(|(code, _)| *code)
@@ -502,10 +481,11 @@ impl I18nCompletenessChecker {
         for &lang in &all_languages {
             if let Ok(catalog) = svc.get_catalog(lang) {
                 let mut valid_count = 0usize;
+                let mut missing = Vec::new();
                 for key in &master_keys {
-                    if let Some(element) = catalog.get(key) {
-                        valid_count = valid_count.saturating_add(1);
-                        if let Some(translated) = element.as_str() {
+                    match catalog.get(key) {
+                        Some(JsonValue::String(translated)) if !translated.trim().is_empty() => {
+                            valid_count = valid_count.saturating_add(1);
                             let src_placeholders = extract_placeholders(key);
                             let dst_placeholders = extract_placeholders(translated);
                             if src_placeholders != dst_placeholders {
@@ -514,9 +494,22 @@ impl I18nCompletenessChecker {
                                 ));
                             }
                         }
+                        Some(element) if !matches!(element, JsonValue::Null) => {
+                            valid_count = valid_count.saturating_add(1);
+                        }
+                        _ => missing.push(key.as_str()),
                     }
                 }
+                if !missing.is_empty() {
+                    errors.push(format!(
+                        "Language '{lang}' would fall back for {} messages. First missing: '{}'",
+                        missing.len(),
+                        missing.first().copied().unwrap_or("")
+                    ));
+                }
                 translated_counts.insert(lang.to_string(), valid_count);
+            } else {
+                errors.push(format!("Could not load catalog for language '{lang}'."));
             }
         }
 
