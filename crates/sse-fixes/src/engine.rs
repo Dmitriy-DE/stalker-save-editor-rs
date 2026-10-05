@@ -569,6 +569,7 @@ impl GameFixEngine {
             ));
         }
 
+        let mut old_files = Vec::with_capacity(old_manifest.files.len());
         for file in &old_manifest.files {
             let path = resolve_game_path(game_dir, &file.relative_path)?;
             if !path.is_file() || !matches_file_hash(&path, &file.after_sha256) {
@@ -576,15 +577,39 @@ impl GameFixEngine {
                     "A managed game file changed after installation; refusing to update".to_string(),
                 ));
             }
+            let bytes =
+                fs::read(&path).map_err(|error| Error::System(format!("Failed to snapshot installed fix: {error}")))?;
+            old_files.push((file.relative_path.clone(), path, bytes));
         }
 
-        self.uninstall(&definition.id, game_dir)?;
-        let install_result = self.install_internal(definition, game_dir, true);
-        if install_result.is_err() {
-            let _ = AtomicFileWriter::write(&manifest_path, &old_manifest_bytes, true);
+        let update_result = (|| -> Result<GameFixInstallResult> {
+            self.uninstall(&definition.id, game_dir)?;
+            self.install_internal(definition, game_dir, true)
+        })();
+
+        if let Err(error) = update_result {
+            let fix_dir = get_fix_directory(game_dir, &definition.id);
+            let mut rollback_errors = Vec::new();
+            for (relative_path, path, bytes) in &old_files {
+                if let Err(restore_error) = AtomicFileWriter::write(path, bytes, true) {
+                    rollback_errors.push(format!("{relative_path}: {restore_error}"));
+                }
+            }
+            if let Err(restore_error) = AtomicFileWriter::write(&manifest_path, &old_manifest_bytes, true) {
+                rollback_errors.push(format!("manifest: {restore_error}"));
+            }
+            delete_journal(&fix_dir);
+
+            if rollback_errors.is_empty() {
+                return Err(error);
+            }
+            return Err(Error::System(format!(
+                "Game Fix update failed and rollback to the previous version was incomplete: {}",
+                rollback_errors.join("; ")
+            )));
         }
 
-        install_result
+        update_result
     }
 
     /// Uninstalls an installed fix, restoring the original game files.
@@ -2035,4 +2060,111 @@ fn escape_json_str(s: &str) -> String {
     }
     out.push('"');
     out
+}
+
+
+#[cfg(test)]
+mod g13_tests {
+    use super::*;
+    use crate::fs_util::fail_atomic_write_number_for_test;
+    use crate::models::TextPatchOperation;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_game_root() -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        std::env::temp_dir().join(format!(
+            "sse-g13-update-{}-{nonce:x}",
+            std::process::id()
+        ))
+    }
+
+    fn definition(version: &str, a: &str, b: &str, a_sha: &str, b_sha: &str) -> GameFixDefinition {
+        GameFixDefinition {
+            id: "test.g13.transaction".to_owned(),
+            game: GameTarget::ShadowOfChernobyl,
+            version: version.to_owned(),
+            title: "G13 transaction test".to_owned(),
+            supported_steam_build_ids: vec!["100".to_owned()],
+            category: GameFixCategory::Experimental,
+            maturity: GameFixMaturity::Experimental,
+            depends_on: Vec::new(),
+            conflicts_with: Vec::new(),
+            text_patches: vec![
+                TextPatchOperation {
+                    relative_path: "gamedata/configs/a.ltx".to_owned(),
+                    expected_text: "old-a".to_owned(),
+                    replacement_text: a.to_owned(),
+                    expected_file_sha256: Some(a_sha.to_owned()),
+                    code_page: 28_591,
+                    retail_only: false,
+                },
+                TextPatchOperation {
+                    relative_path: "gamedata/configs/b.ltx".to_owned(),
+                    expected_text: "old-b".to_owned(),
+                    replacement_text: b.to_owned(),
+                    expected_file_sha256: Some(b_sha.to_owned()),
+                    code_page: 28_591,
+                    retail_only: false,
+                },
+            ],
+            source: "test".to_owned(),
+            problem: "test".to_owned(),
+            description: "test".to_owned(),
+            implementation: GameFixImplementationType::ExactTextReplacement,
+            requires_new_game: false,
+            save_compatibility: GameFixSaveCompatibility::ExistingSaves,
+            verification_state: GameFixVerificationState::SyntheticTests,
+            detection_method: "test".to_owned(),
+            references: Vec::new(),
+            overlays: Vec::new(),
+            spawn_edits: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn update_failure_on_second_new_file_restores_previous_version_and_manifest() -> Result<()> {
+        let root = temp_game_root();
+        fs::create_dir_all(root.join("gamedata/configs"))?;
+        fs::write(root.join("fsgame.ltx"), b"$game_data$=true|true|$fs_root$|gamedata\\")?;
+        fs::write(
+            root.join("appmanifest_4500.acf"),
+            b"\"AppState\" { \"appid\" \"4500\" \"buildid\" \"100\" }",
+        )?;
+
+        let original_a = b"value=old-a\n";
+        let original_b = b"value=old-b\n";
+        let path_a = root.join("gamedata/configs/a.ltx");
+        let path_b = root.join("gamedata/configs/b.ltx");
+        fs::write(&path_a, original_a)?;
+        fs::write(&path_b, original_b)?;
+
+        let a_sha = sha256_hex(original_a);
+        let b_sha = sha256_hex(original_b);
+        let v1 = definition("1.0", "v1-a", "v1-b", &a_sha, &b_sha);
+        let v2 = definition("2.0", "v2-a", "v2-b", &a_sha, &b_sha);
+        let engine = GameFixEngine::with_synthetic(true);
+
+        engine.install(&v1, &root)?;
+        let installed_a = fs::read(&path_a)?;
+        let installed_b = fs::read(&path_b)?;
+        let manifest_path = get_manifest_path(&root, &v1.id);
+        let installed_manifest = fs::read(&manifest_path)?;
+
+        // update writes: uninstall journal, two old-file restores, removed manifest,
+        // install journal, first v2 file, second v2 file. Fail exactly on that second file.
+        fail_atomic_write_number_for_test(7);
+        let update = engine.update(&v2, &root);
+        assert!(update.is_err());
+
+        assert_eq!(fs::read(&path_a)?, installed_a);
+        assert_eq!(fs::read(&path_b)?, installed_b);
+        assert_eq!(fs::read(&manifest_path)?, installed_manifest);
+        assert_eq!(engine.get_status(&v1, &root)?, GameFixState::Installed);
+        assert!(!get_fix_directory(&root, &v1.id).join(JOURNAL_FILE_NAME).exists());
+
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
 }
