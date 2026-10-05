@@ -2307,5 +2307,16 @@
  "●  НЕ НАЙДЕНО": "●  NOT FOUND",
  "● БУДЕТ СОЗДАНО": "● WILL BE CREATED",
  "● ГОТОВО": "● READY",
- "♡  ПОДДЕРЖАТЬ ПРОЕКТ": "♡  SUPPORT THE PROJECT"
+ "♡  ПОДДЕРЖАТЬ ПРОЕКТ": "♡  SUPPORT THE PROJECT",
+ "Отправлять анонимные отчёты об ошибках?": "Send anonymous error reports?",
+ "В автоматический отчёт входят только версия, ОС, текст ошибки, стек и обезличенный журнал. Сохранения, пути и игровые логи не отправляются.": "The automatic report contains only the version, OS, error text, stack trace, and redacted application log. Saves, paths, and game logs are not sent.",
+ "Отправить отчёт?": "Send report?",
+ "Ниже показано всё, что войдёт в отчёт.": "Everything that will be included in the report is shown below.",
+ "Отправить": "Send",
+ "Отправка анонимных отчётов включена.": "Anonymous error reports enabled.",
+ "Отправка анонимных отчётов отключена.": "Anonymous error reports disabled.",
+ "Отчёт не отправлен.": "Report was not sent.",
+ "Приёмник отчётов пока не настроен. Отчёт сохранён локально.": "The report receiver is not configured yet. The report was saved locally.",
+ "Отчёт сохранён локально; HTTPS-приёмник будет использован после включения сервера.": "The report was saved locally; the HTTPS receiver will be used after the server is enabled.",
+ "Не удалось сохранить отчёт": "Could not save report"
 }

@@ -18,6 +18,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const LOG_FILE: &str = "save-editor.log";
 const CRASH_FILE: &str = "last-crash.txt";
+const AUTOMATIC_REPORT_FILE: &str = "automatic-error-report.txt";
 const MAX_LOG_BYTES: u64 = 1024 * 1024;
 const MAX_CRASH_BYTES: usize = 64 * 1024;
 const MAX_BUNDLE_BYTES: usize = 2 * 1024 * 1024;
@@ -246,7 +247,11 @@ pub fn install_crash_reporter() {
                 .copied()
                 .or_else(|| panic.payload().downcast_ref::<String>().map(String::as_str))
                 .unwrap_or("non-string panic");
-            record_crash("Unhandled panic", &format!("{location}: {payload}"));
+            let backtrace = std::backtrace::Backtrace::force_capture();
+            record_crash(
+                "Unhandled panic",
+                &format!("{location}: {payload}\nBacktrace:\n{backtrace}"),
+            );
             previous(panic);
         }));
     });
@@ -274,6 +279,68 @@ pub fn pending_crash() -> Option<String> {
 /// Removes the previous-run crash marker.
 pub fn dismiss_crash() {
     let _ = fs::remove_file(log_directory().join(CRASH_FILE));
+}
+
+/// Builds the exact automatic error-report payload shown to the user before consent.
+///
+/// The payload contains only application version, OS/architecture, the supplied error,
+/// a redacted stack trace, and a redacted tail of the application log. Path-like tokens
+/// are removed after normal diagnostics redaction. Save contents and game logs are never read.
+#[must_use]
+pub fn automatic_error_report(error_text: &str, stack: &str) -> String {
+    let log = fs::read_to_string(log_directory().join(LOG_FILE)).unwrap_or_default();
+    let log = tail_utf8(&log, 16 * 1024);
+    format!(
+        "Version: {}\nOS: {} {}\nError:\n{}\n\nStack:\n{}\n\nApplication log:\n{}\n",
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        redact_paths(&redact(error_text)),
+        redact_paths(&redact(stack)),
+        redact_paths(&redact(log)),
+    )
+}
+
+/// Builds an automatic report from the previous-run crash marker.
+#[must_use]
+pub fn pending_automatic_error_report() -> Option<String> {
+    pending_crash().map(|crash| automatic_error_report(&crash, "captured in crash marker"))
+}
+
+/// Saves the user-approved automatic report locally.
+///
+/// The receiver endpoint is intentionally not contacted until the owner configures the HTTPS service.
+///
+/// # Errors
+/// Returns an error when the local report cannot be written.
+pub fn save_automatic_error_report(report: &str) -> Result<PathBuf> {
+    let directory = log_directory();
+    fs::create_dir_all(&directory)?;
+    let path = directory.join(AUTOMATIC_REPORT_FILE);
+    fs::write(&path, redact_paths(&redact(report)))?;
+    Ok(path)
+}
+
+/// Compile-time HTTPS receiver configured by the owner, if one is available.
+#[must_use]
+pub fn automatic_report_endpoint() -> Option<&'static str> {
+    option_env!("SSE_REPORT_ENDPOINT").filter(|value| value.starts_with("https://"))
+}
+
+fn redact_paths(text: &str) -> String {
+    let mut output = String::with_capacity(text.len());
+    for segment in text.split_inclusive(char::is_whitespace) {
+        let token = segment.trim_end_matches(char::is_whitespace);
+        let whitespace = segment.get(token.len()..).unwrap_or_default();
+        let looks_like_path = token.contains('/') || token.contains('\\') || token.as_bytes().get(1) == Some(&b':');
+        if looks_like_path {
+            output.push_str("<path>");
+        } else {
+            output.push_str(token);
+        }
+        output.push_str(whitespace);
+    }
+    output
 }
 
 /// Creates a redacted gzip diagnostics bundle without sending it anywhere.
@@ -623,6 +690,8 @@ mod tests {
     use super::*;
     use sse_codecs::inflate::inflate_raw;
 
+    static TEST_GATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn redacts_home_steam_and_wine_identifiers() {
         let source = "/home/alice/game C:\\Users\\Alice\\save drive_c/users/steamuser/AppData userdata/123456/remote 76561198012345678";
@@ -638,7 +707,38 @@ mod tests {
     }
 
     #[test]
+    fn automatic_report_contains_only_redacted_diagnostics() -> Result<()> {
+        let _guard = TEST_GATE
+            .lock()
+            .map_err(|_| Error::System("diagnostics test gate poisoned".to_owned()))?;
+        let directory = std::env::temp_dir().join(format!("sse-auto-report-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory)?;
+        configure_log_directory(Some(directory.clone()));
+        info("opened /home/alice/secret.sav for 76561198012345678");
+        let report = automatic_error_report(
+            "failed C:\\Users\\Alice\\save.sav",
+            "frame at /Users/alice/project/src/main.rs:10",
+        );
+        assert!(report.contains("Version:"));
+        assert!(report.contains("OS:"));
+        assert!(report.contains("<path>"));
+        assert!(report.contains("<steamid>"));
+        assert!(!report.contains("Alice"));
+        assert!(!report.contains("alice"));
+        assert!(!report.contains(".sav"));
+        let saved = save_automatic_error_report(&report)?;
+        assert!(saved.exists());
+        configure_log_directory(None);
+        let _ = fs::remove_dir_all(directory);
+        Ok(())
+    }
+
+    #[test]
     fn bundle_is_valid_gzip_with_redacted_payload() -> Result<()> {
+        let _guard = TEST_GATE
+            .lock()
+            .map_err(|_| Error::System("diagnostics test gate poisoned".to_owned()))?;
         let directory = std::env::temp_dir().join(format!("sse-diagnostics-{}", std::process::id()));
         let _ = fs::remove_dir_all(&directory);
         fs::create_dir_all(&directory)?;
