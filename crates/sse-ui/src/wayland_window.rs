@@ -371,7 +371,7 @@ fn event_reader<U: Send + 'static>(
     writer: Arc<Mutex<UnixStream>>,
     objects: ReaderObjects,
     proxy: Proxy<U>,
-    sync: Arc<Mutex<BufferSync>>,
+    sync: Arc<(Mutex<BufferSync>, Condvar)>,
     closed: Arc<Mutex<bool>>,
 ) {
     let ReaderObjects {
@@ -412,7 +412,7 @@ fn event_reader<U: Send + 'static>(
                         u32::try_from(width).unwrap_or_default(),
                         u32::try_from(height).unwrap_or_default(),
                     );
-                    if let Ok(mut state) = sync.lock() {
+                    if let Ok(mut state) = sync.0.lock() {
                         state.configured_size = Some(size);
                     }
                     let _ = proxy.window(WindowEvent::Resized {
@@ -478,18 +478,21 @@ fn event_reader<U: Send + 'static>(
         }
 
         let released_size = if opcode == 0 {
-            match sync.lock() {
+            match sync.0.lock() {
                 Ok(mut state) => {
                     let configured_size = state.configured_size;
-                    state
+                    let released = state
                         .ids
                         .iter()
                         .position(|id| *id == object)
-                        .and_then(|index| state.released.get_mut(index))
-                        .and_then(|released| {
-                            *released = true;
-                            configured_size
-                        })
+                        .and_then(|index| state.released.get_mut(index));
+                    if let Some(released) = released {
+                        *released = true;
+                        sync.1.notify_one();
+                        configured_size
+                    } else {
+                        None
+                    }
                 }
                 Err(_) => None,
             }
