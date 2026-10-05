@@ -126,6 +126,33 @@ mod tests {
         use crate::theme::BG_BASE;
         use crate::widget::Tree;
 
+        struct EnvGuard(Vec<(&'static str, Option<std::ffi::OsString>)>);
+        impl Drop for EnvGuard {
+            fn drop(&mut self) {
+                for (key, value) in self.0.drain(..) {
+                    if let Some(value) = value {
+                        std::env::set_var(key, value);
+                    } else {
+                        std::env::remove_var(key);
+                    }
+                }
+            }
+        }
+        let isolated = std::env::temp_dir().join(format!("sse-golden-home-{}", std::process::id()));
+        std::fs::create_dir_all(&isolated)?;
+        let keys = [
+            "HOME",
+            "XDG_DATA_HOME",
+            "STALKER_SAVE_EDITOR_DATA",
+            "USERPROFILE",
+            "LOCALAPPDATA",
+        ];
+        let previous = keys.into_iter().map(|key| (key, std::env::var_os(key))).collect();
+        let _guard = EnvGuard(previous);
+        for key in keys {
+            std::env::set_var(key, &isolated);
+        }
+
         const EXPECTED: [&str; 20] = [
             "07c594695c21e3bebb31d9aa7cca659305890a83e751ef12c0664a3c2a94d8e9",
             "aab58483cf1ee9b68b178e4ef301ba32e7460a9a00d414dacbd1148895da15c4",
