@@ -134,7 +134,6 @@ impl TaskHandle {
     }
 }
 
-
 type NamedTaskRegistry = (Mutex<HashMap<&'static str, usize>>, Condvar);
 
 fn named_task_registry() -> &'static NamedTaskRegistry {
