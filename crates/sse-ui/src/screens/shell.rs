@@ -1433,7 +1433,7 @@ impl Shell {
             ..
         }) = message
         {
-            if !tree.dialog_open() {
+            if !tree.dialog_open() && !tree.focused_is_input() {
                 let count = self.nav.len();
                 match *keysym {
                     KEY_UP => self.select(tree, self.selected.checked_sub(1).unwrap_or(count.saturating_sub(1)))?,
