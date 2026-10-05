@@ -3,6 +3,7 @@
 use sse_catalog::{CatalogBundleReader, FactionCatalog, UpgradeCatalog};
 use sse_core::{Cursor, Error, Result, SaveBuffer};
 use std::collections::{HashMap, HashSet};
+use std::ops::Range;
 
 use crate::Save;
 
@@ -1089,6 +1090,8 @@ fn apply_with_catalog_internal(
             "X-Ray edit failed its exact unpacked-image read-back check".to_owned(),
         ));
     }
+    let replaced_chunks = replacements.iter().map(|(kind, _)| *kind).collect::<Vec<_>>();
+    verify_changed_image_ranges(save, &verified, after, &writes, &replaced_chunks)?;
     if seen_money {
         let expected_money = changes.changes().iter().find_map(|change| match change {
             Change::SetMoney { new_value, .. } => Some(*new_value),
@@ -1452,6 +1455,142 @@ struct PendingWrite {
     offset: usize,
     bytes: [u8; 4],
     length: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ChangedRange {
+    before: Range<usize>,
+    after: Range<usize>,
+}
+
+fn verify_unchanged_outside_ranges(before: &[u8], after: &[u8], ranges: &[ChangedRange]) -> Result<()> {
+    let mut before_cursor = 0;
+    let mut after_cursor = 0;
+
+    for changed in ranges {
+        if changed.before.start > changed.before.end
+            || changed.after.start > changed.after.end
+            || changed.before.start < before_cursor
+            || changed.after.start < after_cursor
+        {
+            return Err(Error::damaged("changed ranges overlap or are out of order"));
+        }
+        if changed.before.end > before.len() || changed.after.end > after.len() {
+            return Err(Error::damaged("changed range is outside an image"));
+        }
+        let before_gap = before
+            .get(before_cursor..changed.before.start)
+            .ok_or_else(|| Error::damaged("source gap is outside the image"))?;
+        let after_gap = after
+            .get(after_cursor..changed.after.start)
+            .ok_or_else(|| Error::damaged("replacement gap is outside the image"))?;
+        if before_gap != after_gap {
+            return Err(Error::damaged("save bytes differ outside declared changed ranges"));
+        }
+        before_cursor = changed.before.end;
+        after_cursor = changed.after.end;
+    }
+
+    let before_tail = before
+        .get(before_cursor..)
+        .ok_or_else(|| Error::damaged("source tail is outside the image"))?;
+    let after_tail = after
+        .get(after_cursor..)
+        .ok_or_else(|| Error::damaged("replacement tail is outside the image"))?;
+    if before_tail != after_tail {
+        return Err(Error::damaged("save bytes differ outside declared changed ranges"));
+    }
+    Ok(())
+}
+
+fn verify_changed_image_ranges(
+    source: &Save,
+    replacement_layout: &Save,
+    replacement_image: &[u8],
+    writes: &[PendingWrite],
+    replaced_chunks: &[u32],
+) -> Result<()> {
+    let source_chunks = source.chunks();
+    let replacement_chunks = replacement_layout.chunks();
+    if source_chunks.len() != replacement_chunks.len()
+        || source_chunks
+            .iter()
+            .zip(replacement_chunks)
+            .any(|(before, after)| before.kind != after.kind)
+    {
+        return Err(Error::damaged("X-Ray edit changed chunk order or count"));
+    }
+
+    let mut ranges = Vec::with_capacity(writes.len().saturating_add(replaced_chunks.len()));
+    for (before, after) in source_chunks.iter().zip(replacement_chunks) {
+        if replaced_chunks.contains(&before.kind) {
+            ranges.push(ChangedRange {
+                before: chunk_record_range(*before)?,
+                after: chunk_record_range(*after)?,
+            });
+        }
+    }
+
+    for write in writes {
+        let write_end = write
+            .offset
+            .checked_add(write.length)
+            .ok_or_else(|| Error::damaged("X-Ray changed range overflows"))?;
+        let mut owner = None;
+        for (index, chunk) in source_chunks.iter().enumerate() {
+            let chunk_end = chunk
+                .offset
+                .checked_add(chunk.length)
+                .ok_or_else(|| Error::damaged("X-Ray chunk range overflows"))?;
+            if write.offset >= chunk.offset && write_end <= chunk_end && owner.replace(index).is_some() {
+                return Err(Error::damaged("X-Ray write belongs to duplicate chunks"));
+            }
+        }
+        let index = owner.ok_or_else(|| Error::damaged("X-Ray write is outside every chunk payload"))?;
+        let before = source_chunks
+            .get(index)
+            .ok_or_else(|| Error::damaged("X-Ray source chunk index disappeared"))?;
+        if replaced_chunks.contains(&before.kind) {
+            continue;
+        }
+        let after = replacement_chunks
+            .get(index)
+            .ok_or_else(|| Error::damaged("X-Ray replacement chunk index disappeared"))?;
+        if before.length != after.length {
+            return Err(Error::damaged(
+                "X-Ray chunk changed length without a declared replacement",
+            ));
+        }
+        let relative_offset = write
+            .offset
+            .checked_sub(before.offset)
+            .ok_or_else(|| Error::damaged("X-Ray changed range offset underflows"))?;
+        let after_start = after
+            .offset
+            .checked_add(relative_offset)
+            .ok_or_else(|| Error::damaged("X-Ray replacement changed range overflows"))?;
+        let after_end = after_start
+            .checked_add(write.length)
+            .ok_or_else(|| Error::damaged("X-Ray replacement changed range overflows"))?;
+        ranges.push(ChangedRange {
+            before: write.offset..write_end,
+            after: after_start..after_end,
+        });
+    }
+    ranges.sort_unstable_by_key(|range| (range.before.start, range.after.start));
+    verify_unchanged_outside_ranges(source.raw_image(), replacement_image, &ranges)
+}
+
+fn chunk_record_range(chunk: crate::container::Chunk) -> Result<std::ops::Range<usize>> {
+    let start = chunk
+        .offset
+        .checked_sub(8)
+        .ok_or_else(|| Error::damaged("X-Ray chunk header offset underflows"))?;
+    let end = chunk
+        .offset
+        .checked_add(chunk.length)
+        .ok_or_else(|| Error::damaged("X-Ray chunk record range overflows"))?;
+    Ok(start..end)
 }
 
 impl PendingWrite {
@@ -2285,12 +2424,31 @@ fn write_u16(bytes: &mut [u8], offset: usize, value: u16) -> Result<()> {
 mod tests {
     use super::{
         actor_spawn_position_offset, apply, apply_inverse, apply_with_catalog, apply_with_undo, capability, read_u16,
-        read_u32, read_vector, Capability, Change, ChangeKind, ChangeSet, Placement,
+        read_u32, read_vector, verify_changed_image_ranges, Capability, Change, ChangeKind, ChangeSet, PendingWrite,
+        Placement,
     };
     use crate::{Format, Save};
     use sse_catalog::{CatalogBundleReader, UpgradeCatalog, UpgradeDefinition};
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    #[test]
+    fn money_writer_rejects_a_collateral_image_change() -> TestResult {
+        let source_bytes = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-cop-source.sav");
+        let expected_bytes = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-cop-expected.sav");
+        let source = Save::read(source_bytes)?;
+        let expected = Save::read(expected_bytes)?;
+        let writes = [PendingWrite::u32(source.money_offset(), expected.money()?)];
+
+        verify_changed_image_ranges(&source, &expected, expected.raw_image(), &writes, &[])?;
+
+        let mut corrupted = expected.raw_image().to_vec();
+        corrupted[0] ^= 1;
+        let error = verify_changed_image_ranges(&source, &expected, &corrupted, &writes, &[])
+            .expect_err("a collateral byte outside the money field must be rejected");
+        assert!(error.to_string().contains("outside declared changed ranges"));
+        Ok(())
+    }
 
     #[test]
     fn faction_writes_match_three_reference_fixture_pairs() -> TestResult {
