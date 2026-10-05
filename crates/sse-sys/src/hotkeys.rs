@@ -69,7 +69,7 @@ impl HotkeySession {
     }
 }
 
-#[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
+#[cfg_attr(not(any(target_os = "windows", target_os = "linux")), allow(dead_code))]
 fn is_game_name(name: &str) -> bool {
     let value = name.trim().to_ascii_lowercase();
     let value = value.strip_suffix(".exe").unwrap_or(&value);
@@ -331,7 +331,7 @@ mod platform {
     }
     type ErrorHandler = unsafe extern "C" fn(*mut c_void, *mut XErrorEvent) -> c_int;
 
-    #[link(name = "X11")]
+    #[link(name = "libX11.so.6", kind = "dylib", modifiers = "+verbatim")]
     unsafe extern "C" {
         fn XOpenDisplay(name: *const c_char) -> *mut c_void;
         fn XDefaultRootWindow(display: *mut c_void) -> c_ulong;
