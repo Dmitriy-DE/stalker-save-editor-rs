@@ -833,13 +833,34 @@ mod tests {
     #[test]
     fn module_lookup_uses_sorted_binary_partition() {
         let modules = vec![
-            super::Module { base: 0x3000, size: 0x100, timestamp: 0, version: (0, 0, 0, 0), name: "c".to_owned() },
-            super::Module { base: 0x1000, size: 0x100, timestamp: 0, version: (0, 0, 0, 0), name: "a".to_owned() },
-            super::Module { base: 0x2000, size: 0x100, timestamp: 0, version: (0, 0, 0, 0), name: "b".to_owned() },
+            super::Module {
+                base: 0x3000,
+                size: 0x100,
+                timestamp: 0,
+                version: (0, 0, 0, 0),
+                name: "c".to_owned(),
+            },
+            super::Module {
+                base: 0x1000,
+                size: 0x100,
+                timestamp: 0,
+                version: (0, 0, 0, 0),
+                name: "a".to_owned(),
+            },
+            super::Module {
+                base: 0x2000,
+                size: 0x100,
+                timestamp: 0,
+                version: (0, 0, 0, 0),
+                name: "b".to_owned(),
+            },
         ];
         let mut modules = modules;
         modules.sort_unstable_by_key(|module| module.base);
-        assert_eq!(super::frame_for_address(&modules, 0x2050).map(|frame| frame.module), Some("b".to_owned()));
+        assert_eq!(
+            super::frame_for_address(&modules, 0x2050).map(|frame| frame.module),
+            Some("b".to_owned())
+        );
         assert!(super::frame_for_address(&modules, 0x2500).is_none());
     }
 
