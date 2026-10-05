@@ -22,12 +22,24 @@ fn main() {
     let result = match args.first().map(String::as_str) {
         Some("--screenshot") => screenshot(&args),
         Some("--bench") => bench(&args),
+        Some("--companion") => companion_command(&args),
         _ => window(),
     };
     if let Err(error) = result {
         eprintln!("sse-shell: {error}");
         std::process::exit(1);
     }
+}
+
+fn companion_command(args: &[String]) -> Result<()> {
+    let directory = args.get(1).ok_or_else(|| Error::Refused("usage: --companion DIR COMMAND [ARG ...]".to_owned()))?;
+    let command = args.get(2).ok_or_else(|| Error::Refused("usage: --companion DIR COMMAND [ARG ...]".to_owned()))?;
+    let arguments = args.iter().skip(3).map(String::as_str).collect::<Vec<_>>();
+    let client = sse_companion::protocol::CompanionClient::new(std::path::PathBuf::from(directory));
+    let reply = client.send(command, &arguments, Duration::from_secs(3))
+        .map_err(|error| Error::System(format!("companion: {error}")))?;
+    println!("{:?} {}", reply.status, reply.text);
+    Ok(())
 }
 
 fn screenshot(args: &[String]) -> Result<()> {
@@ -200,6 +212,23 @@ fn window() -> Result<()> {
     let mut tree = Tree::new(Fonts::bundled()?, rgb(BG_BASE));
     let mut shell = Shell::build(&mut tree, Some(proxy.clone()))?;
     let (width, height) = (1280_u16, 800_u16);
+    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        let mut backend = sse_ui::wayland_window::WaylandWindow::open(
+            "S.T.A.L.K.E.R. Save Editor",
+            u32::from(width),
+            u32::from(height),
+            proxy.clone(),
+        )?;
+        tree.resize(u32::from(width), u32::from(height));
+        let started = Instant::now();
+        std::thread::spawn(move || loop {
+            std::thread::sleep(Duration::from_millis(500));
+            if !proxy.send(AppMessage::Tick(started.elapsed().as_secs())) { return; }
+        });
+        let stats = sse_ui::event_loop::run(&receiver, &mut tree, &mut shell, &mut backend)?;
+        eprintln!("wakes {} frames {} pixels {}", stats.wakes, stats.frames, stats.pixels, "wayland");
+        return Ok(());
+    }
     let mut backend =
         sse_ui::x11_window::X11Window::open("S.T.A.L.K.E.R. Save Editor", width, height, BG_BASE, proxy.clone())?;
     tree.resize(u32::from(width), u32::from(height));
