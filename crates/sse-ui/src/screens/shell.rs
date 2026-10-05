@@ -1105,6 +1105,7 @@ impl Shell {
                 Message::User(AppMessage::Tick(_)) => true,
                 Message::User(AppMessage::ToScreen(id, _)) => *id == screen.id(),
                 Message::User(AppMessage::EditorAction(_)) => screen.id() == ScreenId::Inventory,
+                Message::User(AppMessage::SoundLoaded(_, _)) => false,
                 Message::Window(_) => index == self.selected,
             };
             if wanted {
