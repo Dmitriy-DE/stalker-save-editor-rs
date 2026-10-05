@@ -517,7 +517,12 @@ impl Shell {
         let open_button = top_button(tree, top, crate::strings::t("Открыть…"), false)?;
         let refresh = top_button(tree, top, crate::strings::t("Обновить"), false)?;
         let save = top_button(tree, top, crate::strings::t("СОХРАНИТЬ"), true)?;
-        let save_reason = style::label(tree, header, crate::strings::t("Выберите сохранение для редактирования."), Text::Note)?;
+        let save_reason = style::label(
+            tree,
+            header,
+            crate::strings::t("Выберите сохранение для редактирования."),
+            Text::Note,
+        )?;
         let breadcrumb = style::label(tree, header, "", Text::Note)?;
         let title = style::label(tree, header, "", Text::Title)?;
         let subtitle = tree.add(
@@ -1087,7 +1092,10 @@ impl Shell {
         tree.set_text(self.edition, self.app.selected_game().unwrap_or("X-Ray / S2"))?;
         let Some(source_sha256) = self.app.current_save_sha256() else {
             tree.set_text(self.draft_badge, crate::strings::t("Черновик: 0 действ."))?;
-            tree.set_text(self.save_reason, crate::strings::t("Выберите сохранение для редактирования."))?;
+            tree.set_text(
+                self.save_reason,
+                crate::strings::t("Выберите сохранение для редактирования."),
+            )?;
             tree.set_enabled(self.undo, false)?;
             tree.set_enabled(self.redo, false)?;
             tree.set_enabled(self.reset, false)?;
