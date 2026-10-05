@@ -289,6 +289,7 @@ impl Shell {
     /// Returns an error from the widget tree.
     pub fn build(tree: &mut Tree, proxy: Option<Proxy<AppMessage>>) -> Result<Self> {
         let settings = sse_app::AppSettings::load(&sse_app::default_settings_path());
+        let interactive = proxy.is_some();
         let language = startup_language(&settings);
         crate::strings::set_language(Some(&language));
         let root_style = Style {
@@ -931,9 +932,9 @@ impl Shell {
         shell.show(tree, 0)?;
         shell.render_library(tree)?;
         shell.sync_draft_controls(tree)?;
-        if !settings.reports_notice_shown {
+        if interactive && !settings.reports_notice_shown {
             tree.open_dialog(shell.reports_banner)?;
-        } else if settings.send_reports {
+        } else if interactive && settings.send_reports {
             shell.open_pending_report_dialog(tree)?;
         }
         Ok(shell)
