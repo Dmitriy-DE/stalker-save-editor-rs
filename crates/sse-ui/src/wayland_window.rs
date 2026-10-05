@@ -256,8 +256,10 @@ fn connect() -> Result<UnixStream> {
 
 fn event_reader<U: Send + 'static>(
     mut stream: UnixStream,
+    writer: Arc<Mutex<UnixStream>>,
     objects: ReaderObjects,
     proxy: Proxy<U>,
+    sync: Arc<Mutex<BufferSync>>,
     closed: Arc<Mutex<bool>>,
 ) {
     let ReaderObjects {
@@ -289,25 +291,41 @@ fn event_reader<U: Send + 'static>(
 
         if object == xdg_surface && opcode == 0 {
             if let Some(serial) = read_u32(&payload, 0) {
-                let _ = send(&mut stream, xdg_surface, 4, &u32s(&[serial]));
+                let _ = send_shared(&writer, xdg_surface, 4, &u32s(&[serial]));
+            }
+        } else if object == toplevel && opcode == 0 {
+            if let (Some(width), Some(height)) = (read_i32(&payload, 0), read_i32(&payload, 4)) {
+                if width > 0 && height > 0 {
+                    let size = (
+                        u32::try_from(width).unwrap_or_default(),
+                        u32::try_from(height).unwrap_or_default(),
+                    );
+                    if let Ok(mut state) = sync.lock() {
+                        state.configured_size = Some(size);
+                    }
+                    let _ = proxy.window(WindowEvent::Resized {
+                        width: size.0,
+                        height: size.1,
+                    });
+                }
             }
         } else if object == toplevel && opcode == 1 {
             let _ = proxy.window(WindowEvent::CloseRequested);
         } else if object == wm && opcode == 0 {
             if let Some(serial) = read_u32(&payload, 0) {
-                let _ = send(&mut stream, wm, 3, &u32s(&[serial]));
+                let _ = send_shared(&writer, wm, 3, &u32s(&[serial]));
             }
         } else if Some(object) == seat && opcode == 0 {
             if let Some(capabilities) = read_u32(&payload, 0) {
                 if capabilities & SEAT_CAP_POINTER != 0
                     && pointer.is_none()
-                    && send(&mut stream, object, 0, &u32s(&[POINTER_ID])).is_ok()
+                    && send_shared(&writer, object, 0, &u32s(&[POINTER_ID])).is_ok()
                 {
                     pointer = Some(POINTER_ID);
                 }
                 if capabilities & SEAT_CAP_KEYBOARD != 0
                     && keyboard.is_none()
-                    && send(&mut stream, object, 1, &u32s(&[KEYBOARD_ID])).is_ok()
+                    && send_shared(&writer, object, 1, &u32s(&[KEYBOARD_ID])).is_ok()
                 {
                     keyboard = Some(KEYBOARD_ID);
                 }
@@ -347,7 +365,21 @@ fn event_reader<U: Send + 'static>(
             }
         }
 
-        let _ = stream.flush();
+        let released_size = if opcode == 0 {
+            sync.lock().ok().and_then(|mut state| {
+                state.ids.iter().position(|id| *id == object).and_then(|index| {
+                    state.released.get_mut(index).map(|released| {
+                        *released = true;
+                        state.configured_size
+                    })
+                })
+            }).flatten()
+        } else {
+            None
+        };
+        if let Some((width, height)) = released_size {
+            let _ = proxy.window(WindowEvent::Exposed(Rect::new(0, 0, width, height)));
+        }
     }
 }
 
