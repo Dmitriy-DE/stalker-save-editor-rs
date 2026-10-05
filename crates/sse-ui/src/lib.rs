@@ -38,7 +38,6 @@ pub mod text;
 pub mod theme;
 /// Generated Unicode 17 grapheme and line-break property tables.
 pub mod unicode_tables;
-pub mod wayland;
 /// Native dependency-free Wayland presenter.
 #[cfg(target_os = "linux")]
 pub mod wayland_window;
