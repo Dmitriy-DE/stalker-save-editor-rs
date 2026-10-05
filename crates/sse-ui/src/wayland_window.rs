@@ -268,54 +268,6 @@ impl Drop for WaylandWindow {
     }
 }
 
-fn create_buffer(
-    writer: &Arc<Mutex<UnixStream>>,
-    shm: u32,
-    width: u32,
-    height: u32,
-    pool: u32,
-    buffer: u32,
-) -> Result<BufferSlot> {
-    let byte_len = frame_bytes(width, height)?;
-    let memory = MappedFile::new(byte_len).map_err(io)?;
-    let stride = width
-        .checked_mul(4)
-        .ok_or_else(|| Error::Refused("Wayland stride overflow".to_owned()))?;
-    let mut writer = writer
-        .lock()
-        .map_err(|_| Error::System("Wayland writer lock poisoned".to_owned()))?;
-    send_with_fd(
-        &writer,
-        shm,
-        0,
-        &u32s(&[
-            pool,
-            u32::try_from(byte_len).map_err(|_| Error::Refused("Wayland buffer too large".to_owned()))?,
-        ]),
-        memory.raw_fd(),
-    )?;
-    send(
-        &mut writer,
-        pool,
-        0,
-        &u32s(&[buffer, 0, width, height, stride, WL_SHM_FORMAT_XRGB8888]),
-    )?;
-    writer.flush().map_err(io)?;
-    Ok(BufferSlot {
-        pool,
-        buffer,
-        memory,
-    })
-}
-
-fn send_shared(writer: &Arc<Mutex<UnixStream>>, object: u32, opcode: u16, payload: &[u8]) -> Result<()> {
-    let mut writer = writer
-        .lock()
-        .map_err(|_| Error::System("Wayland writer lock poisoned".to_owned()))?;
-    send(&mut writer, object, opcode, payload)?;
-    writer.flush().map_err(io)
-}
-
 fn connect() -> Result<UnixStream> {
     let runtime =
         std::env::var_os("XDG_RUNTIME_DIR").ok_or_else(|| Error::Refused("XDG_RUNTIME_DIR is not set".to_owned()))?;
