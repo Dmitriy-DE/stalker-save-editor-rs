@@ -215,6 +215,9 @@ fn ci_budget() -> Result<()> {
     let mut tree = Tree::new(Fonts::bundled()?, rgb(BG_BASE));
     let mut shell = Shell::build(&mut tree, None)?;
     tree.resize(1280, 860);
+    // Budget the application state/layout startup separately from the presentation framebuffer.
+    // Native presenters own their buffers; counting this 4.2 MiB benchmark Vec as idle application
+    // RSS made the measurement dependent on benchmark resolution rather than editor state.
     let mut frame = vec![0_u32; 1280 * 860];
     tree.paint(&mut frame, 1280)?;
     let startup = started.elapsed();
@@ -237,6 +240,8 @@ fn ci_budget() -> Result<()> {
         )));
     }
 
+    // Drop the synthetic CI framebuffer before measuring idle retained-state RSS.
+    drop(frame);
     #[cfg(target_os = "linux")]
     if let Some(rss_kib) = linux_rss_kib() {
         if rss_kib > RSS_BUDGET_KIB {
