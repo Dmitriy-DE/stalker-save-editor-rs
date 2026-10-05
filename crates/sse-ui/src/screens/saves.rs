@@ -5640,18 +5640,10 @@ mod tests {
 
     #[test]
     fn add_template_prefers_unbound_metadata_and_spawn_ffff() {
-        let clean = super::add_template_preference(
-            Some(u32::MAX),
-            Some(u32::MAX),
-            false,
-            Some(u16::MAX),
-            20,
-        );
+        let clean = super::add_template_preference(Some(u32::MAX), Some(u32::MAX), false, Some(u16::MAX), 20);
         let story_bound = super::add_template_preference(Some(7), Some(u32::MAX), false, Some(u16::MAX), 1);
-        let custom_bound =
-            super::add_template_preference(Some(u32::MAX), Some(u32::MAX), true, Some(u16::MAX), 2);
-        let spawn_bound =
-            super::add_template_preference(Some(u32::MAX), Some(u32::MAX), false, Some(9), 3);
+        let custom_bound = super::add_template_preference(Some(u32::MAX), Some(u32::MAX), true, Some(u16::MAX), 2);
+        let spawn_bound = super::add_template_preference(Some(u32::MAX), Some(u32::MAX), false, Some(9), 3);
 
         assert!(clean < story_bound);
         assert!(clean < custom_bound);
