@@ -479,6 +479,7 @@ pub struct Settings {
     volume_button: Option<WidgetId>,
     reports_button: Option<WidgetId>,
     send_report_button: Option<WidgetId>,
+    backup_input: Option<WidgetId>,
     scale_value: Option<WidgetId>,
     scale_button: Option<WidgetId>,
     theme_value: Option<WidgetId>,
@@ -701,15 +702,24 @@ impl Screen for Settings {
             "Папка для создания резервных копий и журналов восстановления:",
             Text::Body,
         )?;
-        style::label(
-            cx.tree,
-            backups,
-            self.settings
-                .backup_directory
-                .as_ref()
-                .map_or("<по умолчанию>", |p| p.to_str().unwrap_or("<не-UTF-8 путь>")),
-            Text::Value,
-        )?;
+        let backup_value = self
+            .settings
+            .backup_directory
+            .as_ref()
+            .map_or("", |p| p.to_str().unwrap_or(""));
+        self.backup_input = Some(cx.tree.add(
+            Some(backups),
+            NodeKind::Leaf,
+            Style {
+                min: Size::new(220.0, 36.0),
+                ..Style::default()
+            },
+            Content::Input {
+                text: backup_value.to_owned(),
+                style: TextStyle::new(Face::Body, 14.0),
+            },
+            Look::default(),
+        )?);
         style::label(
             cx.tree,
             backups,
@@ -741,12 +751,13 @@ impl Screen for Settings {
             },
             Button::Secondary,
         )?);
-        self.send_report_button = Some(style::button(
+        self.send_report_button = None;
+        style::label(
             cx.tree,
             reports,
-            "Отправить отчёт сейчас",
-            Button::Secondary,
-        )?);
+            "Ручная отправка отчёта отключена в Rust-версии.",
+            Text::Note,
+        )?;
         style::label(
             cx.tree,
             reports,
@@ -821,13 +832,6 @@ impl Screen for Settings {
         if clicked.is_some() && clicked == self.reports_button {
             self.settings.send_reports = !self.settings.send_reports;
             cx.status = Some("Настройка отчётов изменена; нажмите «Сохранить настройки».".to_owned());
-        }
-        if clicked.is_some() && clicked == self.send_report_button {
-            cx.status = Some(if self.settings.send_reports {
-                "Отправка отчёта недоступна: report transport API ещё не предоставлен sse-app.".to_owned()
-            } else {
-                "Отправка отчёта отключена в настройках.".to_owned()
-            });
         }
         if clicked.is_some() && clicked == self.theme_button {
             self.theme = self
@@ -911,6 +915,10 @@ impl Screen for Settings {
             cx.status = Some(crate::strings::t("Язык применится после перезапуска приложения.").to_owned());
         }
         if clicked.is_some() && clicked == self.save_button {
+            if let Some(input) = self.backup_input {
+                let value = cx.tree.input_text(input).unwrap_or("").trim();
+                self.settings.backup_directory = (!value.is_empty()).then(|| std::path::PathBuf::from(value));
+            }
             self.settings.language = crate::strings::LANGUAGES
                 .get(self.language)
                 .map(|code| (*code).to_owned());
