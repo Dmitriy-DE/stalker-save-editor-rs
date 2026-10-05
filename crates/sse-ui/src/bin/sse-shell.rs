@@ -28,9 +28,19 @@ fn main() -> std::process::ExitCode {
         Some("--ci-budget") => ci_budget(),
         Some("--companion") => companion_command(&args),
         Some("--hotkey-helper") => hotkey_helper(),
-        _ => window(),
+        _ => {
+            sse_app::diagnostics::install_crash_reporter();
+            sse_app::diagnostics::info(&format!(
+                "start {} on {} {}",
+                env!("CARGO_PKG_VERSION"),
+                std::env::consts::OS,
+                std::env::consts::ARCH
+            ));
+            window()
+        }
     };
     if let Err(error) = result {
+        sse_app::diagnostics::error(&format!("sse-shell: {error}"));
         eprintln!("sse-shell: {error}");
         return std::process::ExitCode::FAILURE;
     }
