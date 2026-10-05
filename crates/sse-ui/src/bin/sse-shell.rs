@@ -294,8 +294,8 @@ fn window() -> Result<()> {
                 });
                 let stats = sse_ui::event_loop::run(&receiver, &mut tree, &mut shell, &mut backend)?;
                 eprintln!(
-                    "wakes {} frames {} pixels {}",
-                    stats.wakes, stats.frames, stats.pixels, "Wayland"
+                    "Wayland wakes {} frames {} pixels {}",
+                    stats.wakes, stats.frames, stats.pixels
                 );
                 return Ok(());
             }
