@@ -524,7 +524,9 @@ impl Window for Win32Window {
             .len()
             .checked_mul(2)
             .ok_or_else(|| Error::Refused("clipboard too large".to_owned()))?;
-        // SAFETY: hwnd is live and clipboard ownership is released on every return path below.\n        // SAFETY: hwnd is live and clipboard ownership is released on every return path below.\n        if unsafe { w::OpenClipboard(self.hwnd) } == 0 {
+        // SAFETY: hwnd is live and clipboard ownership is released on every return path below.
+        // SAFETY: hwnd is live and clipboard ownership is released on every return path below.
+        if unsafe { w::OpenClipboard(self.hwnd) } == 0 {
             return Err(Error::System("OpenClipboard failed".to_owned()));
         }
 // SAFETY: this Win32 FFI boundary uses the live handles/pointers established by the surrounding checks.
@@ -562,14 +564,16 @@ impl Window for Win32Window {
         }
     }
     fn clipboard_text(&mut self) -> Result<Option<String>> {
-        // SAFETY: querying clipboard format availability has no pointer preconditions.\n        if unsafe { w::IsClipboardFormatAvailable(CF_UNICODETEXT) } == 0 {
+        // SAFETY: querying clipboard format availability has no pointer preconditions.
+        if unsafe { w::IsClipboardFormatAvailable(CF_UNICODETEXT) } == 0 {
             return Ok(None);
         }
 // SAFETY: this Win32 FFI boundary uses the live handles/pointers established by the surrounding checks.
         if unsafe { w::OpenClipboard(self.hwnd) } == 0 {
             return Err(Error::System("OpenClipboard failed".to_owned()));
         }
-        // SAFETY: clipboard is open and CF_UNICODETEXT availability was checked above.\n        let mem = unsafe { w::GetClipboardData(CF_UNICODETEXT) };
+        // SAFETY: clipboard is open and CF_UNICODETEXT availability was checked above.
+        let mem = unsafe { w::GetClipboardData(CF_UNICODETEXT) };
         if mem.is_null() {
             unsafe { w::CloseClipboard() };
             return Ok(None);
@@ -582,7 +586,8 @@ impl Window for Win32Window {
             unsafe { w::CloseClipboard() };
             return Err(Error::System("GlobalLock failed".to_owned()));
         }
-        // SAFETY: GlobalLock returned a buffer of GlobalSize(mem) bytes, so units u16 values are readable.\n        let slice = unsafe { std::slice::from_raw_parts(raw.cast::<u16>(), units) };
+        // SAFETY: GlobalLock returned a buffer of GlobalSize(mem) bytes, so units u16 values are readable.
+        let slice = unsafe { std::slice::from_raw_parts(raw.cast::<u16>(), units) };
         let end = slice.iter().position(|v| *v == 0).unwrap_or(slice.len());
         let text = String::from_utf16_lossy(slice.get(..end).unwrap_or_default());
 // SAFETY: this Win32 FFI boundary uses the live handles/pointers established by the surrounding checks.
@@ -593,7 +598,8 @@ impl Window for Win32Window {
         Ok(Some(text))
     }
     fn register_hotkey(&mut self, id: i32, modifiers: u32, key: u32) -> Result<()> {
-        // SAFETY: hwnd is live; id/modifier/key are plain Win32 hotkey values.\n        if unsafe { w::RegisterHotKey(self.hwnd, id, modifiers | MOD_NOREPEAT, key) } == 0 {
+        // SAFETY: hwnd is live; id/modifier/key are plain Win32 hotkey values.
+        if unsafe { w::RegisterHotKey(self.hwnd, id, modifiers | MOD_NOREPEAT, key) } == 0 {
             return Err(Error::System("RegisterHotKey failed".to_owned()));
         }
         self.hotkeys.push(id);
@@ -611,12 +617,14 @@ impl Window for Win32Window {
             flags: 0,
             scheme: ptr::null_mut(),
         };
-        // SAFETY: v points to writable HIGHCONTRAST storage with the documented size.\n        (unsafe { w::SystemParametersInfoW(0x42, v.size, (&mut v as *mut w::HighContrast).cast(), 0) }) != 0
+        // SAFETY: v points to writable HIGHCONTRAST storage with the documented size.
+        (unsafe { w::SystemParametersInfoW(0x42, v.size, (&mut v as *mut w::HighContrast).cast(), 0) }) != 0
             && v.flags & 1 != 0
     }
     fn reduced_motion(&self) -> bool {
         let mut enabled: i32 = 1;
-        // SAFETY: enabled points to writable BOOL-sized storage for SPI_GETCLIENTAREAANIMATION.\n        (unsafe { w::SystemParametersInfoW(0x1042, 0, (&mut enabled as *mut i32).cast(), 0) }) != 0 && enabled == 0
+        // SAFETY: enabled points to writable BOOL-sized storage for SPI_GETCLIENTAREAANIMATION.
+        (unsafe { w::SystemParametersInfoW(0x1042, 0, (&mut enabled as *mut i32).cast(), 0) }) != 0 && enabled == 0
     }
 }
 fn wide(s: &str) -> Vec<u16> {
@@ -646,7 +654,8 @@ fn cursor_handle(c: CursorShape) -> w::Hcursor {
         CursorShape::ResizeVertical => 32645,
         CursorShape::Hand => 32649,
     };
-    // SAFETY: MAKEINTRESOURCE-style cursor IDs are documented for LoadCursorW with a null instance.\n    unsafe { w::LoadCursorW(ptr::null_mut(), id as usize as *const u16) }
+    // SAFETY: MAKEINTRESOURCE-style cursor IDs are documented for LoadCursorW with a null instance.
+    unsafe { w::LoadCursorW(ptr::null_mut(), id as usize as *const u16) }
 }
 unsafe extern "system" fn proc(hwnd: w::Hwnd, msg: u32, wp: usize, lp: isize) -> isize {
     // SAFETY: hwnd is supplied by Windows to this registered window procedure.
@@ -970,38 +979,50 @@ const IID: w::Guid = w::Guid {
 };
 fn file_dialog(owner: w::Hwnd, folders: bool) -> Result<Option<String>> {
     let mut raw: *mut c_void = ptr::null_mut();
-    // SAFETY: COM is initialized by Win32Window::new; CLSID/IID and out pointer match IFileOpenDialog.\n    let hr = unsafe { w::CoCreateInstance(&CLSID, ptr::null_mut(), 1, &IID, &mut raw) };
+    // SAFETY: COM is initialized by Win32Window::new; CLSID/IID and out pointer match IFileOpenDialog.
+    let hr = unsafe { w::CoCreateInstance(&CLSID, ptr::null_mut(), 1, &IID, &mut raw) };
     if hr < 0 || raw.is_null() {
         return Err(Error::System("IFileOpenDialog unavailable".to_owned()));
     }
-    // SAFETY: successful CoCreateInstance returned an IFileOpenDialog pointer with this vtable prefix.\n    let v = unsafe { &**(raw as *mut *mut DialogV) };
+    // SAFETY: successful CoCreateInstance returned an IFileOpenDialog pointer with this vtable prefix.
+    let v = unsafe { &**(raw as *mut *mut DialogV) };
     let mut options = 0;
-    // SAFETY: raw is a live IFileOpenDialog and options is writable.\n    let _ = unsafe { (v.get_options)(raw, &mut options) };
-    // SAFETY: raw is a live IFileOpenDialog and the option bits are documented FOS flags.\n    let _ = unsafe { (v.set_options)(raw, options | 0x40 | if folders { 0x20 } else { 0 }) };
-    // SAFETY: raw is live and owner is the live parent HWND.\n    let shown = unsafe { (v.show)(raw, owner) };
+    // SAFETY: raw is a live IFileOpenDialog and options is writable.
+    let _ = unsafe { (v.get_options)(raw, &mut options) };
+    // SAFETY: raw is a live IFileOpenDialog and the option bits are documented FOS flags.
+    let _ = unsafe { (v.set_options)(raw, options | 0x40 | if folders { 0x20 } else { 0 }) };
+    // SAFETY: raw is live and owner is the live parent HWND.
+    let shown = unsafe { (v.show)(raw, owner) };
     if shown < 0 {
-        // SAFETY: release balances the CoCreateInstance reference exactly once on this path.\n        unsafe { (v.release)(raw) };
-        return Ok(None);
-    }
-    let mut item: *mut c_void = ptr::null_mut();
-    // SAFETY: raw is live and item is a writable COM out pointer.\n    if unsafe { (v.get_result)(raw, &mut item) } < 0 || item.is_null() {
+        // SAFETY: release balances the CoCreateInstance reference exactly once on this path.
         unsafe { (v.release)(raw) };
         return Ok(None);
     }
-    // SAFETY: get_result returned a live IShellItem pointer with this vtable prefix.\n    let iv = unsafe { &**(item as *mut *mut ItemV) };
+    let mut item: *mut c_void = ptr::null_mut();
+    // SAFETY: raw is live and item is a writable COM out pointer.
+    if unsafe { (v.get_result)(raw, &mut item) } < 0 || item.is_null() {
+        unsafe { (v.release)(raw) };
+        return Ok(None);
+    }
+    // SAFETY: get_result returned a live IShellItem pointer with this vtable prefix.
+    let iv = unsafe { &**(item as *mut *mut ItemV) };
     let mut path: *mut u16 = ptr::null_mut();
-    // SAFETY: item is live and path is a writable PWSTR out pointer.\n    let ok = unsafe { (iv.name)(item, 0x80058000, &mut path) };
+    // SAFETY: item is live and path is a writable PWSTR out pointer.
+    let ok = unsafe { (iv.name)(item, 0x80058000, &mut path) };
     let result = if ok >= 0 && !path.is_null() {
         let mut n = 0usize;
-        // SAFETY: SIGDN_FILESYSPATH returns a NUL-terminated CoTaskMemAlloc UTF-16 string.\n        while unsafe { *path.add(n) } != 0 {
+        // SAFETY: SIGDN_FILESYSPATH returns a NUL-terminated CoTaskMemAlloc UTF-16 string.
+        while unsafe { *path.add(n) } != 0 {
             n = n.saturating_add(1);
         }
-        // SAFETY: n was found before the terminating NUL in the live UTF-16 allocation.\n        Some(String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(path, n) }))
+        // SAFETY: n was found before the terminating NUL in the live UTF-16 allocation.
+        Some(String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(path, n) }))
     } else {
         None
     };
     if !path.is_null() {
-        // SAFETY: path was allocated by the shell for SIGDN_FILESYSPATH and is freed exactly once.\n        unsafe { w::CoTaskMemFree(path.cast()) }
+        // SAFETY: path was allocated by the shell for SIGDN_FILESYSPATH and is freed exactly once.
+        unsafe { w::CoTaskMemFree(path.cast()) }
     }
     unsafe {
         (iv.release)(item);
