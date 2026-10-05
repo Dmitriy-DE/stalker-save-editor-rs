@@ -136,22 +136,25 @@ fn make_archive_decoders() -> (HeaderDecoder, EntryDecoder) {
                 candidates.push(decoded);
             }
         }
-        if candidates.is_empty() {
-            return Err(sse_core::Error::damaged("X-Ray archive header could not be decoded"));
-        }
-        candidates.dedup();
-        if candidates.len() != 1 {
-            return Err(sse_core::Error::damaged(
-                "X-Ray archive header decryption is ambiguous: candidates differ",
-            ));
-        }
-        Ok(candidates)
+        select_unique_header_candidate(candidates)
     });
     let entry_decoder: EntryDecoder =
         Arc::new(|data: &[u8], expected_size: usize| sse_codecs::lzo1x::decompress(data, expected_size));
     (header_decoder, entry_decoder)
 }
 
+fn select_unique_header_candidate(mut candidates: Vec<Vec<u8>>) -> sse_core::Result<Vec<Vec<u8>>> {
+    if candidates.is_empty() {
+        return Err(sse_core::Error::damaged("X-Ray archive header could not be decoded"));
+    }
+    candidates.sort();
+    candidates.dedup();
+    if candidates.len() != 1 {
+        return Err(sse_core::Error::damaged(
+            "X-Ray archive header decryption is ambiguous: candidates differ",
+        ));
+    }
+    Ok(candidates)
 fn read_xray_hook_source(
     root: &Path,
     game: CompanionGame,
@@ -1573,6 +1576,14 @@ mod g14_tests {
             bytes.as_deref(),
             Some(b"function actor_binder:update(delta) end".as_slice())
         );
+    }
+
+    #[test]
+    fn ambiguous_archive_header_candidates_are_refused() {
+        let result = select_unique_header_candidate(vec![b"first".to_vec(), b"second".to_vec()]);
+        assert!(result.is_err());
+        let duplicate = select_unique_header_candidate(vec![b"same".to_vec(), b"same".to_vec()]);
+        assert_eq!(duplicate.ok(), Some(vec![b"same".to_vec()]));
     }
 
     #[test]
