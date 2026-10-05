@@ -169,6 +169,31 @@ fn schema_three_roundtrips_s2_stash_handles_without_truncation() {
 }
 
 #[test]
+fn schema_five_roundtrips_faction_relation_and_relocation_edits() {
+    let directory = TemporaryDirectory::new();
+    let store = DraftStore::new(&directory.0);
+    let source_sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let mut plan = DraftPlan::empty(source_sha256).expect("valid plan");
+    plan.faction_relations.insert("freedom".to_owned(), 1_000);
+    plan.relocate_to = Some(0x1234);
+    let journal = DraftJournal::new(vec![plan], 0).expect("valid journal");
+
+    store.save(journal).expect("faction relation draft should save");
+    let bytes = fs::read(store.path_for(source_sha256).expect("valid hash")).expect("draft should exist");
+    let serialized = std::str::from_utf8(&bytes).expect("draft JSON should be UTF-8");
+    assert!(serialized.contains("\"schema\":5"));
+    assert!(serialized.contains("\"factionRelations\":{\"freedom\":1000}"));
+    assert!(serialized.contains("\"relocateTo\":4660"));
+
+    let restored = store
+        .load(source_sha256)
+        .expect("draft read should succeed")
+        .expect("draft should load");
+    assert_eq!(current(&restored).faction_relations.get("freedom"), Some(&1_000));
+    assert_eq!(current(&restored).relocate_to, Some(0x1234));
+}
+
+#[test]
 fn schema_three_loads_durability_placement_and_upgrade_edits() {
     let directory = TemporaryDirectory::new();
     let store = DraftStore::new(&directory.0);

@@ -20,6 +20,7 @@ sse-fixes = { path = "../sse-fixes" }
 sse-lint = { path = "../sse-lint" }
 sse-steam = { path = "../sse-steam" }
 sse-update = { path = "../sse-update" }
+sse-doctor = { path = "../sse-doctor" }
 
 [lints]
 workspace = true

@@ -135,6 +135,10 @@ pub struct DraftPlan {
     pub s2_stash_takes: Vec<u32>,
     /// Transfers from the actor inventory into stashes.
     pub stash_puts: Vec<StashPut>,
+    /// Requested goodwill values keyed by catalog faction.
+    pub faction_relations: BTreeMap<String, i32>,
+    /// Confirmed level-changer object to use for actor relocation.
+    pub relocate_to: Option<u16>,
     /// Original legacy plan preserved when it contains unsupported edits.
     pub unmapped_legacy_plan: Option<JsonValue>,
 }
@@ -155,6 +159,8 @@ impl DraftPlan {
             stash_takes: Vec::new(),
             s2_stash_takes: Vec::new(),
             stash_puts: Vec::new(),
+            faction_relations: BTreeMap::new(),
+            relocate_to: None,
             unmapped_legacy_plan: None,
         })
     }
@@ -170,6 +176,8 @@ impl DraftPlan {
             || !self.stash_takes.is_empty()
             || !self.s2_stash_takes.is_empty()
             || !self.stash_puts.is_empty()
+            || !self.faction_relations.is_empty()
+            || self.relocate_to.is_some()
             || self.unmapped_legacy_plan.is_some()
     }
 
@@ -237,6 +245,16 @@ impl DraftPlan {
                     "draft stash-put request is invalid or duplicated".to_owned(),
                 ));
             }
+        }
+        if self
+            .faction_relations
+            .iter()
+            .any(|(key, _)| key.trim().is_empty() || key.len() > 256 || key.contains('\0'))
+        {
+            return Err(Error::Refused("draft faction relation key is invalid".to_owned()));
+        }
+        if self.relocate_to.is_some_and(|handle| handle == 0 || handle == u16::MAX) {
+            return Err(Error::Refused("draft relocation handle is invalid".to_owned()));
         }
         if takes
             .iter()
@@ -423,7 +441,7 @@ impl DraftStore {
         Ok(self.directory.join(format!("{source_sha256}.json")))
     }
 
-    /// Loads schemas 1–4, returning `None` for a missing, invalid, or oversized draft.
+    /// Loads schemas 1–5, returning `None` for a missing, invalid, or oversized draft.
     pub fn load(&self, source_sha256: &str) -> Result<Option<DraftJournal>> {
         let path = self.path_for(source_sha256)?;
         if fs::symlink_metadata(&path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
@@ -540,18 +558,22 @@ fn parse_journal(bytes: &[u8], expected_sha256: &str) -> Result<DraftJournal> {
             .collect::<Result<Vec<_>>>()?,
         2 => plans
             .iter()
-            .map(|plan| parse_current_plan(plan, expected_sha256, false, false))
+            .map(|plan| parse_current_plan(plan, expected_sha256, false, false, false))
             .collect::<Result<Vec<_>>>()?,
         3 => plans
             .iter()
             .map(|plan| {
                 let includes_s2_stash_takes = object_entries(plan)?.iter().any(|(name, _)| name == "s2StashTakes");
-                parse_current_plan(plan, expected_sha256, true, includes_s2_stash_takes)
+                parse_current_plan(plan, expected_sha256, true, includes_s2_stash_takes, false)
             })
             .collect::<Result<Vec<_>>>()?,
         4 => plans
             .iter()
-            .map(|plan| parse_current_plan(plan, expected_sha256, true, true))
+            .map(|plan| parse_current_plan(plan, expected_sha256, true, true, false))
+            .collect::<Result<Vec<_>>>()?,
+        5 => plans
+            .iter()
+            .map(|plan| parse_current_plan(plan, expected_sha256, true, true, true))
             .collect::<Result<Vec<_>>>()?,
         _ => return Err(Error::Refused("unsupported draft schema".to_owned())),
     };
@@ -562,7 +584,13 @@ fn parse_journal(bytes: &[u8], expected_sha256: &str) -> Result<DraftJournal> {
     Ok(journal)
 }
 
-fn parse_current_plan(value: &JsonValue, expected_sha256: &str, extended: bool, s2_stashes: bool) -> Result<DraftPlan> {
+fn parse_current_plan(
+    value: &JsonValue,
+    expected_sha256: &str,
+    extended: bool,
+    s2_stashes: bool,
+    operations: bool,
+) -> Result<DraftPlan> {
     let base_fields = [
         "sourceSha256",
         "money",
@@ -600,7 +628,25 @@ fn parse_current_plan(value: &JsonValue, expected_sha256: &str, extended: bool, 
         "upgrades",
         "unmappedLegacyPlan",
     ];
-    let members = if s2_stashes {
+    let operation_fields = [
+        "sourceSha256",
+        "money",
+        "stackCounts",
+        "detachHandles",
+        "adds",
+        "stashTakes",
+        "s2StashTakes",
+        "stashPuts",
+        "durability",
+        "placements",
+        "upgrades",
+        "factionRelations",
+        "relocateTo",
+        "unmappedLegacyPlan",
+    ];
+    let members = if operations {
+        object_members(value, &operation_fields)?
+    } else if s2_stashes {
         object_members(value, &full_fields)?
     } else if extended {
         object_members(value, &extended_fields)?
@@ -686,6 +732,15 @@ fn parse_current_plan(value: &JsonValue, expected_sha256: &str, extended: bool, 
         .iter()
         .map(parse_stash_put)
         .collect::<Result<Vec<_>>>()?;
+    if operations {
+        for (key, value) in object_entries(field(members, "factionRelations")?)? {
+            let relation = number_i32(value)?;
+            if plan.faction_relations.insert(key.to_owned(), relation).is_some() {
+                return Err(Error::damaged("draft repeats a faction relation key"));
+            }
+        }
+        plan.relocate_to = nullable_u16(field(members, "relocateTo")?)?;
+    }
     plan.unmapped_legacy_plan = match field(members, "unmappedLegacyPlan")? {
         JsonValue::Null => None,
         value => Some(value.clone()),
@@ -795,13 +850,24 @@ fn parse_legacy_plan(value: &JsonValue, source_sha256: &str) -> Result<DraftPlan
 
 fn serialize_journal(journal: &DraftJournal) -> Result<Vec<u8>> {
     validate_journal(journal)?;
-    let extended = journal.plans.iter().any(|plan| {
-        !plan.durability.is_empty()
-            || !plan.placements.is_empty()
-            || !plan.upgrades.is_empty()
-            || !plan.s2_stash_takes.is_empty()
-    });
-    let schema = if extended { 3 } else { 2 };
+    let operations = journal
+        .plans
+        .iter()
+        .any(|plan| !plan.faction_relations.is_empty() || plan.relocate_to.is_some());
+    let extended = operations
+        || journal.plans.iter().any(|plan| {
+            !plan.durability.is_empty()
+                || !plan.placements.is_empty()
+                || !plan.upgrades.is_empty()
+                || !plan.s2_stash_takes.is_empty()
+        });
+    let schema = if operations {
+        5
+    } else if extended {
+        3
+    } else {
+        2
+    };
     let mut writer = Writer::compact();
     writer.object_start()?;
     writer.key("index")?;
@@ -809,7 +875,7 @@ fn serialize_journal(journal: &DraftJournal) -> Result<Vec<u8>> {
     writer.key("plans")?;
     writer.array_start()?;
     for plan in &journal.plans {
-        write_current_plan(&mut writer, plan, extended)?;
+        write_current_plan(&mut writer, plan, extended, operations)?;
     }
     writer.array_end()?;
     writer.key("schema")?;
@@ -825,7 +891,7 @@ fn serialize_journal(journal: &DraftJournal) -> Result<Vec<u8>> {
     writer.finish()
 }
 
-fn write_current_plan(writer: &mut Writer, plan: &DraftPlan, extended: bool) -> Result<()> {
+fn write_current_plan(writer: &mut Writer, plan: &DraftPlan, extended: bool, operations: bool) -> Result<()> {
     writer.object_start()?;
     writer.key("sourceSha256")?;
     writer.string(&plan.source_sha256)?;
@@ -886,6 +952,21 @@ fn write_current_plan(writer: &mut Writer, plan: &DraftPlan, extended: bool) -> 
         writer.object_end()?;
     }
     writer.array_end()?;
+    if operations {
+        writer.key("factionRelations")?;
+        writer.object_start()?;
+        for (key, relation) in &plan.faction_relations {
+            writer.key(key)?;
+            writer.i64(i64::from(*relation))?;
+        }
+        writer.object_end()?;
+        writer.key("relocateTo")?;
+        if let Some(handle) = plan.relocate_to {
+            writer.u64(u64::from(handle))?;
+        } else {
+            writer.null()?;
+        }
+    }
     if extended {
         writer.key("durability")?;
         writer.object_start()?;
@@ -1078,6 +1159,14 @@ fn nullable_u32(value: &JsonValue) -> Result<Option<u32>> {
     }
 }
 
+fn nullable_u16(value: &JsonValue) -> Result<Option<u16>> {
+    if value == &JsonValue::Null {
+        Ok(None)
+    } else {
+        number_u16(value).map(Some)
+    }
+}
+
 fn number_u32(value: &JsonValue) -> Result<u32> {
     number_string(value)?
         .parse::<u32>()
@@ -1094,6 +1183,12 @@ fn number_u8(value: &JsonValue) -> Result<u8> {
     number_string(value)?
         .parse::<u8>()
         .map_err(|_| Error::damaged("draft number is not an unsigned 8-bit integer"))
+}
+
+fn number_i32(value: &JsonValue) -> Result<i32> {
+    number_string(value)?
+        .parse::<i32>()
+        .map_err(|_| Error::damaged("draft number is not a signed 32-bit integer"))
 }
 
 fn number_string(value: &JsonValue) -> Result<&str> {

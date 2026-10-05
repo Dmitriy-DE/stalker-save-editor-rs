@@ -1,8 +1,9 @@
 use crate::{
     analyze_crash_file, analyze_crash_file_with_dump_reader, analyze_crash_log, analyze_game_install,
-    analyze_game_install_from_steam, analyze_quests, analyze_save, classify_game_build, discover_crash_logs,
-    evaluate_quest_facts, parse_app_state, CrashAdvice, CrashDumpFacts, CrashDumpReader, CrashKind,
-    CrashSignatureCatalog, GameBuildStatus, GameTarget, QuestNpcVitals, QuestTaskStatus, SaveDoctorStatus,
+    analyze_game_install_from_steam, analyze_quests, analyze_quests_from_save, analyze_save, classify_game_build,
+    discover_crash_logs, evaluate_quest_facts, parse_app_state, prepare_quest_repair, verify_quest_repair, CrashAdvice,
+    CrashDumpFacts, CrashDumpReader, CrashKind, CrashSignatureCatalog, GameBuildStatus, GameTarget, QuestNpcVitals,
+    QuestTaskStatus, SaveDoctorStatus,
 };
 
 const SYNTHETIC_XRAY_SAVE: &[u8] = include_bytes!("../../../fixtures/synthetic/xray-soc.sav");
@@ -639,7 +640,7 @@ fn release_crash_log_50_mib_tail_throughput_measurement() {
 }
 
 #[test]
-fn quest_doctor_keeps_save_states_unknown_when_the_reader_exposes_no_quest_fields() {
+fn quest_doctor_keeps_unmatched_npc_facts_unknown() -> sse_core::Result<()> {
     let report = analyze_quests(SYNTHETIC_XRAY_SAVE);
 
     assert_eq!(report.status, SaveDoctorStatus::Unknown);
@@ -650,6 +651,21 @@ fn quest_doctor_keeps_save_states_unknown_when_the_reader_exposes_no_quest_field
         .iter()
         .all(|state| state.status == QuestTaskStatus::Unknown));
     assert!(report.states.iter().all(|state| state.missing_info.is_none()));
+    assert!(prepare_quest_repair(SYNTHETIC_XRAY_SAVE)?.is_none());
+    verify_quest_repair(SYNTHETIC_XRAY_SAVE)?;
+    Ok(())
+}
+
+#[test]
+fn quest_doctor_can_evaluate_an_already_parsed_save() -> sse_core::Result<()> {
+    let parsed = sse_xray::Save::read(SYNTHETIC_XRAY_SAVE)?;
+    let from_bytes = analyze_quests(SYNTHETIC_XRAY_SAVE);
+    let from_index = analyze_quests_from_save(&parsed);
+
+    assert_eq!(from_index.format_id, from_bytes.format_id);
+    assert_eq!(from_index.status, from_bytes.status);
+    assert_eq!(from_index.states, from_bytes.states);
+    Ok(())
 }
 
 #[test]
