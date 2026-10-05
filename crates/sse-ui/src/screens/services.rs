@@ -334,7 +334,7 @@ impl Screen for Companion {
         style::label(
             cx.tree,
             card,
-            "Меню в игре: Esc → F1 или КПК компаньона. Установка через приложение ниже.",
+            "Меню в игре: Esc → F1 или КПК компаньона. Хук создаёт распакованный скрипт в gamedata/scripts; установка через приложение ниже.",
             Text::Note,
         )?;
         style::label(cx.tree, card, "Целевая игра: выбранная в «Обзоре игр»", Text::Body)?;
