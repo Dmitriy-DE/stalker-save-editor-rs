@@ -924,39 +924,53 @@ const IID: w::Guid = w::Guid {
 };
 fn file_dialog(owner: w::Hwnd, folders: bool) -> Result<Option<String>> {
     let mut raw: *mut c_void = ptr::null_mut();
+    // SAFETY: CLSID/IID are the documented FileOpenDialog identifiers and raw is writable COM output storage.
     let hr = unsafe { w::CoCreateInstance(&CLSID, ptr::null_mut(), 1, &IID, &mut raw) };
     if hr < 0 || raw.is_null() {
         return Err(Error::System("IFileOpenDialog unavailable".to_owned()));
     }
+    // SAFETY: successful CoCreateInstance returned an IFileOpenDialog pointer whose first field is its vtable.
     let v = unsafe { &**(raw as *mut *mut DialogV) };
     let mut options = 0;
+    // SAFETY: raw is a live IFileOpenDialog and options is writable storage for GetOptions.
     let _ = unsafe { (v.get_options)(raw, &mut options) };
+    // SAFETY: raw is live and the option bits are documented FOS flags.
     let _ = unsafe { (v.set_options)(raw, options | 0x40 | if folders { 0x20 } else { 0 }) };
+    // SAFETY: raw is a live dialog and owner is the live parent HWND.
     let shown = unsafe { (v.show)(raw, owner) };
     if shown < 0 {
+        // SAFETY: releases the live IFileOpenDialog reference exactly once on this return path.
         unsafe { (v.release)(raw) };
         return Ok(None);
     }
     let mut item: *mut c_void = ptr::null_mut();
+    // SAFETY: raw is live and item is writable IShellItem output storage.
     if unsafe { (v.get_result)(raw, &mut item) } < 0 || item.is_null() {
+        // SAFETY: releases the live IFileOpenDialog reference exactly once on this return path.
         unsafe { (v.release)(raw) };
         return Ok(None);
     }
+    // SAFETY: successful GetResult returned a live IShellItem whose first field is its vtable.
     let iv = unsafe { &**(item as *mut *mut ItemV) };
     let mut path: *mut u16 = ptr::null_mut();
+    // SAFETY: item is live and path is writable storage for the CoTaskMem-allocated display name.
     let ok = unsafe { (iv.name)(item, 0x80058000, &mut path) };
     let result = if ok >= 0 && !path.is_null() {
         let mut n = 0usize;
+        // SAFETY: successful GetDisplayName returns a NUL-terminated UTF-16 string.
         while unsafe { *path.add(n) } != 0 {
             n = n.saturating_add(1);
         }
+        // SAFETY: n was found by scanning the live NUL-terminated allocation and excludes the terminator.
         Some(String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(path, n) }))
     } else {
         None
     };
     if !path.is_null() {
+        // SAFETY: path was allocated by the shell with CoTaskMem and is released exactly once here.
         unsafe { w::CoTaskMemFree(path.cast()) }
     }
+    // SAFETY: item and raw are live COM references and each is released exactly once.
     unsafe {
         (iv.release)(item);
         (v.release)(raw);
