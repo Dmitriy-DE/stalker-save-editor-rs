@@ -602,141 +602,175 @@ fn cursor_handle(c: CursorShape) -> w::Hcursor {
     unsafe { w::LoadCursorW(ptr::null_mut(), id as usize as *const u16) }
 }
 unsafe extern "system" fn proc(hwnd: w::Hwnd, msg: u32, wp: usize, lp: isize) -> isize {
+    // SAFETY: hwnd is supplied by Win32; GWLP_USERDATA is either zero or the State pointer installed by new.
     let raw = unsafe { w::GetWindowLongPtrW(hwnd, GWLP_USERDATA) } as *mut State;
     if raw.is_null() {
+        // SAFETY: forwarding an unhandled message with the original Win32 arguments is required by the ABI.
         return unsafe { w::DefWindowProcW(hwnd, msg, wp, lp) };
     }
-    let s = unsafe { &mut *raw };
     match msg {
         WM_CLOSE => {
-            s.events.push_back(Event::Close);
+            // SAFETY: callbacks run on the owning window thread and user data points at the live State.
+            unsafe { (&mut *raw).events.push_back(Event::Close) };
             0
         }
         WM_DESTROY => {
+            // SAFETY: called on the window thread while processing WM_DESTROY.
             unsafe { w::PostQuitMessage(0) };
             0
         }
         WM_ERASEBKGND => 1,
         WM_SETFOCUS => {
-            s.events.push_back(Event::Focus(true));
+            // SAFETY: callbacks run on the owning window thread and user data points at the live State.
+            unsafe { (&mut *raw).events.push_back(Event::Focus(true)) };
             0
         }
         WM_KILLFOCUS => {
-            s.events.push_back(Event::Focus(false));
+            // SAFETY: callbacks run on the owning window thread and user data points at the live State.
+            unsafe { (&mut *raw).events.push_back(Event::Focus(false)) };
             0
         }
         WM_SIZE => {
             let width = u32::try_from(word(lp, false)).unwrap_or_default();
             let height = u32::try_from(word(lp, true)).unwrap_or_default();
+            // SAFETY: hwnd is the live window currently dispatching WM_SIZE.
             let dpi = unsafe { w::GetDpiForWindow(hwnd) };
-            s.events.push_back(Event::Resized {
+            let event = Event::Resized {
                 width,
                 height,
                 scale: (dpi as f32).mul_add(0.010416667, 0.0),
-            });
+            };
+            // SAFETY: no State reference is held across GetDpiForWindow; raw remains owned by the window.
+            unsafe { (&mut *raw).events.push_back(event) };
             0
         }
         WM_DPICHANGED => {
+            // SAFETY: WM_DPICHANGED lParam points to the suggested RECT for the duration of this callback.
             let rect = unsafe { &*(lp as *const w::Rect) };
             let width = rect.right.saturating_sub(rect.left);
             let height = rect.bottom.saturating_sub(rect.top);
+            // SAFETY: hwnd is live and the suggested RECT coordinates came from this WM_DPICHANGED message.
             unsafe { w::SetWindowPos(hwnd, ptr::null_mut(), rect.left, rect.top, width, height, 0x14) };
             0
         }
         WM_GETMINMAXINFO => {
+            // SAFETY: raw points at live State; copy values before touching the Win32-owned output structure.
+            let (min_w, min_h) = unsafe { ((*raw).min_w, (*raw).min_h) };
+            // SAFETY: WM_GETMINMAXINFO lParam points to writable MINMAXINFO for this callback.
             let m = unsafe { &mut *(lp as *mut w::MinMax) };
-            m.min_track.x = i32::try_from(s.min_w).unwrap_or(i32::MAX);
-            m.min_track.y = i32::try_from(s.min_h).unwrap_or(i32::MAX);
+            m.min_track.x = i32::try_from(min_w).unwrap_or(i32::MAX);
+            m.min_track.y = i32::try_from(min_h).unwrap_or(i32::MAX);
             0
         }
         WM_KEYDOWN => {
-            s.events.push_back(Event::Key {
+            let event = Event::Key {
                 code: u32::try_from(wp).unwrap_or_default(),
                 down: true,
                 repeat: (lp & (1isize.checked_shl(30).unwrap_or(0))) != 0,
-            });
+            };
+            // SAFETY: callbacks run on the owning window thread and user data points at the live State.
+            unsafe { (&mut *raw).events.push_back(event) };
             0
         }
         WM_KEYUP => {
-            s.events.push_back(Event::Key {
+            let event = Event::Key {
                 code: u32::try_from(wp).unwrap_or_default(),
                 down: false,
                 repeat: false,
-            });
+            };
+            // SAFETY: callbacks run on the owning window thread and user data points at the live State.
+            unsafe { (&mut *raw).events.push_back(event) };
             0
         }
         WM_CHAR => {
             let u = u16::try_from(wp).unwrap_or_default();
+            // SAFETY: this short borrow ends before the callback returns and crosses no Win32 call.
+            let state = unsafe { &mut *raw };
             if (0xd800..=0xdbff).contains(&u) {
-                s.high = Some(u);
+                state.high = Some(u);
             } else if (0xdc00..=0xdfff).contains(&u) {
-                if let Some(h) = s.high.take() {
-                    if let Some(Ok(c)) = char::decode_utf16([h, u]).next() {
-                        s.events.push_back(Event::Text(c));
+                if let Some(h) = state.high.take() {
+                    if let Some(Ok(character)) = char::decode_utf16([h, u]).next() {
+                        state.events.push_back(Event::Text(character));
                     }
                 }
-            } else if let Some(c) = char::from_u32(u32::from(u)) {
-                s.high = None;
-                s.events.push_back(Event::Text(c));
+            } else if let Some(character) = char::from_u32(u32::from(u)) {
+                state.high = None;
+                state.events.push_back(Event::Text(character));
             }
             0
         }
         WM_MOUSEMOVE => {
-            s.events.push_back(Event::PointerMoved {
+            let event = Event::PointerMoved {
                 x: word(lp, false),
                 y: word(lp, true),
-            });
+            };
+            // SAFETY: callbacks run on the owning window thread and user data points at the live State.
+            unsafe { (&mut *raw).events.push_back(event) };
             0
         }
         WM_LDOWN | WM_RDOWN | WM_MDOWN => {
+            // SAFETY: hwnd is the live window receiving this mouse-button message.
             unsafe { w::SetCapture(hwnd) };
-            s.events.push_back(Event::PointerButton {
-                button: if msg == WM_LDOWN {
-                    MouseButton::Left
-                } else if msg == WM_RDOWN {
-                    MouseButton::Right
-                } else {
-                    MouseButton::Middle
-                },
-                down: true,
-            });
+            let button = if msg == WM_LDOWN {
+                MouseButton::Left
+            } else if msg == WM_RDOWN {
+                MouseButton::Right
+            } else {
+                MouseButton::Middle
+            };
+            // SAFETY: no State reference is held across SetCapture; raw remains live afterwards.
+            unsafe { (&mut *raw).events.push_back(Event::PointerButton { button, down: true }) };
             0
         }
         WM_LUP | WM_RUP | WM_MUP => {
+            // SAFETY: releasing capture is valid on the window thread after a captured button transition.
             unsafe { w::ReleaseCapture() };
-            s.events.push_back(Event::PointerButton {
-                button: if msg == WM_LUP {
-                    MouseButton::Left
-                } else if msg == WM_RUP {
-                    MouseButton::Right
-                } else {
-                    MouseButton::Middle
-                },
-                down: false,
-            });
+            let button = if msg == WM_LUP {
+                MouseButton::Left
+            } else if msg == WM_RUP {
+                MouseButton::Right
+            } else {
+                MouseButton::Middle
+            };
+            // SAFETY: no State reference is held across ReleaseCapture; raw remains live afterwards.
+            unsafe { (&mut *raw).events.push_back(Event::PointerButton { button, down: false }) };
             0
         }
         WM_WHEEL => {
-            s.events.push_back(Event::Wheel { x: 0, y: wheel(wp) });
+            let event = Event::Wheel { x: 0, y: wheel(wp) };
+            // SAFETY: callbacks run on the owning window thread and user data points at the live State.
+            unsafe { (&mut *raw).events.push_back(event) };
             0
         }
         WM_HWHEEL => {
-            s.events.push_back(Event::Wheel { x: wheel(wp), y: 0 });
+            let event = Event::Wheel { x: wheel(wp), y: 0 };
+            // SAFETY: callbacks run on the owning window thread and user data points at the live State.
+            unsafe { (&mut *raw).events.push_back(event) };
             0
         }
         WM_HOTKEY => {
-            s.events.push_back(Event::HotKey(i32::try_from(wp).unwrap_or_default()));
+            let event = Event::HotKey(i32::try_from(wp).unwrap_or_default());
+            // SAFETY: callbacks run on the owning window thread and user data points at the live State.
+            unsafe { (&mut *raw).events.push_back(event) };
             0
         }
         WM_SETCURSOR => {
-            unsafe { w::SetCursor(cursor_handle(s.cursor)) };
+            // SAFETY: copy the cursor value from live State before calling back into Win32.
+            let cursor = unsafe { (*raw).cursor };
+            // SAFETY: cursor_handle returns a shared system cursor suitable for SetCursor.
+            unsafe { w::SetCursor(cursor_handle(cursor)) };
             1
         }
         WM_PAINT => {
-            paint(hwnd, s);
+            // SAFETY: paint only takes a shared view of live State while Win32 reads the framebuffer bytes.
+            paint(hwnd, unsafe { &*raw });
             0
         }
-        _ => unsafe { w::DefWindowProcW(hwnd, msg, wp, lp) },
+        _ => {
+            // SAFETY: forwarding an unhandled message with the original Win32 arguments is required by the ABI.
+            unsafe { w::DefWindowProcW(hwnd, msg, wp, lp) }
+        }
     }
 }
 fn paint(hwnd: w::Hwnd, s: &State) {
