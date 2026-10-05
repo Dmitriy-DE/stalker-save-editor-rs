@@ -297,8 +297,7 @@ impl S2Save {
             })
             .collect::<Vec<_>>();
         let (image, changed_ranges) = apply_changes_to_image(self, changes)?;
-        let (packed, verified_container) =
-            pack_and_verify_s2_image(self.container.image(), &image, &changed_ranges)?;
+        let (packed, verified_container) = pack_and_verify_s2_image(self.container.image(), &image, &changed_ranges)?;
         if !durability_changes.is_empty() {
             let verified = Self::from_container(verified_container)?;
             verify_durability_readback(self, &verified, &durability_changes)?;
@@ -2105,10 +2104,14 @@ fn verify_durability_values(
     let mut changed_handles = HashSet::with_capacity(changes.len());
     for (handle, condition) in changes {
         if !changed_handles.insert(*handle) {
-            return Err(Error::Refused("S2 durability handle is edited more than once".to_owned()));
+            return Err(Error::Refused(
+                "S2 durability handle is edited more than once".to_owned(),
+            ));
         }
         if !expected.contains_key(handle) {
-            return Err(Error::Refused("S2 durability handle is missing or ambiguous".to_owned()));
+            return Err(Error::Refused(
+                "S2 durability handle is missing or ambiguous".to_owned(),
+            ));
         }
         expected.insert(*handle, Some(*condition));
     }
@@ -2124,7 +2127,9 @@ fn condition_map(values: &[(u32, Option<f32>)]) -> Result<BTreeMap<u32, Option<f
     let mut conditions = BTreeMap::new();
     for (handle, condition) in values {
         if conditions.insert(*handle, *condition).is_some() {
-            return Err(Error::damaged("S2 durability read-back contains duplicate item handles"));
+            return Err(Error::damaged(
+                "S2 durability read-back contains duplicate item handles",
+            ));
         }
     }
     Ok(conditions)
@@ -2417,15 +2422,21 @@ mod tests {
         assert!(prepared.is_ok());
         let Ok((image, changed_ranges)) = prepared else { return };
         let mut corrupted = image;
-        let unchanged_offset = (0..corrupted.len())
-            .find(|offset| changed_ranges.iter().all(|range| !range.after.contains(offset)));
+        let unchanged_offset =
+            (0..corrupted.len()).find(|offset| changed_ranges.iter().all(|range| !range.after.contains(offset)));
         assert!(unchanged_offset.is_some());
-        let Some(unchanged_offset) = unchanged_offset else { return };
-        let Some(byte) = corrupted.get_mut(unchanged_offset) else { return };
+        let Some(unchanged_offset) = unchanged_offset else {
+            return;
+        };
+        let Some(byte) = corrupted.get_mut(unchanged_offset) else {
+            return;
+        };
         *byte ^= 1;
 
-        assert!(pack_and_verify_s2_image(parsed.container().image(), &corrupted, &changed_ranges)
-            .is_err_and(|error| error.to_string().contains("outside declared changed ranges")));
+        assert!(
+            pack_and_verify_s2_image(parsed.container().image(), &corrupted, &changed_ranges)
+                .is_err_and(|error| error.to_string().contains("outside declared changed ranges"))
+        );
     }
 
     #[test]

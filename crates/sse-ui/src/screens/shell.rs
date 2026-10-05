@@ -932,6 +932,9 @@ impl Shell {
     /// # Errors
     /// Returns an error from the widget tree or the screen.
     pub fn open(&mut self, tree: &mut Tree, id: ScreenId) -> Result<()> {
+        if self.library_workspace.is_saving() {
+            return Ok(());
+        }
         match self.screens.iter().position(|screen| screen.id() == id) {
             Some(index) => self.select(tree, index),
             None => Ok(()),
@@ -943,6 +946,9 @@ impl Shell {
     /// # Errors
     /// Returns an error if the screen cannot read or parse the save.
     pub fn open_save(&mut self, tree: &mut Tree, path: &Path) -> Result<bool> {
+        if self.library_workspace.is_saving() {
+            return Ok(false);
+        }
         self.open(tree, ScreenId::Overview)?;
         let Some(index) = self.screens.iter().position(|screen| screen.id() == ScreenId::Overview) else {
             return Ok(false);
@@ -966,6 +972,9 @@ impl Shell {
     }
 
     fn select(&mut self, tree: &mut Tree, index: usize) -> Result<()> {
+        if self.library_workspace.is_saving() {
+            return Ok(());
+        }
         if index == self.selected || index >= self.screens.len() {
             return Ok(());
         }
@@ -1148,6 +1157,17 @@ impl Shell {
     }
 
     fn handle(&mut self, tree: &mut Tree, message: &Message<AppMessage>, clicked: Option<WidgetId>) -> Result<Flow> {
+        match message {
+            Message::Window(WindowEvent::CloseRequested) if self.library_workspace.is_saving() => {
+                tree.set_text(self.status, "Дождитесь завершения сохранения, чтобы закрыть окно.")?;
+                self.sync_saving_overlay(tree)?;
+                return Ok(Flow::Continue);
+            }
+            Message::Window(WindowEvent::CloseRequested) | Message::Window(WindowEvent::Disconnected) => {
+                return Ok(Flow::Exit);
+            }
+            _ => {}
+        }
         if let Message::Window(WindowEvent::Resized { width, .. }) = message {
             self.sync_navigation_width(tree, *width)?;
             let sidebar_width = if self.nav_collapsed { 58 } else { 236 };
@@ -1558,6 +1578,10 @@ impl App<AppMessage> for Shell {
             }
         }
     }
+
+    fn close_requested(&mut self, tree: &mut Tree, message: &Message<AppMessage>) -> Flow {
+        self.message(tree, message, None)
+    }
 }
 
 #[cfg(test)]
@@ -1627,14 +1651,52 @@ mod tests {
         let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
         let shell = Shell::build(&mut tree, None)?;
 
-        assert!(shell.library_workspace.begin_saving());
+        let request = shell
+            .library_workspace
+            .begin_saving()
+            .ok_or_else(|| sse_core::Error::Refused("test save did not start".to_owned()))?;
         shell.sync_saving_overlay(&mut tree)?;
         assert!(tree.dialog_open());
         assert_eq!(tree.dialog(), Some(shell.saving_dialog));
 
-        shell.library_workspace.finish_saving();
+        assert!(shell.library_workspace.finish_saving(request));
         shell.sync_saving_overlay(&mut tree)?;
         assert!(!tree.dialog_open());
+        Ok(())
+    }
+
+    #[test]
+    fn close_request_waits_for_an_active_save_and_exits_after_completion() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut shell = Shell::build(&mut tree, None)?;
+        let close = Message::Window(WindowEvent::CloseRequested);
+
+        let request = shell
+            .library_workspace
+            .begin_saving()
+            .ok_or_else(|| sse_core::Error::Refused("test save did not start".to_owned()))?;
+        assert_eq!(shell.handle(&mut tree, &close, None)?, Flow::Continue);
+        assert!(shell.library_workspace.finish_saving(request));
+        assert_eq!(shell.handle(&mut tree, &close, None)?, Flow::Exit);
+        Ok(())
+    }
+
+    #[test]
+    fn screen_and_save_selection_cannot_change_during_a_write() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut shell = Shell::build(&mut tree, None)?;
+        let current = shell.current();
+        let request = shell
+            .library_workspace
+            .begin_saving()
+            .ok_or_else(|| sse_core::Error::Refused("test save did not start".to_owned()))?;
+
+        shell.open(&mut tree, ScreenId::Inventory)?;
+        assert_eq!(shell.current(), current);
+        assert!(!shell.open_save(&mut tree, std::path::Path::new("other-save.sav"))?);
+        assert_eq!(shell.current(), current);
+
+        assert!(shell.library_workspace.finish_saving(request));
         Ok(())
     }
 

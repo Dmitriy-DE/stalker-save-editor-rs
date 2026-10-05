@@ -143,20 +143,27 @@ impl Workspace {
     }
 
     pub(crate) fn is_saving(&self) -> bool {
-        self.lock().saving
+        self.lock().active_save_request.is_some()
     }
 
-    pub(crate) fn begin_saving(&self) -> bool {
+    pub(crate) fn begin_saving(&self) -> Option<u64> {
         let mut state = self.lock();
-        if state.saving {
+        if state.active_save_request.is_some() {
+            return None;
+        }
+        let request = state.next_save_request.checked_add(1)?;
+        state.next_save_request = request;
+        state.active_save_request = Some(request);
+        Some(request)
+    }
+
+    pub(crate) fn finish_saving(&self, request: u64) -> bool {
+        let mut state = self.lock();
+        if state.active_save_request != Some(request) {
             return false;
         }
-        state.saving = true;
+        state.active_save_request = None;
         true
-    }
-
-    pub(crate) fn finish_saving(&self) {
-        self.lock().saving = false;
     }
 
     pub(crate) fn library_snapshot(&self) -> (bool, Option<String>, Vec<SaveSlot>) {
@@ -321,7 +328,8 @@ struct WorkspaceState {
     last_file_check: u64,
     file_check_generation: u64,
     file_check_in_flight: bool,
-    saving: bool,
+    active_save_request: Option<u64>,
+    next_save_request: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -392,6 +400,7 @@ impl LoadedSave {
         Self::from_buffer(slot, packed)
     }
 
+    #[cfg(test)]
     fn from_bytes(slot: SaveSlot, bytes: &[u8]) -> Result<Self> {
         Self::from_buffer(slot, SaveBuffer::from_vec(bytes.to_vec()))
     }
@@ -743,6 +752,10 @@ where
     };
     let request = {
         let mut state = workspace.lock();
+        if state.active_save_request.is_some() {
+            cx.status = Some("Нельзя сменить сейв, пока выполняется запись.".to_owned());
+            return;
+        }
         state.load_request = state.load_request.saturating_add(1);
         state.loading = true;
         state.load_error = None;
@@ -820,7 +833,10 @@ fn schedule_file_check(workspace: &Workspace, cx: &Context<'_>, seconds: u64) {
     };
     let (path, expected_size, expected_modified, source_sha256, generation) = {
         let mut state = workspace.lock();
-        if state.saving || state.file_check_in_flight || seconds.saturating_sub(state.last_file_check) < 3 {
+        if state.active_save_request.is_some()
+            || state.file_check_in_flight
+            || seconds.saturating_sub(state.last_file_check) < 3
+        {
             return;
         }
         let Some(selected) = state.selected.as_ref() else {
@@ -883,7 +899,12 @@ fn start_reload_selected(workspace: &Workspace, cx: &mut Context<'_>) -> Result<
         return Ok(());
     };
     let (path, old_sha256, request, generation, empty_journal) = {
-        let selected = workspace.lock().selected.clone();
+        let mut state = workspace.lock();
+        if state.active_save_request.is_some() {
+            cx.status = Some("Нельзя перечитать сейв, пока выполняется запись.".to_owned());
+            return Ok(());
+        }
+        let selected = state.selected.clone();
         let Some(selected) = selected else {
             return Ok(());
         };
@@ -898,7 +919,6 @@ fn start_reload_selected(workspace: &Workspace, cx: &mut Context<'_>) -> Result<
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(old_sha256.clone(), generation);
-        let mut state = workspace.lock();
         state.load_request = state.load_request.saturating_add(1);
         state.loading = true;
         state.load_error = None;
@@ -3364,14 +3384,15 @@ impl Inventory {
                 return Ok(());
             }
         }
-        if !self.workspace.begin_saving() {
+        let Some(request_id) = self.workspace.begin_saving() else {
             let text = "Сохранение уже выполняется.";
             if let Some(status) = self.status {
                 cx.tree.set_text(status, text)?;
             }
             cx.status = Some(text.to_owned());
             return Ok(());
-        }
+        };
+        let source_path = selected.slot.path.clone();
         if let Some(status) = self.status {
             cx.tree.set_text(status, "Сохранение…")?;
         }
@@ -3383,7 +3404,12 @@ impl Inventory {
             };
             let _ = proxy.send(AppMessage::ToScreen(
                 ScreenId::Inventory,
-                Box::new(SaveFinished { source_sha256, result }),
+                Box::new(SaveFinished {
+                    request_id,
+                    source_path,
+                    source_sha256,
+                    result,
+                }),
             ));
         });
         Ok(())
@@ -3424,6 +3450,8 @@ impl Inventory {
 }
 
 struct SaveFinished {
+    request_id: u64,
+    source_path: PathBuf,
     source_sha256: String,
     result: std::result::Result<(Arc<LoadedSave>, String), String>,
 }
@@ -3443,22 +3471,55 @@ fn commit_save_edits_to(
     backup_directory: &Path,
 ) -> Result<(Arc<LoadedSave>, String)> {
     let (packed, summary) = prepare_save_edits(selected, edits, stash_moves)?;
-    let (receipt, reloaded) = transaction::replace_transaction_with_summary_and_verifier(
-        &selected.slot.path,
-        &selected.source_sha256,
-        packed.as_slice(),
-        backup_directory,
-        summary,
-        |read_back| {
-            let mut slot = selected.slot.clone();
-            let metadata = std::fs::metadata(&slot.path)?;
-            slot.size = metadata.len();
-            slot.last_write_time_utc = metadata.modified().unwrap_or(slot.last_write_time_utc);
-            let reloaded = LoadedSave::from_bytes(slot, read_back)?;
-            verify_requested_values(selected, &reloaded, edits, stash_moves)?;
-            Ok(reloaded)
-        },
-    )?;
+    let preflight_image = packed.clone();
+    let readback_image = packed.clone();
+    let (receipt, mut reloaded, (size, modified)) =
+        transaction::replace_transaction_with_summary_preflight_and_verifier(
+            &selected.slot.path,
+            &selected.source_sha256,
+            packed.as_slice(),
+            backup_directory,
+            summary,
+            |_, replacement| {
+                if replacement != preflight_image.as_slice() {
+                    return Err(Error::damaged("prepared save bytes changed before semantic preflight"));
+                }
+                let reloaded = LoadedSave::from_buffer(selected.slot.clone(), preflight_image.clone())?;
+                verify_requested_values(selected, &reloaded, edits, stash_moves)?;
+                Ok(reloaded)
+            },
+            |read_back| {
+                if read_back != readback_image.as_slice() {
+                    return Err(Error::damaged("save bytes differ after durable read-back"));
+                }
+                let metadata = std::fs::metadata(&selected.slot.path)?;
+                Ok((
+                    metadata.len(),
+                    metadata.modified().unwrap_or(selected.slot.last_write_time_utc),
+                ))
+            },
+        )?;
+    reloaded.slot.size = size;
+    reloaded.slot.last_write_time_utc = modified;
+    reloaded.info = save_info(&reloaded.slot);
+    let (crc_status, format) = match &reloaded.data {
+        SaveData::Xray { save, .. } => ("не подтверждается отдельным полем", save.format().id()),
+        SaveData::Stalker2 { save, .. } => (
+            if save.container().stored_crc32() == save.container().computed_crc32() {
+                "OK (CRC32)"
+            } else {
+                "ошибка"
+            },
+            "S2",
+        ),
+    };
+    reloaded.integrity = save_integrity(
+        &reloaded.slot,
+        &reloaded.source_sha256,
+        packed.len(),
+        crc_status,
+        format,
+    );
     Ok((
         Arc::new(reloaded),
         format!(
@@ -4701,8 +4762,22 @@ impl Screen for Inventory {
                     state.external_change = *changed;
                 }
             }
-            if let Some(SaveFinished { source_sha256, result }) = payload.downcast_ref::<SaveFinished>() {
-                self.workspace.finish_saving();
+            if let Some(SaveFinished {
+                request_id,
+                source_path,
+                source_sha256,
+                result,
+            }) = payload.downcast_ref::<SaveFinished>()
+            {
+                if !self.workspace.finish_saving(*request_id) {
+                    return self.render(cx);
+                }
+                let still_selected = self.workspace.lock().selected.as_ref().is_some_and(|selected| {
+                    selected.slot.path == *source_path && selected.source_sha256 == *source_sha256
+                });
+                if !still_selected {
+                    return self.render(cx);
+                }
                 match result {
                     Ok((loaded, text)) => {
                         let mut state = self.workspace.lock();
@@ -5233,6 +5308,25 @@ mod tests {
     fn save_library_and_overview_dates_match_reference_patterns() {
         assert_eq!(super::display_file_time(UNIX_EPOCH, true, false), "01.01.70 00:00");
         assert_eq!(super::display_file_time(UNIX_EPOCH, false, true), "01.01.1970 00:00:00");
+    }
+
+    #[test]
+    fn stale_save_completion_cannot_unlock_a_newer_write() -> sse_core::Result<()> {
+        let workspace = Workspace::default();
+        let first = workspace
+            .begin_saving()
+            .ok_or_else(|| Error::Refused("first test save did not start".to_owned()))?;
+        assert!(workspace.finish_saving(first));
+        let second = workspace
+            .begin_saving()
+            .ok_or_else(|| Error::Refused("second test save did not start".to_owned()))?;
+        assert_ne!(first, second);
+
+        assert!(!workspace.finish_saving(first));
+        assert!(workspace.is_saving());
+        assert!(workspace.finish_saving(second));
+        assert!(!workspace.is_saving());
+        Ok(())
     }
 
     #[test]
