@@ -127,7 +127,11 @@ mod tests {
         use crate::widget::Tree;
 
         const EXPECTED: [&str; 20] = [""; 20];
-        assert_eq!(ScreenId::ALL.len(), EXPECTED.len(), "golden set must cover every menu screen");
+        assert_eq!(
+            ScreenId::ALL.len(),
+            EXPECTED.len(),
+            "golden set must cover every menu screen"
+        );
         let mut actual = Vec::with_capacity(ScreenId::ALL.len());
         for (index, id) in ScreenId::ALL.iter().enumerate() {
             let mut tree = Tree::new(Fonts::bundled()?, crate::screens::style::rgb(BG_BASE));
@@ -142,9 +146,11 @@ mod tests {
             }
             let digest = sse_codecs::sha256::sha256_hex(&bytes);
             actual.push(digest.clone());
-            assert_eq!(digest, EXPECTED[index], "golden mismatch for {id:?}; actual set: {actual:?}");
+            assert_eq!(
+                digest, EXPECTED[index],
+                "golden mismatch for {id:?}; actual set: {actual:?}"
+            );
         }
         Ok(())
     }
-
 }
