@@ -1571,9 +1571,10 @@ mod g14_tests {
     }
 
     #[test]
-    fn overlap_check_is_case_insensitive_after_normalization() {
+    fn overlap_check_is_case_insensitive_after_normalization() -> Result<(), InstallError> {
         let payload = PayloadFile::new("GameData/Scripts/bind_stalker.script", vec![1]);
-        let normalized = normalize_relative(&payload.relative_path).expect("path");
+        let normalized = normalize_relative(&payload.relative_path)?;
         assert_eq!(normalized.to_ascii_lowercase(), "gamedata/scripts/bind_stalker.script");
+        Ok(())
     }
 }
