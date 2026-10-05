@@ -2023,6 +2023,7 @@ struct DoctorFinding {
 enum DoctorReply {
     Progress(String),
     Done(std::result::Result<(usize, u64, Vec<DoctorFinding>), String>),
+    Mods(std::result::Result<String, String>),
 }
 
 #[derive(Default)]
@@ -2031,6 +2032,10 @@ struct GameDoctor {
     start: Option<WidgetId>,
     cancel: Option<WidgetId>,
     toggle_s2_mods: Option<WidgetId>,
+    confirm_s2: Option<WidgetId>,
+    confirm_s2_write: Option<WidgetId>,
+    confirm_s2_cancel: Option<WidgetId>,
+    pending_s2_toggle: Option<PathBuf>,
     rows: Vec<WidgetId>,
     findings: Vec<DoctorFinding>,
     cancellation: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
@@ -2167,7 +2172,15 @@ impl Screen for GameDoctor {
             "ВРЕМЕННО ОТКЛЮЧИТЬ / ВОССТАНОВИТЬ КАСТОМНЫЕ МОДЫ",
             Button::Secondary,
         )?);
-        style::label(cx.tree, card, "ФАЙЛ · ТЯЖЕСТЬ · НАХОДКА", Text::Value)?;
+        let confirm = style::card(cx.tree, host)?;
+        self.confirm_s2 = Some(confirm);
+        style::label(cx.tree, confirm, "ПОДТВЕРЖДЕНИЕ ИЗМЕНЕНИЯ МОДОВ S2", Text::Heading)?;
+        style::label(cx.tree, confirm, "Папка ~mods будет атомарно переименована. Проверьте выбранную установку.", Text::Note)?;
+        let confirm_row = style::row(cx.tree, confirm)?;
+        self.confirm_s2_write = Some(style::button(cx.tree, confirm_row, "ПОДТВЕРДИТЬ", Button::Primary)?);
+        self.confirm_s2_cancel = Some(style::button(cx.tree, confirm_row, "ОТМЕНА", Button::Secondary)?);
+        cx.tree.set_visible(confirm, false)?;
+        style::label(cx.tree, card, "МОДИФИКАЦИИ · АУДИТ ФАЙЛОВ", Text::Value)?;
         for _ in 0..10 {
             let row = style::label(cx.tree, card, "", Text::Body)?;
             cx.tree.set_visible(row, false)?;
@@ -2187,17 +2200,22 @@ impl Screen for GameDoctor {
         }
         if clicked.is_some() && clicked == self.toggle_s2_mods {
             let is_s2 = cx.app.selected_game().is_some_and(|g| matches!(g, "s2" | "stalker2"));
-            let directory = cx.app.game_dir().map(Path::to_path_buf);
             if !is_s2 {
                 cx.status = Some("Переключение модов доступно только для S.T.A.L.K.E.R. 2.".to_owned());
-            } else if let Some(directory) = directory {
-                match sse_fixes::toolkit::Stalker2ModToggle::toggle(&directory) {
-                    Ok(result) => cx.status = Some(format!("S2 mods: {result:?}")),
-                    Err(error) => cx.status = Some(error.to_string()),
-                }
-            } else {
-                cx.status = Some("ВЫБЕРИТЕ ИГРУ И ПАПКУ УСТАНОВКИ ДЛЯ ПРОВЕРКИ.".to_owned());
-            }
+            } else if let Some(directory) = cx.app.game_dir().map(Path::to_path_buf) {
+                self.pending_s2_toggle = Some(directory);
+                if let Some(card) = self.confirm_s2 { cx.tree.open_dialog(card)?; }
+            } else { cx.status = Some("ВЫБЕРИТЕ ИГРУ И ПАПКУ УСТАНОВКИ ДЛЯ ПРОВЕРКИ.".to_owned()); }
+            return Ok(());
+        }
+        if clicked.is_some() && clicked == self.confirm_s2_cancel {
+            self.pending_s2_toggle = None; if self.confirm_s2.is_some() { cx.tree.close_dialog()?; } return Ok(());
+        }
+        if clicked.is_some() && clicked == self.confirm_s2_write {
+            let Some(directory) = self.pending_s2_toggle.take() else { return Ok(()); };
+            if cx.app.game_dir() != Some(directory.as_path()) { if self.confirm_s2.is_some(){cx.tree.close_dialog()?;} cx.status=Some("Выбор установки изменился; подтверждение отменено.".to_owned()); return Ok(()); }
+            if self.confirm_s2.is_some(){cx.tree.close_dialog()?;} let Some(proxy)=cx.proxy.cloned() else{return Ok(())};
+            std::thread::spawn(move || { let result=sse_fixes::toolkit::Stalker2ModToggle::toggle(&directory).map(|value|format!("S2 mods: {value:?}")).map_err(|e|e.to_string()); proxy.send(AppMessage::ToScreen(ScreenId::GameDoctor,Box::new(DoctorReply::Mods(result)))); }); return Ok(());
         }
         if clicked.is_some() && clicked == self.cancel {
             if let Some(cancelled) = &self.cancellation {
@@ -2238,10 +2256,10 @@ impl Screen for GameDoctor {
                     }
                     DoctorReply::Done(Err(error)) => {
                         self.cancellation = None;
-                        if let Some(status) = self.status {
-                            cx.tree.set_text(status, error)?;
-                        }
+                        if let Some(status) = self.status { cx.tree.set_text(status, error)?; }
                     }
+                    DoctorReply::Mods(Ok(status)) => { cx.status = Some(status.clone()); self.run(cx); }
+                    DoctorReply::Mods(Err(error)) => { cx.status = Some(error.clone()); }
                 }
             }
         }
