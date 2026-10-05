@@ -174,6 +174,10 @@ pub struct Shell {
     proxy: Option<Proxy<AppMessage>>,
     app: sse_app::state::AppState,
     wizard: super::wizard::Wizard,
+    sounds: crate::sound::GameUiSounds,
+    sound_game: Option<String>,
+    sound_enabled: bool,
+    sound_volume: f32,
 }
 
 fn padded(left: f32, top: f32, right: f32, bottom: f32) -> Edges {
@@ -862,6 +866,10 @@ impl Shell {
             proxy,
             app: sse_app::state::AppState::new(),
             wizard,
+            sounds: crate::sound::GameUiSounds::default(),
+            sound_game: None,
+            sound_enabled: settings.sound_enabled,
+            sound_volume: (settings.sound_volume.min(100) as f32) / 100.0,
         };
         let initial_collapsed = settings.navigation_collapsed.unwrap_or(false);
         shell.apply_navigation(tree, initial_collapsed)?;
@@ -869,6 +877,22 @@ impl Shell {
         shell.render_library(tree)?;
         shell.sync_draft_controls(tree)?;
         Ok(shell)
+    }
+
+    fn sync_game_sounds(&mut self) {
+        let Some(game) = self.app.selected_game().map(str::to_owned) else { return };
+        if self.sound_game.as_deref() == Some(game.as_str()) { return; }
+        self.sound_game = Some(game.clone());
+        let Some(directory) = self.app.game_dir().map(Path::to_path_buf) else { return };
+        let Some(proxy) = self.proxy.clone() else { return };
+        std::thread::spawn(move || {
+            let sounds = crate::sound::GameUiSounds::load(&game, &directory);
+            let _ = proxy.send(AppMessage::SoundLoaded(game, Box::new(sounds)));
+        });
+    }
+
+    fn play_sound(&self, cue: crate::sound::Cue) {
+        if self.sound_enabled { self.sounds.play(cue, self.sound_volume); }
     }
 
     fn apply_navigation(&mut self, tree: &mut Tree, collapsed: bool) -> Result<()> {
@@ -998,6 +1022,7 @@ impl Shell {
             tree.set_look(*new, style::nav(true))?;
         }
         self.selected = index;
+        self.play_sound(crate::sound::Cue::Switch);
         tree.set_visible(
             self.library,
             self.screens
@@ -1168,6 +1193,13 @@ impl Shell {
     }
 
     fn handle(&mut self, tree: &mut Tree, message: &Message<AppMessage>, clicked: Option<WidgetId>) -> Result<Flow> {
+        if let Message::User(AppMessage::SoundLoaded(game, sounds)) = message {
+            if self.sound_game.as_deref() == Some(game.as_str()) {
+                self.sounds = std::mem::take(&mut **sounds.clone());
+            }
+            return Ok(Flow::Continue);
+        }
+        self.sync_game_sounds();
         if matches!(message, Message::User(AppMessage::Tick(_))) {
             let _ = tree.tick_tooltip();
             if let Some(text) = tree.active_tooltip().map(str::to_owned) {
