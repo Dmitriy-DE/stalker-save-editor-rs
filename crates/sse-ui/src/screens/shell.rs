@@ -349,11 +349,15 @@ impl Shell {
                 ..Look::default()
             },
         )?;
-        style::label(
-            tree,
-            reports_banner,
-            "Редактор раз в сутки и после сбоя отправляет разработчику журнал работы, чтобы находить ошибки. Пути, имена и Steam ID из него вырезаются, сейвы не отправляются.",
-            Text::Note,
+        tree.add(
+            Some(reports_banner),
+            NodeKind::Leaf,
+            Style { grow: 1.0, shrink: 1.0, preferred: Size::new(420.0, 0.0), max: Size::new(560.0, f32::INFINITY), ..Style::default() },
+            Content::Paragraph {
+                text: "Редактор раз в сутки и после сбоя отправляет разработчику журнал работы, чтобы находить ошибки. Пути, имена и Steam ID из него вырезаются, сейвы не отправляются.".to_owned(),
+                style: Text::Note.style(),
+            },
+            Look { text: rgb(style::TEXT_MUTED), ..Look::default() },
         )?;
         let reports_ok = style::button(tree, reports_banner, "Понятно", style::Button::Secondary)?;
         let reports_off = style::button(tree, reports_banner, "Не отправлять", style::Button::Secondary)?;
@@ -409,6 +413,7 @@ impl Shell {
             Style {
                 min: Size::new(0.0, 28.0),
                 padding: padded(32.0, 0.0, 32.0, 0.0),
+                shrink: 0.0,
                 ..Style::default()
             },
             Content::Label {
@@ -569,6 +574,7 @@ impl Shell {
             None => {
                 let host_style = Style {
                     grow: 1.0,
+                    shrink: 0.0,
                     gap: Size::new(0.0, 16.0),
                     align_items: Align::Stretch,
                     ..Style::default()
