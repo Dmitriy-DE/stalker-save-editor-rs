@@ -57,6 +57,17 @@ pub fn default_data_directory() -> PathBuf {
     PathBuf::from("StalkerSaveEditor")
 }
 
+/// Returns the configured backup directory, or `<DataDirectory>/backups`.
+#[must_use]
+pub fn backup_directory(settings: &crate::settings::AppSettings) -> PathBuf {
+    settings
+        .backup_directory
+        .as_ref()
+        .filter(|directory| !directory.as_os_str().is_empty())
+        .cloned()
+        .unwrap_or_else(|| default_data_directory().join("backups"))
+}
+
 /// Returns the default path to `settings.json`.
 #[must_use]
 pub fn default_settings_path() -> PathBuf {
@@ -67,4 +78,36 @@ pub fn default_settings_path() -> PathBuf {
 #[must_use]
 pub fn update_download_directory() -> PathBuf {
     default_data_directory().join("updates")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn backup_directory_uses_settings_override() {
+        let settings = crate::settings::AppSettings {
+            backup_directory: Some(PathBuf::from("custom-backups")),
+            ..crate::settings::AppSettings::default()
+        };
+
+        assert_eq!(backup_directory(&settings), PathBuf::from("custom-backups"));
+    }
+
+    #[test]
+    fn backup_directory_defaults_under_application_data_directory() {
+        let settings = crate::settings::AppSettings::default();
+
+        assert_eq!(backup_directory(&settings), default_data_directory().join("backups"));
+    }
+
+    #[test]
+    fn empty_backup_override_uses_application_data_directory() {
+        let settings = crate::settings::AppSettings {
+            backup_directory: Some(PathBuf::new()),
+            ..crate::settings::AppSettings::default()
+        };
+
+        assert_eq!(backup_directory(&settings), default_data_directory().join("backups"));
+    }
 }

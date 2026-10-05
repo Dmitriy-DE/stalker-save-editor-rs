@@ -169,13 +169,14 @@ impl HistoryScreen {
             return;
         };
         let id = self.id;
+        let backup_directory = self.workspace.backup_directory();
         self.workspace.spawn("history-refresh", move |context| {
             if context.is_cancelled() {
                 return;
             }
             let result = match id {
                 ScreenId::Backups => HistoryResult::Backups(
-                    transaction::list_backups(&default_backup_directory()).map_err(|error| error.to_string()),
+                    transaction::list_backups(&backup_directory).map_err(|error| error.to_string()),
                 ),
                 ScreenId::Compare | ScreenId::Timeline | ScreenId::SaveDoctor => {
                     HistoryResult::Saves(discover_saves().map_err(|error| error.to_string()))
@@ -1176,22 +1177,6 @@ fn restored_output_path_at(source: &Path, timestamp: u64) -> PathBuf {
     source.with_file_name(format!("{name}_restored_{timestamp}.{extension}"))
 }
 
-fn default_backup_directory() -> PathBuf {
-    #[cfg(target_os = "windows")]
-    let data = std::env::var_os("LOCALAPPDATA")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("USERPROFILE").map(|home| PathBuf::from(home).join("AppData/Local")));
-    #[cfg(target_os = "macos")]
-    let data = std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Library/Application Support"));
-    #[cfg(all(unix, not(target_os = "macos")))]
-    let data = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")));
-    data.unwrap_or_else(|| std::env::temp_dir().join("StalkerSaveEditorData"))
-        .join("StalkerSaveEditor")
-        .join("backups")
-}
-
 fn page_count(total: usize) -> usize {
     total.saturating_add(MAXIMUM_VISIBLE_ENTRIES.saturating_sub(1)) / MAXIMUM_VISIBLE_ENTRIES
 }
@@ -1214,8 +1199,8 @@ fn truncate(value: &str, maximum: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        compare_packed, default_backup_directory, diagnose_packed, format_system_time, page_count,
-        restored_output_path_at, timeline_order, truncate, Action, ActionButton, HistoryScreen, Workspace,
+        compare_packed, diagnose_packed, format_system_time, page_count, restored_output_path_at, timeline_order,
+        truncate, Action, ActionButton, HistoryScreen, Workspace,
     };
     use crate::event_loop::Message;
     use crate::glyphs::Fonts;
@@ -1313,8 +1298,12 @@ mod tests {
     }
 
     #[test]
-    fn default_backup_directory_ends_in_application_backup_location() {
-        assert!(default_backup_directory().ends_with("StalkerSaveEditor/backups"));
+    fn shared_backup_directory_defaults_under_application_data_directory() {
+        let settings = sse_app::AppSettings::default();
+        assert_eq!(
+            sse_app::paths::backup_directory(&settings),
+            sse_app::paths::default_data_directory().join("backups")
+        );
     }
 
     #[test]

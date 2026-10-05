@@ -17,6 +17,16 @@ pub fn screens() -> Vec<Box<dyn Screen>> {
     vec![Box::new(Capabilities::default()), Box::new(Settings::default())]
 }
 
+pub(crate) fn screens_with_workspace(workspace: super::saves::Workspace) -> Vec<Box<dyn Screen>> {
+    vec![
+        Box::new(Capabilities::default()),
+        Box::new(Settings {
+            backup_workspace: Some(workspace),
+            ..Settings::default()
+        }),
+    ]
+}
+
 #[derive(Clone, Copy)]
 enum Support {
     Verified,
@@ -497,9 +507,18 @@ pub struct Settings {
     theme: usize,
     accent: usize,
     settings: sse_app::AppSettings,
+    backup_workspace: Option<super::saves::Workspace>,
 }
 
 impl Settings {
+    fn sync_backup_directory(&mut self, tree: &crate::widget::Tree) {
+        if let (Some(input), Some(workspace)) = (self.backup_input, self.backup_workspace.as_ref()) {
+            let value = tree.input_text(input).unwrap_or("").trim();
+            self.settings.backup_directory = (!value.is_empty()).then(|| std::path::PathBuf::from(value));
+            workspace.set_backup_directory(sse_app::paths::backup_directory(&self.settings));
+        }
+    }
+
     fn theme_choice(&self) -> (&'static str, &'static str) {
         crate::theme::THEMES
             .get(self.theme)
@@ -536,6 +555,9 @@ impl Screen for Settings {
 
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
         self.settings = load_settings();
+        if let Some(workspace) = &self.backup_workspace {
+            workspace.set_backup_directory(sse_app::paths::backup_directory(&self.settings));
+        }
         self.language = crate::strings::language_index(self.settings.language.as_deref().unwrap_or("ru"));
         let settings_root = style::row(cx.tree, host)?;
         let sections = style::card(cx.tree, settings_root)?;
@@ -724,7 +746,7 @@ impl Screen for Settings {
         style::label(
             cx.tree,
             backups,
-            "Новое значение папки применяется только после «Сохранить настройки».",
+            "Новое значение применяется сразу; settings.json обновится после сохранения настроек.",
             Text::Note,
         )?;
         self.section_panels.push(backups);
@@ -801,6 +823,7 @@ impl Screen for Settings {
         message: &Message<AppMessage>,
         clicked: Option<WidgetId>,
     ) -> Result<()> {
+        self.sync_backup_directory(cx.tree);
         if clicked.is_some() {
             if let Some(index) = self.section_buttons.iter().position(|id| Some(*id) == clicked) {
                 self.selected_section = index;
@@ -953,6 +976,44 @@ impl Screen for Settings {
                 cx.tree.set_text(result, text)?;
             }
         }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Settings;
+    use crate::glyphs::{Face, Fonts, TextStyle};
+    use crate::layout::{NodeKind, Style};
+    use crate::raster::Color;
+    use crate::screens::saves::Workspace;
+    use crate::widget::{Content, Look, Tree};
+    use std::path::PathBuf;
+
+    #[test]
+    fn backup_input_updates_shared_path_before_settings_are_saved() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let input = tree.add(
+            None,
+            NodeKind::Leaf,
+            Style::default(),
+            Content::Input {
+                text: String::new(),
+                style: TextStyle::new(Face::Body, 14.0),
+            },
+            Look::default(),
+        )?;
+        tree.set_input_text(input, "custom-backups")?;
+        let workspace = Workspace::with_backup_directory(PathBuf::from("old-backups"));
+        let mut settings = Settings {
+            backup_input: Some(input),
+            backup_workspace: Some(workspace.clone()),
+            ..Settings::default()
+        };
+
+        settings.sync_backup_directory(&tree);
+
+        assert_eq!(workspace.backup_directory(), PathBuf::from("custom-backups"));
         Ok(())
     }
 }

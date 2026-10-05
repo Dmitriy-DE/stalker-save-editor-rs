@@ -275,10 +275,10 @@ pub fn registry() -> Vec<Box<dyn Screen>> {
 pub(crate) fn registry_with_save_workspace(save_workspace: saves::Workspace) -> Vec<Box<dyn Screen>> {
     let mut screens: Vec<Box<dyn Screen>> = Vec::new();
     screens.extend(saves::screens_with_workspace(save_workspace.clone()));
-    screens.extend(history::screens_with_workspace(save_workspace));
+    screens.extend(history::screens_with_workspace(save_workspace.clone()));
     screens.extend(games::screens());
     screens.extend(services::screens());
-    screens.extend(app::screens());
+    screens.extend(app::screens_with_workspace(save_workspace));
     screens.sort_by_key(|screen| screen.id());
     screens
 }
