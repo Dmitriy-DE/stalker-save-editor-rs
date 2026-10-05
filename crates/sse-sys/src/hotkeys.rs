@@ -69,6 +69,7 @@ impl HotkeySession {
     }
 }
 
+#[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
 fn is_game_name(name: &str) -> bool {
     let value = name.trim().to_ascii_lowercase();
     let value = value.strip_suffix(".exe").unwrap_or(&value);
@@ -94,7 +95,7 @@ fn is_game_name(name: &str) -> bool {
 #[cfg(target_os = "windows")]
 mod platform {
     use super::{is_game_name, HotkeyBinding};
-    use sse_core::{Error, Result};
+    use sse_core::Result;
     use std::ffi::c_void;
     use std::ptr;
     use std::thread;
