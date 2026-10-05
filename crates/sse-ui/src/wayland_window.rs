@@ -797,6 +797,13 @@ mod tests {
     }
 
     #[test]
+    fn wire_message_encodes_one_aligned_packet() {
+        let packet = wire_message(7, 3, &9_u32.to_ne_bytes()).ok();
+        assert_eq!(packet.as_ref().map(Vec::len), Some(12));
+    }
+
+
+    #[test]
     fn keyboard_event_preserves_ctrl_shortcut_without_text() {
         assert_eq!(
             keyboard_event(31, true, true, false),
