@@ -2204,12 +2204,20 @@ impl Screen for GameDoctor {
                 cx.status = Some("Переключение модов доступно только для S.T.A.L.K.E.R. 2.".to_owned());
             } else if let Some(directory) = cx.app.game_dir().map(Path::to_path_buf) {
                 self.pending_s2_toggle = Some(directory);
-                if let Some(card) = self.confirm_s2 { cx.tree.open_dialog(card)?; }
-            } else { cx.status = Some("ВЫБЕРИТЕ ИГРУ И ПАПКУ УСТАНОВКИ ДЛЯ ПРОВЕРКИ.".to_owned()); }
+                if let Some(card) = self.confirm_s2 {
+                    cx.tree.open_dialog(card)?;
+                }
+            } else {
+                cx.status = Some("ВЫБЕРИТЕ ИГРУ И ПАПКУ УСТАНОВКИ ДЛЯ ПРОВЕРКИ.".to_owned());
+            }
             return Ok(());
         }
         if clicked.is_some() && clicked == self.confirm_s2_cancel {
-            self.pending_s2_toggle = None; if self.confirm_s2.is_some() { cx.tree.close_dialog()?; } return Ok(());
+            self.pending_s2_toggle = None;
+            if self.confirm_s2.is_some() {
+                cx.tree.close_dialog()?;
+            }
+            return Ok(());
         }
         if clicked.is_some() && clicked == self.confirm_s2_write {
             let Some(directory) = self.pending_s2_toggle.take() else { return Ok(()); };
