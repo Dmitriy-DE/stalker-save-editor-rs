@@ -506,17 +506,8 @@ impl Layout {
         }
         self.measure_visits = self.measure_visits.saturating_add(1);
 
-        let style = self.node(id)?.style;
-        if style.max.width <= EPSILON && style.max.height <= EPSILON {
-            let result = clamp_size(Size::default(), constraints);
-            self.node_mut(id)?.cache = Some(MeasureCache {
-                constraint: key,
-                revision,
-                size: result,
-            });
-            return Ok(result);
-        }
         let kind = self.node(id)?.kind.clone();
+        let style = self.node(id)?.style;
         let children = self.node(id)?.children.clone();
         let inner_constraints = content_constraints(constraints, style);
         let next_depth = depth
@@ -829,9 +820,6 @@ impl Layout {
         self.node_mut(id)?.rect = own;
         let content_rect = inset_rect(own, style.padding);
         self.node_mut(id)?.content_size = Size::new(content_rect.width, content_rect.height);
-        if style.max.width <= EPSILON && style.max.height <= EPSILON {
-            return Ok(());
-        }
         let kind = self.node(id)?.kind.clone();
         let children = self.node(id)?.children.clone();
         let next_depth = depth
