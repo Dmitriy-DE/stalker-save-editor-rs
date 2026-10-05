@@ -310,7 +310,7 @@ impl Win32Window {
                 u32::try_from(mem::size_of::<i32>()).unwrap_or_default(),
             )
         };
-// SAFETY: this Win32 FFI boundary uses the live handles/pointers established by the surrounding checks.
+        // SAFETY: this Win32 FFI boundary uses the live handles/pointers established by the surrounding checks.
         unsafe {
             w::ShowWindow(hwnd, 5);
             w::UpdateWindow(hwnd);
@@ -463,7 +463,7 @@ impl Window for Win32Window {
             }
         }
         if damage.is_empty() {
-// SAFETY: this Win32 FFI boundary uses the live handles/pointers established by the surrounding checks.
+            // SAFETY: this Win32 FFI boundary uses the live handles/pointers established by the surrounding checks.
             unsafe {
                 w::InvalidateRect(self.hwnd, ptr::null(), 0);
             }
@@ -493,11 +493,11 @@ impl Window for Win32Window {
             private: 0,
         };
         loop {
-// SAFETY: this Win32 FFI boundary uses the live handles/pointers established by the surrounding checks.
+            // SAFETY: this Win32 FFI boundary uses the live handles/pointers established by the surrounding checks.
             if unsafe { w::PeekMessageW(&mut msg, ptr::null_mut(), 0, 0, PM_REMOVE) } == 0 {
                 break;
             }
-// SAFETY: this Win32 FFI boundary uses the live handles/pointers established by the surrounding checks.
+            // SAFETY: this Win32 FFI boundary uses the live handles/pointers established by the surrounding checks.
             unsafe {
                 w::TranslateMessage(&msg);
                 w::DispatchMessageW(&msg);
@@ -512,7 +512,7 @@ impl Window for Win32Window {
         self.state().cursor = c;
         let h = cursor_handle(c);
         if !h.is_null() {
-// SAFETY: this Win32 FFI boundary uses the live handles/pointers established by the surrounding checks.
+            // SAFETY: this Win32 FFI boundary uses the live handles/pointers established by the surrounding checks.
             unsafe {
                 w::SetCursor(h);
             }
@@ -529,11 +529,11 @@ impl Window for Win32Window {
         if unsafe { w::OpenClipboard(self.hwnd) } == 0 {
             return Err(Error::System("OpenClipboard failed".to_owned()));
         }
-// SAFETY: this Win32 FFI boundary uses the live handles/pointers established by the surrounding checks.
+        // SAFETY: this Win32 FFI boundary uses the live handles/pointers established by the surrounding checks.
         unsafe { w::EmptyClipboard() };
         let mem = unsafe { w::GlobalAlloc(GMEM_MOVEABLE, bytes) };
         if mem.is_null() {
-// SAFETY: this Win32 FFI boundary uses the live handles/pointers established by the surrounding checks.
+            // SAFETY: this Win32 FFI boundary uses the live handles/pointers established by the surrounding checks.
             unsafe { w::CloseClipboard() };
             return Err(Error::System("GlobalAlloc failed".to_owned()));
         }
@@ -546,7 +546,7 @@ impl Window for Win32Window {
             unsafe { w::CloseClipboard() };
             return Err(Error::System("GlobalLock failed".to_owned()));
         }
-// SAFETY: this Win32 FFI boundary uses the live handles/pointers established by the surrounding checks.
+        // SAFETY: this Win32 FFI boundary uses the live handles/pointers established by the surrounding checks.
         unsafe {
             ptr::copy_nonoverlapping(data.as_ptr().cast::<u8>(), dst.cast::<u8>(), bytes);
             w::GlobalUnlock(mem);
@@ -568,7 +568,7 @@ impl Window for Win32Window {
         if unsafe { w::IsClipboardFormatAvailable(CF_UNICODETEXT) } == 0 {
             return Ok(None);
         }
-// SAFETY: this Win32 FFI boundary uses the live handles/pointers established by the surrounding checks.
+        // SAFETY: this Win32 FFI boundary uses the live handles/pointers established by the surrounding checks.
         if unsafe { w::OpenClipboard(self.hwnd) } == 0 {
             return Err(Error::System("OpenClipboard failed".to_owned()));
         }
@@ -578,11 +578,11 @@ impl Window for Win32Window {
             unsafe { w::CloseClipboard() };
             return Ok(None);
         }
-// SAFETY: this Win32 FFI boundary uses the live handles/pointers established by the surrounding checks.
+        // SAFETY: this Win32 FFI boundary uses the live handles/pointers established by the surrounding checks.
         let units = unsafe { w::GlobalSize(mem) }.checked_div(2).unwrap_or(0);
         let raw = unsafe { w::GlobalLock(mem) };
         if raw.is_null() {
-// SAFETY: this Win32 FFI boundary uses the live handles/pointers established by the surrounding checks.
+            // SAFETY: this Win32 FFI boundary uses the live handles/pointers established by the surrounding checks.
             unsafe { w::CloseClipboard() };
             return Err(Error::System("GlobalLock failed".to_owned()));
         }
@@ -590,7 +590,7 @@ impl Window for Win32Window {
         let slice = unsafe { std::slice::from_raw_parts(raw.cast::<u16>(), units) };
         let end = slice.iter().position(|v| *v == 0).unwrap_or(slice.len());
         let text = String::from_utf16_lossy(slice.get(..end).unwrap_or_default());
-// SAFETY: this Win32 FFI boundary uses the live handles/pointers established by the surrounding checks.
+        // SAFETY: this Win32 FFI boundary uses the live handles/pointers established by the surrounding checks.
         unsafe {
             w::GlobalUnlock(mem);
             w::CloseClipboard();
