@@ -2175,7 +2175,12 @@ impl Screen for GameDoctor {
         let confirm = style::card(cx.tree, host)?;
         self.confirm_s2 = Some(confirm);
         style::label(cx.tree, confirm, "ПОДТВЕРЖДЕНИЕ ИЗМЕНЕНИЯ МОДОВ S2", Text::Heading)?;
-        style::label(cx.tree, confirm, "Папка ~mods будет атомарно переименована. Проверьте выбранную установку.", Text::Note)?;
+        style::label(
+            cx.tree,
+            confirm,
+            "Папка ~mods будет атомарно переименована. Проверьте выбранную установку.",
+            Text::Note,
+        )?;
         let confirm_row = style::row(cx.tree, confirm)?;
         self.confirm_s2_write = Some(style::button(cx.tree, confirm_row, "ПОДТВЕРДИТЬ", Button::Primary)?);
         self.confirm_s2_cancel = Some(style::button(cx.tree, confirm_row, "ОТМЕНА", Button::Secondary)?);
