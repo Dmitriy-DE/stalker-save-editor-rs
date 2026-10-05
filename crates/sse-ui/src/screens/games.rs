@@ -2430,7 +2430,12 @@ impl Screen for Encyclopedia {
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
         let card = style::card(cx.tree, host)?;
         style::label(cx.tree, card, "ЭНЦИКЛОПЕДИЯ ПРЕДМЕТОВ", Text::Heading)?;
-        style::label(cx.tree, card, "У каждой записи показаны имя, значок, вес, цена и секция из файлов установленной игры.", Text::Note)?;
+        style::label(
+            cx.tree,
+            card,
+            "У каждой записи показаны имя, значок, вес, цена и секция из файлов установленной игры.",
+            Text::Note,
+        )?;
         self.status = Some(style::label(cx.tree, card, "Загрузка каталога…", Text::Note)?);
         self.search = Some(crate::widgets::text_input::TextInput::new(
             "",
@@ -2457,10 +2462,24 @@ impl Screen for Encyclopedia {
         let actions = style::row(cx.tree, card)?;
         self.to_save = Some(style::button(cx.tree, actions, "В сохранение", Button::Primary)?);
         self.to_game = Some(style::button(cx.tree, actions, "В игру", Button::Secondary)?);
-        if let Some(id) = self.to_save { cx.tree.set_enabled(id, false)?; }
-        if let Some(id) = self.to_game { cx.tree.set_enabled(id, false)?; }
-        style::label(cx.tree, card, "Выберите совместимое сохранение с поддержкой добавления предметов.", Text::Note)?;
-        style::label(cx.tree, card, "Выберите эту игру в Компаньоне и подключитесь к запущенной игре.", Text::Note)?;
+        if let Some(id) = self.to_save {
+            cx.tree.set_enabled(id, false)?;
+        }
+        if let Some(id) = self.to_game {
+            cx.tree.set_enabled(id, false)?;
+        }
+        style::label(
+            cx.tree,
+            card,
+            "Выберите совместимое сохранение с поддержкой добавления предметов.",
+            Text::Note,
+        )?;
+        style::label(
+            cx.tree,
+            card,
+            "Выберите эту игру в Компаньоне и подключитесь к запущенной игре.",
+            Text::Note,
+        )?;
         Ok(())
     }
 
@@ -2556,9 +2575,14 @@ impl Screen for Encyclopedia {
                     if let Some(index) = self.visible.get(row_index).copied() {
                         self.selected = Some(index);
                         if let (Some(card), Some(entry)) = (self.card, self.entries.get(index)) {
-                            cx.tree.set_text(card, &format!("{}\n{}\n{}", entry.name, entry.kind, entry.detail))?;
-                            if let Some(id) = self.to_save { cx.tree.set_enabled(id, false)?; }
-                            if let Some(id) = self.to_game { cx.tree.set_enabled(id, false)?; }
+                            cx.tree
+                                .set_text(card, &format!("{}\n{}\n{}", entry.name, entry.kind, entry.detail))?;
+                            if let Some(id) = self.to_save {
+                                cx.tree.set_enabled(id, false)?;
+                            }
+                            if let Some(id) = self.to_game {
+                                cx.tree.set_enabled(id, false)?;
+                            }
                         }
                     }
                 }
@@ -2570,7 +2594,13 @@ impl Screen for Encyclopedia {
                     Ok(entries) => {
                         self.entries.clone_from(entries);
                         if let Some(status) = self.status {
-                            cx.tree.set_text(status, &format!("Источник: файлы выбранной установленной игры. Записей: {}", entries.len()))?;
+                            cx.tree.set_text(
+                                status,
+                                &format!(
+                                    "Источник: файлы выбранной установленной игры. Записей: {}",
+                                    entries.len()
+                                ),
+                            )?;
                         }
                         self.apply_search(cx)?;
                     }
