@@ -392,7 +392,7 @@ impl Win32Window {
         }
         if icon.is_null() {
             return Err(Error::System("CreateIconIndirect failed".to_owned()));
-        } // SAFETY: WM_SETICON accepts HICON in lParam.
+        }
         // SAFETY: WM_SETICON accepts the live HICON in lParam; ownership remains with this window.
         unsafe {
             w::PostMessageW(self.hwnd, 0x80, 1, icon as isize);
@@ -848,10 +848,7 @@ unsafe extern "system" fn proc(hwnd: w::Hwnd, msg: u32, wp: usize, lp: isize) ->
             0
         }
         WM_SETCURSOR => {
-            let cursor = state
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .cursor;
+            let cursor = state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).cursor;
             // SAFETY: cursor_handle returns a shared system cursor handle valid for SetCursor.
             unsafe { w::SetCursor(cursor_handle(cursor)) };
             1
