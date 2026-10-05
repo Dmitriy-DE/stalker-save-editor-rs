@@ -852,10 +852,14 @@ impl Tree {
                 continue;
             }
             let Some(node) = self.nodes.get(index) else { continue };
-            let clipped_area = self
-                .clip_for(id)
-                .and_then(|clip| intersection(&area, clip))
-                .unwrap_or(area);
+            let clip = self.clip_for(id);
+            let clipped_area = match clip {
+                Some(clip) => match intersection(&area, clip) {
+                    Some(clipped) => clipped,
+                    None => continue,
+                },
+                None => area,
+            };
             if node.rect.width == 0 || node.rect.height == 0 || !touches(node.rect, clipped_area) {
                 continue;
             }
@@ -868,6 +872,7 @@ impl Tree {
             }
             let padding = node.style.padding;
             let content = node.content.clone();
+            let previous_clip = surface.replace_clip(clipped_area);
             paint_node(
                 surface,
                 &mut self.fonts,
@@ -877,6 +882,7 @@ impl Tree {
                 &content,
                 (hovered, pressed),
             );
+            surface.replace_clip(previous_clip);
         }
     }
 
