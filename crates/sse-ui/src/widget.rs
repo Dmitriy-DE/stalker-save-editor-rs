@@ -780,21 +780,24 @@ impl Tree {
             &mut no_text,
         )?;
         self.layout.arrange(root_layout, bounds, self.scale, &mut no_text)?;
-        let scrolls: Vec<i32> = (0..self.nodes.len())
-            .map(|index| {
-                let mut total = 0_i32;
-                let mut parent = self.nodes.get(index).and_then(|node| node.parent);
-                while let Some(at) = parent {
-                    if let Some(node) = self.nodes.get(at.0) {
-                        total = total.saturating_add(node.scroll_y);
-                        parent = node.parent;
-                    } else {
-                        break;
-                    }
-                }
-                total
-            })
-            .collect();
+        let mut scrolls: Vec<i32> = Vec::with_capacity(self.nodes.len());
+        for index in 0..self.nodes.len() {
+            let total = self
+                .nodes
+                .get(index)
+                .and_then(|node| node.parent)
+                .and_then(|parent| {
+                    self.nodes.get(parent.0).map(|parent_node| {
+                        scrolls
+                            .get(parent.0)
+                            .copied()
+                            .unwrap_or_default()
+                            .saturating_add(parent_node.scroll_y)
+                    })
+                })
+                .unwrap_or_default();
+            scrolls.push(total);
+        }
         let mut moved = Vec::new();
         for (index, node) in self.nodes.iter_mut().enumerate() {
             let arranged = self.layout.rect(node.layout)?;
@@ -963,18 +966,50 @@ impl Tree {
 
     fn paint_nodes(&mut self, surface: &mut Surface<'_>, area: Rect, dialog_only: bool) {
         let modal_dialog = self.modal_dialog;
+        let mut shown = Vec::with_capacity(self.nodes.len());
+        let mut clips: Vec<Option<Rect>> = Vec::with_capacity(self.nodes.len());
+        let mut in_dialog = Vec::with_capacity(self.nodes.len());
+        for (index, node) in self.nodes.iter().enumerate() {
+            let parent_shown = node
+                .parent
+                .and_then(|parent| shown.get(parent.0))
+                .copied()
+                .unwrap_or(true);
+            shown.push(node.visible && parent_shown);
+
+            let inherited_clip = node.parent.and_then(|parent| clips.get(parent.0)).copied().flatten();
+            let clip = node
+                .parent
+                .and_then(|parent| self.nodes.get(parent.0))
+                .map_or(inherited_clip, |parent| {
+                    if parent.clip_children {
+                        Some(inherited_clip.map_or(parent.rect, |old| {
+                            intersection(&old, parent.rect).unwrap_or(Rect::new(0, 0, 0, 0))
+                        }))
+                    } else {
+                        inherited_clip
+                    }
+                });
+            clips.push(clip);
+
+            let id = WidgetId(index);
+            let parent_in_dialog = node
+                .parent
+                .and_then(|parent| in_dialog.get(parent.0))
+                .copied()
+                .unwrap_or(false);
+            in_dialog.push(modal_dialog.is_some_and(|dialog| id == dialog || parent_in_dialog));
+        }
         for index in 0..self.nodes.len() {
             let id = WidgetId(index);
-            let in_dialog = modal_dialog.is_some_and(|dialog| self.within_subtree(id, dialog));
-            if modal_dialog.is_some() && in_dialog != dialog_only {
+            if modal_dialog.is_some() && in_dialog.get(index).copied().unwrap_or(false) != dialog_only {
                 continue;
             }
-            if !self.shown(id) {
+            if !shown.get(index).copied().unwrap_or(false) {
                 continue;
             }
             let Some(node) = self.nodes.get(index) else { continue };
-            let clip = self.clip_for(id);
-            let clipped_area = match clip {
+            let clipped_area = match clips.get(index).copied().flatten() {
                 Some(clip) => match intersection(&area, clip) {
                     Some(clipped) => clipped,
                     None => continue,
