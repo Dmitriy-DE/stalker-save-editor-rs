@@ -4,13 +4,22 @@ use crate::{default_settings_path, AppSettings};
 use sse_core::{Error, Result};
 use std::sync::{mpsc, OnceLock};
 
+/// One ordered mutation applied by the settings writer.
 #[derive(Clone, Debug)]
 pub enum SettingsPatch {
+    /// Replace the complete settings snapshot.
     Replace(AppSettings),
+    /// Replace only the visual theme identifier.
     Theme(String),
+    /// Replace only the accent identifier.
     Accent(String),
+    /// Replace only the UI scale percentage.
     Scale(u32),
-    ReportsNotice { send_reports: Option<bool> },
+    /// Mark the reports notice as seen and optionally change report sending.
+    ReportsNotice {
+        /// New report-sending value, or None to keep the current value.
+        send_reports: Option<bool>,
+    },
 }
 
 struct Request {
@@ -48,7 +57,7 @@ fn sender() -> &'static mpsc::Sender<Request> {
     })
 }
 
-pub fn submit(patch: SettingsPatch) -> mpsc::Receiver<Result<()>> {
+/// Queues one settings mutation and returns a receiver for its durable-write result.\n#[must_use]\npub fn submit(patch: SettingsPatch) -> mpsc::Receiver<Result<()>> {
     let (done_tx, done_rx) = mpsc::channel();
     if sender().send(Request { patch, done: done_tx }).is_err() {
         let (fallback_tx, fallback_rx) = mpsc::channel();
