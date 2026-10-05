@@ -46,6 +46,17 @@ enum RestoreMode {
     InPlace,
 }
 
+struct RestoreRequestGuard {
+    workspace: Workspace,
+    request_id: u64,
+}
+
+impl Drop for RestoreRequestGuard {
+    fn drop(&mut self) {
+        let _ = self.workspace.finish_restoring(self.request_id);
+    }
+}
+
 #[derive(Debug)]
 enum RestoredSave {
     Copy(PathBuf),
@@ -226,12 +237,24 @@ impl HistoryScreen {
         source: PathBuf,
         mode: RestoreMode,
         proxy: Option<crate::event_loop::Proxy<AppMessage>>,
-    ) {
+    ) -> bool {
         let Some(proxy) = proxy else {
-            return;
+            return false;
+        };
+        let restore_guard = if mode == RestoreMode::InPlace {
+            let Some(request_id) = self.workspace.begin_restoring() else {
+                return false;
+            };
+            Some(RestoreRequestGuard {
+                workspace: self.workspace.clone(),
+                request_id,
+            })
+        } else {
+            None
         };
         let id = self.id;
         self.workspace.spawn("save-restore", move |context| {
+            let _restore_guard = restore_guard;
             if context.is_cancelled() {
                 return;
             }
@@ -243,6 +266,7 @@ impl HistoryScreen {
             };
             proxy.send(AppMessage::ToScreen(id, Box::new(HistoryResult::Restored(result))));
         });
+        true
     }
 
     fn open_restore_confirmation(
@@ -744,7 +768,16 @@ impl Screen for HistoryScreen {
                     RestoreMode::InPlace => "Проверяю журнал и восстанавливаю сейв на место…",
                 };
                 self.set_summary(cx.tree, status)?;
-                self.start_restore(journal, source, mode, cx.proxy.cloned());
+                if !self.start_restore(journal, source, mode, cx.proxy.cloned()) {
+                    let text = if self.workspace.is_saving() {
+                        "Дождитесь завершения сохранения, чтобы восстановить сейв на место."
+                    } else if self.workspace.is_restoring() {
+                        "Восстановление сейва уже выполняется."
+                    } else {
+                        "Не удалось начать восстановление сейва."
+                    };
+                    self.set_summary(cx.tree, text)?;
+                }
             }
         }
         if let Some(action) = self
@@ -758,7 +791,12 @@ impl Screen for HistoryScreen {
                     self.open_restore_confirmation(cx, journal, source, RestoreMode::Copy)?;
                 }
                 Action::RestoreInPlace { journal, source } => {
-                    if has_pending_edits_for_selected_source(cx.app, &source) {
+                    if self.workspace.is_saving() {
+                        self.set_summary(
+                            cx.tree,
+                            "Дождитесь завершения сохранения, чтобы восстановить сейв на место.",
+                        )?;
+                    } else if has_pending_edits_for_selected_source(cx.app, &source) {
                         self.set_summary(cx.tree, "Сначала сохраните или сбросьте черновик выбранного сейва.")?;
                     } else {
                         self.open_restore_confirmation(cx, journal, source, RestoreMode::InPlace)?;
@@ -1294,6 +1332,26 @@ mod tests {
         app.discard_draft(&source_sha256);
         app.set_invalid_numeric_input(true);
         assert!(super::has_pending_edits_for_selected_source(&app, &source));
+        Ok(())
+    }
+
+    #[test]
+    fn in_place_restore_does_not_start_while_a_save_is_active() -> sse_core::Result<()> {
+        let workspace = Workspace::default();
+        let save_request = workspace
+            .begin_saving()
+            .ok_or_else(|| sse_core::Error::Refused("test save did not start".to_owned()))?;
+        let screen = HistoryScreen::new(ScreenId::Backups, "test", workspace.clone());
+        let (proxy, _receiver) = crate::event_loop::channel_pair::<AppMessage>();
+
+        assert!(!screen.start_restore(
+            PathBuf::from("fixture-journal.json"),
+            PathBuf::from("fixture.sav"),
+            super::RestoreMode::InPlace,
+            Some(proxy),
+        ));
+        assert!(!workspace.is_restoring());
+        assert!(workspace.finish_saving(save_request));
         Ok(())
     }
 

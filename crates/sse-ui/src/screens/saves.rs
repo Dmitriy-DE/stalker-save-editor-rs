@@ -177,14 +177,29 @@ impl Workspace {
         self.lock().active_save_request.is_some()
     }
 
+    pub(crate) fn is_restoring(&self) -> bool {
+        self.lock().active_restore_request.is_some()
+    }
+
     pub(crate) fn begin_saving(&self) -> Option<u64> {
         let mut state = self.lock();
-        if state.active_save_request.is_some() {
+        if state.active_save_request.is_some() || state.active_restore_request.is_some() {
             return None;
         }
         let request = state.next_save_request.checked_add(1)?;
         state.next_save_request = request;
         state.active_save_request = Some(request);
+        Some(request)
+    }
+
+    pub(crate) fn begin_restoring(&self) -> Option<u64> {
+        let mut state = self.lock();
+        if state.active_save_request.is_some() || state.active_restore_request.is_some() {
+            return None;
+        }
+        let request = state.next_restore_request.checked_add(1)?;
+        state.next_restore_request = request;
+        state.active_restore_request = Some(request);
         Some(request)
     }
 
@@ -194,6 +209,15 @@ impl Workspace {
             return false;
         }
         state.active_save_request = None;
+        true
+    }
+
+    pub(crate) fn finish_restoring(&self, request: u64) -> bool {
+        let mut state = self.lock();
+        if state.active_restore_request != Some(request) {
+            return false;
+        }
+        state.active_restore_request = None;
         true
     }
 
@@ -361,6 +385,8 @@ struct WorkspaceState {
     file_check_in_flight: bool,
     active_save_request: Option<u64>,
     next_save_request: u64,
+    active_restore_request: Option<u64>,
+    next_restore_request: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -3416,7 +3442,11 @@ impl Inventory {
             }
         }
         let Some(request_id) = self.workspace.begin_saving() else {
-            let text = "Сохранение уже выполняется.";
+            let text = if self.workspace.is_restoring() {
+                "Дождитесь завершения восстановления сейва."
+            } else {
+                "Сохранение уже выполняется."
+            };
             if let Some(status) = self.status {
                 cx.tree.set_text(status, text)?;
             }
@@ -3504,8 +3534,8 @@ fn commit_save_edits_to(
     backup_directory: &Path,
 ) -> Result<(Arc<LoadedSave>, String)> {
     let (packed, summary) = prepare_save_edits(selected, edits, stash_moves)?;
+    // SaveBuffer clones share their Arc<[u8]>; move the one preflight handle into the reloaded save.
     let preflight_image = packed.clone();
-    let readback_image = packed.clone();
     let (receipt, mut reloaded, (size, modified)) =
         transaction::replace_transaction_with_summary_preflight_and_verifier(
             &selected.slot.path,
@@ -3513,16 +3543,16 @@ fn commit_save_edits_to(
             packed.as_slice(),
             backup_directory,
             summary,
-            |_, replacement| {
+            move |_, replacement| {
                 if replacement != preflight_image.as_slice() {
                     return Err(Error::damaged("prepared save bytes changed before semantic preflight"));
                 }
-                let reloaded = LoadedSave::from_buffer(selected.slot.clone(), preflight_image.clone())?;
+                let reloaded = LoadedSave::from_buffer(selected.slot.clone(), preflight_image)?;
                 verify_requested_values(selected, &reloaded, edits, stash_moves)?;
                 Ok(reloaded)
             },
             |read_back| {
-                if read_back != readback_image.as_slice() {
+                if read_back != packed.as_slice() {
                     return Err(Error::damaged("save bytes differ after durable read-back"));
                 }
                 let metadata = std::fs::metadata(&selected.slot.path)?;
@@ -5348,6 +5378,28 @@ mod tests {
         assert!(workspace.is_saving());
         assert!(workspace.finish_saving(second));
         assert!(!workspace.is_saving());
+        Ok(())
+    }
+
+    #[test]
+    fn save_and_in_place_restore_requests_are_mutually_exclusive() -> sse_core::Result<()> {
+        let workspace = Workspace::default();
+        let save_request = workspace
+            .begin_saving()
+            .ok_or_else(|| Error::Refused("test save did not start".to_owned()))?;
+        assert!(workspace.begin_restoring().is_none());
+        assert!(workspace.finish_saving(save_request));
+
+        let restore_request = workspace
+            .begin_restoring()
+            .ok_or_else(|| Error::Refused("test restore did not start".to_owned()))?;
+        assert!(workspace.is_restoring());
+        assert!(workspace.begin_saving().is_none());
+        assert!(!workspace.finish_restoring(restore_request.saturating_sub(1)));
+        assert!(workspace.is_restoring());
+        assert!(workspace.finish_restoring(restore_request));
+        assert!(!workspace.is_restoring());
+        assert!(workspace.begin_saving().is_some());
         Ok(())
     }
 
