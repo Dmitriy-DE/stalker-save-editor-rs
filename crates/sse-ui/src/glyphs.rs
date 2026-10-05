@@ -10,7 +10,7 @@ const BODY_BOLD: &[u8] = include_bytes!("../assets/fonts/LiberationSansNarrow-Bo
 const HEADING: &[u8] = include_bytes!("../assets/fonts/Oswald-wght.ttf");
 
 /// Upper bound of cached glyph masks before the cache is dropped and rebuilt.
-const MAX_CACHED_GLYPHS: usize = 1024;
+const MAX_CACHED_GLYPHS: usize = 4096;
 /// Subpixel horizontal positions per pixel.
 const SUBPIXEL_STEPS: f32 = 4.0;
 
