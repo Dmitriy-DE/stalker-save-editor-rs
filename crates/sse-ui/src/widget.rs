@@ -450,6 +450,33 @@ impl Tree {
             .flatten()
     }
 
+    /// Visible button labels that need ellipsis at the current arranged size.
+    ///
+    /// # Errors
+    /// Returns an error when layout cannot be updated.
+    pub fn ellipsized_button_labels(&mut self) -> Result<Vec<String>> {
+        self.update_layout()?;
+        let mut labels = Vec::new();
+        for index in 0..self.nodes.len() {
+            let id = WidgetId(index);
+            if !self.shown(id) {
+                continue;
+            }
+            let Some(node) = self.nodes.get(index) else { continue };
+            let (text, style, icon_inset) = match &node.content {
+                Content::Button { text, style } => (text.as_str(), *style, 0.0),
+                Content::IconButton { text, style, .. } if !text.is_empty() => (text.as_str(), *style, 24.0),
+                _ => continue,
+            };
+            let available =
+                u32_to_f32(node.rect.width) - node.style.padding.left - node.style.padding.right - icon_inset;
+            if self.fonts.measure(text, style) > available.max(0.0) + 0.5 {
+                labels.push(text.to_owned());
+            }
+        }
+        Ok(labels)
+    }
+
     /// Replaces an input widget's value and records it as changed.
     ///
     /// # Errors
@@ -1173,8 +1200,18 @@ fn paint_node(
         }
         return;
     }
-    let text_width = resources.0.measure(text, style);
     let right = i32_to_f32(rect.x) + u32_to_f32(rect.width) - padding.right;
+    let available_width = (right - left).max(0.0);
+    let fitted;
+    let text = if matches!(content, Content::Button { .. } | Content::IconButton { .. })
+        && resources.0.measure(text, style) > available_width
+    {
+        fitted = ellipsize_single_line(text, available_width, resources.0, style);
+        fitted.as_str()
+    } else {
+        text
+    };
+    let text_width = resources.0.measure(text, style);
     let x = match look.align {
         TextAlign::Start => left,
         TextAlign::Center => left + (right - left - text_width).max(0.0) / 2.0,
@@ -1184,6 +1221,23 @@ fn paint_node(
     let inner = u32_to_f32(rect.height) - padding.top - padding.bottom;
     let baseline = top + (inner - line) / 2.0 + resources.0.ascent(style);
     resources.0.draw(surface, text, x, baseline, style, color);
+}
+
+fn ellipsize_single_line(text: &str, max_width: f32, fonts: &Fonts, style: TextStyle) -> String {
+    const ELLIPSIS: &str = "…";
+    if max_width <= 0.0 || fonts.measure(ELLIPSIS, style) > max_width {
+        return String::new();
+    }
+    let mut fitted = text.to_owned();
+    while !fitted.is_empty() {
+        let mut candidate = fitted.clone();
+        candidate.push_str(ELLIPSIS);
+        if fonts.measure(&candidate, style) <= max_width {
+            return candidate;
+        }
+        fitted.pop();
+    }
+    ELLIPSIS.to_owned()
 }
 
 fn hidden_style() -> Style {
