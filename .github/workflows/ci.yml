@@ -49,3 +49,32 @@ jobs:
           name: acceptance-screenshots
           path: target/acceptance-screenshots/*.png
           if-no-files-found: error
+
+  test-build:
+    # Unsigned test binaries for the owner after every merge into main; not a release.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked --release -p sse-cli -p sse-ui
+      - name: Collect binaries
+        shell: bash
+        run: |
+          mkdir -p test-build
+          ext=""; [ "${{ runner.os }}" = "Windows" ] && ext=".exe"
+          cp "target/release/sse-shell${ext}" "test-build/SaveEditor${ext}"
+          cp "target/release/stalker-save${ext}" "test-build/stalker-save${ext}"
+          git rev-parse --short HEAD > test-build/COMMIT.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: test-build-${{ runner.os }}
+          path: test-build/
+          retention-days: 14
+          if-no-files-found: error
