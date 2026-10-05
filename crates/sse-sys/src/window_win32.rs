@@ -235,9 +235,12 @@ impl Win32Window {
     pub fn new(options: WindowOptions) -> Result<Self> {
         // SAFETY: -4 is DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2; fallback is PROCESS_PER_MONITOR_DPI_AWARE.
         if unsafe { w::SetProcessDpiAwarenessContext(-4) } == 0 {
+            // SAFETY: PROCESS_PER_MONITOR_DPI_AWARE is the documented fallback on older Windows.
             let _ = unsafe { w::SetProcessDpiAwareness(2) };
         }
-        let com = unsafe { w::CoInitializeEx(ptr::null_mut(), 2) } >= 0; // SAFETY: unnamed auto-reset event.
+        // SAFETY: initializes COM apartment state for this window thread; balanced in Drop on success.
+        let com = unsafe { w::CoInitializeEx(ptr::null_mut(), 2) } >= 0;
+        // SAFETY: null security/name pointers request an unnamed auto-reset event owned by this process.
         let event = unsafe { w::CreateEventW(ptr::null(), 0, 0, ptr::null()) };
         if event.is_null() {
             return Err(Error::System("CreateEventW failed".to_owned()));
@@ -258,7 +261,8 @@ impl Win32Window {
             menu: ptr::null(),
             name: class.as_ptr(),
             small_icon: ptr::null_mut(),
-        }; // SAFETY: WNDCLASSEX and UTF-16 name are valid for this call.
+        };
+        // SAFETY: WNDCLASSEX fields and the NUL-terminated class name remain valid for the duration of the call.
         let _ = unsafe { w::RegisterClassExW(&wc) };
         let state = Box::into_raw(Box::new(State {
             frame: Vec::new(),
@@ -271,7 +275,8 @@ impl Win32Window {
             cursor: CursorShape::Arrow,
         }));
         let width = i32::try_from(options.width).map_err(|_| Error::Refused("window width too large".to_owned()))?;
-        let height = i32::try_from(options.height).map_err(|_| Error::Refused("window height too large".to_owned()))?; // SAFETY: registered class, stable Box pointer, NUL-terminated strings.
+        let height = i32::try_from(options.height).map_err(|_| Error::Refused("window height too large".to_owned()))?;
+        // SAFETY: class/title are NUL-terminated, dimensions are checked, and state is a stable Box::into_raw pointer.
         let hwnd = unsafe {
             w::CreateWindowExW(
                 0,
@@ -295,7 +300,8 @@ impl Win32Window {
         }
         // SAFETY: state is a live Box::into_raw allocation and remains valid until Win32Window::drop.
         unsafe { w::SetWindowLongPtrW(hwnd, GWLP_USERDATA, state as isize) };
-        let dark: i32 = 1; // SAFETY: attribute 20 consumes a BOOL-sized value.
+        let dark: i32 = 1;
+        // SAFETY: attribute 20 consumes a pointer to a live BOOL-sized value for the duration of the call.
         let _ = unsafe {
             w::DwmSetWindowAttribute(
                 hwnd,
@@ -304,6 +310,7 @@ impl Win32Window {
                 u32::try_from(mem::size_of::<i32>()).unwrap_or_default(),
             )
         };
+        // SAFETY: hwnd was returned successfully by CreateWindowExW and is live here.
         unsafe {
             w::ShowWindow(hwnd, 5);
             w::UpdateWindow(hwnd);
@@ -343,7 +350,8 @@ impl Win32Window {
             bgra.push(*p.get(3).unwrap_or(&0));
         }
         let wi = i32::try_from(width).map_err(|_| Error::Refused("icon too wide".to_owned()))?;
-        let hi = i32::try_from(height).map_err(|_| Error::Refused("icon too tall".to_owned()))?; // SAFETY: CreateBitmap copies supplied pixels.
+        let hi = i32::try_from(height).map_err(|_| Error::Refused("icon too tall".to_owned()))?;
+        // SAFETY: BGRA storage is contiguous and live for CreateBitmap, which copies the supplied pixels.
         let color = unsafe { w::CreateBitmap(wi, hi, 1, 32, bgra.as_ptr().cast()) };
         let mask = vec![
             0u8;
@@ -354,6 +362,7 @@ impl Win32Window {
                     .unwrap_or(0)
             )
         ];
+        // SAFETY: mask storage is contiguous and live for CreateBitmap, which copies the supplied bits.
         let mono = unsafe { w::CreateBitmap(wi, hi, 1, 1, mask.as_ptr().cast()) };
         if color.is_null() || mono.is_null() {
             return Err(Error::System("icon bitmap creation failed".to_owned()));
@@ -364,15 +373,18 @@ impl Win32Window {
             y: 0,
             mask: mono,
             color,
-        }; // SAFETY: bitmaps are live for icon creation.
+        };
+        // SAFETY: both bitmaps are live and referenced by a fully initialized ICONINFO.
         let icon = unsafe { w::CreateIconIndirect(&info) };
+        // SAFETY: CreateIconIndirect copied the bitmap data; these owned bitmap handles can now be released.
         unsafe {
             w::DeleteObject(color);
             w::DeleteObject(mono);
         }
         if icon.is_null() {
             return Err(Error::System("CreateIconIndirect failed".to_owned()));
-        } // SAFETY: WM_SETICON accepts HICON in lParam.
+        }
+        // SAFETY: WM_SETICON accepts this live HICON in lParam for the live window.
         unsafe {
             w::PostMessageW(self.hwnd, 0x80, 1, icon as isize);
             w::PostMessageW(self.hwnd, 0x80, 0, icon as isize);
@@ -429,12 +441,14 @@ impl Window for Win32Window {
                 top: i32::try_from(d.y).unwrap_or_default(),
                 right: i32::try_from(d.x.saturating_add(d.width)).unwrap_or(i32::MAX),
                 bottom: i32::try_from(d.y.saturating_add(d.height)).unwrap_or(i32::MAX),
-            }; // SAFETY: live HWND; no erase prevents resize flicker.
+            };
+            // SAFETY: hwnd is live and r is a valid stack RECT for the duration of InvalidateRect.
             unsafe {
                 w::InvalidateRect(self.hwnd, &r, 0);
             }
         }
         if damage.is_empty() {
+            // SAFETY: hwnd is live; a null RECT invalidates the whole client area without erasing.
             unsafe {
                 w::InvalidateRect(self.hwnd, ptr::null(), 0);
             }
@@ -446,7 +460,8 @@ impl Window for Win32Window {
             return e;
         }
         let ms = timeout.map_or(INFINITE, |d| u32::try_from(d.as_millis()).unwrap_or(u32::MAX));
-        let handle = self.wake.0 .0 as w::Handle; // SAFETY: event handle is live; wait sleeps without polling.
+        let handle = self.wake.0 .0 as w::Handle;
+        // SAFETY: handle is the live event owned by WakeHandle; the pointer to it is valid for this synchronous wait.
         let wait = unsafe { w::MsgWaitForMultipleObjects(1, &handle, 0, ms, QS_ALLINPUT) };
         if wait == WAIT_TIMEOUT {
             return Event::Timeout;
@@ -464,9 +479,11 @@ impl Window for Win32Window {
             private: 0,
         };
         loop {
+            // SAFETY: msg is writable storage and a null HWND requests messages for the current thread.
             if unsafe { w::PeekMessageW(&mut msg, ptr::null_mut(), 0, 0, PM_REMOVE) } == 0 {
                 break;
             }
+            // SAFETY: msg was initialized by PeekMessageW and remains live for translation/dispatch.
             unsafe {
                 w::TranslateMessage(&msg);
                 w::DispatchMessageW(&msg);
@@ -481,6 +498,7 @@ impl Window for Win32Window {
         self.state_mut().cursor = c;
         let h = cursor_handle(c);
         if !h.is_null() {
+            // SAFETY: h is a shared system cursor handle returned by LoadCursorW.
             unsafe {
                 w::SetCursor(h);
             }
@@ -492,25 +510,34 @@ impl Window for Win32Window {
             .len()
             .checked_mul(2)
             .ok_or_else(|| Error::Refused("clipboard too large".to_owned()))?;
+        // SAFETY: hwnd is the live owner window for this clipboard transaction.
         if unsafe { w::OpenClipboard(self.hwnd) } == 0 {
             return Err(Error::System("OpenClipboard failed".to_owned()));
         }
+        // SAFETY: clipboard is open on this thread.
         unsafe { w::EmptyClipboard() };
+        // SAFETY: requests a movable global-memory block of the checked byte size.
         let mem = unsafe { w::GlobalAlloc(GMEM_MOVEABLE, bytes) };
         if mem.is_null() {
+            // SAFETY: clipboard was opened successfully above and is still owned by this thread.
             unsafe { w::CloseClipboard() };
             return Err(Error::System("GlobalAlloc failed".to_owned()));
         }
+        // SAFETY: mem is a live movable global-memory handle returned by GlobalAlloc.
         let dst = unsafe { w::GlobalLock(mem) };
         if dst.is_null() {
+            // SAFETY: clipboard was opened successfully above and is still owned by this thread.
             unsafe { w::CloseClipboard() };
             return Err(Error::System("GlobalLock failed".to_owned()));
         }
+        // SAFETY: source and locked destination each contain at least bytes bytes and do not overlap.
         unsafe {
             ptr::copy_nonoverlapping(data.as_ptr().cast::<u8>(), dst.cast::<u8>(), bytes);
             w::GlobalUnlock(mem);
         }
+        // SAFETY: clipboard is open and mem contains NUL-terminated UTF-16 in movable global memory.
         let set = unsafe { w::SetClipboardData(CF_UNICODETEXT, mem) };
+        // SAFETY: closes the clipboard transaction opened above.
         unsafe { w::CloseClipboard() };
         if set.is_null() {
             Err(Error::System("SetClipboardData failed".to_owned()))
@@ -519,26 +546,35 @@ impl Window for Win32Window {
         }
     }
     fn clipboard_text(&mut self) -> Result<Option<String>> {
+        // SAFETY: format query has no pointer arguments and does not retain state.
         if unsafe { w::IsClipboardFormatAvailable(CF_UNICODETEXT) } == 0 {
             return Ok(None);
         }
+        // SAFETY: hwnd is the live owner window for this clipboard transaction.
         if unsafe { w::OpenClipboard(self.hwnd) } == 0 {
             return Err(Error::System("OpenClipboard failed".to_owned()));
         }
+        // SAFETY: clipboard is open and the requested format was reported available.
         let mem = unsafe { w::GetClipboardData(CF_UNICODETEXT) };
         if mem.is_null() {
+            // SAFETY: clipboard was opened successfully above and is still owned by this thread.
             unsafe { w::CloseClipboard() };
             return Ok(None);
         }
+        // SAFETY: mem is the live clipboard-owned global-memory handle returned above.
         let units = unsafe { w::GlobalSize(mem) }.checked_div(2).unwrap_or(0);
+        // SAFETY: mem remains live while the clipboard is open.
         let raw = unsafe { w::GlobalLock(mem) };
         if raw.is_null() {
+            // SAFETY: clipboard was opened successfully above and is still owned by this thread.
             unsafe { w::CloseClipboard() };
             return Err(Error::System("GlobalLock failed".to_owned()));
         }
+        // SAFETY: GlobalSize bounds the locked allocation; interpreting it as u16 matches CF_UNICODETEXT.
         let slice = unsafe { std::slice::from_raw_parts(raw.cast::<u16>(), units) };
         let end = slice.iter().position(|v| *v == 0).unwrap_or(slice.len());
         let text = String::from_utf16_lossy(slice.get(..end).unwrap_or_default());
+        // SAFETY: balances the successful GlobalLock/OpenClipboard calls above.
         unsafe {
             w::GlobalUnlock(mem);
             w::CloseClipboard();
@@ -546,6 +582,7 @@ impl Window for Win32Window {
         Ok(Some(text))
     }
     fn register_hotkey(&mut self, id: i32, modifiers: u32, key: u32) -> Result<()> {
+        // SAFETY: hwnd is live and the ID/modifier/key values are passed by value.
         if unsafe { w::RegisterHotKey(self.hwnd, id, modifiers | MOD_NOREPEAT, key) } == 0 {
             return Err(Error::System("RegisterHotKey failed".to_owned()));
         }
@@ -564,11 +601,13 @@ impl Window for Win32Window {
             flags: 0,
             scheme: ptr::null_mut(),
         };
+        // SAFETY: v is writable HIGHCONTRAST storage with its size field initialized.
         (unsafe { w::SystemParametersInfoW(0x42, v.size, (&mut v as *mut w::HighContrast).cast(), 0) }) != 0
             && v.flags & 1 != 0
     }
     fn reduced_motion(&self) -> bool {
         let mut enabled: i32 = 1;
+        // SAFETY: enabled is writable BOOL-sized storage for the documented client-area animation query.
         (unsafe { w::SystemParametersInfoW(0x1042, 0, (&mut enabled as *mut i32).cast(), 0) }) != 0 && enabled == 0
     }
 }
@@ -599,6 +638,7 @@ fn cursor_handle(c: CursorShape) -> w::Hcursor {
         CursorShape::ResizeVertical => 32645,
         CursorShape::Hand => 32649,
     };
+    // SAFETY: MAKEINTRESOURCE-style predefined cursor IDs are accepted with a null module handle.
     unsafe { w::LoadCursorW(ptr::null_mut(), id as usize as *const u16) }
 }
 unsafe extern "system" fn proc(hwnd: w::Hwnd, msg: u32, wp: usize, lp: isize) -> isize {
@@ -787,6 +827,7 @@ fn paint(hwnd: w::Hwnd, s: &State) {
         inc_update: 0,
         reserved: [0; 32],
     };
+    // SAFETY: hwnd is processing WM_PAINT and p is writable PAINTSTRUCT-compatible storage.
     let dc = unsafe { w::BeginPaint(hwnd, &mut p) };
     if !dc.is_null() && !s.frame.is_empty() {
         let info = w::Bmi {
@@ -811,6 +852,7 @@ fn paint(hwnd: w::Hwnd, s: &State) {
         let bottom = p.paint.bottom.max(top);
         let width = u32::try_from(right.saturating_sub(left)).unwrap_or_default();
         let height = u32::try_from(bottom.saturating_sub(top)).unwrap_or_default();
+        // SAFETY: frame contains the advertised BGRA dimensions and info describes that live buffer.
         unsafe {
             w::SetDIBitsToDevice(
                 dc,
@@ -828,6 +870,7 @@ fn paint(hwnd: w::Hwnd, s: &State) {
             );
         }
     }
+    // SAFETY: balances the successful BeginPaint call for this WM_PAINT dispatch.
     unsafe {
         w::EndPaint(hwnd, &p);
     }
