@@ -765,11 +765,11 @@ impl Screen for Achievements {
             self.rows.push(r);
         }
         let row = style::row(cx.tree, card)?;
-        self.set = Some(style::button(cx.tree, row, "Разблокировать", Button::Primary)?);
+        self.set = Some(style::button(cx.tree, row, "ПОЛУЧИТЬ", Button::Primary)?);
         self.clear = Some(style::button(
             cx.tree,
             row,
-            crate::strings::t("Сбросить"),
+            crate::strings::t("СНЯТЬ"),
             Button::Secondary,
         )?);
         let confirm = style::card(cx.tree, host)?;
@@ -1042,7 +1042,7 @@ impl Cloud {
                 let output = std::fs::read(&intent.local).map_err(|error| format!("Ошибка записи: {error}"))?;
                 if sse_codecs::sha256::sha256(&output) != intent.local_sha256 {
                     return Ok(
-                        "Aborted: Локальный файл изменился после запроса записи; подтвердите запись ещё раз."
+                        "Локальный файл изменился после запроса записи; подтвердите запись ещё раз."
                             .to_owned(),
                     );
                 }
@@ -1064,24 +1064,24 @@ impl Cloud {
                 };
                 match sse_steam::worker::run_sibling_worker(&request, TIMEOUT) {
                     Ok(Response { ok: true, payload }) => match payload.first().copied() {
-                        Some(0) => Ok(format!("Verified: Записано и проверено: {}", intent.remote)),
+                        Some(0) => Ok(format!("Записано и проверено: {}", intent.remote)),
                         Some(1) => Ok(format!(
-                            "Uncertain: Результат записи не подтверждён (повтор не выполняется): {}",
+                            "Результат записи не подтверждён (повтор не выполняется): {}",
                             intent.remote
                         )),
                         _ => Ok(format!(
-                            "Uncertain: Результат записи не подтверждён (повтор не выполняется): {}",
+                            "Результат записи не подтверждён (повтор не выполняется): {}",
                             intent.remote
                         )),
                     },
                     Ok(Response { ok: false, payload }) => Ok(format!(
-                        "Aborted: Запись отменена: {}",
+                        "Запись отменена: {}",
                         String::from_utf8(payload).unwrap_or_else(|_| "Steam отклонил запись".to_owned())
                     )),
                     Err(sse_steam::worker::WorkerProcessError::Timeout {
                         write_outcome_uncertain: true,
                     }) => Ok(format!(
-                        "Uncertain: Результат записи не подтверждён (повтор не выполняется): {}",
+                        "Результат записи не подтверждён (повтор не выполняется): {}",
                         intent.remote
                     )),
                     Err(error) => Err(format!("Ошибка записи: {error}")),
@@ -1171,7 +1171,7 @@ impl Screen for Cloud {
         ) && self.confirm_card.is_some_and(|card| cx.tree.dialog() == Some(card))
         {
             self.clear_intent(cx)?;
-            cx.status = Some("Aborted: Запись отменена пользователем.".to_owned());
+            cx.status = Some("Запись отменена пользователем.".to_owned());
             return Ok(());
         }
         if clicked.is_some() && self.rows.first().copied() == clicked {
@@ -1209,7 +1209,7 @@ impl Screen for Cloud {
 
         if clicked.is_some() && clicked == self.confirm_cancel {
             self.clear_intent(cx)?;
-            cx.status = Some("Aborted: Запись отменена пользователем.".to_owned());
+            cx.status = Some("Запись отменена пользователем.".to_owned());
         }
 
         if clicked.is_some() && clicked == self.confirm_write {
