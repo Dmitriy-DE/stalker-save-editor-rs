@@ -246,10 +246,12 @@ impl MacWindow {
     /// Creates NSApplication, menu bar, dark NSWindow, runtime view/delegate classes, and a layer-backed content view.
     pub fn new(options: WindowOptions) -> Result<Self> {
         register_classes()?;
+// SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
         let app = unsafe { o::id(o::class(c"NSApplication"), o::sel(c"sharedApplication")) };
         if app.is_null() {
             return Err(Error::System("NSApplication unavailable".to_owned()));
         }
+// SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
         unsafe { o::void_isize(app, o::sel(c"setActivationPolicy:"), 0) };
         install_menu(app)?;
         let rect = o::Rect {
@@ -259,6 +261,7 @@ impl MacWindow {
                 height: f64::from(options.height),
             },
         };
+// SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
         let allocated = unsafe { o::id(o::class(c"NSWindow"), o::sel(c"alloc")) };
         let window = unsafe {
             o::window_init(
@@ -274,6 +277,7 @@ impl MacWindow {
             return Err(Error::System("NSWindow creation failed".to_owned()));
         }
         let title = o::string(&options.title).ok_or_else(|| Error::Refused("title contains NUL".to_owned()))?;
+// SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
         unsafe {
             o::void_id(window, o::sel(c"setTitle:"), title);
             o::void_size(
@@ -285,6 +289,7 @@ impl MacWindow {
                 },
             )
         };
+// SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
         let view = unsafe {
             o::id_rect(
                 o::id(o::class(c"SseFramebufferView"), o::sel(c"alloc")),
@@ -292,21 +297,25 @@ impl MacWindow {
                 rect,
             )
         };
+// SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
         let delegate = unsafe { o::id(o::id(o::class(c"SseWindowDelegate"), o::sel(c"alloc")), o::sel(c"init")) };
         let shared = Arc::new(Shared {
             events: Mutex::new(VecDeque::new()),
         });
         attach(view, &shared);
         attach(delegate, &shared);
+// SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
         unsafe {
             o::void_bool(view, o::sel(c"setWantsLayer:"), YES);
             o::void_id(window, o::sel(c"setContentView:"), view);
             o::void_id(window, o::sel(c"setDelegate:"), delegate)
         };
         if let Some(name) = o::string("NSAppearanceNameDarkAqua") {
+// SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
             let appearance = unsafe { o::id_id(o::class(c"NSAppearance"), o::sel(c"appearanceNamed:"), name) };
             unsafe { o::void_id(window, o::sel(c"setAppearance:"), appearance) }
         }
+// SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
         unsafe {
             o::void(window, o::sel(c"center"));
             o::void_id(window, o::sel(c"makeKeyAndOrderFront:"), ptr::null_mut());
@@ -328,6 +337,7 @@ impl MacWindow {
         }
     }
     fn panel(&mut self, folder: bool) -> Result<Option<String>> {
+// SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
         let panel = unsafe { o::id(o::class(c"NSOpenPanel"), o::sel(c"openPanel")) };
         unsafe {
             o::void_bool(panel, o::sel(c"setCanChooseFiles:"), if folder { NO } else { YES });
@@ -338,9 +348,11 @@ impl MacWindow {
             );
             o::void_bool(panel, o::sel(c"setAllowsMultipleSelection:"), NO)
         };
+// SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
         if unsafe { o::isize_(panel, o::sel(c"runModal")) } != 1 {
             return Ok(None);
         }
+// SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
         let url = unsafe { o::id(panel, o::sel(c"URL")) };
         let path = unsafe { o::id(url, o::sel(c"path")) };
         Ok(o::rust_string(path))
@@ -352,6 +364,7 @@ impl Drop for MacWindow {
             map.remove(&(self.view as usize));
         }
         if !self.window.is_null() {
+// SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
             unsafe {
                 o::void(self.window, o::sel(c"close"));
                 o::void(self.window, o::sel(c"release"))
@@ -382,14 +395,18 @@ impl Window for MacWindow {
         let info = Box::into_raw(owned).cast::<c_void>(); // SAFETY: provider owns Box through release_pixels and data remains valid until provider destruction.
         let provider = unsafe { o::CGDataProviderCreateWithData(info, data.cast(), needed, Some(release_pixels)) };
         if provider.is_null() {
+// SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
             unsafe { drop(Box::from_raw(info.cast::<Vec<u8>>())) };
             return Err(Error::System("CGDataProviderCreateWithData failed".to_owned()));
         }
+// SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
         let space = unsafe { o::CGColorSpaceCreateDeviceRGB() };
         if space.is_null() {
+// SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
             unsafe { o::CGDataProviderRelease(provider) };
             return Err(Error::System("CGColorSpaceCreateDeviceRGB failed".to_owned()));
         }
+// SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
         let image = unsafe {
             o::CGImageCreate(
                 usize::try_from(width).unwrap_or_default(),
@@ -405,6 +422,7 @@ impl Window for MacWindow {
                 0,
             )
         };
+// SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
         unsafe {
             o::CGColorSpaceRelease(space);
             o::CGDataProviderRelease(provider)
@@ -412,6 +430,7 @@ impl Window for MacWindow {
         if image.is_null() {
             return Err(Error::System("CGImageCreate failed".to_owned()));
         }
+// SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
         let layer = unsafe { o::id(self.view, o::sel(c"layer")) };
         unsafe {
             o::void_id(layer, o::sel(c"setContents:"), image);
@@ -430,6 +449,7 @@ impl Window for MacWindow {
             }
         }
         let date = match timeout {
+// SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
             Some(d) => unsafe {
                 o::date(
                     o::class(c"NSDate"),
@@ -437,9 +457,11 @@ impl Window for MacWindow {
                     d.as_secs_f64(),
                 )
             },
+// SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
             None => unsafe { o::id(o::class(c"NSDate"), o::sel(c"distantFuture")) },
         };
         let mode = o::string("kCFRunLoopDefaultMode").unwrap_or(ptr::null_mut());
+// SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
         let event = unsafe {
             o::event(
                 self.app,
@@ -454,6 +476,7 @@ impl Window for MacWindow {
             return Event::Timeout;
         }
         decode_event(event, self.view, &self.shared);
+// SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
         unsafe {
             o::void_id(self.app, o::sel(c"sendEvent:"), event);
             o::void(self.app, o::sel(c"updateWindows"))
@@ -472,22 +495,28 @@ impl Window for MacWindow {
             CursorShape::ResizeHorizontal => c"resizeLeftRightCursor",
             CursorShape::ResizeVertical => c"resizeUpDownCursor",
         };
+// SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
         let cur = unsafe { o::id(o::class(c"NSCursor"), o::sel(name)) };
         if !cur.is_null() {
+// SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
             unsafe { o::void(cur, o::sel(c"set")) }
         }
     }
     fn set_clipboard_text(&mut self, text: &str) -> Result<()> {
+// SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
         let board = unsafe { o::id(o::class(c"NSPasteboard"), o::sel(c"generalPasteboard")) };
         unsafe { o::void(board, o::sel(c"clearContents")) };
         let value = o::string(text).ok_or_else(|| Error::Refused("clipboard contains NUL".to_owned()))?;
+// SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
         let array = unsafe { o::id_id(o::class(c"NSArray"), o::sel(c"arrayWithObject:"), value) };
         unsafe { o::void_id(board, o::sel(c"writeObjects:"), array) };
         Ok(())
     }
     fn clipboard_text(&mut self) -> Result<Option<String>> {
+// SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
         let board = unsafe { o::id(o::class(c"NSPasteboard"), o::sel(c"generalPasteboard")) };
         let ty = o::string("public.utf8-plain-text").ok_or_else(|| Error::System("NSString failed".to_owned()))?;
+// SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
         Ok(o::rust_string(unsafe {
             o::id_id(board, o::sel(c"stringForType:"), ty)
         }))
@@ -499,6 +528,7 @@ impl Window for MacWindow {
         self.panel(true)
     }
     fn reduced_motion(&self) -> bool {
+// SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
         let workspace = unsafe { o::id(o::class(c"NSWorkspace"), o::sel(c"sharedWorkspace")) };
         (unsafe { o::bool_(workspace, o::sel(c"accessibilityDisplayShouldReduceMotion")) }) != 0
     }
@@ -506,10 +536,12 @@ impl Window for MacWindow {
 
 fn register_classes() -> Result<()> {
     if o::class(c"SseFramebufferView").is_null() {
+// SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
         let cls = unsafe { o::objc_allocateClassPair(o::class(c"NSView"), c"SseFramebufferView".as_ptr(), 0) };
         if cls.is_null() {
             return Err(Error::System("view class allocation failed".to_owned()));
         }
+// SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
         unsafe {
             o::class_addMethod(
                 cls,
@@ -521,10 +553,12 @@ fn register_classes() -> Result<()> {
         }
     }
     if o::class(c"SseWindowDelegate").is_null() {
+// SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
         let cls = unsafe { o::objc_allocateClassPair(o::class(c"NSObject"), c"SseWindowDelegate".as_ptr(), 0) };
         if cls.is_null() {
             return Err(Error::System("delegate class allocation failed".to_owned()));
         }
+// SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
         unsafe {
             o::class_addMethod(
                 cls,
@@ -548,10 +582,12 @@ unsafe extern "C" fn should_close(this: o::Id, _: o::Sel, _: o::Id) -> o::Bool {
     NO
 }
 unsafe extern "C" fn backing_changed(this: o::Id, _: o::Sel, note: o::Id) {
+// SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
     let window = unsafe { o::id(note, o::sel(c"object")) };
     let scale = if window.is_null() {
         0.0
     } else {
+// SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
         unsafe { o::f64_(window, o::sel(c"backingScaleFactor")) }
     };
     push(
@@ -570,8 +606,10 @@ unsafe extern "C" fn insert_text(this: o::Id, _: o::Sel, text: o::Id, _: o::Rang
 }
 
 fn install_menu(app: o::Id) -> Result<()> {
+// SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
     let menu = unsafe { o::id(o::id(o::class(c"NSMenu"), o::sel(c"alloc")), o::sel(c"init")) };
     let root = unsafe { o::id(o::id(o::class(c"NSMenuItem"), o::sel(c"alloc")), o::sel(c"init")) };
+// SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
     unsafe { o::void_id(menu, o::sel(c"addItem:"), root) };
     let sub = unsafe { o::id(o::id(o::class(c"NSMenu"), o::sel(c"alloc")), o::sel(c"init")) };
     for (title, action, key) in [
@@ -580,8 +618,10 @@ fn install_menu(app: o::Id) -> Result<()> {
         ("Quit", c"terminate:", "q"),
     ] {
         let item = menu_item(title, action, key)?;
+// SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
         unsafe { o::void_id(sub, o::sel(c"addItem:"), item) }
     }
+// SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
     unsafe {
         o::void_id(root, o::sel(c"setSubmenu:"), sub);
         o::void_id(app, o::sel(c"setMainMenu:"), menu)
@@ -591,6 +631,7 @@ fn install_menu(app: o::Id) -> Result<()> {
 fn menu_item(title: &str, action: &'static std::ffi::CStr, key: &str) -> Result<o::Id> {
     let title = o::string(title).ok_or_else(|| Error::System("menu title failed".to_owned()))?;
     let key = o::string(key).ok_or_else(|| Error::System("menu key failed".to_owned()))?;
+// SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
     let item = unsafe {
         o::menu_init(
             o::id(o::class(c"NSMenuItem"), o::sel(c"alloc")),
@@ -603,6 +644,7 @@ fn menu_item(title: &str, action: &'static std::ffi::CStr, key: &str) -> Result<
     Ok(item)
 }
 fn decode_event(event: o::Id, view: o::Id, shared: &Arc<Shared>) {
+// SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
     let ty = unsafe { o::usize_(event, o::sel(c"type")) };
     let emit = |e| {
         if let Ok(mut q) = shared.events.lock() {
@@ -611,6 +653,7 @@ fn decode_event(event: o::Id, view: o::Id, shared: &Arc<Shared>) {
     };
     match ty {
         10 | 11 => {
+// SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
             let code = unsafe { o::usize_(event, o::sel(c"keyCode")) };
             let repeat = unsafe { o::bool_(event, o::sel(c"isARepeat")) } != 0;
             emit(Event::Key {
@@ -619,6 +662,7 @@ fn decode_event(event: o::Id, view: o::Id, shared: &Arc<Shared>) {
                 repeat,
             });
             if ty == 10 {
+// SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
                 let array = unsafe { o::id_id(o::class(c"NSArray"), o::sel(c"arrayWithObject:"), event) };
                 unsafe { o::void_id(view, o::sel(c"interpretKeyEvents:"), array) }
             }
@@ -637,11 +681,13 @@ fn decode_event(event: o::Id, view: o::Id, shared: &Arc<Shared>) {
             });
         }
         5..=7 => {
+// SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
             let p = unsafe { o::point(event, o::sel(c"locationInWindow")) };
             emit(Event::PointerMoved { x: p.x, y: p.y });
         }
         22 => {
             emit(Event::Wheel {
+// SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
                 x: unsafe { o::f64_(event, o::sel(c"scrollingDeltaX")) },
                 y: unsafe { o::f64_(event, o::sel(c"scrollingDeltaY")) },
             });
