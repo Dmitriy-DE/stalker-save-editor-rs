@@ -193,7 +193,9 @@ fn clip(text: &str) -> String {
 #[derive(Debug)]
 enum CompanionReply {
     Status(std::result::Result<Option<String>, String>),
+    Protocol(&'static str, std::result::Result<String, String>),
     Changed(std::result::Result<String, String>),
+    Hotkeys(std::result::Result<String, String>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -207,11 +209,19 @@ struct CompanionIntent {
 struct Companion {
     status: Option<WidgetId>,
     version: Option<WidgetId>,
+    latency: Option<WidgetId>,
+    path: Option<WidgetId>,
     install: Option<WidgetId>,
     remove: Option<WidgetId>,
     refresh_button: Option<WidgetId>,
     ping: Option<WidgetId>,
     inspect: Option<WidgetId>,
+    info: Option<WidgetId>,
+    inventory: Option<WidgetId>,
+    manual_path: Option<WidgetId>,
+    apply_manual: Option<WidgetId>,
+    manual_directory: Option<PathBuf>,
+    hotkey_inputs: Vec<(sse_companion::hotkeys::HotkeyAction, WidgetId)>,
     save_hotkeys: Option<WidgetId>,
     default_hotkeys: Option<WidgetId>,
     confirm_card: Option<WidgetId>,
@@ -221,20 +231,75 @@ struct Companion {
 }
 
 impl Companion {
+    fn selected(&self, cx: &Context<'_>) -> std::result::Result<(String, PathBuf), String> {
+        let game = cx
+            .app
+            .selected_game()
+            .map(str::to_owned)
+            .ok_or_else(|| "Игра не выбрана".to_owned())?;
+        let directory = self
+            .manual_directory
+            .clone()
+            .or_else(|| cx.app.game_dir().map(Path::to_path_buf))
+            .ok_or_else(|| "Папка игры не выбрана".to_owned())?;
+        Ok((game, directory))
+    }
+    fn exchange_directory(game: &str, directory: &Path) -> std::result::Result<PathBuf, String> {
+        if xray_game(game).is_none() {
+            return Err("появится после протокола компаньона".to_owned());
+        }
+        for relative in ["_appdata_", "appdata", "userdata"] {
+            let candidate = directory.join(relative);
+            if candidate.is_dir() {
+                return Ok(candidate);
+            }
+        }
+        Err("появится после протокола компаньона".to_owned())
+    }
     fn refresh(&self, cx: &mut Context<'_>) {
         let Some(proxy) = cx.proxy.cloned() else { return };
-        let game = cx.app.selected_game().map(str::to_owned);
-        let dir = cx.app.game_dir().map(Path::to_path_buf);
+        let selected = self.selected(cx);
         std::thread::spawn(move || {
-            let result = match (game.as_deref(), dir.as_deref()) {
-                (Some(g), Some(d)) => companion_root(g, d).map(|r| installed_version(&r)),
-                _ => Err("Сначала выберите установленную игру в «Обзоре игр»".to_owned()),
-            };
+            let result = selected.and_then(|(g, d)| companion_root(&g, &d).map(|r| installed_version(&r)));
             proxy.send(AppMessage::ToScreen(
                 ScreenId::Companion,
                 Box::new(CompanionReply::Status(result)),
             ));
         });
+    }
+    fn protocol(&self, cx: &mut Context<'_>, command: &'static str) {
+        let Some(proxy) = cx.proxy.cloned() else { return };
+        let selected = self.selected(cx);
+        std::thread::spawn(move || {
+            let result = selected
+                .and_then(|(game, directory)| Self::exchange_directory(&game, &directory))
+                .and_then(|directory| {
+                    sse_companion::protocol::CompanionClient::new(directory)
+                        .send(command, &[], Duration::from_secs(3))
+                        .map(|reply| reply.text)
+                        .map_err(|e| e.to_string())
+                });
+            proxy.send(AppMessage::ToScreen(
+                ScreenId::Companion,
+                Box::new(CompanionReply::Protocol(command, result)),
+            ));
+        });
+    }
+    fn load_hotkeys(&mut self, cx: &mut Context<'_>, defaults: bool) -> Result<()> {
+        let path = sse_app::paths::default_data_directory().join("hotkeys.txt");
+        let layout = if defaults {
+            sse_companion::hotkeys::HotkeyLayout::default()
+        } else {
+            sse_companion::hotkeys::HotkeyLayout::load(&path)
+        };
+        for (action, id) in &self.hotkey_inputs {
+            let value = layout
+                .binding(*action)
+                .map_or_else(String::new, |gesture| gesture.to_string());
+            cx.tree.set_input_text(*id, &value)?;
+        }
+        let _ = cx.tree.take_changed_inputs();
+        Ok(())
     }
 }
 
@@ -256,8 +321,10 @@ impl Screen for Companion {
         )?;
         style::label(cx.tree, card, "Целевая игра: выбранная в «Обзоре игр»", Text::Body)?;
         style::label(cx.tree, card, "СТАТУС И СВЯЗЬ", Text::Heading)?;
-        self.status = Some(style::label(cx.tree, card, "Выберите игру", Text::Value)?);
-        self.version = Some(style::label(cx.tree, card, "Версия: —", Text::Note)?);
+        self.status = Some(style::label(cx.tree, card, "НЕ УСТАНОВЛЕН", Text::Value)?);
+        self.version = Some(style::label(cx.tree, card, "Версия мода: —", Text::Note)?);
+        self.latency = Some(style::label(cx.tree, card, "Связь / Задержка: Нет ответа", Text::Note)?);
+        self.path = Some(style::label(cx.tree, card, "Путь установки: —", Text::Note)?);
         let row = style::row(cx.tree, card)?;
         self.install = Some(style::button(cx.tree, row, "УСТАНОВИТЬ / ОБНОВИТЬ", Button::Primary)?);
         self.remove = Some(style::button(cx.tree, row, "УДАЛИТЬ", Button::Secondary)?);
@@ -272,6 +339,8 @@ impl Screen for Companion {
             Text::Note,
         )?;
         self.inspect = Some(style::button(cx.tree, live, "ПОЛУЧИТЬ ДАННЫЕ", Button::Secondary)?);
+        self.info = Some(style::label(cx.tree, live, "Информация игрока: —", Text::Body)?);
+        self.inventory = Some(style::label(cx.tree, live, "Инвентарь игрока: —", Text::Body)?);
         style::label(
             cx.tree,
             live,
@@ -285,8 +354,8 @@ impl Screen for Companion {
             "S.T.A.L.K.E.R. 2 — команды игры (экспериментально)",
             Text::Heading,
         )?;
-        style::label(cx.tree, s2, "Нужны S2 на ПК, UE4SS и установленный мод. Команды выполняет сама игра (XSetGodMode, XSetNoClipGSC, XSetTimeSpeed).", Text::Note)?;
-        for command in [
+        style::label(cx.tree,s2,"Нужны S2 на ПК, UE4SS и установленный мод. Команды выполняет сама игра (XSetGodMode, XSetNoClipGSC, XSetTimeSpeed).",Text::Note)?;
+        for label in [
             "Бессмертие: вкл",
             "Бессмертие: выкл",
             "Полёт: вкл",
@@ -294,8 +363,10 @@ impl Screen for Companion {
             "Время ×5",
             "Время: норма",
         ] {
-            style::button(cx.tree, s2, command, Button::Secondary)?;
+            let id = style::button(cx.tree, s2, label, Button::Secondary)?;
+            cx.tree.set_enabled(id, false)?;
         }
+        style::label(cx.tree, s2, "появится после протокола компаньона", Text::Note)?;
         let all = style::card(cx.tree, host)?;
         style::label(cx.tree, all, "ВСЕ ИГРЫ", Text::Heading)?;
         for game in [
@@ -309,17 +380,33 @@ impl Screen for Companion {
         ] {
             style::label(cx.tree, all, &format!("[ ] {game} · игра не найдена"), Text::Body)?;
         }
-        style::button(
+        let all_install = style::button(
             cx.tree,
             all,
             "УСТАНОВИТЬ / ОБНОВИТЬ ВО ВСЕ ОТМЕЧЕННЫЕ",
             Button::Secondary,
         )?;
+        cx.tree.set_enabled(all_install, false)?;
+        style::label(
+            cx.tree,
+            all,
+            "Выбор нескольких установок появится после общего API обнаружения игр.",
+            Text::Note,
+        )?;
+        let manual = style::card(cx.tree, host)?;
+        style::label(cx.tree, manual, "ПАПКА ИГРЫ (РУЧНОЙ ВЫБОР)", Text::Heading)?;
+        style::label(
+            cx.tree,
+            manual,
+            "Оставьте пустым для автоматического поиска через Steam. Укажите путь вручную, если папка нестандартная.",
+            Text::Note,
+        )?;
+        let manual_row = style::row(cx.tree, manual)?;
+        self.manual_path = Some(style::input(cx.tree, manual_row, "")?);
+        self.apply_manual = Some(style::button(cx.tree, manual_row, "ПРИМЕНИТЬ", Button::Secondary)?);
         let hot = style::card(cx.tree, host)?;
         style::label(cx.tree, hot, "ГОРЯЧИЕ КЛАВИШИ", Text::Heading)?;
-        style::label(cx.tree, hot, "Приложение перехватывает сочетание и отправляет команду моду через файл-протокол. Игра должна быть запущена с установленным модом.", Text::Note)?;
-        let hotkey_path = sse_app::paths::default_data_directory().join("hotkeys.txt");
-        let layout = sse_companion::hotkeys::HotkeyLayout::load(&hotkey_path);
+        style::label(cx.tree,hot,"Приложение перехватывает сочетание и отправляет команду моду через файл-протокол. Игра должна быть запущена с установленным модом.",Text::Note)?;
         for action in [
             sse_companion::hotkeys::HotkeyAction::Heal,
             sse_companion::hotkeys::HotkeyAction::RepairEquipped,
@@ -327,12 +414,14 @@ impl Screen for Companion {
             sse_companion::hotkeys::HotkeyAction::JumpLast,
             sse_companion::hotkeys::HotkeyAction::QuickSave,
         ] {
-            let key = layout.binding(action).map_or_else(|| "—".to_owned(), |v| v.to_string());
-            style::label(cx.tree, hot, &format!("{} — {key}", action.name()), Text::Body)?;
+            let row = style::row(cx.tree, hot)?;
+            style::label(cx.tree, row, action.name(), Text::Body)?;
+            let input = style::input(cx.tree, row, "")?;
+            self.hotkey_inputs.push((action, input));
         }
-        style::label(cx.tree, hot, &format!("Файл: {}", hotkey_path.display()), Text::Note)?;
-        self.save_hotkeys = Some(style::button(cx.tree, hot, "СОХРАНИТЬ КЛАВИШИ", Button::Primary)?);
-        self.default_hotkeys = Some(style::button(cx.tree, hot, "ПО УМОЛЧАНИЮ", Button::Secondary)?);
+        let hot_row = style::row(cx.tree, hot)?;
+        self.save_hotkeys = Some(style::button(cx.tree, hot_row, "СОХРАНИТЬ КЛАВИШИ", Button::Primary)?);
+        self.default_hotkeys = Some(style::button(cx.tree, hot_row, "ПО УМОЛЧАНИЮ", Button::Secondary)?);
         let confirm = style::card(cx.tree, host)?;
         self.confirm_card = Some(confirm);
         style::label(cx.tree, confirm, "ПОДТВЕРЖДЕНИЕ ИЗМЕНЕНИЯ ИГРЫ", Text::Heading)?;
@@ -350,9 +439,10 @@ impl Screen for Companion {
     }
     fn shown(&mut self, cx: &mut Context<'_>) -> Result<()> {
         self.intent = None;
-        if let Some(card) = self.confirm_card {
-            cx.tree.set_visible(card, false)?;
+        if self.confirm_card.is_some() {
+            cx.tree.close_dialog().ok();
         }
+        self.load_hotkeys(cx, false)?;
         self.refresh(cx);
         Ok(())
     }
@@ -366,38 +456,74 @@ impl Screen for Companion {
             self.refresh(cx);
             return Ok(());
         }
-        if clicked.is_some() && (clicked == self.ping || clicked == self.inspect) {
-            cx.status = Some(
-                "Для живой связи ядру нужен resolver каталога file-protocol для выбранной игры; UI не угадывает путь."
-                    .to_owned(),
-            );
+        if clicked.is_some() && clicked == self.ping {
+            cx.status = Some("Проверка связи с модом…".to_owned());
+            self.protocol(cx, "ping");
+            return Ok(());
+        }
+        if clicked.is_some() && clicked == self.inspect {
+            cx.status = Some("Чтение ответов Companion…".to_owned());
+            self.protocol(cx, "info");
+            self.protocol(cx, "list_inventory");
+            return Ok(());
+        }
+        if clicked.is_some() && clicked == self.apply_manual {
+            let text = self
+                .manual_path
+                .and_then(|id| cx.tree.input_text(id).ok())
+                .unwrap_or("")
+                .trim()
+                .to_owned();
+            if text.is_empty() {
+                self.manual_directory = None;
+                cx.status = Some("Папка очищена, используется автообнаружение.".to_owned());
+            } else {
+                let path = PathBuf::from(&text);
+                if path.is_dir() {
+                    self.manual_directory = Some(path.clone());
+                    cx.status = Some(format!("Папка задана: {}", path.display()));
+                } else {
+                    cx.status = Some(format!("Папка не найдена: {text}"));
+                }
+            }
+            self.intent = None;
+            self.refresh(cx);
             return Ok(());
         }
         if clicked.is_some() && clicked == self.default_hotkeys {
-            let path = sse_app::paths::default_data_directory().join("hotkeys.txt");
-            match sse_companion::hotkeys::HotkeyLayout::default().save(&path) {
-                Ok(()) => cx.status = Some(format!("Клавиши сохранены: {}.", path.display())),
-                Err(error) => cx.status = Some(format!("Клавиши не сохранены: {error}")),
-            }
+            self.load_hotkeys(cx, true)?;
             return Ok(());
         }
         if clicked.is_some() && clicked == self.save_hotkeys {
-            let path = sse_app::paths::default_data_directory().join("hotkeys.txt");
-            let layout = sse_companion::hotkeys::HotkeyLayout::load(&path);
-            match layout.save(&path) {
-                Ok(()) => cx.status = Some(format!("Клавиши сохранены: {}.", path.display())),
-                Err(error) => cx.status = Some(format!("Клавиши не сохранены: {error}")),
+            let mut text = String::new();
+            for (action, id) in &self.hotkey_inputs {
+                let value = cx.tree.input_text(*id).unwrap_or("");
+                text.push_str(action.name());
+                text.push('=');
+                text.push_str(value);
+                text.push('\n');
             }
+            let path = sse_app::paths::default_data_directory().join("hotkeys.txt");
+            let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
+            std::thread::spawn(move || {
+                let result = sse_companion::hotkeys::HotkeyLayout::parse(&text)
+                    .and_then(|layout| layout.save(&path))
+                    .map(|()| format!("Клавиши сохранены: {}.", path.display()))
+                    .map_err(|e| e.to_string());
+                proxy.send(AppMessage::ToScreen(
+                    ScreenId::Companion,
+                    Box::new(CompanionReply::Hotkeys(result)),
+                ));
+            });
             return Ok(());
         }
         if clicked.is_some() && (clicked == self.install || clicked == self.remove) {
-            let Some(game) = cx.app.selected_game().map(str::to_owned) else {
-                cx.status = Some("Игра не выбрана".to_owned());
-                return Ok(());
-            };
-            let Some(directory) = cx.app.game_dir().map(Path::to_path_buf) else {
-                cx.status = Some("Папка игры не выбрана".to_owned());
-                return Ok(());
+            let (game, directory) = match self.selected(cx) {
+                Ok(v) => v,
+                Err(e) => {
+                    cx.status = Some(e);
+                    return Ok(());
+                }
             };
             self.intent = Some(CompanionIntent {
                 install: clicked == self.install,
@@ -420,9 +546,8 @@ impl Screen for Companion {
             let Some(intent) = self.intent.take() else {
                 return Ok(());
             };
-            let current_game = cx.app.selected_game();
-            let current_dir = cx.app.game_dir();
-            if current_game != Some(intent.game.as_str()) || current_dir != Some(intent.directory.as_path()) {
+            let current = self.selected(cx).ok();
+            if current.as_ref() != Some(&(intent.game.clone(), intent.directory.clone())) {
                 if self.confirm_card.is_some() {
                     cx.tree.close_dialog()?;
                 }
@@ -432,37 +557,32 @@ impl Screen for Companion {
             if self.confirm_card.is_some() {
                 cx.tree.close_dialog()?;
             }
-            let install = intent.install;
-            let game = Some(intent.game);
-            let dir = Some(intent.directory);
             let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
             std::thread::spawn(move || {
                 let result = (|| {
-                    let game = game.ok_or_else(|| "Игра не выбрана".to_owned())?;
-                    let dir = dir.ok_or_else(|| "Папка игры не выбрана".to_owned())?;
-                    let root = companion_root(&game, &dir)?;
-                    if install {
-                        if let Some(target) = xray_game(&game) {
+                    let root = companion_root(&intent.game, &intent.directory)?;
+                    if intent.install {
+                        if let Some(target) = xray_game(&intent.game) {
                             sse_companion::installer::install_bundled(&root, target).map_err(|e| e.to_string())?;
                         } else {
                             sse_companion::installer::install_stalker2(&root).map_err(|e| e.to_string())?;
                         }
-                        Ok("Компаньон установлен".to_owned())
+                        Ok("Компаньон успешно установлен!".to_owned())
                     } else {
-                        let id = if matches!(game.as_str(), "s2" | "stalker2") {
+                        let id = if matches!(intent.game.as_str(), "s2" | "stalker2") {
                             "s2"
-                        } else if game.contains("soc") {
+                        } else if intent.game.contains("soc") {
                             "soc"
-                        } else if game.contains("cs") || game == "clear_sky" {
+                        } else if intent.game.contains("cs") || intent.game == "clear_sky" {
                             "cs"
                         } else {
                             "cop"
                         };
                         let removed = sse_companion::installer::uninstall(&root, id).map_err(|e| e.to_string())?;
                         Ok(if removed {
-                            "Компаньон удалён; исходные файлы восстановлены"
+                            "Компаньон удалён."
                         } else {
-                            "Компаньон не был установлен"
+                            "Не удалось удалить компаньон."
                         }
                         .to_owned())
                     }
@@ -472,6 +592,7 @@ impl Screen for Companion {
                     Box::new(CompanionReply::Changed(result)),
                 ));
             });
+            return Ok(());
         }
         if let Message::User(AppMessage::ToScreen(ScreenId::Companion, payload)) = message {
             if let Some(reply) = payload.downcast_ref::<CompanionReply>() {
@@ -481,26 +602,64 @@ impl Screen for Companion {
                             cx.tree.set_text(
                                 id,
                                 if version.is_some() {
-                                    "Установлен"
+                                    "УСТАНОВЛЕН (ОЖИДАНИЕ ИГРЫ)"
                                 } else {
-                                    "Не установлен"
+                                    "НЕ УСТАНОВЛЕН"
                                 },
                             )?;
                         }
                         if let Some(id) = self.version {
                             cx.tree
-                                .set_text(id, &format!("Версия: {}", version.as_deref().unwrap_or("—")))?;
+                                .set_text(id, &format!("Версия мода: {}", version.as_deref().unwrap_or("—")))?;
+                        }
+                        if let (Some(id), Ok((_, dir))) = (self.path, self.selected(cx)) {
+                            cx.tree.set_text(id, &format!("Путь установки: {}", dir.display()))?;
                         }
                     }
-                    CompanionReply::Status(Err(e)) | CompanionReply::Changed(Err(e)) => {
+                    CompanionReply::Status(Err(e)) => {
                         if let Some(id) = self.status {
-                            cx.tree.set_text(id, &clip(e))?;
+                            cx.tree.set_text(id, "ОШИБКА")?;
                         }
+                        cx.status = Some(format!("Ошибка обновления статуса: {e}"));
                     }
-                    CompanionReply::Changed(Ok(text)) => {
+                    CompanionReply::Protocol(command, Ok(text)) => match *command {
+                        "ping" => {
+                            if let Some(id) = self.status {
+                                cx.tree.set_text(id, "РАБОТАЕТ (ПОДКЛЮЧЁН)")?;
+                            }
+                            if let Some(id) = self.latency {
+                                cx.tree.set_text(id, "Связь / Задержка: мод отвечает")?;
+                            }
+                            cx.status = Some(format!("Мод отвечает. {text}"));
+                        }
+                        "info" => {
+                            if let Some(id) = self.info {
+                                cx.tree.set_text(id, &format!("Информация игрока: {text}"))?;
+                            }
+                        }
+                        "list_inventory" => {
+                            if let Some(id) = self.inventory {
+                                cx.tree.set_text(id, &format!("Инвентарь игрока: {text}"))?;
+                            }
+                        }
+                        _ => {}
+                    },
+                    CompanionReply::Protocol(command, Err(e)) => {
+                        if let Some(id) = self.latency {
+                            cx.tree.set_text(id, "Связь / Задержка: Нет ответа")?;
+                        }
+                        cx.status = Some(if *command == "ping" {
+                            format!("Ошибка пинга: {e}")
+                        } else {
+                            format!("Не удалось получить данные Companion: {e}")
+                        });
+                    }
+                    CompanionReply::Changed(Ok(text)) | CompanionReply::Hotkeys(Ok(text)) => {
                         cx.status = Some(text.clone());
                         self.refresh(cx);
                     }
+                    CompanionReply::Changed(Err(e)) => cx.status = Some(format!("Ошибка установки: {e}")),
+                    CompanionReply::Hotkeys(Err(e)) => cx.status = Some(format!("Клавиши не сохранены: {e}")),
                 }
             }
         }

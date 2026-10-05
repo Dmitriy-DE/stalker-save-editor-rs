@@ -47,3 +47,41 @@ pub mod sha256;
 pub mod kraken;
 /// Safe Kraken mode-1 LZ and Huffman encoder paired with [`kraken`].
 pub mod kraken_encode;
+
+const MAX_DECLARED_EXPANSION_RATIO: usize = 4096;
+const DECLARED_EXPANSION_SLACK: usize = 64 * 1024;
+
+/// Rejects hostile declared decompressed sizes before callers allocate the output buffer.
+///
+/// The bound is deliberately generous for real save compression while preventing tiny inputs from
+/// requesting hundreds of MiB. It must be checked before allocation.
+///
+/// # Errors
+/// Returns `Error::Damaged` when the declaration is not proportional to the packed stream.
+pub fn validate_declared_output_size(stream_len: usize, declared_size: usize, codec: &str) -> sse_core::Result<()> {
+    let proportional = stream_len
+        .checked_mul(MAX_DECLARED_EXPANSION_RATIO)
+        .and_then(|value| value.checked_add(DECLARED_EXPANSION_SLACK))
+        .unwrap_or(usize::MAX);
+    if declared_size > proportional {
+        return Err(sse_core::Error::damaged(format!(
+            "{codec} declared output size is disproportionate to the packed stream"
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod allocation_guard_tests {
+    use super::validate_declared_output_size;
+
+    #[test]
+    fn tiny_stream_cannot_claim_256_mib() {
+        assert!(validate_declared_output_size(100, 256 * 1024 * 1024, "test").is_err());
+    }
+
+    #[test]
+    fn ordinary_compression_ratio_is_accepted() {
+        assert!(validate_declared_output_size(1024, 1024 * 1024, "test").is_ok());
+    }
+}

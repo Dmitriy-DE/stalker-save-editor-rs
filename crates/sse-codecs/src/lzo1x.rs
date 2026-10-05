@@ -17,6 +17,7 @@ pub fn decompress(stream: &[u8], expected_size: usize) -> Result<Vec<u8>> {
     if stream.len() < 3 {
         return Err(Error::damaged("LZO stream is too short"));
     }
+    crate::validate_declared_output_size(stream.len(), expected_size, "LZO")?;
 
     let mut reader = Cursor::new(stream);
     let mut output = vec![0_u8; expected_size];
