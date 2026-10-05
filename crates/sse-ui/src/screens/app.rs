@@ -702,11 +702,23 @@ impl Screen for Settings {
             "Папка для создания резервных копий и журналов восстановления:",
             Text::Body,
         )?;
-        let backup_value = self.settings.backup_directory.as_ref().map_or("", |p| p.to_str().unwrap_or(""));
+        let backup_value = self
+            .settings
+            .backup_directory
+            .as_ref()
+            .map_or("", |p| p.to_str().unwrap_or(""));
         self.backup_input = Some(cx.tree.add(
-            Some(backups), NodeKind::Leaf,
-            Style { min: Size::new(220.0, 36.0), ..Style::default() },
-            Content::Input { text: backup_value.to_owned(), placeholder: "Путь к папке бэкапов".to_owned(), style: TextStyle::new(Face::Body, 14.0) },
+            Some(backups),
+            NodeKind::Leaf,
+            Style {
+                min: Size::new(220.0, 36.0),
+                ..Style::default()
+            },
+            Content::Input {
+                text: backup_value.to_owned(),
+                placeholder: "Путь к папке бэкапов".to_owned(),
+                style: TextStyle::new(Face::Body, 14.0),
+            },
             Look::default(),
         )?);
         style::label(
@@ -741,7 +753,12 @@ impl Screen for Settings {
             Button::Secondary,
         )?);
         self.send_report_button = None;
-        style::label(cx.tree, reports, "Ручная отправка отчёта отключена в Rust-версии.", Text::Note)?;
+        style::label(
+            cx.tree,
+            reports,
+            "Ручная отправка отчёта отключена в Rust-версии.",
+            Text::Note,
+        )?;
         style::label(
             cx.tree,
             reports,
