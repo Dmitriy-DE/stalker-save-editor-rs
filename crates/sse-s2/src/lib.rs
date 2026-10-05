@@ -141,6 +141,10 @@ impl S2Save {
     /// Reads a packed save and builds its bounded inventory index.
     pub fn from_bytes(data: &[u8]) -> Result<Self> {
         let container = S2Container::from_bytes(data)?;
+        Self::from_container(container)
+    }
+
+    fn from_container(container: S2Container) -> Result<Self> {
         let index = S2InventoryIndex::locate(container.image())?;
         let objects = S2ObjectIndex::build(container.image(), index.is_legacy)?;
         let names = S2NameTables::locate(container.image(), &objects, index.is_legacy)?;
@@ -273,10 +277,10 @@ impl S2Save {
         Ok(items)
     }
 
-    /// Whether this S2 layout can be written with the safe RLE Kraken encoder.
+    /// Whether this S2 layout can be written with the supported Kraken encoder.
     #[must_use]
     pub const fn can_write(&self) -> bool {
-        true
+        !self.index.is_legacy
     }
 
     /// Applies supported changes and encodes a packed S2 save with a CRC-checked read-back.
@@ -284,8 +288,20 @@ impl S2Save {
     /// # Errors
     /// Reports invalid, ambiguous, or unsupported edit requests without modifying this parsed save.
     pub fn write_changes(&self, changes: &[S2Change]) -> Result<Vec<u8>> {
+        let durability_changes = changes
+            .iter()
+            .filter_map(|change| match change {
+                S2Change::SetDurability { handle, condition } => Some((*handle, *condition)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
         let (image, changed_ranges) = apply_changes_to_image(self, changes)?;
-        pack_and_verify_s2_image(&image, &changed_ranges)
+        let (packed, verified_container) = pack_and_verify_s2_image(&image, &changed_ranges)?;
+        if !durability_changes.is_empty() {
+            let verified = Self::from_container(verified_container)?;
+            verify_durability_readback(self, &verified, &durability_changes)?;
+        }
+        Ok(packed)
     }
 }
 
@@ -991,21 +1007,26 @@ fn build_inventory_items(
 }
 
 fn record_end_guesses(raw_length: usize, index: &S2InventoryIndex, objects: &S2ObjectIndex) -> HashMap<u32, usize> {
-    let mut by_handle = BTreeMap::new();
+    let mut starts = objects
+        .records
+        .iter()
+        .map(|record| record.record_offset)
+        .collect::<Vec<_>>();
+    starts.sort_unstable();
+    starts.dedup();
+    let mut end_by_offset = HashMap::with_capacity(starts.len());
+    for (position, offset) in starts.iter().enumerate() {
+        let fallback = raw_length.min(offset.saturating_add(4096));
+        let next = starts.get(position.saturating_add(1)).copied().unwrap_or(fallback);
+        end_by_offset.insert(*offset, next.min(raw_length));
+    }
+    let mut ends = HashMap::with_capacity(index.owned_handles.len());
     for handle in &index.owned_handles {
         if let Some(record) = objects.unique(*handle) {
-            by_handle.entry(*handle).or_insert(record.record_offset);
+            if let Some(end) = end_by_offset.get(&record.record_offset) {
+                ends.insert(*handle, *end);
+            }
         }
-    }
-    let mut starts = by_handle.into_iter().collect::<Vec<_>>();
-    starts.sort_by_key(|(_, offset)| *offset);
-    let mut ends = HashMap::with_capacity(starts.len());
-    for (position, (handle, offset)) in starts.iter().enumerate() {
-        let fallback = raw_length.min(offset.saturating_add(4096));
-        let next = starts
-            .get(position.saturating_add(1))
-            .map_or(fallback, |(_, next)| *next);
-        ends.insert(*handle, next.min(offset.saturating_add(65_536)));
     }
     ends
 }
@@ -1111,15 +1132,10 @@ fn read_weapon_state(
     if read_u32(raw, record_offset).ok()? != handle {
         return None;
     }
-    const SCAN_LIMIT: usize = 0x800;
-    const PRIMARY_LIMIT: usize = 0x400;
     const MINIMUM_OFFSET: usize = 0x30;
     const MAXIMUM_UPGRADES: usize = 64;
     let minimum_offset = record_offset.checked_add(MINIMUM_OFFSET)?;
-    let limit = raw
-        .len()
-        .min(record_offset.checked_add(SCAN_LIMIT)?)
-        .min(record_end.max(record_offset));
+    let limit = raw.len().min(record_end.max(record_offset));
     if limit <= minimum_offset.saturating_add(6) {
         return None;
     }
@@ -1156,21 +1172,11 @@ fn read_weapon_state(
         value_offset = value_offset.checked_add(1)?;
     }
 
-    if candidates.len() == 1 {
-        let (offset, value, modules, upgrades, _) = candidates.pop()?;
-        return Some((offset, value, modules, upgrades));
+    if candidates.len() != 1 {
+        return None;
     }
-    let mut primary = None;
-    for candidate in candidates {
-        if candidate.0.saturating_sub(record_offset) >= PRIMARY_LIMIT {
-            continue;
-        }
-        if primary.is_some() {
-            return None;
-        }
-        primary = Some(candidate);
-    }
-    primary.map(|(offset, value, modules, upgrades, _)| (offset, value, modules, upgrades))
+    let (offset, value, modules, upgrades, _) = candidates.pop()?;
+    Some((offset, value, modules, upgrades))
 }
 
 fn read_upgrade_vector(
@@ -1293,6 +1299,14 @@ fn is_known_kind(kind: u8) -> bool {
 
 fn is_editable_stack(kind: u8, count: u32) -> bool {
     (count > 1 && matches!(kind, 4 | 5 | 7 | 8)) || (count >= 1 && matches!(kind, 4 | 5 | 7))
+}
+
+fn has_unique_owned_handle(index: &S2InventoryIndex, handle: u32) -> bool {
+    index.owned_handles.iter().filter(|owned| **owned == handle).count() == 1
+}
+
+fn has_unique_backpack_grid_handle(index: &S2InventoryIndex, handle: u32) -> bool {
+    has_unique_owned_handle(index, handle) && index.grid_cells.iter().filter(|cell| cell.handle == handle).count() == 1
 }
 
 /// Wallet and grid offsets plus validated handle references.
@@ -1555,7 +1569,10 @@ fn apply_changes_to_image(save: &S2Save, changes: &[S2Change]) -> Result<(Vec<u8
         return Err(Error::Refused("S2 write requires at least one change".to_owned()));
     }
     if save.index.is_legacy {
-        return Err(Error::Refused("legacy S2 layouts are read-only".to_owned()));
+        return Err(Error::Refused(
+            "This save was written by game version 1.0.x. It can be read, but its layout is not supported for editing; load it in the current game and save again."
+                .to_owned(),
+        ));
     }
     if changes
         .iter()
@@ -1586,6 +1603,11 @@ fn apply_changes_to_image(save: &S2Save, changes: &[S2Change]) -> Result<(Vec<u8
                 if !(1..=10_000_000).contains(&count) {
                     return Err(Error::Refused(
                         "S2 stack count is outside the supported range".to_owned(),
+                    ));
+                }
+                if !has_unique_backpack_grid_handle(&save.index, handle) {
+                    return Err(Error::Refused(
+                        "S2 stack handle is not uniquely owned by the backpack grid".to_owned(),
                     ));
                 }
                 let record = save
@@ -1620,9 +1642,16 @@ fn apply_changes_to_image(save: &S2Save, changes: &[S2Change]) -> Result<(Vec<u8
                         "S2 durability must be finite and between zero and one".to_owned(),
                     ));
                 }
+                if !has_unique_owned_handle(&save.index, handle) {
+                    return Err(Error::Refused("S2 durability handle is not uniquely owned".to_owned()));
+                }
                 let item = durability_items
                     .as_ref()
-                    .and_then(|items| items.iter().find(|item| item.handle == handle))
+                    .and_then(|items| {
+                        let mut matches = items.iter().filter(|item| item.handle == handle);
+                        let only = matches.next()?;
+                        matches.next().is_none().then_some(only)
+                    })
                     .ok_or_else(|| Error::Refused("S2 durability handle is missing or ambiguous".to_owned()))?;
                 if save.unresolved_handles.contains(&handle) {
                     return Err(Error::Refused("S2 durability item is unresolved".to_owned()));
@@ -1890,7 +1919,7 @@ fn move_stash_item_to_backpack(
     Ok(())
 }
 
-fn pack_and_verify_s2_image(image: &[u8], changed_ranges: &[Range<usize>]) -> Result<Vec<u8>> {
+fn pack_and_verify_s2_image(image: &[u8], changed_ranges: &[Range<usize>]) -> Result<(Vec<u8>, S2Container)> {
     if image.is_empty() || image.len() > MAXIMUM_UNPACKED_SIZE {
         return Err(Error::Refused(
             "S2 image is outside the supported size range".to_owned(),
@@ -1922,7 +1951,62 @@ fn pack_and_verify_s2_image(image: &[u8], changed_ranges: &[Range<usize>]) -> Re
     if verified.image() != image {
         return Err(Error::damaged("S2 write verification differs from the complete image"));
     }
-    Ok(packed)
+    Ok((packed, verified))
+}
+
+fn verify_durability_readback(save: &S2Save, verified: &S2Save, changes: &[(u32, f32)]) -> Result<()> {
+    let before_items = save.items();
+    let before = before_items
+        .iter()
+        .map(|item| (item.handle, item.condition))
+        .collect::<Vec<_>>();
+    let after_items = verified.items();
+    let after = after_items
+        .iter()
+        .map(|item| (item.handle, item.condition))
+        .collect::<Vec<_>>();
+    verify_durability_values(&before, &after, changes)
+}
+
+fn verify_durability_values(
+    before: &[(u32, Option<f32>)],
+    after: &[(u32, Option<f32>)],
+    changes: &[(u32, f32)],
+) -> Result<()> {
+    let mut expected = condition_map(before)?;
+    let actual = condition_map(after)?;
+    let mut changed_handles = HashSet::with_capacity(changes.len());
+    for (handle, condition) in changes {
+        if !changed_handles.insert(*handle) {
+            return Err(Error::Refused(
+                "S2 durability handle is edited more than once".to_owned(),
+            ));
+        }
+        if !expected.contains_key(handle) {
+            return Err(Error::Refused(
+                "S2 durability handle is missing or ambiguous".to_owned(),
+            ));
+        }
+        expected.insert(*handle, Some(*condition));
+    }
+    if expected != actual {
+        return Err(Error::damaged(
+            "S2 durability read-back differs from the requested and unchanged item conditions",
+        ));
+    }
+    Ok(())
+}
+
+fn condition_map(values: &[(u32, Option<f32>)]) -> Result<BTreeMap<u32, Option<f32>>> {
+    let mut conditions = BTreeMap::new();
+    for (handle, condition) in values {
+        if conditions.insert(*handle, *condition).is_some() {
+            return Err(Error::damaged(
+                "S2 durability read-back contains duplicate item handles",
+            ));
+        }
+    }
+    Ok(conditions)
 }
 
 fn write_u8_at(bytes: &mut [u8], offset: usize, value: u8) -> Result<()> {
@@ -2187,10 +2271,7 @@ mod tests {
         let Ok((image, changed_ranges)) = image else { return };
         let packed = pack_and_verify_s2_image(&image, &changed_ranges);
         assert!(packed.is_ok());
-        let Ok(packed) = packed else { return };
-        let reread = S2Container::from_bytes(&packed);
-        assert!(reread.is_ok());
-        let Ok(reread) = reread else { return };
+        let Ok((packed, reread)) = packed else { return };
         assert_eq!(reread.image(), image);
         assert_eq!(super::read_u32(&packed, 0), Ok(350));
         let trailer = packed.len().saturating_sub(4);
@@ -2240,6 +2321,99 @@ mod tests {
     }
 
     #[test]
+    fn s2_stack_writer_refuses_a_handle_outside_the_owned_list() {
+        let parsed = S2Save::from_bytes(WRITER_S2_STACK_SOURCE);
+        assert!(parsed.is_ok());
+        let Ok(mut parsed) = parsed else { return };
+        let Some(template) = parsed.objects.records.first().copied() else {
+            return;
+        };
+        let Some(handle) = (0x3000_0000..=0x3000_FFFF)
+            .find(|handle| !parsed.index.owned_handles.contains(handle) && parsed.objects.unique(*handle).is_none())
+        else {
+            return;
+        };
+        let record_index = parsed.objects.records.len();
+        parsed
+            .objects
+            .records
+            .push(super::S2ObjectRecordIndex { handle, ..template });
+        parsed.objects.by_handle.insert(handle, vec![record_index]);
+
+        assert!(apply_changes_to_image(
+            &parsed,
+            &[S2Change::SetStackCount {
+                handle,
+                count: template.count.saturating_add(1)
+            }],
+        )
+        .is_err_and(|error| error.to_string().contains("not uniquely owned")));
+    }
+
+    #[test]
+    fn s2_stack_writer_refuses_an_owned_handle_outside_the_backpack_grid() {
+        let parsed = S2Save::from_bytes(WRITER_S2_STACK_SOURCE);
+        assert!(parsed.is_ok());
+        let Ok(mut parsed) = parsed else { return };
+        let Some(template) = parsed.objects.records.first().copied() else {
+            return;
+        };
+        let Some(handle) = (0x3000_0000..=0x3000_FFFF)
+            .find(|handle| !parsed.index.owned_handles.contains(handle) && parsed.objects.unique(*handle).is_none())
+        else {
+            return;
+        };
+        let record_index = parsed.objects.records.len();
+        parsed
+            .objects
+            .records
+            .push(super::S2ObjectRecordIndex { handle, ..template });
+        parsed.objects.by_handle.insert(handle, vec![record_index]);
+        parsed.index.owned_handles.push(handle);
+
+        assert!(apply_changes_to_image(
+            &parsed,
+            &[S2Change::SetStackCount {
+                handle,
+                count: template.count.saturating_add(1)
+            }],
+        )
+        .is_err_and(|error| error.to_string().contains("backpack grid")));
+    }
+
+    #[test]
+    fn durability_window_stops_before_the_next_object_index() {
+        let parsed = S2Save::from_bytes(WRITER_S2_STACK_SOURCE);
+        assert!(parsed.is_ok());
+        let Ok(parsed) = parsed else { return };
+        let Some(handle) = parsed.index.owned_handles.first().copied() else {
+            return;
+        };
+        let Some(record) = parsed.objects.unique(handle).copied() else {
+            return;
+        };
+        let next_offset = record.record_offset.saturating_add(0x20_000);
+        let Some(next_handle) = (0x3000_0000..=0x3000_FFFF).find(|candidate| {
+            !parsed.index.owned_handles.contains(candidate) && parsed.objects.unique(*candidate).is_none()
+        }) else {
+            return;
+        };
+        let next = super::S2ObjectRecordIndex {
+            handle: next_handle,
+            record_offset: next_offset,
+            ..record
+        };
+        let mut objects = super::S2ObjectIndex::default();
+        objects.records.extend([record, next]);
+        objects.by_handle.insert(handle, vec![0]);
+        objects.by_handle.insert(next_handle, vec![1]);
+
+        let ends = super::record_end_guesses(next_offset.saturating_add(1), &parsed.index, &objects);
+
+        assert_eq!(ends.get(&handle), Some(&next_offset));
+    }
+
+    #[test]
     fn s2_durability_and_money_share_one_working_image_and_match_reference() {
         let parsed = S2Save::from_bytes(WRITER_S2_ARMOR_MONEY_SOURCE);
         assert!(parsed.is_ok());
@@ -2265,14 +2439,65 @@ mod tests {
         let parsed = S2Save::from_bytes(WRITER_S2_WEAPON_SOURCE);
         assert!(parsed.is_ok());
         let Ok(parsed) = parsed else { return };
-        let result = apply_changes_to_image(
-            &parsed,
-            &[S2Change::SetDurability {
-                handle: 805_309_098,
-                condition: 0.9,
-            }],
-        );
+        let changes = [S2Change::SetDurability {
+            handle: 805_309_098,
+            condition: 0.9,
+        }];
+        let result = apply_changes_to_image(&parsed, &changes);
         assert_eq!(result.map(|(image, _)| image), Ok(WRITER_S2_WEAPON_EXPECTED.to_vec()));
+
+        let packed = parsed.write_changes(&changes);
+        assert!(packed.is_ok());
+        let Ok(packed) = packed else { return };
+        let verified = S2Save::from_bytes(&packed);
+        assert!(verified.is_ok());
+        let Ok(verified) = verified else { return };
+        assert_eq!(
+            verified
+                .items()
+                .iter()
+                .find(|item| item.handle == 805_309_098)
+                .map(|item| item.condition),
+            Some(Some(0.9))
+        );
+    }
+
+    #[test]
+    fn s2_durability_writer_refuses_a_handle_outside_the_owned_list() {
+        let parsed = S2Save::from_bytes(WRITER_S2_WEAPON_SOURCE);
+        assert!(parsed.is_ok());
+        let Ok(mut parsed) = parsed else { return };
+        let handle = 805_309_098;
+        assert!(parsed.index.owned_handles.contains(&handle));
+        parsed.index.owned_handles.retain(|owned| *owned != handle);
+
+        assert!(
+            apply_changes_to_image(&parsed, &[S2Change::SetDurability { handle, condition: 0.9 }],)
+                .is_err_and(|error| error.to_string().contains("not uniquely owned"))
+        );
+    }
+
+    #[test]
+    fn durability_readback_rejects_a_changed_condition_on_another_item() {
+        let before = [
+            (0x3000_0001, Some(0.75)),
+            (0x3000_0002, Some(0.40)),
+            (0x3000_0003, None),
+        ];
+        let expected = [
+            (0x3000_0001, Some(0.90)),
+            (0x3000_0002, Some(0.40)),
+            (0x3000_0003, None),
+        ];
+        let collateral_change = [
+            (0x3000_0001, Some(0.90)),
+            (0x3000_0002, Some(0.41)),
+            (0x3000_0003, None),
+        ];
+        let requested = [(0x3000_0001, 0.90)];
+
+        assert!(super::verify_durability_values(&before, &expected, &requested).is_ok());
+        assert!(super::verify_durability_values(&before, &collateral_change, &requested).is_err());
     }
 
     #[test]
@@ -2510,6 +2735,21 @@ mod tests {
     }
 
     #[test]
+    fn legacy_1031_layout_reports_that_writing_is_disabled() {
+        let packed = pack_raw(&legacy_synthetic_raw());
+        let parsed = S2Save::from_bytes(&packed);
+        assert!(parsed.is_ok());
+        let Ok(parsed) = parsed else { return };
+
+        assert!(!parsed.can_write());
+        assert!(parsed
+            .write_changes(&[S2Change::SetMoney(85_434)])
+            .is_err_and(|error| error.to_string().contains(
+                "This save was written by game version 1.0.x. It can be read, but its layout is not supported for editing; load it in the current game and save again."
+            )));
+    }
+
+    #[test]
     fn armor_state_requires_matching_nested_handle_and_finite_condition() {
         let handle = 0x3000_0201_u32;
         let record_offset = 8_usize;
@@ -2732,6 +2972,26 @@ mod tests {
         assert_eq!(
             super::read_weapon_state(&malformed, handle, record_offset, malformed.len(), &names),
             None
+        );
+
+        let mut two_candidates = raw.clone();
+        let secondary_value = value_offset.saturating_add(0x900);
+        let source_start = value_offset.saturating_sub(8);
+        let source_end = value_offset.saturating_add(12);
+        let secondary_start = secondary_value.saturating_sub(8);
+        two_candidates.resize(secondary_value.saturating_add(16), 0);
+        let Some(source) = raw.get(source_start..source_end) else {
+            return;
+        };
+        let Some(destination) = two_candidates.get_mut(secondary_start..secondary_start.saturating_add(source.len()))
+        else {
+            return;
+        };
+        destination.copy_from_slice(source);
+        assert_eq!(
+            super::read_weapon_state(&two_candidates, handle, record_offset, two_candidates.len(), &names),
+            None,
+            "a second candidate anywhere before the next indexed object remains ambiguous"
         );
     }
 
