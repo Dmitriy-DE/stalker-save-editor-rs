@@ -985,25 +985,6 @@ impl Shell {
         if self.library_workspace.is_saving() {
             return Ok(());
         }
-        let (width, height) = tree.size();
-        if width > 0 && height > 0 {
-            for index in 0..self.screens.len() {
-                let cache_safe = self.screens.get(index).is_some_and(|screen| {
-                    !matches!(
-                        screen.id(),
-                        ScreenId::Inventory
-                            | ScreenId::Compare
-                            | ScreenId::Games
-                            | ScreenId::GameFixes
-                            | ScreenId::Companion
-                            | ScreenId::Settings
-                    )
-                });
-                if cache_safe {
-                    self.prepare(tree, index)?;
-                }
-            }
-        }
         match self.screens.iter().position(|screen| screen.id() == id) {
             Some(index) => self.select(tree, index),
             None => Ok(()),
