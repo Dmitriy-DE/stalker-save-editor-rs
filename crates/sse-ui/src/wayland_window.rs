@@ -32,15 +32,29 @@ struct ReaderObjects {
     surface: u32,
 }
 
+#[derive(Clone, Copy)]
+struct BufferSync {
+    ids: [u32; 2],
+    released: [bool; 2],
+    configured_size: Option<(u32, u32)>,
+}
+
+struct BufferSlot {
+    pool: u32,
+    buffer: u32,
+    memory: MappedFile,
+}
+
 /// Native Wayland presenter. Input support currently uses wl_seat discovery and falls back to X11 when the
 /// compositor cannot provide the required core objects.
 pub struct WaylandWindow {
-    stream: UnixStream,
+    writer: Arc<Mutex<UnixStream>>,
+    shm: u32,
     surface: u32,
-    buffer: u32,
-    pool: u32,
-    memory: MappedFile,
+    buffers: [BufferSlot; 2],
     size: (u32, u32),
+    next_object_id: u32,
+    sync: Arc<Mutex<BufferSync>>,
     closed: Arc<Mutex<bool>>,
 }
 
@@ -78,34 +92,20 @@ impl WaylandWindow {
         send(&mut stream, surface, 6, &[])?; // initial commit
         stream.flush().map_err(io)?;
 
-        let byte_len = frame_bytes(width, height)?;
-        let memory = MappedFile::new(byte_len).map_err(io)?;
-        let pool = 11;
-        send_with_fd(
-            &stream,
-            shm,
-            0,
-            &u32s(&[
-                pool,
-                u32::try_from(byte_len).map_err(|_| Error::Refused("Wayland buffer too large".to_owned()))?,
-            ]),
-            memory.raw_fd(),
-        )?;
-        let buffer = 12;
-        let stride = width
-            .checked_mul(4)
-            .ok_or_else(|| Error::Refused("Wayland stride overflow".to_owned()))?;
-        send(
-            &mut stream,
-            pool,
-            0,
-            &u32s(&[buffer, 0, width, height, stride, WL_SHM_FORMAT_XRGB8888]),
-        )?;
-        stream.flush().map_err(io)?;
+        let reader = stream.try_clone().map_err(io)?;
+        let writer = Arc::new(Mutex::new(stream));
+        let first = create_buffer(&writer, shm, width, height, 11, 12)?;
+        let second = create_buffer(&writer, shm, width, height, 15, 16)?;
+        let sync = Arc::new(Mutex::new(BufferSync {
+            ids: [first.buffer, second.buffer],
+            released: [true, true],
+            configured_size: Some((width, height)),
+        }));
 
         let closed = Arc::new(Mutex::new(false));
-        let reader = stream.try_clone().map_err(io)?;
         let reader_closed = Arc::clone(&closed);
+        let reader_sync = Arc::clone(&sync);
+        let reader_writer = Arc::clone(&writer);
         let reader_objects = ReaderObjects {
             xdg_surface,
             toplevel,
@@ -115,17 +115,62 @@ impl WaylandWindow {
         };
         std::thread::Builder::new()
             .name("wayland-events".to_owned())
-            .spawn(move || event_reader(reader, reader_objects, proxy, reader_closed))
+            .spawn(move || event_reader(reader, reader_writer, reader_objects, proxy, reader_sync, reader_closed))
             .map_err(io)?;
         Ok(Self {
-            stream,
+            writer,
+            shm,
             surface,
-            buffer,
-            pool,
-            memory,
+            buffers: [first, second],
             size: (width, height),
+            next_object_id: 17,
+            sync,
             closed,
         })
+    }
+}
+
+impl WaylandWindow {
+    fn recreate_buffers(&mut self, width: u32, height: u32) -> Result<()> {
+        let first_pool = self.next_object_id;
+        let first_buffer = first_pool
+            .checked_add(1)
+            .ok_or_else(|| Error::Refused("Wayland object ID overflow".to_owned()))?;
+        let second_pool = first_pool
+            .checked_add(2)
+            .ok_or_else(|| Error::Refused("Wayland object ID overflow".to_owned()))?;
+        let second_buffer = first_pool
+            .checked_add(3)
+            .ok_or_else(|| Error::Refused("Wayland object ID overflow".to_owned()))?;
+        let next_object_id = first_pool
+            .checked_add(4)
+            .ok_or_else(|| Error::Refused("Wayland object ID overflow".to_owned()))?;
+
+        let first = create_buffer(&self.writer, self.shm, width, height, first_pool, first_buffer)?;
+        let second = create_buffer(&self.writer, self.shm, width, height, second_pool, second_buffer)?;
+        let buffer_ids = [first.buffer, second.buffer];
+        for slot in &self.buffers {
+            let _ = send_shared(&self.writer, slot.buffer, 0, &[]);
+            let _ = send_shared(&self.writer, slot.pool, 1, &[]);
+        }
+        self.buffers = [first, second];
+        self.size = (width, height);
+        self.next_object_id = next_object_id;
+        let mut sync = self
+            .sync
+            .lock()
+            .map_err(|_| Error::System("Wayland buffer state lock poisoned".to_owned()))?;
+        sync.ids = buffer_ids;
+        sync.released = [true, true];
+        Ok(())
+    }
+
+    fn release_slot(&self, index: usize) {
+        if let Ok(mut sync) = self.sync.lock() {
+            if let Some(released) = sync.released.get_mut(index) {
+                *released = true;
+            }
+        }
     }
 }
 
@@ -134,16 +179,42 @@ impl Present for WaylandWindow {
         if rects.is_empty() {
             return Ok(());
         }
-        if (width, height) != self.size || stride != usize::try_from(width).unwrap_or(0) {
-            return Err(Error::Refused(
-                "Wayland resize requires buffer recreation; using XWayland fallback is recommended".to_owned(),
-            ));
+        if stride != usize::try_from(width).unwrap_or(0) {
+            return Err(Error::Refused("Wayland frame stride does not match width".to_owned()));
         }
-        self.memory.write_u32_le(frame).map_err(io)?;
-        send(&mut self.stream, self.surface, 1, &u32s(&[self.buffer, 0, 0]))?; // attach
+        if (width, height) != self.size {
+            self.recreate_buffers(width, height)?;
+        }
+
+        let slot_index = {
+            let mut sync = self
+                .sync
+                .lock()
+                .map_err(|_| Error::System("Wayland buffer state lock poisoned".to_owned()))?;
+            let Some(index) = sync.released.iter().position(|released| *released) else {
+                return Ok(());
+            };
+            if let Some(released) = sync.released.get_mut(index) {
+                *released = false;
+            }
+            index
+        };
+
+        let slot = self
+            .buffers
+            .get_mut(slot_index)
+            .ok_or_else(|| Error::damaged("Wayland buffer slot is missing"))?;
+        if let Err(error) = slot.memory.write_u32_le(frame).map_err(io) {
+            self.release_slot(slot_index);
+            return Err(error);
+        }
+        if let Err(error) = send_shared(&self.writer, self.surface, 1, &u32s(&[slot.buffer, 0, 0])) {
+            self.release_slot(slot_index);
+            return Err(error);
+        }
         for rect in rects {
-            send(
-                &mut self.stream,
+            if let Err(error) = send_shared(
+                &self.writer,
                 self.surface,
                 2,
                 &i32s(&[
@@ -152,18 +223,26 @@ impl Present for WaylandWindow {
                     i32::try_from(rect.width).unwrap_or(i32::MAX),
                     i32::try_from(rect.height).unwrap_or(i32::MAX),
                 ]),
-            )?;
+            ) {
+                self.release_slot(slot_index);
+                return Err(error);
+            }
         }
-        send(&mut self.stream, self.surface, 6, &[])?;
-        self.stream.flush().map_err(io)
+        if let Err(error) = send_shared(&self.writer, self.surface, 6, &[]) {
+            self.release_slot(slot_index);
+            return Err(error);
+        }
+        Ok(())
     }
 }
 
 impl Drop for WaylandWindow {
     fn drop(&mut self) {
-        let _ = send(&mut self.stream, self.buffer, 0, &[]);
-        let _ = send(&mut self.stream, self.pool, 1, &[]);
         let _ = self.closed.lock().map(|mut value| *value = true);
+        for slot in &self.buffers {
+            let _ = send_shared(&self.writer, slot.buffer, 0, &[]);
+            let _ = send_shared(&self.writer, slot.pool, 1, &[]);
+        }
     }
 }
 
@@ -178,8 +257,10 @@ fn connect() -> Result<UnixStream> {
 
 fn event_reader<U: Send + 'static>(
     mut stream: UnixStream,
+    writer: Arc<Mutex<UnixStream>>,
     objects: ReaderObjects,
     proxy: Proxy<U>,
+    sync: Arc<Mutex<BufferSync>>,
     closed: Arc<Mutex<bool>>,
 ) {
     let ReaderObjects {
@@ -211,25 +292,41 @@ fn event_reader<U: Send + 'static>(
 
         if object == xdg_surface && opcode == 0 {
             if let Some(serial) = read_u32(&payload, 0) {
-                let _ = send(&mut stream, xdg_surface, 4, &u32s(&[serial]));
+                let _ = send_shared(&writer, xdg_surface, 4, &u32s(&[serial]));
+            }
+        } else if object == toplevel && opcode == 0 {
+            if let (Some(width), Some(height)) = (read_i32(&payload, 0), read_i32(&payload, 4)) {
+                if width > 0 && height > 0 {
+                    let size = (
+                        u32::try_from(width).unwrap_or_default(),
+                        u32::try_from(height).unwrap_or_default(),
+                    );
+                    if let Ok(mut state) = sync.lock() {
+                        state.configured_size = Some(size);
+                    }
+                    let _ = proxy.window(WindowEvent::Resized {
+                        width: size.0,
+                        height: size.1,
+                    });
+                }
             }
         } else if object == toplevel && opcode == 1 {
             let _ = proxy.window(WindowEvent::CloseRequested);
         } else if object == wm && opcode == 0 {
             if let Some(serial) = read_u32(&payload, 0) {
-                let _ = send(&mut stream, wm, 3, &u32s(&[serial]));
+                let _ = send_shared(&writer, wm, 3, &u32s(&[serial]));
             }
         } else if Some(object) == seat && opcode == 0 {
             if let Some(capabilities) = read_u32(&payload, 0) {
                 if capabilities & SEAT_CAP_POINTER != 0
                     && pointer.is_none()
-                    && send(&mut stream, object, 0, &u32s(&[POINTER_ID])).is_ok()
+                    && send_shared(&writer, object, 0, &u32s(&[POINTER_ID])).is_ok()
                 {
                     pointer = Some(POINTER_ID);
                 }
                 if capabilities & SEAT_CAP_KEYBOARD != 0
                     && keyboard.is_none()
-                    && send(&mut stream, object, 1, &u32s(&[KEYBOARD_ID])).is_ok()
+                    && send_shared(&writer, object, 1, &u32s(&[KEYBOARD_ID])).is_ok()
                 {
                     keyboard = Some(KEYBOARD_ID);
                 }
@@ -269,7 +366,28 @@ fn event_reader<U: Send + 'static>(
             }
         }
 
-        let _ = stream.flush();
+        let released_size = if opcode == 0 {
+            match sync.lock() {
+                Ok(mut state) => {
+                    let configured_size = state.configured_size;
+                    state
+                        .ids
+                        .iter()
+                        .position(|id| *id == object)
+                        .and_then(|index| state.released.get_mut(index))
+                        .and_then(|released| {
+                            *released = true;
+                            configured_size
+                        })
+                }
+                Err(_) => None,
+            }
+        } else {
+            None
+        };
+        if let Some((width, height)) = released_size {
+            let _ = proxy.window(WindowEvent::Exposed(Rect::new(0, 0, width, height)));
+        }
     }
 }
 
@@ -445,7 +563,7 @@ fn read_message(stream: &mut UnixStream) -> Result<(u32, u16, Vec<u8>)> {
     let object = u32::from_ne_bytes(head[..4].try_into().map_err(|_| Error::damaged("Wayland header"))?);
     let word = u32::from_ne_bytes(head[4..].try_into().map_err(|_| Error::damaged("Wayland header"))?);
     let size = usize::try_from(word >> 16).map_err(|_| Error::damaged("Wayland size"))?;
-    if !(8..=1_048_576).contains(&size) {
+    if !valid_message_size(size) {
         return Err(Error::damaged("invalid Wayland message size"));
     }
     let payload_len = size
@@ -456,26 +574,13 @@ fn read_message(stream: &mut UnixStream) -> Result<(u32, u16, Vec<u8>)> {
     let opcode = u16::try_from(word & 0xffff).map_err(|_| Error::damaged("Wayland opcode"))?;
     Ok((object, opcode, payload))
 }
-fn send(stream: &mut UnixStream, object: u32, opcode: u16, payload: &[u8]) -> Result<()> {
+fn wire_message(object: u32, opcode: u16, payload: &[u8]) -> Result<Vec<u8>> {
     let size = 8usize
         .checked_add(payload.len())
         .ok_or_else(|| Error::damaged("Wayland message overflow"))?;
-    let size_word = u32::try_from(size)
-        .map_err(|_| Error::damaged("Wayland message too large"))?
-        .checked_shl(16)
-        .ok_or_else(|| Error::damaged("Wayland message size shift overflow"))?;
-    let word = size_word | u32::from(opcode);
-    stream.write_all(&object.to_ne_bytes()).map_err(io)?;
-    stream.write_all(&word.to_ne_bytes()).map_err(io)?;
-    stream.write_all(payload).map_err(io)
-}
-fn send_string(stream: &mut UnixStream, object: u32, opcode: u16, value: &str) -> Result<()> {
-    send(stream, object, opcode, &wire_string(value))
-}
-fn send_with_fd(stream: &UnixStream, object: u32, opcode: u16, payload: &[u8], fd: std::os::fd::RawFd) -> Result<()> {
-    let size = 8usize
-        .checked_add(payload.len())
-        .ok_or_else(|| Error::damaged("Wayland fd message overflow"))?;
+    if !valid_message_size(size) {
+        return Err(Error::damaged("Wayland message size is not 4-byte aligned"));
+    }
     let size_word = u32::try_from(size)
         .map_err(|_| Error::damaged("Wayland message too large"))?
         .checked_shl(16)
@@ -485,7 +590,70 @@ fn send_with_fd(stream: &UnixStream, object: u32, opcode: u16, payload: &[u8], f
     bytes.extend_from_slice(&object.to_ne_bytes());
     bytes.extend_from_slice(&word.to_ne_bytes());
     bytes.extend_from_slice(payload);
-    sse_sys::unix_fd::send_fd(stream, &bytes, fd).map_err(io)
+    Ok(bytes)
+}
+
+fn send(stream: &mut UnixStream, object: u32, opcode: u16, payload: &[u8]) -> Result<()> {
+    let bytes = wire_message(object, opcode, payload)?;
+    stream.write_all(&bytes).map_err(io)
+}
+
+fn send_shared(writer: &Mutex<UnixStream>, object: u32, opcode: u16, payload: &[u8]) -> Result<()> {
+    let bytes = wire_message(object, opcode, payload)?;
+    let mut stream = writer
+        .lock()
+        .map_err(|_| Error::System("Wayland writer lock poisoned".to_owned()))?;
+    stream.write_all(&bytes).map_err(io)
+}
+
+fn send_string(stream: &mut UnixStream, object: u32, opcode: u16, value: &str) -> Result<()> {
+    send(stream, object, opcode, &wire_string(value))
+}
+
+fn send_with_fd_shared(
+    writer: &Mutex<UnixStream>,
+    object: u32,
+    opcode: u16,
+    payload: &[u8],
+    fd: std::os::fd::RawFd,
+) -> Result<()> {
+    let bytes = wire_message(object, opcode, payload)?;
+    let stream = writer
+        .lock()
+        .map_err(|_| Error::System("Wayland writer lock poisoned".to_owned()))?;
+    sse_sys::unix_fd::send_fd(&stream, &bytes, fd).map_err(io)
+}
+
+fn create_buffer(
+    writer: &Mutex<UnixStream>,
+    shm: u32,
+    width: u32,
+    height: u32,
+    pool: u32,
+    buffer: u32,
+) -> Result<BufferSlot> {
+    let byte_len = frame_bytes(width, height)?;
+    let memory = MappedFile::new(byte_len).map_err(io)?;
+    send_with_fd_shared(
+        writer,
+        shm,
+        0,
+        &u32s(&[
+            pool,
+            u32::try_from(byte_len).map_err(|_| Error::Refused("Wayland buffer too large".to_owned()))?,
+        ]),
+        memory.raw_fd(),
+    )?;
+    let stride = width
+        .checked_mul(4)
+        .ok_or_else(|| Error::Refused("Wayland stride overflow".to_owned()))?;
+    send_shared(
+        writer,
+        pool,
+        0,
+        &u32s(&[buffer, 0, width, height, stride, WL_SHM_FORMAT_XRGB8888]),
+    )?;
+    Ok(BufferSlot { pool, buffer, memory })
 }
 fn wire_string(value: &str) -> Vec<u8> {
     let len = value.len().saturating_add(1);
@@ -514,6 +682,10 @@ fn read_i32(bytes: &[u8], offset: usize) -> Option<i32> {
 fn align4(value: usize) -> usize {
     value.saturating_add(3) & !3
 }
+
+fn valid_message_size(size: usize) -> bool {
+    (8..=1_048_576).contains(&size) && size.checked_rem(4) == Some(0)
+}
 fn frame_bytes(width: u32, height: u32) -> Result<usize> {
     usize::try_from(width)
         .ok()
@@ -528,7 +700,7 @@ fn io(error: std::io::Error) -> Error {
 
 #[cfg(test)]
 mod tests {
-    use super::{keyboard_event, parse_global, parse_pointer_event, wire_string};
+    use super::{keyboard_event, parse_global, parse_pointer_event, valid_message_size, wire_message, wire_string};
     use crate::event_loop::WindowEvent;
 
     #[test]
@@ -550,6 +722,19 @@ mod tests {
             Some(WindowEvent::PointerMoved { x: 12, y: 34 })
         );
         assert_eq!(position, (12, 34));
+    }
+
+    #[test]
+    fn message_size_requires_four_byte_alignment() {
+        assert!(valid_message_size(8));
+        assert!(valid_message_size(12));
+        assert!(!valid_message_size(10));
+        assert!(!valid_message_size(0));
+    }
+
+    #[test]
+    fn wire_message_rejects_unaligned_payload() {
+        assert!(wire_message(1, 0, &[1, 2]).is_err());
     }
 
     #[test]
