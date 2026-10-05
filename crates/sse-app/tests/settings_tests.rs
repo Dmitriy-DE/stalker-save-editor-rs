@@ -139,3 +139,44 @@ fn forward_compatibility_unknown_fields_ignored() {
     assert_eq!(settings.sound_volume, 65);
     assert_eq!(settings.theme_id, "zone");
 }
+
+
+#[test]
+fn reads_exact_csharp_snake_case_settings_shape() {
+    let csharp = br#"{
+  "save_directories": [
+    "C:\\Games\\STALKER\\savedgames"
+  ],
+  "backup_directory": "D:\\Backups",
+  "language": "en",
+  "sound_enabled": true,
+  "sound_volume": 80,
+  "music_enabled": false,
+  "theme_id": "zone",
+  "accent_id": "amber",
+  "ui_scale_percent": 125,
+  "navigation_collapsed": null,
+  "send_reports": true,
+  "reports_notice_shown": true,
+  "last_report_utc": "2026-10-05T18:30:12.1234567Z"
+}"#;
+    let settings = AppSettings::from_json_slice(csharp).expect("C# settings must parse");
+    assert_eq!(
+        settings.save_directories,
+        Some(vec![PathBuf::from(r"C:\Games\STALKER\savedgames")])
+    );
+    assert_eq!(settings.backup_directory, Some(PathBuf::from(r"D:\Backups")));
+    assert_eq!(settings.language.as_deref(), Some("en"));
+    assert_eq!(settings.ui_scale_percent, 125);
+    assert_eq!(settings.navigation_collapsed, None);
+    assert!(settings.send_reports);
+    assert!(settings.reports_notice_shown);
+    assert_eq!(
+        settings.last_report_utc.as_deref(),
+        Some("2026-10-05T18:30:12.1234567Z")
+    );
+
+    let rust_json = settings.to_json_bytes().expect("Rust settings must serialize");
+    let reparsed = AppSettings::from_json_slice(&rust_json).expect("Rust settings must reparse");
+    assert_eq!(reparsed, settings);
+}
