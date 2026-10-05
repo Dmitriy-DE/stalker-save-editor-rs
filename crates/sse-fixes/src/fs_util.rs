@@ -2,6 +2,8 @@
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
+#[cfg(test)]
+use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
@@ -9,6 +11,35 @@ use std::time::SystemTime;
 use sse_core::{Error, Result};
 
 static COUNTER: AtomicU64 = AtomicU64::new(1);
+
+#[cfg(test)]
+thread_local! {
+    static TEST_FAIL_WRITE_NUMBER: Cell<Option<usize>> = const { Cell::new(None) };
+    static TEST_WRITE_NUMBER: Cell<usize> = const { Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn fail_atomic_write_number_for_test(number: usize) {
+    TEST_WRITE_NUMBER.with(|value| value.set(0));
+    TEST_FAIL_WRITE_NUMBER.with(|value| value.set(Some(number)));
+}
+
+#[cfg(test)]
+fn should_fail_atomic_write_for_test() -> bool {
+    let number = TEST_WRITE_NUMBER.with(|value| {
+        let next = value.get().saturating_add(1);
+        value.set(next);
+        next
+    });
+    TEST_FAIL_WRITE_NUMBER.with(|value| {
+        if value.get() == Some(number) {
+            value.set(None);
+            true
+        } else {
+            false
+        }
+    })
+}
 
 /// Atomic file writer that creates a sibling temporary file, flushes it to disk,
 /// and renames it over the target.
@@ -20,6 +51,11 @@ impl AtomicFileWriter {
     /// # Errors
     /// Returns [`Error::System`] or [`Error::Refused`] on I/O error or if `overwrite` is false and target exists.
     pub fn write(path: &Path, bytes: &[u8], overwrite: bool) -> Result<()> {
+        #[cfg(test)]
+        if should_fail_atomic_write_for_test() {
+            return Err(Error::System("injected atomic write failure".to_owned()));
+        }
+
         if !overwrite && path.exists() {
             return Err(Error::Refused(format!(
                 "Refusing to overwrite existing file: {}",
