@@ -31,7 +31,7 @@ static WRITER: OnceLock<mpsc::Sender<Request>> = OnceLock::new();
 fn sender() -> &'static mpsc::Sender<Request> {
     WRITER.get_or_init(|| {
         let (tx, rx) = mpsc::channel::<Request>();
-        std::thread::Builder::new()
+        let _writer = std::thread::Builder::new()
             .name("settings-writer".to_owned())
             .spawn(move || {
                 let path = default_settings_path();
@@ -51,13 +51,14 @@ fn sender() -> &'static mpsc::Sender<Request> {
                     }
                     let _ = request.done.send(current.save(&path));
                 }
-            })
-            .expect("settings writer thread");
+            });
         tx
     })
 }
 
-/// Queues one settings mutation and returns a receiver for its durable-write result.\n#[must_use]\npub fn submit(patch: SettingsPatch) -> mpsc::Receiver<Result<()>> {
+/// Queues one settings mutation and returns a receiver for its durable-write result.
+#[must_use]
+pub fn submit(patch: SettingsPatch) -> mpsc::Receiver<Result<()>> {
     let (done_tx, done_rx) = mpsc::channel();
     if sender().send(Request { patch, done: done_tx }).is_err() {
         let (fallback_tx, fallback_rx) = mpsc::channel();
