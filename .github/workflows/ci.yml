@@ -28,6 +28,50 @@ jobs:
         if: matrix.os == 'ubuntu-24.04'
         run: cargo run --release -p sse-ui --bin sse-shell -- --ci-budget
 
+      - name: Checkout pinned C# UI reference
+        if: matrix.os == 'ubuntu-24.04'
+        uses: actions/checkout@v4
+        with:
+          repository: Dmitriy-DE/S.T.A.L.K.E.R.-Save-Editor
+          ref: a5cf5a82fe2314b411a288df5f8c57222998d6f1
+          path: target/csharp-reference
+
+      - name: Set up .NET 10 for C# UI reference
+        if: matrix.os == 'ubuntu-24.04'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Golden UI parity against C# reference
+        if: matrix.os == 'ubuntu-24.04'
+        shell: bash
+        env:
+          STALKER_EDITOR_SCREENSHOT_WIDTH: 1280
+          STALKER_EDITOR_SCREENSHOT_HEIGHT: 860
+        run: |
+          ref=target/csharp-reference
+          dotnet restore "$ref/src/StalkerSaveEditor.App/StalkerSaveEditor.App.csproj"
+          dotnet build "$ref/src/StalkerSaveEditor.App/StalkerSaveEditor.App.csproj" -c Release --no-restore
+          mkdir -p target/ui-golden/csharp target/ui-golden/rust
+          fixture="$ref/tests/Fixtures/xray-call-of-pripyat.sav"
+          dll="$ref/src/StalkerSaveEditor.App/bin/Release/net10.0/StalkerSaveEditor.dll"
+          for tab in overview inventory compare settings; do
+            dotnet "$dll" --screenshot "target/ui-golden/csharp/$tab.png" --fixture "$fixture" --tab "$tab"
+          done
+          cargo run --release -p sse-ui --bin sse-shell -- --screenshot target/ui-golden/rust/overview.png 1280x860 0 --open "$fixture"
+          cargo run --release -p sse-ui --bin sse-shell -- --screenshot target/ui-golden/rust/inventory.png 1280x860 1 --open "$fixture"
+          cargo run --release -p sse-ui --bin sse-shell -- --screenshot target/ui-golden/rust/compare.png 1280x860 6 --open "$fixture"
+          cargo run --release -p sse-ui --bin sse-shell -- --screenshot target/ui-golden/rust/settings.png 1280x860 19 --open "$fixture"
+          python tools/ui_golden_diff.py --reference-dir target/ui-golden/csharp --actual-dir target/ui-golden/rust --tolerance 8 --max-ratio 0.005 overview inventory compare settings
+
+      - name: Upload golden UI parity screenshots
+        if: always() && matrix.os == 'ubuntu-24.04'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-golden-parity
+          path: target/ui-golden/**/*.png
+          if-no-files-found: warn
+
       - name: Fuzz smoke new save formats
         if: matrix.os == 'ubuntu-24.04'
         run: cargo test -p sse-fuzz-smoke --release -- --nocapture
