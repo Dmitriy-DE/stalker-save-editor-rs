@@ -112,6 +112,13 @@ impl Wizard {
                 | ScreenId::Backups
         )
     }
+
+    /// Returns whether the first-run wizard currently replaces the selected screen.
+    #[must_use]
+    pub fn is_showing(&self, tree: &Tree) -> bool {
+        tree.is_visible(self.host)
+    }
+
     /// Synchronizes visibility and hides the normal screen host while active.
     pub fn sync(
         &self,

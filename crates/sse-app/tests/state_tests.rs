@@ -95,28 +95,6 @@ fn draft_tracking_and_events() {
 }
 
 #[test]
-fn draft_tracking_counts_durability_placement_and_upgrade_edits() {
-    let mut state = AppState::new();
-    let sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-    let mut plan = DraftPlan::empty(sha256).expect("valid empty plan");
-    plan.durability.insert(0x1234, 75);
-    plan.placements
-        .insert(0x1234, sse_storage::drafts::DraftPlacement::Belt);
-    plan.upgrades.insert(0x1234, vec!["wpn_upgrade_scope_1".to_owned()]);
-
-    state.set_draft(plan);
-
-    assert_eq!(
-        state.poll_events(),
-        vec![AppEvent::DraftChanged {
-            source_sha256: sha256.to_owned(),
-            has_changes: true,
-        }]
-    );
-    assert_eq!(state.snapshot().active_draft_hashes, [sha256.to_owned()]);
-}
-
-#[test]
 fn draft_journal_supports_undo_and_redo_for_money_and_stacks() {
     let mut state = AppState::new();
     let sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";

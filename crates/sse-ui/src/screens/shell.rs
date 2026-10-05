@@ -1258,13 +1258,14 @@ impl Shell {
                 return Ok(Flow::Continue);
             }
             if !tree.dialog_open() && *ctrl && matches!(*keysym, 0x46 | 0x66) {
-                let target = if self.current() == Some(ScreenId::Inventory) {
-                    ScreenId::Inventory
-                } else {
-                    ScreenId::Overview
-                };
-                if let Some(index) = self.screens.iter().position(|screen| screen.id() == target) {
-                    self.select(tree, index)?;
+                if !self.wizard.is_showing(tree) {
+                    if let Some(index) = self
+                        .screens
+                        .iter()
+                        .position(|screen| screen.id() == ScreenId::Inventory)
+                    {
+                        self.select(tree, index)?;
+                    }
                 }
                 self.route(tree, message, None)?;
                 return Ok(Flow::Continue);
@@ -1428,7 +1429,7 @@ impl App<AppMessage> for Shell {
 #[cfg(test)]
 mod tests {
     use super::{save_eligibility, ScreenId, Shell};
-    use crate::event_loop::{Flow, Message, WindowEvent};
+    use crate::event_loop::{channel_pair, Flow, Message, WindowEvent};
     use crate::glyphs::Fonts;
     use crate::raster::Color;
     use crate::widget::Tree;
@@ -1644,6 +1645,41 @@ mod tests {
         });
         shell.handle(&mut tree, &search, None)?;
         assert_eq!(tree.focused(), None);
+        Ok(())
+    }
+
+    #[test]
+    fn ctrl_f_opens_inventory_search_after_a_save_is_loaded() -> sse_core::Result<()> {
+        let fixture = include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-source.sav");
+        let path = std::env::temp_dir().join(format!("sse-shell-ctrl-f-{}.sav", std::process::id()));
+        std::fs::write(&path, fixture)?;
+        let (proxy, receiver) = channel_pair::<super::super::AppMessage>();
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut shell = Shell::build(&mut tree, Some(proxy))?;
+        assert!(shell.open_save(&mut tree, &path)?);
+
+        while shell.app.current_save() != Some(path.as_path()) {
+            let loaded = receiver
+                .recv_timeout(std::time::Duration::from_secs(10))
+                .map_err(|error| sse_core::Error::System(error.to_string()))?;
+            shell.handle(&mut tree, &loaded, None)?;
+        }
+
+        let search = Message::Window(WindowEvent::Key {
+            pressed: true,
+            keysym: u32::from('f'),
+            text: None,
+            ctrl: true,
+            shift: false,
+        });
+        shell.handle(&mut tree, &search, None)?;
+
+        assert_eq!(shell.current(), Some(ScreenId::Inventory));
+        let focused = tree
+            .focused()
+            .ok_or_else(|| sse_core::Error::damaged("Ctrl+F did not focus inventory search"))?;
+        assert!(tree.input_text(focused).is_ok(), "Ctrl+F must focus a text input");
+        std::fs::remove_file(path)?;
         Ok(())
     }
 

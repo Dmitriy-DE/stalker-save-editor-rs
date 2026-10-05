@@ -79,6 +79,7 @@ impl FileSystem for StdFileSystem {
     }
 
     fn copy_permissions(&self, source: &Path, destination: &Path) -> Result<()> {
+        sse_sys::secure_fs::copy_owner_and_group(source, destination)?;
         fs::set_permissions(destination, fs::metadata(source)?.permissions())?;
         Ok(())
     }
@@ -572,12 +573,32 @@ pub fn replace_transaction_with_verifier<T>(
     backup_directory: &Path,
     verify_readback: impl FnOnce(&[u8]) -> Result<T>,
 ) -> Result<(ReplacementReceipt, T)> {
-    replace_with_file_system_and_verifier(
+    replace_transaction_with_summary_and_verifier(
+        source_path,
+        expected_source_sha256,
+        replacement,
+        backup_directory,
+        EditSummary::default(),
+        verify_readback,
+    )
+}
+
+/// Replaces a save, records money and stack edits, and verifies durable read-back bytes before commit.
+pub fn replace_transaction_with_summary_and_verifier<T>(
+    source_path: &Path,
+    expected_source_sha256: &str,
+    replacement: &[u8],
+    backup_directory: &Path,
+    summary: EditSummary,
+    verify_readback: impl FnOnce(&[u8]) -> Result<T>,
+) -> Result<(ReplacementReceipt, T)> {
+    replace_with_file_system_and_summary_and_verifier(
         &StdFileSystem,
         source_path,
         expected_source_sha256,
         replacement,
         backup_directory,
+        summary,
         verify_readback,
     )
 }
@@ -610,13 +631,33 @@ pub fn replace_with_file_system_and_verifier<T>(
     backup_directory: &Path,
     verify_readback: impl FnOnce(&[u8]) -> Result<T>,
 ) -> Result<(ReplacementReceipt, T)> {
+    replace_with_file_system_and_summary_and_verifier(
+        files,
+        source_path,
+        expected_source_sha256,
+        replacement,
+        backup_directory,
+        EditSummary::default(),
+        verify_readback,
+    )
+}
+
+fn replace_with_file_system_and_summary_and_verifier<T>(
+    files: &impl FileSystem,
+    source_path: &Path,
+    expected_source_sha256: &str,
+    replacement: &[u8],
+    backup_directory: &Path,
+    summary: EditSummary,
+    verify_readback: impl FnOnce(&[u8]) -> Result<T>,
+) -> Result<(ReplacementReceipt, T)> {
     replace_with_file_system_and_verifier_operation(
         files,
         source_path,
         expected_source_sha256,
         replacement,
         backup_directory,
-        JournalOperation::Replace,
+        JournalOperation::Replace(summary),
         verify_readback,
     )
 }
@@ -860,7 +901,7 @@ struct Journal<'a> {
 
 #[derive(Clone, Copy)]
 enum JournalOperation<'a> {
-    Replace,
+    Replace(EditSummary),
     Restore(&'a Path),
 }
 
@@ -1231,7 +1272,15 @@ fn serialize_journal(journal: &Journal<'_>) -> Vec<u8> {
     let recovery_path = json_escape(&journal.recovery_path.to_string_lossy());
     let created_at = json_escape(journal.created_at);
     let operation = match journal.operation {
-        JournalOperation::Replace => "{\"mode\":\"replace\",\"money\":null,\"stack_count\":0}".to_owned(),
+        JournalOperation::Replace(summary) => {
+            let money = summary
+                .money
+                .map_or_else(|| "null".to_owned(), |value| value.to_string());
+            format!(
+                "{{\"mode\":\"replace\",\"money\":{money},\"stack_count\":{}}}",
+                summary.stack_count
+            )
+        }
         JournalOperation::Restore(restore_from) => format!(
             "{{\"mode\":\"restore\",\"restore_from\":\"{}\",\"money\":null,\"stack_count\":0}}",
             json_escape(&restore_from.to_string_lossy())
@@ -1432,8 +1481,8 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn replacement_preserves_unix_mode_bits() -> TestResult {
-        use std::os::unix::fs::PermissionsExt;
+    fn replacement_preserves_unix_mode_and_owner_bits() -> TestResult {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
         let unique = format!("sse-storage-permissions-{}", std::process::id());
         let root = std::env::temp_dir().join(unique);
@@ -1446,6 +1495,9 @@ mod tests {
         let replacement = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-expected.sav");
         std::fs::write(&source, source_bytes)?;
         std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o640))?;
+        let source_metadata = std::fs::metadata(&source)?;
+        let source_uid = source_metadata.uid();
+        let source_gid = source_metadata.gid();
         let source_hash = sse_codecs::sha256::sha256_hex(source_bytes);
 
         let failed = super::replace_transaction_with_verifier(&source, &source_hash, replacement, &backups, |_| {
@@ -1455,6 +1507,9 @@ mod tests {
         assert_eq!(std::fs::read(&source)?, source_bytes);
         let original_mode = std::fs::metadata(&source)?.permissions().mode() & 0o777;
         assert_eq!(original_mode, 0o640);
+        let original_metadata = std::fs::metadata(&source)?;
+        assert_eq!(original_metadata.uid(), source_uid);
+        assert_eq!(original_metadata.gid(), source_gid);
         assert!(std::fs::read_dir(&backups)?.next().is_none());
         assert!(std::fs::read_dir(&saves)?.all(|entry| { entry.is_ok_and(|entry| entry.file_name() == "save.sav") }));
 
@@ -1462,6 +1517,9 @@ mod tests {
 
         let mode = std::fs::metadata(&source)?.permissions().mode() & 0o777;
         assert_eq!(mode, 0o640);
+        let replaced_metadata = std::fs::metadata(&source)?;
+        assert_eq!(replaced_metadata.uid(), source_uid);
+        assert_eq!(replaced_metadata.gid(), source_gid);
         assert_eq!(std::fs::read(&source)?, replacement);
         assert!(receipt
             .backup_path

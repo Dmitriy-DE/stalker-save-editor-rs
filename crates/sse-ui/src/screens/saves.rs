@@ -1819,6 +1819,59 @@ fn group_xray_items<'a>(
     groups
 }
 
+#[derive(Hash, PartialEq, Eq)]
+struct S2ItemGroupKey {
+    type_key: [u8; 3],
+    kind_code: u8,
+    count: u32,
+    width: Option<u16>,
+    height: Option<u16>,
+    condition_bits: Option<u32>,
+    weight_bits: u32,
+    modules: Vec<String>,
+    upgrades: Vec<String>,
+    unique_handle: Option<u32>,
+}
+
+fn group_s2_items<'a>(items: &[&'a S2InventoryItem], state: &WorkspaceState) -> Vec<Vec<&'a S2InventoryItem>> {
+    let mut groups: Vec<Vec<&S2InventoryItem>> = Vec::new();
+    let mut positions: HashMap<S2ItemGroupKey, usize> = HashMap::new();
+    for item in items {
+        let handle = ItemHandle::Stalker2(item.handle);
+        let condition_bits = state
+            .pending_durability
+            .get(&handle)
+            .map(|value| (f32::from(*value) / 100.0).to_bits())
+            .or_else(|| item.condition.map(f32::to_bits));
+        let has_pending_edit = state.pending_stacks.contains_key(&handle)
+            || state.pending_durability.contains_key(&handle)
+            || state.pending_placements.contains_key(&handle)
+            || state.pending_upgrades.contains_key(&handle);
+        let key = S2ItemGroupKey {
+            type_key: item.type_key,
+            kind_code: item.kind_code,
+            count: item.count,
+            width: item.width,
+            height: item.height,
+            condition_bits,
+            weight_bits: item.total_weight.to_bits(),
+            modules: item.modules.clone(),
+            upgrades: item.upgrades.clone(),
+            unique_handle: (item.editable_count || has_pending_edit).then_some(item.handle),
+        };
+        if let Some(index) = positions.get(&key).copied() {
+            if let Some(group) = groups.get_mut(index) {
+                group.push(item);
+            }
+        } else {
+            let index = groups.len();
+            positions.insert(key, index);
+            groups.push(vec![item]);
+        }
+    }
+    groups
+}
+
 struct UpgradeControl {
     widget: WidgetId,
     key: Option<String>,
@@ -2268,7 +2321,8 @@ impl Inventory {
                             && search_matches(&format!("{} {key}", item.display_name.as_deref().unwrap_or("")), &query)
                     })
                     .collect();
-                self.update_inventory_filters(cx, visible_items.len())?;
+                let visible_groups = group_s2_items(&visible_items, &state);
+                self.update_inventory_filters(cx, visible_groups.len())?;
                 if !self.selected_item.is_some_and(|selected| {
                     visible_items
                         .iter()
@@ -2282,14 +2336,25 @@ impl Inventory {
                 }
                 let start = self.page.saturating_mul(INVENTORY_PAGE_SIZE);
                 for (offset, row) in self.rows.iter_mut().enumerate() {
-                    if let Some(item) = visible_items.get(start.saturating_add(offset)) {
+                    if let Some(group) = visible_groups.get(start.saturating_add(offset)) {
+                        let Some(item) = group.first().copied() else {
+                            continue;
+                        };
                         cx.tree.set_visible(row.row, true)?;
                         let name = item.display_name.as_deref().unwrap_or("Неизвестный предмет");
-                        let count = state
-                            .pending_stacks
-                            .get(&ItemHandle::Stalker2(item.handle))
-                            .copied()
-                            .unwrap_or(item.count);
+                        let count = if item.editable_count {
+                            state
+                                .pending_stacks
+                                .get(&ItemHandle::Stalker2(item.handle))
+                                .copied()
+                                .unwrap_or(item.count)
+                                .to_string()
+                        } else {
+                            group
+                                .iter()
+                                .fold(0_u64, |total, item| total.saturating_add(u64::from(item.count)))
+                                .to_string()
+                        };
                         let key = format!(
                             "{:02x}{:02x}{:02x}",
                             item.type_key[0], item.type_key[1], item.type_key[2]
@@ -2332,7 +2397,7 @@ impl Inventory {
                         row.handle = None;
                     }
                 }
-                let pages = visible_items
+                let pages = visible_groups
                     .len()
                     .saturating_add(INVENTORY_PAGE_SIZE.saturating_sub(1))
                     / INVENTORY_PAGE_SIZE;
@@ -3365,12 +3430,13 @@ fn commit_save_edits_to(
     stash_moves: &BTreeSet<u32>,
     backup_directory: &Path,
 ) -> Result<(Arc<LoadedSave>, String)> {
-    let (packed, _summary) = prepare_save_edits(selected, edits, stash_moves)?;
-    let (receipt, reloaded) = transaction::replace_transaction_with_verifier(
+    let (packed, summary) = prepare_save_edits(selected, edits, stash_moves)?;
+    let (receipt, reloaded) = transaction::replace_transaction_with_summary_and_verifier(
         &selected.slot.path,
         &selected.source_sha256,
         packed.as_slice(),
         backup_directory,
+        summary,
         |read_back| {
             let mut slot = selected.slot.clone();
             let metadata = std::fs::metadata(&slot.path)?;
@@ -5075,8 +5141,8 @@ pub(super) fn short_text(text: &str, limit: usize) -> String {
 mod tests {
     use super::{
         add_external_file_banner, commit_save_edits_to, prepare_save_edits, prepare_xray_edits, AddRequest,
-        DraftJournal, DraftPlan, DraftStore, Inventory, LoadFinished, LoadedSave, Overview, PendingInventoryEdits,
-        S2Save, SaveBuffer, SaveSlot, Workspace,
+        DraftJournal, DraftPlan, DraftStore, Inventory, ItemHandle, LoadFinished, LoadedSave, Overview,
+        PendingInventoryEdits, S2Save, SaveBuffer, SaveSlot, Workspace,
     };
     use crate::event_loop::{channel_pair, Message, WindowEvent};
     use crate::glyphs::Fonts;
@@ -5406,6 +5472,71 @@ mod tests {
     }
 
     #[test]
+    fn identical_s2_items_share_a_row_until_one_is_edited() -> sse_core::Result<()> {
+        let temp = TempDirectory::new();
+        let source = include_bytes!("../../../../fixtures/synthetic/writer-s2-stacks/s2-stacks-source.sav");
+        let packed = SaveBuffer::from_vec(source.to_vec());
+        let source_sha256 = sse_codecs::sha256::sha256_hex(packed.as_slice());
+        let save = S2Save::from_bytes(packed.as_slice())?;
+        let stash = save.stash().ok();
+        let mut item = save
+            .items()
+            .into_iter()
+            .next()
+            .ok_or_else(|| Error::damaged("S2 fixture has no inventory item"))?;
+        item.editable_count = false;
+        item.count = 1;
+        item.condition = None;
+        item.condition_offset = None;
+        item.modules.clear();
+        item.upgrades.clear();
+        let mut duplicate = item.clone();
+        duplicate.handle = duplicate.handle.saturating_add(1);
+        duplicate.x = duplicate.x.map(|value| value.saturating_add(1));
+        duplicate.record_offset = duplicate.record_offset.saturating_add(1);
+        duplicate.count_offset = duplicate.count_offset.saturating_add(1);
+        let loaded = LoadedSave::from_s2(
+            fixture_slot("s2-stacks-source.sav", "stalker2", "stalker2"),
+            packed,
+            source_sha256.clone(),
+            save,
+            vec![item, duplicate.clone()],
+            stash,
+        );
+        let workspace = Workspace::with_draft_directory(temp.0.join("drafts"));
+        workspace.lock().selected = Some(Arc::new(loaded));
+        let mut app = sse_app::state::AppState::new();
+        app.set_current_save_identity(PathBuf::from("s2-stacks-source.sav"), source_sha256.clone());
+        app.set_draft_journal(DraftJournal::new(vec![DraftPlan::empty(&source_sha256)?], 0)?);
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let mut screen = Inventory::new(workspace.clone());
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: None,
+            status: None,
+            app: &mut app,
+        };
+
+        screen.build(&mut cx, host)?;
+        assert_eq!(screen.rows.iter().filter(|row| cx.tree.is_visible(row.row)).count(), 1);
+
+        workspace
+            .lock()
+            .pending_stacks
+            .insert(super::ItemHandle::Stalker2(duplicate.handle), 2);
+        screen.render(&mut cx)?;
+        assert_eq!(screen.rows.iter().filter(|row| cx.tree.is_visible(row.row)).count(), 2);
+        Ok(())
+    }
+
+    #[test]
     fn s2_money_edit_uses_the_verified_writer() -> sse_core::Result<()> {
         let source = include_bytes!("../../../../fixtures/synthetic/writer-s2-stacks/s2-stacks-source.sav");
         let packed = SaveBuffer::from_vec(source.to_vec());
@@ -5556,6 +5687,49 @@ mod tests {
             &xray_after.data,
             super::SaveData::Xray { save, .. } if save.money().ok() == Some(xray_money)
         ));
+        let xray_backup = sse_storage::transaction::list_backups(&backup)?
+            .into_iter()
+            .next()
+            .ok_or_else(|| Error::damaged("X-Ray write did not create a backup journal"))?;
+        let xray_journal = fs::read_to_string(xray_backup.journal_path)?;
+        assert!(xray_journal.contains(&format!(
+            "\"operation\":{{\"mode\":\"replace\",\"money\":{xray_money},\"stack_count\":0}}"
+        )));
+
+        let xray_stack_source =
+            include_bytes!("../../../../fixtures/synthetic/writer-stacks/xray-stack-cop-source.sav");
+        let xray_stack_path = saves.join("xray-stack.sav");
+        fs::write(&xray_stack_path, xray_stack_source)?;
+        let xray_stack = LoadedSave::read(fixture_slot(&xray_stack_path.to_string_lossy(), "stalker-cop", "cop"))?;
+        let xray_stack_money = match &xray_stack.data {
+            super::SaveData::Xray { save, .. } => save.money()?.saturating_add(777),
+            super::SaveData::Stalker2 { .. } => return Err(Error::damaged("X-Ray stack fixture parsed as S2")),
+        };
+        let stack_backup = temp.0.join("xray-stack-backups");
+        let (xray_stack_after, _) = commit_save_edits_to(
+            &xray_stack,
+            &PendingInventoryEdits {
+                money: Some(xray_stack_money),
+                stacks: BTreeMap::from([(ItemHandle::Xray(0x1234), 44)]),
+                ..PendingInventoryEdits::default()
+            },
+            &BTreeSet::new(),
+            &stack_backup,
+        )?;
+        assert!(matches!(
+            &xray_stack_after.data,
+            super::SaveData::Xray { save, inventory }
+                if save.money().ok() == Some(xray_stack_money)
+                    && inventory.iter().any(|item| item.handle == 0x1234 && item.count == Some(44))
+        ));
+        let stack_journal = sse_storage::transaction::list_backups(&stack_backup)?
+            .into_iter()
+            .next()
+            .ok_or_else(|| Error::damaged("X-Ray stack write did not create a backup journal"))?;
+        let stack_journal = fs::read_to_string(stack_journal.journal_path)?;
+        assert!(stack_journal.contains(&format!(
+            "\"operation\":{{\"mode\":\"replace\",\"money\":{xray_stack_money},\"stack_count\":1}}"
+        )));
 
         let s2_source = include_bytes!("../../../../fixtures/synthetic/writer-s2-stacks/s2-stacks-source.sav");
         let s2_path = saves.join("s2.sav");
