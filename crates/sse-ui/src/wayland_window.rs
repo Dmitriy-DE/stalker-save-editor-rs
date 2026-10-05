@@ -130,21 +130,90 @@ impl WaylandWindow {
     }
 }
 
+impl WaylandWindow {
+    fn recreate_buffers(&mut self, width: u32, height: u32) -> Result<()> {
+        let first_pool = self.next_object_id;
+        let first_buffer = first_pool
+            .checked_add(1)
+            .ok_or_else(|| Error::Refused("Wayland object ID overflow".to_owned()))?;
+        let second_pool = first_pool
+            .checked_add(2)
+            .ok_or_else(|| Error::Refused("Wayland object ID overflow".to_owned()))?;
+        let second_buffer = first_pool
+            .checked_add(3)
+            .ok_or_else(|| Error::Refused("Wayland object ID overflow".to_owned()))?;
+        let next_object_id = first_pool
+            .checked_add(4)
+            .ok_or_else(|| Error::Refused("Wayland object ID overflow".to_owned()))?;
+
+        let first = create_buffer(&self.writer, self.shm, width, height, first_pool, first_buffer)?;
+        let second = create_buffer(&self.writer, self.shm, width, height, second_pool, second_buffer)?;
+        for slot in &self.buffers {
+            let _ = send_shared(&self.writer, slot.buffer, 0, &[]);
+            let _ = send_shared(&self.writer, slot.pool, 1, &[]);
+        }
+        self.buffers = [first, second];
+        self.size = (width, height);
+        self.next_object_id = next_object_id;
+        let mut sync = self
+            .sync
+            .lock()
+            .map_err(|_| Error::System("Wayland buffer state lock poisoned".to_owned()))?;
+        sync.ids = [self.buffers[0].buffer, self.buffers[1].buffer];
+        sync.released = [true, true];
+        Ok(())
+    }
+
+    fn release_slot(&self, index: usize) {
+        if let Ok(mut sync) = self.sync.lock() {
+            if let Some(released) = sync.released.get_mut(index) {
+                *released = true;
+            }
+        }
+    }
+}
+
 impl Present for WaylandWindow {
     fn present(&mut self, frame: &[u32], stride: usize, width: u32, height: u32, rects: &[Rect]) -> Result<()> {
         if rects.is_empty() {
             return Ok(());
         }
-        if (width, height) != self.size || stride != usize::try_from(width).unwrap_or(0) {
-            return Err(Error::Refused(
-                "Wayland resize requires buffer recreation; using XWayland fallback is recommended".to_owned(),
-            ));
+        if stride != usize::try_from(width).unwrap_or(0) {
+            return Err(Error::Refused("Wayland frame stride does not match width".to_owned()));
         }
-        self.memory.write_u32_le(frame).map_err(io)?;
-        send(&mut self.stream, self.surface, 1, &u32s(&[self.buffer, 0, 0]))?; // attach
+        if (width, height) != self.size {
+            self.recreate_buffers(width, height)?;
+        }
+
+        let slot_index = {
+            let mut sync = self
+                .sync
+                .lock()
+                .map_err(|_| Error::System("Wayland buffer state lock poisoned".to_owned()))?;
+            let Some(index) = sync.released.iter().position(|released| *released) else {
+                return Ok(());
+            };
+            if let Some(released) = sync.released.get_mut(index) {
+                *released = false;
+            }
+            index
+        };
+
+        let slot = self
+            .buffers
+            .get_mut(slot_index)
+            .ok_or_else(|| Error::damaged("Wayland buffer slot is missing"))?;
+        if let Err(error) = slot.memory.write_u32_le(frame).map_err(io) {
+            self.release_slot(slot_index);
+            return Err(error);
+        }
+        if let Err(error) = send_shared(&self.writer, self.surface, 1, &u32s(&[slot.buffer, 0, 0])) {
+            self.release_slot(slot_index);
+            return Err(error);
+        }
         for rect in rects {
-            send(
-                &mut self.stream,
+            if let Err(error) = send_shared(
+                &self.writer,
                 self.surface,
                 2,
                 &i32s(&[
@@ -153,18 +222,26 @@ impl Present for WaylandWindow {
                     i32::try_from(rect.width).unwrap_or(i32::MAX),
                     i32::try_from(rect.height).unwrap_or(i32::MAX),
                 ]),
-            )?;
+            ) {
+                self.release_slot(slot_index);
+                return Err(error);
+            }
         }
-        send(&mut self.stream, self.surface, 6, &[])?;
-        self.stream.flush().map_err(io)
+        if let Err(error) = send_shared(&self.writer, self.surface, 6, &[]) {
+            self.release_slot(slot_index);
+            return Err(error);
+        }
+        Ok(())
     }
 }
 
 impl Drop for WaylandWindow {
     fn drop(&mut self) {
-        let _ = send(&mut self.stream, self.buffer, 0, &[]);
-        let _ = send(&mut self.stream, self.pool, 1, &[]);
         let _ = self.closed.lock().map(|mut value| *value = true);
+        for slot in &self.buffers {
+            let _ = send_shared(&self.writer, slot.buffer, 0, &[]);
+            let _ = send_shared(&self.writer, slot.pool, 1, &[]);
+        }
     }
 }
 
