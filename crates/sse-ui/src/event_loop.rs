@@ -250,6 +250,12 @@ pub fn run<U, A: App<U>, P: Present>(
     Ok(stats)
 }
 
+/// Applies one message without entering the blocking native receiver loop.
+/// Browser hosts use this to feed events from JavaScript into the same retained UI dispatcher.
+pub fn dispatch<U, A: App<U>>(tree: &mut Tree, app: &mut A, message: &Message<U>) -> Flow {
+    handle(tree, app, message)
+}
+
 fn handle<U, A: App<U>>(tree: &mut Tree, app: &mut A, message: &Message<U>) -> Flow {
     let mut clicked = None;
     if let Message::Window(event) = message {
