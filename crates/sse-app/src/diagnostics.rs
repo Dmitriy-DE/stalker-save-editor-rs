@@ -7,10 +7,11 @@ use crate::paths::default_data_directory;
 use sse_codecs::{
     crc32::crc32,
     deflate::{compress_raw, Level},
+    zip::{self, Entry},
 };
 use sse_core::{Error, Result};
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -22,6 +23,8 @@ const MAX_CRASH_BYTES: usize = 64 * 1024;
 const MAX_BUNDLE_BYTES: usize = 2 * 1024 * 1024;
 const PART_BYTES: usize = 256 * 1024;
 const ROTATIONS: usize = 3;
+const MAX_DIAGNOSTIC_GAME_LOG_BYTES: usize = 1024 * 1024;
+const MAX_DIAGNOSTIC_GAME_LOG_FILES: usize = 64;
 
 static LOG_GATE: Mutex<()> = Mutex::new(());
 static LOG_DIRECTORY: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
@@ -369,11 +372,250 @@ pub fn save_diagnostics_bundle(path: &Path, environment_report: Option<&str>) ->
 #[must_use]
 pub fn environment_report() -> String {
     format!(
-        "OS: {}\nArchitecture: {}\nData directory: {}\n",
+        "Version: {}\nOS: {}\nArchitecture: {}\nData directory: {}\n",
+        env!("CARGO_PKG_VERSION"),
         std::env::consts::OS,
         std::env::consts::ARCH,
         redact(&default_data_directory().to_string_lossy())
     )
+}
+
+/// One discovered game installation to include in a local diagnostics report.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DiagnosticGame {
+    /// Display name of the game.
+    pub title: String,
+    /// Installation directory; the report includes only its redacted form.
+    pub install_directory: PathBuf,
+    /// Whether this is S.T.A.L.K.E.R. 2, whose log paths are under `Saved`.
+    pub is_stalker2: bool,
+}
+
+/// Builds a local ZIP report containing application diagnostics and discovered game paths.
+/// Game logs and crash files are read only when `include_game_logs` is true.
+///
+/// # Errors
+/// Returns an error if the ZIP cannot be encoded.
+pub fn diagnostics_zip(games: &[DiagnosticGame], include_game_logs: bool) -> Result<Vec<u8>> {
+    diagnostics_zip_at(&log_directory(), games, include_game_logs)
+}
+
+/// Writes a local diagnostics ZIP to the selected path. This function never sends report data.
+///
+/// # Errors
+/// Returns an error if the archive cannot be built or written.
+pub fn save_diagnostics_zip(path: &Path, games: &[DiagnosticGame], include_game_logs: bool) -> Result<()> {
+    if path.as_os_str().is_empty() {
+        return Err(Error::Refused("diagnostics path is empty".to_owned()));
+    }
+    let archive = diagnostics_zip(games, include_game_logs)?;
+    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, archive)?;
+    Ok(())
+}
+
+fn diagnostics_zip_at(log_directory: &Path, games: &[DiagnosticGame], include_game_logs: bool) -> Result<Vec<u8>> {
+    let mut entries = vec![Entry {
+        name: "report/environment.txt".to_owned(),
+        data: redact(&environment_report()).into_bytes(),
+    }];
+    let mut game_report = String::from("Found game installations:\n");
+    let mut ordered_games: Vec<&DiagnosticGame> = games.iter().collect();
+    ordered_games.sort_by(|left, right| {
+        left.title
+            .cmp(&right.title)
+            .then_with(|| left.install_directory.cmp(&right.install_directory))
+    });
+    for game in &ordered_games {
+        game_report.push_str(&single_line(&redact(&game.title)));
+        game_report.push('\t');
+        game_report.push_str(&single_line(&redact(&game.install_directory.to_string_lossy())));
+        game_report.push('\n');
+    }
+    entries.push(Entry {
+        name: "report/games.txt".to_owned(),
+        data: game_report.into_bytes(),
+    });
+
+    for name in [
+        CRASH_FILE,
+        LOG_FILE,
+        "save-editor.log.1",
+        "save-editor.log.2",
+        "save-editor.log.3",
+    ] {
+        if let Some(data) = read_diagnostic_file(&log_directory.join(name), log_directory, PART_BYTES) {
+            let archive_name = if name == CRASH_FILE {
+                "application/last-crash.txt".to_owned()
+            } else {
+                format!("application/{name}")
+            };
+            entries.push(Entry {
+                name: archive_name,
+                data,
+            });
+        }
+    }
+
+    if include_game_logs {
+        let mut total_game_bytes = 0_usize;
+        let mut file_count = 0_usize;
+        'games: for (game_index, game) in ordered_games.iter().enumerate() {
+            for (archive_name, path) in game_log_paths(game, game_index) {
+                if file_count >= MAX_DIAGNOSTIC_GAME_LOG_FILES || total_game_bytes >= MAX_DIAGNOSTIC_GAME_LOG_BYTES {
+                    break 'games;
+                }
+                let remaining = MAX_DIAGNOSTIC_GAME_LOG_BYTES.saturating_sub(total_game_bytes);
+                let maximum = remaining.min(PART_BYTES);
+                let Some(data) = read_diagnostic_file(&path, &game.install_directory, maximum) else {
+                    continue;
+                };
+                if data.is_empty() {
+                    continue;
+                }
+                total_game_bytes = total_game_bytes.saturating_add(data.len());
+                file_count = file_count.saturating_add(1);
+                entries.push(Entry {
+                    name: archive_name,
+                    data,
+                });
+            }
+        }
+    }
+
+    zip::write(&entries, Level::Default)
+}
+
+fn game_log_paths(game: &DiagnosticGame, game_index: usize) -> Vec<(String, PathBuf)> {
+    let Ok(root) = fs::canonicalize(&game.install_directory) else {
+        return Vec::new();
+    };
+    let locations: &[(&str, &str)] = if game.is_stalker2 {
+        &[("Saved/Logs", "logs"), ("Saved/Crashes", "crashes")]
+    } else {
+        &[("appdata/logs", "xray-logs"), ("logs", "xray-logs")]
+    };
+    let mut found = Vec::new();
+    for (relative, category) in locations {
+        let directory = game.install_directory.join(relative);
+        let Ok(metadata) = fs::symlink_metadata(&directory) else {
+            continue;
+        };
+        if !metadata.file_type().is_dir() {
+            continue;
+        }
+        let Ok(directory) = fs::canonicalize(directory) else {
+            continue;
+        };
+        if !directory.starts_with(&root) {
+            continue;
+        }
+        let Ok(entries) = fs::read_dir(&directory) else {
+            continue;
+        };
+        let mut files: Vec<PathBuf> = entries
+            .filter_map(std::result::Result::ok)
+            .filter_map(|entry| {
+                let file_type = entry.file_type().ok()?;
+                if file_type.is_file() {
+                    Some(entry.path())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        files.sort();
+        for path in files {
+            let Some(name) = path.file_name().map(|name| name.to_string_lossy().into_owned()) else {
+                continue;
+            };
+            if !game.is_stalker2 && !is_xray_log_name(&name) {
+                continue;
+            }
+            if game.is_stalker2 && !is_stalker2_log_name(&name, category) {
+                continue;
+            }
+            found.push((
+                format!("game-logs/{game_index:02}/{category}/{}", safe_archive_segment(&name)),
+                path,
+            ));
+        }
+    }
+    found
+}
+
+fn is_xray_log_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower.starts_with("xray_") && lower.ends_with(".log")
+}
+
+fn is_stalker2_log_name(name: &str, category: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    if category == "crashes" {
+        matches!(lower.rsplit('.').next(), Some("log" | "txt" | "dmp" | "mdmp" | "crash"))
+    } else {
+        matches!(lower.rsplit('.').next(), Some("log" | "txt"))
+    }
+}
+
+fn safe_archive_segment(value: &str) -> String {
+    let segment: String = value
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if segment.is_empty() || segment == "." || segment == ".." {
+        "log.bin".to_owned()
+    } else {
+        segment
+    }
+}
+
+fn read_diagnostic_file(path: &Path, root: &Path, maximum: usize) -> Option<Vec<u8>> {
+    if maximum == 0 {
+        return None;
+    }
+    let root = fs::canonicalize(root).ok()?;
+    let metadata = fs::symlink_metadata(path).ok()?;
+    if !metadata.file_type().is_file() {
+        return None;
+    }
+    let path = fs::canonicalize(path).ok()?;
+    if !path.starts_with(&root) {
+        return None;
+    }
+    let mut file = File::open(path).ok()?;
+    let length = file.metadata().ok()?.len();
+    let maximum_u64 = u64::try_from(maximum).ok()?;
+    file.seek(SeekFrom::Start(length.saturating_sub(maximum_u64))).ok()?;
+    let mut data = Vec::with_capacity(usize::try_from(length.min(maximum_u64)).ok()?);
+    file.take(maximum_u64).read_to_end(&mut data).ok()?;
+    if let Ok(text) = std::str::from_utf8(&data) {
+        let redacted = redact(text);
+        Some(tail_utf8(&redacted, maximum).as_bytes().to_vec())
+    } else {
+        Some(data)
+    }
+}
+
+fn single_line(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| {
+            if matches!(character, '\r' | '\n' | '\t') {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -421,6 +663,132 @@ mod tests {
         assert!(!text.contains("alice"));
         configure_log_directory(None);
         let _ = fs::remove_dir_all(directory);
+        Ok(())
+    }
+
+    #[test]
+    fn diagnostic_zip_redacts_metadata_and_omits_game_logs_without_consent() -> Result<()> {
+        let root = std::env::temp_dir().join(format!("sse-diagnostic-zip-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let app_logs = root.join("app-logs");
+        let xray = root.join("games").join("xray");
+        let stalker2 = root.join("games").join("stalker2");
+        fs::create_dir_all(app_logs.join("game"))?;
+        fs::create_dir_all(xray.join("appdata").join("logs"))?;
+        fs::create_dir_all(stalker2.join("Saved").join("Logs"))?;
+        fs::create_dir_all(stalker2.join("Saved").join("Crashes"))?;
+        fs::write(
+            app_logs.join("save-editor.log"),
+            "startup C:\\Users\\Alice\\Documents\\secret.sav\n",
+        )?;
+        fs::write(
+            xray.join("appdata").join("logs").join("xray_1.log"),
+            "xray diagnostic\n",
+        )?;
+        fs::write(
+            stalker2.join("Saved").join("Logs").join("Stalker2.log"),
+            "game diagnostic\n",
+        )?;
+        fs::write(
+            stalker2.join("Saved").join("Crashes").join("crash.txt"),
+            "crash diagnostic\n",
+        )?;
+        let games = [
+            DiagnosticGame {
+                title: "Shadow of Chernobyl".to_owned(),
+                install_directory: xray,
+                is_stalker2: false,
+            },
+            DiagnosticGame {
+                title: "Heart of Chornobyl".to_owned(),
+                install_directory: stalker2,
+                is_stalker2: true,
+            },
+            DiagnosticGame {
+                title: "Clear Sky".to_owned(),
+                install_directory: PathBuf::from(r"C:\Users\Alice\Games\Clear Sky"),
+                is_stalker2: false,
+            },
+        ];
+
+        let archive = diagnostics_zip_at(&app_logs, &games, false)?;
+        let entries = sse_codecs::zip::read(&archive, 4 * 1024 * 1024)?;
+        let names: Vec<&str> = entries.iter().map(|entry| entry.name.as_str()).collect();
+        assert!(names.contains(&"report/environment.txt"));
+        assert!(names.contains(&"report/games.txt"));
+        assert!(names.contains(&"application/save-editor.log"));
+        assert!(!names.iter().any(|name| name.starts_with("game-logs/")));
+        let environment = entries
+            .iter()
+            .find(|entry| entry.name == "report/environment.txt")
+            .map(|entry| String::from_utf8_lossy(&entry.data))
+            .ok_or_else(|| Error::damaged("environment report missing from diagnostic ZIP"))?;
+        assert!(environment.contains(&format!("Version: {}", env!("CARGO_PKG_VERSION"))));
+        let application_log = entries
+            .iter()
+            .find(|entry| entry.name == "application/save-editor.log")
+            .map(|entry| String::from_utf8_lossy(&entry.data))
+            .ok_or_else(|| Error::damaged("application log missing from diagnostic ZIP"))?;
+        assert!(application_log.contains("<home>"));
+        assert!(!application_log.contains("Alice"));
+        let game_list = entries
+            .iter()
+            .find(|entry| entry.name == "report/games.txt")
+            .map(|entry| String::from_utf8_lossy(&entry.data))
+            .ok_or_else(|| Error::damaged("game list missing from diagnostic ZIP"))?;
+        assert!(game_list.contains("<home>"));
+        assert!(!game_list.contains("Alice"));
+        let _ = fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[test]
+    fn diagnostic_zip_adds_bounded_xray_and_stalker2_logs_after_consent() -> Result<()> {
+        let root = std::env::temp_dir().join(format!("sse-diagnostic-logs-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let app_logs = root.join("app-logs");
+        let xray = root.join("xray");
+        let stalker2 = root.join("stalker2");
+        fs::create_dir_all(&app_logs)?;
+        fs::create_dir_all(xray.join("logs"))?;
+        fs::create_dir_all(stalker2.join("Saved").join("Logs"))?;
+        fs::create_dir_all(stalker2.join("Saved").join("Crashes"))?;
+        fs::write(
+            xray.join("logs").join("xray_0.log"),
+            "xray report from C:\\Users\\Alice\\mod\n",
+        )?;
+        fs::write(stalker2.join("Saved").join("Logs").join("game.log"), "S2 game log\n")?;
+        fs::write(
+            stalker2.join("Saved").join("Crashes").join("crash.dmp"),
+            [0_u8, 1, 2, 3],
+        )?;
+        let games = [
+            DiagnosticGame {
+                title: "Shadow of Chernobyl".to_owned(),
+                install_directory: xray,
+                is_stalker2: false,
+            },
+            DiagnosticGame {
+                title: "Heart of Chornobyl".to_owned(),
+                install_directory: stalker2,
+                is_stalker2: true,
+            },
+        ];
+
+        let archive = diagnostics_zip_at(&app_logs, &games, true)?;
+        let entries = sse_codecs::zip::read(&archive, 4 * 1024 * 1024)?;
+        assert!(entries.iter().any(|entry| entry.name.ends_with("/xray_0.log")));
+        assert!(entries.iter().any(|entry| entry.name.ends_with("/game.log")));
+        assert!(entries.iter().any(|entry| entry.name.ends_with("/crash.dmp")));
+        let xray_log = entries
+            .iter()
+            .find(|entry| entry.name.ends_with("/xray_0.log"))
+            .map(|entry| String::from_utf8_lossy(&entry.data))
+            .ok_or_else(|| Error::damaged("X-Ray log missing from diagnostic ZIP"))?;
+        assert!(xray_log.contains("<home>"));
+        assert!(!xray_log.contains("Alice"));
+        assert!(entries.iter().all(|entry| entry.data.len() <= PART_BYTES));
+        let _ = fs::remove_dir_all(root);
         Ok(())
     }
 }
