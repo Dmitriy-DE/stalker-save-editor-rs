@@ -1054,7 +1054,41 @@ impl Shell {
         self.show(tree, index)
     }
 
+    fn prepare(&mut self, tree: &mut Tree, index: usize) -> Result<()> {
+        let (Some(screen), Some(slot)) = (self.screens.get_mut(index), self.hosts.get_mut(index)) else {
+            return Ok(());
+        };
+        if slot.is_some() {
+            return Ok(());
+        }
+        let host_style = Style {
+            grow: 1.0,
+            shrink: 0.0,
+            gap: Size::new(0.0, 16.0),
+            align_items: Align::Stretch,
+            ..Style::default()
+        };
+        let host = tree.add(
+            Some(self.content),
+            NodeKind::Column,
+            host_style,
+            Content::Panel,
+            Look::default(),
+        )?;
+        *slot = Some(host);
+        let mut cx = Context {
+            tree,
+            proxy: self.proxy.as_ref(),
+            status: None,
+            app: &mut self.app,
+        };
+        screen.build(&mut cx, host)?;
+        cx.tree.set_visible(host, false)?;
+        Ok(())
+    }
+
     fn show(&mut self, tree: &mut Tree, index: usize) -> Result<()> {
+        self.prepare(tree, index)?;
         let (Some(screen), Some(slot)) = (self.screens.get_mut(index), self.hosts.get_mut(index)) else {
             return Ok(());
         };
@@ -1075,26 +1109,8 @@ impl Shell {
             status: None,
             app: &mut self.app,
         };
-        match *slot {
-            Some(host) => cx.tree.set_visible(host, true)?,
-            None => {
-                let host_style = Style {
-                    grow: 1.0,
-                    shrink: 0.0,
-                    gap: Size::new(0.0, 16.0),
-                    align_items: Align::Stretch,
-                    ..Style::default()
-                };
-                let host = cx.tree.add(
-                    Some(self.content),
-                    NodeKind::Column,
-                    host_style,
-                    Content::Panel,
-                    Look::default(),
-                )?;
-                *slot = Some(host);
-                screen.build(&mut cx, host)?;
-            }
+        if let Some(host) = *slot {
+            cx.tree.set_visible(host, true)?;
         }
         screen.shown(&mut cx)?;
         let screen_id = screen.id();
@@ -1185,18 +1201,28 @@ impl Shell {
             journal.is_some_and(sse_storage::drafts::DraftJournal::can_redo),
         )?;
         tree.set_enabled(self.reset, has_changes)?;
-        tree.set_enabled(self.save, eligibility.can_save && !self.library_workspace.is_saving())?;
+        let save_busy = self.library_workspace.is_saving() || sse_app::tasks::named_task_active("save-restore");
+        tree.set_enabled(self.save, eligibility.can_save && !save_busy)?;
         Ok(())
     }
 
     fn dispatch_editor_action(&mut self, tree: &mut Tree, action: EditorAction) -> Result<()> {
+        if action == EditorAction::Save && sse_app::tasks::named_task_active("save-restore") {
+            tree.set_text(
+                self.status,
+                "Сохранение недоступно: дождитесь завершения восстановления сейва.",
+            )?;
+            return Ok(());
+        }
         if let Some(index) = self
             .screens
             .iter()
             .position(|screen| screen.id() == ScreenId::Inventory)
         {
-            if self.hosts.get(index).is_some_and(Option::is_none) {
+            if self.selected != index {
                 self.select(tree, index)?;
+            } else {
+                self.show(tree, index)?;
             }
         }
         self.route(tree, &Message::User(AppMessage::EditorAction(action)), None)?;
@@ -1224,6 +1250,16 @@ impl Shell {
             }
             Message::Window(WindowEvent::CloseRequested) if sse_app::tasks::named_task_active("save-restore") => {
                 tree.set_text(self.status, "Дождитесь завершения восстановления, чтобы закрыть окно.")?;
+                return Ok(Flow::Continue);
+            }
+            Message::Window(WindowEvent::CloseRequested)
+                if sse_app::tasks::named_task_active("game-background")
+                    || sse_app::tasks::named_task_active("companion-background") =>
+            {
+                tree.set_text(
+                    self.status,
+                    "Дождитесь завершения фоновой операции с игрой, чтобы закрыть окно.",
+                )?;
                 return Ok(Flow::Continue);
             }
             Message::Window(WindowEvent::CloseRequested) => {
@@ -1930,7 +1966,43 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_s_is_refused_while_restore_is_active() -> sse_core::Result<()> {
+        let _guard = close_task_test_guard();
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut shell = Shell::build(&mut tree, None)?;
+        let initial = shell.current();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let tasks = sse_app::TaskManager::new();
+        let _restore = tasks.spawn("save-restore", move |_context| {
+            release_rx.recv().map_err(|error| error.to_string())?;
+            Ok(())
+        });
+        let save = Message::Window(WindowEvent::Key {
+            pressed: true,
+            keysym: u32::from('s'),
+            text: None,
+            ctrl: true,
+            shift: false,
+        });
+
+        assert!(matches!(shell.handle(&mut tree, &save, None)?, Flow::Continue));
+        assert_eq!(shell.current(), initial);
+
+        release_tx
+            .send(())
+            .map_err(|error| sse_core::Error::System(error.to_string()))?;
+        for _ in 0..100 {
+            if !sse_app::tasks::named_task_active("save-restore") {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn ctrl_s_opens_inventory_and_keeps_the_shell_running() -> sse_core::Result<()> {
+        let _guard = close_task_test_guard();
         let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
         let mut shell = Shell::build(&mut tree, None)?;
         let message = Message::Window(WindowEvent::Key {

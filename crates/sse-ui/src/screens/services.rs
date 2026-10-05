@@ -266,7 +266,7 @@ impl Companion {
     fn refresh(&self, cx: &mut Context<'_>) {
         let Some(proxy) = cx.proxy.cloned() else { return };
         let selected = self.selected(cx);
-        std::thread::spawn(move || {
+        sse_app::tasks::spawn_named_detached("companion-background", move || {
             let result = selected.and_then(|(g, d)| companion_root(&g, &d).map(|r| installed_version(&r)));
             proxy.send(AppMessage::ToScreen(
                 ScreenId::Companion,
@@ -277,7 +277,7 @@ impl Companion {
     fn protocol_args(&self, cx: &mut Context<'_>, command: &'static str, argument: Option<&'static str>) {
         let Some(proxy) = cx.proxy.cloned() else { return };
         let selected = self.selected(cx);
-        std::thread::spawn(move || {
+        sse_app::tasks::spawn_named_detached("companion-background", move || {
             let result = selected
                 .and_then(|(game, directory)| Self::exchange_directory(&game, &directory))
                 .and_then(|directory| {
@@ -334,7 +334,7 @@ impl Screen for Companion {
         style::label(
             cx.tree,
             card,
-            "Меню в игре: Esc → F1 или КПК компаньона. Установка через приложение ниже.",
+            "Меню в игре: Esc → F1 или КПК компаньона. Хук создаёт распакованный скрипт в gamedata/scripts; установка через приложение ниже.",
             Text::Note,
         )?;
         style::label(cx.tree, card, "Целевая игра: выбранная в «Обзоре игр»", Text::Body)?;
@@ -540,7 +540,7 @@ impl Screen for Companion {
             }
             let path = sse_app::paths::default_data_directory().join("hotkeys.txt");
             let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
-            std::thread::spawn(move || {
+            sse_app::tasks::spawn_named_detached("companion-background", move || {
                 let result = sse_companion::hotkeys::HotkeyLayout::parse(&text)
                     .and_then(|layout| layout.save(&path))
                     .map(|()| format!("Клавиши сохранены: {}.", path.display()))
@@ -593,7 +593,7 @@ impl Screen for Companion {
                 cx.tree.close_dialog()?;
             }
             let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
-            std::thread::spawn(move || {
+            sse_app::tasks::spawn_named_detached("companion-background", move || {
                 let result = (|| {
                     let root = companion_root(&intent.game, &intent.directory)?;
                     if intent.install {
@@ -744,7 +744,7 @@ impl Achievements {
     fn load(&self, cx: &mut Context<'_>) {
         let Some(proxy) = cx.proxy.cloned() else { return };
         let id = cx.app.selected_game().and_then(app_id);
-        std::thread::spawn(move || {
+        sse_app::tasks::spawn_named_detached("companion-background", move || {
             let result = id
                 .ok_or_else(|| "Для выбранной игры нет Steam App ID".to_owned())
                 .and_then(|app_id| worker(&Request::ListAchievements { app_id }))
@@ -908,7 +908,7 @@ impl Screen for Achievements {
             let set = intent.set;
             let _ = cx.tree.close_dialog()?;
             let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
-            std::thread::spawn(move || {
+            sse_app::tasks::spawn_named_detached("companion-background", move || {
                 let req = if set {
                     Request::SetAchievement {
                         app_id,
@@ -1015,7 +1015,7 @@ impl Cloud {
     fn load(&self, cx: &mut Context<'_>) {
         let Some(proxy) = cx.proxy.cloned() else { return };
         let id = cx.app.selected_game().and_then(app_id);
-        std::thread::spawn(move || {
+        sse_app::tasks::spawn_named_detached("companion-background", move || {
             let result = id
                 .ok_or_else(|| "Для выбранной игры нет Steam App ID".to_owned())
                 .and_then(|app_id| worker(&Request::List { app_id }))
@@ -1086,7 +1086,7 @@ impl Cloud {
         };
 
         let Some(proxy) = cx.proxy.cloned() else { return };
-        std::thread::spawn(move || {
+        sse_app::tasks::spawn_named_detached("companion-background", move || {
             let result = std::fs::read(&local)
                 .map_err(|error| format!("Ошибка записи: {error}"))
                 .map(|bytes| CloudIntent {
@@ -1104,7 +1104,7 @@ impl Cloud {
 
     fn upload(&self, cx: &mut Context<'_>, intent: CloudIntent) {
         let Some(proxy) = cx.proxy.cloned() else { return };
-        std::thread::spawn(move || {
+        sse_app::tasks::spawn_named_detached("companion-background", move || {
             let result = (|| {
                 let output = std::fs::read(&intent.local).map_err(|error| format!("Ошибка записи: {error}"))?;
                 if sse_codecs::sha256::sha256(&output) != intent.local_sha256 {
@@ -1310,7 +1310,7 @@ impl Screen for Cloud {
                 .join("cloud_downloads");
             let remote = item.name.clone();
             let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
-            std::thread::spawn(move || {
+            sse_app::tasks::spawn_named_detached("companion-background", move || {
                 let result = (|| {
                     let source = worker(&Request::Read {
                         app_id,
@@ -1434,7 +1434,7 @@ impl Updates {
             self.busy = false;
             return;
         };
-        std::thread::spawn(move || {
+        sse_app::tasks::spawn_named_detached("companion-background", move || {
             let result = (|| {
                 let detected = sse_update::UpdateInstallationDetector::detect(None, None, None)
                     .map_err(|e| format!("Updates are not available: {e}"))?;
@@ -1473,7 +1473,7 @@ impl Updates {
             self.busy = false;
             return;
         };
-        std::thread::spawn(move || {
+        sse_app::tasks::spawn_named_detached("companion-background", move || {
             let result = (|| {
                 let detected =
                     sse_update::UpdateInstallationDetector::detect(None, None, None).map_err(|e| e.to_string())?;
@@ -1517,7 +1517,7 @@ impl Updates {
             self.busy = false;
             return;
         };
-        std::thread::spawn(move || {
+        sse_app::tasks::spawn_named_detached("companion-background", move || {
             let result = (|| {
                 let detected =
                     sse_update::UpdateInstallationDetector::detect(None, None, None).map_err(|e| e.to_string())?;

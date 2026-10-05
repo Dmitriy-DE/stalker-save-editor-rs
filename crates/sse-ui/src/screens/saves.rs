@@ -1961,6 +1961,22 @@ struct AddCandidate {
     template_available: bool,
 }
 
+fn add_template_preference(
+    story_id: Option<u32>,
+    spawn_story_id: Option<u32>,
+    has_custom_data: bool,
+    spawn_id: Option<u16>,
+    object_id: u16,
+) -> (bool, bool, bool, bool, u16) {
+    (
+        story_id.is_some_and(|value| value != u32::MAX),
+        spawn_story_id.is_some_and(|value| value != u32::MAX),
+        has_custom_data,
+        spawn_id != Some(u16::MAX),
+        object_id,
+    )
+}
+
 fn add_candidates(selected: &LoadedSave, removed: &BTreeSet<u32>) -> Vec<AddCandidate> {
     let SaveData::Xray { save, inventory } = &selected.data else {
         return Vec::new();
@@ -2185,6 +2201,7 @@ impl Inventory {
             }
             return Ok(());
         };
+        self.set_edit_controls(cx, true)?;
         if self.last_path.as_ref() != Some(&selected.slot.path) {
             self.last_path = Some(selected.slot.path.clone());
             self.page = 0;
@@ -3761,22 +3778,31 @@ fn prepare_save_edits(
                         request.item_key
                     )));
                 }
-                let template = inventory
+                let template_object = inventory
                     .iter()
-                    .find(|item| {
+                    .filter(|item| {
                         item.section == request.item_key && !edits.removals.contains(&ItemHandle::Xray(item.handle))
+                    })
+                    .filter_map(|item| {
+                        save.registry_objects()
+                            .iter()
+                            .find(|object| object.object_id == item.handle && object.parent_id == save.actor_id())
+                    })
+                    .min_by_key(|object| {
+                        add_template_preference(
+                            object.story_id,
+                            object.spawn_story_id,
+                            save.custom_data(object).is_some_and(|data| !data.is_empty()),
+                            object.spawn_id,
+                            object.object_id,
+                        )
                     })
                     .ok_or_else(|| {
                         Error::Refused(format!(
-                            "item '{}' has no matching serialized template in this save",
+                            "item '{}' has no matching actor-owned serialized template in this save",
                             request.item_key
                         ))
                     })?;
-                let template_object = save
-                    .registry_objects()
-                    .iter()
-                    .find(|object| object.object_id == template.handle && object.parent_id == save.actor_id())
-                    .ok_or_else(|| Error::Refused("selected item template is no longer actor-owned".to_owned()))?;
                 let object_id = used_object_ids
                     .iter()
                     .next_back()
@@ -5663,6 +5689,18 @@ mod tests {
                 .collect::<Vec<_>>()
         );
         Ok(())
+    }
+
+    #[test]
+    fn add_template_prefers_unbound_metadata_and_spawn_ffff() {
+        let clean = super::add_template_preference(Some(u32::MAX), Some(u32::MAX), false, Some(u16::MAX), 20);
+        let story_bound = super::add_template_preference(Some(7), Some(u32::MAX), false, Some(u16::MAX), 1);
+        let custom_bound = super::add_template_preference(Some(u32::MAX), Some(u32::MAX), true, Some(u16::MAX), 2);
+        let spawn_bound = super::add_template_preference(Some(u32::MAX), Some(u32::MAX), false, Some(9), 3);
+
+        assert!(clean < story_bound);
+        assert!(clean < custom_bound);
+        assert!(clean < spawn_bound);
     }
 
     #[test]
