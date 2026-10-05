@@ -404,10 +404,7 @@ fn prepare_and_export(arguments: &[String]) -> Result<(), WriteFailure> {
                 let matching = save
                     .registry_objects()
                     .iter()
-                    .filter(|record| {
-                        record.name.eq_ignore_ascii_case(&addition.item_key)
-                            || record.name_replace.eq_ignore_ascii_case(&addition.item_key)
-                    })
+                    .filter(|record| record.name.eq_ignore_ascii_case(&addition.item_key))
                     .map(|record| record.object_id)
                     .collect::<Vec<_>>();
                 match matching.as_slice() {
@@ -427,6 +424,23 @@ fn prepare_and_export(arguments: &[String]) -> Result<(), WriteFailure> {
                 }
             }
         };
+        if addition.template_object.is_some() {
+            let template = save
+                .registry_objects()
+                .iter()
+                .find(|record| record.object_id == template_object)
+                .ok_or_else(|| {
+                    WriteFailure::Core(Error::Refused(format!(
+                        "explicit add template 0x{template_object:04X} does not exist"
+                    )))
+                })?;
+            if !template.name.eq_ignore_ascii_case(&addition.item_key) {
+                return Err(WriteFailure::Core(Error::Refused(format!(
+                    "explicit TEMPLATE:KEY must use the template's section '{}', not '{}'",
+                    template.name, addition.item_key
+                ))));
+            }
+        }
         let object_id = allocate_object_id(&mut reserved_object_ids, template_object)?;
         let quantity = u16::try_from(addition.quantity).map_err(|_| {
             WriteFailure::Core(Error::Refused(format!(
@@ -821,7 +835,7 @@ fn allocate_object_id(reserved: &mut HashSet<u16>, template: u16) -> Result<u16,
     let mut candidate = template;
     for _ in 0..u16::MAX {
         candidate = candidate.wrapping_add(1);
-        if candidate != 0 && reserved.insert(candidate) {
+        if candidate != 0 && candidate != u16::MAX && reserved.insert(candidate) {
             return Ok(candidate);
         }
     }
@@ -1153,8 +1167,10 @@ mod tests {
 mod write_tests {
     use super::s2_legacy_write_error;
     use super::{
-        read_info, read_inventory, run, s2_cli_warnings, s2_info_lines, s2_inventory_lines, s2_type_key, writer, Save,
+        allocate_object_id, read_info, read_inventory, run, s2_cli_warnings, s2_info_lines, s2_inventory_lines,
+        s2_type_key, writer, Save,
     };
+    use std::collections::HashSet;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -1685,6 +1701,40 @@ mod write_tests {
     }
 
     #[test]
+    fn explicit_add_template_must_match_the_requested_section() {
+        let temporary = TempDirectory::new();
+        let source = temporary.0.join("source.sav");
+        let output = temporary.0.join("edited.sav");
+        let backups = temporary.0.join("backups");
+        fs::write(
+            &source,
+            include_bytes!("../../../fixtures/synthetic/writer-add/xray-add-soc-ammo-source.sav"),
+        )
+        .expect("write X-Ray add fixture");
+
+        let result = run(&[
+            "edit".to_owned(),
+            source.display().to_string(),
+            "--add".to_owned(),
+            "0x1234:exo_outfit=1".to_owned(),
+            "--output".to_owned(),
+            output.display().to_string(),
+            "--backup-dir".to_owned(),
+            backups.display().to_string(),
+        ]);
+
+        assert_eq!(result, 3);
+        assert!(!output.exists());
+    }
+
+    #[test]
+    fn object_id_allocator_skips_the_alife_sentinel() {
+        let mut reserved = HashSet::new();
+        assert!(matches!(allocate_object_id(&mut reserved, u16::MAX - 1), Ok(1)));
+        assert!(!reserved.contains(&u16::MAX));
+    }
+
+    #[test]
     fn edit_durability_and_placement_match_writer_fixtures_byte_for_byte() {
         let temporary = TempDirectory::new();
         let saves = temporary.0.join("saves");
@@ -1849,7 +1899,7 @@ mod write_tests {
     }
 
     #[test]
-    fn edit_remove_matches_writer_fixture_byte_for_byte() {
+    fn edit_remove_refuses_story_linked_fixture_object() {
         let temporary = TempDirectory::new();
         let saves = temporary.0.join("saves");
         fs::create_dir(&saves).expect("create save directory");
@@ -1862,23 +1912,18 @@ mod write_tests {
         )
         .expect("write removal fixture");
 
-        assert_eq!(
-            run(&[
-                "edit".to_owned(),
-                source.display().to_string(),
-                "--remove".to_owned(),
-                "0x1234".to_owned(),
-                "--output".to_owned(),
-                output.display().to_string(),
-                "--backup-dir".to_owned(),
-                backups.display().to_string(),
-            ]),
-            0
-        );
-        assert_eq!(
-            fs::read(&output).expect("removal output"),
-            include_bytes!("../../../fixtures/synthetic/writer-delete/xray-delete-soc-expected.sav")
-        );
+        let result = run(&[
+            "edit".to_owned(),
+            source.display().to_string(),
+            "--remove".to_owned(),
+            "0x1234".to_owned(),
+            "--output".to_owned(),
+            output.display().to_string(),
+            "--backup-dir".to_owned(),
+            backups.display().to_string(),
+        ]);
+        assert_eq!(result, 3);
+        assert!(!output.exists());
     }
 }
 

@@ -67,6 +67,8 @@ pub struct InventoryItem {
     pub(crate) placement_base_slot: Option<u8>,
     /// Confirmed equipment condition in the serialized STATE field.
     pub condition: Option<f32>,
+    /// Durability can be changed only when the matching UPDATE byte is unique and proven.
+    pub durability_editable: bool,
     pub(crate) condition_offset: Option<usize>,
     pub(crate) update_condition_offset: Option<usize>,
     pub(crate) client_condition_offset: Option<usize>,
@@ -450,6 +452,7 @@ impl Save {
                 placement_value: placement_fields.as_ref().map(|fields| fields.packed),
                 placement_base_slot: placement_fields.as_ref().and_then(|fields| fields.base_slot),
                 condition: condition_fields.map(|fields| fields.0),
+                durability_editable: condition_fields.is_some_and(|fields| fields.2.is_some()),
                 condition_offset: condition_fields.map(|fields| fields.1),
                 update_condition_offset: condition_fields.and_then(|fields| fields.2),
                 client_condition_offset: condition_fields.and_then(|fields| fields.3),
@@ -1110,14 +1113,14 @@ fn read_condition_fields(raw: &[u8], record: &ObjectRecord) -> Option<(f32, usiz
         return None;
     }
 
+    let update_start = record.update_offset.checked_add(2)?;
+    let update_end = record.update_offset.checked_add(record.update_length)?;
+    let update_payload = raw.get(update_start..update_end)?;
     let mut update_match = None;
     let mut update_matches = 0_u8;
-    for relative in [3_usize, 4] {
-        let candidate = record.update_offset.checked_add(relative)?;
-        if relative >= record.update_length {
-            continue;
-        }
-        let encoded = f32::from(*raw.get(candidate)?) / 255.0;
+    for (relative, byte) in update_payload.iter().enumerate() {
+        let candidate = update_start.checked_add(relative)?;
+        let encoded = f32::from(*byte) / 255.0;
         if (encoded - condition).abs() <= (1.0 / 255.0) + 1.0e-6 {
             update_match = Some(candidate);
             update_matches = update_matches.saturating_add(1);

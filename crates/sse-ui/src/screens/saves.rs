@@ -2570,13 +2570,13 @@ impl Inventory {
                         .clone()
                         .unwrap_or_else(|| "Размещение не прочитано".to_owned()),
                     upgrades,
-                    item.condition.is_some()
+                    item.durability_editable
                         && writer::capability(save.format(), writer::ChangeKind::EditDurability)
                             != writer::Capability::Unsupported,
                     item.placement.is_some()
                         && writer::capability(save.format(), writer::ChangeKind::EditPlacement)
                             != writer::Capability::Unsupported,
-                    item.section.to_ascii_lowercase().starts_with("af_"),
+                    false,
                     writer::capability(save.format(), writer::ChangeKind::RemoveItems)
                         != writer::Capability::Unsupported
                         && item.placement.as_deref() != Some("slot"),
@@ -3648,6 +3648,11 @@ fn prepare_save_edits(
                         "selected X-Ray item has no confirmed condition field".to_owned(),
                     ));
                 };
+                if !item.durability_editable {
+                    return Err(Error::Refused(
+                        "selected X-Ray item has no proven UPDATE condition mirror".to_owned(),
+                    ));
+                }
                 let new_value = f32::from(*percent) / 100.0;
                 if (old_value - new_value).abs() > 0.005 {
                     changes.push(writer::Change::SetDurability {
