@@ -1,8 +1,8 @@
 //! S.T.A.L.K.E.R. 2 containers and read-only save indexes.
 
+use sse_core::byte_ranges::{verify_unchanged_outside_ranges, ChangedRange};
 use sse_core::{Error, Result, SaveBuffer};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::ops::Range;
 
 /// Maximum decoded S2 image admitted by the bounded Rust reader.
 pub const MAXIMUM_UNPACKED_SIZE: usize = 256 * 1024 * 1024;
@@ -285,7 +285,7 @@ impl S2Save {
     /// Reports invalid, ambiguous, or unsupported edit requests without modifying this parsed save.
     pub fn write_changes(&self, changes: &[S2Change]) -> Result<Vec<u8>> {
         let (image, changed_ranges) = apply_changes_to_image(self, changes)?;
-        pack_and_verify_s2_image(&image, &changed_ranges)
+        pack_and_verify_s2_image(self.container.image(), &image, &changed_ranges)
     }
 }
 
@@ -1550,7 +1550,7 @@ fn require_range(bytes: &[u8], offset: usize, length: usize, message: &'static s
     Ok(())
 }
 
-fn apply_changes_to_image(save: &S2Save, changes: &[S2Change]) -> Result<(Vec<u8>, Vec<Range<usize>>)> {
+fn apply_changes_to_image(save: &S2Save, changes: &[S2Change]) -> Result<(Vec<u8>, Vec<ChangedRange>)> {
     if changes.is_empty() {
         return Err(Error::Refused("S2 write requires at least one change".to_owned()));
     }
@@ -1580,7 +1580,10 @@ fn apply_changes_to_image(save: &S2Save, changes: &[S2Change]) -> Result<(Vec<u8
         match *change {
             S2Change::SetMoney(amount) => {
                 write_u32_at(&mut image, save.index.money_offset, amount)?;
-                changed_ranges.push(save.index.money_offset..save.index.money_offset.saturating_add(4));
+                changed_ranges.push(ChangedRange {
+                    before: save.index.money_offset..save.index.money_offset.saturating_add(4),
+                    after: save.index.money_offset..save.index.money_offset.saturating_add(4),
+                });
             }
             S2Change::SetStackCount { handle, count } => {
                 if !(1..=10_000_000).contains(&count) {
@@ -1611,8 +1614,14 @@ fn apply_changes_to_image(save: &S2Save, changes: &[S2Change]) -> Result<(Vec<u8
                 }
                 write_u32_at(&mut image, record.count_offset, count)?;
                 write_u32_at(&mut image, record.weight_offset, total_weight.to_bits())?;
-                changed_ranges.push(record.count_offset..record.count_offset.saturating_add(4));
-                changed_ranges.push(record.weight_offset..record.weight_offset.saturating_add(4));
+                changed_ranges.push(ChangedRange {
+                    before: record.count_offset..record.count_offset.saturating_add(4),
+                    after: record.count_offset..record.count_offset.saturating_add(4),
+                });
+                changed_ranges.push(ChangedRange {
+                    before: record.weight_offset..record.weight_offset.saturating_add(4),
+                    after: record.weight_offset..record.weight_offset.saturating_add(4),
+                });
             }
             S2Change::SetDurability { handle, condition } => {
                 if !condition.is_finite() || !(0.0..=1.0).contains(&condition) {
@@ -1632,7 +1641,10 @@ fn apply_changes_to_image(save: &S2Save, changes: &[S2Change]) -> Result<(Vec<u8
                     .filter(|_| item.condition.is_some())
                     .ok_or_else(|| Error::Refused("S2 durability field is not confirmed editable".to_owned()))?;
                 write_u32_at(&mut image, offset, condition.to_bits())?;
-                changed_ranges.push(offset..offset.saturating_add(4));
+                changed_ranges.push(ChangedRange {
+                    before: offset..offset.saturating_add(4),
+                    after: offset..offset.saturating_add(4),
+                });
             }
             S2Change::MoveStashToBackpack { handle } => stash_move = Some(handle),
         }
@@ -1642,7 +1654,7 @@ fn apply_changes_to_image(save: &S2Save, changes: &[S2Change]) -> Result<(Vec<u8
         let stash = save.stash()?;
         move_stash_item_to_backpack(save, &stash, handle, &mut image, &mut changed_ranges)?;
     }
-    merge_ranges(&mut changed_ranges);
+    changed_ranges.sort_unstable_by_key(|range| (range.before.start, range.after.start));
     Ok((image, changed_ranges))
 }
 
@@ -1651,7 +1663,7 @@ fn move_stash_item_to_backpack(
     stash: &S2StashLayout,
     handle: u32,
     image: &mut Vec<u8>,
-    changed_ranges: &mut Vec<Range<usize>>,
+    changed_ranges: &mut Vec<ChangedRange>,
 ) -> Result<()> {
     if !save.unresolved_handles.is_empty() {
         return Err(Error::Refused(
@@ -1871,26 +1883,48 @@ fn move_stash_item_to_backpack(
     let flags = read_u8(image, flags_offset)?;
     write_u8_at(image, flags_offset, flags & !0x08)?;
 
-    let player_end = save.index.grid_end_offset.saturating_add(inserted_bytes);
-    let stash_start = stash.owned_count_offset.saturating_add(inserted_bytes);
-    let stash_end = stash
-        .grid_end_offset
-        .saturating_add(inserted_bytes)
-        .saturating_sub(removed_bytes);
-    changed_ranges.push(save.index.owned_count_offset..player_end);
-    changed_ranges.push(stash_start..stash_end);
-    changed_ranges.push(position_x_offset..record_flag_offset.saturating_add(1));
-    changed_ranges.push(flags_offset..flags_offset.saturating_add(1));
+    let span_start = save.index.owned_count_offset;
+    let span_end = stash.grid_end_offset;
     for range in changed_ranges.iter_mut().take(original_range_count) {
-        if range.start >= stash.grid_end_offset {
-            range.start = range.start.saturating_add(shifted_bytes);
-            range.end = range.end.saturating_add(shifted_bytes);
+        if range.before.start >= span_end {
+            range.after.start = range
+                .after
+                .start
+                .checked_add(shifted_bytes)
+                .ok_or_else(|| Error::damaged("S2 changed range start overflows after stash insertion"))?;
+            range.after.end = range
+                .after
+                .end
+                .checked_add(shifted_bytes)
+                .ok_or_else(|| Error::damaged("S2 changed range end overflows after stash insertion"))?;
+        } else if range.before.start < span_end
+            && range.before.end > span_start
+            && (range.before.start < span_start || range.before.end > span_end)
+        {
+            return Err(Error::damaged("S2 change range crosses the stash transfer window"));
         }
     }
+    changed_ranges.truncate(original_range_count);
+    changed_ranges.retain(|range| range.before.end <= span_start || range.before.start >= span_end);
+    changed_ranges.push(ChangedRange {
+        before: span_start..span_end,
+        after: span_start..span_end.saturating_add(shifted_bytes),
+    });
+    let old_record_position_x = record.record_offset.saturating_add(11);
+    let old_record_flag = record.record_offset.saturating_add(15);
+    let old_flags = record.record_offset.saturating_add(28);
+    changed_ranges.push(ChangedRange {
+        before: old_record_position_x..old_record_flag.saturating_add(1),
+        after: position_x_offset..record_flag_offset.saturating_add(1),
+    });
+    changed_ranges.push(ChangedRange {
+        before: old_flags..old_flags.saturating_add(1),
+        after: flags_offset..flags_offset.saturating_add(1),
+    });
     Ok(())
 }
 
-fn pack_and_verify_s2_image(image: &[u8], changed_ranges: &[Range<usize>]) -> Result<Vec<u8>> {
+fn pack_and_verify_s2_image(source_image: &[u8], image: &[u8], changed_ranges: &[ChangedRange]) -> Result<Vec<u8>> {
     if image.is_empty() || image.len() > MAXIMUM_UNPACKED_SIZE {
         return Err(Error::Refused(
             "S2 image is outside the supported size range".to_owned(),
@@ -1898,11 +1932,7 @@ fn pack_and_verify_s2_image(image: &[u8], changed_ranges: &[Range<usize>]) -> Re
     }
     let unpacked_size =
         u32::try_from(image.len()).map_err(|_| Error::Refused("S2 image exceeds u32 length".to_owned()))?;
-    for range in changed_ranges {
-        if image.get(range.clone()).is_none() {
-            return Err(Error::damaged("S2 changed range is out of bounds"));
-        }
-    }
+    verify_unchanged_outside_ranges(source_image, image, changed_ranges)?;
     // The LZ+Huffman encoder: its streams decode in the reference ooz (33/33 real saves); the old RLE encoder's did not.
     let compressed = sse_codecs::kraken_encode::compress(image);
     if compressed.is_empty() {
@@ -1977,18 +2007,6 @@ fn remove_bytes(image: &mut Vec<u8>, offset: usize, length: usize) -> Result<()>
     image.copy_within(end..previous_len, offset);
     image.truncate(previous_len.saturating_sub(length));
     Ok(())
-}
-
-fn merge_ranges(ranges: &mut Vec<Range<usize>>) {
-    ranges.sort_unstable_by_key(|range| range.start);
-    ranges.dedup_by(|next, previous| {
-        if next.start <= previous.end {
-            previous.end = previous.end.max(next.end);
-            true
-        } else {
-            false
-        }
-    });
 }
 
 fn find_all(bytes: &[u8], needle: &[u8]) -> Vec<usize> {
@@ -2185,7 +2203,7 @@ mod tests {
         let image = apply_changes_to_image(&parsed, &[S2Change::SetMoney(876_543)]);
         assert!(image.is_ok());
         let Ok((image, changed_ranges)) = image else { return };
-        let packed = pack_and_verify_s2_image(&image, &changed_ranges);
+        let packed = pack_and_verify_s2_image(parsed.container().image(), &image, &changed_ranges);
         assert!(packed.is_ok());
         let Ok(packed) = packed else { return };
         let reread = S2Container::from_bytes(&packed);
@@ -2199,6 +2217,32 @@ mod tests {
             (super::read_u32(&packed, trailer), expected_crc),
             (Ok(stored), Some(computed)) if stored == computed
         ));
+    }
+
+    #[test]
+    fn s2_packer_rejects_a_collateral_image_change_before_compression() {
+        let parsed = S2Save::from_bytes(WRITER_S2_MONEY_SOURCE);
+        assert!(parsed.is_ok());
+        let Ok(parsed) = parsed else { return };
+        let prepared = apply_changes_to_image(&parsed, &[S2Change::SetMoney(876_543)]);
+        assert!(prepared.is_ok());
+        let Ok((image, changed_ranges)) = prepared else { return };
+        let mut corrupted = image;
+        let unchanged_offset =
+            (0..corrupted.len()).find(|offset| changed_ranges.iter().all(|range| !range.after.contains(offset)));
+        assert!(unchanged_offset.is_some());
+        let Some(unchanged_offset) = unchanged_offset else {
+            return;
+        };
+        let Some(byte) = corrupted.get_mut(unchanged_offset) else {
+            return;
+        };
+        *byte ^= 1;
+
+        assert!(
+            pack_and_verify_s2_image(parsed.container().image(), &corrupted, &changed_ranges)
+                .is_err_and(|error| error.to_string().contains("outside declared changed ranges"))
+        );
     }
 
     #[test]

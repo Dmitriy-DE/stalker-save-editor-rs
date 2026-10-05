@@ -7,6 +7,8 @@
 //! * a heuristic that locates data must match in exactly one place or report nothing.
 
 mod buffer;
+/// Validates that prepared save edits touch only their declared byte ranges.
+pub mod byte_ranges;
 mod cursor;
 mod error;
 

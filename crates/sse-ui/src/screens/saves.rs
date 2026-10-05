@@ -100,6 +100,7 @@ enum ItemHandle {
 struct LoadedSave {
     slot: SaveSlot,
     source_sha256: String,
+    packed_size: u64,
     summary: String,
     factions: String,
     stashes: String,
@@ -122,12 +123,16 @@ enum SaveData {
 impl LoadedSave {
     fn read(slot: SaveSlot) -> Result<Self> {
         let packed = SaveBuffer::read(&slot.path)?;
+        Self::from_buffer(slot, packed)
+    }
+
+    fn from_buffer(slot: SaveSlot, packed: SaveBuffer) -> Result<Self> {
         let source_sha256 = sse_codecs::sha256::sha256_hex(packed.as_slice());
-        let parsed = match S2Save::from_bytes(packed.as_slice()) {
+        match S2Save::from_bytes(packed.as_slice()) {
             Ok(save) => {
                 let inventory = save.items();
                 let stash = save.stash().ok();
-                Ok(Self::from_s2(slot, packed, source_sha256, save, inventory, stash))
+                Self::from_s2(slot, packed, source_sha256, save, inventory, stash)
             }
             Err(s2_error) => match Save::read(packed.as_slice()) {
                 Ok(save) => {
@@ -138,8 +143,7 @@ impl LoadedSave {
                     "unsupported or damaged save (S2: {s2_error}; X-Ray: {xray_error})"
                 ))),
             },
-        }?;
-        Ok(parsed)
+        }
     }
 
     fn from_xray(
@@ -149,7 +153,8 @@ impl LoadedSave {
         save: Save,
         inventory: Vec<InventoryItem>,
     ) -> Result<Self> {
-        let money = save.money()?;
+        let packed_size = u64::try_from(packed.len())
+            .map_err(|_| Error::damaged("X-Ray packed size does not fit the save metadata"))?;
         let format = save.format().id();
         let game = match save.format() {
             sse_xray::Format::Soc | sse_xray::Format::SocEe => "soc",
@@ -160,28 +165,24 @@ impl LoadedSave {
         slot.candidate_game_id = game.to_owned();
         slot.candidate_release_id = format.to_owned();
         slot.format_id = Some(format.to_owned());
-        let summary = format!(
-            "Игра: {format}\nЛокация: не подтверждена текущим индексатором\nИзменён (Unix UTC): {}\nРазмер: {} байт\nФормат: {format}\nCRC: контейнер X-Ray не хранит CRC\nВремя игры: {}\nДеньги: {money}\nПредметов в инвентаре: {}",
-            unix_time(slot.last_write_time_utc),
-            packed.len(),
-            save.game_time(),
-            inventory.len()
-        );
         let factions = match save.player_faction() {
             Some(id) => format!("Фракция игрока: ID {id}\nРедактирование отношений недоступно в текущем индексаторе."),
             None => "Идентификатор фракции игрока не подтверждён этим сохранением.".to_owned(),
         };
         let stashes = describe_xray_stashes(&save);
         let transitions = describe_xray_transitions(&save);
-        Ok(Self {
+        let mut loaded = Self {
             slot,
             source_sha256,
-            summary,
+            packed_size,
+            summary: String::new(),
             factions,
             stashes,
             transitions,
             data: SaveData::Xray { save, inventory },
-        })
+        };
+        loaded.refresh_summary()?;
+        Ok(loaded)
     }
 
     fn from_s2(
@@ -191,20 +192,13 @@ impl LoadedSave {
         save: S2Save,
         inventory: Vec<S2InventoryItem>,
         stash: Option<S2StashLayout>,
-    ) -> Self {
+    ) -> Result<Self> {
+        let packed_size =
+            u64::try_from(packed.len()).map_err(|_| Error::damaged("S2 packed size does not fit the save metadata"))?;
         slot.game_id = Some("stalker2".to_owned());
         slot.candidate_game_id = "stalker2".to_owned();
         slot.candidate_release_id = "stalker2".to_owned();
         slot.format_id = Some("stalker2".to_owned());
-        let summary = format!(
-            "Игра: S.T.A.L.K.E.R. 2\nЛокация: не подтверждена текущим индексатором\nИзменён (Unix UTC): {}\nРазмер: {} байт\nФормат: S2\nCRC32: {:08X} — проверен\nДеньги: {}\nПредметов в рюкзаке: {}\nНеопознанных ссылок: {}",
-            unix_time(slot.last_write_time_utc),
-            packed.len(),
-            save.container().stored_crc32(),
-            save.money(),
-            inventory.len(),
-            save.unresolved_handles().len()
-        );
         let factions =
             "Фракции S2 доступны только для чтения; отношения и принадлежность пока не индексируются.".to_owned();
         let stashes = describe_s2_stash(stash.as_ref());
@@ -212,10 +206,11 @@ impl LoadedSave {
         let stash_items = stash
             .as_ref()
             .map(|_| save.stash_items().map_err(|error| error.to_string()));
-        Self {
+        let mut loaded = Self {
             slot,
             source_sha256,
-            summary,
+            packed_size,
+            summary: String::new(),
             factions,
             stashes,
             transitions,
@@ -224,7 +219,42 @@ impl LoadedSave {
                 inventory,
                 stash_items,
             },
-        }
+        };
+        loaded.refresh_summary()?;
+        Ok(loaded)
+    }
+
+    fn refresh_summary(&mut self) -> Result<()> {
+        self.summary = match &self.data {
+            SaveData::Xray { save, inventory } => {
+                let format = save.format().id();
+                format!(
+                    "Игра: {format}\nЛокация: не подтверждена текущим индексатором\nИзменён (Unix UTC): {}\nРазмер: {} байт\nФормат: {format}\nCRC: контейнер X-Ray не хранит CRC\nВремя игры: {}\nДеньги: {}\nПредметов в инвентаре: {}",
+                    unix_time(self.slot.last_write_time_utc),
+                    self.packed_size,
+                    save.game_time(),
+                    save.money()?,
+                    inventory.len()
+                )
+            }
+            SaveData::Stalker2 { save, inventory, .. } => format!(
+                "Игра: S.T.A.L.K.E.R. 2\nЛокация: не подтверждена текущим индексатором\nИзменён (Unix UTC): {}\nРазмер: {} байт\nФормат: S2\nCRC32: {:08X} — проверен\nДеньги: {}\nПредметов в рюкзаке: {}\nНеопознанных ссылок: {}",
+                unix_time(self.slot.last_write_time_utc),
+                self.packed_size,
+                save.container().stored_crc32(),
+                save.money(),
+                inventory.len(),
+                save.unresolved_handles().len()
+            ),
+        };
+        Ok(())
+    }
+
+    fn update_file_metadata(&mut self, size: u64, modified: std::time::SystemTime) -> Result<()> {
+        self.slot.size = size;
+        self.slot.last_write_time_utc = modified;
+        self.packed_size = size;
+        self.refresh_summary()
     }
 }
 
@@ -1148,18 +1178,24 @@ fn commit_save_edits_to(
     backup_directory: &Path,
 ) -> Result<(Arc<LoadedSave>, String)> {
     let (packed, _summary) = prepare_save_edits(selected, money, stacks, stash_moves)?;
-    let receipt = transaction::replace_transaction(
+    let prepared = packed.clone();
+    let (receipt, mut reloaded) = transaction::replace_transaction_with_preflight(
         &selected.slot.path,
         &selected.source_sha256,
         packed.as_slice(),
         backup_directory,
+        |_, replacement| {
+            if replacement != prepared.as_slice() {
+                return Err(Error::damaged(
+                    "prepared save bytes changed before transaction preflight",
+                ));
+            }
+            verify_prepared_output(selected, prepared, money, stacks, stash_moves)
+        },
     )?;
-    let mut slot = selected.slot.clone();
-    let metadata = std::fs::metadata(&slot.path)?;
-    slot.size = metadata.len();
-    slot.last_write_time_utc = metadata.modified().unwrap_or(slot.last_write_time_utc);
-    let reloaded = LoadedSave::read(slot)?;
-    verify_requested_values(&reloaded, money, stacks, stash_moves)?;
+    let metadata = std::fs::metadata(&selected.slot.path)?;
+    let modified = metadata.modified().unwrap_or(reloaded.slot.last_write_time_utc);
+    reloaded.update_file_metadata(metadata.len(), modified)?;
     Ok((
         Arc::new(reloaded),
         format!(
@@ -1168,6 +1204,18 @@ fn commit_save_edits_to(
             receipt.output_sha256
         ),
     ))
+}
+
+fn verify_prepared_output(
+    selected: &LoadedSave,
+    packed: SaveBuffer,
+    money: Option<u32>,
+    stacks: &BTreeMap<ItemHandle, u32>,
+    stash_moves: &BTreeSet<u32>,
+) -> Result<LoadedSave> {
+    let prepared = LoadedSave::from_buffer(selected.slot.clone(), packed)?;
+    verify_requested_values(&prepared, money, stacks, stash_moves)?;
+    Ok(prepared)
 }
 
 #[cfg(test)]
@@ -1911,8 +1959,8 @@ fn short_text(text: &str, limit: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        commit_save_edits_to, prepare_save_edits, prepare_xray_edits, LoadFinished, LoadedSave, Overview, S2Save,
-        SaveBuffer, SaveSlot, Workspace,
+        commit_save_edits_to, prepare_save_edits, prepare_xray_edits, verify_prepared_output, LoadFinished, LoadedSave,
+        Overview, S2Save, SaveBuffer, SaveSlot, Workspace,
     };
     use crate::event_loop::{channel_pair, Message};
     use crate::glyphs::Fonts;
@@ -1994,6 +2042,53 @@ mod tests {
     }
 
     #[test]
+    fn prepared_semantic_mismatch_is_rejected_before_transaction() -> sse_core::Result<()> {
+        let source = include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-source.sav");
+        let expected = include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-expected.sav");
+        let loaded = load_xray(source, "xray-money-cop-source.sav", "stalker-cop", "cop")?;
+
+        let result = verify_prepared_output(
+            &loaded,
+            SaveBuffer::from_vec(expected.to_vec()),
+            Some(1),
+            &BTreeMap::new(),
+            &BTreeSet::new(),
+        );
+        let error = match result {
+            Ok(_) => return Err(Error::damaged("prepared output accepted an unexpected money value")),
+            Err(error) => error,
+        };
+
+        assert!(error.to_string().contains("saved wallet value differs after read-back"));
+        Ok(())
+    }
+
+    #[test]
+    fn s2_prepared_semantic_mismatch_is_rejected_before_transaction() -> sse_core::Result<()> {
+        let source = include_bytes!("../../../../fixtures/synthetic/writer-s2-stacks/s2-stacks-source.sav");
+        let packed = SaveBuffer::from_vec(source.to_vec());
+        let sha256 = sse_codecs::sha256::sha256_hex(packed.as_slice());
+        let save = S2Save::from_bytes(packed.as_slice())?;
+        let inventory = save.items();
+        let stash = save.stash().ok();
+        let loaded = LoadedSave::from_s2(
+            fixture_slot("s2-stacks-source.sav", "stalker2", "stalker2"),
+            packed,
+            sha256,
+            save,
+            inventory,
+            stash,
+        )?;
+        let (prepared, _) = prepare_save_edits(&loaded, Some(1_000), &BTreeMap::new(), &BTreeSet::new())?;
+
+        assert!(
+            verify_prepared_output(&loaded, prepared, Some(999), &BTreeMap::new(), &BTreeSet::new(),)
+                .is_err_and(|error| error.to_string().contains("saved wallet value differs after read-back"))
+        );
+        Ok(())
+    }
+
+    #[test]
     fn s2_money_edit_uses_the_verified_writer() -> sse_core::Result<()> {
         let source = include_bytes!("../../../../fixtures/synthetic/writer-s2-stacks/s2-stacks-source.sav");
         let packed = SaveBuffer::from_vec(source.to_vec());
@@ -2008,7 +2103,7 @@ mod tests {
             save,
             inventory,
             stash,
-        );
+        )?;
 
         let (output, summary) = prepare_save_edits(&loaded, Some(1_000), &BTreeMap::new(), &BTreeSet::new())?;
         assert_eq!(S2Save::from_bytes(output.as_slice())?.money(), 1_000);

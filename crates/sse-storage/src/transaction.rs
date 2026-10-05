@@ -426,14 +426,32 @@ pub fn replace_transaction(
     replacement: &[u8],
     backup_directory: &Path,
 ) -> Result<ReplacementReceipt> {
-    replace_transaction_with_verifier(
+    replace_transaction_with_preflight(
         source_path,
         expected_source_sha256,
         replacement,
         backup_directory,
-        |_| Ok(()),
+        |_, _| Ok(()),
     )
     .map(|(receipt, ())| receipt)
+}
+
+/// Validates the prepared replacement after checking the source hash and before writing transaction artifacts.
+pub fn replace_transaction_with_preflight<T>(
+    source_path: &Path,
+    expected_source_sha256: &str,
+    replacement: &[u8],
+    backup_directory: &Path,
+    preflight: impl FnOnce(&[u8], &[u8]) -> Result<T>,
+) -> Result<(ReplacementReceipt, T)> {
+    replace_with_file_system_and_preflight(
+        &StdFileSystem,
+        source_path,
+        expected_source_sha256,
+        replacement,
+        backup_directory,
+        preflight,
+    )
 }
 
 /// Replaces a save and runs a format-aware check against durable read-back bytes before commit.
@@ -482,6 +500,48 @@ pub fn replace_with_file_system_and_verifier<T>(
     backup_directory: &Path,
     verify_readback: impl FnOnce(&[u8]) -> Result<T>,
 ) -> Result<(ReplacementReceipt, T)> {
+    replace_with_file_system_and_checks(
+        files,
+        source_path,
+        expected_source_sha256,
+        replacement,
+        backup_directory,
+        |_, _| Ok(()),
+        verify_readback,
+    )
+    .map(|(receipt, (), verified)| (receipt, verified))
+}
+
+/// Testable replacement with a validator that runs before any transaction artifacts are created.
+pub fn replace_with_file_system_and_preflight<T>(
+    files: &impl FileSystem,
+    source_path: &Path,
+    expected_source_sha256: &str,
+    replacement: &[u8],
+    backup_directory: &Path,
+    preflight: impl FnOnce(&[u8], &[u8]) -> Result<T>,
+) -> Result<(ReplacementReceipt, T)> {
+    replace_with_file_system_and_checks(
+        files,
+        source_path,
+        expected_source_sha256,
+        replacement,
+        backup_directory,
+        preflight,
+        |_| Ok(()),
+    )
+    .map(|(receipt, preflight, ())| (receipt, preflight))
+}
+
+fn replace_with_file_system_and_checks<P, V>(
+    files: &impl FileSystem,
+    source_path: &Path,
+    expected_source_sha256: &str,
+    replacement: &[u8],
+    backup_directory: &Path,
+    preflight: impl FnOnce(&[u8], &[u8]) -> Result<P>,
+    verify_readback: impl FnOnce(&[u8]) -> Result<V>,
+) -> Result<(ReplacementReceipt, P, V)> {
     if replacement.is_empty() {
         return Err(Error::Refused("replacement save is empty".to_owned()));
     }
@@ -511,6 +571,7 @@ pub fn replace_with_file_system_and_verifier<T>(
             "source changed since preparation: expected {expected_source_sha256}, found {source_sha256}"
         )));
     }
+    let preflight_value = preflight(&source_bytes, replacement)?;
     let output_sha256 = sha256::sha256_hex(replacement);
     let created_at = timestamp_utc()?;
     let token = transaction_token();
@@ -658,6 +719,7 @@ pub fn replace_with_file_system_and_verifier<T>(
             journal_path,
             output_sha256,
         },
+        preflight_value,
         verified_value,
     ))
 }
@@ -1084,7 +1146,7 @@ fn sync_directory(directory: Option<&Path>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{replace_with_file_system, FileSystem};
+    use super::{replace_with_file_system, replace_with_file_system_and_preflight, FileSystem};
     use sse_core::{Error, Result};
     use std::cell::{Cell, RefCell};
     use std::collections::HashMap;
@@ -1124,6 +1186,34 @@ mod tests {
 
         assert!(replace_with_file_system(&fs, &source, &wrong_hash, output_bytes, &backup_directory).is_err());
         assert_eq!(fs.bytes(&source).as_deref(), Some(source_bytes.as_slice()));
+        assert_eq!(fs.operation_count(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn failed_preflight_leaves_the_source_and_creates_no_transaction_artifacts() -> TestResult {
+        let source_bytes = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-source.sav");
+        let output_bytes = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-expected.sav");
+        let source_hash = sse_codecs::sha256::sha256_hex(source_bytes);
+        let (source, backup_directory) = fake_paths();
+        let fs = MemoryFs::new(&source, source_bytes, None);
+
+        let result = replace_with_file_system_and_preflight(
+            &fs,
+            &source,
+            &source_hash,
+            output_bytes,
+            &backup_directory,
+            |original, replacement| {
+                assert_eq!(original, source_bytes);
+                assert_eq!(replacement, output_bytes);
+                Err::<(), Error>(Error::damaged("injected preflight verification failure"))
+            },
+        );
+
+        assert!(result.is_err());
+        assert_eq!(fs.bytes(&source).as_deref(), Some(source_bytes.as_slice()));
+        assert_eq!(fs.files.borrow().len(), 1);
         assert_eq!(fs.operation_count(), 2);
         Ok(())
     }
