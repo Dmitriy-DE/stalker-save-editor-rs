@@ -1964,6 +1964,41 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_s_is_refused_while_restore_is_active() -> sse_core::Result<()> {
+        let _guard = close_task_test_guard();
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut shell = Shell::build(&mut tree, None)?;
+        let initial = shell.current();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let tasks = sse_app::TaskManager::new();
+        let _restore = tasks.spawn("save-restore", move |_context| {
+            release_rx.recv().map_err(|error| error.to_string())?;
+            Ok(())
+        });
+        let save = Message::Window(WindowEvent::Key {
+            pressed: true,
+            keysym: u32::from('s'),
+            text: None,
+            ctrl: true,
+            shift: false,
+        });
+
+        assert!(matches!(shell.handle(&mut tree, &save, None)?, Flow::Continue));
+        assert_eq!(shell.current(), initial);
+
+        release_tx
+            .send(())
+            .map_err(|error| sse_core::Error::System(error.to_string()))?;
+        for _ in 0..100 {
+            if !sse_app::tasks::named_task_active("save-restore") {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn ctrl_s_opens_inventory_and_keeps_the_shell_running() -> sse_core::Result<()> {
         let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
         let mut shell = Shell::build(&mut tree, None)?;
