@@ -1935,6 +1935,22 @@ struct AddCandidate {
     template_available: bool,
 }
 
+fn add_template_preference(
+    story_id: Option<u32>,
+    spawn_story_id: Option<u32>,
+    has_custom_data: bool,
+    spawn_id: Option<u16>,
+    object_id: u16,
+) -> (bool, bool, bool, bool, u16) {
+    (
+        story_id.is_some_and(|value| value != u32::MAX),
+        spawn_story_id.is_some_and(|value| value != u32::MAX),
+        has_custom_data,
+        spawn_id != Some(u16::MAX),
+        object_id,
+    )
+}
+
 fn add_candidates(selected: &LoadedSave, removed: &BTreeSet<u32>) -> Vec<AddCandidate> {
     let SaveData::Xray { save, inventory } = &selected.data else {
         return Vec::new();
@@ -3742,11 +3758,11 @@ fn prepare_save_edits(
                             .find(|object| object.object_id == item.handle && object.parent_id == save.actor_id())
                     })
                     .min_by_key(|object| {
-                        (
-                            object.story_id.is_some_and(|value| value != u32::MAX),
-                            object.spawn_story_id.is_some_and(|value| value != u32::MAX),
+                        add_template_preference(
+                            object.story_id,
+                            object.spawn_story_id,
                             save.custom_data(object).is_some_and(|data| !data.is_empty()),
-                            object.spawn_id != Some(u16::MAX),
+                            object.spawn_id,
                             object.object_id,
                         )
                     })
@@ -5620,6 +5636,26 @@ mod tests {
                 .collect::<Vec<_>>()
         );
         Ok(())
+    }
+
+    #[test]
+    fn add_template_prefers_unbound_metadata_and_spawn_ffff() {
+        let clean = super::add_template_preference(
+            Some(u32::MAX),
+            Some(u32::MAX),
+            false,
+            Some(u16::MAX),
+            20,
+        );
+        let story_bound = super::add_template_preference(Some(7), Some(u32::MAX), false, Some(u16::MAX), 1);
+        let custom_bound =
+            super::add_template_preference(Some(u32::MAX), Some(u32::MAX), true, Some(u16::MAX), 2);
+        let spawn_bound =
+            super::add_template_preference(Some(u32::MAX), Some(u32::MAX), false, Some(9), 3);
+
+        assert!(clean < story_bound);
+        assert!(clean < custom_bound);
+        assert!(clean < spawn_bound);
     }
 
     #[test]
