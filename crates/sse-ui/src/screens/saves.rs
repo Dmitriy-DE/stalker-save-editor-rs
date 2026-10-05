@@ -2175,6 +2175,7 @@ impl Inventory {
             }
             return Ok(());
         };
+        self.set_edit_controls(cx, true)?;
         if self.last_path.as_ref() != Some(&selected.slot.path) {
             self.last_path = Some(selected.slot.path.clone());
             self.page = 0;
