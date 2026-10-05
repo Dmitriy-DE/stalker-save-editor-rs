@@ -197,7 +197,8 @@ pub struct Stats {
     pub pixels: u64,
 }
 
-/// Runs until the app returns [`Flow::Exit`], the window closes or every sender is gone.
+/// Runs until the app returns [`Flow::Exit`] or the display connection is lost. The app decides whether a close
+/// request exits or keeps the window open.
 ///
 /// # Errors
 /// Returns an error from layout, painting or the backend.
@@ -271,7 +272,8 @@ fn handle<U, A: App<U>>(tree: &mut Tree, app: &mut A, message: &Message<U>) -> F
                 let text_buffer = text.map(|ch| ch.to_string());
                 let _ = tree.edit_focused_input(keysym, text_buffer.as_deref());
             }
-            WindowEvent::CloseRequested | WindowEvent::Disconnected => {
+            WindowEvent::CloseRequested => return app.message(tree, message, None),
+            WindowEvent::Disconnected => {
                 app.message(tree, message, None);
                 return Flow::Exit;
             }
@@ -283,9 +285,25 @@ fn handle<U, A: App<U>>(tree: &mut Tree, app: &mut A, message: &Message<U>) -> F
 
 #[cfg(test)]
 mod tests {
-    use super::{channel_pair, Message};
+    use super::{channel_pair, handle, App, Flow, Message, WindowEvent};
+    use crate::glyphs::Fonts;
+    use crate::raster::Color;
+    use crate::widget::Tree;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+
+    struct KeepOpen;
+
+    impl App<()> for KeepOpen {
+        fn message(
+            &mut self,
+            _tree: &mut Tree,
+            _message: &Message<()>,
+            _clicked: Option<crate::widget::WidgetId>,
+        ) -> Flow {
+            Flow::Continue
+        }
+    }
 
     #[test]
     fn proxy_wakes_a_registered_native_event_loop_after_sending() {
@@ -299,5 +317,17 @@ mod tests {
         assert!(proxy.send(7));
         assert_eq!(calls.load(Ordering::Relaxed), 1);
         assert!(matches!(receiver.recv(), Ok(Message::User(7))));
+    }
+
+    #[test]
+    fn close_request_can_be_declined_by_the_application() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut app = KeepOpen;
+
+        assert_eq!(
+            handle(&mut tree, &mut app, &Message::Window(WindowEvent::CloseRequested)),
+            Flow::Continue
+        );
+        Ok(())
     }
 }

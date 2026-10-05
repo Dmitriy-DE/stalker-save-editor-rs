@@ -211,6 +211,11 @@ pub trait Screen {
     /// One-line description under the title.
     fn subtitle(&self) -> &str;
 
+    /// Whether the screen owns an operation that keeps the shell open and temporarily blocks user input.
+    fn operation_in_progress(&self) -> bool {
+        false
+    }
+
     /// Builds the widgets into `host` (a stretched column). Called once, the first time the screen is shown.
     ///
     /// # Errors

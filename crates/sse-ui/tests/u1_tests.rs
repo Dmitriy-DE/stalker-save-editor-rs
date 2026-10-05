@@ -206,6 +206,9 @@ struct Counter {
 
 impl App<u32> for Counter {
     fn message(&mut self, tree: &mut Tree, message: &Message<u32>, _: Option<WidgetId>) -> Flow {
+        if matches!(message, Message::Window(WindowEvent::CloseRequested)) {
+            return Flow::Exit;
+        }
         if let Message::User(n) = message {
             self.seen.push(*n);
             tree.set_text(self.label, &format!("шаг {n}")).unwrap();

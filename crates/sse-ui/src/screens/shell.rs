@@ -495,6 +495,10 @@ impl Shell {
     /// # Errors
     /// Returns an error if the screen cannot read or parse the save.
     pub fn open_save(&mut self, tree: &mut Tree, path: &Path) -> Result<bool> {
+        if self.operation_in_progress() {
+            tree.set_text(self.status, "Сохранение выполняется…")?;
+            return Ok(false);
+        }
         self.open(tree, ScreenId::Overview)?;
         let Some(index) = self.screens.iter().position(|screen| screen.id() == ScreenId::Overview) else {
             return Ok(false);
@@ -518,7 +522,7 @@ impl Shell {
     }
 
     fn select(&mut self, tree: &mut Tree, index: usize) -> Result<()> {
-        if index == self.selected || index >= self.screens.len() {
+        if self.operation_in_progress() || index == self.selected || index >= self.screens.len() {
             return Ok(());
         }
         if tree.dialog_open() {
@@ -537,6 +541,10 @@ impl Shell {
         self.scroll.scroll_to(0.0);
         tree.set_scroll_y(self.content, 0)?;
         self.show(tree, index)
+    }
+
+    fn operation_in_progress(&self) -> bool {
+        self.screens.iter().any(|screen| screen.operation_in_progress())
     }
 
     fn show(&mut self, tree: &mut Tree, index: usize) -> Result<()> {
@@ -628,6 +636,25 @@ impl Shell {
     }
 
     fn handle(&mut self, tree: &mut Tree, message: &Message<AppMessage>, clicked: Option<WidgetId>) -> Result<Flow> {
+        if self.operation_in_progress() {
+            match message {
+                Message::Window(WindowEvent::CloseRequested) => {
+                    tree.set_text(self.status, "Сохранение выполняется…")?;
+                    return Ok(Flow::Continue);
+                }
+                Message::Window(WindowEvent::Disconnected) => return Ok(Flow::Exit),
+                Message::Window(
+                    WindowEvent::DpiChanged { .. } | WindowEvent::Resized { .. } | WindowEvent::Exposed(_),
+                )
+                | Message::User(_) => {}
+                Message::Window(_) => return Ok(Flow::Continue),
+            }
+        } else if matches!(
+            message,
+            Message::Window(WindowEvent::CloseRequested | WindowEvent::Disconnected)
+        ) {
+            return Ok(Flow::Exit);
+        }
         if let Message::Window(WindowEvent::Resized { width, .. }) = message {
             let panel_width = width.saturating_sub(232);
             tree.set_visible(self.edition, panel_width >= 1000)?;
@@ -806,7 +833,28 @@ mod tests {
     use crate::event_loop::{Flow, Message, WindowEvent};
     use crate::glyphs::Fonts;
     use crate::raster::Color;
-    use crate::widget::Tree;
+    use crate::screens::{Context, Screen, ScreenId};
+    use crate::widget::{Tree, WidgetId};
+
+    struct BusyScreen;
+
+    impl Screen for BusyScreen {
+        fn id(&self) -> ScreenId {
+            ScreenId::Inventory
+        }
+
+        fn subtitle(&self) -> &str {
+            "busy test screen"
+        }
+
+        fn operation_in_progress(&self) -> bool {
+            true
+        }
+
+        fn build(&mut self, _cx: &mut Context<'_>, _host: WidgetId) -> sse_core::Result<()> {
+            Ok(())
+        }
+    }
 
     #[test]
     fn escape_does_not_close_the_application() -> sse_core::Result<()> {
@@ -820,6 +868,42 @@ mod tests {
             shift: false,
         });
         assert!(matches!(shell.handle(&mut tree, &message, None)?, Flow::Continue));
+        Ok(())
+    }
+
+    #[test]
+    fn active_save_keeps_window_open_and_blocks_screen_selection() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut shell = Shell::build(&mut tree, None)?;
+        let inventory = shell
+            .screens
+            .iter()
+            .position(|screen| screen.id() == ScreenId::Inventory)
+            .ok_or_else(|| sse_core::Error::damaged("missing inventory screen"))?;
+        *shell
+            .screens
+            .get_mut(inventory)
+            .ok_or_else(|| sse_core::Error::damaged("missing inventory screen"))? = Box::new(BusyScreen);
+
+        assert_eq!(
+            shell.handle(&mut tree, &Message::Window(WindowEvent::CloseRequested), None)?,
+            Flow::Continue
+        );
+        assert!(!shell.open_save(&mut tree, std::path::Path::new("save-during-write.sav"))?);
+        shell.open(&mut tree, ScreenId::Settings)?;
+        assert_eq!(shell.current(), Some(ScreenId::Overview));
+        Ok(())
+    }
+
+    #[test]
+    fn close_request_exits_when_no_operation_is_running() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut shell = Shell::build(&mut tree, None)?;
+
+        assert_eq!(
+            shell.handle(&mut tree, &Message::Window(WindowEvent::CloseRequested), None)?,
+            Flow::Exit
+        );
         Ok(())
     }
 

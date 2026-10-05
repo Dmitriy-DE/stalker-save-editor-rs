@@ -75,6 +75,62 @@ impl Workspace {
     pub(crate) fn poll_tasks(&self) {
         let _ = self.lock().tasks.poll_events();
     }
+
+    fn begin_save(&self) -> std::result::Result<SavePlan, SaveStartError> {
+        let mut state = self.lock();
+        if state.saving.is_some() {
+            return Err(SaveStartError::AlreadyInProgress);
+        }
+        let selected = state.selected.clone().ok_or(SaveStartError::NoSaveSelected)?;
+        let request = state
+            .save_request
+            .checked_add(1)
+            .ok_or(SaveStartError::RequestIdExhausted)?;
+        state.save_request = request;
+        state.saving = Some(request);
+        Ok(SavePlan {
+            request,
+            source_path: selected.slot.path.clone(),
+            source_sha256: selected.source_sha256.clone(),
+            selected,
+            money: state.pending_money,
+            stacks: state.pending_stacks.clone(),
+            stash_moves: state.pending_stash_moves.clone(),
+        })
+    }
+
+    fn finish_save(
+        &self,
+        request: u64,
+        source_path: &Path,
+        source_sha256: &str,
+        saved: Option<&Arc<LoadedSave>>,
+    ) -> Option<bool> {
+        let mut state = self.lock();
+        if state.saving != Some(request) {
+            return None;
+        }
+        state.saving = None;
+        let Some(saved) = saved else {
+            return Some(false);
+        };
+        let source_is_still_selected = state
+            .selected
+            .as_ref()
+            .is_some_and(|current| current.slot.path == source_path && current.source_sha256 == source_sha256);
+        if !source_is_still_selected {
+            return Some(false);
+        }
+        state.selected = Some(Arc::clone(saved));
+        state.pending_money = None;
+        state.pending_stacks.clear();
+        state.pending_stash_moves.clear();
+        Some(true)
+    }
+
+    fn save_in_progress(&self) -> bool {
+        self.lock().saving.is_some()
+    }
 }
 
 #[derive(Default)]
@@ -89,6 +145,25 @@ struct WorkspaceState {
     pending_money: Option<u32>,
     pending_stacks: BTreeMap<ItemHandle, u32>,
     pending_stash_moves: BTreeSet<u32>,
+    save_request: u64,
+    saving: Option<u64>,
+}
+
+struct SavePlan {
+    request: u64,
+    source_path: PathBuf,
+    source_sha256: String,
+    selected: Arc<LoadedSave>,
+    money: Option<u32>,
+    stacks: BTreeMap<ItemHandle, u32>,
+    stash_moves: BTreeSet<u32>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SaveStartError {
+    AlreadyInProgress,
+    NoSaveSelected,
+    RequestIdExhausted,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -376,6 +451,10 @@ where
     };
     let request = {
         let mut state = workspace.lock();
+        if state.saving.is_some() {
+            cx.status = Some("Сохранение выполняется…".to_owned());
+            return;
+        }
         state.load_request = state.load_request.saturating_add(1);
         state.loading = true;
         state.load_error = None;
@@ -1042,6 +1121,9 @@ impl Inventory {
 
     fn stage_money(&self, increase: bool) {
         let mut state = self.workspace.lock();
+        if state.saving.is_some() {
+            return;
+        }
         let Some(selected) = state.selected.as_ref() else {
             return;
         };
@@ -1063,6 +1145,9 @@ impl Inventory {
 
     fn stage_stack(&self, handle: ItemHandle, increase: bool) {
         let mut state = self.workspace.lock();
+        if state.saving.is_some() {
+            return;
+        }
         let Some(selected) = state.selected.as_ref() else {
             return;
         };
@@ -1099,37 +1184,56 @@ impl Inventory {
             cx.status = Some("Сохранение доступно в работающем окне редактора.".to_owned());
             return Ok(());
         };
-        let (selected, money, stacks, stash_moves) = {
-            let state = self.workspace.lock();
-            (
-                state.selected.clone(),
-                state.pending_money,
-                state.pending_stacks.clone(),
-                state.pending_stash_moves.clone(),
-            )
+        let plan = match self.workspace.begin_save() {
+            Ok(plan) => plan,
+            Err(error) => {
+                let text = match error {
+                    SaveStartError::AlreadyInProgress => "Сохранение уже выполняется…",
+                    SaveStartError::NoSaveSelected => "Сначала выберите сейв.",
+                    SaveStartError::RequestIdExhausted => "Не удалось начать сохранение: исчерпан номер запроса.",
+                };
+                if let Some(id) = self.status {
+                    cx.tree.set_text(id, text)?;
+                }
+                cx.status = Some(text.to_owned());
+                return Ok(());
+            }
         };
-        let Some(selected) = selected else {
-            cx.status = Some("Сначала выберите сейв.".to_owned());
-            return Ok(());
-        };
+        let SavePlan {
+            request,
+            source_path,
+            source_sha256,
+            selected,
+            money,
+            stacks,
+            stash_moves,
+        } = plan;
         if let Some(status) = self.status {
             cx.tree.set_text(status, "Создаю резервную копию и сохраняю…")?;
         }
-        self.workspace.spawn("save-write", move |context| {
-            if context.is_cancelled() {
-                return;
-            }
+        cx.status = Some("Сохранение…".to_owned());
+        self.workspace.spawn("save-write", move |_context| {
             let result = commit_save_edits(&selected, money, &stacks, &stash_moves).map_err(|error| error.to_string());
             let _ = proxy.send(AppMessage::ToScreen(
                 ScreenId::Inventory,
-                Box::new(SaveFinished(result)),
+                Box::new(SaveFinished {
+                    request,
+                    source_path,
+                    source_sha256,
+                    result,
+                }),
             ));
         });
         Ok(())
     }
 }
 
-struct SaveFinished(std::result::Result<(Arc<LoadedSave>, String), String>);
+struct SaveFinished {
+    request: u64,
+    source_path: PathBuf,
+    source_sha256: String,
+    result: std::result::Result<(Arc<LoadedSave>, String), String>,
+}
 
 fn commit_save_edits(
     selected: &LoadedSave,
@@ -1383,6 +1487,10 @@ impl Screen for Inventory {
         "Состав рюкзака и подтверждённые изменения X-Ray / S2"
     }
 
+    fn operation_in_progress(&self) -> bool {
+        self.workspace.save_in_progress()
+    }
+
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
         let inventory = style::card(cx.tree, host)?;
         style::label(cx.tree, inventory, "ИНВЕНТАРЬ", Text::Heading)?;
@@ -1470,20 +1578,30 @@ impl Screen for Inventory {
             return self.save(cx);
         }
         if let Message::User(AppMessage::ToScreen(ScreenId::Inventory, payload)) = message {
-            if let Some(SaveFinished(result)) = payload.downcast_ref::<SaveFinished>() {
-                match result {
+            if let Some(completion) = payload.downcast_ref::<SaveFinished>() {
+                let selection_updated = self.workspace.finish_save(
+                    completion.request,
+                    &completion.source_path,
+                    &completion.source_sha256,
+                    completion.result.as_ref().ok().map(|(loaded, _)| loaded),
+                );
+                let Some(selection_updated) = selection_updated else {
+                    return Ok(());
+                };
+                match &completion.result {
                     Ok((loaded, text)) => {
-                        let mut state = self.workspace.lock();
-                        state.selected = Some(Arc::clone(loaded));
-                        state.pending_money = None;
-                        state.pending_stacks.clear();
-                        state.pending_stash_moves.clear();
-                        drop(state);
-                        cx.app.set_current_save(Some(loaded.slot.path.clone()));
-                        if let Some(id) = self.status {
-                            cx.tree.set_text(id, text)?;
+                        if selection_updated {
+                            cx.app.set_current_save(Some(loaded.slot.path.clone()));
                         }
-                        cx.status = Some(text.clone());
+                        let text = if selection_updated {
+                            text.clone()
+                        } else {
+                            format!("{text} Текущий выбор оставлен без изменений.")
+                        };
+                        if let Some(id) = self.status {
+                            cx.tree.set_text(id, &text)?;
+                        }
+                        cx.status = Some(text);
                     }
                     Err(error) => {
                         let text = format!("Не сохранено: {error}");
@@ -1911,8 +2029,8 @@ fn short_text(text: &str, limit: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        commit_save_edits_to, prepare_save_edits, prepare_xray_edits, LoadFinished, LoadedSave, Overview, S2Save,
-        SaveBuffer, SaveSlot, Workspace,
+        commit_save_edits_to, prepare_save_edits, prepare_xray_edits, start_load_from, Inventory, LoadFinished,
+        LoadedSave, Overview, S2Save, SaveBuffer, SaveFinished, SaveSlot, Workspace,
     };
     use crate::event_loop::{channel_pair, Message};
     use crate::glyphs::Fonts;
@@ -1926,6 +2044,7 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Arc;
     use std::time::UNIX_EPOCH;
 
     static NEXT_TEMP_DIRECTORY: AtomicU64 = AtomicU64::new(1);
@@ -2211,6 +2330,156 @@ mod tests {
         };
         overview.message(&mut cx, &message, None)?;
         assert_eq!(cx.app.current_save(), Some(path.as_path()));
+        Ok(())
+    }
+
+    #[test]
+    fn save_button_does_not_start_a_second_write() -> sse_core::Result<()> {
+        let selected = Arc::new(load_xray(
+            include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-source.sav"),
+            "fixture.sav",
+            "stalker-cop",
+            "cop",
+        )?);
+        let workspace = Workspace::default();
+        workspace.lock().selected = Some(selected);
+        let (proxy, _receiver) = channel_pair::<AppMessage>();
+        let mut app = sse_app::AppState::new();
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let screen = Inventory::new(workspace.clone());
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: Some(&proxy),
+            status: None,
+            app: &mut app,
+        };
+
+        screen.save(&mut cx)?;
+        screen.save(&mut cx)?;
+
+        assert_eq!(workspace.lock().tasks.active_task_count(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn save_in_progress_preserves_the_current_save_selection() -> sse_core::Result<()> {
+        let selected = Arc::new(load_xray(
+            include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-source.sav"),
+            "current.sav",
+            "stalker-cop",
+            "cop",
+        )?);
+        let workspace = Workspace::default();
+        workspace.lock().selected = Some(Arc::clone(&selected));
+        let (proxy, _receiver) = channel_pair::<AppMessage>();
+        let mut app = sse_app::AppState::new();
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let screen = Inventory::new(workspace.clone());
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: Some(&proxy),
+            status: None,
+            app: &mut app,
+        };
+
+        screen.save(&mut cx)?;
+        start_load_from(
+            &workspace,
+            || Err(Error::damaged("selection load must not start during a save")),
+            false,
+            &mut cx,
+        );
+
+        let state = workspace.lock();
+        assert_eq!(state.load_request, 0);
+        assert_eq!(
+            state.selected.as_ref().map(|save| save.slot.path.as_path()),
+            Some(std::path::Path::new("current.sav"))
+        );
+        assert_eq!(state.tasks.active_task_count(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn stale_save_completion_does_not_replace_a_newer_selection() -> sse_core::Result<()> {
+        let source = include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-source.sav");
+        let saved = Arc::new(load_xray(source, "saved.sav", "stalker-cop", "cop")?);
+        let newer = Arc::new(load_xray(source, "newer.sav", "stalker-cop", "cop")?);
+        let workspace = Workspace::default();
+        {
+            let mut state = workspace.lock();
+            state.selected = Some(Arc::clone(&newer));
+            state.save_request = 2;
+            state.saving = Some(2);
+        }
+        let mut app = sse_app::AppState::new();
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let mut screen = Inventory::new(workspace.clone());
+        let message = Message::User(AppMessage::ToScreen(
+            ScreenId::Inventory,
+            Box::new(SaveFinished {
+                request: 1,
+                source_path: saved.slot.path.clone(),
+                source_sha256: saved.source_sha256.clone(),
+                result: Ok((saved, "Сохранено.".to_owned())),
+            }),
+        ));
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: None,
+            status: None,
+            app: &mut app,
+        };
+
+        screen.message(&mut cx, &message, None)?;
+
+        assert_eq!(
+            workspace.lock().selected.as_ref().map(|save| save.slot.path.as_path()),
+            Some(std::path::Path::new("newer.sav"))
+        );
+        assert_eq!(workspace.lock().saving, Some(2));
+        Ok(())
+    }
+
+    #[test]
+    fn matching_save_request_does_not_replace_a_different_selected_source() -> sse_core::Result<()> {
+        let source = include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-source.sav");
+        let saved = Arc::new(load_xray(source, "saved.sav", "stalker-cop", "cop")?);
+        let newer = Arc::new(load_xray(source, "newer.sav", "stalker-cop", "cop")?);
+        let workspace = Workspace::default();
+        {
+            let mut state = workspace.lock();
+            state.selected = Some(Arc::clone(&newer));
+            state.save_request = 1;
+            state.saving = Some(1);
+        }
+        let mut app = sse_app::AppState::new();
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let mut screen = Inventory::new(workspace.clone());
+        let message = Message::User(AppMessage::ToScreen(
+            ScreenId::Inventory,
+            Box::new(SaveFinished {
+                request: 1,
+                source_path: saved.slot.path.clone(),
+                source_sha256: saved.source_sha256.clone(),
+                result: Ok((saved, "Сохранено.".to_owned())),
+            }),
+        ));
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: None,
+            status: None,
+            app: &mut app,
+        };
+
+        screen.message(&mut cx, &message, None)?;
+
+        let state = workspace.lock();
+        assert_eq!(state.saving, None);
+        assert_eq!(
+            state.selected.as_ref().map(|save| save.slot.path.as_path()),
+            Some(std::path::Path::new("newer.sav"))
+        );
         Ok(())
     }
 }
