@@ -350,6 +350,21 @@ impl Shell {
             },
         )?;
 
+        let nav_toggle = tree.add(
+            Some(sidebar),
+            NodeKind::Leaf,
+            Style {
+                min: Size::new(0.0, 30.0),
+                padding: padded(20.0, 0.0, 12.0, 0.0),
+                ..Style::default()
+            },
+            Content::Button {
+                text: "☰  Свернуть меню".to_owned(),
+                style: TextStyle::new(Face::Heading, 12.0),
+            },
+            style::nav(false),
+        )?;
+
         let library_workspace = super::saves::Workspace::default();
         let screens = super::registry_with_save_workspace(library_workspace.clone());
         let mut nav = Vec::with_capacity(screens.len());
