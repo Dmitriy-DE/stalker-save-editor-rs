@@ -23,6 +23,3 @@ sse-update = { path = "../sse-update" }
 
 [lints]
 workspace = true
-
-[target.'cfg(all(target_os = "linux", not(target_arch = "wasm32")))'.dependencies]
-minifb = { version = "=0.28.0", default-features = false, features = ["wayland", "dlopen"] }

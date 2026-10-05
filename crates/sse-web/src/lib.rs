@@ -4,8 +4,9 @@ use sse_core::{Error, Result};
 use sse_ui::event_loop::{self, Flow, Message, WindowEvent};
 use sse_ui::glyphs::Fonts;
 use sse_ui::screens::shell::Shell;
-use sse_ui::screens::style::{rgb, BG_BASE};
+use sse_ui::screens::style::rgb;
 use sse_ui::screens::AppMessage;
+use sse_ui::theme::BG_BASE;
 use sse_ui::widget::Tree;
 
 const MAX_FRAME_PIXELS: u64 = 8_294_400;
@@ -217,9 +218,14 @@ mod wasm_abi {
     #[no_mangle]
     pub extern "C" fn sse_web_init() -> u32 {
         RUNTIME.with(|runtime| {
-            let Ok(mut runtime) = runtime.try_borrow_mut() else { return RUNTIME_UNAVAILABLE; };
+            let Ok(mut runtime) = runtime.try_borrow_mut() else {
+                return RUNTIME_UNAVAILABLE;
+            };
             match WebRuntime::new() {
-                Ok(shell) => { *runtime = Some(shell); CONTINUE }
+                Ok(shell) => {
+                    *runtime = Some(shell);
+                    CONTINUE
+                }
                 Err(_) => RUNTIME_UNAVAILABLE,
             }
         })
@@ -227,20 +233,36 @@ mod wasm_abi {
 
     #[no_mangle]
     pub extern "C" fn sse_web_event(code: u32, a: i32, b: i32, c: i32, d: i32, e: i32) -> u32 {
-        let Some(event) = decode_event(code, a, b, c, d, e) else { return INVALID_EVENT; };
+        let Some(event) = decode_event(code, a, b, c, d, e) else {
+            return INVALID_EVENT;
+        };
         RUNTIME.with(|runtime| {
-            let Ok(mut runtime) = runtime.try_borrow_mut() else { return RUNTIME_UNAVAILABLE; };
-            let Some(runtime) = runtime.as_mut() else { return RUNTIME_UNAVAILABLE; };
-            if runtime.dispatch_browser(event) { EXIT } else { CONTINUE }
+            let Ok(mut runtime) = runtime.try_borrow_mut() else {
+                return RUNTIME_UNAVAILABLE;
+            };
+            let Some(runtime) = runtime.as_mut() else {
+                return RUNTIME_UNAVAILABLE;
+            };
+            if runtime.dispatch_browser(event) {
+                EXIT
+            } else {
+                CONTINUE
+            }
         })
     }
 
     #[no_mangle]
     pub extern "C" fn sse_web_render(width: u32, height: u32) -> u32 {
         RUNTIME.with(|runtime| {
-            let Ok(mut runtime) = runtime.try_borrow_mut() else { return 0; };
-            let Some(runtime) = runtime.as_mut() else { return 0; };
-            let Ok(frame) = runtime.frame(width, height) else { return 0; };
+            let Ok(mut runtime) = runtime.try_borrow_mut() else {
+                return 0;
+            };
+            let Some(runtime) = runtime.as_mut() else {
+                return 0;
+            };
+            let Ok(frame) = runtime.frame(width, height) else {
+                return 0;
+            };
             u32::try_from(frame.as_ptr() as usize).unwrap_or(0)
         })
     }

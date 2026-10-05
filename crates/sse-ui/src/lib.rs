@@ -39,9 +39,6 @@ pub mod theme;
 /// Generated Unicode 17 grapheme and line-break property tables.
 pub mod unicode_tables;
 pub mod wayland;
-/// Native Wayland window presenter used when WAYLAND_DISPLAY is available.
-#[cfg(target_os = "linux")]
-pub mod wayland_window;
 /// Retained widget tree with damage tracking (U1).
 pub mod widget;
 /// Win32 window adapter over the safe `sse-sys` window API.
