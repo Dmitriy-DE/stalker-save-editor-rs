@@ -1016,6 +1016,7 @@ impl Shell {
             .transpose()?
             .unwrap_or(false);
         if let Some(status) = cx.status {
+            let status = crate::status::localize_writer_status(&status);
             cx.tree.set_text(self.status, &status)?;
         }
         Ok(opened)
@@ -1102,6 +1103,7 @@ impl Shell {
         drop(cx);
         self.wizard.sync(tree, &self.app, screen_id, screen_host)?;
         if let Some(text) = status {
+            let text = crate::status::localize_writer_status(&text);
             tree.set_text(self.status, &text)?;
         }
         if !tree.dialog_open() {
@@ -1139,6 +1141,7 @@ impl Shell {
             }
         }
         if let Some(text) = status {
+            let text = crate::status::localize_writer_status(&text);
             tree.set_text(self.status, &text)?;
         }
         Ok(())
@@ -1305,6 +1308,7 @@ impl Shell {
             return Ok(Flow::Continue);
         }
         if let Some(text) = wizard_status {
+            let text = crate::status::localize_writer_status(&text);
             tree.set_text(self.status, &text)?;
         }
         if clicked.is_some() && clicked == Some(self.reports_ok) {
@@ -1563,7 +1567,11 @@ impl Shell {
         let text = if scanning {
             format!("{} · …", slots.len())
         } else if let Some(error) = error.as_deref() {
-            format!("{} · ошибка: {}", slots.len(), super::saves::short_text(error, 24))
+            format!(
+                "{} · ошибка: {}",
+                slots.len(),
+                super::saves::short_text(&crate::status::localize_writer_status(error), 24)
+            )
         } else {
             slots.len().to_string()
         };
@@ -1615,7 +1623,7 @@ impl Shell {
         let status = if scanning {
             "Поиск сейвов…".to_owned()
         } else if let Some(error) = error.as_deref() {
-            super::saves::short_text(error, 20)
+            super::saves::short_text(&crate::status::localize_writer_status(error), 20)
         } else if slots.is_empty() {
             "Сейвы не найдены".to_owned()
         } else {
@@ -1637,7 +1645,8 @@ impl App<AppMessage> for Shell {
         match self.handle(tree, message, clicked) {
             Ok(flow) => flow,
             Err(error) => {
-                let _ = tree.set_text(self.status, &format!("Ошибка: {error}"));
+                let text = crate::status::localize_writer_status(&format!("Ошибка: {error}"));
+                let _ = tree.set_text(self.status, &text);
                 Flow::Continue
             }
         }
