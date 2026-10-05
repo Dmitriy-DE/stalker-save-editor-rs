@@ -770,6 +770,19 @@ fn start_background_discovery(workspace: &Workspace, cx: &mut Context<'_>) {
 /// Discovers installations across Steam libraries, GOG, Heroic, and known standard paths.
 #[must_use]
 pub fn discover_all_installations() -> Vec<DiscoveredInstallation> {
+    let mut installations = discover_game_installations();
+
+    // Save headers are needed only for the Games overview's save-count column.
+    count_saves_for_installations(&mut installations);
+
+    installations
+}
+
+/// Discovers game installation paths without opening or counting save files.
+///
+/// This is intended for local diagnostics, where the report needs installation paths only.
+#[must_use]
+pub fn discover_game_installations() -> Vec<DiscoveredInstallation> {
     let mut installations = Vec::new();
     let mut seen_dirs = HashSet::new();
 
@@ -815,9 +828,6 @@ pub fn discover_all_installations() -> Vec<DiscoveredInstallation> {
 
     // 2. Non-Steam discovery (GOG, Heroic, standard user directories)
     discover_non_steam_installations(&mut installations, &mut seen_dirs);
-
-    // 3. Count saves for each discovered installation
-    count_saves_for_installations(&mut installations);
 
     installations.sort_by(|a, b| a.target.cmp(&b.target).then_with(|| a.directory.cmp(&b.directory)));
 
