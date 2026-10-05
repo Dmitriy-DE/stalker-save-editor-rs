@@ -1058,11 +1058,29 @@ impl Cloud {
             cx.status = Some("Запись S.T.A.L.K.E.R. 2 в Steam Cloud запрещена.".to_owned());
             return;
         }
-        let Some(local) = cx.app.current_save().map(Path::to_path_buf) else {
-            cx.status = Some("Сначала откройте локальный сейв".to_owned());
+        let remote = item.name.clone();
+        let remote_name = Path::new(&remote).file_name().and_then(|name| name.to_str()).unwrap_or(&remote);
+        let snapshot = cx.app.snapshot();
+        let mut candidates = snapshot.recent_saves;
+        if let Some(current) = snapshot.current_save {
+            if !candidates.iter().any(|path| path == &current) {
+                candidates.push(current);
+            }
+        }
+        let mut matching = candidates.into_iter().filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.eq_ignore_ascii_case(remote_name))
+        });
+        let Some(local) = matching.next() else {
+            cx.status = Some("Для выбранного облачного файла не найден локальный сейв с тем же именем.".to_owned());
             return;
         };
-        let remote = item.name.clone();
+        if matching.next().is_some() {
+            cx.status = Some("Найдено несколько локальных сейвов с тем же именем; запись в облако отменена.".to_owned());
+            return;
+        };
+
         let Some(proxy) = cx.proxy.cloned() else { return };
         std::thread::spawn(move || {
             let result = std::fs::read(&local)
@@ -1092,11 +1110,7 @@ impl Cloud {
                     app_id: intent.app_id,
                     remote_name: intent.remote.clone(),
                 })?;
-                let artifacts = intent
-                    .local
-                    .parent()
-                    .unwrap_or_else(|| Path::new("."))
-                    .join("steam-cloud-backups");
+                let artifacts = sse_app::paths::default_data_directory().join("backups");
                 let request = Request::Write {
                     app_id: intent.app_id,
                     remote_name: intent.remote.clone(),
