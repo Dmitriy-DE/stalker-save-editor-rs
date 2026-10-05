@@ -218,6 +218,7 @@ struct Companion {
     inspect: Option<WidgetId>,
     info: Option<WidgetId>,
     inventory: Option<WidgetId>,
+    s2_commands: Vec<(WidgetId, &'static str, &'static str)>,
     manual_path: Option<WidgetId>,
     apply_manual: Option<WidgetId>,
     manual_directory: Option<PathBuf>,
@@ -246,7 +247,13 @@ impl Companion {
     }
     fn exchange_directory(game: &str, directory: &Path) -> std::result::Result<PathBuf, String> {
         if xray_game(game).is_none() {
-            return Err("появится после протокола компаньона".to_owned());
+            if matches!(game, "s2" | "stalker2") || game.contains("stalker2") {
+                return std::env::var_os("LOCALAPPDATA")
+                    .map(PathBuf::from)
+                    .map(|root| root.join("Stalker2").join("Saved"))
+                    .ok_or_else(|| "LOCALAPPDATA не задан; папка протокола S.T.A.L.K.E.R. 2 не найдена".to_owned());
+            }
+            return Err("Для выбранной игры протокол Companion не поддерживается.".to_owned());
         }
         for relative in ["_appdata_", "appdata", "userdata"] {
             let candidate = directory.join(relative);
@@ -267,7 +274,7 @@ impl Companion {
             ));
         });
     }
-    fn protocol(&self, cx: &mut Context<'_>, command: &'static str) {
+    fn protocol_args(&self, cx: &mut Context<'_>, command: &'static str, argument: Option<&'static str>) {
         let Some(proxy) = cx.proxy.cloned() else { return };
         let selected = self.selected(cx);
         std::thread::spawn(move || {
@@ -275,7 +282,7 @@ impl Companion {
                 .and_then(|(game, directory)| Self::exchange_directory(&game, &directory))
                 .and_then(|directory| {
                     sse_companion::protocol::CompanionClient::new(directory)
-                        .send(command, &[], Duration::from_secs(3))
+                        .send(command, argument.as_slice(), Duration::from_secs(3))
                         .map(|reply| reply.text)
                         .map_err(|e| e.to_string())
                 });
@@ -284,6 +291,9 @@ impl Companion {
                 Box::new(CompanionReply::Protocol(command, result)),
             ));
         });
+    }
+    fn protocol(&self, cx: &mut Context<'_>, command: &'static str) {
+        self.protocol_args(cx, command, None);
     }
     fn load_hotkeys(&mut self, cx: &mut Context<'_>, defaults: bool) -> Result<()> {
         let path = sse_app::paths::default_data_directory().join("hotkeys.txt");
@@ -355,18 +365,18 @@ impl Screen for Companion {
             Text::Heading,
         )?;
         style::label(cx.tree,s2,"Нужны S2 на ПК, UE4SS и установленный мод. Команды выполняет сама игра (XSetGodMode, XSetNoClipGSC, XSetTimeSpeed).",Text::Note)?;
-        for label in [
-            "Бессмертие: вкл",
-            "Бессмертие: выкл",
-            "Полёт: вкл",
-            "Полёт: выкл",
-            "Время ×5",
-            "Время: норма",
+        for (label, command, argument) in [
+            ("Бессмертие: вкл", "god", "on"),
+            ("Бессмертие: выкл", "god", "off"),
+            ("Полёт: вкл", "noclip", "on"),
+            ("Полёт: выкл", "noclip", "off"),
+            ("Время ×5", "timespeed", "5"),
+            ("Время: норма", "timespeed", "0"),
         ] {
             let id = style::button(cx.tree, s2, label, Button::Secondary)?;
-            cx.tree.set_enabled(id, false)?;
+            self.s2_commands.push((id, command, argument));
         }
-        style::label(cx.tree, s2, "появится после протокола компаньона", Text::Note)?;
+        style::label(cx.tree, s2, "Команды отправляются через протокол Companion в Stalker2\\Saved.", Text::Note)?;
         let all = style::card(cx.tree, host)?;
         style::label(cx.tree, all, "ВСЕ ИГРЫ", Text::Heading)?;
         for game in [
@@ -443,6 +453,10 @@ impl Screen for Companion {
             cx.tree.close_dialog().ok();
         }
         self.load_hotkeys(cx, false)?;
+        let s2 = cx.app.selected_game().is_some_and(|game| matches!(game, "s2" | "stalker2") || game.contains("stalker2"));
+        for (id, _, _) in &self.s2_commands {
+            cx.tree.set_enabled(*id, s2)?;
+        }
         self.refresh(cx);
         Ok(())
     }
@@ -465,6 +479,11 @@ impl Screen for Companion {
             cx.status = Some("Чтение ответов Companion…".to_owned());
             self.protocol(cx, "info");
             self.protocol(cx, "list_inventory");
+            return Ok(());
+        }
+        if let Some((_, command, argument)) = self.s2_commands.iter().find(|(id, _, _)| clicked == Some(*id)) {
+            cx.status = Some("Команда отправляется в S.T.A.L.K.E.R. 2…".to_owned());
+            self.protocol_args(cx, command, Some(argument));
             return Ok(());
         }
         if clicked.is_some() && clicked == self.apply_manual {
