@@ -421,7 +421,11 @@ impl Tree {
 
     /// Advances the tooltip delay by one 500 ms UI timer tick.
     pub fn tick_tooltip(&mut self) -> bool {
-        let has = self.hover.and_then(|id| self.nodes.get(id.0)).and_then(|node| node.tooltip.as_ref()).is_some();
+        let has = self
+            .hover
+            .and_then(|id| self.nodes.get(id.0))
+            .and_then(|node| node.tooltip.as_ref())
+            .is_some();
         if !has {
             self.tooltip_ticks = 0;
             self.tooltip_visible = false;
@@ -438,7 +442,11 @@ impl Tree {
     #[must_use]
     pub fn active_tooltip(&self) -> Option<&str> {
         self.tooltip_visible
-            .then(|| self.hover.and_then(|id| self.nodes.get(id.0)).and_then(|node| node.tooltip.as_deref()))
+            .then(|| {
+                self.hover
+                    .and_then(|id| self.nodes.get(id.0))
+                    .and_then(|node| node.tooltip.as_deref())
+            })
             .flatten()
     }
 
@@ -838,10 +846,9 @@ impl Tree {
 
     fn hit_interactive(&self, x: i32, y: i32, enabled_only: bool) -> Option<WidgetId> {
         (0..self.nodes.len()).rev().map(WidgetId).find(|id| {
-            self.nodes
-                .get(id.0)
-                .is_some_and(|node| (!enabled_only || node.enabled) && node.content.interactive() && contains(node.rect, x, y))
-                && self.shown(*id)
+            self.nodes.get(id.0).is_some_and(|node| {
+                (!enabled_only || node.enabled) && node.content.interactive() && contains(node.rect, x, y)
+            }) && self.shown(*id)
                 && self.clip_for(*id).is_none_or(|clip| contains(clip, x, y))
                 && self.modal_dialog.is_none_or(|dialog| self.within_subtree(*id, dialog))
         })
