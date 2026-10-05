@@ -716,7 +716,6 @@ impl Screen for Settings {
             },
             Content::Input {
                 text: backup_value.to_owned(),
-                placeholder: "Путь к папке бэкапов".to_owned(),
                 style: TextStyle::new(Face::Body, 14.0),
             },
             Look::default(),
