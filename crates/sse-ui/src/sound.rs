@@ -5,10 +5,14 @@ use std::path::Path;
 use sse_content::{CompanionGame, GameFileTree};
 use sse_sys::output::{Output, SystemOutput};
 
+/// Short UI feedback sound selected from the installed game's own assets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Cue {
+    /// Successful primary action.
     Select,
+    /// Navigation or selection change.
     Switch,
+    /// Refused or failed action.
     Decline,
 }
 
@@ -19,6 +23,7 @@ struct Clip {
     rate: u32,
 }
 
+/// Decoded and cached game-native UI sound clips.
 #[derive(Clone, Default)]
 pub struct GameUiSounds {
     select: Option<Clip>,
@@ -27,6 +32,7 @@ pub struct GameUiSounds {
 }
 
 impl GameUiSounds {
+    /// Loads known menu cues from loose files or X-Ray archives without network access.
     #[must_use]
     pub fn load(game_id: &str, game_directory: &Path) -> Self {
         let game = match game_id {
@@ -67,6 +73,7 @@ impl GameUiSounds {
         sounds
     }
 
+    /// Plays a cached cue when the installed game supplied it.
     pub fn play(&self, cue: Cue, volume: f32) {
         let clip = match cue {
             Cue::Select => self.select.as_ref(),
