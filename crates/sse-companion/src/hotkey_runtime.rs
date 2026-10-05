@@ -19,6 +19,16 @@ pub struct HotkeyRuntime {
     stopped: bool,
 }
 
+impl std::fmt::Debug for HotkeyRuntime {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("HotkeyRuntime")
+            .field("exchange_directory", &self.exchange_directory)
+            .field("stopped", &self.stopped)
+            .finish_non_exhaustive()
+    }
+}
+
 impl HotkeyRuntime {
     /// Starts the same executable as a native hotkey helper and enables polling in the game mod.
     ///
@@ -156,6 +166,12 @@ impl HotkeyRuntime {
             last_error: errors,
             stopped: false,
         })
+    }
+
+    /// Exchange directory this runtime sends Companion commands through.
+    #[must_use]
+    pub fn exchange_directory(&self) -> &std::path::Path {
+        &self.exchange_directory
     }
 
     /// Returns the most recent command failure, if any.
