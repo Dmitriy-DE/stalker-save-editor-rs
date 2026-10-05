@@ -340,7 +340,7 @@ impl Screen for Companion {
         self.latency = Some(style::label(cx.tree, card, "Связь / Задержка: Нет ответа", Text::Note)?);
         self.path = Some(style::label(cx.tree, card, "Путь установки: —", Text::Note)?);
         let row = style::row(cx.tree, card)?;
-        self.install = Some(style::button(cx.tree, row, "УСТАНОВИТЬ / ОБНОВИТЬ", Button::Primary)?);
+        self.install = Some(style::button(cx.tree, row, "УСТАНОВИТЬ", Button::Primary)?);
         self.remove = Some(style::button(cx.tree, row, "УДАЛИТЬ", Button::Secondary)?);
         self.ping = Some(style::button(cx.tree, row, "ПРОВЕРИТЬ СВЯЗЬ", Button::Secondary)?);
         self.refresh_button = Some(style::button(cx.tree, row, "ОБНОВИТЬ СТАТУС", Button::Secondary)?);
@@ -634,6 +634,9 @@ impl Screen for Companion {
                         if let Some(id) = self.version {
                             cx.tree
                                 .set_text(id, &format!("Версия мода: {}", version.as_deref().unwrap_or("—")))?;
+                        }
+                        if let Some(id) = self.install {
+                            cx.tree.set_text(id, if version.is_some() { "ОБНОВИТЬ" } else { "УСТАНОВИТЬ" })?;
                         }
                         if let (Some(id), Ok((_, dir))) = (self.path, self.selected(cx)) {
                             cx.tree.set_text(id, &format!("Путь установки: {}", dir.display()))?;
