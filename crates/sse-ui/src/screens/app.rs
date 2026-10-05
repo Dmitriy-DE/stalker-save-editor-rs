@@ -241,12 +241,16 @@ fn grid_label(
             grid: Some(GridPlacement::cell(column, row)),
             ..Style::default()
         },
-        Content::Label {
-            text: text.to_owned(),
-            style: TextStyle::new(
-                if heading { Face::Heading } else { Face::Body },
-                if heading { 13.0 } else { 14.0 },
-            ),
+        if heading {
+            Content::Paragraph {
+                text: text.to_owned(),
+                style: TextStyle::new(Face::Heading, 11.0),
+            }
+        } else {
+            Content::Label {
+                text: text.to_owned(),
+                style: TextStyle::new(Face::Body, 13.0),
+            }
         },
         Look {
             border: Some((style::rgb(colors.borders[0]), 1.0)),
@@ -324,16 +328,18 @@ impl Screen for Capabilities {
             Some(matrix),
             NodeKind::Grid {
                 columns: vec![
-                    Track::Fixed(220.0),
-                    Track::Fixed(92.0),
-                    Track::Fixed(92.0),
-                    Track::Fixed(92.0),
-                    Track::Fixed(92.0),
-                    Track::Fixed(92.0),
-                    Track::Fixed(92.0),
-                    Track::Fixed(92.0),
+                    Track::Fraction(2.2),
+                    Track::Fraction(1.0),
+                    Track::Fraction(1.0),
+                    Track::Fraction(1.0),
+                    Track::Fraction(1.0),
+                    Track::Fraction(1.0),
+                    Track::Fraction(1.0),
+                    Track::Fraction(1.0),
                 ],
-                rows: vec![Track::Fixed(38.0); CAPABILITY_ROWS.len().saturating_add(1)],
+                rows: std::iter::once(Track::Fixed(52.0))
+                    .chain(std::iter::repeat_n(Track::Fixed(38.0), CAPABILITY_ROWS.len()))
+                    .collect(),
             },
             Style {
                 gap: Size::new(2.0, 2.0),
