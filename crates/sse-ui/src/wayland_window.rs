@@ -725,8 +725,13 @@ fn io(error: std::io::Error) -> Error {
 
 #[cfg(test)]
 mod tests {
-    use super::{keyboard_event, parse_global, parse_pointer_event, valid_message_size, wire_message, wire_string};
+    use super::{
+        keyboard_event, parse_global, parse_pointer_event, read_message, send_shared, valid_message_size, wire_message,
+        wire_string,
+    };
     use crate::event_loop::WindowEvent;
+    use std::os::unix::net::UnixStream;
+    use std::sync::{Arc, Mutex};
 
     #[test]
     fn registry_global_decodes() {
@@ -768,6 +773,48 @@ mod tests {
         assert_eq!(packet.as_ref().map(Vec::len), Some(12));
     }
 
+
+    #[test]
+    fn serialized_writer_never_interleaves_wayland_packets() {
+        let pair = UnixStream::pair();
+        assert!(pair.is_ok());
+        let Some((reader, writer)) = pair.ok() else {
+            return;
+        };
+        let writer = Arc::new(Mutex::new(writer));
+        let first_writer = Arc::clone(&writer);
+        let second_writer = Arc::clone(&writer);
+        let first = std::thread::spawn(move || {
+            for sequence in 0_u32..64 {
+                assert!(send_shared(&first_writer, 41, 3, &sequence.to_ne_bytes()).is_ok());
+            }
+        });
+        let second = std::thread::spawn(move || {
+            for sequence in 0_u32..64 {
+                assert!(send_shared(&second_writer, 42, 4, &sequence.to_ne_bytes()).is_ok());
+            }
+        });
+        let mut reader = reader;
+        let mut first_count = 0_u32;
+        let mut second_count = 0_u32;
+        for _ in 0..128 {
+            let packet = read_message(&mut reader);
+            assert!(packet.is_ok());
+            let Some((object, opcode, payload)) = packet.ok() else {
+                return;
+            };
+            assert_eq!(payload.len(), 4);
+            match (object, opcode) {
+                (41, 3) => first_count = first_count.saturating_add(1),
+                (42, 4) => second_count = second_count.saturating_add(1),
+                _ => panic!("interleaved or malformed Wayland packet"),
+            }
+        }
+        assert!(first.join().is_ok());
+        assert!(second.join().is_ok());
+        assert_eq!(first_count, 64);
+        assert_eq!(second_count, 64);
+    }
 
     #[test]
     fn keyboard_event_preserves_ctrl_shortcut_without_text() {
