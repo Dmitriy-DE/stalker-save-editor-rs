@@ -1204,7 +1204,9 @@ impl Shell {
             journal.is_some_and(sse_storage::drafts::DraftJournal::can_redo),
         )?;
         tree.set_enabled(self.reset, has_changes)?;
-        tree.set_enabled(self.save, eligibility.can_save && !self.library_workspace.is_saving())?;
+        let save_busy =
+            self.library_workspace.is_saving() || sse_app::tasks::named_task_active("save-restore");
+        tree.set_enabled(self.save, eligibility.can_save && !save_busy)?;
         Ok(())
     }
 
