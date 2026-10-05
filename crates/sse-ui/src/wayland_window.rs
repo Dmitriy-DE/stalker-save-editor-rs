@@ -138,12 +138,7 @@ impl Present for WaylandWindow {
         if rects.is_empty() {
             return Ok(());
         }
-        let configured = self
-            .sync
-            .0
-            .lock()
-            .map(|state| state.configured_size)
-            .unwrap_or(None);
+        let configured = self.sync.0.lock().map(|state| state.configured_size).unwrap_or(None);
         let target = configured.unwrap_or((width, height));
         if target != self.size {
             self.recreate_buffers(target.0, target.1)?;
@@ -772,7 +767,6 @@ mod tests {
         let packet = wire_message(7, 3, &9_u32.to_ne_bytes()).ok();
         assert_eq!(packet.as_ref().map(Vec::len), Some(12));
     }
-
 
     #[test]
     fn serialized_writer_never_interleaves_wayland_packets() {
