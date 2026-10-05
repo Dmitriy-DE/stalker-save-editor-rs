@@ -155,6 +155,8 @@ fn select_unique_header_candidate(mut candidates: Vec<Vec<u8>>) -> sse_core::Res
         ));
     }
     Ok(candidates)
+}
+
 fn read_xray_hook_source(
     root: &Path,
     game: CompanionGame,
