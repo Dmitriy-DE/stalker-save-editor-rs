@@ -146,6 +146,7 @@ dependencies = [
  "sse-companion",
  "sse-content",
  "sse-core",
+ "sse-doctor",
  "sse-fixes",
  "sse-lint",
  "sse-s2",
