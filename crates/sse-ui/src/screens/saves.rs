@@ -17,7 +17,6 @@ use sse_storage::transaction::{self, EditSummary};
 use sse_xray::{save::InventoryItem, writer, Save};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 const SAVE_PAGE_SIZE: usize = 10;
@@ -127,8 +126,7 @@ pub(crate) struct Workspace {
     state: Arc<Mutex<WorkspaceState>>,
     draft_directory: Arc<PathBuf>,
     backup_directory: Arc<Mutex<PathBuf>>,
-    draft_generation: Arc<AtomicU64>,
-    draft_latest: Arc<Mutex<BTreeMap<String, u64>>>,
+    session: sse_app::SaveSession,
     draft_write_lock: Arc<Mutex<()>>,
 }
 
@@ -159,8 +157,7 @@ impl Workspace {
             state: Arc::new(Mutex::new(WorkspaceState::default())),
             draft_directory: Arc::new(draft_directory),
             backup_directory: Arc::new(Mutex::new(backup_directory)),
-            draft_generation: Arc::new(AtomicU64::new(0)),
-            draft_latest: Arc::new(Mutex::new(BTreeMap::new())),
+            session: sse_app::SaveSession::new(),
             draft_write_lock: Arc::new(Mutex::new(())),
         }
     }
@@ -179,56 +176,20 @@ impl Workspace {
             .unwrap_or_else(std::sync::PoisonError::into_inner) = directory;
     }
 
+    pub(crate) fn session(&self) -> sse_app::SaveSession {
+        self.session.clone()
+    }
+
     fn lock(&self) -> MutexGuard<'_, WorkspaceState> {
         self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     pub(crate) fn is_saving(&self) -> bool {
-        self.lock().active_save_request.is_some()
+        self.session.is_saving()
     }
 
     pub(crate) fn is_restoring(&self) -> bool {
-        self.lock().active_restore_request.is_some()
-    }
-
-    pub(crate) fn begin_saving(&self) -> Option<u64> {
-        let mut state = self.lock();
-        if state.active_save_request.is_some() || state.active_restore_request.is_some() {
-            return None;
-        }
-        let request = state.next_save_request.checked_add(1)?;
-        state.next_save_request = request;
-        state.active_save_request = Some(request);
-        Some(request)
-    }
-
-    pub(crate) fn begin_restoring(&self) -> Option<u64> {
-        let mut state = self.lock();
-        if state.active_save_request.is_some() || state.active_restore_request.is_some() {
-            return None;
-        }
-        let request = state.next_restore_request.checked_add(1)?;
-        state.next_restore_request = request;
-        state.active_restore_request = Some(request);
-        Some(request)
-    }
-
-    pub(crate) fn finish_saving(&self, request: u64) -> bool {
-        let mut state = self.lock();
-        if state.active_save_request != Some(request) {
-            return false;
-        }
-        state.active_save_request = None;
-        true
-    }
-
-    pub(crate) fn finish_restoring(&self, request: u64) -> bool {
-        let mut state = self.lock();
-        if state.active_restore_request != Some(request) {
-            return false;
-        }
-        state.active_restore_request = None;
-        true
+        self.session.is_restoring()
     }
 
     pub(crate) fn library_snapshot(&self) -> (bool, Option<String>, Vec<SaveSlot>) {
@@ -263,14 +224,18 @@ impl Workspace {
         }
     }
 
-    pub(crate) fn spawn<F>(&self, name: &'static str, work: F)
+    pub(crate) fn spawn<F>(&self, name: &'static str, work: F) -> Result<()>
     where
         F: FnOnce(sse_app::tasks::TaskContext) + Send + 'static,
     {
-        let _handle = self.lock().tasks.spawn(name, move |context| {
-            work(context);
-            Ok(())
-        });
+        self.lock()
+            .tasks
+            .spawn(name, move |context| {
+                work(context);
+                Ok(())
+            })
+            .map(|_| ())
+            .map_err(|error| Error::System(format!("failed to start {name} task: {error}")))
     }
 
     pub(crate) fn poll_tasks(&self) {
@@ -289,27 +254,19 @@ impl Workspace {
         let Some(source_sha256) = journal.current().map(|plan| plan.source_sha256.clone()) else {
             return;
         };
-        let generation = self.draft_generation.fetch_add(1, Ordering::AcqRel).saturating_add(1);
-        let latest = Arc::clone(&self.draft_latest);
-        latest
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(source_sha256.clone(), generation);
-        let latest = Arc::clone(&self.draft_latest);
+        let Some(generation) = self.session.next_draft_generation(&source_sha256) else {
+            cx.status = Some("Не удалось назначить поколение черновика.".to_owned());
+            return;
+        };
+        let session = self.session.clone();
         let write_lock = Arc::clone(&self.draft_write_lock);
         let draft_directory = Arc::clone(&self.draft_directory);
-        self.spawn("draft-reset", move |context| {
+        if let Err(error) = self.spawn("draft-reset", move |context| {
             if context.is_cancelled() {
                 return;
             }
             let _guard = write_lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            if latest
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .get(&source_sha256)
-                .copied()
-                != Some(generation)
-            {
+            if !session.is_current_draft_generation(&source_sha256, generation) {
                 return;
             }
             let store = DraftStore::new(draft_directory.as_path());
@@ -324,7 +281,9 @@ impl Workspace {
                 ScreenId::Inventory,
                 Box::new(DraftPersisted(result)),
             ));
-        });
+        }) {
+            cx.status = Some(format!("Не удалось запустить сохранение черновика: {error}"));
+        }
     }
 
     fn persist_drafts(&self, journals: Vec<DraftJournal>, cx: &mut Context<'_>) {
@@ -332,33 +291,31 @@ impl Workspace {
             cx.status = Some("Черновик изменён только в памяти: фоновой канал недоступен.".to_owned());
             return;
         };
-        let generation = self.draft_generation.fetch_add(1, Ordering::AcqRel).saturating_add(1);
         let hashes: Vec<String> = journals
             .iter()
             .filter_map(|journal| journal.current().map(|plan| plan.source_sha256.clone()))
             .collect();
-        let latest = Arc::clone(&self.draft_latest);
-        {
-            let mut latest = latest.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            for hash in &hashes {
-                latest.insert(hash.clone(), generation);
-            }
-        }
+        let Some(generation) = self
+            .session
+            .next_draft_generation_for(hashes.iter().map(String::as_str))
+        else {
+            cx.status = Some("Не удалось назначить поколение черновика.".to_owned());
+            return;
+        };
+        let session = self.session.clone();
         let write_lock = Arc::clone(&self.draft_write_lock);
         let draft_directory = Arc::clone(&self.draft_directory);
-        self.spawn("draft-save", move |context| {
+        if let Err(error) = self.spawn("draft-save", move |context| {
             if context.is_cancelled() {
                 return;
             }
             let _guard = write_lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            let is_latest = latest.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             if hashes
                 .iter()
-                .any(|hash| is_latest.get(hash).copied() != Some(generation))
+                .any(|hash| !session.is_current_draft_generation(hash, generation))
             {
                 return;
             }
-            drop(is_latest);
             let store = DraftStore::new(draft_directory.as_path());
             let result = journals
                 .into_iter()
@@ -368,7 +325,9 @@ impl Workspace {
                 ScreenId::Inventory,
                 Box::new(DraftPersisted(result)),
             ));
-        });
+        }) {
+            cx.status = Some(format!("Не удалось запустить сохранение черновика: {error}"));
+        }
     }
 }
 
@@ -395,12 +354,6 @@ struct WorkspaceState {
     pending_relocation: Option<u16>,
     external_change: bool,
     last_file_check: u64,
-    file_check_generation: u64,
-    file_check_in_flight: bool,
-    active_save_request: Option<u64>,
-    next_save_request: u64,
-    active_restore_request: Option<u64>,
-    next_restore_request: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -691,8 +644,8 @@ fn start_discovery(workspace: &Workspace, cx: &mut Context<'_>) {
         }
         state.scanning = true;
     }
-    let workspace = workspace.clone();
-    workspace.clone().spawn("save-discovery", move |context| {
+    let shared = workspace.clone();
+    if let Err(error) = workspace.spawn("save-discovery", move |context| {
         if context.is_cancelled() {
             return;
         }
@@ -703,13 +656,17 @@ fn start_discovery(workspace: &Workspace, cx: &mut Context<'_>) {
                 .cmp(save_game_key(right))
                 .then_with(|| right.last_write_time_utc.cmp(&left.last_write_time_utc))
         });
-        let mut state = workspace.lock();
+        let mut state = shared.lock();
         state.discovery = Some(result);
         state.scanning = false;
         drop(state);
         let _ = proxy.send(AppMessage::ToScreen(ScreenId::Overview, Box::new(())));
-    });
-    cx.status = Some("Ищу сейвы в обнаруженных каталогах…".to_owned());
+    }) {
+        workspace.lock().scanning = false;
+        cx.status = Some(format!("Не удалось запустить поиск сейвов: {error}"));
+    } else {
+        cx.status = Some("Ищу сейвы в обнаруженных каталогах…".to_owned());
+    }
 }
 
 fn start_load(workspace: &Workspace, slot: SaveSlot, cx: &mut Context<'_>) {
@@ -729,12 +686,17 @@ where
         cx.status = Some("Загрузка сейва доступна в работающем окне редактора.".to_owned());
         return;
     };
+    if workspace.session.is_busy() {
+        let text = if workspace.session.is_restoring() {
+            "Нельзя сменить сейв, пока выполняется восстановление."
+        } else {
+            "Нельзя сменить сейв, пока выполняется запись."
+        };
+        cx.status = Some(text.to_owned());
+        return;
+    }
     let request = {
         let mut state = workspace.lock();
-        if state.active_save_request.is_some() {
-            cx.status = Some("Нельзя сменить сейв, пока выполняется запись.".to_owned());
-            return;
-        }
         state.load_request = state.load_request.saturating_add(1);
         state.loading = true;
         state.load_error = None;
@@ -752,15 +714,13 @@ where
         state.pending_faction_relations.clear();
         state.pending_relocation = None;
         state.external_change = false;
-        state.file_check_generation = state.file_check_generation.saturating_add(1);
-        state.file_check_in_flight = false;
         state.last_file_check = 0;
         state.load_request
     };
     cx.app.set_current_save(None);
-    let workspace = workspace.clone();
+    let shared = workspace.clone();
     let draft_directory = Arc::clone(&workspace.draft_directory);
-    workspace.clone().spawn("save-load", move |context| {
+    if let Err(error) = workspace.spawn("save-load", move |context| {
         if context.is_cancelled() {
             return;
         }
@@ -768,7 +728,7 @@ where
             let journal = load_draft_journal(draft_directory.as_path(), &save.source_sha256)?;
             Ok((save, journal))
         });
-        let mut state = workspace.lock();
+        let mut state = shared.lock();
         if state.load_request != request {
             return;
         }
@@ -806,20 +766,25 @@ where
         };
         drop(state);
         let _ = proxy.send(AppMessage::ToScreen(ScreenId::Overview, Box::new(completion)));
-    });
-    cx.status = Some("Загружаю и проверяю выбранный сейв…".to_owned());
+    }) {
+        let mut state = workspace.lock();
+        if state.load_request == request {
+            state.loading = false;
+            state.load_error = Some(error.to_string());
+        }
+        cx.status = Some(format!("Не удалось запустить чтение сейва: {error}"));
+    } else {
+        cx.status = Some("Загружаю и проверяю выбранный сейв…".to_owned());
+    }
 }
 
-fn schedule_file_check(workspace: &Workspace, cx: &Context<'_>, seconds: u64) {
+fn schedule_file_check(workspace: &Workspace, cx: &mut Context<'_>, seconds: u64) {
     let Some(proxy) = cx.proxy.cloned() else {
         return;
     };
-    let (path, expected_size, expected_modified, source_sha256, generation) = {
+    let (path, expected_size, expected_modified, source_sha256) = {
         let mut state = workspace.lock();
-        if state.active_save_request.is_some()
-            || state.file_check_in_flight
-            || seconds.saturating_sub(state.last_file_check) < 3
-        {
+        if seconds.saturating_sub(state.last_file_check) < 3 {
             return;
         }
         let Some(selected) = state.selected.as_ref() else {
@@ -832,18 +797,13 @@ fn schedule_file_check(workspace: &Workspace, cx: &Context<'_>, seconds: u64) {
             selected.source_sha256.clone(),
         );
         state.last_file_check = seconds;
-        state.file_check_in_flight = true;
-        state.file_check_generation = state.file_check_generation.saturating_add(1);
-        (
-            snapshot.0,
-            snapshot.1,
-            snapshot.2,
-            snapshot.3,
-            state.file_check_generation,
-        )
+        (snapshot.0, snapshot.1, snapshot.2, snapshot.3)
+    };
+    let Some(mut file_check) = workspace.session.begin_file_check(&path) else {
+        return;
     };
     let shared = workspace.clone();
-    workspace.spawn("save-file-monitor", move |context| {
+    if let Err(error) = workspace.spawn("save-file-monitor", move |context| {
         if context.is_cancelled() {
             return;
         }
@@ -851,20 +811,15 @@ fn schedule_file_check(workspace: &Workspace, cx: &Context<'_>, seconds: u64) {
             metadata.len() != expected_size || metadata.modified().is_ok_and(|modified| modified != expected_modified)
         });
         let still_selected = {
-            let mut state = shared.lock();
-            let still_selected = state
+            let state = shared.lock();
+            state
                 .selected
                 .as_ref()
-                .is_some_and(|selected| selected.slot.path == path && selected.source_sha256 == source_sha256);
-            if state.file_check_generation == generation {
-                state.file_check_in_flight = false;
-                if still_selected {
-                    state.external_change = changed;
-                }
-            }
-            still_selected
+                .is_some_and(|selected| selected.slot.path == path && selected.source_sha256 == source_sha256)
         };
-        if still_selected {
+        let current_check = file_check.finish();
+        if still_selected && current_check {
+            shared.lock().external_change = changed;
             let finished = FileCheckFinished {
                 path,
                 source_sha256,
@@ -873,7 +828,9 @@ fn schedule_file_check(workspace: &Workspace, cx: &Context<'_>, seconds: u64) {
             let _ = proxy.send(AppMessage::ToScreen(ScreenId::Overview, Box::new(finished.clone())));
             let _ = proxy.send(AppMessage::ToScreen(ScreenId::Inventory, Box::new(finished)));
         }
-    });
+    }) {
+        cx.status = Some(format!("Не удалось запустить проверку файла: {error}"));
+    }
 }
 
 fn start_reload_selected(workspace: &Workspace, cx: &mut Context<'_>) -> Result<()> {
@@ -881,27 +838,34 @@ fn start_reload_selected(workspace: &Workspace, cx: &mut Context<'_>) -> Result<
         cx.status = Some("Повторное чтение доступно в работающем окне редактора.".to_owned());
         return Ok(());
     };
-    let (path, old_sha256, request, generation, empty_journal) = {
+    if workspace.session.is_busy() {
+        let text = if workspace.session.is_restoring() {
+            "Нельзя перечитать сейв, пока выполняется восстановление."
+        } else {
+            "Нельзя перечитать сейв, пока выполняется запись."
+        };
+        cx.status = Some(text.to_owned());
+        return Ok(());
+    }
+    let Some(selected) = workspace.lock().selected.clone() else {
+        return Ok(());
+    };
+    let path = selected.slot.path.clone();
+    let old_sha256 = selected.source_sha256.clone();
+    let Some(generation) = workspace.session.next_draft_generation(&old_sha256) else {
+        cx.status = Some("Не удалось назначить поколение черновика.".to_owned());
+        return Ok(());
+    };
+    let empty_journal = DraftJournal::new(vec![DraftPlan::empty(&old_sha256)?], 0)?;
+    let request = {
         let mut state = workspace.lock();
-        if state.active_save_request.is_some() {
-            cx.status = Some("Нельзя перечитать сейв, пока выполняется запись.".to_owned());
+        if state
+            .selected
+            .as_ref()
+            .is_none_or(|current| current.slot.path != path || current.source_sha256 != old_sha256)
+        {
             return Ok(());
         }
-        let selected = state.selected.clone();
-        let Some(selected) = selected else {
-            return Ok(());
-        };
-        let old_sha256 = selected.source_sha256.clone();
-        let empty_journal = DraftJournal::new(vec![DraftPlan::empty(&old_sha256)?], 0)?;
-        let generation = workspace
-            .draft_generation
-            .fetch_add(1, Ordering::AcqRel)
-            .saturating_add(1);
-        workspace
-            .draft_latest
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(old_sha256.clone(), generation);
         state.load_request = state.load_request.saturating_add(1);
         state.loading = true;
         state.load_error = None;
@@ -919,37 +883,23 @@ fn start_reload_selected(workspace: &Workspace, cx: &mut Context<'_>) -> Result<
         state.pending_faction_relations.clear();
         state.pending_relocation = None;
         state.external_change = false;
-        state.file_check_generation = state.file_check_generation.saturating_add(1);
-        state.file_check_in_flight = false;
         state.last_file_check = 0;
-        (
-            selected.slot.path.clone(),
-            old_sha256,
-            state.load_request,
-            generation,
-            empty_journal,
-        )
+        state.load_request
     };
     cx.app.set_current_save(None);
     cx.app.discard_draft(&old_sha256);
     let write_lock = Arc::clone(&workspace.draft_write_lock);
-    let latest = Arc::clone(&workspace.draft_latest);
+    let session = workspace.session.clone();
     let directory = Arc::clone(&workspace.draft_directory);
     let shared = workspace.clone();
-    workspace.spawn("save-reload", move |context| {
+    if let Err(error) = workspace.spawn("save-reload", move |context| {
         if context.is_cancelled() {
             return;
         }
         let result: Result<(LoadedSave, DraftJournal)> = (|| {
             {
                 let _guard = write_lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                if latest
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .get(&old_sha256)
-                    .copied()
-                    == Some(generation)
-                {
+                if session.is_current_draft_generation(&old_sha256, generation) {
                     DraftStore::new(directory.as_path()).save(empty_journal)?;
                 }
             }
@@ -988,8 +938,16 @@ fn start_reload_selected(workspace: &Workspace, cx: &mut Context<'_>) -> Result<
         };
         drop(state);
         let _ = proxy.send(AppMessage::ToScreen(ScreenId::Overview, Box::new(completion)));
-    });
-    cx.status = Some("Сбрасываю черновик и перечитываю сейв с диска…".to_owned());
+    }) {
+        let mut state = workspace.lock();
+        if state.load_request == request {
+            state.loading = false;
+            state.load_error = Some(error.to_string());
+        }
+        cx.status = Some(format!("Не удалось запустить повторное чтение: {error}"));
+    } else {
+        cx.status = Some("Сбрасываю черновик и перечитываю сейв с диска…".to_owned());
+    }
     Ok(())
 }
 
@@ -3425,8 +3383,9 @@ impl Inventory {
                 return Ok(());
             }
         }
-        let Some(request_id) = self.workspace.begin_saving() else {
-            let text = if self.workspace.is_restoring() {
+        let session = self.workspace.session();
+        let Some(operation_guard) = session.begin_save(&selected.slot.path) else {
+            let text = if session.is_restoring() {
                 "Дождитесь завершения восстановления сейва."
             } else {
                 "Сохранение уже выполняется."
@@ -3437,27 +3396,44 @@ impl Inventory {
             cx.status = Some(text.to_owned());
             return Ok(());
         };
+        let request_id = operation_guard.id();
+        let draft_generation = session
+            .draft_generation(&source_sha256)
+            .or_else(|| session.next_draft_generation(&source_sha256));
+        let Some(draft_generation) = draft_generation else {
+            cx.status = Some("Не удалось назначить поколение черновика.".to_owned());
+            return Ok(());
+        };
         let source_path = selected.slot.path.clone();
         let backup_directory = self.workspace.backup_directory();
         if let Some(status) = self.status {
             cx.tree.set_text(status, "Сохранение…")?;
         }
-        self.workspace.spawn("save-write", move |context| {
+        if let Err(error) = self.workspace.spawn("save-write", move |context| {
+            let save_guard = operation_guard;
             let result = if context.is_cancelled() {
                 Err("Сохранение отменено.".to_owned())
             } else {
                 commit_save_edits(&selected, &edits, &stash_moves, &backup_directory).map_err(|error| error.to_string())
             };
+            drop(save_guard);
             let _ = proxy.send(AppMessage::ToScreen(
                 ScreenId::Inventory,
                 Box::new(SaveFinished {
                     request_id,
+                    draft_generation,
                     source_path,
                     source_sha256,
                     result,
                 }),
             ));
-        });
+        }) {
+            let text = format!("Не удалось начать сохранение: {error}");
+            if let Some(status) = self.status {
+                cx.tree.set_text(status, &text)?;
+            }
+            cx.status = Some(text);
+        }
         Ok(())
     }
 
@@ -3496,7 +3472,8 @@ impl Inventory {
 }
 
 struct SaveFinished {
-    request_id: u64,
+    request_id: sse_app::SaveOperationId,
+    draft_generation: sse_app::DraftGeneration,
     source_path: PathBuf,
     source_sha256: String,
     result: std::result::Result<(Arc<LoadedSave>, String), String>,
@@ -4989,12 +4966,13 @@ impl Screen for Inventory {
             }
             if let Some(SaveFinished {
                 request_id,
+                draft_generation,
                 source_path,
                 source_sha256,
                 result,
             }) = payload.downcast_ref::<SaveFinished>()
             {
-                if !self.workspace.finish_saving(*request_id) {
+                if !self.workspace.session.is_latest_operation(*request_id) {
                     return self.render(cx);
                 }
                 let still_selected = self.workspace.lock().selected.as_ref().is_some_and(|selected| {
@@ -5021,8 +4999,13 @@ impl Screen for Inventory {
                         state.pending_relocation = None;
                         state.external_change = false;
                         drop(state);
-                        cx.app.discard_draft(source_sha256);
-                        let old_empty = DraftJournal::new(vec![DraftPlan::empty(source_sha256)?], 0)?;
+                        let old_draft_is_current = self
+                            .workspace
+                            .session
+                            .clear_draft_if_current(source_sha256, *draft_generation);
+                        if old_draft_is_current {
+                            cx.app.discard_draft(source_sha256);
+                        }
                         let new_journal = DraftJournal::new(vec![DraftPlan::empty(&loaded.source_sha256)?], 0)?;
                         cx.app
                             .set_current_save_identity(loaded.slot.path.clone(), loaded.source_sha256.clone());
@@ -5031,7 +5014,11 @@ impl Screen for Inventory {
                         cx.app.set_current_save_format(loaded.slot.format_id.clone(), legacy_s2);
                         cx.app.set_draft_journal(new_journal.clone());
                         set_workspace_draft(&self.workspace, &new_journal);
-                        self.workspace.persist_drafts(vec![old_empty, new_journal], cx);
+                        let mut journals = vec![new_journal];
+                        if old_draft_is_current {
+                            journals.push(DraftJournal::new(vec![DraftPlan::empty(source_sha256)?], 0)?);
+                        }
+                        self.workspace.persist_drafts(journals, cx);
                         if let Some(id) = self.status {
                             cx.tree.set_text(id, text)?;
                         }
@@ -6251,20 +6238,23 @@ mod tests {
     }
 
     #[test]
-    fn stale_save_completion_cannot_unlock_a_newer_write() -> sse_core::Result<()> {
+    fn earlier_save_identifier_cannot_claim_a_newer_operation() -> sse_core::Result<()> {
         let workspace = Workspace::default();
-        let first = workspace
-            .begin_saving()
+        let session = workspace.session();
+        let path = PathBuf::from("fixture.sav");
+        let first = session
+            .begin_save(&path)
             .ok_or_else(|| Error::Refused("first test save did not start".to_owned()))?;
-        assert!(workspace.finish_saving(first));
-        let second = workspace
-            .begin_saving()
+        let first_id = first.id();
+        drop(first);
+        let second = session
+            .begin_save(&path)
             .ok_or_else(|| Error::Refused("second test save did not start".to_owned()))?;
-        assert_ne!(first, second);
+        assert_ne!(first_id, second.id());
 
-        assert!(!workspace.finish_saving(first));
+        assert!(!session.is_latest_operation(first_id));
         assert!(workspace.is_saving());
-        assert!(workspace.finish_saving(second));
+        drop(second);
         assert!(!workspace.is_saving());
         Ok(())
     }
@@ -6272,22 +6262,22 @@ mod tests {
     #[test]
     fn save_and_in_place_restore_requests_are_mutually_exclusive() -> sse_core::Result<()> {
         let workspace = Workspace::default();
-        let save_request = workspace
-            .begin_saving()
+        let session = workspace.session();
+        let path = PathBuf::from("fixture.sav");
+        let save_guard = session
+            .begin_save(&path)
             .ok_or_else(|| Error::Refused("test save did not start".to_owned()))?;
-        assert!(workspace.begin_restoring().is_none());
-        assert!(workspace.finish_saving(save_request));
+        assert!(session.begin_restore(&path).is_none());
+        drop(save_guard);
 
-        let restore_request = workspace
-            .begin_restoring()
+        let restore_guard = session
+            .begin_restore(&path)
             .ok_or_else(|| Error::Refused("test restore did not start".to_owned()))?;
         assert!(workspace.is_restoring());
-        assert!(workspace.begin_saving().is_none());
-        assert!(!workspace.finish_restoring(restore_request.saturating_sub(1)));
-        assert!(workspace.is_restoring());
-        assert!(workspace.finish_restoring(restore_request));
+        assert!(session.begin_save(&path).is_none());
+        drop(restore_guard);
         assert!(!workspace.is_restoring());
-        assert!(workspace.begin_saving().is_some());
+        assert!(session.begin_save(&path).is_some());
         Ok(())
     }
 
