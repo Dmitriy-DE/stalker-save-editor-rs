@@ -1190,6 +1190,13 @@ impl Shell {
     }
 
     fn dispatch_editor_action(&mut self, tree: &mut Tree, action: EditorAction) -> Result<()> {
+        if action == EditorAction::Save && sse_app::tasks::named_task_active("save-restore") {
+            tree.set_text(
+                self.status,
+                "Сохранение недоступно: дождитесь завершения восстановления сейва.",
+            )?;
+            return Ok(());
+        }
         if let Some(index) = self
             .screens
             .iter()
