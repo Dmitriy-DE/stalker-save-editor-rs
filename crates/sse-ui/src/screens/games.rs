@@ -1433,7 +1433,7 @@ impl Screen for Environment {
                 match deleted {
                     Some(id) => cx.status = Some(format!("Снимок удалён: {id}")),
                     None => cx.status = Some("Снимков пока нет: создайте первый кнопкой ниже.".to_owned()),
-                 }
+                }
                 self.selected_snapshot = None;
                 self.refresh_lists(cx)?;
                 return Ok(());
