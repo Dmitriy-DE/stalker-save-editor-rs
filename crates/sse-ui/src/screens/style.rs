@@ -167,7 +167,12 @@ pub fn input(tree: &mut Tree, parent: WidgetId, placeholder: &str) -> Result<Wid
         NodeKind::Leaf,
         Style {
             min: Size::new(160.0, theme::BUTTON_HEIGHT),
-            padding: Edges { left: 10.0, top: 0.0, right: 10.0, bottom: 0.0 },
+            padding: Edges {
+                left: 10.0,
+                top: 0.0,
+                right: 10.0,
+                bottom: 0.0,
+            },
             grow: 1.0,
             ..Style::default()
         },
