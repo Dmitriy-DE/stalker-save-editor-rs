@@ -2303,5 +2303,16 @@
  "●  НЕ НАЙДЕНО": "●  BULUNAMADI",
  "● БУДЕТ СОЗДАНО": "● OLUŞTURULACAK",
  "● ГОТОВО": "● HAZIR",
- "♡  ПОДДЕРЖАТЬ ПРОЕКТ": "♡  PROJEYİ DESTEKLE"
+ "♡  ПОДДЕРЖАТЬ ПРОЕКТ": "♡  PROJEYİ DESTEKLE",
+ "Отправлять анонимные отчёты об ошибках?": "Anonim hata raporları gönderilsin mi?",
+ "В автоматический отчёт входят только версия, ОС, текст ошибки, стек и обезличенный журнал. Сохранения, пути и игровые логи не отправляются.": "Otomatik rapor yalnızca sürüm, işletim sistemi, hata metni, yığın izi ve anonimleştirilmiş uygulama günlüğünü içerir. Kayıt dosyaları, yollar ve oyun günlükleri gönderilmez.",
+ "Отправить отчёт?": "Rapor gönderilsin mi?",
+ "Ниже показано всё, что войдёт в отчёт.": "Rapora eklenecek her şey aşağıda gösterilir.",
+ "Отправить": "Gönder",
+ "Отправка анонимных отчётов включена.": "Anonim hata raporları etkin.",
+ "Отправка анонимных отчётов отключена.": "Anonim hata raporları devre dışı.",
+ "Отчёт не отправлен.": "Rapor gönderilmedi.",
+ "Приёмник отчётов пока не настроен. Отчёт сохранён локально.": "Rapor alıcısı henüz yapılandırılmadı. Rapor yerel olarak kaydedildi.",
+ "Отчёт сохранён локально; HTTPS-приёмник будет использован после включения сервера.": "Rapor yerel olarak kaydedildi; sunucu etkinleştirildikten sonra HTTPS alıcısı kullanılacak.",
+ "Не удалось сохранить отчёт": "Rapor kaydedilemedi"
 }
