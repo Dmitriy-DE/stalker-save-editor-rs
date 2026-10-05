@@ -617,7 +617,8 @@ impl Screen for Companion {
             let runtime_slot = Arc::clone(&self.hotkey_runtime);
             sse_app::tasks::spawn_named_detached("companion-background", move || {
                 let result = (|| {
-                    let layout = sse_companion::hotkeys::HotkeyLayout::parse(&text).map_err(|error| error.to_string())?;
+                    let layout =
+                        sse_companion::hotkeys::HotkeyLayout::parse(&text).map_err(|error| error.to_string())?;
                     layout.save(&path).map_err(|error| error.to_string())?;
                     let running = runtime_slot
                         .lock()
