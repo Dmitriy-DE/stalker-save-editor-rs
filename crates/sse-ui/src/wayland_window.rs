@@ -194,12 +194,19 @@ impl Present for WaylandWindow {
         }
 
         let slot = self.acquire_buffer()?;
-        self.buffers[slot].memory.write_u32_le(frame).map_err(io)?;
+        let buffer = {
+            let slot = self
+                .buffers
+                .get_mut(slot)
+                .ok_or_else(|| Error::System("Wayland buffer slot disappeared".to_owned()))?;
+            slot.memory.write_u32_le(frame).map_err(io)?;
+            slot.buffer
+        };
         let mut writer = self
             .writer
             .lock()
             .map_err(|_| Error::System("Wayland writer lock poisoned".to_owned()))?;
-        send(&mut writer, self.surface, 1, &u32s(&[self.buffers[slot].buffer, 0, 0]))?;
+        send(&mut writer, self.surface, 1, &u32s(&[buffer, 0, 0]))?;
         for rect in rects {
             send(
                 &mut writer,
@@ -234,8 +241,12 @@ impl WaylandWindow {
             .iter()
             .position(|released| *released)
             .ok_or_else(|| Error::System("Wayland compositor did not release a frame buffer".to_owned()))?;
-        state.released[slot] = false;
-        Ok(slot)
+        if let Some(released) = state.released.get_mut(slot) {
+            *released = false;
+            Ok(slot)
+        } else {
+            Err(Error::System("Wayland buffer slot disappeared".to_owned()))
+        }
     }
 
     fn recreate_buffers(&mut self, width: u32, height: u32) -> Result<()> {
@@ -253,7 +264,10 @@ impl WaylandWindow {
                 .0
                 .lock()
                 .map_err(|_| Error::System("Wayland buffer lock poisoned".to_owned()))?;
-            state.ids = [self.buffers[0].buffer, self.buffers[1].buffer];
+            state.ids = [
+                self.buffers.first().map(|slot| slot.buffer).unwrap_or_default(),
+                self.buffers.get(1).map(|slot| slot.buffer).unwrap_or_default(),
+            ];
             state.released = [true, true];
             state.configured_size = None;
         }
