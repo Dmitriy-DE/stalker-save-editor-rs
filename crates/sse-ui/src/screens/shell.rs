@@ -2002,6 +2002,7 @@ mod tests {
 
     #[test]
     fn ctrl_s_opens_inventory_and_keeps_the_shell_running() -> sse_core::Result<()> {
+        let _guard = close_task_test_guard();
         let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
         let mut shell = Shell::build(&mut tree, None)?;
         let message = Message::Window(WindowEvent::Key {
