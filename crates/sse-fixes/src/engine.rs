@@ -2062,7 +2062,6 @@ fn escape_json_str(s: &str) -> String {
     out
 }
 
-
 #[cfg(test)]
 mod g13_tests {
     use super::*;
@@ -2074,10 +2073,7 @@ mod g13_tests {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |duration| duration.as_nanos());
-        std::env::temp_dir().join(format!(
-            "sse-g13-update-{}-{nonce:x}",
-            std::process::id()
-        ))
+        std::env::temp_dir().join(format!("sse-g13-update-{}-{nonce:x}", std::process::id()))
     }
 
     fn definition(version: &str, a: &str, b: &str, a_sha: &str, b_sha: &str) -> GameFixDefinition {
