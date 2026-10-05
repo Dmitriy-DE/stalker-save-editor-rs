@@ -1004,7 +1004,7 @@ impl Tree {
                 look.border = Some((Color::rgba(214, 166, 45, 255), 2.0));
             }
             let padding = node.style.padding;
-            let content = node.content.clone();
+            let content = &node.content;
             let previous_clip = surface.replace_clip(clipped_area);
             paint_node(
                 surface,
@@ -1012,7 +1012,7 @@ impl Tree {
                 rect,
                 padding,
                 &look,
-                &content,
+                content,
                 (hovered, pressed),
             );
             surface.replace_clip(previous_clip);
