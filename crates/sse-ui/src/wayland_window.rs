@@ -148,6 +148,7 @@ impl WaylandWindow {
 
         let first = create_buffer(&self.writer, self.shm, width, height, first_pool, first_buffer)?;
         let second = create_buffer(&self.writer, self.shm, width, height, second_pool, second_buffer)?;
+        let buffer_ids = [first.buffer, second.buffer];
         for slot in &self.buffers {
             let _ = send_shared(&self.writer, slot.buffer, 0, &[]);
             let _ = send_shared(&self.writer, slot.pool, 1, &[]);
@@ -159,7 +160,7 @@ impl WaylandWindow {
             .sync
             .lock()
             .map_err(|_| Error::System("Wayland buffer state lock poisoned".to_owned()))?;
-        sync.ids = [self.buffers[0].buffer, self.buffers[1].buffer];
+        sync.ids = buffer_ids;
         sync.released = [true, true];
         Ok(())
     }
@@ -374,11 +375,10 @@ fn event_reader<U: Send + 'static>(
                         .iter()
                         .position(|id| *id == object)
                         .and_then(|index| state.released.get_mut(index))
-                        .map(|released| {
+                        .and_then(|released| {
                             *released = true;
                             configured_size
                         })
-                        .flatten()
                 }
                 Err(_) => None,
             }
