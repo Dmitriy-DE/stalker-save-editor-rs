@@ -152,7 +152,6 @@ pub struct Shell {
     undo: WidgetId,
     redo: WidgetId,
     reset: WidgetId,
-    open_button: WidgetId,
     refresh: WidgetId,
     save: WidgetId,
     library: WidgetId,
@@ -519,7 +518,6 @@ impl Shell {
         let undo = top_button(tree, top, crate::strings::t("Отменить"), false)?;
         let redo = top_button(tree, top, crate::strings::t("Вернуть"), false)?;
         let reset = top_button(tree, top, crate::strings::t("Сбросить"), false)?;
-        let open_button = top_button(tree, top, crate::strings::t("Открыть…"), false)?;
         let refresh = top_button(tree, top, crate::strings::t("Обновить"), false)?;
         let save = top_button(tree, top, crate::strings::t("СОХРАНИТЬ"), true)?;
         let save_reason = style::label(
@@ -844,7 +842,6 @@ impl Shell {
             undo,
             redo,
             reset,
-            open_button,
             refresh,
             save,
             library,
@@ -1310,18 +1307,17 @@ impl Shell {
             tree.set_text(self.status, &text)?;
         }
         if clicked.is_some() && clicked == Some(self.reports_ok) {
-            let mut settings = sse_app::AppSettings::load(&sse_app::default_settings_path());
-            settings.reports_notice_shown = true;
-            settings.save(&sse_app::default_settings_path())?;
+            let _ = sse_app::settings_writer::submit(sse_app::settings_writer::SettingsPatch::ReportsNotice {
+                send_reports: None,
+            });
             tree.set_visible(self.reports_banner, false)?;
             tree.set_text(self.status, "Настройки отчётов сохранены.")?;
             return Ok(Flow::Continue);
         }
         if clicked.is_some() && clicked == Some(self.reports_off) {
-            let mut settings = sse_app::AppSettings::load(&sse_app::default_settings_path());
-            settings.reports_notice_shown = true;
-            settings.send_reports = false;
-            settings.save(&sse_app::default_settings_path())?;
+            let _ = sse_app::settings_writer::submit(sse_app::settings_writer::SettingsPatch::ReportsNotice {
+                send_reports: Some(false),
+            });
             tree.set_visible(self.reports_banner, false)?;
             tree.set_text(self.status, "Отправка отчётов отключена.")?;
             return Ok(Flow::Continue);
@@ -1339,13 +1335,6 @@ impl Shell {
         };
         if let Some(action) = editor_action {
             self.dispatch_editor_action(tree, action)?;
-            return Ok(Flow::Continue);
-        }
-        if clicked.is_some() && clicked == Some(self.open_button) {
-            tree.set_text(
-                self.status,
-                "Открыть… недоступно: системный выбор файла ещё не подключён.",
-            )?;
             return Ok(Flow::Continue);
         }
         if clicked.is_some() && clicked == Some(self.refresh) {

@@ -126,8 +126,35 @@ mod tests {
         use crate::theme::BG_BASE;
         use crate::widget::Tree;
 
+        struct EnvGuard(Vec<(&'static str, Option<std::ffi::OsString>)>);
+        impl Drop for EnvGuard {
+            fn drop(&mut self) {
+                for (key, value) in self.0.drain(..) {
+                    if let Some(value) = value {
+                        std::env::set_var(key, value);
+                    } else {
+                        std::env::remove_var(key);
+                    }
+                }
+            }
+        }
+        let isolated = std::env::temp_dir().join(format!("sse-golden-home-{}", std::process::id()));
+        std::fs::create_dir_all(&isolated)?;
+        let keys = [
+            "HOME",
+            "XDG_DATA_HOME",
+            "STALKER_SAVE_EDITOR_DATA",
+            "USERPROFILE",
+            "LOCALAPPDATA",
+        ];
+        let previous = keys.into_iter().map(|key| (key, std::env::var_os(key))).collect();
+        let _guard = EnvGuard(previous);
+        for key in keys {
+            std::env::set_var(key, &isolated);
+        }
+
         const EXPECTED: [&str; 20] = [
-            "77ee3947e1d0eca5607700d59fa60f8d35916d267c6976545d3ac0ad7a1dac16",
+            "07c594695c21e3bebb31d9aa7cca659305890a83e751ef12c0664a3c2a94d8e9",
             "aab58483cf1ee9b68b178e4ef301ba32e7460a9a00d414dacbd1148895da15c4",
             "8051d4cf91309b6969a244e611f2d3bef8931c18d397762300a44f9cbbbee518",
             "0a1501a839c6153fb8972bec0f03e3ebca17df91155c7c4d8be20956782a8ac1",
@@ -137,7 +164,7 @@ mod tests {
             "5f3b964cb60149665c6e03334b05e06a8e2bb473ddb6b4c4d865950886d23d47",
             "52e86d80de846191617ff01823d5b4c1734619c6bae55e34c079ac15ff92a4f4",
             "31d088b72494e5ffe58ce3447be7bc085def4537f973ea7c8a4943b6a25e331f",
-            "8cee39ba54c8796b936b482189f458f318618a73c0e5f27bbabb0e360ee7ce81",
+            "0515c7396ed6cbd92e8e9016f4bbdb3e9be966ecb259351e3f7d078e5a1163d5",
             "39da010d0598005538838624eddb92932260999e39a232936b5999374aa29917",
             "efd8077d42cf4cbae88b1492de990bd7bb3303287d71abb430e4135231e75016",
             "6628eed4d1908f2b77170c2f65c9cdbbc4628055e1298a427c6aafbf0909758b",
@@ -146,7 +173,7 @@ mod tests {
             "2633f90b1e3233a469d009419d8ae42555400da433a77d9ddff4103ecd838fe5",
             "e6d23f92c7e880ac3dc6e20c9bc901791c2fc3c8755bf309f7de8113af7e2e40",
             "edd1d1c2e2fc56282b6658afe3e6318ed918347612c11718edac47f226162c29",
-            "589780f6d3d0f4ce53ed3c9d97a3a63ae21ea822c2e71b90bd1147e773155bab",
+            "035656c16569d9090a94c04ba65e698c9dbfc35f41f8bc84476aea0d8dcd64a5",
         ];
         assert_eq!(
             ScreenId::ALL.len(),

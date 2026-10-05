@@ -1179,6 +1179,8 @@ struct Environment {
     profile_ids: Vec<String>,
     selected_profile: Option<String>,
     pending_restore: Option<String>,
+    pending_delete_snapshot: Option<String>,
+    pending_delete_profile: Option<String>,
 }
 
 impl Environment {
@@ -1423,17 +1425,20 @@ impl Screen for Environment {
                     cx.status = Some("Управляемая установка: не выбрана".to_owned());
                     return Ok(());
                 };
-                let selected = self.selected_snapshot.clone();
-                let deleted = if let Some(id) = selected {
-                    sse_fixes::toolkit::ToolkitSnapshotService::delete_snapshot(&directory, &id)?;
-                    Some(id)
-                } else {
-                    None
+                let Some(id) = self.selected_snapshot.clone() else {
+                    cx.status = Some("Снимков пока нет: создайте первый кнопкой ниже.".to_owned());
+                    return Ok(());
                 };
-                match deleted {
-                    Some(id) => cx.status = Some(format!("Снимок удалён: {id}")),
-                    None => cx.status = Some("Снимков пока нет: создайте первый кнопкой ниже.".to_owned()),
+                if self.pending_delete_snapshot.as_deref() != Some(id.as_str()) {
+                    self.pending_delete_snapshot = Some(id.clone());
+                    cx.status = Some(format!(
+                        "Удаление снимка необратимо. Нажмите «УДАЛИТЬ СНИМОК» ещё раз для подтверждения: {id}"
+                    ));
+                    return Ok(());
                 }
+                self.pending_delete_snapshot = None;
+                sse_fixes::toolkit::ToolkitSnapshotService::delete_snapshot(&directory, &id)?;
+                cx.status = Some(format!("Снимок удалён: {id}"));
                 self.selected_snapshot = None;
                 self.refresh_lists(cx)?;
                 return Ok(());
@@ -1538,6 +1543,15 @@ impl Screen for Environment {
                     .and_then(|id| profiles.iter().find(|item| item.id == id))
                     .or_else(|| profiles.first());
                 if let Some(selected) = selected {
+                    if self.pending_delete_profile.as_deref() != Some(selected.id.as_str()) {
+                        self.pending_delete_profile = Some(selected.id.clone());
+                        cx.status = Some(format!(
+                            "Удаление профиля необратимо. Нажмите «УДАЛИТЬ ПРОФИЛЬ» ещё раз для подтверждения: {}",
+                            selected.profile.name
+                        ));
+                        return Ok(());
+                    }
+                    self.pending_delete_profile = None;
                     match sse_fixes::toolkit::ToolkitProfileService::delete_profile(
                         &sse_app::paths::default_data_directory(),
                         &selected.id,
@@ -2298,6 +2312,8 @@ impl Screen for GameFixes {
 #[derive(Clone, Debug)]
 struct DoctorFinding {
     file: String,
+    line: usize,
+    checker: String,
     severity: String,
     message: String,
 }
@@ -2384,46 +2400,19 @@ impl GameDoctor {
                     .into_iter()
                     .map(|finding| DoctorFinding {
                         file: finding.file,
+                        line: finding.line,
+                        checker: finding.checker,
                         severity: finding.severity.as_str().to_owned(),
                         message: finding.message,
                     })
                     .collect();
-
-                let row_ids: Vec<u64> = (0..findings.len())
-                    .filter_map(|index| u64::try_from(index).ok())
-                    .collect();
-                let headers = vec![
-                    crate::widgets::table::Header {
-                        label: "Файл".to_owned(),
-                        sortable: true,
-                        direction: None,
-                    },
-                    crate::widgets::table::Header {
-                        label: "Тяжесть".to_owned(),
-                        sortable: true,
-                        direction: None,
-                    },
-                ];
-                if let Ok(mut table) = crate::widgets::table::Table::new(row_ids, 24.0, headers) {
-                    let _ = table.header_click(0, false, |left, right, _| {
-                        let a = usize::try_from(left).ok().and_then(|i| findings.get(i));
-                        let b = usize::try_from(right).ok().and_then(|i| findings.get(i));
-                        a.map(|v| (&v.file, &v.severity))
-                            .cmp(&b.map(|v| (&v.file, &v.severity)))
-                    });
-                    let mut ordered = Vec::with_capacity(findings.len());
-                    for index in 0..findings.len() {
-                        if let Some(row) = table
-                            .visible_row(index)
-                            .and_then(|id| usize::try_from(id).ok())
-                            .and_then(|i| findings.get(i))
-                            .cloned()
-                        {
-                            ordered.push(row);
-                        }
-                    }
-                    findings = ordered;
-                }
+                findings.sort_by(|left, right| {
+                    left.file
+                        .cmp(&right.file)
+                        .then_with(|| left.line.cmp(&right.line))
+                        .then_with(|| left.checker.cmp(&right.checker))
+                        .then_with(|| left.message.cmp(&right.message))
+                });
                 Ok((report.files_checked, report.elapsed_ms, findings))
             })();
             proxy.send(AppMessage::ToScreen(
@@ -2563,7 +2552,10 @@ impl Screen for GameDoctor {
                                 cx.tree.set_visible(widget, true)?;
                                 cx.tree.set_text(
                                     widget,
-                                    &format!("{} · {} · {}", finding.file, finding.severity, finding.message),
+                                    &format!(
+                                        "{}:{} · {} · {} · {}",
+                                        finding.file, finding.line, finding.severity, finding.checker, finding.message
+                                    ),
                                 )?;
                             } else {
                                 cx.tree.set_visible(widget, false)?;
