@@ -608,11 +608,27 @@ impl Screen for Companion {
             }
             let path = sse_app::paths::default_data_directory().join("hotkeys.txt");
             let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
+            let runtime_slot = Arc::clone(&self.hotkey_runtime);
             sse_app::tasks::spawn_named_detached("companion-background", move || {
-                let result = sse_companion::hotkeys::HotkeyLayout::parse(&text)
-                    .and_then(|layout| layout.save(&path))
-                    .map(|()| format!("Клавиши сохранены: {}.", path.display()))
-                    .map_err(|e| e.to_string());
+                let result = (|| {
+                    let layout = sse_companion::hotkeys::HotkeyLayout::parse(&text).map_err(|error| error.to_string())?;
+                    layout.save(&path).map_err(|error| error.to_string())?;
+                    let running = runtime_slot
+                        .lock()
+                        .map_err(|_| "hotkey runtime lock was poisoned".to_owned())?
+                        .take();
+                    if let Some(mut runtime) = running {
+                        let directory = runtime.exchange_directory().to_path_buf();
+                        runtime.stop().map_err(|error| error.to_string())?;
+                        let restarted = sse_companion::hotkey_runtime::HotkeyRuntime::start(&layout, directory)
+                            .map_err(|error| error.to_string())?;
+                        let mut slot = runtime_slot
+                            .lock()
+                            .map_err(|_| "hotkey runtime lock was poisoned".to_owned())?;
+                        *slot = Some(restarted);
+                    }
+                    Ok(format!("Клавиши сохранены: {}.", path.display()))
+                })();
                 proxy.send(AppMessage::ToScreen(
                     ScreenId::Companion,
                     Box::new(CompanionReply::Hotkeys(result)),
