@@ -26,6 +26,7 @@ fn main() -> std::process::ExitCode {
         Some("--screenshot") => screenshot(&args),
         Some("--bench") => bench(&args),
         Some("--ci-budget") => ci_budget(),
+        Some("--ci-i18n-layout") => ci_i18n_layout(),
         Some("--companion") => companion_command(&args),
         Some("--hotkey-helper") => hotkey_helper(),
         _ => {
@@ -227,6 +228,11 @@ fn screenshot(args: &[String]) -> Result<()> {
         shell.open(&mut tree, *id)?;
     }
     tree.resize(width, height);
+    shell.message(
+        &mut tree,
+        &Message::Window(sse_ui::event_loop::WindowEvent::Resized { width, height }),
+        None,
+    )?;
     let stride = usize::try_from(width).unwrap_or(0);
     let mut frame = vec![0_u32; stride.saturating_mul(usize::try_from(height).unwrap_or(0))];
     tree.paint(&mut frame, stride)?;
@@ -311,6 +317,51 @@ fn bench(args: &[String]) -> Result<()> {
         pixels.checked_div(200).unwrap_or(0)
     );
     println!("hover move repaint {per_hover:?}");
+    Ok(())
+}
+
+fn ci_i18n_layout() -> Result<()> {
+    const LANGUAGES: [&str; 2] = ["de", "fr"];
+    const SIZES: [(u32, u32); 2] = [(1280, 860), (940, 600)];
+
+    let previous = std::env::var_os("STALKER_EDITOR_LANG");
+    for language in LANGUAGES {
+        std::env::set_var("STALKER_EDITOR_LANG", language);
+        for (width, height) in SIZES {
+            let mut tree = Tree::new(Fonts::bundled()?, rgb(BG_BASE));
+            let mut shell = Shell::build(&mut tree, None)?;
+            tree.resize(width, height);
+            shell.message(
+                &mut tree,
+                &Message::Window(sse_ui::event_loop::WindowEvent::Resized { width, height }),
+                None,
+            )?;
+            let stride = usize::try_from(width).unwrap_or(0);
+            let mut frame =
+                vec![0_u32; stride.saturating_mul(usize::try_from(height).unwrap_or(0))];
+            for id in ScreenId::ALL {
+                shell.open(&mut tree, id)?;
+                tree.paint(&mut frame, stride)?;
+                let clipped = tree.clipped_button_labels()?;
+                if !clipped.is_empty() {
+                    if let Some(value) = previous.as_ref() {
+                        std::env::set_var("STALKER_EDITOR_LANG", value);
+                    } else {
+                        std::env::remove_var("STALKER_EDITOR_LANG");
+                    }
+                    return Err(Error::Refused(format!(
+                        "{language} {width}x{height} {id:?}: clipped buttons: {}",
+                        clipped.join(" | ")
+                    )));
+                }
+            }
+        }
+    }
+    if let Some(value) = previous {
+        std::env::set_var("STALKER_EDITOR_LANG", value);
+    } else {
+        std::env::remove_var("STALKER_EDITOR_LANG");
+    }
     Ok(())
 }
 
