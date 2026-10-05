@@ -1265,8 +1265,8 @@ impl Shell {
 
     fn handle(&mut self, tree: &mut Tree, message: &Message<AppMessage>, clicked: Option<WidgetId>) -> Result<Flow> {
         let save_session = self.library_workspace.session();
-        let write_active = sse_app::tasks::named_task_active("game-write")
-            || sse_app::tasks::named_task_active("companion-write");
+        let write_active =
+            sse_app::tasks::named_task_active("game-write") || sse_app::tasks::named_task_active("companion-write");
         if self.close_waiting && !write_active && !save_session.is_saving() && !save_session.is_restoring() {
             self.close_waiting = false;
             return Ok(Flow::Exit);
@@ -1334,10 +1334,7 @@ impl Shell {
             if tree.dialog() == Some(self.force_close_dialog) {
                 let _ = tree.close_dialog()?;
             }
-            tree.set_text(
-                self.status,
-                "Ожидаю завершения записи в игру/компаньон…",
-            )?;
+            tree.set_text(self.status, "Ожидаю завершения записи в игру/компаньон…")?;
             return Ok(Flow::Continue);
         }
         if let Message::User(AppMessage::SoundLoaded(game, sounds)) = message {
@@ -1891,7 +1888,7 @@ mod tests {
             .ok_or_else(|| sse_core::Error::Refused("test restore did not start".to_owned()))?;
         let (started_sender, started_receiver) = std::sync::mpsc::channel();
         let (release_sender, release_receiver) = std::sync::mpsc::channel();
-        sse_app::tasks::spawn_named_detached("game-background", move || {
+        sse_app::tasks::spawn_named_detached("game-write", move || {
             let _ = started_sender.send(());
             let _ = release_receiver.recv();
         });
@@ -1908,7 +1905,7 @@ mod tests {
             .send(())
             .map_err(|error| sse_core::Error::System(error.to_string()))?;
         assert!(sse_app::tasks::wait_for_named_tasks(
-            &["game-background"],
+            &["game-write"],
             std::time::Duration::from_secs(1)
         ));
 
@@ -2257,6 +2254,44 @@ mod tests {
         shell.handle(&mut tree, &backwards, None)?;
         assert_ne!(first, second);
         assert_eq!(tree.focused(), first);
+        Ok(())
+    }
+    #[test]
+    fn close_ignores_reads_and_confirms_second_request_during_write() -> sse_core::Result<()> {
+        let _guard = close_task_test_guard();
+        let close = Message::Window(WindowEvent::CloseRequested);
+
+        let (read_tx, read_rx) = std::sync::mpsc::channel();
+        sse_app::tasks::spawn_named_detached("game-read", move || {
+            let _ = read_rx.recv();
+        });
+        let mut read_tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut read_shell = Shell::build(&mut read_tree, None)?;
+        assert_eq!(read_shell.handle(&mut read_tree, &close, None)?, Flow::Exit);
+        let _ = read_tx.send(());
+
+        let (write_tx, write_rx) = std::sync::mpsc::channel();
+        sse_app::tasks::spawn_named_detached("game-write", move || {
+            let _ = write_rx.recv();
+        });
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut shell = Shell::build(&mut tree, None)?;
+        assert_eq!(shell.handle(&mut tree, &close, None)?, Flow::Continue);
+        assert!(!tree.dialog_open());
+        assert_eq!(shell.handle(&mut tree, &close, None)?, Flow::Continue);
+        assert_eq!(tree.dialog(), Some(shell.force_close_dialog));
+
+        let tick = Message::User(super::AppMessage::Tick(0));
+        assert_eq!(
+            shell.handle(&mut tree, &tick, Some(shell.force_close_no))?,
+            Flow::Continue
+        );
+        assert!(!tree.dialog_open());
+        assert_eq!(shell.handle(&mut tree, &close, None)?, Flow::Continue);
+        assert_eq!(tree.dialog(), Some(shell.force_close_dialog));
+        assert_eq!(shell.handle(&mut tree, &tick, Some(shell.force_close_yes))?, Flow::Exit);
+        let _ = write_tx.send(());
+        let _ = sse_app::tasks::wait_for_named_tasks(&["game-read", "game-write"], std::time::Duration::from_secs(1));
         Ok(())
     }
 }
