@@ -9,6 +9,7 @@ use crate::widgets::table::{Header, Table};
 use sse_core::{Error, Result, SaveBuffer};
 use sse_s2::{S2Change, S2InventoryItem, S2Save, S2StashItem, S2StashLayout};
 use sse_storage::discovery::{SaveDirectoryLocator, SaveSlot, SaveSlotDiscovery};
+use sse_storage::drafts::{DraftJournal, DraftPlan, DraftStore};
 use sse_storage::transaction::{self, EditSummary};
 use sse_xray::{save::InventoryItem, writer, Save};
 use std::collections::{BTreeMap, BTreeSet};
@@ -54,12 +55,22 @@ pub(crate) fn screens_with_workspace(workspace: Workspace) -> Vec<Box<dyn Screen
 /// S2 stash transfer stays off until a written save is proven to load in the game.
 const S2_STASH_MOVE_ENABLED: bool = false;
 
-#[derive(Clone, Default)]
-pub(crate) struct Workspace(Arc<Mutex<WorkspaceState>>);
+#[derive(Clone)]
+pub(crate) struct Workspace {
+    state: Arc<Mutex<WorkspaceState>>,
+    draft_store: DraftStore,
+}
 
 impl Workspace {
+    fn with_draft_store(draft_store: DraftStore) -> Self {
+        Self {
+            state: Arc::new(Mutex::new(WorkspaceState::default())),
+            draft_store,
+        }
+    }
+
     fn lock(&self) -> MutexGuard<'_, WorkspaceState> {
-        self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+        self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     pub(crate) fn spawn<F>(&self, name: &'static str, work: F)
@@ -75,6 +86,62 @@ impl Workspace {
     pub(crate) fn poll_tasks(&self) {
         let _ = self.lock().tasks.poll_events();
     }
+
+    fn queue_draft_write(&self, journal: DraftJournal) -> bool {
+        let Some(plan) = journal.current() else {
+            return false;
+        };
+        let mut state = self.lock();
+        state.draft_write_queue.insert(plan.source_sha256.clone(), journal);
+        if state.draft_writer_running {
+            false
+        } else {
+            state.draft_writer_running = true;
+            true
+        }
+    }
+
+    fn start_draft_writer(&self, proxy: Option<crate::event_loop::Proxy<AppMessage>>) {
+        let workspace = self.clone();
+        self.spawn("draft-write", move |_| loop {
+            let queued = {
+                let mut state = workspace.lock();
+                match state.draft_write_queue.pop_first() {
+                    Some(queued) => queued,
+                    None => {
+                        state.draft_writer_running = false;
+                        break;
+                    }
+                }
+            };
+            let (source_sha256, journal) = queued;
+            let result = workspace
+                .draft_store
+                .save(journal)
+                .map(|_| ())
+                .map_err(|error| error.to_string());
+            {
+                let mut state = workspace.lock();
+                if let Err(error) = &result {
+                    state.draft_write_errors.insert(source_sha256.clone(), error.clone());
+                } else {
+                    state.draft_write_errors.remove(&source_sha256);
+                }
+            }
+            if let Some(proxy) = &proxy {
+                let _ = proxy.send(AppMessage::ToScreen(
+                    ScreenId::Inventory,
+                    Box::new(DraftWriteFinished { source_sha256, result }),
+                ));
+            }
+        });
+    }
+}
+
+impl Default for Workspace {
+    fn default() -> Self {
+        Self::with_draft_store(DraftStore::new(sse_app::paths::default_data_directory().join("drafts")))
+    }
 }
 
 #[derive(Default)]
@@ -89,12 +156,192 @@ struct WorkspaceState {
     pending_money: Option<u32>,
     pending_stacks: BTreeMap<ItemHandle, u32>,
     pending_stash_moves: BTreeSet<u32>,
+    draft_journals: BTreeMap<String, DraftJournal>,
+    draft_write_queue: BTreeMap<String, DraftJournal>,
+    draft_write_errors: BTreeMap<String, String>,
+    draft_writer_running: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum ItemHandle {
     Xray(u16),
     Stalker2(u32),
+}
+
+fn draft_has_changes(plan: &DraftPlan) -> bool {
+    plan.money.is_some()
+        || !plan.stack_counts.is_empty()
+        || !plan.durability.is_empty()
+        || !plan.placements.is_empty()
+        || !plan.upgrades.is_empty()
+        || !plan.detach_handles.is_empty()
+        || !plan.adds.is_empty()
+        || !plan.stash_takes.is_empty()
+        || !plan.stash_puts.is_empty()
+        || plan.unmapped_legacy_plan.is_some()
+}
+
+fn stack_handles_for_save(save: &LoadedSave, plan: &DraftPlan) -> BTreeMap<ItemHandle, u32> {
+    let mut pending = BTreeMap::new();
+    for (registry_id, count) in &plan.stack_counts {
+        match &save.data {
+            SaveData::Xray { inventory, .. } => {
+                let Ok(handle) = u16::try_from(*registry_id) else {
+                    continue;
+                };
+                if inventory
+                    .iter()
+                    .any(|item| item.handle == handle && item.count.is_some())
+                {
+                    pending.insert(ItemHandle::Xray(handle), *count);
+                }
+            }
+            SaveData::Stalker2 { inventory, .. } => {
+                if inventory
+                    .iter()
+                    .any(|item| item.handle == *registry_id && item.editable_count)
+                {
+                    pending.insert(ItemHandle::Stalker2(*registry_id), *count);
+                }
+            }
+        }
+    }
+    pending
+}
+
+fn draft_plan_with_pending(
+    selected: &LoadedSave,
+    journal: Option<&DraftJournal>,
+    pending_money: Option<u32>,
+    pending_stacks: &BTreeMap<ItemHandle, u32>,
+) -> Result<DraftPlan> {
+    let mut plan = match journal.and_then(DraftJournal::current) {
+        Some(plan) => plan.clone(),
+        None => DraftPlan::empty(&selected.source_sha256)?,
+    };
+    plan.money = pending_money;
+    match &selected.data {
+        SaveData::Xray { save, inventory } => {
+            plan.stack_counts.retain(|handle, _| {
+                let Ok(handle) = u16::try_from(*handle) else {
+                    return true;
+                };
+                !inventory
+                    .iter()
+                    .any(|item| item.handle == handle && item.count.is_some())
+            });
+            for (handle, count) in pending_stacks {
+                if let ItemHandle::Xray(handle) = handle {
+                    if inventory
+                        .iter()
+                        .find(|item| item.handle == *handle)
+                        .and_then(|item| item.count)
+                        .is_some_and(|original| u32::from(original) != *count)
+                    {
+                        plan.stack_counts.insert(u32::from(*handle), *count);
+                    }
+                }
+            }
+            if pending_money.is_some_and(|money| save.money().is_ok_and(|original| original == money)) {
+                plan.money = None;
+            }
+        }
+        SaveData::Stalker2 { save, inventory, .. } => {
+            plan.stack_counts.retain(|handle, _| {
+                !inventory
+                    .iter()
+                    .any(|item| item.handle == *handle && item.editable_count)
+            });
+            for (handle, count) in pending_stacks {
+                if let ItemHandle::Stalker2(handle) = handle {
+                    if inventory
+                        .iter()
+                        .find(|item| item.handle == *handle && item.editable_count)
+                        .is_some_and(|item| item.count != *count)
+                    {
+                        plan.stack_counts.insert(*handle, *count);
+                    }
+                }
+            }
+            if pending_money.is_some_and(|money| save.money() == money) {
+                plan.money = None;
+            }
+        }
+    }
+    Ok(plan)
+}
+
+fn journal_with_plan(existing: Option<DraftJournal>, plan: DraftPlan) -> Result<DraftJournal> {
+    let Some(journal) = existing else {
+        let empty = DraftPlan::empty(&plan.source_sha256)?;
+        return DraftJournal::new(vec![empty], 0)?.record(plan, false);
+    };
+    if journal.current() == Some(&plan) {
+        Ok(journal)
+    } else {
+        journal.record(plan, false)
+    }
+}
+
+fn draft_save_blocker(selected: &LoadedSave, journal: Option<&DraftJournal>) -> Option<&'static str> {
+    let plan = journal.and_then(DraftJournal::current)?;
+    if plan.source_sha256 != selected.source_sha256 {
+        return Some("Черновик относится к другой версии сейва; запись заблокирована.");
+    }
+    if plan.unmapped_legacy_plan.is_some() {
+        return Some("Черновик содержит правки неизвестного формата; запись заблокирована.");
+    }
+    if !plan.durability.is_empty()
+        || !plan.placements.is_empty()
+        || !plan.upgrades.is_empty()
+        || !plan.detach_handles.is_empty()
+        || !plan.adds.is_empty()
+        || !plan.stash_takes.is_empty()
+        || !plan.stash_puts.is_empty()
+    {
+        return Some("Черновик содержит типы правок, которые эта форма пока не записывает.");
+    }
+    for handle in plan.stack_counts.keys() {
+        let found = match &selected.data {
+            SaveData::Xray { inventory, .. } => u16::try_from(*handle).ok().is_some_and(|handle| {
+                inventory
+                    .iter()
+                    .any(|item| item.handle == handle && item.count.is_some())
+            }),
+            SaveData::Stalker2 { inventory, .. } => inventory
+                .iter()
+                .any(|item| item.handle == *handle && item.editable_count),
+        };
+        if !found {
+            return Some("Черновик содержит количество для неизвестного предмета; запись заблокирована.");
+        }
+    }
+    None
+}
+
+fn draft_status(state: &WorkspaceState, selected: &LoadedSave) -> String {
+    if let Some(error) = state.draft_write_errors.get(&selected.source_sha256) {
+        return format!("Черновик не записан на диск: {error}");
+    }
+    let Some(plan) = state
+        .draft_journals
+        .get(&selected.source_sha256)
+        .and_then(DraftJournal::current)
+        .filter(|plan| draft_has_changes(plan))
+    else {
+        return "Изменения пока не подготовлены.".to_owned();
+    };
+    let changes = usize::from(plan.money.is_some())
+        .saturating_add(plan.stack_counts.len())
+        .saturating_add(plan.durability.len())
+        .saturating_add(plan.placements.len())
+        .saturating_add(plan.upgrades.len())
+        .saturating_add(plan.detach_handles.len())
+        .saturating_add(plan.adds.len())
+        .saturating_add(plan.stash_takes.len())
+        .saturating_add(plan.stash_puts.len())
+        .saturating_add(usize::from(plan.unmapped_legacy_plan.is_some()));
+    format!("Черновик: {changes} действ. · автосохранение в локальный журнал.")
 }
 
 struct LoadedSave {
@@ -391,14 +638,21 @@ where
         if context.is_cancelled() {
             return;
         }
-        let result = slot().and_then(LoadedSave::read);
+        let result = slot().and_then(LoadedSave::read).and_then(|save| {
+            let cached = workspace.lock().draft_journals.get(&save.source_sha256).cloned();
+            let journal = match cached {
+                Some(journal) => Some(journal),
+                None => workspace.draft_store.load(&save.source_sha256)?,
+            };
+            Ok((save, journal))
+        });
         let mut state = workspace.lock();
         if state.load_request != request {
             return;
         }
         state.loading = false;
         let completion = match result {
-            Ok(save) => {
+            Ok((save, loaded_journal)) => {
                 state.load_error = None;
                 if include_discovery {
                     let searched_paths = save.slot.path.parent().map(Path::to_path_buf).into_iter().collect();
@@ -408,11 +662,28 @@ where
                     });
                 }
                 let path = save.slot.path.clone();
+                let source_sha256 = save.source_sha256.clone();
+                let journal = state
+                    .draft_journals
+                    .get(&save.source_sha256)
+                    .cloned()
+                    .or(loaded_journal);
+                if let Some(journal) = &journal {
+                    state.pending_money = journal.current().and_then(|plan| plan.money);
+                    state.pending_stacks = journal
+                        .current()
+                        .map(|plan| stack_handles_for_save(&save, plan))
+                        .unwrap_or_default();
+                    state.draft_journals.insert(save.source_sha256.clone(), journal.clone());
+                }
+                let draft = journal.and_then(|journal| journal.current().cloned());
                 state.selected = Some(Arc::new(save));
                 LoadFinished {
                     request,
                     selected_path: Some(path),
+                    source_sha256: Some(source_sha256),
                     error: None,
+                    draft,
                 }
             }
             Err(error) => {
@@ -422,7 +693,9 @@ where
                 LoadFinished {
                     request,
                     selected_path: None,
+                    source_sha256: None,
                     error: Some(error),
+                    draft: None,
                 }
             }
         };
@@ -435,7 +708,14 @@ where
 struct LoadFinished {
     request: u64,
     selected_path: Option<PathBuf>,
+    source_sha256: Option<String>,
     error: Option<String>,
+    draft: Option<DraftPlan>,
+}
+
+struct DraftWriteFinished {
+    source_sha256: String,
+    result: std::result::Result<(), String>,
 }
 
 fn save_game_key(slot: &SaveSlot) -> &str {
@@ -770,7 +1050,9 @@ impl Screen for Overview {
             if let Some(LoadFinished {
                 request,
                 selected_path,
+                source_sha256,
                 error,
+                draft,
             }) = payload.downcast_ref::<LoadFinished>()
             {
                 if self.workspace.lock().load_request == *request {
@@ -778,6 +1060,13 @@ impl Screen for Overview {
                     if let Some(error) = error {
                         cx.status = Some(format!("Сейв не загружен: {error}"));
                     } else {
+                        if let Some(source_sha256) = source_sha256 {
+                            if let Some(draft) = draft.as_ref().filter(|draft| draft_has_changes(draft)) {
+                                cx.app.set_draft(draft.clone());
+                            } else {
+                                cx.app.discard_draft(source_sha256);
+                            }
+                        }
                         cx.status = Some("Сейв прочитан и проверен.".to_owned());
                     }
                 }
@@ -928,10 +1217,7 @@ impl Inventory {
                     cx.tree.set_visible(id, has_changes)?;
                 }
                 if let Some(id) = self.status {
-                    cx.tree.set_text(
-                        id,
-                        "Изменения подготовлены. Сохранение создаст бэкап, запишет файл и повторно его прочитает.",
-                    )?;
+                    cx.tree.set_text(id, &draft_status(&state, selected))?;
                 }
             }
             SaveData::Stalker2 { save, inventory, .. } => {
@@ -1005,14 +1291,12 @@ impl Inventory {
                     cx.tree.set_text(id, "Сохранить")?;
                 }
                 if let Some(id) = self.status {
-                    cx.tree.set_text(
-                        id,
-                        if writable {
-                            "Изменения сохраняются с резервной копией и проверкой повторным чтением."
-                        } else {
-                            "Сейв S2 1.0.x открыт только для чтения."
-                        },
-                    )?;
+                    let text = if writable {
+                        draft_status(&state, selected)
+                    } else {
+                        "Сейв S2 1.0.x открыт только для чтения.".to_owned()
+                    };
+                    cx.tree.set_text(id, &text)?;
                 }
             }
         }
@@ -1040,58 +1324,124 @@ impl Inventory {
         Ok(())
     }
 
-    fn stage_money(&self, increase: bool) {
-        let mut state = self.workspace.lock();
-        let Some(selected) = state.selected.as_ref() else {
-            return;
+    fn stage_money(&self, increase: bool, cx: &mut Context<'_>) -> Result<()> {
+        let journal = {
+            let mut state = self.workspace.lock();
+            let Some(selected) = state.selected.clone() else {
+                return Ok(());
+            };
+            let current_money = match &selected.data {
+                SaveData::Xray { save, .. } => save.money().ok(),
+                SaveData::Stalker2 { save, .. } if !save.index().is_legacy() => Some(save.money()),
+                SaveData::Stalker2 { .. } => None,
+            };
+            let Some(current_money) = current_money else {
+                return Ok(());
+            };
+            let current = state.pending_money.unwrap_or(current_money);
+            let next = if increase {
+                current.saturating_add(1_000).min(2_000_000_000)
+            } else {
+                current.saturating_sub(1_000)
+            };
+            let pending_money = (next != current_money).then_some(next);
+            let plan = draft_plan_with_pending(
+                &selected,
+                state.draft_journals.get(&selected.source_sha256),
+                pending_money,
+                &state.pending_stacks,
+            )?;
+            let existing = state.draft_journals.get(&selected.source_sha256).cloned();
+            let journal = match journal_with_plan(existing, plan) {
+                Ok(journal) => journal,
+                Err(error) => {
+                    cx.status = Some(format!("Черновик не изменён: {error}"));
+                    return Ok(());
+                }
+            };
+            state.pending_money = pending_money;
+            state.draft_write_errors.remove(&selected.source_sha256);
+            state
+                .draft_journals
+                .insert(selected.source_sha256.clone(), journal.clone());
+            journal
         };
-        let current_money = match &selected.data {
-            SaveData::Xray { save, .. } => save.money().ok(),
-            SaveData::Stalker2 { save, .. } if !save.index().is_legacy() => Some(save.money()),
-            SaveData::Stalker2 { .. } => None,
-        };
-        let Some(current_money) = current_money else {
-            return;
-        };
-        let current = state.pending_money.unwrap_or(current_money);
-        state.pending_money = Some(if increase {
-            current.saturating_add(1_000).min(2_000_000_000)
-        } else {
-            current.saturating_sub(1_000)
-        });
+        self.publish_draft(cx, journal)
     }
 
-    fn stage_stack(&self, handle: ItemHandle, increase: bool) {
-        let mut state = self.workspace.lock();
-        let Some(selected) = state.selected.as_ref() else {
-            return;
-        };
-        let original = match (&selected.data, handle) {
-            (SaveData::Xray { inventory, .. }, ItemHandle::Xray(handle)) => inventory
-                .iter()
-                .find(|item| item.handle == handle)
-                .and_then(|item| item.count)
-                .map(u32::from),
-            (SaveData::Stalker2 { inventory, .. }, ItemHandle::Stalker2(handle)) => inventory
-                .iter()
-                .find(|item| item.handle == handle && item.editable_count)
-                .map(|item| item.count),
-            _ => None,
-        };
-        let Some(original) = original else {
-            return;
-        };
-        let current = state.pending_stacks.get(&handle).copied().unwrap_or(original);
-        let next = if increase {
-            let maximum = match handle {
-                ItemHandle::Xray(_) => u32::from(u16::MAX),
-                ItemHandle::Stalker2(_) => 10_000_000,
+    fn stage_stack(&self, handle: ItemHandle, increase: bool, cx: &mut Context<'_>) -> Result<()> {
+        let journal = {
+            let mut state = self.workspace.lock();
+            let Some(selected) = state.selected.clone() else {
+                return Ok(());
             };
-            current.saturating_add(1).min(maximum)
-        } else {
-            current.saturating_sub(1).max(1)
+            let original = match (&selected.data, handle) {
+                (SaveData::Xray { inventory, .. }, ItemHandle::Xray(handle)) => inventory
+                    .iter()
+                    .find(|item| item.handle == handle)
+                    .and_then(|item| item.count)
+                    .map(u32::from),
+                (SaveData::Stalker2 { inventory, .. }, ItemHandle::Stalker2(handle)) => inventory
+                    .iter()
+                    .find(|item| item.handle == handle && item.editable_count)
+                    .map(|item| item.count),
+                _ => None,
+            };
+            let Some(original) = original else {
+                return Ok(());
+            };
+            let current = state.pending_stacks.get(&handle).copied().unwrap_or(original);
+            let next = if increase {
+                let maximum = match handle {
+                    ItemHandle::Xray(_) => u32::from(u16::MAX),
+                    ItemHandle::Stalker2(_) => 10_000_000,
+                };
+                current.saturating_add(1).min(maximum)
+            } else {
+                current.saturating_sub(1).max(1)
+            };
+            let mut pending_stacks = state.pending_stacks.clone();
+            if next == original {
+                pending_stacks.remove(&handle);
+            } else {
+                pending_stacks.insert(handle, next);
+            }
+            let plan = draft_plan_with_pending(
+                &selected,
+                state.draft_journals.get(&selected.source_sha256),
+                state.pending_money,
+                &pending_stacks,
+            )?;
+            let existing = state.draft_journals.get(&selected.source_sha256).cloned();
+            let journal = match journal_with_plan(existing, plan) {
+                Ok(journal) => journal,
+                Err(error) => {
+                    cx.status = Some(format!("Черновик не изменён: {error}"));
+                    return Ok(());
+                }
+            };
+            state.pending_stacks = pending_stacks;
+            state.draft_write_errors.remove(&selected.source_sha256);
+            state
+                .draft_journals
+                .insert(selected.source_sha256.clone(), journal.clone());
+            journal
         };
-        state.pending_stacks.insert(handle, next);
+        self.publish_draft(cx, journal)
+    }
+
+    fn publish_draft(&self, cx: &mut Context<'_>, journal: DraftJournal) -> Result<()> {
+        if let Some(plan) = journal.current() {
+            if draft_has_changes(plan) {
+                cx.app.set_draft(plan.clone());
+            } else {
+                cx.app.discard_draft(&plan.source_sha256);
+            }
+        }
+        if self.workspace.queue_draft_write(journal) {
+            self.workspace.start_draft_writer(cx.proxy.cloned());
+        }
+        Ok(())
     }
 
     fn save(&self, cx: &mut Context<'_>) -> Result<()> {
@@ -1099,22 +1449,36 @@ impl Inventory {
             cx.status = Some("Сохранение доступно в работающем окне редактора.".to_owned());
             return Ok(());
         };
-        let (selected, money, stacks, stash_moves) = {
+        let (selected, money, stacks, stash_moves, journal) = {
             let state = self.workspace.lock();
             (
                 state.selected.clone(),
                 state.pending_money,
                 state.pending_stacks.clone(),
                 state.pending_stash_moves.clone(),
+                state
+                    .selected
+                    .as_ref()
+                    .and_then(|selected| state.draft_journals.get(&selected.source_sha256))
+                    .cloned(),
             )
         };
         let Some(selected) = selected else {
             cx.status = Some("Сначала выберите сейв.".to_owned());
             return Ok(());
         };
+        if let Some(reason) = draft_save_blocker(&selected, journal.as_ref()) {
+            cx.status = Some(reason.to_owned());
+            if let Some(status) = self.status {
+                cx.tree.set_text(status, reason)?;
+            }
+            return Ok(());
+        }
         if let Some(status) = self.status {
             cx.tree.set_text(status, "Создаю резервную копию и сохраняю…")?;
         }
+        let source_sha256 = selected.source_sha256.clone();
+        let plan = journal.and_then(|journal| journal.current().cloned());
         self.workspace.spawn("save-write", move |context| {
             if context.is_cancelled() {
                 return;
@@ -1122,14 +1486,22 @@ impl Inventory {
             let result = commit_save_edits(&selected, money, &stacks, &stash_moves).map_err(|error| error.to_string());
             let _ = proxy.send(AppMessage::ToScreen(
                 ScreenId::Inventory,
-                Box::new(SaveFinished(result)),
+                Box::new(SaveFinished {
+                    source_sha256,
+                    plan,
+                    result,
+                }),
             ));
         });
         Ok(())
     }
 }
 
-struct SaveFinished(std::result::Result<(Arc<LoadedSave>, String), String>);
+struct SaveFinished {
+    source_sha256: String,
+    plan: Option<DraftPlan>,
+    result: std::result::Result<(Arc<LoadedSave>, String), String>,
+}
 
 fn commit_save_edits(
     selected: &LoadedSave,
@@ -1443,11 +1815,11 @@ impl Screen for Inventory {
             }
         }
         if clicked.is_some() && clicked == self.money_decrease {
-            self.stage_money(false);
+            self.stage_money(false, cx)?;
             return self.render(cx);
         }
         if clicked.is_some() && clicked == self.money_increase {
-            self.stage_money(true);
+            self.stage_money(true, cx)?;
             return self.render(cx);
         }
         if clicked.is_some() && clicked == self.previous {
@@ -1461,7 +1833,7 @@ impl Screen for Inventory {
         for row in &self.rows {
             if clicked == Some(row.decrease) || clicked == Some(row.increase) {
                 if let Some(handle) = row.handle {
-                    self.stage_stack(handle, clicked == Some(row.increase));
+                    self.stage_stack(handle, clicked == Some(row.increase), cx)?;
                 }
                 return self.render(cx);
             }
@@ -1470,31 +1842,76 @@ impl Screen for Inventory {
             return self.save(cx);
         }
         if let Message::User(AppMessage::ToScreen(ScreenId::Inventory, payload)) = message {
-            if let Some(SaveFinished(result)) = payload.downcast_ref::<SaveFinished>() {
+            let mut completion_status = None;
+            if let Some(SaveFinished {
+                source_sha256,
+                plan,
+                result,
+            }) = payload.downcast_ref::<SaveFinished>()
+            {
                 match result {
                     Ok((loaded, text)) => {
-                        let mut state = self.workspace.lock();
-                        state.selected = Some(Arc::clone(loaded));
-                        state.pending_money = None;
-                        state.pending_stacks.clear();
-                        state.pending_stash_moves.clear();
-                        drop(state);
-                        cx.app.set_current_save(Some(loaded.slot.path.clone()));
-                        if let Some(id) = self.status {
-                            cx.tree.set_text(id, text)?;
+                        let (empty_journal, same_selection) = if let Some(plan) = plan {
+                            let mut state = self.workspace.lock();
+                            let same_selection = state
+                                .selected
+                                .as_ref()
+                                .is_some_and(|selected| selected.source_sha256 == *source_sha256);
+                            if same_selection {
+                                state.selected = Some(Arc::clone(loaded));
+                                state.pending_money = None;
+                                state.pending_stacks.clear();
+                                state.pending_stash_moves.clear();
+                            }
+                            let same_draft =
+                                state.draft_journals.get(source_sha256).and_then(DraftJournal::current) == Some(plan);
+                            if same_draft {
+                                let empty = DraftJournal::new(vec![DraftPlan::empty(source_sha256)?], 0)?;
+                                state.draft_journals.insert(source_sha256.clone(), empty.clone());
+                                (Some(empty), same_selection)
+                            } else {
+                                (None, same_selection)
+                            }
+                        } else {
+                            (None, false)
+                        };
+                        if let Some(empty_journal) = empty_journal {
+                            if self.workspace.queue_draft_write(empty_journal) {
+                                self.workspace.start_draft_writer(cx.proxy.cloned());
+                            }
+                            cx.app.discard_draft(source_sha256);
                         }
-                        cx.status = Some(text.clone());
+                        if same_selection {
+                            cx.app.set_current_save(Some(loaded.slot.path.clone()));
+                            completion_status = Some(text.clone());
+                        }
                     }
                     Err(error) => {
-                        let text = format!("Не сохранено: {error}");
-                        if let Some(id) = self.status {
-                            cx.tree.set_text(id, &text)?;
-                        }
-                        cx.status = Some(text);
+                        completion_status = Some(format!("Не сохранено: {error}"));
                     }
                 }
             }
+            if let Some(finished) = payload.downcast_ref::<DraftWriteFinished>() {
+                let selected_sha = self
+                    .workspace
+                    .lock()
+                    .selected
+                    .as_ref()
+                    .map(|selected| selected.source_sha256.clone());
+                if selected_sha.as_deref() == Some(finished.source_sha256.as_str()) {
+                    completion_status = Some(match &finished.result {
+                        Ok(()) => "Черновик сохранён в локальный журнал.".to_owned(),
+                        Err(error) => format!("Черновик не записан на диск: {error}"),
+                    });
+                }
+            }
             self.render(cx)?;
+            if let Some(text) = completion_status {
+                if let Some(id) = self.status {
+                    cx.tree.set_text(id, &text)?;
+                }
+                cx.status = Some(text);
+            }
         }
         Ok(())
     }
@@ -1911,8 +2328,8 @@ fn short_text(text: &str, limit: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        commit_save_edits_to, prepare_save_edits, prepare_xray_edits, LoadFinished, LoadedSave, Overview, S2Save,
-        SaveBuffer, SaveSlot, Workspace,
+        commit_save_edits_to, prepare_save_edits, prepare_xray_edits, slot_for_path, Inventory, LoadFinished,
+        LoadedSave, Overview, S2Save, SaveBuffer, SaveSlot, Workspace,
     };
     use crate::event_loop::{channel_pair, Message};
     use crate::glyphs::Fonts;
@@ -1921,12 +2338,14 @@ mod tests {
     use crate::screens::{AppMessage, Context, Screen, ScreenId};
     use crate::widget::{Content, Look, Tree};
     use sse_core::Error;
+    use sse_storage::drafts::DraftStore;
     use sse_xray::Save;
     use std::collections::{BTreeMap, BTreeSet};
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::UNIX_EPOCH;
+    use std::sync::Arc;
+    use std::time::{Instant, UNIX_EPOCH};
 
     static NEXT_TEMP_DIRECTORY: AtomicU64 = AtomicU64::new(1);
 
@@ -1944,6 +2363,42 @@ mod tests {
     impl Drop for TempDirectory {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn wait_for_draft_writes(workspace: &Workspace) -> sse_core::Result<()> {
+        let deadline = Instant::now()
+            .checked_add(std::time::Duration::from_secs(5))
+            .ok_or_else(|| Error::System("draft wait deadline overflowed".to_owned()))?;
+        loop {
+            workspace.poll_tasks();
+            let state = workspace.lock();
+            if !state.draft_writer_running && state.draft_write_queue.is_empty() {
+                return Ok(());
+            }
+            drop(state);
+            if Instant::now() >= deadline {
+                return Err(Error::System("timed out waiting for draft journal write".to_owned()));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    fn load_overview_fixture(
+        overview: &mut Overview,
+        cx: &mut Context<'_>,
+        receiver: &std::sync::mpsc::Receiver<Message<AppMessage>>,
+        path: &Path,
+    ) -> sse_core::Result<()> {
+        assert!(overview.open_save(cx, path)?);
+        loop {
+            let message = receiver
+                .recv_timeout(std::time::Duration::from_secs(10))
+                .map_err(|error| Error::System(error.to_string()))?;
+            if matches!(&message, Message::User(AppMessage::ToScreen(ScreenId::Overview, _))) {
+                overview.message(cx, &message, None)?;
+                return Ok(());
+            }
         }
     }
 
@@ -2168,7 +2623,7 @@ mod tests {
             include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-source.sav"),
         )?;
         let (proxy, receiver) = channel_pair::<AppMessage>();
-        let mut overview = Overview::new(Workspace::default());
+        let mut overview = Overview::new(Workspace::with_draft_store(DraftStore::new(temp.0.join("drafts"))));
         let mut app = sse_app::AppState::new();
         let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
         let host = tree.add(
@@ -2211,6 +2666,200 @@ mod tests {
         };
         overview.message(&mut cx, &message, None)?;
         assert_eq!(cx.app.current_save(), Some(path.as_path()));
+        Ok(())
+    }
+
+    #[test]
+    fn inventory_money_edit_is_published_to_the_shared_draft_state() -> sse_core::Result<()> {
+        let temp = TempDirectory::new();
+        let source = include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-source.sav");
+        let original_money = Save::read(source)?.money()?;
+        let selected = Arc::new(load_xray(source, "fixture.sav", "stalker-cop", "cop")?);
+        let source_sha256 = selected.source_sha256.clone();
+        let workspace = Workspace::with_draft_store(DraftStore::new(temp.0.join("drafts")));
+        workspace.lock().selected = Some(selected);
+        let mut app = sse_app::AppState::new();
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let mut screen = Inventory::new(workspace);
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: None,
+            status: None,
+            app: &mut app,
+        };
+        screen.build(&mut cx, host)?;
+        let button = screen
+            .money_increase
+            .ok_or_else(|| Error::damaged("money increase button is missing"))?;
+        screen.message(&mut cx, &Message::User(AppMessage::Tick(0)), Some(button))?;
+
+        assert!(cx.app.has_draft(&source_sha256));
+        assert_eq!(
+            cx.app.draft(&source_sha256).and_then(|draft| draft.money),
+            Some(original_money + 1_000)
+        );
+        wait_for_draft_writes(&screen.workspace)?;
+        Ok(())
+    }
+
+    #[test]
+    fn draft_journal_survives_switching_saves_and_reopening_from_disk() -> sse_core::Result<()> {
+        let temp = TempDirectory::new();
+        let first_path = temp.0.join("first.sav");
+        let second_path = temp.0.join("second.sav");
+        fs::write(
+            &first_path,
+            include_bytes!("../../../../fixtures/synthetic/writer-stacks/xray-stack-cop-source.sav"),
+        )?;
+        fs::write(
+            &second_path,
+            include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-source.sav"),
+        )?;
+        let draft_directory = temp.0.join("drafts");
+        let workspace = Workspace::with_draft_store(DraftStore::new(&draft_directory));
+        let first = Arc::new(LoadedSave::read(slot_for_path(&first_path)?)?);
+        let first_sha = first.source_sha256.clone();
+        let first_money = match &first.data {
+            super::SaveData::Xray { save, .. } => save.money()?,
+            super::SaveData::Stalker2 { .. } => return Err(Error::damaged("expected X-Ray test fixture")),
+        };
+        let first_stack_count = match &first.data {
+            super::SaveData::Xray { inventory, .. } => inventory
+                .iter()
+                .find(|item| item.handle == 0x1234)
+                .and_then(|item| item.count)
+                .map(u32::from)
+                .ok_or_else(|| Error::damaged("stack fixture item 0x1234 is missing"))?,
+            super::SaveData::Stalker2 { .. } => return Err(Error::damaged("expected X-Ray test fixture")),
+        };
+        workspace.lock().selected = Some(first);
+
+        let mut app = sse_app::AppState::new();
+        let mut inventory_tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let inventory_host = inventory_tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let mut inventory = Inventory::new(workspace.clone());
+        {
+            let mut cx = Context {
+                tree: &mut inventory_tree,
+                proxy: None,
+                status: None,
+                app: &mut app,
+            };
+            inventory.build(&mut cx, inventory_host)?;
+            let button = inventory
+                .money_increase
+                .ok_or_else(|| Error::damaged("money increase button is missing"))?;
+            inventory.message(&mut cx, &Message::User(AppMessage::Tick(0)), Some(button))?;
+            let stack_button = inventory
+                .rows
+                .iter()
+                .find(|row| row.handle == Some(super::ItemHandle::Xray(0x1234)))
+                .map(|row| row.increase)
+                .ok_or_else(|| Error::damaged("stack control 0x1234 is not visible"))?;
+            inventory.message(&mut cx, &Message::User(AppMessage::Tick(0)), Some(stack_button))?;
+        }
+        wait_for_draft_writes(&workspace)?;
+        let persisted = DraftStore::new(&draft_directory)
+            .load(&first_sha)?
+            .ok_or_else(|| Error::damaged("draft was not persisted"))?;
+        assert_eq!(
+            persisted.current().and_then(|plan| plan.money),
+            Some(first_money + 1_000)
+        );
+        assert_eq!(
+            persisted
+                .current()
+                .and_then(|plan| plan.stack_counts.get(&0x1234))
+                .copied(),
+            Some(first_stack_count + 1)
+        );
+
+        let (proxy, receiver) = channel_pair::<AppMessage>();
+        let mut overview_tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let overview_host = overview_tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let mut overview = Overview::new(workspace.clone());
+        let mut cx = Context {
+            tree: &mut overview_tree,
+            proxy: Some(&proxy),
+            status: None,
+            app: &mut app,
+        };
+        overview.build(&mut cx, overview_host)?;
+        load_overview_fixture(&mut overview, &mut cx, &receiver, &second_path)?;
+        assert!(workspace
+            .lock()
+            .selected
+            .as_ref()
+            .is_some_and(|save| save.slot.path == second_path));
+        load_overview_fixture(&mut overview, &mut cx, &receiver, &first_path)?;
+        drop(cx);
+
+        let state = workspace.lock();
+        assert_eq!(state.pending_money, Some(first_money + 1_000));
+        assert_eq!(
+            state.pending_stacks.get(&super::ItemHandle::Xray(0x1234)),
+            Some(&(first_stack_count + 1))
+        );
+        assert!(state.selected.as_ref().is_some_and(|save| save.slot.path == first_path));
+        assert_eq!(
+            app.draft(&first_sha).and_then(|plan| plan.money),
+            Some(first_money + 1_000)
+        );
+        drop(state);
+
+        let reopened_workspace = Workspace::with_draft_store(DraftStore::new(&draft_directory));
+        let (reopen_proxy, reopen_receiver) = channel_pair::<AppMessage>();
+        let mut reopen_app = sse_app::AppState::new();
+        let mut reopen_tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let reopen_host = reopen_tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let mut reopen_overview = Overview::new(reopened_workspace.clone());
+        let mut reopen_cx = Context {
+            tree: &mut reopen_tree,
+            proxy: Some(&reopen_proxy),
+            status: None,
+            app: &mut reopen_app,
+        };
+        reopen_overview.build(&mut reopen_cx, reopen_host)?;
+        load_overview_fixture(&mut reopen_overview, &mut reopen_cx, &reopen_receiver, &first_path)?;
+        drop(reopen_cx);
+        let reopened_state = reopened_workspace.lock();
+        assert_eq!(reopened_state.pending_money, Some(first_money + 1_000));
+        assert_eq!(
+            reopened_state.pending_stacks.get(&super::ItemHandle::Xray(0x1234)),
+            Some(&(first_stack_count + 1))
+        );
+        assert_eq!(
+            reopen_app
+                .draft(&first_sha)
+                .and_then(|plan| plan.stack_counts.get(&0x1234))
+                .copied(),
+            Some(first_stack_count + 1)
+        );
         Ok(())
     }
 }
