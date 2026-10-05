@@ -481,7 +481,7 @@ struct Checked(String);
 
 struct DiagnosticsChecked(Vec<sse_app::diagnostics::EnvironmentCheck>);
 
-struct ReportSaved(Result<std::path::PathBuf, String>);
+struct ReportSaved(std::result::Result<std::path::PathBuf, String>);
 
 /// Settings screen.
 #[derive(Default)]
