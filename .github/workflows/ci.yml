@@ -32,15 +32,22 @@ jobs:
         if: matrix.os == 'ubuntu-24.04'
         run: cargo test -p sse-fuzz-smoke --release -- --nocapture
 
+      - name: Localized layout QA
+        if: matrix.os == 'ubuntu-24.04'
+        run: cargo run --release -p sse-ui --bin sse-shell -- --ci-i18n-layout
+
       - name: Render acceptance screenshots
         if: matrix.os == 'ubuntu-24.04'
         shell: bash
         run: |
           mkdir -p target/acceptance-screenshots
-          cargo run --release -p sse-ui --bin sse-shell -- --screenshot target/acceptance-screenshots/overview-940x600.png 940x600 0
-          cargo run --release -p sse-ui --bin sse-shell -- --screenshot target/acceptance-screenshots/capabilities-940x600.png 940x600 17
-          cargo run --release -p sse-ui --bin sse-shell -- --screenshot target/acceptance-screenshots/overview-1280x860.png 1280x860 0
-          cargo run --release -p sse-ui --bin sse-shell -- --screenshot target/acceptance-screenshots/capabilities-1280x860.png 1280x860 17
+          for lang in en de fr uk; do
+            for size in 940x600 1280x860; do
+              STALKER_EDITOR_LANG="$lang" cargo run --release -p sse-ui --bin sse-shell -- --screenshot "target/acceptance-screenshots/overview-${lang}-${size}.png" "$size" 0
+            done
+          done
+          STALKER_EDITOR_LANG=en cargo run --release -p sse-ui --bin sse-shell -- --screenshot target/acceptance-screenshots/capabilities-en-940x600.png 940x600 17
+          STALKER_EDITOR_LANG=en cargo run --release -p sse-ui --bin sse-shell -- --screenshot target/acceptance-screenshots/capabilities-en-1280x860.png 1280x860 17
       - name: Upload acceptance screenshots
         if: matrix.os == 'ubuntu-24.04'
         uses: actions/upload-artifact@v4
