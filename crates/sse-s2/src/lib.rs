@@ -79,6 +79,7 @@ impl S2Container {
         let stream = data
             .get(4..trailer_offset)
             .ok_or_else(|| Error::damaged("S2 Kraken stream range is out of bounds"))?;
+        sse_codecs::validate_declared_output_size(stream.len(), unpacked_size, "S2 Kraken")?;
         let mut image = vec![0_u8; unpacked_size];
         sse_codecs::kraken::decompress_into(stream, &mut image)?;
         Ok(Self {
