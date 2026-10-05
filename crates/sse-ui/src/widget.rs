@@ -6,7 +6,9 @@
 
 use crate::glyphs::{to_px, to_u32, Fonts, TextStyle};
 use crate::layout::{self, Constraints, Layout, NodeId, NodeKind, Size, Style};
-use crate::raster::{Color, Radii, Rect, Surface};
+use crate::path::Icon;
+use crate::raster::{Color, MaskRef, Radii, Rect, Surface};
+use crate::widgets::icon::IconCache;
 use sse_core::{Error, Result};
 
 /// Damage rectangles kept separately before they are merged into one bounding box.
@@ -109,6 +111,15 @@ pub enum Content {
         /// Font face and size.
         style: TextStyle,
     },
+    /// A clickable navigation row with a built-in vector icon.
+    IconButton {
+        /// Vector icon.
+        icon: Icon,
+        /// Optional text; empty in collapsed navigation.
+        text: String,
+        /// Font face and size.
+        style: TextStyle,
+    },
 }
 
 impl Content {
@@ -118,12 +129,13 @@ impl Content {
             Self::Label { text, style }
             | Self::Input { text, style }
             | Self::Paragraph { text, style }
-            | Self::Button { text, style } => Some((text.as_str(), *style)),
+            | Self::Button { text, style }
+            | Self::IconButton { text, style, .. } => Some((text.as_str(), *style)),
         }
     }
 
     const fn interactive(&self) -> bool {
-        matches!(self, Self::Button { .. } | Self::Input { .. })
+        matches!(self, Self::Button { .. } | Self::IconButton { .. } | Self::Input { .. })
     }
 }
 
@@ -157,6 +169,7 @@ pub struct Tree {
     previous_dialog_focus: Option<WidgetId>,
     modal_dialog: Option<WidgetId>,
     overlay_host: Option<WidgetId>,
+    icon_cache: IconCache,
     changed_inputs: Vec<WidgetId>,
 }
 
@@ -180,6 +193,7 @@ impl Tree {
             previous_dialog_focus: None,
             modal_dialog: None,
             overlay_host: None,
+            icon_cache: IconCache::new(),
             changed_inputs: Vec::new(),
         }
     }
@@ -450,6 +464,17 @@ impl Tree {
         if !self.changed_inputs.contains(&id) {
             self.changed_inputs.push(id);
         }
+    }
+
+    /// Replaces layout style of a widget and invalidates layout and paint.
+    pub fn set_style(&mut self, id: WidgetId, style: Style) -> Result<()> {
+        let layout = self.node(id)?.layout;
+        let content = self.node(id)?.content.clone();
+        self.node_mut(id)?.style = style;
+        self.layout.set_style(layout, self.text_style(&content, style))?;
+        self.needs_layout = true;
+        self.damage_all();
+        Ok(())
     }
 
     /// Replaces how a widget looks.
@@ -924,7 +949,7 @@ impl Tree {
             let previous_clip = surface.replace_clip(clipped_area);
             paint_node(
                 surface,
-                &mut self.fonts,
+                (&mut self.fonts, &mut self.icon_cache),
                 rect,
                 padding,
                 &look,
@@ -994,7 +1019,7 @@ impl Tree {
 
 fn paint_node(
     surface: &mut Surface<'_>,
-    fonts: &mut Fonts,
+    resources: (&mut Fonts, &mut IconCache),
     rect: Rect,
     padding: layout::Edges,
     look: &Look,
@@ -1023,6 +1048,18 @@ fn paint_node(
             color,
         );
     }
+    if let Content::IconButton { icon, .. } = content {
+        let size = u16::try_from(rect.height.min(18)).unwrap_or(18);
+        if let Ok(bitmap) = resources.1.get(*icon, size, look.text.to_u32()) {
+            if let Ok(mask) = MaskRef::new(&bitmap.alpha, u32::from(size), u32::from(size), usize::from(size)) {
+                let x = rect.x.saturating_add(to_px(padding.left.max(8.0)));
+                let y = rect
+                    .y
+                    .saturating_add(i32::try_from(rect.height.saturating_sub(u32::from(size)) / 2).unwrap_or(0));
+                surface.blit_mask(mask, x, y, Color::from_u32(bitmap.color));
+            }
+        }
+    }
     let Some((text, style)) = content.text() else {
         return;
     };
@@ -1031,25 +1068,30 @@ fn paint_node(
     } else {
         look.text
     };
-    let line = fonts.line_height(style);
-    let left = i32_to_f32(rect.x) + padding.left;
+    let line = resources.0.line_height(style);
+    let icon_inset = if matches!(content, Content::IconButton { text, .. } if !text.is_empty()) {
+        24.0
+    } else {
+        0.0
+    };
+    let left = i32_to_f32(rect.x) + padding.left + icon_inset;
     if matches!(content, Content::Paragraph { .. }) {
         let inner_width = (u32_to_f32(rect.width) - padding.left - padding.right).max(1.0);
-        let lines = crate::text::break_lines(text, inner_width, &fonts.metrics(style));
-        let mut baseline = i32_to_f32(rect.y) + padding.top + fonts.ascent(style);
+        let lines = crate::text::break_lines(text, inner_width, &resources.0.metrics(style));
+        let mut baseline = i32_to_f32(rect.y) + padding.top + resources.0.ascent(style);
         for wrapped in lines {
             if let Some(slice) = text.get(wrapped.start..wrapped.end) {
-                fonts.draw(surface, slice, left, baseline, style, look.text);
+                resources.0.draw(surface, slice, left, baseline, style, look.text);
                 if wrapped.append_hyphen {
-                    let x = left + fonts.measure(slice, style);
-                    fonts.draw(surface, "-", x, baseline, style, look.text);
+                    let x = left + resources.0.measure(slice, style);
+                    resources.0.draw(surface, "-", x, baseline, style, look.text);
                 }
             }
             baseline += line;
         }
         return;
     }
-    let text_width = fonts.measure(text, style);
+    let text_width = resources.0.measure(text, style);
     let right = i32_to_f32(rect.x) + u32_to_f32(rect.width) - padding.right;
     let x = match look.align {
         TextAlign::Start => left,
@@ -1058,8 +1100,8 @@ fn paint_node(
     };
     let top = i32_to_f32(rect.y) + padding.top;
     let inner = u32_to_f32(rect.height) - padding.top - padding.bottom;
-    let baseline = top + (inner - line) / 2.0 + fonts.ascent(style);
-    fonts.draw(surface, text, x, baseline, style, color);
+    let baseline = top + (inner - line) / 2.0 + resources.0.ascent(style);
+    resources.0.draw(surface, text, x, baseline, style, color);
 }
 
 fn hidden_style() -> Style {
