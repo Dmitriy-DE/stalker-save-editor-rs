@@ -466,17 +466,6 @@ impl Tree {
         }
     }
 
-    /// Replaces layout style of a widget and invalidates layout and paint.
-    pub fn set_style(&mut self, id: WidgetId, style: Style) -> Result<()> {
-        let layout = self.node(id)?.layout;
-        let content = self.node(id)?.content.clone();
-        self.node_mut(id)?.style = style;
-        self.layout.set_style(layout, self.text_style(&content, style))?;
-        self.needs_layout = true;
-        self.damage_all();
-        Ok(())
-    }
-
     /// Replaces how a widget looks.
     ///
     /// # Errors
