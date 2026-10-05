@@ -173,15 +173,7 @@ pub fn recv_fd(stream: &UnixStream, bytes: &mut [u8]) -> io::Result<(usize, Opti
         ));
     }
     // SAFETY: validated cmsghdr length includes one aligned RawFd written by the kernel.
-    let raw = unsafe {
-        std::ptr::read(
-            control
-                .as_ptr()
-                .cast::<u8>()
-                .add(data_offset)
-                .cast::<RawFd>(),
-        )
-    };
+    let raw = unsafe { std::ptr::read(control.as_ptr().cast::<u8>().add(data_offset).cast::<RawFd>()) };
     if raw < 0 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -215,9 +207,8 @@ mod tests {
         let mut payload = [0_u8; 8];
         let (received, descriptor) = recv_fd(&receiver, &mut payload)?;
         assert_eq!(payload.get(..received), Some(&b"fd"[..]));
-        let file = std::fs::File::from(
-            descriptor.ok_or_else(|| std::io::Error::other("SCM_RIGHTS descriptor missing"))?,
-        );
+        let file =
+            std::fs::File::from(descriptor.ok_or_else(|| std::io::Error::other("SCM_RIGHTS descriptor missing"))?);
         assert_eq!(file.metadata()?.len(), 4096);
         Ok(())
     }
