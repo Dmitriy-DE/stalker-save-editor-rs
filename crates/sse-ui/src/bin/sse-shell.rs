@@ -33,11 +33,16 @@ fn main() {
 }
 
 fn companion_command(args: &[String]) -> Result<()> {
-    let directory = args.get(1).ok_or_else(|| Error::Refused("usage: --companion DIR COMMAND [ARG ...]".to_owned()))?;
-    let command = args.get(2).ok_or_else(|| Error::Refused("usage: --companion DIR COMMAND [ARG ...]".to_owned()))?;
+    let directory = args
+        .get(1)
+        .ok_or_else(|| Error::Refused("usage: --companion DIR COMMAND [ARG ...]".to_owned()))?;
+    let command = args
+        .get(2)
+        .ok_or_else(|| Error::Refused("usage: --companion DIR COMMAND [ARG ...]".to_owned()))?;
     let arguments = args.iter().skip(3).map(String::as_str).collect::<Vec<_>>();
     let client = sse_companion::protocol::CompanionClient::new(std::path::PathBuf::from(directory));
-    let reply = client.send(command, &arguments, Duration::from_secs(3))
+    let reply = client
+        .send(command, &arguments, Duration::from_secs(3))
         .map_err(|error| Error::System(format!("companion: {error}")))?;
     println!("{:?} {}", reply.status, reply.text);
     Ok(())
@@ -203,6 +208,7 @@ fn bench(args: &[String]) -> Result<()> {
 fn ci_budget() -> Result<()> {
     const START_BUDGET: Duration = Duration::from_millis(200);
     const SWITCH_BUDGET: Duration = Duration::from_millis(16);
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     const RSS_BUDGET_KIB: u64 = 30 * 1024;
 
     let started = Instant::now();
@@ -213,13 +219,15 @@ fn ci_budget() -> Result<()> {
     tree.paint(&mut frame, 1280)?;
     let startup = started.elapsed();
     if startup > START_BUDGET {
-        return Err(Error::Refused(format!("startup budget exceeded: {startup:?} > {START_BUDGET:?}")));
+        return Err(Error::Refused(format!(
+            "startup budget exceeded: {startup:?} > {START_BUDGET:?}"
+        )));
     }
 
     let mut worst_switch = Duration::ZERO;
     for id in ScreenId::ALL {
         let switch_started = Instant::now();
-        shell.open(&mut tree, *id)?;
+        shell.open(&mut tree, id)?;
         tree.paint(&mut frame, 1280)?;
         worst_switch = worst_switch.max(switch_started.elapsed());
     }
@@ -232,7 +240,9 @@ fn ci_budget() -> Result<()> {
     #[cfg(target_os = "linux")]
     if let Some(rss_kib) = linux_rss_kib() {
         if rss_kib > RSS_BUDGET_KIB {
-            return Err(Error::Refused(format!("idle RSS budget exceeded: {rss_kib} KiB > {RSS_BUDGET_KIB} KiB")));
+            return Err(Error::Refused(format!(
+                "idle RSS budget exceeded: {rss_kib} KiB > {RSS_BUDGET_KIB} KiB"
+            )));
         }
         println!("budget startup={startup:?} switch_worst={worst_switch:?} rss={rss_kib}KiB");
     }
@@ -261,23 +271,6 @@ fn window() -> Result<()> {
     let mut tree = Tree::new(Fonts::bundled()?, rgb(BG_BASE));
     let mut shell = Shell::build(&mut tree, Some(proxy.clone()))?;
     let (width, height) = (1280_u16, 800_u16);
-    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-        let mut backend = sse_ui::wayland_window::WaylandWindow::open(
-            "S.T.A.L.K.E.R. Save Editor",
-            u32::from(width),
-            u32::from(height),
-            proxy.clone(),
-        )?;
-        tree.resize(u32::from(width), u32::from(height));
-        let started = Instant::now();
-        std::thread::spawn(move || loop {
-            std::thread::sleep(Duration::from_millis(500));
-            if !proxy.send(AppMessage::Tick(started.elapsed().as_secs())) { return; }
-        });
-        let stats = sse_ui::event_loop::run(&receiver, &mut tree, &mut shell, &mut backend)?;
-        eprintln!("wakes {} frames {} pixels {}" , stats.wakes, stats.frames, stats.pixels, "wayland");
-        return Ok(());
-    }
     let mut backend =
         sse_ui::x11_window::X11Window::open("S.T.A.L.K.E.R. Save Editor", width, height, BG_BASE, proxy.clone())?;
     tree.resize(u32::from(width), u32::from(height));
