@@ -986,7 +986,7 @@
  "Не задано — использовать установленную игру/автопоиск": "Nenastaveno — použít nainstalovanou hru/automatické hledání",
  "Не найдена": "Nenalezena",
  "Не найдено — будет создано при первой записи": "Nenalezeno — vytvoří se při prvním zápisu",
- "Не отправлять": "Neposílat",
+ "Не отправлять": "Neodesílat",
  "Не поддерживается движком или форматом сохранения.": "Nepodporováno enginem ani formátem uložené hry.",
  "Не подтверждено": "Nepotvrzeno",
  "Не получено": "Nezískáno",
@@ -2311,5 +2311,16 @@
  "●  НЕ НАЙДЕНО": "●  NENALEZENO",
  "● БУДЕТ СОЗДАНО": "● BUDE VYTVOŘENA",
  "● ГОТОВО": "● PŘIPRAVENO",
- "♡  ПОДДЕРЖАТЬ ПРОЕКТ": "♡  PODPOŘIT PROJEKT"
+ "♡  ПОДДЕРЖАТЬ ПРОЕКТ": "♡  PODPOŘIT PROJEKT",
+ "Отправлять анонимные отчёты об ошибках?": "Odesílat anonymní hlášení chyb?",
+ "В автоматический отчёт входят только версия, ОС, текст ошибки, стек и обезличенный журнал. Сохранения, пути и игровые логи не отправляются.": "Automatické hlášení obsahuje pouze verzi, operační systém, text chyby, zásobník a anonymizovaný protokol aplikace. Uložené hry, cesty ani herní protokoly se neodesílají.",
+ "Отправить отчёт?": "Odeslat hlášení?",
+ "Ниже показано всё, что войдёт в отчёт.": "Níže je zobrazeno vše, co bude součástí hlášení.",
+ "Отправить": "Odeslat",
+ "Отправка анонимных отчётов включена.": "Anonymní hlášení chyb jsou zapnuta.",
+ "Отправка анонимных отчётов отключена.": "Anonymní hlášení chyb jsou vypnuta.",
+ "Отчёт не отправлен.": "Hlášení nebylo odesláno.",
+ "Приёмник отчётов пока не настроен. Отчёт сохранён локально.": "Příjemce hlášení zatím není nakonfigurován. Hlášení bylo uloženo místně.",
+ "Отчёт сохранён локально; HTTPS-приёмник будет использован после включения сервера.": "Hlášení bylo uloženo místně; příjemce HTTPS bude použit po spuštění serveru.",
+ "Не удалось сохранить отчёт": "Hlášení se nepodařilo uložit"
 }

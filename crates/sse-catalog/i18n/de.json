@@ -2307,5 +2307,16 @@
  "●  НЕ НАЙДЕНО": "●  NICHT GEFUNDEN",
  "● БУДЕТ СОЗДАНО": "● WIRD ERSTELLT",
  "● ГОТОВО": "● BEREIT",
- "♡  ПОДДЕРЖАТЬ ПРОЕКТ": "♡  PROJEKT UNTERSTÜTZEN"
+ "♡  ПОДДЕРЖАТЬ ПРОЕКТ": "♡  PROJEKT UNTERSTÜTZEN",
+ "Отправлять анонимные отчёты об ошибках?": "Anonyme Fehlerberichte senden?",
+ "В автоматический отчёт входят только версия, ОС, текст ошибки, стек и обезличенный журнал. Сохранения, пути и игровые логи не отправляются.": "Der automatische Bericht enthält nur Version, Betriebssystem, Fehlertext, Stacktrace und ein anonymisiertes Anwendungsprotokoll. Spielstände, Pfade und Spielprotokolle werden nicht gesendet.",
+ "Отправить отчёт?": "Bericht senden?",
+ "Ниже показано всё, что войдёт в отчёт.": "Unten wird alles angezeigt, was in den Bericht aufgenommen wird.",
+ "Отправить": "Senden",
+ "Отправка анонимных отчётов включена.": "Anonyme Fehlerberichte sind aktiviert.",
+ "Отправка анонимных отчётов отключена.": "Anonyme Fehlerberichte sind deaktiviert.",
+ "Отчёт не отправлен.": "Bericht wurde nicht gesendet.",
+ "Приёмник отчётов пока не настроен. Отчёт сохранён локально.": "Der Berichtsempfänger ist noch nicht konfiguriert. Der Bericht wurde lokal gespeichert.",
+ "Отчёт сохранён локально; HTTPS-приёмник будет использован после включения сервера.": "Der Bericht wurde lokal gespeichert; der HTTPS-Empfänger wird nach Aktivierung des Servers verwendet.",
+ "Не удалось сохранить отчёт": "Bericht konnte nicht gespeichert werden"
 }
