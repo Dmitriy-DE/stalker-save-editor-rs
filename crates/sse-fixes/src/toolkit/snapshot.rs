@@ -190,6 +190,26 @@ impl ToolkitSnapshotService {
         deserialize_snapshot(&bytes)
     }
 
+    /// Deletes a stored snapshot by its content-addressed identifier.
+    pub fn delete_snapshot(game_directory: &Path, snapshot_id: &str) -> Result<()> {
+        if snapshot_id.len() != 64
+            || !snapshot_id
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        {
+            return Err(Error::Refused("Invalid toolkit snapshot id.".to_owned()));
+        }
+        let dir = Self::snapshots_dir(game_directory);
+        check_no_links(game_directory, &dir)?;
+        let path = dir.join(format!("{snapshot_id}.json"));
+        check_no_links(game_directory, &path)?;
+        match fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(Error::from(error)),
+        }
+    }
+
     /// Restores the game environment to the state captured in the specified snapshot.
     ///
     /// # Errors

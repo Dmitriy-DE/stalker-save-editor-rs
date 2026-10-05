@@ -1166,10 +1166,67 @@ struct Environment {
     snapshot: Option<WidgetId>,
     restore: Option<WidgetId>,
     audit: Option<WidgetId>,
+    delete_snapshot: Option<WidgetId>,
+    snapshot_rows: Vec<WidgetId>,
+    snapshot_ids: Vec<String>,
+    selected_snapshot: Option<String>,
+    profile_name: Option<WidgetId>,
+    save_profile: Option<WidgetId>,
+    apply_profile: Option<WidgetId>,
+    delete_profile: Option<WidgetId>,
+    user_inputs: Vec<(String, WidgetId, WidgetId, WidgetId)>,
+    profile_rows: Vec<WidgetId>,
+    profile_ids: Vec<String>,
+    selected_profile: Option<String>,
     pending_restore: Option<String>,
 }
 
 impl Environment {
+    fn refresh_lists(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        self.snapshot_ids.clear();
+        if let Some(directory) = cx.app.game_dir() {
+            let snapshots = sse_fixes::toolkit::ToolkitSnapshotService::list_snapshots(directory)?;
+            for (index, widget) in self.snapshot_rows.iter().copied().enumerate() {
+                if let Some(snapshot) = snapshots.get(index) {
+                    self.snapshot_ids.push(snapshot.id.clone());
+                    cx.tree.set_text(
+                        widget,
+                        &format!(
+                            "{} · {} · исправлений: {}",
+                            snapshot.label,
+                            snapshot.game.title(),
+                            snapshot.installed_fixes.len()
+                        ),
+                    )?;
+                    cx.tree.set_visible(widget, true)?;
+                } else {
+                    cx.tree.set_visible(widget, false)?;
+                }
+            }
+        }
+        let profiles =
+            sse_fixes::toolkit::ToolkitProfileService::list_profiles(&sse_app::paths::default_data_directory())?;
+        self.profile_ids.clear();
+        for (index, widget) in self.profile_rows.iter().copied().enumerate() {
+            if let Some(profile) = profiles.get(index) {
+                self.profile_ids.push(profile.id.clone());
+                cx.tree.set_text(
+                    widget,
+                    &format!(
+                        "{} · {} · исправлений: {}",
+                        profile.profile.name,
+                        profile.profile.game.title(),
+                        profile.profile.target_fix_ids.len()
+                    ),
+                )?;
+                cx.tree.set_visible(widget, true)?;
+            } else {
+                cx.tree.set_visible(widget, false)?;
+            }
+        }
+        Ok(())
+    }
+
     fn inspect(cx: &Context<'_>) -> std::result::Result<(sse_content::CompanionGame, PathBuf), String> {
         let game = cx
             .app
@@ -1257,23 +1314,49 @@ impl Screen for Environment {
             "Снимки включают только файлы и манифесты Game Fix, Companion и настроек, которыми владеет инструмент.",
             Text::Note,
         )?;
+        for _ in 0..6 {
+            let row = style::button(cx.tree, card, "", Button::Secondary)?;
+            cx.tree.set_visible(row, false)?;
+            self.snapshot_rows.push(row);
+        }
         self.snapshot = Some(style::button(cx.tree, card, "СОЗДАТЬ СНИМОК", Button::Primary)?);
-        self.restore = Some(style::button(
-            cx.tree,
-            card,
-            "ВОССТАНОВИТЬ ПОСЛЕДНИЙ СНИМОК",
-            Button::Danger,
-        )?);
+        self.restore = Some(style::button(cx.tree, card, "ВОССТАНОВИТЬ ВЫБРАННЫЙ", Button::Danger)?);
+        self.delete_snapshot = Some(style::button(cx.tree, card, "УДАЛИТЬ СНИМОК", Button::Danger)?);
         style::label(cx.tree, card, "ПРОФИЛИ ИГРЫ", Text::Heading)?;
         style::label(
             cx.tree,
             card,
-            "Профили поддерживаются ядром; UI имени/списка будет подключён после text-input binding.",
+            "Профиль хранит набор Game Fix и управляемые значения user.ltx.",
             Text::Note,
         )?;
+        for _ in 0..6 {
+            let row = style::button(cx.tree, card, "", Button::Secondary)?;
+            cx.tree.set_visible(row, false)?;
+            self.profile_rows.push(row);
+        }
+        self.profile_name = Some(style::input(cx.tree, card, "")?);
+        self.save_profile = Some(style::button(
+            cx.tree,
+            card,
+            "СОХРАНИТЬ ТЕКУЩЕЕ СОСТОЯНИЕ",
+            Button::Primary,
+        )?);
+        self.apply_profile = Some(style::button(cx.tree, card, "ПРИМЕНИТЬ ПРОФИЛЬ", Button::Secondary)?);
+        self.delete_profile = Some(style::button(cx.tree, card, "УДАЛИТЬ ПРОФИЛЬ", Button::Danger)?);
         style::label(cx.tree, card, "НАСТРОЙКИ user.ltx", Text::Heading)?;
-        for setting in sse_fixes::toolkit::MANAGED_SETTINGS {
-            style::label(cx.tree, card, setting.key, Text::Body)?;
+        style::label(
+            cx.tree,
+            card,
+            "Изменяются только известные параметры; остальные строки user.ltx сохраняются без изменений.",
+            Text::Note,
+        )?;
+        for setting in sse_fixes::toolkit::MANAGED_SETTINGS.iter().take(8) {
+            let row = style::row(cx.tree, card)?;
+            style::label(cx.tree, row, setting.key, Text::Body)?;
+            let input = style::input(cx.tree, row, "")?;
+            let apply = style::button(cx.tree, row, "ПРИМЕНИТЬ", Button::Secondary)?;
+            let default = style::button(cx.tree, row, "ПО УМОЛЧАНИЮ", Button::Secondary)?;
+            self.user_inputs.push((setting.key.to_owned(), input, apply, default));
         }
         style::label(cx.tree, card, "АУДИТ УСТАНОВКИ", Text::Heading)?;
         self.audit = Some(style::button(cx.tree, card, "ПРОВЕРИТЬ", Button::Secondary)?);
@@ -1287,6 +1370,26 @@ impl Screen for Environment {
 
     fn shown(&mut self, cx: &mut Context<'_>) -> Result<()> {
         self.start(cx);
+        self.refresh_lists(cx)?;
+        let game = cx.app.selected_game().unwrap_or("—");
+        let directory = cx
+            .app
+            .game_dir()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "не выбрана".to_owned());
+        if let Some(status) = self.status {
+            cx.tree
+                .set_text(status, &format!("Управляемая установка: {game} · {directory}"))?;
+        }
+        if let Some(game_directory) = cx.app.game_dir() {
+            if let Ok(settings) = sse_fixes::toolkit::ManagedUserLtxSettings::read_managed_settings(game_directory) {
+                for (key, input, _, _) in &self.user_inputs {
+                    cx.tree
+                        .set_input_text(*input, settings.get(key).map_or("", String::as_str))?;
+                }
+                let _ = cx.tree.take_changed_inputs();
+            }
+        }
         Ok(())
     }
 
@@ -1296,6 +1399,186 @@ impl Screen for Environment {
         message: &Message<AppMessage>,
         clicked: Option<WidgetId>,
     ) -> Result<()> {
+        let changed = cx.tree.take_changed_inputs();
+        if changed.iter().any(|id| self.profile_name == Some(*id)) {
+            self.selected_profile = None;
+        }
+        if let Some(clicked) = clicked {
+            if let Some(index) = self.snapshot_rows.iter().position(|widget| *widget == clicked) {
+                self.selected_snapshot = self.snapshot_ids.get(index).cloned();
+                if let Some(id) = &self.selected_snapshot {
+                    cx.status = Some(format!("Выбран снимок: {id}"));
+                }
+                return Ok(());
+            }
+            if let Some(index) = self.profile_rows.iter().position(|widget| *widget == clicked) {
+                self.selected_profile = self.profile_ids.get(index).cloned();
+                if let Some(id) = &self.selected_profile {
+                    cx.status = Some(format!("Выбран профиль: {id}"));
+                }
+                return Ok(());
+            }
+            if Some(clicked) == self.delete_snapshot {
+                let Some(directory) = cx.app.game_dir().map(Path::to_path_buf) else {
+                    cx.status = Some("Управляемая установка: не выбрана".to_owned());
+                    return Ok(());
+                };
+                let selected = self.selected_snapshot.clone();
+                let deleted = if let Some(id) = selected {
+                    sse_fixes::toolkit::ToolkitSnapshotService::delete_snapshot(&directory, &id)?;
+                    Some(id)
+                } else {
+                    None
+                };
+                match deleted {
+                    Some(id) => cx.status = Some(format!("Снимок удалён: {id}")),
+                    None => cx.status = Some("Снимков пока нет: создайте первый кнопкой ниже.".to_owned()),
+                }
+                self.selected_snapshot = None;
+                self.refresh_lists(cx)?;
+                return Ok(());
+            }
+            if Some(clicked) == self.save_profile {
+                let Some(game) = cx.app.selected_game().and_then(fix_target) else {
+                    cx.status = Some("Управляемая установка: не выбрана".to_owned());
+                    return Ok(());
+                };
+                let Some(directory) = cx.app.game_dir().map(Path::to_path_buf) else {
+                    cx.status = Some("Управляемая установка: не выбрана".to_owned());
+                    return Ok(());
+                };
+                let name = self
+                    .profile_name
+                    .and_then(|id| cx.tree.input_text(id).ok())
+                    .unwrap_or("")
+                    .trim()
+                    .to_owned();
+                if name.is_empty() {
+                    cx.status = Some("Введите имя профиля.".to_owned());
+                    return Ok(());
+                }
+                let engine = sse_fixes::GameFixEngine::new();
+                let fixes = engine.list_installed(&directory, None)?;
+                let settings = sse_fixes::toolkit::ManagedUserLtxSettings::read_managed_settings(&directory)?;
+                let profile = sse_fixes::toolkit::ToolkitProfile {
+                    name: name.clone(),
+                    description: String::new(),
+                    game,
+                    target_fix_ids: fixes
+                        .into_iter()
+                        .filter(|fix| fix.state == sse_fixes::GameFixState::Installed)
+                        .map(|fix| fix.id)
+                        .collect(),
+                    user_ltx_overrides: settings,
+                    s2_mods_enabled: None,
+                };
+                match sse_fixes::toolkit::ToolkitProfileService::save_profile(
+                    &sse_app::paths::default_data_directory(),
+                    &directory,
+                    &profile,
+                    &engine,
+                ) {
+                    Ok(id) => {
+                        self.selected_profile = Some(id);
+                        cx.status = Some(format!("Профиль сохранён: {name}"));
+                    }
+                    Err(error) => cx.status = Some(format!("Не удалось сохранить профиль: {error}")),
+                }
+                return Ok(());
+            }
+            if Some(clicked) == self.apply_profile {
+                let profiles = sse_fixes::toolkit::ToolkitProfileService::list_profiles(
+                    &sse_app::paths::default_data_directory(),
+                )?;
+                let selected = self
+                    .selected_profile
+                    .as_deref()
+                    .and_then(|id| profiles.iter().find(|item| item.id == id))
+                    .or_else(|| profiles.first())
+                    .cloned();
+                let Some(selected) = selected else {
+                    cx.status = Some("Сначала выберите профиль.".to_owned());
+                    return Ok(());
+                };
+                let Some(directory) = cx.app.game_dir().map(Path::to_path_buf) else {
+                    return Ok(());
+                };
+                let Some(proxy) = cx.proxy.cloned() else {
+                    return Ok(());
+                };
+                std::thread::spawn(move || {
+                    let engine = sse_fixes::GameFixEngine::new();
+                    let catalog = sse_fixes::GameFixCatalog;
+                    let lines = match sse_fixes::toolkit::ToolkitProfileService::apply_profile(
+                        &directory,
+                        &selected.profile,
+                        &engine,
+                        &catalog,
+                    ) {
+                        Ok(report) => vec![format!(
+                            "Профиль применён: {} · резервная точка: {}",
+                            report.profile_name, report.pre_switch_snapshot_id
+                        )],
+                        Err(error) => vec![format!("Не удалось применить профиль: {error}")],
+                    };
+                    proxy.send(AppMessage::ToScreen(
+                        ScreenId::Environment,
+                        Box::new(EnvironmentResult { lines }),
+                    ));
+                });
+                return Ok(());
+            }
+            if Some(clicked) == self.delete_profile {
+                let profiles = sse_fixes::toolkit::ToolkitProfileService::list_profiles(
+                    &sse_app::paths::default_data_directory(),
+                )?;
+                let selected = self
+                    .selected_profile
+                    .as_deref()
+                    .and_then(|id| profiles.iter().find(|item| item.id == id))
+                    .or_else(|| profiles.first());
+                if let Some(selected) = selected {
+                    match sse_fixes::toolkit::ToolkitProfileService::delete_profile(
+                        &sse_app::paths::default_data_directory(),
+                        &selected.id,
+                    ) {
+                        Ok(()) => {
+                            self.selected_profile = None;
+                            cx.status = Some("Профиль удалён.".to_owned());
+                        }
+                        Err(error) => cx.status = Some(format!("Не удалось удалить профиль: {error}")),
+                    }
+                }
+                return Ok(());
+            }
+            for (key, input, apply, default) in &self.user_inputs {
+                if clicked == *apply || clicked == *default {
+                    let Some(directory) = cx.app.game_dir().map(Path::to_path_buf) else {
+                        return Ok(());
+                    };
+                    let value = if clicked == *default {
+                        sse_fixes::toolkit::MANAGED_SETTINGS
+                            .iter()
+                            .find(|item| item.key == key)
+                            .map_or("", |item| item.default_val)
+                            .to_owned()
+                    } else {
+                        cx.tree.input_text(*input)?.trim().to_owned()
+                    };
+                    let mut update = std::collections::BTreeMap::new();
+                    update.insert(key.clone(), value);
+                    match sse_fixes::toolkit::ManagedUserLtxSettings::update_managed_settings(&directory, &update) {
+                        Ok(_) if clicked == *default => cx.status = Some(format!("Восстановлено значение игры: {key}")),
+                        Ok(_) => cx.status = Some(format!("Настройка обновлена: {key}")),
+                        Err(error) if clicked == *default => {
+                            cx.status = Some(format!("Не удалось восстановить настройку: {error}"))
+                        }
+                        Err(error) => cx.status = Some(format!("Не удалось изменить настройку: {error}")),
+                    }
+                    return Ok(());
+                }
+            }
+        }
         if clicked.is_some() && clicked == self.restore {
             let directory = cx.app.game_dir().map(Path::to_path_buf);
             let game = cx.app.selected_game().and_then(fix_target);
@@ -1303,12 +1586,12 @@ impl Screen for Environment {
                 cx.status = Some("Управляемая установка: не выбрана".to_owned());
                 return Ok(());
             };
-            let snapshots = sse_fixes::toolkit::ToolkitSnapshotService::list_snapshots(&directory)
-                .map_err(|e| sse_core::Error::Refused(e.to_string()))?;
-            let Some(snapshot) = snapshots.first() else {
-                cx.status = Some("Снимков пока нет.".to_owned());
+            let Some(snapshot_id) = self.selected_snapshot.clone() else {
+                cx.status = Some("Сначала выберите снимок.".to_owned());
                 return Ok(());
             };
+            let snapshot = sse_fixes::toolkit::ToolkitSnapshotService::get_snapshot(&directory, &snapshot_id)
+                .map_err(|e| sse_core::Error::Refused(e.to_string()))?;
             if self.pending_restore.as_deref() != Some(snapshot.id.as_str()) {
                 self.pending_restore = Some(snapshot.id.clone());
                 cx.status = Some(format!("ВОССТАНОВЛЕНИЕ ИЗМЕНИТ ФАЙЛЫ ИГРЫ. Нажмите «ВОССТАНОВИТЬ ПОСЛЕДНИЙ СНИМОК» ещё раз для подтверждения: {}", snapshot.label));
