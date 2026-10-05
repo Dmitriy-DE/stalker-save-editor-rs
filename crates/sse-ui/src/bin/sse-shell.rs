@@ -205,7 +205,7 @@ fn window() -> Result<()> {
     tree.resize(u32::from(width), u32::from(height));
     let started = Instant::now();
     std::thread::spawn(move || loop {
-        std::thread::sleep(Duration::from_secs(1));
+        std::thread::sleep(Duration::from_millis(500));
         if !proxy.send(AppMessage::Tick(started.elapsed().as_secs())) {
             return;
         }
@@ -226,7 +226,7 @@ fn window() -> Result<()> {
     tree.resize(width, height);
     let started = Instant::now();
     std::thread::spawn(move || loop {
-        std::thread::sleep(Duration::from_secs(1));
+        std::thread::sleep(Duration::from_millis(500));
         if !proxy.send(AppMessage::Tick(started.elapsed().as_secs())) {
             return;
         }
@@ -247,7 +247,7 @@ fn window() -> Result<()> {
     tree.resize(width, height);
     let started = Instant::now();
     std::thread::spawn(move || loop {
-        std::thread::sleep(Duration::from_secs(1));
+        std::thread::sleep(Duration::from_millis(500));
         if !proxy.send(AppMessage::Tick(started.elapsed().as_secs())) {
             return;
         }

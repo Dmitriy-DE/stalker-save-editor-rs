@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=S.T.A.L.K.E.R. Save Editor
+Comment=Edit and inspect S.T.A.L.K.E.R. save files
+Exec=sse-shell
+Icon=stalker-save-editor
+Terminal=false
+Categories=Game;Utility;
+StartupNotify=true

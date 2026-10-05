@@ -170,16 +170,22 @@ build_linux() {
     trap 'rm -rf -- "$SSE_PACKAGE_STAGE"' EXIT
     cp "${cli}" "${stage}/stalker-save"
     cp "${shell_bin}" "${stage}/sse-shell"
+    cp "${PROJECT_ROOT}/packaging/icons/stalker-save-editor.svg" "${stage}/stalker-save-editor.svg"
+    cp "${PROJECT_ROOT}/packaging/linux/stalker-save-editor.desktop" "${stage}/stalker-save-editor.desktop"
     write_build_manifest "${stage}/BUILD_MANIFEST.json" linux x86_64 portable
     tar --sort=name --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 --numeric-owner \
-        -C "${stage}" -cf - stalker-save sse-shell BUILD_MANIFEST.json \
+        -C "${stage}" -cf - stalker-save sse-shell stalker-save-editor.svg stalker-save-editor.desktop BUILD_MANIFEST.json \
         | gzip -n >"${DIST_DIR}/SaveEditor-linux-x86_64.tar.gz"
     record_artifact linux-x86_64 linux-x86_64 x86_64 portable "${DIST_DIR}/SaveEditor-linux-x86_64.tar.gz"
 
     local deb_stage="${stage}/deb"
-    mkdir -p "${deb_stage}/DEBIAN" "${deb_stage}/usr/bin" "${deb_stage}/usr/share/stalker-save-editor"
+    mkdir -p "${deb_stage}/DEBIAN" "${deb_stage}/usr/bin" "${deb_stage}/usr/share/stalker-save-editor" \
+        "${deb_stage}/usr/share/applications" "${deb_stage}/usr/share/metainfo" "${deb_stage}/usr/share/icons/hicolor/scalable/apps"
     cp "${cli}" "${deb_stage}/usr/bin/stalker-save"
     cp "${shell_bin}" "${deb_stage}/usr/bin/sse-shell"
+    cp "${PROJECT_ROOT}/packaging/linux/stalker-save-editor.desktop" "${deb_stage}/usr/share/applications/"
+    cp "${PROJECT_ROOT}/packaging/linux/org.stalker_save_editor.SaveEditor.metainfo.xml" "${deb_stage}/usr/share/metainfo/"
+    cp "${PROJECT_ROOT}/packaging/icons/stalker-save-editor.svg" "${deb_stage}/usr/share/icons/hicolor/scalable/apps/"
     write_build_manifest "${deb_stage}/usr/share/stalker-save-editor/BUILD_MANIFEST.json" linux x86_64 package
     cat >"${deb_stage}/DEBIAN/control" <<EOF
 Package: stalker-save-editor
@@ -216,8 +222,9 @@ build_windows() {
     trap 'rm -rf -- "$SSE_PACKAGE_STAGE"' EXIT
     cp "${cli}" "${stage}/stalker-save.exe"
     cp "${shell_bin}" "${stage}/sse-shell.exe"
+    cp "${PROJECT_ROOT}/packaging/icons/stalker-save-editor.svg" "${stage}/stalker-save-editor.svg"
     write_build_manifest "${stage}/BUILD_MANIFEST.json" windows x86_64 portable
-    (cd "${stage}" && zip -q "${DIST_DIR}/SaveEditor-windows-x86_64.zip" stalker-save.exe sse-shell.exe BUILD_MANIFEST.json)
+    (cd "${stage}" && zip -q "${DIST_DIR}/SaveEditor-windows-x86_64.zip" stalker-save.exe sse-shell.exe stalker-save-editor.svg BUILD_MANIFEST.json)
     record_artifact windows-x86_64 windows-x86_64 x86_64 portable "${DIST_DIR}/SaveEditor-windows-x86_64.zip"
 }
 
@@ -240,17 +247,9 @@ build_macos() {
     cp "${shell_bin}" "${stage}/SaveEditor.app/Contents/MacOS/sse-shell"
     chmod 0755 "${stage}/SaveEditor.app/Contents/MacOS/stalker-save" "${stage}/SaveEditor.app/Contents/MacOS/sse-shell"
     write_build_manifest "${stage}/SaveEditor.app/Contents/Resources/BUILD_MANIFEST.json" macos "${arch}" disk-image
-    cat >"${stage}/SaveEditor.app/Contents/Info.plist" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-<key>CFBundleExecutable</key><string>sse-shell</string>
-<key>CFBundleIdentifier</key><string>org.stalker-save-editor.${bundle_arch}</string>
-<key>CFBundleName</key><string>S.T.A.L.K.E.R. Save Editor</string>
-<key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>${VERSION}</string>
-</dict></plist>
-EOF
+    sed -e "s/@ARCH@/${bundle_arch}/g" -e "s/@VERSION@/${VERSION}/g" \
+        "${PROJECT_ROOT}/packaging/macos/Info.plist.in" >"${stage}/SaveEditor.app/Contents/Info.plist"
+    cp "${PROJECT_ROOT}/packaging/icons/stalker-save-editor.svg" "${stage}/SaveEditor.app/Contents/Resources/stalker-save-editor.svg"
     local dmg_name="SaveEditor-macos-${arch}.dmg"
     hdiutil create -volname "SaveEditor-${arch}" -srcfolder "${stage}" -ov -format UDZO "${DIST_DIR}/${dmg_name}" >/dev/null
     record_artifact "${key}" "${key}" "${arch}" disk-image "${DIST_DIR}/${dmg_name}"

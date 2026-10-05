@@ -40,16 +40,26 @@ def main() -> int:
             raise ValueError(f"{path}: expected object")
         catalogs[lang] = catalog
         keys.update(catalog)
+    extras_path = pathlib.Path(__file__).with_name("i18n-extra.json")
+    extras = json.loads(extras_path.read_text(encoding="utf-8")) if extras_path.exists() else {}
+    if not isinstance(extras, dict):
+        raise ValueError(f"{extras_path}: expected object")
+    keys.update(extras)
     rows = []
     for key in sorted(keys):
         values = []
         for lang in LANGS:
-            value = key if lang == "ru" else catalogs[lang].get(key)
+            extra = extras.get(key, {})
+            value = extra.get(lang) if isinstance(extra, dict) else None
+            if not isinstance(value, str) or not value:
+                value = key if lang == "ru" else catalogs[lang].get(key)
             if not isinstance(value, str) or not value:
                 value = catalogs["en"].get(key) if lang != "en" else None
             if not isinstance(value, str) or not value:
                 value = key
             values.append(value)
+        if key in extras and any(not isinstance(extras[key].get(lang), str) or not extras[key].get(lang) for lang in LANGS):
+            raise ValueError(f"{extras_path}: Rust-only key {key!r} must provide all 15 translations")
         rows.append(f"    ({q(key)}, [" + ", ".join(q(v) for v in values) + "]),")
     header = """//! Generated from C# 1.3.1 localization. Do not edit by hand.
 use std::sync::atomic::{AtomicU8, Ordering};

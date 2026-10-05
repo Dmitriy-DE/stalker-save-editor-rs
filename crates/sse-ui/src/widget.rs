@@ -150,6 +150,7 @@ struct Node {
     enabled: bool,
     scroll_y: i32,
     clip_children: bool,
+    tooltip: Option<String>,
 }
 
 /// Retained widget tree, its layout and its pending damage.
@@ -171,6 +172,8 @@ pub struct Tree {
     overlay_host: Option<WidgetId>,
     icon_cache: IconCache,
     changed_inputs: Vec<WidgetId>,
+    tooltip_ticks: u8,
+    tooltip_visible: bool,
 }
 
 impl Tree {
@@ -195,6 +198,8 @@ impl Tree {
             overlay_host: None,
             icon_cache: IconCache::new(),
             changed_inputs: Vec::new(),
+            tooltip_ticks: 0,
+            tooltip_visible: false,
         }
     }
 
@@ -223,6 +228,14 @@ impl Tree {
     #[must_use]
     pub const fn focused(&self) -> Option<WidgetId> {
         self.focused
+    }
+
+    /// Whether keyboard focus currently belongs to a text input.
+    #[must_use]
+    pub fn focused_is_input(&self) -> bool {
+        self.focused
+            .and_then(|id| self.nodes.get(id.0))
+            .is_some_and(|node| matches!(&node.content, Content::Input { .. }))
     }
 
     /// Moves focus to a visible button or input, or clears keyboard focus.
@@ -360,6 +373,7 @@ impl Tree {
             enabled: true,
             scroll_y: 0,
             clip_children: false,
+            tooltip: None,
         });
         if parent.is_none() {
             self.root = Some(id);
@@ -397,6 +411,43 @@ impl Tree {
             Content::Input { text, .. } => Ok(text.as_str()),
             _ => Err(Error::damaged("widget is not an input")),
         }
+    }
+
+    /// Sets hover help for a widget. Disabled interactive widgets remain hover targets for tooltips.
+    pub fn set_tooltip(&mut self, id: WidgetId, text: impl Into<String>) -> Result<()> {
+        self.node_mut(id)?.tooltip = Some(text.into());
+        Ok(())
+    }
+
+    /// Advances the tooltip delay by one 500 ms UI timer tick.
+    pub fn tick_tooltip(&mut self) -> bool {
+        let has = self
+            .hover
+            .and_then(|id| self.nodes.get(id.0))
+            .and_then(|node| node.tooltip.as_ref())
+            .is_some();
+        if !has {
+            self.tooltip_ticks = 0;
+            self.tooltip_visible = false;
+            return false;
+        }
+        self.tooltip_ticks = self.tooltip_ticks.saturating_add(1);
+        let reveal = self.tooltip_ticks >= 1;
+        let changed = reveal != self.tooltip_visible;
+        self.tooltip_visible = reveal;
+        changed
+    }
+
+    /// Tooltip text after the 500 ms hover delay has elapsed.
+    #[must_use]
+    pub fn active_tooltip(&self) -> Option<&str> {
+        self.tooltip_visible
+            .then(|| {
+                self.hover
+                    .and_then(|id| self.nodes.get(id.0))
+                    .and_then(|node| node.tooltip.as_deref())
+            })
+            .flatten()
     }
 
     /// Replaces an input widget's value and records it as changed.
@@ -790,11 +841,14 @@ impl Tree {
     /// The topmost visible interactive widget under a point.
     #[must_use]
     pub fn hit(&self, x: i32, y: i32) -> Option<WidgetId> {
+        self.hit_interactive(x, y, true)
+    }
+
+    fn hit_interactive(&self, x: i32, y: i32, enabled_only: bool) -> Option<WidgetId> {
         (0..self.nodes.len()).rev().map(WidgetId).find(|id| {
-            self.nodes
-                .get(id.0)
-                .is_some_and(|node| node.enabled && node.content.interactive() && contains(node.rect, x, y))
-                && self.shown(*id)
+            self.nodes.get(id.0).is_some_and(|node| {
+                (!enabled_only || node.enabled) && node.content.interactive() && contains(node.rect, x, y)
+            }) && self.shown(*id)
                 && self.clip_for(*id).is_none_or(|clip| contains(clip, x, y))
                 && self.modal_dialog.is_none_or(|dialog| self.within_subtree(*id, dialog))
         })
@@ -802,7 +856,7 @@ impl Tree {
 
     /// Pointer moved; updates hover and damages what changed. Returns true when hover changed.
     pub fn pointer_moved(&mut self, x: i32, y: i32) -> bool {
-        let hit = self.hit(x, y);
+        let hit = self.hit_interactive(x, y, false);
         if hit == self.hover {
             return false;
         }
@@ -812,6 +866,8 @@ impl Tree {
             }
         }
         self.hover = hit;
+        self.tooltip_ticks = 0;
+        self.tooltip_visible = false;
         true
     }
 
@@ -821,6 +877,8 @@ impl Tree {
             self.add_damage(rect);
         }
         self.hover = None;
+        self.tooltip_ticks = 0;
+        self.tooltip_visible = false;
     }
 
     /// Primary button pressed or released at a point. Returns the clicked widget on a release over the widget that

@@ -33,7 +33,7 @@ fn save_eligibility(
 ) -> SaveEligibility {
     if !has_save {
         return SaveEligibility {
-            reason: "Выберите сохранение для редактирования.".to_owned(),
+            reason: crate::strings::t("Выберите сохранение для редактирования.").to_owned(),
             can_save: false,
             change_count: 0,
         };
@@ -168,11 +168,16 @@ pub struct Shell {
     reports_ok: WidgetId,
     reports_off: WidgetId,
     saving_dialog: WidgetId,
+    tooltip: WidgetId,
     status: WidgetId,
     selected: usize,
     proxy: Option<Proxy<AppMessage>>,
     app: sse_app::state::AppState,
     wizard: super::wizard::Wizard,
+    sounds: crate::sound::GameUiSounds,
+    sound_game: Option<String>,
+    sound_enabled: bool,
+    sound_volume: f32,
 }
 
 fn padded(left: f32, top: f32, right: f32, bottom: f32) -> Edges {
@@ -341,7 +346,7 @@ impl Shell {
                 ..Style::default()
             },
             Content::Label {
-                text: "РЕДАКТОР СОХРАНЕНИЙ".to_owned(),
+                text: crate::strings::t("РЕДАКТОР СОХРАНЕНИЙ").to_owned(),
                 style: TextStyle::new(Face::Heading, 12.0),
             },
             Look {
@@ -359,7 +364,7 @@ impl Shell {
                 ..Style::default()
             },
             Content::Button {
-                text: "☰  Свернуть меню".to_owned(),
+                text: crate::strings::t("☰  Свернуть меню").to_owned(),
                 style: TextStyle::new(Face::Heading, 12.0),
             },
             style::nav(false),
@@ -510,14 +515,19 @@ impl Shell {
         let _ = brand;
         let edition = style::label(tree, top, "X-Ray / S2", Text::Value)?;
         tree.set_visible(edition, false)?;
-        let draft_badge = style::label(tree, top, "Черновик: 0 действ.", Text::Note)?;
-        let undo = top_button(tree, top, "Отменить", false)?;
-        let redo = top_button(tree, top, "Вернуть", false)?;
-        let reset = top_button(tree, top, "Сбросить", false)?;
-        let open_button = top_button(tree, top, "Открыть…", false)?;
-        let refresh = top_button(tree, top, "Обновить", false)?;
-        let save = top_button(tree, top, "СОХРАНИТЬ", true)?;
-        let save_reason = style::label(tree, header, "Выберите сохранение для редактирования.", Text::Note)?;
+        let draft_badge = style::label(tree, top, crate::strings::t("Черновик: 0 действ."), Text::Note)?;
+        let undo = top_button(tree, top, crate::strings::t("Отменить"), false)?;
+        let redo = top_button(tree, top, crate::strings::t("Вернуть"), false)?;
+        let reset = top_button(tree, top, crate::strings::t("Сбросить"), false)?;
+        let open_button = top_button(tree, top, crate::strings::t("Открыть…"), false)?;
+        let refresh = top_button(tree, top, crate::strings::t("Обновить"), false)?;
+        let save = top_button(tree, top, crate::strings::t("СОХРАНИТЬ"), true)?;
+        let save_reason = style::label(
+            tree,
+            header,
+            crate::strings::t("Выберите сохранение для редактирования."),
+            Text::Note,
+        )?;
         let breadcrumb = style::label(tree, header, "", Text::Note)?;
         let title = style::label(tree, header, "", Text::Title)?;
         let subtitle = tree.add(
@@ -804,6 +814,11 @@ impl Shell {
             Text::Body,
         )?;
         tree.set_visible(saving_dialog, false)?;
+        let tooltip = style::label(tree, overlay_host, "", Text::Body)?;
+        tree.set_visible(tooltip, false)?;
+        tree.set_tooltip(nav_toggle, crate::strings::t("Свернуть меню"))?;
+        tree.set_tooltip(library_refresh, crate::strings::t("Обновить"))?;
+        tree.set_tooltip(save, crate::strings::t("Выберите сохранение для редактирования."))?;
 
         let hosts = vec![None; screens.len()];
         let mut shell = Self {
@@ -845,11 +860,16 @@ impl Shell {
             reports_ok,
             reports_off,
             saving_dialog,
+            tooltip,
             status,
             selected: 0,
             proxy,
             app: sse_app::state::AppState::new(),
             wizard,
+            sounds: crate::sound::GameUiSounds::default(),
+            sound_game: None,
+            sound_enabled: settings.sound_enabled,
+            sound_volume: (settings.sound_volume.min(100) as f32) / 100.0,
         };
         let initial_collapsed = settings.navigation_collapsed.unwrap_or(false);
         shell.apply_navigation(tree, initial_collapsed)?;
@@ -857,6 +877,30 @@ impl Shell {
         shell.render_library(tree)?;
         shell.sync_draft_controls(tree)?;
         Ok(shell)
+    }
+
+    fn sync_game_sounds(&mut self) {
+        let Some(game) = self.app.selected_game().map(str::to_owned) else {
+            return;
+        };
+        if self.sound_game.as_deref() == Some(game.as_str()) {
+            return;
+        }
+        self.sound_game = Some(game.clone());
+        let Some(directory) = self.app.game_dir().map(Path::to_path_buf) else {
+            return;
+        };
+        let Some(proxy) = self.proxy.clone() else { return };
+        std::thread::spawn(move || {
+            let sounds = crate::sound::GameUiSounds::load(&game, &directory);
+            let _ = proxy.send(AppMessage::SoundLoaded(game, Box::new(sounds)));
+        });
+    }
+
+    fn play_sound(&self, cue: crate::sound::Cue) {
+        if self.sound_enabled {
+            self.sounds.play(cue, self.sound_volume);
+        }
     }
 
     fn apply_navigation(&mut self, tree: &mut Tree, collapsed: bool) -> Result<()> {
@@ -887,6 +931,14 @@ impl Shell {
             } else {
                 "☰  Свернуть меню"
             },
+        )?;
+        tree.set_tooltip(
+            self.nav_toggle,
+            crate::strings::t(if collapsed {
+                "Развернуть меню"
+            } else {
+                "Свернуть меню"
+            }),
         )?;
         for (index, id) in self.nav.iter().copied().enumerate() {
             let text = if collapsed {
@@ -991,6 +1043,7 @@ impl Shell {
             tree.set_look(*new, style::nav(true))?;
         }
         self.selected = index;
+        self.play_sound(crate::sound::Cue::Switch);
         tree.set_visible(
             self.library,
             self.screens
@@ -1073,6 +1126,7 @@ impl Shell {
                 Message::User(AppMessage::Tick(_)) => true,
                 Message::User(AppMessage::ToScreen(id, _)) => *id == screen.id(),
                 Message::User(AppMessage::EditorAction(_)) => screen.id() == ScreenId::Inventory,
+                Message::User(AppMessage::SoundLoaded(_, _)) => false,
                 Message::Window(_) => index == self.selected,
             };
             if wanted {
@@ -1095,8 +1149,11 @@ impl Shell {
     fn sync_draft_controls(&self, tree: &mut Tree) -> Result<()> {
         tree.set_text(self.edition, self.app.selected_game().unwrap_or("X-Ray / S2"))?;
         let Some(source_sha256) = self.app.current_save_sha256() else {
-            tree.set_text(self.draft_badge, "Черновик: 0 действ.")?;
-            tree.set_text(self.save_reason, "Выберите сохранение для редактирования.")?;
+            tree.set_text(self.draft_badge, crate::strings::t("Черновик: 0 действ."))?;
+            tree.set_text(
+                self.save_reason,
+                crate::strings::t("Выберите сохранение для редактирования."),
+            )?;
             tree.set_enabled(self.undo, false)?;
             tree.set_enabled(self.redo, false)?;
             tree.set_enabled(self.reset, false)?;
@@ -1117,6 +1174,7 @@ impl Shell {
         let draft_badge = format!("Черновик: {} действ.", eligibility.change_count);
         tree.set_text(self.draft_badge, &draft_badge)?;
         tree.set_text(self.save_reason, &eligibility.reason)?;
+        tree.set_tooltip(self.save, crate::strings::t(&eligibility.reason))?;
         tree.set_enabled(
             self.undo,
             journal.is_some_and(sse_storage::drafts::DraftJournal::can_undo),
@@ -1167,6 +1225,22 @@ impl Shell {
                 return Ok(Flow::Exit);
             }
             _ => {}
+        }
+        if let Message::User(AppMessage::SoundLoaded(game, sounds)) = message {
+            if self.sound_game.as_deref() == Some(game.as_str()) {
+                self.sounds = (**sounds).clone();
+            }
+            return Ok(Flow::Continue);
+        }
+        self.sync_game_sounds();
+        if matches!(message, Message::User(AppMessage::Tick(_))) {
+            let _ = tree.tick_tooltip();
+            if let Some(text) = tree.active_tooltip().map(str::to_owned) {
+                tree.set_text(self.tooltip, &text)?;
+                tree.set_visible(self.tooltip, true)?;
+            } else {
+                tree.set_visible(self.tooltip, false)?;
+            }
         }
         if let Message::Window(WindowEvent::Resized { width, .. }) = message {
             self.sync_navigation_width(tree, *width)?;
@@ -1445,7 +1519,7 @@ impl Shell {
             ..
         }) = message
         {
-            if !tree.dialog_open() {
+            if !tree.dialog_open() && !tree.focused_is_input() {
                 let count = self.nav.len();
                 match *keysym {
                     KEY_UP => self.select(tree, self.selected.checked_sub(1).unwrap_or(count.saturating_sub(1)))?,
@@ -1598,7 +1672,7 @@ mod tests {
         let source_sha256 = "a".repeat(64);
         assert_eq!(
             save_eligibility(false, None, false, None, false).reason,
-            "Выберите сохранение для редактирования."
+            crate::strings::t("Выберите сохранение для редактирования.")
         );
         assert_eq!(
             save_eligibility(true, None, false, None, true).reason,
