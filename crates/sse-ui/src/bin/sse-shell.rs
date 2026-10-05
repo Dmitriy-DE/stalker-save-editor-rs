@@ -240,7 +240,9 @@ fn ci_budget() -> Result<()> {
         let switch_started = Instant::now();
         shell.open(&mut tree, id)?;
         tree.paint(&mut frame, 1280)?;
-        worst_switch = worst_switch.max(switch_started.elapsed());
+        let elapsed = switch_started.elapsed();
+        println!("budget switch {id:?}={elapsed:?}");
+        worst_switch = worst_switch.max(elapsed);
     }
     if worst_switch > SWITCH_BUDGET {
         return Err(Error::Refused(format!(
