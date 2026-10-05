@@ -874,10 +874,7 @@ impl<'a> Surface<'a> {
                 .iter_mut()
                 .zip(source_chunks.remainder())
             {
-                *destination_pixel = blend_prepared(
-                    *destination_pixel,
-                    table.get(usize::from(*coverage)).copied().unwrap_or_default(),
-                );
+                *destination_pixel = blend_covered(*destination_pixel, source, *coverage);
             }
             surface_y = surface_y.saturating_add(1);
         }
