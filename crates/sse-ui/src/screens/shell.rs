@@ -1344,7 +1344,7 @@ impl Shell {
         if clicked.is_some() && clicked == Some(self.open_button) {
             tree.set_text(
                 self.status,
-                "Открыть… недоступно: системный file-picker ещё не подключён к Shell.",
+                "Открыть… недоступно: системный выбор файла ещё не подключён.",
             )?;
             return Ok(Flow::Continue);
         }
