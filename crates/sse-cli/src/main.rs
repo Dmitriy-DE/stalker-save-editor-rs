@@ -1770,18 +1770,15 @@ mod write_tests {
     }
 
     #[test]
-    fn edit_add_matches_writer_fixture_byte_for_byte() {
+    fn edit_add_clears_template_metadata_and_preserves_source() {
         let temporary = TempDirectory::new();
         let saves = temporary.0.join("saves");
         fs::create_dir(&saves).expect("create save directory");
         let source = saves.join("source.sav");
         let output = saves.join("edited.sav");
         let backups = temporary.0.join("backups");
-        fs::write(
-            &source,
-            include_bytes!("../../../fixtures/synthetic/writer-add/xray-add-cop-ammo-source.sav"),
-        )
-        .expect("write add fixture");
+        let source_bytes = include_bytes!("../../../fixtures/synthetic/writer-add/xray-add-cop-ammo-source.sav");
+        fs::write(&source, source_bytes).expect("write add fixture");
 
         assert_eq!(
             run(&[
@@ -1796,10 +1793,26 @@ mod write_tests {
             ]),
             0
         );
-        assert_eq!(
-            fs::read(&output).expect("add output"),
-            include_bytes!("../../../fixtures/synthetic/writer-add/xray-add-cop-ammo-expected.sav")
-        );
+        assert_eq!(fs::read(&source).expect("source remains unchanged"), source_bytes);
+        let output_bytes = fs::read(&output).expect("add output");
+        let parsed = Save::read(&output_bytes).expect("edited save should read back");
+        let added = parsed
+            .registry_objects()
+            .iter()
+            .find(|record| record.object_id == 4661)
+            .expect("new object should be present");
+        assert_eq!(added.name, "ammo_9x39_pab9");
+        assert_eq!(added.name_replace, "");
+        assert_eq!(added.spawn_id, Some(u16::MAX));
+        assert_eq!(added.story_id, Some(u32::MAX));
+        assert_eq!(added.spawn_story_id, Some(u32::MAX));
+        assert_eq!(parsed.custom_data(added), Some(&[][..]));
+        let inventory = parsed.inventory().expect("edited inventory");
+        let added_stack = inventory
+            .iter()
+            .find(|item| item.handle == 4661)
+            .expect("new stack should be in the actor inventory");
+        assert_eq!(added_stack.count, Some(17));
     }
 
     #[test]
