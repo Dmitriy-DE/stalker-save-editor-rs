@@ -24,9 +24,8 @@ jobs:
       - run: cargo test --workspace
       - run: cargo build --release -p sse-cli
 
-      - name: UI performance budgets (report only until K10, switch 40-60 ms vs 16 ms)
+      - name: UI startup and memory budgets
         if: matrix.os == 'ubuntu-24.04'
-        continue-on-error: true
         run: cargo run --release -p sse-ui --bin sse-shell -- --ci-budget
 
       - name: Fuzz smoke new save formats
