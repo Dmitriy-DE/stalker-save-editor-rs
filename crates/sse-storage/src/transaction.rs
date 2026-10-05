@@ -444,12 +444,32 @@ pub fn replace_transaction_with_verifier<T>(
     backup_directory: &Path,
     verify_readback: impl FnOnce(&[u8]) -> Result<T>,
 ) -> Result<(ReplacementReceipt, T)> {
-    replace_with_file_system_and_verifier(
+    replace_transaction_with_checks(
+        source_path,
+        expected_source_sha256,
+        replacement,
+        backup_directory,
+        |_| Ok(()),
+        verify_readback,
+    )
+}
+
+/// Replaces a save after validating prepared bytes and verifies durable read-back bytes before commit.
+pub fn replace_transaction_with_checks<T>(
+    source_path: &Path,
+    expected_source_sha256: &str,
+    replacement: &[u8],
+    backup_directory: &Path,
+    verify_prepared: impl FnOnce(&[u8]) -> Result<()>,
+    verify_readback: impl FnOnce(&[u8]) -> Result<T>,
+) -> Result<(ReplacementReceipt, T)> {
+    replace_with_file_system_and_checks(
         &StdFileSystem,
         source_path,
         expected_source_sha256,
         replacement,
         backup_directory,
+        verify_prepared,
         verify_readback,
     )
 }
@@ -482,6 +502,27 @@ pub fn replace_with_file_system_and_verifier<T>(
     backup_directory: &Path,
     verify_readback: impl FnOnce(&[u8]) -> Result<T>,
 ) -> Result<(ReplacementReceipt, T)> {
+    replace_with_file_system_and_checks(
+        files,
+        source_path,
+        expected_source_sha256,
+        replacement,
+        backup_directory,
+        |_| Ok(()),
+        verify_readback,
+    )
+}
+
+/// Testable replacement with pre-write and durable read-back checks.
+pub fn replace_with_file_system_and_checks<T>(
+    files: &impl FileSystem,
+    source_path: &Path,
+    expected_source_sha256: &str,
+    replacement: &[u8],
+    backup_directory: &Path,
+    verify_prepared: impl FnOnce(&[u8]) -> Result<()>,
+    verify_readback: impl FnOnce(&[u8]) -> Result<T>,
+) -> Result<(ReplacementReceipt, T)> {
     if replacement.is_empty() {
         return Err(Error::Refused("replacement save is empty".to_owned()));
     }
@@ -511,6 +552,7 @@ pub fn replace_with_file_system_and_verifier<T>(
             "source changed since preparation: expected {expected_source_sha256}, found {source_sha256}"
         )));
     }
+    verify_prepared(replacement)?;
     let output_sha256 = sha256::sha256_hex(replacement);
     let created_at = timestamp_utc()?;
     let token = transaction_token();
@@ -1171,6 +1213,34 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(fs.bytes(&source).as_deref(), Some(source_bytes.as_slice()));
         assert_eq!(fs.files.borrow().len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn prepared_semantic_failure_refuses_before_creating_transaction_artifacts() -> TestResult {
+        let source_bytes = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-source.sav");
+        let output_bytes = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-expected.sav");
+        let source_hash = sse_codecs::sha256::sha256_hex(source_bytes);
+        let (source, backup_directory) = fake_paths();
+        let fs = MemoryFs::new(&source, source_bytes, None);
+
+        let result = super::replace_with_file_system_and_checks(
+            &fs,
+            &source,
+            &source_hash,
+            output_bytes,
+            &backup_directory,
+            |prepared| {
+                assert_eq!(prepared, output_bytes);
+                Err::<(), Error>(Error::damaged("injected prepared semantic verification failure"))
+            },
+            |_| Ok(()),
+        );
+
+        assert!(result.is_err());
+        assert_eq!(fs.bytes(&source).as_deref(), Some(source_bytes.as_slice()));
+        assert_eq!(fs.files.borrow().len(), 1);
+        assert_eq!(fs.operation_count(), 2);
         Ok(())
     }
 

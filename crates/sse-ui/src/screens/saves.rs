@@ -122,17 +122,22 @@ enum SaveData {
 impl LoadedSave {
     fn read(slot: SaveSlot) -> Result<Self> {
         let packed = SaveBuffer::read(&slot.path)?;
-        let source_sha256 = sse_codecs::sha256::sha256_hex(packed.as_slice());
-        let parsed = match S2Save::from_bytes(packed.as_slice()) {
+        Self::parse_bytes(slot, packed.as_slice())
+    }
+
+    fn parse_bytes(slot: SaveSlot, packed: &[u8]) -> Result<Self> {
+        let packed_len = packed.len();
+        let source_sha256 = sse_codecs::sha256::sha256_hex(packed);
+        let parsed = match S2Save::from_bytes(packed) {
             Ok(save) => {
                 let inventory = save.items();
                 let stash = save.stash().ok();
-                Ok(Self::from_s2(slot, packed, source_sha256, save, inventory, stash))
+                Ok(Self::from_s2(slot, packed_len, source_sha256, save, inventory, stash))
             }
-            Err(s2_error) => match Save::read(packed.as_slice()) {
+            Err(s2_error) => match Save::read(packed) {
                 Ok(save) => {
                     let inventory = save.inventory()?;
-                    Self::from_xray(slot, packed, source_sha256, save, inventory)
+                    Self::from_xray(slot, packed_len, source_sha256, save, inventory)
                 }
                 Err(xray_error) => Err(Error::damaged(format!(
                     "unsupported or damaged save (S2: {s2_error}; X-Ray: {xray_error})"
@@ -144,7 +149,7 @@ impl LoadedSave {
 
     fn from_xray(
         mut slot: SaveSlot,
-        packed: SaveBuffer,
+        packed_len: usize,
         source_sha256: String,
         save: Save,
         inventory: Vec<InventoryItem>,
@@ -163,7 +168,7 @@ impl LoadedSave {
         let summary = format!(
             "Игра: {format}\nЛокация: не подтверждена текущим индексатором\nИзменён (Unix UTC): {}\nРазмер: {} байт\nФормат: {format}\nCRC: контейнер X-Ray не хранит CRC\nВремя игры: {}\nДеньги: {money}\nПредметов в инвентаре: {}",
             unix_time(slot.last_write_time_utc),
-            packed.len(),
+            packed_len,
             save.game_time(),
             inventory.len()
         );
@@ -186,7 +191,7 @@ impl LoadedSave {
 
     fn from_s2(
         mut slot: SaveSlot,
-        packed: SaveBuffer,
+        packed_len: usize,
         source_sha256: String,
         save: S2Save,
         inventory: Vec<S2InventoryItem>,
@@ -199,7 +204,7 @@ impl LoadedSave {
         let summary = format!(
             "Игра: S.T.A.L.K.E.R. 2\nЛокация: не подтверждена текущим индексатором\nИзменён (Unix UTC): {}\nРазмер: {} байт\nФормат: S2\nCRC32: {:08X} — проверен\nДеньги: {}\nПредметов в рюкзаке: {}\nНеопознанных ссылок: {}",
             unix_time(slot.last_write_time_utc),
-            packed.len(),
+            packed_len,
             save.container().stored_crc32(),
             save.money(),
             inventory.len(),
@@ -1148,18 +1153,27 @@ fn commit_save_edits_to(
     backup_directory: &Path,
 ) -> Result<(Arc<LoadedSave>, String)> {
     let (packed, _summary) = prepare_save_edits(selected, money, stacks, stash_moves)?;
-    let receipt = transaction::replace_transaction(
+    let (receipt, mut reloaded) = transaction::replace_transaction_with_checks(
         &selected.slot.path,
         &selected.source_sha256,
         packed.as_slice(),
         backup_directory,
+        |prepared| {
+            let parsed = LoadedSave::parse_bytes(selected.slot.clone(), prepared)?;
+            verify_requested_values(&parsed, money, stacks, stash_moves)
+        },
+        |read_back| {
+            let parsed = LoadedSave::parse_bytes(selected.slot.clone(), read_back)?;
+            verify_requested_values(&parsed, money, stacks, stash_moves)?;
+            Ok(parsed)
+        },
     )?;
-    let mut slot = selected.slot.clone();
-    let metadata = std::fs::metadata(&slot.path)?;
-    slot.size = metadata.len();
-    slot.last_write_time_utc = metadata.modified().unwrap_or(slot.last_write_time_utc);
-    let reloaded = LoadedSave::read(slot)?;
-    verify_requested_values(&reloaded, money, stacks, stash_moves)?;
+    if let Ok(size) = u64::try_from(packed.len()) {
+        reloaded.slot.size = size;
+    }
+    if let Ok(metadata) = std::fs::metadata(&reloaded.slot.path) {
+        reloaded.slot.last_write_time_utc = metadata.modified().unwrap_or(reloaded.slot.last_write_time_utc);
+    }
     Ok((
         Arc::new(reloaded),
         format!(
@@ -1965,7 +1979,13 @@ mod tests {
         let sha256 = sse_codecs::sha256::sha256_hex(packed.as_slice());
         let save = Save::read(packed.as_slice())?;
         let inventory = save.inventory()?;
-        LoadedSave::from_xray(fixture_slot(path, format_id, game_id), packed, sha256, save, inventory)
+        LoadedSave::from_xray(
+            fixture_slot(path, format_id, game_id),
+            packed.len(),
+            sha256,
+            save,
+            inventory,
+        )
     }
 
     #[test]
@@ -2003,7 +2023,7 @@ mod tests {
         let stash = save.stash().ok();
         let loaded = LoadedSave::from_s2(
             fixture_slot("s2-stacks-source.sav", "stalker2", "stalker2"),
-            packed,
+            packed.len(),
             sha256,
             save,
             inventory,

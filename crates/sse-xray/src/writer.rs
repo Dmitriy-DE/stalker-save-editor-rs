@@ -1,7 +1,7 @@
 //! One-copy X-Ray edit preparation. Unknown fields remain untouched.
 
 use sse_catalog::{CatalogBundleReader, FactionCatalog, UpgradeCatalog};
-use sse_core::{Cursor, Error, Result, SaveBuffer};
+use sse_core::{verify_unmodified_bytes, ByteChangeRange, Cursor, Error, Result, SaveBuffer};
 use std::collections::{HashMap, HashSet};
 
 use crate::Save;
@@ -1089,6 +1089,7 @@ fn apply_with_catalog_internal(
             "X-Ray edit failed its exact unpacked-image read-back check".to_owned(),
         ));
     }
+    verify_preserved_xray_bytes(save, &verified)?;
     if seen_money {
         let expected_money = changes.changes().iter().find_map(|change| match change {
             Change::SetMoney { new_value, .. } => Some(*new_value),
@@ -1254,6 +1255,49 @@ fn apply_with_catalog_internal(
         None
     };
     Ok((packed, undo))
+}
+
+fn verify_preserved_xray_bytes(source: &Save, output: &Save) -> Result<()> {
+    if source.format() != output.format() {
+        return Err(Error::damaged(
+            "X-Ray image format changed while checking preserved bytes",
+        ));
+    }
+    let mut changed_ranges = Vec::with_capacity(2);
+    for kind in [2_u32, 9_u32] {
+        let before = source.optional_chunk_bytes(source.raw_image(), kind)?;
+        let after = output.optional_chunk_bytes(output.raw_image(), kind)?;
+        if before == after {
+            continue;
+        }
+        let (Some(before), Some(after)) = (before, after) else {
+            return Err(Error::damaged(format!(
+                "X-Ray writer changed the presence of chunk type {kind}"
+            )));
+        };
+        let before_start = source
+            .chunk_payload_offset(kind)?
+            .checked_sub(8)
+            .ok_or_else(|| Error::damaged("X-Ray chunk header offset underflow"))?;
+        let after_start = output
+            .chunk_payload_offset(kind)?
+            .checked_sub(8)
+            .ok_or_else(|| Error::damaged("X-Ray output chunk header offset underflow"))?;
+        let before_end = before_start
+            .checked_add(8)
+            .and_then(|offset| offset.checked_add(before.len()))
+            .ok_or_else(|| Error::damaged("X-Ray changed chunk range overflow"))?;
+        let after_end = after_start
+            .checked_add(8)
+            .and_then(|offset| offset.checked_add(after.len()))
+            .ok_or_else(|| Error::damaged("X-Ray output changed chunk range overflow"))?;
+        changed_ranges.push(ByteChangeRange {
+            before: before_start..before_end,
+            after: after_start..after_end,
+        });
+    }
+    changed_ranges.sort_unstable_by_key(|range| range.before.start);
+    verify_unmodified_bytes(source.raw_image(), output.raw_image(), &changed_ranges)
 }
 
 fn build_undo_token(source: &Save, applied: &Save) -> Result<UndoToken> {
@@ -2285,12 +2329,35 @@ fn write_u16(bytes: &mut [u8], offset: usize, value: u16) -> Result<()> {
 mod tests {
     use super::{
         actor_spawn_position_offset, apply, apply_inverse, apply_with_catalog, apply_with_undo, capability, read_u16,
-        read_u32, read_vector, Capability, Change, ChangeKind, ChangeSet, Placement,
+        read_u32, read_vector, verify_preserved_xray_bytes, Capability, Change, ChangeKind, ChangeSet, Placement,
     };
+    use crate::container::Container;
     use crate::{Format, Save};
     use sse_catalog::{CatalogBundleReader, UpgradeCatalog, UpgradeDefinition};
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    #[test]
+    fn preservation_check_rejects_an_unrelated_chunk_change() -> TestResult {
+        let source_packed = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-source.sav");
+        let source = Save::read(source_packed)?;
+        let container = Container::read(source_packed)?;
+        let chunk = container
+            .chunks()
+            .iter()
+            .find(|chunk| chunk.kind == 1 && chunk.length > 0)
+            .expect("fixture should contain a non-writable chunk");
+        let mut changed_image = source.raw_image().to_vec();
+        let byte = changed_image
+            .get_mut(chunk.offset)
+            .expect("selected chunk payload should be in bounds");
+        *byte ^= 1;
+        let changed_packed = source.repack(&changed_image)?;
+        let changed = Save::read(changed_packed.as_slice())?;
+
+        assert!(verify_preserved_xray_bytes(&source, &changed).is_err());
+        Ok(())
+    }
 
     #[test]
     fn faction_writes_match_three_reference_fixture_pairs() -> TestResult {
