@@ -329,6 +329,32 @@ impl HotkeyMatcher {
     }
 }
 
+/// Returns why global companion hotkeys cannot run on the current platform/session.
+#[must_use]
+pub fn unavailable_reason() -> Option<&'static str> {
+    #[cfg(target_os = "windows")]
+    {
+        None
+    }
+    #[cfg(target_os = "linux")]
+    {
+        if std::env::var_os("DISPLAY").is_some() {
+            None
+        } else if std::env::var("XDG_SESSION_TYPE")
+            .ok()
+            .is_some_and(|value| value.eq_ignore_ascii_case("wayland"))
+        {
+            Some("Горячие клавиши требуют X11 или XWayland. Сеанс Wayland без XWayland не поддерживается.")
+        } else {
+            Some("Горячие клавиши требуют X11 или XWayland; переменная DISPLAY не задана.")
+        }
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    {
+        Some("Горячие клавиши поддерживаются только на Windows и Linux (X11/XWayland).")
+    }
+}
+
 /// OS registration boundary implemented by the Windows/X11 adapter in `sse-sys`.
 pub trait HotkeyBackend {
     /// Registers one global gesture for an action.
