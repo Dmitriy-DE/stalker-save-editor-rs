@@ -589,13 +589,39 @@ pub fn replace_transaction_with_summary_and_verifier<T>(
     summary: EditSummary,
     verify_readback: impl FnOnce(&[u8]) -> Result<T>,
 ) -> Result<(ReplacementReceipt, T)> {
-    replace_with_file_system_and_summary_and_verifier(
-        &StdFileSystem,
+    replace_transaction_with_summary_preflight_and_verifier(
         source_path,
         expected_source_sha256,
         replacement,
         backup_directory,
         summary,
+        |_, _| Ok(()),
+        verify_readback,
+    )
+    .map(|(receipt, (), verified)| (receipt, verified))
+}
+
+/// Runs semantic validation after the fresh source hash check and before transaction files are created.
+/// The returned preflight value is paired with the durable read-back result after commit.
+pub fn replace_transaction_with_summary_preflight_and_verifier<P, V>(
+    source_path: &Path,
+    expected_source_sha256: &str,
+    replacement: &[u8],
+    backup_directory: &Path,
+    summary: EditSummary,
+    preflight: impl FnOnce(&[u8], &[u8]) -> Result<P>,
+    verify_readback: impl FnOnce(&[u8]) -> Result<V>,
+) -> Result<(ReplacementReceipt, P, V)> {
+    replace_with_file_system_and_operation_and_checks(
+        &StdFileSystem,
+        ReplacementRequest {
+            source_path,
+            expected_source_sha256,
+            replacement,
+            backup_directory,
+            operation: JournalOperation::Replace(summary),
+        },
+        preflight,
         verify_readback,
     )
 }
@@ -668,6 +694,34 @@ fn replace_with_file_system_and_verifier_operation<T>(
     operation: JournalOperation<'_>,
     verify_readback: impl FnOnce(&[u8]) -> Result<T>,
 ) -> Result<(ReplacementReceipt, T)> {
+    replace_with_file_system_and_operation_and_checks(
+        files,
+        ReplacementRequest {
+            source_path,
+            expected_source_sha256,
+            replacement,
+            backup_directory,
+            operation,
+        },
+        |_, _| Ok(()),
+        verify_readback,
+    )
+    .map(|(receipt, (), verified)| (receipt, verified))
+}
+
+fn replace_with_file_system_and_operation_and_checks<P, V>(
+    files: &impl FileSystem,
+    request: ReplacementRequest<'_>,
+    preflight: impl FnOnce(&[u8], &[u8]) -> Result<P>,
+    verify_readback: impl FnOnce(&[u8]) -> Result<V>,
+) -> Result<(ReplacementReceipt, P, V)> {
+    let ReplacementRequest {
+        source_path,
+        expected_source_sha256,
+        replacement,
+        backup_directory,
+        operation,
+    } = request;
     if replacement.is_empty() {
         return Err(Error::Refused("replacement save is empty".to_owned()));
     }
@@ -693,6 +747,7 @@ fn replace_with_file_system_and_verifier_operation<T>(
             "source changed since preparation: expected {expected_source_sha256}, found {source_sha256}"
         )));
     }
+    let preflight_value = preflight(&source_bytes, replacement)?;
     let output_sha256 = sha256::sha256_hex(replacement);
     let created_at = timestamp_utc()?;
     let token = transaction_token();
@@ -843,6 +898,7 @@ fn replace_with_file_system_and_verifier_operation<T>(
             journal_path,
             output_sha256,
         },
+        preflight_value,
         verified_value,
     ))
 }
@@ -973,6 +1029,14 @@ struct Journal<'a> {
 enum JournalOperation<'a> {
     Replace(EditSummary),
     Restore(&'a Path),
+}
+
+struct ReplacementRequest<'a> {
+    source_path: &'a Path,
+    expected_source_sha256: &'a str,
+    replacement: &'a [u8],
+    backup_directory: &'a Path,
+    operation: JournalOperation<'a>,
 }
 
 struct ExportJournal<'a> {
@@ -1520,6 +1584,46 @@ mod tests {
             );
             assert_eq!(fs.files.borrow().len(), 1, "failed artifacts at step {failure_step}");
         }
+        Ok(())
+    }
+
+    #[test]
+    fn preflight_rejection_happens_before_any_transaction_artifact() -> TestResult {
+        let source_bytes = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-source.sav");
+        let replacement = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-expected.sav");
+        let source_hash = sse_codecs::sha256::sha256_hex(source_bytes);
+        let (source, backup_directory) = fake_paths();
+        let fs = MemoryFs::new(&source, source_bytes, None);
+        let readback_called = Cell::new(false);
+
+        let result = super::replace_with_file_system_and_operation_and_checks(
+            &fs,
+            super::ReplacementRequest {
+                source_path: &source,
+                expected_source_sha256: &source_hash,
+                replacement,
+                backup_directory: &backup_directory,
+                operation: super::JournalOperation::Replace(super::EditSummary {
+                    money: Some(123_456),
+                    ..super::EditSummary::default()
+                }),
+            },
+            |original, prepared| {
+                assert_eq!(original, source_bytes);
+                assert_eq!(prepared, replacement);
+                Err::<(), Error>(Error::damaged("injected preflight verification failure"))
+            },
+            |_| {
+                readback_called.set(true);
+                Ok(())
+            },
+        );
+
+        assert!(result.is_err());
+        assert!(!readback_called.get());
+        assert_eq!(fs.bytes(&source).as_deref(), Some(source_bytes.as_slice()));
+        assert_eq!(fs.files.borrow().len(), 1);
+        assert_eq!(fs.operation_count(), 2);
         Ok(())
     }
 

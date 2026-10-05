@@ -298,6 +298,10 @@ impl Save {
         self.container.image()
     }
 
+    pub(crate) fn chunks(&self) -> &[crate::container::Chunk] {
+        self.container.chunks()
+    }
+
     pub(crate) const fn money_offset(&self) -> usize {
         self.money_offset
     }

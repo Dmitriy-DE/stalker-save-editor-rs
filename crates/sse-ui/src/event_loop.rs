@@ -184,6 +184,12 @@ pub trait App<U> {
     /// Handles one message. Default window handling (resize, expose, hover, clicks) already happened; `clicked` is
     /// the widget a primary click landed on.
     fn message(&mut self, tree: &mut Tree, message: &Message<U>, clicked: Option<crate::widget::WidgetId>) -> Flow;
+
+    /// Handles a native close request. Apps close by default; one with a pending operation may defer closing.
+    fn close_requested(&mut self, tree: &mut Tree, message: &Message<U>) -> Flow {
+        let _ = self.message(tree, message, None);
+        Flow::Exit
+    }
 }
 
 /// Per-loop statistics, for budgets and tests.
@@ -271,8 +277,9 @@ fn handle<U, A: App<U>>(tree: &mut Tree, app: &mut A, message: &Message<U>) -> F
                 let text_buffer = text.map(|ch| ch.to_string());
                 let _ = tree.edit_focused_input(keysym, text_buffer.as_deref());
             }
-            WindowEvent::CloseRequested | WindowEvent::Disconnected => {
-                app.message(tree, message, None);
+            WindowEvent::CloseRequested => return app.close_requested(tree, message),
+            WindowEvent::Disconnected => {
+                let _ = app.message(tree, message, None);
                 return Flow::Exit;
             }
             _ => {}
@@ -283,7 +290,10 @@ fn handle<U, A: App<U>>(tree: &mut Tree, app: &mut A, message: &Message<U>) -> F
 
 #[cfg(test)]
 mod tests {
-    use super::{channel_pair, Message};
+    use super::{channel_pair, App, Flow, Message, WindowEvent};
+    use crate::glyphs::Fonts;
+    use crate::raster::Color;
+    use crate::widget::Tree;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
@@ -299,5 +309,33 @@ mod tests {
         assert!(proxy.send(7));
         assert_eq!(calls.load(Ordering::Relaxed), 1);
         assert!(matches!(receiver.recv(), Ok(Message::User(7))));
+    }
+
+    #[test]
+    fn close_request_respects_the_apps_deferred_close_decision() -> sse_core::Result<()> {
+        struct KeepOpen;
+
+        impl App<()> for KeepOpen {
+            fn message(
+                &mut self,
+                _tree: &mut Tree,
+                _message: &Message<()>,
+                _clicked: Option<crate::widget::WidgetId>,
+            ) -> Flow {
+                Flow::Continue
+            }
+
+            fn close_requested(&mut self, _tree: &mut Tree, _message: &Message<()>) -> Flow {
+                Flow::Continue
+            }
+        }
+
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut app = KeepOpen;
+        assert_eq!(
+            super::handle(&mut tree, &mut app, &Message::Window(WindowEvent::CloseRequested)),
+            Flow::Continue
+        );
+        Ok(())
     }
 }
