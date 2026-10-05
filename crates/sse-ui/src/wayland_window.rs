@@ -96,11 +96,14 @@ impl WaylandWindow {
         let writer = Arc::new(Mutex::new(stream));
         let first = create_buffer(&writer, shm, width, height, 11, 12)?;
         let second = create_buffer(&writer, shm, width, height, 15, 16)?;
-        let sync = Arc::new(Mutex::new(BufferSync {
-            ids: [first.buffer, second.buffer],
-            released: [true, true],
-            configured_size: Some((width, height)),
-        }));
+        let sync = Arc::new((
+            Mutex::new(BufferSync {
+                ids: [first.buffer, second.buffer],
+                released: [true, true],
+                configured_size: Some((width, height)),
+            }),
+            Condvar::new(),
+        ));
 
         let closed = Arc::new(Mutex::new(false));
         let reader_closed = Arc::clone(&closed);
@@ -127,50 +130,6 @@ impl WaylandWindow {
             sync,
             closed,
         })
-    }
-}
-
-impl WaylandWindow {
-    fn recreate_buffers(&mut self, width: u32, height: u32) -> Result<()> {
-        let first_pool = self.next_object_id;
-        let first_buffer = first_pool
-            .checked_add(1)
-            .ok_or_else(|| Error::Refused("Wayland object ID overflow".to_owned()))?;
-        let second_pool = first_pool
-            .checked_add(2)
-            .ok_or_else(|| Error::Refused("Wayland object ID overflow".to_owned()))?;
-        let second_buffer = first_pool
-            .checked_add(3)
-            .ok_or_else(|| Error::Refused("Wayland object ID overflow".to_owned()))?;
-        let next_object_id = first_pool
-            .checked_add(4)
-            .ok_or_else(|| Error::Refused("Wayland object ID overflow".to_owned()))?;
-
-        let first = create_buffer(&self.writer, self.shm, width, height, first_pool, first_buffer)?;
-        let second = create_buffer(&self.writer, self.shm, width, height, second_pool, second_buffer)?;
-        let buffer_ids = [first.buffer, second.buffer];
-        for slot in &self.buffers {
-            let _ = send_shared(&self.writer, slot.buffer, 0, &[]);
-            let _ = send_shared(&self.writer, slot.pool, 1, &[]);
-        }
-        self.buffers = [first, second];
-        self.size = (width, height);
-        self.next_object_id = next_object_id;
-        let mut sync = self
-            .sync
-            .lock()
-            .map_err(|_| Error::System("Wayland buffer state lock poisoned".to_owned()))?;
-        sync.ids = buffer_ids;
-        sync.released = [true, true];
-        Ok(())
-    }
-
-    fn release_slot(&self, index: usize) {
-        if let Ok(mut sync) = self.sync.lock() {
-            if let Some(released) = sync.released.get_mut(index) {
-                *released = true;
-            }
-        }
     }
 }
 
