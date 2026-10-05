@@ -142,8 +142,8 @@ fn key_event(window: &Window, key: Key, pressed: bool) -> WindowEvent {
         Key::Up => 0xff52, Key::Down => 0xff54, Key::Left => 0xff51, Key::Right => 0xff53,
         _ => 0,
     };
-    let text = if pressed && !ctrl && keysym.is_ascii() {
-        char::from_u32(if shift { keysym.to_ascii_uppercase() } else { keysym })
+    let text = if pressed && !ctrl {
+        char::from_u32(keysym).map(|value| if shift { value.to_ascii_uppercase() } else { value })
     } else { None };
     WindowEvent::Key { pressed, keysym, text, ctrl, shift }
 }
