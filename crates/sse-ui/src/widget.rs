@@ -690,6 +690,33 @@ impl Tree {
         Ok(self.node(id)?.rect)
     }
 
+    /// Returns visible button labels whose rendered text is wider than their arranged content box.
+    ///
+    /// This is used by localization QA to catch translations that would be clipped at supported window sizes.
+    ///
+    /// # Errors
+    /// Returns an error when layout cannot be updated.
+    pub fn clipped_button_labels(&mut self) -> Result<Vec<String>> {
+        self.update_layout()?;
+        let mut clipped = Vec::new();
+        for index in 0..self.nodes.len() {
+            let id = WidgetId(index);
+            if !self.shown(id) {
+                continue;
+            }
+            let Some(node) = self.nodes.get(index) else { continue };
+            let Content::Button { text, style } = &node.content else {
+                continue;
+            };
+            let available =
+                u32_to_f32(node.rect.width) - node.style.padding.left - node.style.padding.right;
+            if self.fonts.measure(text, *style) > available.max(0.0) + 0.5 {
+                clipped.push(text.clone());
+            }
+        }
+        Ok(clipped)
+    }
+
     /// Sets the window size in pixels; everything is damaged.
     pub fn resize(&mut self, width: u32, height: u32) {
         if self.size != (width, height) {
