@@ -232,8 +232,15 @@ struct Companion {
 
 impl Companion {
     fn selected(&self, cx: &Context<'_>) -> std::result::Result<(String, PathBuf), String> {
-        let game = cx.app.selected_game().map(str::to_owned).ok_or_else(|| "Игра не выбрана".to_owned())?;
-        let directory = self.manual_directory.clone().or_else(|| cx.app.game_dir().map(Path::to_path_buf))
+        let game = cx
+            .app
+            .selected_game()
+            .map(str::to_owned)
+            .ok_or_else(|| "Игра не выбрана".to_owned())?;
+        let directory = self
+            .manual_directory
+            .clone()
+            .or_else(|| cx.app.game_dir().map(Path::to_path_buf))
             .ok_or_else(|| "Папка игры не выбрана".to_owned())?;
         Ok((game, directory))
     }
@@ -243,7 +250,9 @@ impl Companion {
         }
         for relative in ["_appdata_", "appdata", "userdata"] {
             let candidate = directory.join(relative);
-            if candidate.is_dir() { return Ok(candidate); }
+            if candidate.is_dir() {
+                return Ok(candidate);
+            }
         }
         Err("появится после протокола компаньона".to_owned())
     }
@@ -251,28 +260,45 @@ impl Companion {
         let Some(proxy) = cx.proxy.cloned() else { return };
         let selected = self.selected(cx);
         std::thread::spawn(move || {
-            let result = selected.and_then(|(g,d)| companion_root(&g,&d).map(|r| installed_version(&r)));
-            proxy.send(AppMessage::ToScreen(ScreenId::Companion, Box::new(CompanionReply::Status(result))));
+            let result = selected.and_then(|(g, d)| companion_root(&g, &d).map(|r| installed_version(&r)));
+            proxy.send(AppMessage::ToScreen(
+                ScreenId::Companion,
+                Box::new(CompanionReply::Status(result)),
+            ));
         });
     }
     fn protocol(&self, cx: &mut Context<'_>, command: &'static str) {
         let Some(proxy) = cx.proxy.cloned() else { return };
         let selected = self.selected(cx);
         std::thread::spawn(move || {
-            let result = selected.and_then(|(game,directory)| Self::exchange_directory(&game,&directory))
-                .and_then(|directory| sse_companion::protocol::CompanionClient::new(directory)
-                    .send(command, &[], Duration::from_secs(3)).map(|reply| reply.text).map_err(|e| e.to_string()));
-            proxy.send(AppMessage::ToScreen(ScreenId::Companion, Box::new(CompanionReply::Protocol(command,result))));
+            let result = selected
+                .and_then(|(game, directory)| Self::exchange_directory(&game, &directory))
+                .and_then(|directory| {
+                    sse_companion::protocol::CompanionClient::new(directory)
+                        .send(command, &[], Duration::from_secs(3))
+                        .map(|reply| reply.text)
+                        .map_err(|e| e.to_string())
+                });
+            proxy.send(AppMessage::ToScreen(
+                ScreenId::Companion,
+                Box::new(CompanionReply::Protocol(command, result)),
+            ));
         });
     }
     fn load_hotkeys(&mut self, cx: &mut Context<'_>, defaults: bool) -> Result<()> {
-        let path=sse_app::paths::default_data_directory().join("hotkeys.txt");
-        let layout=if defaults { sse_companion::hotkeys::HotkeyLayout::default() } else { sse_companion::hotkeys::HotkeyLayout::load(&path) };
-        for (action,id) in &self.hotkey_inputs {
-            let value=layout.binding(*action).map_or_else(String::new, |gesture| gesture.to_string());
-            cx.tree.set_input_text(*id,&value)?;
+        let path = sse_app::paths::default_data_directory().join("hotkeys.txt");
+        let layout = if defaults {
+            sse_companion::hotkeys::HotkeyLayout::default()
+        } else {
+            sse_companion::hotkeys::HotkeyLayout::load(&path)
+        };
+        for (action, id) in &self.hotkey_inputs {
+            let value = layout
+                .binding(*action)
+                .map_or_else(String::new, |gesture| gesture.to_string());
+            cx.tree.set_input_text(*id, &value)?;
         }
-        let _=cx.tree.take_changed_inputs();
+        let _ = cx.tree.take_changed_inputs();
         Ok(())
     }
 }
