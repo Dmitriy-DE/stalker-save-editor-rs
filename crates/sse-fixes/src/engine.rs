@@ -599,9 +599,10 @@ impl GameFixEngine {
                 rollback_errors.push(format!("manifest: {restore_error}"));
             }
             if rollback_errors.is_empty() {
-                delete_journal(&fix_dir);
+                cleanup_update_journal_after_rollback(&fix_dir, &rollback_errors);
                 return Err(error);
             }
+            cleanup_update_journal_after_rollback(&fix_dir, &rollback_errors);
             return Err(Error::System(format!(
                 "Game Fix update failed and rollback to the previous version was incomplete: {}",
                 rollback_errors.join("; ")
@@ -1970,6 +1971,12 @@ fn is_valid_id(id: &str) -> bool {
         .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '-')
 }
 
+fn cleanup_update_journal_after_rollback(fix_dir: &Path, rollback_errors: &[String]) {
+    if rollback_errors.is_empty() {
+        delete_journal(fix_dir);
+    }
+}
+
 fn parse_numeric_version(value: &str) -> Result<Vec<u64>> {
     value
         .split('.')
@@ -2129,6 +2136,23 @@ mod g13_tests {
             overlays: Vec::new(),
             spawn_edits: Vec::new(),
         }
+    }
+
+    #[test]
+    fn incomplete_update_rollback_preserves_recovery_journal() -> Result<()> {
+        let root = temp_game_root();
+        let fix_dir = get_fix_directory(&root, "test.g13.transaction");
+        fs::create_dir_all(&fix_dir)?;
+        let journal = fix_dir.join(JOURNAL_FILE_NAME);
+        fs::write(&journal, b"recovery")?;
+
+        cleanup_update_journal_after_rollback(&fix_dir, &["restore failed".to_owned()]);
+        assert!(journal.is_file());
+
+        cleanup_update_journal_after_rollback(&fix_dir, &[]);
+        assert!(!journal.exists());
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
     }
 
     #[test]
