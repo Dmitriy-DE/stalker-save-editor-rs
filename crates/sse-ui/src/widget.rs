@@ -235,7 +235,7 @@ impl Tree {
     pub fn focused_is_input(&self) -> bool {
         self.focused
             .and_then(|id| self.nodes.get(id.0))
-            .is_some_and(|node| matches!(node.content, Content::Input { .. }))
+            .is_some_and(|node| matches!(&node.content, Content::Input { .. }))
     }
 
     /// Moves focus to a visible button or input, or clears keyboard focus.
