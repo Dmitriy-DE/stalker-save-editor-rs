@@ -387,9 +387,7 @@ impl<'a> Surface<'a> {
         let top_end = rect
             .y
             .saturating_add(i32::try_from(top_depth.min(rect.height)).unwrap_or(i32::MAX));
-        let bottom_start = rect
-            .bottom()
-            .saturating_sub(i64::from(bottom_depth.min(rect.height)));
+        let bottom_start = rect.bottom().saturating_sub(i64::from(bottom_depth.min(rect.height)));
         let middle_top = i64::from(top_end).min(rect.bottom());
         let middle_bottom = bottom_start.max(middle_top).min(rect.bottom());
 
