@@ -117,18 +117,23 @@ fn task_cancellation_honored() -> std::io::Result<()> {
 
 #[test]
 fn task_failure_reporting() -> std::io::Result<()> {
+    let log_directory = std::env::temp_dir().join(format!("sse-task-failure-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&log_directory);
+    sse_app::diagnostics::configure_log_directory(Some(log_directory.clone()));
+
     let manager = TaskManager::new();
     let handle = manager.spawn("failing_task", |_ctx| -> Result<(), String> {
-        Err("file not found".to_owned())
+        Err("file not found: /home/alice/private.sav".to_owned())
     })?;
 
     let mut got_failure = false;
+    let mut failure_message = String::new();
     for _ in 0..50 {
         thread::sleep(Duration::from_millis(10));
         for event in manager.poll_events() {
             if let TaskEvent::Failed(id, err) = event {
                 if id == handle.id() {
-                    assert_eq!(err, "file not found");
+                    failure_message = err;
                     got_failure = true;
                 }
             }
@@ -138,7 +143,37 @@ fn task_failure_reporting() -> std::io::Result<()> {
         }
     }
 
+    sse_app::diagnostics::install_crash_reporter();
+    let _panic_handle = manager.spawn("panicking_task", |_ctx| -> Result<(), String> {
+        panic!("background task panicked at /home/alice/private.sav");
+    })?;
+    let mut panic_marker = String::new();
+    for _ in 0..50 {
+        if let Ok(marker) = std::fs::read_to_string(log_directory.join("last-crash.txt")) {
+            panic_marker = marker;
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    let log = std::fs::read_to_string(log_directory.join("save-editor.log")).unwrap_or_default();
+    sse_app::diagnostics::configure_log_directory(None);
+    let _ = std::fs::remove_dir_all(log_directory);
+
     assert!(got_failure, "failure event must be received");
+    assert_eq!(failure_message, "file not found: /home/alice/private.sav");
+    assert!(log.contains("failing_task"), "task name should be logged");
+    assert!(log.contains("file not found"), "failure should be logged");
+    assert!(log.contains("<home>/private.sav"), "the log should redact user paths");
+    assert!(!log.contains("alice"), "the log must not retain the home user name");
+    assert!(
+        panic_marker.contains("Unhandled panic"),
+        "the panic marker should be written"
+    );
+    assert!(
+        panic_marker.contains("<home>/private.sav"),
+        "panic paths should be redacted"
+    );
     Ok(())
 }
 
