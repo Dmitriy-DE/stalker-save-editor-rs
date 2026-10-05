@@ -880,10 +880,16 @@ impl Shell {
     }
 
     fn sync_game_sounds(&mut self) {
-        let Some(game) = self.app.selected_game().map(str::to_owned) else { return };
-        if self.sound_game.as_deref() == Some(game.as_str()) { return; }
+        let Some(game) = self.app.selected_game().map(str::to_owned) else {
+            return;
+        };
+        if self.sound_game.as_deref() == Some(game.as_str()) {
+            return;
+        }
         self.sound_game = Some(game.clone());
-        let Some(directory) = self.app.game_dir().map(Path::to_path_buf) else { return };
+        let Some(directory) = self.app.game_dir().map(Path::to_path_buf) else {
+            return;
+        };
         let Some(proxy) = self.proxy.clone() else { return };
         std::thread::spawn(move || {
             let sounds = crate::sound::GameUiSounds::load(&game, &directory);
@@ -892,7 +898,9 @@ impl Shell {
     }
 
     fn play_sound(&self, cue: crate::sound::Cue) {
-        if self.sound_enabled { self.sounds.play(cue, self.sound_volume); }
+        if self.sound_enabled {
+            self.sounds.play(cue, self.sound_volume);
+        }
     }
 
     fn apply_navigation(&mut self, tree: &mut Tree, collapsed: bool) -> Result<()> {
@@ -926,7 +934,11 @@ impl Shell {
         )?;
         tree.set_tooltip(
             self.nav_toggle,
-            crate::strings::t(if collapsed { "Развернуть меню" } else { "Свернуть меню" }),
+            crate::strings::t(if collapsed {
+                "Развернуть меню"
+            } else {
+                "Свернуть меню"
+            }),
         )?;
         for (index, id) in self.nav.iter().copied().enumerate() {
             let text = if collapsed {
