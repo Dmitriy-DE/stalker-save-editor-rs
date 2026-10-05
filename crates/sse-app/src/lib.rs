@@ -4,6 +4,7 @@
 
 pub mod paths;
 pub mod settings;
+pub mod settings_writer;
 pub mod state;
 pub mod tasks;
 
