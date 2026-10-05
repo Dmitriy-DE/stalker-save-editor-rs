@@ -149,7 +149,8 @@ impl NamedTaskGuard {
     fn enter(name: &'static str) -> Self {
         let (lock, _) = named_task_registry();
         let mut active = lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        *active.entry(name).or_insert(0) += 1;
+        let count = active.entry(name).or_insert(0);
+        *count = count.saturating_add(1);
         Self { name }
     }
 }
@@ -182,7 +183,8 @@ pub fn named_task_active(name: &str) -> bool {
 #[must_use]
 pub fn wait_for_named_tasks(names: &[&str], timeout: Duration) -> bool {
     let (lock, changed) = named_task_registry();
-    let deadline = Instant::now() + timeout;
+    let now = Instant::now();
+    let deadline = now.checked_add(timeout).unwrap_or(now);
     let mut active = lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     loop {
         if names
