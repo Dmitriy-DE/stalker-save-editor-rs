@@ -32,15 +32,29 @@ struct ReaderObjects {
     surface: u32,
 }
 
+#[derive(Clone, Copy)]
+struct BufferSync {
+    ids: [u32; 2],
+    released: [bool; 2],
+    configured_size: Option<(u32, u32)>,
+}
+
+struct BufferSlot {
+    pool: u32,
+    buffer: u32,
+    memory: MappedFile,
+}
+
 /// Native Wayland presenter. Input support currently uses wl_seat discovery and falls back to X11 when the
 /// compositor cannot provide the required core objects.
 pub struct WaylandWindow {
-    stream: UnixStream,
+    writer: Arc<Mutex<UnixStream>>,
+    shm: u32,
     surface: u32,
-    buffer: u32,
-    pool: u32,
-    memory: MappedFile,
+    buffers: [BufferSlot; 2],
     size: (u32, u32),
+    next_object_id: u32,
+    sync: Arc<Mutex<BufferSync>>,
     closed: Arc<Mutex<bool>>,
 }
 
@@ -78,34 +92,20 @@ impl WaylandWindow {
         send(&mut stream, surface, 6, &[])?; // initial commit
         stream.flush().map_err(io)?;
 
-        let byte_len = frame_bytes(width, height)?;
-        let memory = MappedFile::new(byte_len).map_err(io)?;
-        let pool = 11;
-        send_with_fd(
-            &stream,
-            shm,
-            0,
-            &u32s(&[
-                pool,
-                u32::try_from(byte_len).map_err(|_| Error::Refused("Wayland buffer too large".to_owned()))?,
-            ]),
-            memory.raw_fd(),
-        )?;
-        let buffer = 12;
-        let stride = width
-            .checked_mul(4)
-            .ok_or_else(|| Error::Refused("Wayland stride overflow".to_owned()))?;
-        send(
-            &mut stream,
-            pool,
-            0,
-            &u32s(&[buffer, 0, width, height, stride, WL_SHM_FORMAT_XRGB8888]),
-        )?;
-        stream.flush().map_err(io)?;
+        let reader = stream.try_clone().map_err(io)?;
+        let writer = Arc::new(Mutex::new(stream));
+        let first = create_buffer(&writer, shm, width, height, 11, 12)?;
+        let second = create_buffer(&writer, shm, width, height, 15, 16)?;
+        let sync = Arc::new(Mutex::new(BufferSync {
+            ids: [first.buffer, second.buffer],
+            released: [true, true],
+            configured_size: None,
+        }));
 
         let closed = Arc::new(Mutex::new(false));
-        let reader = stream.try_clone().map_err(io)?;
         let reader_closed = Arc::clone(&closed);
+        let reader_sync = Arc::clone(&sync);
+        let reader_writer = Arc::clone(&writer);
         let reader_objects = ReaderObjects {
             xdg_surface,
             toplevel,
@@ -115,15 +115,16 @@ impl WaylandWindow {
         };
         std::thread::Builder::new()
             .name("wayland-events".to_owned())
-            .spawn(move || event_reader(reader, reader_objects, proxy, reader_closed))
+            .spawn(move || event_reader(reader, reader_writer, reader_objects, proxy, reader_sync, reader_closed))
             .map_err(io)?;
         Ok(Self {
-            stream,
+            writer,
+            shm,
             surface,
-            buffer,
-            pool,
-            memory,
+            buffers: [first, second],
             size: (width, height),
+            next_object_id: 17,
+            sync,
             closed,
         })
     }
