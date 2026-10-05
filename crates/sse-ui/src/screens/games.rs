@@ -2620,7 +2620,24 @@ struct EncyclopediaEntry {
 }
 
 #[derive(Debug)]
-struct EncyclopediaResult(std::result::Result<Vec<EncyclopediaEntry>, String>);
+struct EncyclopediaResult {
+    game: String,
+    generation: u64,
+    result: std::sync::Mutex<Option<std::result::Result<Vec<EncyclopediaEntry>, String>>>,
+}
+
+impl EncyclopediaResult {
+    fn take_if_current(
+        &self,
+        game: Option<&str>,
+        generation: u64,
+    ) -> Option<std::result::Result<Vec<EncyclopediaEntry>, String>> {
+        if self.generation != generation || game != Some(self.game.as_str()) {
+            return None;
+        }
+        self.result.lock().ok()?.take()
+    }
+}
 
 #[derive(Default)]
 struct Encyclopedia {
@@ -2634,14 +2651,21 @@ struct Encyclopedia {
     visible: Vec<usize>,
     selected: Option<usize>,
     search: Option<crate::widgets::text_input::TextInput>,
+    generation: u64,
 }
 
 impl Encyclopedia {
-    fn load(&self, cx: &mut Context<'_>) {
-        let Some(game) = cx.app.selected_game().and_then(encyclopedia_game) else {
+    fn load(&mut self, cx: &mut Context<'_>) {
+        self.generation = self.generation.saturating_add(1);
+        let generation = self.generation;
+        let game_id = cx.app.selected_game().map(str::to_owned);
+        let Some(game) = game_id.as_deref().and_then(encyclopedia_game) else {
             if let Some(status) = self.status {
                 let _ = cx.tree.set_text(status, "Энциклопедия сейчас доступна для X-Ray игр");
             }
+            return;
+        };
+        let Some(game_id) = game_id else {
             return;
         };
         let Some(directory) = cx.app.game_dir().map(Path::to_path_buf) else {
@@ -2697,7 +2721,11 @@ impl Encyclopedia {
             })();
             proxy.send(AppMessage::ToScreen(
                 ScreenId::Encyclopedia,
-                Box::new(EncyclopediaResult(result)),
+                Box::new(EncyclopediaResult {
+                    game: game_id,
+                    generation,
+                    result: std::sync::Mutex::new(Some(result)),
+                }),
             ));
         });
     }
@@ -2932,29 +2960,68 @@ impl Screen for Encyclopedia {
             }
         }
         if let Message::User(AppMessage::ToScreen(ScreenId::Encyclopedia, payload)) = message {
-            if let Some(EncyclopediaResult(result)) = payload.downcast_ref::<EncyclopediaResult>() {
+            if let Some(result) = payload.downcast_ref::<EncyclopediaResult>() {
+                let Some(result) = result.take_if_current(cx.app.selected_game(), self.generation) else {
+                    return Ok(());
+                };
                 match result {
                     Ok(entries) => {
-                        self.entries.clone_from(entries);
+                        let count = entries.len();
+                        self.entries = entries;
                         if let Some(status) = self.status {
                             cx.tree.set_text(
                                 status,
-                                &format!(
-                                    "Источник: файлы выбранной установленной игры. Записей: {}",
-                                    entries.len()
-                                ),
+                                &format!("Источник: файлы выбранной установленной игры. Записей: {count}"),
                             )?;
                         }
                         self.apply_search(cx)?;
                     }
                     Err(error) => {
                         if let Some(status) = self.status {
-                            cx.tree.set_text(status, error)?;
+                            cx.tree.set_text(status, &error)?;
                         }
                     }
                 }
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod encyclopedia_result_tests {
+    use super::{EncyclopediaEntry, EncyclopediaResult};
+
+    #[test]
+    fn stale_game_or_generation_is_rejected_and_current_result_is_moved_once() {
+        let stale_game = EncyclopediaResult {
+            game: "stalker-cop".to_owned(),
+            generation: 4,
+            result: std::sync::Mutex::new(Some(Ok(vec![EncyclopediaEntry {
+                kind: "предмет".to_owned(),
+                key: "medkit".to_owned(),
+                name: "Аптечка".to_owned(),
+                detail: "test".to_owned(),
+            }]))),
+        };
+        assert!(stale_game.take_if_current(Some("stalker-soc"), 4).is_none());
+
+        let stale_generation = EncyclopediaResult {
+            game: "stalker-cop".to_owned(),
+            generation: 4,
+            result: std::sync::Mutex::new(Some(Ok(Vec::new()))),
+        };
+        assert!(stale_generation.take_if_current(Some("stalker-cop"), 5).is_none());
+
+        let current = EncyclopediaResult {
+            game: "stalker-cop".to_owned(),
+            generation: 5,
+            result: std::sync::Mutex::new(Some(Ok(Vec::new()))),
+        };
+        assert!(matches!(
+            current.take_if_current(Some("stalker-cop"), 5),
+            Some(Ok(entries)) if entries.is_empty()
+        ));
+        assert!(current.take_if_current(Some("stalker-cop"), 5).is_none());
     }
 }
