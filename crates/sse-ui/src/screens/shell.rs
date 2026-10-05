@@ -2,14 +2,16 @@
 
 use super::style::{self, rgb, Text};
 use super::{AppMessage, Context, EditorAction, Group, Screen, ScreenId};
+use crate::edit::{Clipboard, EditConfig, FieldMode, InputFilter, Key as EditKey, Modifiers};
 use crate::event_loop::{App, Flow, Message, Proxy, WindowEvent};
 use crate::glyphs::{to_px, Face, TextStyle};
 use crate::layout::{Align, Edges, NodeKind, Size, Style};
 use crate::path::Icon;
 use crate::widget::{Content, Look, TextAlign, Tree, WidgetId};
 use crate::widgets::scroll::ScrollView;
+use crate::widgets::text_input::TextInput;
 use sse_core::Result;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 const KEY_ESCAPE: u32 = 0xff1b;
@@ -21,6 +23,29 @@ const SAVE_LIBRARY_PAGE_SIZE: usize = 8;
 const DRAFT_CLOSE_WARNING: &str = "Последняя правка не сохранена в черновик.";
 const FORCE_CLOSE_DEFAULT_MESSAGE: &str =
     "Фоновая операция ещё записывает файлы. Принудительное закрытие может оставить операцию незавершённой.";
+
+fn open_path_edit_config() -> EditConfig {
+    EditConfig {
+        mode: FieldMode::SingleLine,
+        max_graphemes: 32_768,
+        history_limit: 64,
+        filter: InputFilter::Any,
+    }
+}
+
+#[derive(Default)]
+struct ShellClipboard(String);
+
+impl Clipboard for ShellClipboard {
+    fn read_text(&mut self) -> Result<String> {
+        Ok(self.0.clone())
+    }
+
+    fn write_text(&mut self, text: &str) -> Result<()> {
+        text.clone_into(&mut self.0);
+        Ok(())
+    }
+}
 
 struct SaveEligibility {
     reason: String,
@@ -158,6 +183,13 @@ pub struct Shell {
     reset: WidgetId,
     refresh: WidgetId,
     save: WidgetId,
+    open_button: WidgetId,
+    open_file_dialog: WidgetId,
+    open_path_widget: WidgetId,
+    open_confirm: WidgetId,
+    open_cancel: WidgetId,
+    open_path_input: TextInput,
+    open_path_clipboard: ShellClipboard,
     library: WidgetId,
     library_refresh: WidgetId,
     library_previous: WidgetId,
@@ -320,6 +352,7 @@ impl Shell {
         let interactive = proxy.is_some();
         let language = startup_language(&settings);
         crate::strings::set_language(Some(&language));
+        let open_path_input = TextInput::new("", open_path_edit_config())?;
         let root_style = Style {
             align_items: Align::Stretch,
             ..Style::default()
@@ -557,6 +590,7 @@ impl Shell {
         let undo = top_button(tree, top, crate::strings::t("Отменить"), false)?;
         let redo = top_button(tree, top, crate::strings::t("Вернуть"), false)?;
         let reset = top_button(tree, top, crate::strings::t("Сбросить"), false)?;
+        let open_button = top_button(tree, top, crate::strings::t("Открыть…"), false)?;
         let refresh = top_button(tree, top, crate::strings::t("Обновить"), false)?;
         let save = top_button(tree, top, crate::strings::t("СОХРАНИТЬ"), true)?;
         let save_reason = style::label(
@@ -889,7 +923,6 @@ impl Shell {
             Text::Body,
         )?;
         tree.set_visible(saving_dialog, false)?;
-
         let force_close_dialog = style::card(tree, overlay_host)?;
         style::label(tree, force_close_dialog, "ЗАКРЫТЬ, НЕ ДОЖИДАЯСЬ?", Text::Heading)?;
         let force_close_message = style::label(tree, force_close_dialog, FORCE_CLOSE_DEFAULT_MESSAGE, Text::Body)?;
@@ -898,11 +931,56 @@ impl Shell {
         let force_close_no = style::button(tree, force_close_actions, "ПОДОЖДАТЬ", style::Button::Secondary)?;
         tree.set_visible(force_close_dialog, false)?;
 
+        let open_file_dialog = style::card(tree, overlay_host)?;
+        style::label(
+            tree,
+            open_file_dialog,
+            crate::strings::t("Открыть сохранение"),
+            Text::Heading,
+        )?;
+        style::label(
+            tree,
+            open_file_dialog,
+            crate::strings::t("Укажите путь к файлу сохранения. Файл будет проверен и прочитан в фоне."),
+            Text::Body,
+        )?;
+        style::label(
+            tree,
+            open_file_dialog,
+            crate::strings::t("Путь к файлу сохранения"),
+            Text::Note,
+        )?;
+        let open_path_widget = tree.add(
+            Some(open_file_dialog),
+            NodeKind::Leaf,
+            Style {
+                min: Size::new(420.0, 38.0),
+                padding: padded(10.0, 0.0, 10.0, 0.0),
+                ..Style::default()
+            },
+            Content::Input {
+                text: String::new(),
+                style: Text::Body.style(),
+            },
+            Look {
+                fill: Some(rgb(crate::theme::current().colors.background[4])),
+                border: Some((rgb(crate::theme::current().colors.borders[1]), 1.0)),
+                radius: crate::theme::BUTTON_RADIUS,
+                text: rgb(crate::theme::current().colors.text[0]),
+                ..Look::default()
+            },
+        )?;
+        let open_actions = style::row(tree, open_file_dialog)?;
+        let open_cancel = style::button(tree, open_actions, "Отмена", style::Button::Secondary)?;
+        let open_confirm = style::button(tree, open_actions, "Открыть", style::Button::Primary)?;
+        tree.set_enabled(open_confirm, false)?;
+        tree.set_visible(open_file_dialog, false)?;
         let tooltip = style::label(tree, overlay_host, "", Text::Body)?;
         tree.set_visible(tooltip, false)?;
         tree.set_tooltip(nav_toggle, crate::strings::t("Свернуть меню"))?;
         tree.set_tooltip(library_refresh, crate::strings::t("Обновить"))?;
         tree.set_tooltip(save, crate::strings::t("Выберите сохранение для редактирования."))?;
+        tree.set_tooltip(open_button, crate::strings::t("Открыть сохранение"))?;
 
         let hosts = vec![None; screens.len()];
         let mut shell = Self {
@@ -930,6 +1008,13 @@ impl Shell {
             reset,
             refresh,
             save,
+            open_button,
+            open_file_dialog,
+            open_path_widget,
+            open_confirm,
+            open_cancel,
+            open_path_input,
+            open_path_clipboard: ShellClipboard::default(),
             library,
             library_refresh,
             library_previous,
@@ -1125,7 +1210,7 @@ impl Shell {
     /// # Errors
     /// Returns an error if the screen cannot read or parse the save.
     pub fn open_save(&mut self, tree: &mut Tree, path: &Path) -> Result<bool> {
-        if self.library_workspace.is_saving() {
+        if self.library_workspace.is_saving() || self.library_workspace.is_restoring() {
             return Ok(false);
         }
         self.open(tree, ScreenId::Overview)?;
@@ -1151,8 +1236,83 @@ impl Shell {
         Ok(opened)
     }
 
+    fn show_open_file_dialog(&mut self, tree: &mut Tree) -> Result<()> {
+        if self.library_workspace.is_saving() || self.library_workspace.is_restoring() {
+            return Ok(());
+        }
+        self.open_path_input = TextInput::new("", open_path_edit_config())?;
+        self.open_path_clipboard.0.clear();
+        tree.set_input_text(self.open_path_widget, "")?;
+        tree.set_enabled(self.open_confirm, false)?;
+        tree.open_dialog(self.open_file_dialog)?;
+        tree.set_focus(Some(self.open_path_widget))?;
+        self.open_path_input.focus(true, 0);
+        Ok(())
+    }
+
+    fn close_open_file_dialog(&mut self, tree: &mut Tree) -> Result<()> {
+        if tree.dialog() == Some(self.open_file_dialog) {
+            let _ = tree.close_dialog()?;
+        }
+        self.open_path_input.focus(false, 0);
+        Ok(())
+    }
+
+    fn confirm_open_file(&mut self, tree: &mut Tree) -> Result<()> {
+        let path = self.open_path_input.text();
+        if path.is_empty() || self.proxy.is_none() {
+            return Ok(());
+        }
+        if self.library_workspace.is_saving() || self.library_workspace.is_restoring() {
+            return Ok(());
+        }
+        let path = PathBuf::from(path);
+        self.close_open_file_dialog(tree)?;
+        let _ = self.open_save(tree, &path)?;
+        Ok(())
+    }
+
+    fn edit_open_path(
+        &mut self,
+        tree: &mut Tree,
+        keysym: u32,
+        text: Option<char>,
+        ctrl: bool,
+        shift: bool,
+    ) -> Result<()> {
+        let key = match keysym {
+            0xff08 => EditKey::Backspace,
+            0xffff => EditKey::Delete,
+            0xff51 => EditKey::Left,
+            0xff53 => EditKey::Right,
+            0xff50 => EditKey::Home,
+            0xff57 => EditKey::End,
+            value if ctrl && matches!(value, 0x61 | 0x41) => EditKey::A,
+            value if ctrl && matches!(value, 0x63 | 0x43) => EditKey::C,
+            value if ctrl && matches!(value, 0x76 | 0x56) => EditKey::V,
+            value if ctrl && matches!(value, 0x78 | 0x58) => EditKey::X,
+            value if ctrl && matches!(value, 0x7a | 0x5a) => EditKey::Z,
+            _ => EditKey::Character(text.unwrap_or('\0')),
+        };
+        let typed = text.map(|character| character.to_string());
+        self.open_path_input.focus(true, 0);
+        self.open_path_input.key(
+            key,
+            Modifiers { ctrl, shift },
+            typed.as_deref(),
+            &mut self.open_path_clipboard,
+        )?;
+        let path = self.open_path_input.text();
+        tree.set_input_text(self.open_path_widget, &path)?;
+        tree.set_enabled(
+            self.open_confirm,
+            !path.is_empty() && !self.library_workspace.is_saving() && !self.library_workspace.is_restoring(),
+        )?;
+        Ok(())
+    }
+
     fn select(&mut self, tree: &mut Tree, index: usize) -> Result<()> {
-        if self.library_workspace.is_saving() {
+        if self.library_workspace.is_saving() || self.library_workspace.is_restoring() {
             return Ok(());
         }
         if index == self.selected || index >= self.screens.len() {
@@ -1360,6 +1520,8 @@ impl Shell {
     }
 
     fn sync_saving_overlay(&self, tree: &mut Tree) -> Result<()> {
+        let busy = self.library_workspace.is_saving() || self.library_workspace.is_restoring();
+        tree.set_enabled(self.open_button, !busy)?;
         if self.library_workspace.is_saving() {
             if !tree.dialog_open() {
                 tree.open_dialog(self.saving_dialog)?;
@@ -1564,7 +1726,7 @@ impl Shell {
                 },
             )?;
         }
-        if self.library_workspace.is_saving()
+        if (self.library_workspace.is_saving() || self.library_workspace.is_restoring())
             && !matches!(
                 message,
                 Message::User(AppMessage::ToScreen(_, _)) | Message::User(AppMessage::Tick(_))
@@ -1662,6 +1824,18 @@ impl Shell {
             }
             return Ok(Flow::Continue);
         }
+        if clicked.is_some() && clicked == Some(self.open_button) {
+            self.show_open_file_dialog(tree)?;
+            return Ok(Flow::Continue);
+        }
+        if clicked.is_some() && clicked == Some(self.open_cancel) {
+            self.close_open_file_dialog(tree)?;
+            return Ok(Flow::Continue);
+        }
+        if clicked.is_some() && clicked == Some(self.open_confirm) {
+            self.confirm_open_file(tree)?;
+            return Ok(Flow::Continue);
+        }
         let editor_action = if clicked.is_some() && clicked == Some(self.undo) {
             Some(EditorAction::Undo)
         } else if clicked.is_some() && clicked == Some(self.redo) {
@@ -1757,14 +1931,17 @@ impl Shell {
         if let Message::Window(WindowEvent::Key {
             pressed: true,
             keysym,
+            text,
             ctrl,
             shift,
-            ..
         }) = message
         {
             if *keysym == KEY_ESCAPE {
                 self.route(tree, message, None)?;
                 if tree.dialog_open() {
+                    if tree.dialog() == Some(self.open_file_dialog) {
+                        self.open_path_input.focus(false, 0);
+                    }
                     let _ = tree.close_dialog()?;
                 } else {
                     tree.set_focus(None)?;
@@ -1777,6 +1954,10 @@ impl Shell {
                 return Ok(Flow::Continue);
             }
             if *keysym == KEY_RETURN {
+                if tree.dialog() == Some(self.open_file_dialog) {
+                    self.confirm_open_file(tree)?;
+                    return Ok(Flow::Continue);
+                }
                 if let Some(focus) = tree.focused() {
                     let action = if focus == self.undo {
                         Some(EditorAction::Undo)
@@ -1812,6 +1993,12 @@ impl Shell {
                     tree.set_focus(Some(target))?;
                 }
                 self.route(tree, message, target)?;
+                return Ok(Flow::Continue);
+            }
+            if tree.dialog() == Some(self.open_file_dialog) {
+                if tree.focused() == Some(self.open_path_widget) {
+                    self.edit_open_path(tree, *keysym, *text, *ctrl, *shift)?;
+                }
                 return Ok(Flow::Continue);
             }
             if !tree.dialog_open() && *ctrl && matches!(*keysym, 0x46 | 0x66) {
@@ -2046,6 +2233,97 @@ mod tests {
             save_eligibility(true, Some("stalker2"), false, Some(&supported), true).reason,
             "В черновике есть правки из другой версии редактора, которые эта версия не понимает. Сбросьте черновик, чтобы продолжить (он сохранится рядом)."
         );
+        Ok(())
+    }
+
+    #[test]
+    fn open_toolbar_loads_a_save_from_the_path_dialog_in_the_background() -> sse_core::Result<()> {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| sse_core::Error::System(error.to_string()))?
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("sse shell open {nonce}.sav"));
+        std::fs::write(
+            &path,
+            include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-source.sav"),
+        )?;
+        let (proxy, receiver) = channel_pair::<super::super::AppMessage>();
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut shell = Shell::build(&mut tree, None)?;
+        shell.set_proxy(proxy);
+
+        shell.handle(
+            &mut tree,
+            &Message::User(super::super::AppMessage::Tick(0)),
+            Some(shell.open_button),
+        )?;
+        assert_eq!(tree.dialog(), Some(shell.open_file_dialog));
+        assert_eq!(tree.focused(), Some(shell.open_path_widget));
+        shell.handle(
+            &mut tree,
+            &Message::User(super::super::AppMessage::Tick(0)),
+            Some(shell.open_confirm),
+        )?;
+        assert!(tree.dialog_open(), "an empty path must leave the dialog open");
+
+        shell.handle(
+            &mut tree,
+            &Message::Window(WindowEvent::Key {
+                pressed: true,
+                keysym: 0xff1b,
+                text: None,
+                ctrl: false,
+                shift: false,
+            }),
+            None,
+        )?;
+        assert!(!tree.dialog_open());
+
+        shell.handle(
+            &mut tree,
+            &Message::User(super::super::AppMessage::Tick(0)),
+            Some(shell.open_button),
+        )?;
+        for character in path.to_string_lossy().chars() {
+            shell.handle(
+                &mut tree,
+                &Message::Window(WindowEvent::Key {
+                    pressed: true,
+                    keysym: u32::from(character),
+                    text: Some(character),
+                    ctrl: false,
+                    shift: false,
+                }),
+                None,
+            )?;
+        }
+        assert_eq!(tree.input_text(shell.open_path_widget)?, path.to_string_lossy());
+        shell.handle(
+            &mut tree,
+            &Message::User(super::super::AppMessage::Tick(0)),
+            Some(shell.open_confirm),
+        )?;
+        assert!(!tree.dialog_open());
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        while shell.app.current_save() != Some(path.as_path()) {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                let _ = std::fs::remove_file(&path);
+                return Err(sse_core::Error::System(
+                    "timed out loading a path-selected fixture".to_owned(),
+                ));
+            }
+            let message = match receiver.recv_timeout(remaining) {
+                Ok(message) => message,
+                Err(error) => {
+                    let _ = std::fs::remove_file(&path);
+                    return Err(sse_core::Error::System(error.to_string()));
+                }
+            };
+            shell.handle(&mut tree, &message, None)?;
+        }
+        std::fs::remove_file(path)?;
         Ok(())
     }
 
