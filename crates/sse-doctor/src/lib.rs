@@ -1,7 +1,7 @@
 //! Read-only save and crash diagnostics.
 
-use sse_core::{Error, Result};
-use sse_xray::writer::ChangeSet;
+use sse_core::{Error, Result, SaveBuffer};
+use sse_xray::writer::{self, Change, ChangeSet};
 use sse_xray::Save;
 use std::collections::VecDeque;
 use std::fs::{self, File};
@@ -384,8 +384,7 @@ const QUEST_RULES: [QuestRule; 7] = [
 
 /// Evaluates the checked-in SoC and Clear Sky quest rules against validated save facts.
 ///
-/// This accepts already-read facts because the current X-Ray API does not yet expose actor info portions or
-/// creature health. It only reports repairs as missing flag names; it does not produce or apply a write.
+/// The result is unknown whenever the actor info list or the matching creature STATE cannot be read safely.
 #[must_use]
 pub fn evaluate_quest_facts(
     format_id: &str,
@@ -490,21 +489,101 @@ pub fn analyze_quests(data: &[u8]) -> QuestDoctorReport {
             };
         }
     };
+    analyze_quests_from_save(&save)
+}
+
+/// Evaluates quest rules against an already parsed save to avoid building a second index.
+#[must_use]
+pub fn analyze_quests_from_save(save: &Save) -> QuestDoctorReport {
     let format_id = save.format().id();
-    let states = evaluate_quest_facts(format_id, None, &[]);
+    let known_info = save.actor_known_info();
+    let mut npc_vitals = Vec::new();
+    for rule in QUEST_RULES.iter().filter(|rule| rule.format_id == format_id) {
+        npc_vitals.extend(
+            save.find_creature_vitals(rule.npc_section)
+                .into_iter()
+                .map(|vitals| QuestNpcVitals {
+                    section: rule.npc_section.to_owned(),
+                    is_dead: vitals.is_dead(),
+                }),
+        );
+    }
+    let states = evaluate_quest_facts(format_id, known_info, &npc_vitals);
     let quest_states_available = !states.is_empty();
-    let summary = if quest_states_available {
-        "The supported save reader does not expose validated actor info portions or NPC health; all listed rules remain unknown.".to_owned()
+    let broken = states
+        .iter()
+        .filter(|state| state.status == QuestTaskStatus::Broken)
+        .count();
+    let has_unknown = states.iter().any(|state| state.status == QuestTaskStatus::Unknown);
+    let status = if broken > 0 {
+        SaveDoctorStatus::Warning
+    } else if has_unknown || !quest_states_available {
+        SaveDoctorStatus::Unknown
     } else {
-        "Quest Doctor has no evidence-backed rules for this save format.".to_owned()
+        SaveDoctorStatus::Ok
+    };
+    let summary = if !quest_states_available {
+        "Quest Doctor has evidence-backed rules only for Shadow of Chernobyl and Clear Sky; no states or repairs can be inferred for this format.".to_owned()
+    } else if broken > 0 {
+        format!("{broken} known broken quest(s) found; each can be repaired by adding one info portion.")
+    } else if has_unknown {
+        "Quest state remains unknown where the save does not prove both the actor flag list and NPC state.".to_owned()
+    } else {
+        "No known broken quest was found. Only the listed rules are checked.".to_owned()
     };
     QuestDoctorReport {
-        status: SaveDoctorStatus::Unknown,
+        status,
         format_id: Some(format_id),
         quest_states_available,
         summary,
         states,
     }
+}
+
+/// Prepares the missing actor info portions only when the save proves a known broken quest.
+pub fn prepare_quest_repair(data: &[u8]) -> Result<Option<SaveBuffer>> {
+    let save = Save::read(data)?;
+    let report = analyze_quests_from_save(&save);
+    if report.status == SaveDoctorStatus::Error {
+        return Err(Error::damaged(report.summary));
+    }
+    let info_portions = report
+        .states
+        .iter()
+        .filter(|state| state.status == QuestTaskStatus::Broken)
+        .filter_map(|state| state.missing_info.map(str::to_owned))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    if info_portions.is_empty() {
+        return Ok(None);
+    }
+    let prepared = writer::apply(
+        &save,
+        &ChangeSet::new(vec![Change::AddInfoPortions {
+            target_object: save.actor_id(),
+            info_portions,
+        }]),
+    )?;
+    verify_quest_repair(prepared.as_slice())?;
+    Ok(Some(prepared))
+}
+
+/// Verifies that a written save parses and no evidence-backed quest remains broken.
+pub fn verify_quest_repair(written: &[u8]) -> Result<()> {
+    let report = analyze_quests(written);
+    if !report.quest_states_available
+        || report.status == SaveDoctorStatus::Error
+        || report
+            .states
+            .iter()
+            .any(|state| state.status == QuestTaskStatus::Broken)
+    {
+        return Err(Error::damaged(
+            "the repaired save still reports a broken or unreadable quest state",
+        ));
+    }
+    Ok(())
 }
 
 /// Supported original-trilogy game releases with independent build histories.

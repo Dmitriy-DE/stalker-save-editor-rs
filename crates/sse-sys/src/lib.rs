@@ -1,6 +1,7 @@
 //! Small dependency-free operating-system adapters used by the UI.
 
 pub mod fetch;
+pub mod hotkeys;
 pub mod output;
 pub mod secure_fs;
 

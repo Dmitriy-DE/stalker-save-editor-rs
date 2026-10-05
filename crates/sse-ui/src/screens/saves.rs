@@ -77,6 +77,10 @@ fn search_matches(text: &str, query: &str) -> bool {
     query.is_empty() || text.to_lowercase().contains(query)
 }
 
+fn xray_change_supported(save: &Save, kind: writer::ChangeKind) -> bool {
+    writer::capability(save.format(), kind) != writer::Capability::Unsupported
+}
+
 fn paragraph(tree: &mut crate::widget::Tree, parent: WidgetId, text: &str, role: Text) -> Result<WidgetId> {
     tree.add(
         Some(parent),
@@ -111,6 +115,12 @@ pub(crate) fn screens_with_workspace(workspace: Workspace) -> Vec<Box<dyn Screen
 
 /// S2 stash transfer stays disabled until a saved result is validated in-game.
 pub(super) const S2_STASH_MOVE_ENABLED: bool = false;
+
+/// Refreshes the save library and, after an external write, reloads the active save.
+#[derive(Debug)]
+pub(super) struct RefreshOverview {
+    pub path: Option<PathBuf>,
+}
 
 #[derive(Clone)]
 pub(crate) struct Workspace {
@@ -379,6 +389,10 @@ struct WorkspaceState {
     pending_removed: BTreeSet<ItemHandle>,
     pending_adds: Vec<AddRequest>,
     pending_stash_moves: BTreeSet<u32>,
+    pending_xray_stash_takes: BTreeSet<u16>,
+    pending_xray_stash_puts: BTreeMap<u16, u16>,
+    pending_faction_relations: BTreeMap<String, i32>,
+    pending_relocation: Option<u16>,
     external_change: bool,
     last_file_check: u64,
     file_check_generation: u64,
@@ -413,6 +427,10 @@ struct PendingInventoryEdits {
     upgrades: BTreeMap<ItemHandle, Vec<String>>,
     removals: BTreeSet<ItemHandle>,
     adds: Vec<AddRequest>,
+    stash_takes: BTreeSet<u16>,
+    stash_puts: BTreeMap<u16, u16>,
+    faction_relations: BTreeMap<String, i32>,
+    relocate_to: Option<u16>,
 }
 
 impl PendingInventoryEdits {
@@ -424,6 +442,10 @@ impl PendingInventoryEdits {
             || !self.upgrades.is_empty()
             || !self.removals.is_empty()
             || !self.adds.is_empty()
+            || !self.stash_takes.is_empty()
+            || !self.stash_puts.is_empty()
+            || !self.faction_relations.is_empty()
+            || self.relocate_to.is_some()
     }
 }
 
@@ -433,9 +455,6 @@ struct LoadedSave {
     info: String,
     parameters: String,
     integrity: String,
-    factions: String,
-    stashes: String,
-    transitions: String,
     data: SaveData,
 }
 
@@ -514,21 +533,12 @@ impl LoadedSave {
             "не подтверждается отдельным полем",
             format,
         );
-        let factions = match save.player_faction() {
-            Some(id) => format!("Фракция игрока: ID {id}\nРедактирование отношений недоступно в текущем индексаторе."),
-            None => "Идентификатор фракции игрока не подтверждён этим сохранением.".to_owned(),
-        };
-        let stashes = describe_xray_stashes(&save);
-        let transitions = describe_xray_transitions(&save);
         Ok(Self {
             slot,
             source_sha256,
             info,
             parameters,
             integrity,
-            factions,
-            stashes,
-            transitions,
             data: SaveData::Xray { save, inventory },
         })
     }
@@ -564,10 +574,6 @@ impl LoadedSave {
             },
             "S2",
         );
-        let factions =
-            "Фракции S2 доступны только для чтения; отношения и принадлежность пока не индексируются.".to_owned();
-        let stashes = describe_s2_stash(stash.as_ref());
-        let transitions = "Переходы S2 доступны только для чтения, но их формат пока не индексируется.".to_owned();
         let stash_items = stash
             .as_ref()
             .map(|_| save.stash_items().map_err(|error| error.to_string()));
@@ -577,9 +583,6 @@ impl LoadedSave {
             info,
             parameters,
             integrity,
-            factions,
-            stashes,
-            transitions,
             data: SaveData::Stalker2 {
                 save,
                 inventory,
@@ -676,87 +679,6 @@ pub(super) fn display_size(bytes: u64) -> String {
     }
 }
 
-fn describe_xray_stashes(save: &Save) -> String {
-    let boxes = save
-        .registry_objects()
-        .iter()
-        .filter(|object| object.name.eq_ignore_ascii_case("inventory_box"))
-        .collect::<Vec<_>>();
-    if boxes.is_empty() {
-        return "В этом сохранении не найдено подтверждённых тайников.".to_owned();
-    }
-    let mut lines = Vec::new();
-    for box_object in boxes.iter().take(32) {
-        let children = save
-            .registry_objects()
-            .iter()
-            .filter(|item| item.parent_id == box_object.object_id)
-            .map(|item| format!("{} (0x{:04X})", item.name_replace, item.object_id))
-            .take(32)
-            .collect::<Vec<_>>();
-        lines.push(format!(
-            "Тайник 0x{:04X}: {}",
-            box_object.object_id,
-            if children.is_empty() {
-                "пуст"
-            } else {
-                "содержимое ниже"
-            }
-        ));
-        lines.extend(children.into_iter().map(|child| format!("  · {child}")));
-    }
-    if boxes.len() > 32 {
-        lines.push("Показаны первые 32 тайника.".to_owned());
-    }
-    lines.join("\n")
-}
-
-fn describe_s2_stash(stash: Option<&S2StashLayout>) -> String {
-    let Some(stash) = stash else {
-        return "Подтверждённый блок тайника в этом сохранении не найден.".to_owned();
-    };
-    let mut lines = vec![format!(
-        "Предметов: {} · ячеек сетки: {}",
-        stash.live_handles().len(),
-        stash.grid_cells().len()
-    )];
-    for cell in stash.grid_cells().iter().take(32) {
-        lines.push(format!(
-            "0x{:08X} · столбец {} · строка {}",
-            cell.handle, cell.x, cell.y
-        ));
-    }
-    if stash.grid_cells().len() > 32 {
-        lines.push("Показаны первые 32 ячейки.".to_owned());
-    }
-    lines.join("\n")
-}
-
-fn describe_xray_transitions(save: &Save) -> String {
-    let destinations = match save.level_changer_destinations() {
-        Ok(destinations) => destinations,
-        Err(error) => return format!("Не удалось проверить переходы: {error}"),
-    };
-    if destinations.is_empty() {
-        return "Подтверждённые переходы не найдены.".to_owned();
-    }
-    destinations
-        .iter()
-        .take(64)
-        .map(|(handle, destination)| {
-            let position = destination.dest_position.map_or_else(
-                || "позиция неизвестна".to_owned(),
-                |point| format!("x {:.1}, y {:.1}, z {:.1}", point.x, point.y, point.z),
-            );
-            format!(
-                "0x{handle:04X} · {} → {} · {position}",
-                destination.dest_level_name, destination.dest_level_point_name
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 fn start_discovery(workspace: &Workspace, cx: &mut Context<'_>) {
     let Some(proxy) = cx.proxy.cloned() else {
         cx.status = Some("Поиск сейвов начнётся в работающем окне редактора.".to_owned());
@@ -825,6 +747,10 @@ where
         state.pending_removed.clear();
         state.pending_adds.clear();
         state.pending_stash_moves.clear();
+        state.pending_xray_stash_takes.clear();
+        state.pending_xray_stash_puts.clear();
+        state.pending_faction_relations.clear();
+        state.pending_relocation = None;
         state.external_change = false;
         state.file_check_generation = state.file_check_generation.saturating_add(1);
         state.file_check_in_flight = false;
@@ -988,6 +914,10 @@ fn start_reload_selected(workspace: &Workspace, cx: &mut Context<'_>) -> Result<
         state.pending_removed.clear();
         state.pending_adds.clear();
         state.pending_stash_moves.clear();
+        state.pending_xray_stash_takes.clear();
+        state.pending_xray_stash_puts.clear();
+        state.pending_faction_relations.clear();
+        state.pending_relocation = None;
         state.external_change = false;
         state.file_check_generation = state.file_check_generation.saturating_add(1);
         state.file_check_in_flight = false;
@@ -1217,6 +1147,25 @@ fn set_workspace_draft(workspace: &Workspace, journal: &DraftJournal) {
     state.pending_removed = pending_removed;
     state.pending_adds = pending_adds;
     state.pending_stash_moves = pending_stash_moves;
+    let (pending_xray_stash_takes, pending_xray_stash_puts) = journal.current().map_or_else(
+        || (BTreeSet::new(), BTreeMap::new()),
+        |plan| match state.selected.as_ref().map(|selected| &selected.data) {
+            Some(SaveData::Xray { .. }) => (
+                plan.stash_takes.iter().copied().collect(),
+                plan.stash_puts
+                    .iter()
+                    .map(|transfer| (transfer.object_id, transfer.box_id))
+                    .collect(),
+            ),
+            _ => (BTreeSet::new(), BTreeMap::new()),
+        },
+    );
+    state.pending_xray_stash_takes = pending_xray_stash_takes;
+    state.pending_xray_stash_puts = pending_xray_stash_puts;
+    state.pending_faction_relations = journal
+        .current()
+        .map_or_else(BTreeMap::new, |plan| plan.faction_relations.clone());
+    state.pending_relocation = journal.current().and_then(|plan| plan.relocate_to);
 }
 
 fn save_game_key(slot: &SaveSlot) -> &str {
@@ -1765,6 +1714,12 @@ impl Screen for Overview {
             }
         }
         if let Message::User(AppMessage::ToScreen(ScreenId::Overview, payload)) = message {
+            if let Some(refresh) = payload.downcast_ref::<RefreshOverview>() {
+                start_discovery(&self.workspace, cx);
+                if let Some(path) = refresh.path.clone() {
+                    start_load_from(&self.workspace, move || slot_for_path(&path), false, cx);
+                }
+            }
             if let Some(FileCheckFinished {
                 path,
                 source_sha256,
@@ -2368,6 +2323,10 @@ impl Inventory {
                     || !state.pending_upgrades.is_empty()
                     || !state.pending_removed.is_empty()
                     || !state.pending_adds.is_empty()
+                    || !state.pending_xray_stash_takes.is_empty()
+                    || !state.pending_xray_stash_puts.is_empty()
+                    || !state.pending_faction_relations.is_empty()
+                    || state.pending_relocation.is_some()
                     || state.pending_stacks.iter().any(|(handle, count)| {
                         if let ItemHandle::Xray(handle) = handle {
                             inventory
@@ -2512,7 +2471,11 @@ impl Inventory {
                                 .find(|item| *handle == ItemHandle::Stalker2(item.handle))
                                 .is_some_and(|item| item.count != *count)
                     })
-                    || !state.pending_stash_moves.is_empty();
+                    || !state.pending_stash_moves.is_empty()
+                    || !state.pending_xray_stash_takes.is_empty()
+                    || !state.pending_xray_stash_puts.is_empty()
+                    || !state.pending_faction_relations.is_empty()
+                    || state.pending_relocation.is_some();
                 let blocked_stash_draft = !S2_STASH_MOVE_ENABLED && !state.pending_stash_moves.is_empty();
                 if let Some(id) = self.export {
                     cx.tree
@@ -3426,6 +3389,10 @@ impl Inventory {
                     upgrades: state.pending_upgrades.clone(),
                     removals: state.pending_removed.clone(),
                     adds: state.pending_adds.clone(),
+                    stash_takes: state.pending_xray_stash_takes.clone(),
+                    stash_puts: state.pending_xray_stash_puts.clone(),
+                    faction_relations: state.pending_faction_relations.clone(),
+                    relocate_to: state.pending_relocation,
                 },
                 state.pending_stash_moves.clone(),
             )
@@ -3645,9 +3612,18 @@ fn prepare_save_edits(
                     "S2 stash changes cannot be applied to an X-Ray save".to_owned(),
                 ));
             }
+            if (!edits.stash_takes.is_empty() || !edits.stash_puts.is_empty())
+                && writer::capability(save.format(), writer::ChangeKind::MoveItems) == writer::Capability::Unsupported
+            {
+                return Err(Error::Refused(
+                    "stash transfers are unsupported for this X-Ray format".to_owned(),
+                ));
+            }
             let current_money = save.money()?;
             let money_change = edits.money.filter(|value| *value != current_money);
             let mut changes = Vec::new();
+            let mut relation_count = 0_usize;
+            let mut move_count = 0_usize;
             if let Some(new_value) = money_change {
                 changes.push(writer::Change::SetMoney {
                     target_object: save.actor_id(),
@@ -3821,6 +3797,77 @@ fn prepare_save_edits(
                     quantity,
                 });
             }
+            if !edits.faction_relations.is_empty() {
+                if writer::capability(save.format(), writer::ChangeKind::EditRelations)
+                    == writer::Capability::Unsupported
+                {
+                    return Err(Error::Refused(
+                        "faction relations are unsupported for this X-Ray format".to_owned(),
+                    ));
+                }
+                let faction_catalog = catalog
+                    .and_then(|bundle| bundle.factions.as_ref())
+                    .ok_or_else(|| Error::Refused("faction catalog is unavailable for this save".to_owned()))?;
+                let actor_relations = save
+                    .actor_relations()
+                    .ok_or_else(|| Error::Refused("actor relation row is unavailable in this save".to_owned()))?;
+                for (faction_key, new_value) in &edits.faction_relations {
+                    let faction = faction_catalog
+                        .resolve(faction_key)
+                        .map_err(|_| Error::Refused(format!("unknown faction key '{faction_key}'")))?;
+                    let community_id = faction.numeric_id.ok_or_else(|| {
+                        Error::Refused(format!("faction '{faction_key}' has no numeric community id"))
+                    })?;
+                    if actor_relations
+                        .iter()
+                        .find(|(id, _)| *id == community_id)
+                        .is_some_and(|(_, old_value)| *old_value == *new_value)
+                    {
+                        continue;
+                    }
+                    changes.push(writer::Change::SetFactionRelation {
+                        target_object: save.actor_id(),
+                        faction_key: faction_key.clone(),
+                        old_value: actor_relations
+                            .iter()
+                            .find(|(id, _)| *id == community_id)
+                            .map(|(_, value)| *value),
+                        new_value: *new_value,
+                    });
+                    relation_count = relation_count.saturating_add(1);
+                }
+            }
+            for handle in &edits.stash_takes {
+                let object = save
+                    .registry_objects()
+                    .iter()
+                    .find(|object| object.object_id == *handle)
+                    .ok_or_else(|| Error::Refused(format!("stash item 0x{handle:04X} is missing")))?;
+                changes.push(writer::Change::MoveItem {
+                    target_object: *handle,
+                    old_parent: object.parent_id,
+                    new_parent: save.actor_id(),
+                });
+                move_count = move_count.saturating_add(1);
+            }
+            for (handle, box_id) in &edits.stash_puts {
+                changes.push(writer::Change::MoveItem {
+                    target_object: *handle,
+                    old_parent: save.actor_id(),
+                    new_parent: *box_id,
+                });
+                move_count = move_count.saturating_add(1);
+            }
+            if let Some(destination_changer) = edits.relocate_to {
+                if writer::capability(save.format(), writer::ChangeKind::RelocateActor)
+                    == writer::Capability::Unsupported
+                {
+                    return Err(Error::Refused(
+                        "actor relocation is unsupported for this X-Ray format".to_owned(),
+                    ));
+                }
+                changes.push(writer::Change::RelocateActor { destination_changer });
+            }
             if changes.is_empty() {
                 return Err(Error::Refused("there are no inventory changes to save".to_owned()));
             }
@@ -3830,6 +3877,8 @@ fn prepare_save_edits(
                 EditSummary {
                     money: money_change,
                     stack_count,
+                    move_count,
+                    relation_count,
                     ..EditSummary::default()
                 },
             ))
@@ -3839,6 +3888,15 @@ fn prepare_save_edits(
             inventory,
             stash_items,
         } => {
+            if !edits.stash_takes.is_empty()
+                || !edits.stash_puts.is_empty()
+                || !edits.faction_relations.is_empty()
+                || edits.relocate_to.is_some()
+            {
+                return Err(Error::Refused(
+                    "factions, X-Ray stashes, and transitions are only writable for X-Ray saves".to_owned(),
+                ));
+            }
             if save.index().is_legacy() {
                 return Err(Error::Refused(S2_LEGACY_EDIT_REFUSAL.to_owned()));
             }
@@ -4119,6 +4177,95 @@ fn verify_requested_values(
             return Err(Error::damaged(
                 "saved stash item identity or contents differ after read-back",
             ));
+        }
+    }
+    if !edits.faction_relations.is_empty() {
+        let (original_save, verified_save) = match (&original.data, &selected.data) {
+            (SaveData::Xray { save: before, .. }, SaveData::Xray { save: after, .. }) => (before, after),
+            _ => return Err(Error::Refused("faction edits require an X-Ray read-back".to_owned())),
+        };
+        let bundle = sse_catalog::CatalogBundleReader::load_embedded()
+            .get(original_save.format().id())
+            .and_then(|bundle| bundle.factions.as_ref())
+            .ok_or_else(|| Error::Refused("faction catalog is unavailable for read-back".to_owned()))?;
+        let actual_relations = verified_save
+            .actor_relations()
+            .ok_or_else(|| Error::damaged("actor relation row is missing after read-back"))?;
+        for (key, expected) in &edits.faction_relations {
+            let community_id = bundle
+                .resolve(key)
+                .map_err(|_| Error::Refused(format!("unknown faction key '{key}'")))?
+                .numeric_id
+                .ok_or_else(|| Error::Refused(format!("faction '{key}' has no numeric community id")))?;
+            if !actual_relations
+                .iter()
+                .any(|(id, value)| *id == community_id && value == expected)
+            {
+                return Err(Error::damaged(format!(
+                    "faction relation '{key}' differs after read-back"
+                )));
+            }
+        }
+    }
+    if !edits.stash_takes.is_empty() || !edits.stash_puts.is_empty() {
+        let (before, after) = match (&original.data, &selected.data) {
+            (SaveData::Xray { save: before, .. }, SaveData::Xray { save: after, .. }) => (before, after),
+            _ => {
+                return Err(Error::Refused(
+                    "X-Ray stash edits require an X-Ray read-back".to_owned(),
+                ))
+            }
+        };
+        for handle in &edits.stash_takes {
+            if !before
+                .registry_objects()
+                .iter()
+                .any(|object| object.object_id == *handle)
+                || !after
+                    .registry_objects()
+                    .iter()
+                    .any(|object| object.object_id == *handle && object.parent_id == after.actor_id())
+            {
+                return Err(Error::damaged(format!(
+                    "stash take 0x{handle:04X} differs after read-back"
+                )));
+            }
+        }
+        for (handle, box_id) in &edits.stash_puts {
+            if !before
+                .registry_objects()
+                .iter()
+                .any(|object| object.object_id == *handle && object.parent_id == before.actor_id())
+                || !after
+                    .registry_objects()
+                    .iter()
+                    .any(|object| object.object_id == *handle && object.parent_id == *box_id)
+            {
+                return Err(Error::damaged(format!(
+                    "stash put 0x{handle:04X} differs after read-back"
+                )));
+            }
+        }
+    }
+    if let Some(destination_changer) = edits.relocate_to {
+        let (before, after) = match (&original.data, &selected.data) {
+            (SaveData::Xray { save: before, .. }, SaveData::Xray { save: after, .. }) => (before, after),
+            _ => {
+                return Err(Error::Refused(
+                    "actor relocation requires an X-Ray read-back".to_owned(),
+                ))
+            }
+        };
+        if !before
+            .level_changer_destinations()?
+            .iter()
+            .any(|(handle, _)| *handle == destination_changer)
+            || !after
+                .registry_objects()
+                .iter()
+                .any(|object| object.object_id == after.actor_id())
+        {
+            return Err(Error::damaged("actor relocation target is not present after read-back"));
         }
     }
     Ok(())
@@ -4868,6 +5015,10 @@ impl Screen for Inventory {
                         state.pending_removed.clear();
                         state.pending_adds.clear();
                         state.pending_stash_moves.clear();
+                        state.pending_xray_stash_takes.clear();
+                        state.pending_xray_stash_puts.clear();
+                        state.pending_faction_relations.clear();
+                        state.pending_relocation = None;
                         state.external_change = false;
                         drop(state);
                         cx.app.discard_draft(source_sha256);
@@ -4916,24 +5067,213 @@ impl Screen for Inventory {
 struct Factions {
     workspace: Workspace,
     text: Option<WidgetId>,
+    controls: Option<WidgetId>,
+    previous: Option<WidgetId>,
+    next: Option<WidgetId>,
+    decrease: Option<WidgetId>,
+    increase: Option<WidgetId>,
+    faction_keys: Vec<String>,
+    index: usize,
+    last_path: Option<PathBuf>,
 }
 
 impl Factions {
     fn new(workspace: Workspace) -> Self {
-        Self { workspace, text: None }
+        Self {
+            workspace,
+            text: None,
+            controls: None,
+            previous: None,
+            next: None,
+            decrease: None,
+            increase: None,
+            faction_keys: Vec::new(),
+            index: 0,
+            last_path: None,
+        }
     }
 
-    fn render(&self, cx: &mut Context<'_>) -> Result<()> {
-        let state = self.workspace.lock();
-        let text = state
-            .selected
-            .as_ref()
-            .map(|save| save.factions.as_str())
-            .unwrap_or("Сначала выберите сейв на экране «Обзор».");
+    fn render(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        let (selected, pending) = {
+            let state = self.workspace.lock();
+            (state.selected.clone(), state.pending_faction_relations.clone())
+        };
+        let Some(selected) = selected else {
+            self.faction_keys.clear();
+            self.set_text(cx, "Сначала выберите сейв на экране «Обзор».")?;
+            return self.set_controls_visible(cx, false);
+        };
+        if self.last_path.as_ref() != Some(&selected.slot.path) {
+            self.last_path = Some(selected.slot.path.clone());
+            self.index = 0;
+        }
+        let SaveData::Xray { save, .. } = &selected.data else {
+            self.faction_keys.clear();
+            self.set_text(cx, "Редактирование отношений доступно только для X-Ray сейвов.")?;
+            return self.set_controls_visible(cx, false);
+        };
+        if !xray_change_supported(save, writer::ChangeKind::EditRelations) {
+            self.faction_keys.clear();
+            self.set_text(
+                cx,
+                "Редактирование отношений фракций не поддерживается данным форматом.",
+            )?;
+            return self.set_controls_visible(cx, false);
+        }
+        if save.actor_relations().is_none() {
+            self.faction_keys.clear();
+            self.set_text(
+                cx,
+                "Отношения актёра не подтверждены индексом сохранения; редактирование недоступно.",
+            )?;
+            return self.set_controls_visible(cx, false);
+        }
+        let bundle = sse_catalog::CatalogBundleReader::load_embedded().get(save.format().id());
+        let Some(catalog) = bundle.and_then(|bundle| bundle.factions.as_ref()) else {
+            self.faction_keys.clear();
+            self.set_text(cx, "Каталог фракций для этого формата недоступен.")?;
+            return self.set_controls_visible(cx, false);
+        };
+        self.faction_keys = catalog
+            .factions()
+            .iter()
+            .filter(|faction| faction.key != "actor" && faction.numeric_id.is_some())
+            .map(|faction| faction.key.clone())
+            .collect();
+        self.faction_keys.sort();
+        self.index = self.index.min(self.faction_keys.len().saturating_sub(1));
+        let Some(key) = self.faction_keys.get(self.index) else {
+            self.set_text(cx, "Каталог не содержит изменяемых числовых фракций.")?;
+            return self.set_controls_visible(cx, false);
+        };
+        let faction = catalog
+            .resolve(key)
+            .map_err(|error| Error::Refused(error.to_string()))?;
+        let current = save.actor_relations().and_then(|relations| {
+            faction
+                .numeric_id
+                .and_then(|community| relations.into_iter().find(|(id, _)| *id == community))
+                .map(|(_, value)| value)
+        });
+        let value = pending.get(key).copied().or(current);
+        let label = faction.display_name.as_deref().unwrap_or(&faction.key);
+        let source = if pending.contains_key(key) {
+            "черновик"
+        } else {
+            "сейв"
+        };
+        self.set_text(
+            cx,
+            &format!(
+                "{} из {} · {label} ({key}) · отношение: {} · значение из {source}.\nИзменение отношений экспериментальное. После выбора примените черновик кнопкой «Сохранить» в «Инвентаре»; проверка в игре не выполнена.",
+                self.index.saturating_add(1),
+                self.faction_keys.len(),
+                value.map_or_else(|| "нет записи".to_owned(), |value| value.to_string())
+            ),
+        )?;
+        let can_edit = !self.workspace.is_saving() && !self.workspace.is_restoring();
+        for id in [self.decrease, self.increase].into_iter().flatten() {
+            cx.tree.set_enabled(id, can_edit)?;
+        }
+        self.set_controls_visible(cx, true)
+    }
+
+    fn set_text(&self, cx: &mut Context<'_>, text: &str) -> Result<()> {
         if let Some(id) = self.text {
             cx.tree.set_text(id, text)?;
         }
         Ok(())
+    }
+
+    fn set_controls_visible(&self, cx: &mut Context<'_>, visible: bool) -> Result<()> {
+        if let Some(id) = self.controls {
+            cx.tree.set_visible(id, visible)?;
+        }
+        Ok(())
+    }
+
+    fn stage_relation(&mut self, cx: &mut Context<'_>, delta: i32) -> Result<()> {
+        if self.workspace.is_saving() || self.workspace.is_restoring() {
+            cx.status = Some("Отношения недоступны во время записи или восстановления.".to_owned());
+            return Ok(());
+        }
+        let Some(key) = self.faction_keys.get(self.index).cloned() else {
+            return Ok(());
+        };
+        let (source_sha256, current, format_id) = {
+            let state = self.workspace.lock();
+            let Some(selected) = state.selected.as_ref() else {
+                return Ok(());
+            };
+            let SaveData::Xray { save, .. } = &selected.data else {
+                return Ok(());
+            };
+            if !xray_change_supported(save, writer::ChangeKind::EditRelations) {
+                cx.status = Some("Редактирование отношений фракций не поддерживается данным форматом.".to_owned());
+                return Ok(());
+            }
+            if save.actor_relations().is_none() {
+                cx.status = Some("Отношения актёра не подтверждены индексом сохранения.".to_owned());
+                return Ok(());
+            }
+            let bundle = sse_catalog::CatalogBundleReader::load_embedded().get(save.format().id());
+            let faction = bundle
+                .and_then(|bundle| bundle.factions.as_ref())
+                .and_then(|catalog| catalog.resolve(&key).ok());
+            let current = state.pending_faction_relations.get(&key).copied().or_else(|| {
+                let community_id = faction?.numeric_id?;
+                save.actor_relations()?
+                    .into_iter()
+                    .find(|(id, _)| *id == community_id)
+                    .map(|(_, value)| value)
+            });
+            (selected.source_sha256.clone(), current, save.format().id().to_owned())
+        };
+        let bundle = sse_catalog::CatalogBundleReader::load_embedded().get(&format_id);
+        let Some(catalog) = bundle.and_then(|bundle| bundle.factions.as_ref()) else {
+            cx.status = Some("Каталог фракций недоступен для выбранного сейва.".to_owned());
+            return Ok(());
+        };
+        let next = current.unwrap_or(0).saturating_add(delta);
+        let next = catalog.goodwill_min().map_or(next, |minimum| next.max(minimum));
+        let next = catalog.goodwill_max().map_or(next, |maximum| next.min(maximum));
+        let mut plan = cx
+            .app
+            .draft(&source_sha256)
+            .cloned()
+            .unwrap_or(DraftPlan::empty(&source_sha256)?);
+        let original = {
+            let state = self.workspace.lock();
+            let selected = state.selected.as_ref();
+            let Some(SaveData::Xray { save, .. }) = selected.map(|selected| &selected.data) else {
+                return Ok(());
+            };
+            let Some(community_id) = catalog.resolve(&key).ok().and_then(|faction| faction.numeric_id) else {
+                cx.status = Some("У этой фракции не задан числовой id.".to_owned());
+                return Ok(());
+            };
+            save.actor_relations().and_then(|relations| {
+                relations
+                    .into_iter()
+                    .find(|(id, _)| *id == community_id)
+                    .map(|(_, value)| value)
+            })
+        };
+        if original == Some(next) {
+            plan.faction_relations.remove(&key);
+        } else {
+            plan.faction_relations.insert(key.clone(), next);
+        }
+        cx.app.record_draft(plan)?;
+        let journal = cx
+            .app
+            .draft_journal(&source_sha256)
+            .cloned()
+            .ok_or_else(|| Error::Refused("draft journal disappeared after faction edit".to_owned()))?;
+        set_workspace_draft(&self.workspace, &journal);
+        self.workspace.persist_draft(journal, cx);
+        cx.status = Some(format!("Отношение {key} изменено в черновике: {next}."));
+        self.render(cx)
     }
 }
 
@@ -4955,11 +5295,43 @@ impl Screen for Factions {
             "Выберите сейв на экране «Обзор».",
             Text::Body,
         )?);
+        let controls = style::row(cx.tree, card)?;
+        self.controls = Some(controls);
+        self.previous = Some(style::button(cx.tree, controls, "Предыдущая", Button::Secondary)?);
+        self.decrease = Some(style::button(cx.tree, controls, "−100", Button::Secondary)?);
+        self.increase = Some(style::button(cx.tree, controls, "+100", Button::Secondary)?);
+        self.next = Some(style::button(cx.tree, controls, "Следующая", Button::Secondary)?);
         self.render(cx)
     }
 
     fn shown(&mut self, cx: &mut Context<'_>) -> Result<()> {
         self.render(cx)
+    }
+
+    fn message(
+        &mut self,
+        cx: &mut Context<'_>,
+        _message: &Message<AppMessage>,
+        clicked: Option<WidgetId>,
+    ) -> Result<()> {
+        if clicked.is_some() && clicked == self.previous {
+            self.index = self.index.saturating_sub(1);
+            return self.render(cx);
+        }
+        if clicked.is_some() && clicked == self.next {
+            self.index = self
+                .index
+                .saturating_add(1)
+                .min(self.faction_keys.len().saturating_sub(1));
+            return self.render(cx);
+        }
+        if clicked.is_some() && clicked == self.decrease {
+            return self.stage_relation(cx, -100);
+        }
+        if clicked.is_some() && clicked == self.increase {
+            return self.stage_relation(cx, 100);
+        }
+        Ok(())
     }
 }
 
@@ -4968,7 +5340,14 @@ struct StashRow {
     row: WidgetId,
     label: WidgetId,
     move_button: WidgetId,
-    handle: Option<u32>,
+    action: Option<StashAction>,
+}
+
+#[derive(Clone, Copy)]
+enum StashAction {
+    Stalker2Take(u32),
+    XrayTake(u16),
+    XrayPut { object_id: u16, box_id: u16 },
 }
 
 /// Confirmed stash contents for the selected save.
@@ -5000,12 +5379,17 @@ impl Stashes {
     }
 
     fn render(&mut self, cx: &mut Context<'_>) -> Result<()> {
-        let (selected, pending_moves) = {
+        let (selected, pending_moves, pending_xray_takes, pending_xray_puts) = {
             let state = self.workspace.lock();
-            (state.selected.clone(), state.pending_stash_moves.clone())
+            (
+                state.selected.clone(),
+                state.pending_stash_moves.clone(),
+                state.pending_xray_stash_takes.clone(),
+                state.pending_xray_stash_puts.clone(),
+            )
         };
         for row in &mut self.rows {
-            row.handle = None;
+            row.action = None;
             cx.tree.set_visible(row.row, false)?;
         }
         if let Some(id) = self.previous {
@@ -5026,8 +5410,10 @@ impl Stashes {
             self.last_path = Some(selected.slot.path.clone());
             self.page = 0;
         }
+        if let SaveData::Xray { save, inventory } = &selected.data {
+            return self.render_xray_stashes(cx, save, inventory, &pending_xray_takes, &pending_xray_puts);
+        }
         let SaveData::Stalker2 { save, stash_items, .. } = &selected.data else {
-            self.set_text(cx, &selected.stashes)?;
             return Ok(());
         };
         let items = match stash_items {
@@ -5100,7 +5486,7 @@ impl Stashes {
                     },
                 )?;
                 cx.tree.set_visible(row.move_button, can_move)?;
-                row.handle = Some(item.handle);
+                row.action = Some(StashAction::Stalker2Take(item.handle));
             }
             if let Some(id) = self.previous {
                 cx.tree.set_visible(id, pages > 1 && self.page > 0)?;
@@ -5134,6 +5520,215 @@ impl Stashes {
             }
         }
         Ok(())
+    }
+
+    fn render_xray_stashes(
+        &mut self,
+        cx: &mut Context<'_>,
+        save: &Save,
+        inventory: &[InventoryItem],
+        pending_takes: &BTreeSet<u16>,
+        pending_puts: &BTreeMap<u16, u16>,
+    ) -> Result<()> {
+        let can_move = xray_change_supported(save, writer::ChangeKind::MoveItems)
+            && !self.workspace.is_saving()
+            && !self.workspace.is_restoring();
+        let catalog = sse_catalog::CatalogBundleReader::load_embedded().get(save.format().id());
+        let Some(catalog) = catalog else {
+            self.set_text(cx, "Каталог предметов для этой игры недоступен.")?;
+            return Ok(());
+        };
+        let mut boxes = save
+            .registry_objects()
+            .iter()
+            .filter(|object| object.name == "inventory_box")
+            .collect::<Vec<_>>();
+        boxes.sort_by_key(|object| object.object_id);
+        if boxes.is_empty() {
+            self.set_text(cx, "Подтверждённые тайники X-Ray в этом сейве не найдены.")?;
+            return Ok(());
+        }
+        let mut entries = Vec::new();
+        for box_object in &boxes {
+            for object in save
+                .registry_objects()
+                .iter()
+                .filter(|object| object.parent_id == box_object.object_id)
+            {
+                let Some(item) = catalog.items.resolve(&object.name_replace) else {
+                    continue;
+                };
+                let name = item.display_name.as_deref().unwrap_or(&item.key);
+                let staged = pending_takes.contains(&object.object_id);
+                entries.push((
+                    format!(
+                        "{name} · тайник {} · 0x{:04X}",
+                        box_object.name_replace, object.object_id
+                    ),
+                    StashAction::XrayTake(object.object_id),
+                    staged,
+                ));
+            }
+        }
+        if let Some(destination_box) = boxes.first() {
+            let box_id = destination_box.object_id;
+            for item in inventory
+                .iter()
+                .filter(|item| item.placement.as_deref() == Some("ruck"))
+            {
+                let Some(definition) = catalog.items.resolve(&item.section) else {
+                    continue;
+                };
+                let name = definition.display_name.as_deref().unwrap_or(&definition.key);
+                let staged = pending_puts.get(&item.handle) == Some(&box_id);
+                entries.push((
+                    format!(
+                        "{name} · в тайник {} · 0x{:04X}",
+                        destination_box.name_replace, item.handle
+                    ),
+                    StashAction::XrayPut {
+                        object_id: item.handle,
+                        box_id,
+                    },
+                    staged,
+                ));
+            }
+        }
+        if entries.is_empty() {
+            self.set_text(
+                cx,
+                "В найденных тайниках нет предметов каталога, а в рюкзаке нет предметов с подтверждённым размещением.",
+            )?;
+            return Ok(());
+        }
+        let pages = entries.len().div_ceil(self.rows.len().max(1));
+        self.page = self.page.min(pages.saturating_sub(1));
+        let start = self.page.saturating_mul(self.rows.len());
+        let move_count = pending_takes.len().saturating_add(pending_puts.len());
+        self.set_text(
+            cx,
+            &format!(
+                "X-Ray: {} тайник(ов), {} предмет(ов) для переноса · страница {} из {}. Перенос рюкзак↔первый тайник подтверждён writer-ом и сохранится из «Инвентаря».",
+                boxes.len(),
+                entries.len(),
+                self.page.saturating_add(1),
+                pages
+            ),
+        )?;
+        for (offset, row) in self.rows.iter_mut().enumerate() {
+            let Some((label, action, staged)) = entries.get(start.saturating_add(offset)) else {
+                continue;
+            };
+            cx.tree.set_text(row.label, label)?;
+            cx.tree.set_visible(row.row, true)?;
+            cx.tree.set_text(
+                row.move_button,
+                if *staged {
+                    "Отменить"
+                } else {
+                    "Перенести"
+                },
+            )?;
+            cx.tree.set_visible(row.move_button, true)?;
+            cx.tree.set_enabled(row.move_button, can_move)?;
+            row.action = Some(*action);
+        }
+        if let Some(id) = self.previous {
+            cx.tree.set_visible(id, pages > 1 && self.page > 0)?;
+        }
+        if let Some(id) = self.next {
+            cx.tree
+                .set_visible(id, pages > 1 && self.page.saturating_add(1) < pages)?;
+        }
+        if let Some(id) = self.pager {
+            cx.tree.set_visible(id, pages > 1)?;
+        }
+        let status = if !xray_change_supported(save, writer::ChangeKind::MoveItems) {
+            "Перемещение из тайников не поддерживается данным форматом.".to_owned()
+        } else if self.workspace.is_saving() || self.workspace.is_restoring() {
+            "Перемещение временно недоступно во время записи или восстановления.".to_owned()
+        } else {
+            format!("{move_count} перенос(ов) в черновике; проверьте результат после записи.")
+        };
+        self.set_status(cx, &status)?;
+        Ok(())
+    }
+
+    fn stage_xray_move(&mut self, cx: &mut Context<'_>, action: StashAction) -> Result<()> {
+        if self.workspace.is_saving() || self.workspace.is_restoring() {
+            cx.status = Some("Перенос недоступен во время записи или восстановления.".to_owned());
+            return Ok(());
+        }
+        let source_sha256 = {
+            let state = self.workspace.lock();
+            let Some(selected) = state.selected.as_ref() else {
+                cx.status = Some("Сначала выберите сейв.".to_owned());
+                return Ok(());
+            };
+            if !matches!(selected.data, SaveData::Xray { .. }) {
+                cx.status = Some("X-Ray тайники доступны только для X-Ray сейвов.".to_owned());
+                return Ok(());
+            }
+            let SaveData::Xray { save, .. } = &selected.data else {
+                return Ok(());
+            };
+            if !xray_change_supported(save, writer::ChangeKind::MoveItems) {
+                cx.status = Some("Перемещение из тайников не поддерживается данным форматом.".to_owned());
+                return Ok(());
+            }
+            selected.source_sha256.clone()
+        };
+        let mut plan = cx
+            .app
+            .draft(&source_sha256)
+            .cloned()
+            .unwrap_or(DraftPlan::empty(&source_sha256)?);
+        let message = match action {
+            StashAction::XrayTake(handle) => {
+                plan.stash_puts.retain(|put| put.object_id != handle);
+                if let Some(index) = plan.stash_takes.iter().position(|candidate| *candidate == handle) {
+                    plan.stash_takes.remove(index);
+                    format!("Перенос 0x{handle:04X} из тайника отменён.")
+                } else {
+                    plan.stash_takes.push(handle);
+                    format!("Предмет 0x{handle:04X} будет перенесён в рюкзак при сохранении.")
+                }
+            }
+            StashAction::XrayPut { object_id, box_id } => {
+                plan.stash_takes.retain(|candidate| *candidate != object_id);
+                if let Some(index) = plan.stash_puts.iter().position(|put| put.object_id == object_id) {
+                    let same_destination = plan.stash_puts.get(index).is_some_and(|put| put.box_id == box_id);
+                    plan.stash_puts.remove(index);
+                    if same_destination {
+                        format!("Перенос 0x{object_id:04X} в тайник отменён.")
+                    } else {
+                        plan.stash_puts
+                            .push(sse_storage::drafts::StashPut::new(object_id, box_id)?);
+                        format!("Предмет 0x{object_id:04X} назначен другому тайнику.")
+                    }
+                } else {
+                    plan.stash_puts
+                        .push(sse_storage::drafts::StashPut::new(object_id, box_id)?);
+                    format!("Предмет 0x{object_id:04X} будет перенесён в тайник при сохранении.")
+                }
+            }
+            StashAction::Stalker2Take(_) => {
+                return Err(Error::Refused(
+                    "S2 stash movement must use its guarded draft path".to_owned(),
+                ))
+            }
+        };
+        cx.app.record_draft(plan)?;
+        let journal = cx
+            .app
+            .draft_journal(&source_sha256)
+            .cloned()
+            .ok_or_else(|| Error::Refused("draft journal disappeared after stash edit".to_owned()))?;
+        set_workspace_draft(&self.workspace, &journal);
+        self.workspace.persist_draft(journal, cx);
+        cx.status = Some(message.clone());
+        self.set_status(cx, &message)?;
+        self.render(cx)
     }
 
     fn set_text(&self, cx: &mut Context<'_>, text: &str) -> Result<()> {
@@ -5258,7 +5853,7 @@ impl Screen for Stashes {
                 row,
                 label,
                 move_button,
-                handle: None,
+                action: None,
             });
         }
         self.render(cx)
@@ -5283,13 +5878,19 @@ impl Screen for Stashes {
             self.page = self.page.saturating_add(1);
             return self.render(cx);
         }
-        if let Some(handle) = self
+        if let Some(action) = self
             .rows
             .iter()
             .find(|row| Some(row.move_button) == clicked)
-            .and_then(|row| row.handle)
+            .and_then(|row| row.action)
         {
-            self.move_item(cx, handle)?;
+            match action {
+                StashAction::Stalker2Take(handle) => self.move_item(cx, handle)?,
+                StashAction::XrayTake(handle) => self.stage_xray_move(cx, StashAction::XrayTake(handle))?,
+                StashAction::XrayPut { object_id, box_id } => {
+                    self.stage_xray_move(cx, StashAction::XrayPut { object_id, box_id })?
+                }
+            }
         }
         self.workspace.poll_tasks();
         Ok(())
@@ -5300,24 +5901,238 @@ impl Screen for Stashes {
 struct Transitions {
     workspace: Workspace,
     text: Option<WidgetId>,
+    status: Option<WidgetId>,
+    confirmation: Option<WidgetId>,
+    confirmation_actions: Option<WidgetId>,
+    confirm: Option<WidgetId>,
+    cancel: Option<WidgetId>,
+    rows: Vec<TransitionRow>,
+    pending_confirmation: Option<u16>,
+    last_path: Option<PathBuf>,
+}
+
+#[derive(Clone, Copy)]
+struct TransitionRow {
+    row: WidgetId,
+    label: WidgetId,
+    select: WidgetId,
+    handle: Option<u16>,
 }
 
 impl Transitions {
     fn new(workspace: Workspace) -> Self {
-        Self { workspace, text: None }
+        Self {
+            workspace,
+            text: None,
+            status: None,
+            confirmation: None,
+            confirmation_actions: None,
+            confirm: None,
+            cancel: None,
+            rows: Vec::new(),
+            pending_confirmation: None,
+            last_path: None,
+        }
     }
 
-    fn render(&self, cx: &mut Context<'_>) -> Result<()> {
-        let state = self.workspace.lock();
-        let text = state
-            .selected
-            .as_ref()
-            .map(|save| save.transitions.as_str())
-            .unwrap_or("Сначала выберите сейв на экране «Обзор».");
+    fn render(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        let (selected, pending) = {
+            let state = self.workspace.lock();
+            (state.selected.clone(), state.pending_relocation)
+        };
+        for row in &mut self.rows {
+            row.handle = None;
+            cx.tree.set_visible(row.row, false)?;
+        }
+        if let Some(id) = self.confirmation {
+            cx.tree.set_visible(id, false)?;
+        }
+        if let Some(id) = self.confirmation_actions {
+            cx.tree.set_visible(id, false)?;
+        }
+        if let Some(id) = self.confirm {
+            cx.tree.set_visible(id, false)?;
+        }
+        if let Some(id) = self.cancel {
+            cx.tree.set_visible(id, false)?;
+        }
+        let Some(selected) = selected else {
+            self.set_text(cx, "Сначала выберите сейв на экране «Обзор».")?;
+            self.set_status(cx, "")?;
+            return Ok(());
+        };
+        if self.last_path.as_ref() != Some(&selected.slot.path) {
+            self.last_path = Some(selected.slot.path.clone());
+            self.pending_confirmation = None;
+        }
+        let SaveData::Xray { save, .. } = &selected.data else {
+            self.set_text(cx, "Перенос персонажа поддерживается только для X-Ray сейвов.")?;
+            self.set_status(cx, "")?;
+            return Ok(());
+        };
+        let destinations = match save.level_changer_destinations() {
+            Ok(destinations) => destinations,
+            Err(error) => {
+                self.set_text(cx, &format!("Не удалось проверить переходы: {error}"))?;
+                return Ok(());
+            }
+        };
+        let can_relocate = xray_change_supported(save, writer::ChangeKind::RelocateActor)
+            && !self.workspace.is_saving()
+            && !self.workspace.is_restoring();
+        self.set_text(
+            cx,
+            &format!(
+                "{} подтверждённых переходов. {}",
+                destinations.len(),
+                if can_relocate {
+                    "Выберите точку назначения; изменение попадёт в черновик и запишется с бэкапом после нажатия «Сохранить» в «Инвентаре»."
+                } else {
+                    "Перенос персонажа не поддерживается этим форматом или временно занят."
+                }
+            ),
+        )?;
+        for (row, (handle, destination)) in self.rows.iter_mut().zip(destinations.iter()) {
+            let position = destination.dest_position.map_or_else(
+                || "позиция неизвестна".to_owned(),
+                |point| format!("x {:.1}, y {:.1}, z {:.1}", point.x, point.y, point.z),
+            );
+            cx.tree.set_text(
+                row.label,
+                &format!(
+                    "{} → {} · {position} · id 0x{handle:04X}{}",
+                    destination.dest_level_name,
+                    destination.dest_level_point_name,
+                    if pending == Some(*handle) {
+                        " · в черновике"
+                    } else {
+                        ""
+                    }
+                ),
+            )?;
+            cx.tree.set_visible(row.row, true)?;
+            cx.tree.set_visible(row.select, pending != Some(*handle))?;
+            cx.tree.set_enabled(row.select, can_relocate)?;
+            row.handle = Some(*handle);
+        }
+        if !can_relocate {
+            self.pending_confirmation = None;
+        }
+        if let Some(handle) = self.pending_confirmation {
+            if let Some((_, destination)) = destinations.iter().find(|(candidate, _)| *candidate == handle) {
+                if let Some(id) = self.confirmation {
+                    cx.tree.set_text(
+                        id,
+                        &format!(
+                            "Подтвердить перенос в {} → {}? Затем отдельно нажмите «Сохранить» в «Инвентаре».",
+                            destination.dest_level_name, destination.dest_level_point_name
+                        ),
+                    )?;
+                    cx.tree.set_visible(id, true)?;
+                }
+                if let Some(id) = self.confirm {
+                    cx.tree.set_visible(id, true)?;
+                }
+                if let Some(id) = self.cancel {
+                    cx.tree.set_visible(id, true)?;
+                }
+                if let Some(id) = self.confirmation_actions {
+                    cx.tree.set_visible(id, true)?;
+                }
+            } else {
+                self.pending_confirmation = None;
+            }
+        }
+        self.set_status(
+            cx,
+            &if !xray_change_supported(save, writer::ChangeKind::RelocateActor) {
+                "Перенос персонажа не поддерживается данным форматом.".to_owned()
+            } else if self.workspace.is_saving() || self.workspace.is_restoring() {
+                "Перенос временно недоступен во время записи или восстановления.".to_owned()
+            } else {
+                pending.map_or_else(
+                    || "Персонаж не перемещён. Выберите подтверждённый переход.".to_owned(),
+                    |handle| format!("Перенос 0x{handle:04X} находится в черновике."),
+                )
+            },
+        )?;
+        Ok(())
+    }
+
+    fn set_text(&self, cx: &mut Context<'_>, text: &str) -> Result<()> {
         if let Some(id) = self.text {
             cx.tree.set_text(id, text)?;
         }
         Ok(())
+    }
+
+    fn set_status(&self, cx: &mut Context<'_>, text: &str) -> Result<()> {
+        if let Some(id) = self.status {
+            cx.tree.set_text(id, text)?;
+        }
+        Ok(())
+    }
+
+    fn confirm_relocation(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        if self.workspace.is_saving() || self.workspace.is_restoring() {
+            cx.status = Some("Перенос недоступен во время записи или восстановления.".to_owned());
+            return Ok(());
+        }
+        let Some(handle) = self.pending_confirmation else {
+            return Ok(());
+        };
+        let selected_source = {
+            let state = self.workspace.lock();
+            let Some(selected) = state.selected.as_ref() else {
+                return Ok(());
+            };
+            let SaveData::Xray { save, .. } = &selected.data else {
+                return Ok(());
+            };
+            if !xray_change_supported(save, writer::ChangeKind::RelocateActor) {
+                cx.status = Some("Перенос персонажа не поддерживается данным форматом.".to_owned());
+                self.pending_confirmation = None;
+                self.set_status(cx, "Перенос персонажа не поддерживается данным форматом.")?;
+                for id in [self.confirmation, self.confirmation_actions, self.confirm, self.cancel]
+                    .into_iter()
+                    .flatten()
+                {
+                    cx.tree.set_visible(id, false)?;
+                }
+                return Ok(());
+            }
+            Some((
+                selected.source_sha256.clone(),
+                save.level_changer_destinations()?
+                    .iter()
+                    .any(|(candidate, _)| *candidate == handle),
+            ))
+        };
+        let Some((source_sha256, destination_is_valid)) = selected_source else {
+            return Ok(());
+        };
+        if !destination_is_valid {
+            cx.status = Some("Выбранный переход больше не подтверждается сейвом.".to_owned());
+            self.pending_confirmation = None;
+            return self.render(cx);
+        }
+        let mut plan = cx
+            .app
+            .draft(&source_sha256)
+            .cloned()
+            .unwrap_or(DraftPlan::empty(&source_sha256)?);
+        plan.relocate_to = Some(handle);
+        cx.app.record_draft(plan)?;
+        let journal = cx
+            .app
+            .draft_journal(&source_sha256)
+            .cloned()
+            .ok_or_else(|| Error::Refused("draft journal disappeared after relocation edit".to_owned()))?;
+        set_workspace_draft(&self.workspace, &journal);
+        self.workspace.persist_draft(journal, cx);
+        self.pending_confirmation = None;
+        cx.status = Some(format!("Перенос 0x{handle:04X} подтверждён и добавлен в черновик."));
+        self.render(cx)
     }
 }
 
@@ -5339,11 +6154,58 @@ impl Screen for Transitions {
             "Выберите сейв на экране «Обзор».",
             Text::Body,
         )?);
+        self.status = Some(style::label(cx.tree, card, "", Text::Note)?);
+        self.confirmation = Some(style::label(cx.tree, card, "", Text::Body)?);
+        if let Some(confirmation) = self.confirmation {
+            cx.tree.set_visible(confirmation, false)?;
+        }
+        let actions = style::row(cx.tree, card)?;
+        self.confirmation_actions = Some(actions);
+        self.confirm = Some(style::button(cx.tree, actions, "Подтвердить перенос", Button::Primary)?);
+        self.cancel = Some(style::button(cx.tree, actions, "Отмена", Button::Secondary)?);
+        cx.tree.set_visible(actions, false)?;
+        for _ in 0..MAXIMUM_STASH_ROWS {
+            let row = style::row(cx.tree, card)?;
+            let label = style::label(cx.tree, row, "", Text::Body)?;
+            let select = style::button(cx.tree, row, "Перенести сюда…", Button::Secondary)?;
+            cx.tree.set_visible(row, false)?;
+            self.rows.push(TransitionRow {
+                row,
+                label,
+                select,
+                handle: None,
+            });
+        }
         self.render(cx)
     }
 
     fn shown(&mut self, cx: &mut Context<'_>) -> Result<()> {
         self.render(cx)
+    }
+
+    fn message(
+        &mut self,
+        cx: &mut Context<'_>,
+        _message: &Message<AppMessage>,
+        clicked: Option<WidgetId>,
+    ) -> Result<()> {
+        if clicked.is_some() && clicked == self.confirm {
+            return self.confirm_relocation(cx);
+        }
+        if clicked.is_some() && clicked == self.cancel {
+            self.pending_confirmation = None;
+            return self.render(cx);
+        }
+        if let Some(handle) = self
+            .rows
+            .iter()
+            .find(|row| clicked.is_some() && clicked == Some(row.select))
+            .and_then(|row| row.handle)
+        {
+            self.pending_confirmation = Some(handle);
+            return self.render(cx);
+        }
+        Ok(())
     }
 }
 
@@ -5517,6 +6379,220 @@ mod tests {
 
         assert_eq!(output.as_slice(), expected);
         assert_eq!(summary.money, Some(new_money));
+        Ok(())
+    }
+
+    #[test]
+    fn faction_screen_stages_a_catalogued_relation_for_the_shared_writer() -> sse_core::Result<()> {
+        let temp = TempDirectory::new();
+        let source = include_bytes!("../../../../fixtures/synthetic/writer-factions/cop-source.sav");
+        let loaded = Arc::new(load_xray(source, "cop-source.sav", "stalker-cop", "cop")?);
+        let source_sha256 = loaded.source_sha256.clone();
+        let workspace = Workspace::with_draft_directory(temp.0.join("drafts"));
+        workspace.lock().selected = Some(Arc::clone(&loaded));
+        let mut app = sse_app::state::AppState::new();
+        app.set_current_save_identity(loaded.slot.path.clone(), source_sha256.clone());
+        app.set_current_save_format(Some("stalker-cop".to_owned()), false);
+        app.set_draft_journal(DraftJournal::new(vec![DraftPlan::empty(&source_sha256)?], 0)?);
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let mut screen = super::Factions::new(workspace.clone());
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: None,
+            status: None,
+            app: &mut app,
+        };
+        screen.build(&mut cx, host)?;
+        screen.index = screen
+            .faction_keys
+            .iter()
+            .position(|key| key == "bandit")
+            .ok_or_else(|| Error::damaged("catalogued bandit faction is missing"))?;
+        screen.stage_relation(&mut cx, 1)?;
+
+        let relations = cx
+            .app
+            .draft(&source_sha256)
+            .map(|plan| plan.faction_relations.clone())
+            .ok_or_else(|| Error::damaged("faction edit was not added to the draft"))?;
+        assert!(relations.contains_key("bandit"));
+        let edits = PendingInventoryEdits {
+            faction_relations: relations,
+            ..PendingInventoryEdits::default()
+        };
+        let (output, summary) = prepare_save_edits(&loaded, &edits, &BTreeSet::new())?;
+        let reloaded = LoadedSave::from_bytes(loaded.slot.clone(), output.as_slice())?;
+        super::verify_requested_values(&loaded, &reloaded, &edits, &BTreeSet::new())?;
+        assert_eq!(summary.relation_count, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn unsupported_ee_faction_edit_is_refused_before_catalog_lookup() -> sse_core::Result<()> {
+        let temp = TempDirectory::new();
+        let source = include_bytes!("../../../../fixtures/synthetic/writer-factions/cop-ee-source.sav");
+        let loaded = Arc::new(load_xray(source, "cop-ee-source.sav", "stalker-cop-ee", "cop")?);
+        let source_sha256 = loaded.source_sha256.clone();
+        let workspace = Workspace::with_draft_directory(temp.0.join("drafts"));
+        workspace.lock().selected = Some(Arc::clone(&loaded));
+        let mut app = sse_app::state::AppState::new();
+        app.set_current_save_identity(loaded.slot.path.clone(), source_sha256.clone());
+        app.set_current_save_format(Some("stalker-cop-ee".to_owned()), false);
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let mut screen = super::Factions::new(workspace);
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: None,
+            status: None,
+            app: &mut app,
+        };
+        screen.build(&mut cx, host)?;
+        screen.faction_keys = vec!["bandit".to_owned()];
+        screen.stage_relation(&mut cx, 100)?;
+
+        assert!(cx.app.draft(&source_sha256).is_none());
+        assert!(cx
+            .status
+            .as_deref()
+            .is_some_and(|status| status.contains("не поддерживается")));
+        Ok(())
+    }
+
+    #[test]
+    fn xray_stash_screen_stages_a_transfer_for_the_shared_writer() -> sse_core::Result<()> {
+        let temp = TempDirectory::new();
+        let source = include_bytes!("../../../../fixtures/synthetic/xray-stashes/xray-stash-cop-source.sav");
+        let expected = include_bytes!("../../../../fixtures/synthetic/xray-stashes/xray-stash-cop-take.sav");
+        let loaded = Arc::new(load_xray(source, "stash-cop-source.sav", "stalker-cop", "cop")?);
+        let source_sha256 = loaded.source_sha256.clone();
+        let workspace = Workspace::with_draft_directory(temp.0.join("drafts"));
+        workspace.lock().selected = Some(Arc::clone(&loaded));
+        let mut app = sse_app::state::AppState::new();
+        app.set_current_save_identity(loaded.slot.path.clone(), source_sha256.clone());
+        app.set_current_save_format(Some("stalker-cop".to_owned()), false);
+        app.set_draft_journal(DraftJournal::new(vec![DraftPlan::empty(&source_sha256)?], 0)?);
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let mut screen = super::Stashes::new(workspace.clone());
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: None,
+            status: None,
+            app: &mut app,
+        };
+        screen.build(&mut cx, host)?;
+        screen.stage_xray_move(&mut cx, super::StashAction::XrayTake(9029))?;
+
+        let plan = cx
+            .app
+            .draft(&source_sha256)
+            .cloned()
+            .ok_or_else(|| Error::damaged("X-Ray stash transfer was not added to the draft"))?;
+        assert_eq!(plan.stash_takes, [9029]);
+        let edits = PendingInventoryEdits {
+            stash_takes: plan.stash_takes.into_iter().collect(),
+            ..PendingInventoryEdits::default()
+        };
+        let (output, summary) = prepare_save_edits(&loaded, &edits, &BTreeSet::new())?;
+        assert_eq!(output.as_slice(), expected);
+        let reloaded = LoadedSave::from_bytes(loaded.slot.clone(), output.as_slice())?;
+        super::verify_requested_values(&loaded, &reloaded, &edits, &BTreeSet::new())?;
+        assert_eq!(summary.move_count, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn unsupported_ee_stash_move_never_enters_the_draft() -> sse_core::Result<()> {
+        let temp = TempDirectory::new();
+        let source = include_bytes!("../../../../fixtures/synthetic/xray-stashes/xray-stash-cop-ee-source.sav");
+        let loaded = Arc::new(load_xray(source, "cop-ee-stash.sav", "stalker-cop-ee", "cop")?);
+        let source_sha256 = loaded.source_sha256.clone();
+        let workspace = Workspace::with_draft_directory(temp.0.join("drafts"));
+        workspace.lock().selected = Some(Arc::clone(&loaded));
+        let mut app = sse_app::state::AppState::new();
+        app.set_current_save_identity(loaded.slot.path.clone(), source_sha256.clone());
+        app.set_current_save_format(Some("stalker-cop-ee".to_owned()), false);
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let mut screen = super::Stashes::new(workspace);
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: None,
+            status: None,
+            app: &mut app,
+        };
+        screen.build(&mut cx, host)?;
+        screen.stage_xray_move(&mut cx, super::StashAction::XrayTake(9029))?;
+
+        assert!(cx.app.draft(&source_sha256).is_none());
+        assert!(cx
+            .status
+            .as_deref()
+            .is_some_and(|status| status.contains("не поддерживается")));
+        Ok(())
+    }
+
+    #[test]
+    fn unsupported_ee_transition_confirmation_is_refused() -> sse_core::Result<()> {
+        let temp = TempDirectory::new();
+        let source = include_bytes!("../../../../fixtures/synthetic/writer-factions/cop-ee-source.sav");
+        let loaded = Arc::new(load_xray(source, "cop-ee-source.sav", "stalker-cop-ee", "cop")?);
+        let source_sha256 = loaded.source_sha256.clone();
+        let workspace = Workspace::with_draft_directory(temp.0.join("drafts"));
+        workspace.lock().selected = Some(Arc::clone(&loaded));
+        let mut app = sse_app::state::AppState::new();
+        app.set_current_save_identity(loaded.slot.path.clone(), source_sha256.clone());
+        app.set_current_save_format(Some("stalker-cop-ee".to_owned()), false);
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let mut screen = super::Transitions::new(workspace);
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: None,
+            status: None,
+            app: &mut app,
+        };
+        screen.build(&mut cx, host)?;
+        screen.pending_confirmation = Some(0x1234);
+        screen.confirm_relocation(&mut cx)?;
+
+        assert!(cx.app.draft(&source_sha256).is_none());
+        assert!(cx
+            .status
+            .as_deref()
+            .is_some_and(|status| status.contains("не поддерживается")));
         Ok(())
     }
 
