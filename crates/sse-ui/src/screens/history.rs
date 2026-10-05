@@ -4,6 +4,9 @@ use super::saves::{RefreshOverview, Workspace};
 use super::style::{self, Button, Text};
 use super::{AppMessage, Context, Screen, ScreenId};
 use crate::event_loop::Message;
+use crate::process_guard::{
+    format_id_for_save_file, is_windows_file_busy_error_text, running_game_for_format, SAVE_WHILE_GAME_RUNNING_WARNING,
+};
 use crate::widget::WidgetId;
 use sse_core::{Error, Result, SaveBuffer};
 use sse_storage::discovery::{SaveDirectoryLocator, SaveSlot, SaveSlotDiscovery};
@@ -37,10 +40,12 @@ enum Action {
     Restore {
         journal: PathBuf,
         source: PathBuf,
+        backup: PathBuf,
     },
     RestoreInPlace {
         journal: PathBuf,
         source: PathBuf,
+        backup: PathBuf,
     },
     Compare(PathBuf),
     Diagnose {
@@ -58,6 +63,20 @@ enum Action {
 enum RestoreMode {
     Copy,
     InPlace,
+}
+
+enum GuardedHistoryOperation {
+    Restore {
+        journal: PathBuf,
+        source: PathBuf,
+        backup: PathBuf,
+        mode: RestoreMode,
+    },
+    QuestRepair {
+        path: PathBuf,
+        format_id: String,
+        expected_sha256: String,
+    },
 }
 
 #[derive(Debug)]
@@ -96,6 +115,10 @@ enum HistoryResult {
     Restored {
         request_id: Option<sse_app::SaveOperationId>,
         result: std::result::Result<RestoredSave, String>,
+    },
+    ProcessCheck {
+        request_id: u64,
+        result: std::result::Result<bool, String>,
     },
 }
 
@@ -164,6 +187,7 @@ pub struct HistoryScreen {
     results: Option<WidgetId>,
     refresh: Option<WidgetId>,
     restore_confirmation: Option<WidgetId>,
+    restore_confirmation_title: Option<WidgetId>,
     restore_description: Option<WidgetId>,
     confirm_restore: Option<WidgetId>,
     cancel_restore: Option<WidgetId>,
@@ -176,7 +200,10 @@ pub struct HistoryScreen {
     save_entries: Option<Vec<SaveSlot>>,
     page: usize,
     compare_selection: Vec<PathBuf>,
-    pending_restore: Option<(PathBuf, PathBuf, RestoreMode)>,
+    pending_restore: Option<(PathBuf, PathBuf, PathBuf, RestoreMode)>,
+    pending_guarded_operation: Option<(u64, GuardedHistoryOperation)>,
+    next_process_check_id: u64,
+    process_check_complete: bool,
     diagnosis_request_id: u64,
     diagnosed_selection: Option<(PathBuf, String)>,
 }
@@ -190,6 +217,7 @@ impl HistoryScreen {
             results: None,
             refresh: None,
             restore_confirmation: None,
+            restore_confirmation_title: None,
             restore_description: None,
             confirm_restore: None,
             cancel_restore: None,
@@ -203,6 +231,9 @@ impl HistoryScreen {
             page: 0,
             compare_selection: Vec::new(),
             pending_restore: None,
+            pending_guarded_operation: None,
+            next_process_check_id: 0,
+            process_check_complete: false,
             diagnosis_request_id: 0,
             diagnosed_selection: None,
         }
@@ -275,7 +306,7 @@ impl HistoryScreen {
         Ok(true)
     }
 
-    fn start_quest_repair(
+    fn start_quest_repair_write(
         &self,
         path: PathBuf,
         expected_sha256: String,
@@ -315,7 +346,7 @@ impl HistoryScreen {
         Ok(true)
     }
 
-    fn start_restore(
+    fn start_restore_write(
         &self,
         journal: PathBuf,
         source: PathBuf,
@@ -354,14 +385,98 @@ impl HistoryScreen {
         Ok(true)
     }
 
+    fn start_process_check(&mut self, cx: &mut Context<'_>, operation: GuardedHistoryOperation) -> Result<bool> {
+        let Some(proxy) = cx.proxy.cloned() else {
+            return Ok(false);
+        };
+        let Some(request_id) = self.next_process_check_id.checked_add(1) else {
+            self.set_summary(cx.tree, "Исчерпан номер проверки запущенной игры.")?;
+            return Ok(false);
+        };
+        self.next_process_check_id = request_id;
+        let (format_id, backup_path) = match &operation {
+            GuardedHistoryOperation::Restore { backup, .. } => (None, Some(backup.clone())),
+            GuardedHistoryOperation::QuestRepair { format_id, .. } => (Some(format_id.clone()), None),
+        };
+        self.pending_guarded_operation = Some((request_id, operation));
+        self.process_check_complete = false;
+        if let Some(title) = self.restore_confirmation_title {
+            if matches!(
+                self.pending_guarded_operation.as_ref().map(|(_, operation)| operation),
+                Some(GuardedHistoryOperation::QuestRepair { .. })
+            ) {
+                cx.tree.set_text(title, "ПРОВЕРКА ЗАПУЩЕННОЙ ИГРЫ")?;
+            }
+        }
+        if let (Some(dialog), Some(description), Some(continue_button)) = (
+            self.restore_confirmation,
+            self.restore_description,
+            self.confirm_restore,
+        ) {
+            cx.tree
+                .set_text(description, "Проверяю, запущена ли игра для выбранного сейва…")?;
+            cx.tree.set_text(continue_button, "Проверка…")?;
+            cx.tree.set_enabled(continue_button, false)?;
+            if cx.tree.dialog() != Some(dialog) {
+                cx.tree.open_dialog(dialog)?;
+            }
+        }
+        self.set_summary(cx.tree, "Проверяю запущенную игру…")?;
+        let id = self.id;
+        if let Err(error) = self.workspace.spawn("save-process-check", move |context| {
+            let result = if context.is_cancelled() {
+                Err("process check was cancelled".to_owned())
+            } else {
+                let detected_format = match (format_id.as_deref(), backup_path.as_deref()) {
+                    (Some(format_id), _) => Ok(format_id.to_owned()),
+                    (None, Some(path)) => format_id_for_save_file(path),
+                    (None, None) => Err("save format is unavailable".to_owned()),
+                };
+                detected_format.and_then(|format_id| running_game_for_format(&format_id))
+            };
+            proxy.send(AppMessage::ToScreen(
+                id,
+                Box::new(HistoryResult::ProcessCheck { request_id, result }),
+            ));
+        }) {
+            self.pending_guarded_operation = None;
+            self.process_check_complete = false;
+            let _ = cx.tree.close_dialog()?;
+            self.set_summary(cx.tree, &format!("Не удалось начать проверку запущенной игры: {error}"))?;
+            return Ok(false);
+        }
+        Ok(true)
+    }
+
+    fn start_guarded_operation_write(
+        &self,
+        operation: GuardedHistoryOperation,
+        proxy: Option<crate::event_loop::Proxy<AppMessage>>,
+    ) -> Result<bool> {
+        match operation {
+            GuardedHistoryOperation::Restore {
+                journal,
+                source,
+                backup: _,
+                mode,
+            } => self.start_restore_write(journal, source, mode, proxy),
+            GuardedHistoryOperation::QuestRepair {
+                path,
+                format_id,
+                expected_sha256,
+            } => self.start_quest_repair_write(path, expected_sha256, Some(format_id), proxy),
+        }
+    }
+
     fn open_restore_confirmation(
         &mut self,
         cx: &mut Context<'_>,
         journal: PathBuf,
         source: PathBuf,
+        backup: PathBuf,
         mode: RestoreMode,
     ) -> Result<()> {
-        self.pending_restore = Some((journal, source, mode));
+        self.pending_restore = Some((journal, source, backup, mode));
         if let (Some(dialog), Some(description)) = (self.restore_confirmation, self.restore_description) {
             cx.tree.set_text(
                 description,
@@ -452,6 +567,7 @@ impl HistoryScreen {
                     action: Action::Restore {
                         journal: entry.journal_path.clone(),
                         source: entry.source_path.clone(),
+                        backup: entry.backup_path.clone(),
                     },
                 });
                 cx.tree.set_visible(slot.secondary_button, true)?;
@@ -459,8 +575,9 @@ impl HistoryScreen {
                 self.actions.push(ActionButton {
                     widget: slot.secondary_button,
                     action: Action::RestoreInPlace {
-                        journal: entry.journal_path,
-                        source: entry.source_path,
+                        journal: entry.journal_path.clone(),
+                        source: entry.source_path.clone(),
+                        backup: entry.backup_path,
                     },
                 });
             }
@@ -849,7 +966,12 @@ impl Screen for HistoryScreen {
         let confirmation_host = cx.tree.overlay_host().unwrap_or(host);
         let confirmation = style::card(cx.tree, confirmation_host)?;
         self.restore_confirmation = Some(confirmation);
-        style::label(cx.tree, confirmation, "ВОССТАНОВИТЬ РЕЗЕРВНУЮ КОПИЮ", Text::Heading)?;
+        self.restore_confirmation_title = Some(style::label(
+            cx.tree,
+            confirmation,
+            "ВОССТАНОВИТЬ РЕЗЕРВНУЮ КОПИЮ",
+            Text::Heading,
+        )?);
         self.restore_description = Some(style::label(
             cx.tree,
             confirmation,
@@ -875,18 +997,134 @@ impl Screen for HistoryScreen {
         clicked: Option<WidgetId>,
     ) -> Result<()> {
         self.workspace.poll_tasks();
-        if self.pending_restore.is_some()
-            && matches!(
+        if let Message::User(AppMessage::ToScreen(target, payload)) = message {
+            if *target == self.id {
+                if let Some(HistoryResult::ProcessCheck { request_id, result }) =
+                    payload.downcast_ref::<HistoryResult>()
+                {
+                    let is_current = self
+                        .pending_guarded_operation
+                        .as_ref()
+                        .is_some_and(|(pending_id, _)| pending_id == request_id);
+                    if is_current {
+                        match result {
+                            Ok(false) => {
+                                let Some((_, operation)) = self.pending_guarded_operation.take() else {
+                                    return Ok(());
+                                };
+                                self.process_check_complete = false;
+                                let _ = cx.tree.close_dialog()?;
+                                if !self.start_guarded_operation_write(operation, cx.proxy.cloned())? {
+                                    let status = if self.workspace.is_saving() {
+                                        "Дождитесь завершения записи сейва."
+                                    } else if self.workspace.is_restoring() {
+                                        "Восстановление сейва уже выполняется."
+                                    } else {
+                                        "Не удалось начать операцию с сейвом."
+                                    };
+                                    self.set_summary(cx.tree, status)?;
+                                }
+                            }
+                            Ok(true) => {
+                                self.process_check_complete = true;
+                                if let Some(description) = self.restore_description {
+                                    cx.tree.set_text(description, SAVE_WHILE_GAME_RUNNING_WARNING)?;
+                                }
+                                if let Some(continue_button) = self.confirm_restore {
+                                    cx.tree.set_text(continue_button, "Всё равно сохранить")?;
+                                    cx.tree.set_enabled(continue_button, true)?;
+                                }
+                                self.set_summary(cx.tree, SAVE_WHILE_GAME_RUNNING_WARNING)?;
+                            }
+                            Err(error) => {
+                                self.pending_guarded_operation = None;
+                                self.process_check_complete = false;
+                                let _ = cx.tree.close_dialog()?;
+                                self.set_summary(
+                                    cx.tree,
+                                    &format!("Не удалось проверить запущенную игру; операция отменена: {error}"),
+                                )?;
+                            }
+                        }
+                    }
+                    return Ok(());
+                }
+            }
+        }
+        if self.pending_guarded_operation.is_some() {
+            let escape = matches!(
                 message,
                 Message::Window(crate::event_loop::WindowEvent::Key {
                     pressed: true,
                     keysym: 0xff1b,
                     ..
                 })
-            )
-        {
-            self.pending_restore = None;
-            self.set_summary(cx.tree, "Восстановление отменено.")?;
+            );
+            if escape || clicked.is_some_and(|id| Some(id) == self.cancel_restore) {
+                self.pending_guarded_operation = None;
+                self.process_check_complete = false;
+                if !escape {
+                    let _ = cx.tree.close_dialog()?;
+                }
+                self.set_summary(cx.tree, "Операция отменена.")?;
+                return Ok(());
+            }
+            if clicked.is_some_and(|id| Some(id) == self.confirm_restore) && self.process_check_complete {
+                let Some((_, operation)) = self.pending_guarded_operation.take() else {
+                    return Ok(());
+                };
+                self.process_check_complete = false;
+                let _ = cx.tree.close_dialog()?;
+                if !self.start_guarded_operation_write(operation, cx.proxy.cloned())? {
+                    let status = if self.workspace.is_saving() {
+                        "Дождитесь завершения записи сейва."
+                    } else if self.workspace.is_restoring() {
+                        "Восстановление сейва уже выполняется."
+                    } else {
+                        "Не удалось начать операцию с сейвом."
+                    };
+                    self.set_summary(cx.tree, status)?;
+                }
+                return Ok(());
+            }
+            return Ok(());
+        }
+        if self.pending_restore.is_some() {
+            let escape = matches!(
+                message,
+                Message::Window(crate::event_loop::WindowEvent::Key {
+                    pressed: true,
+                    keysym: 0xff1b,
+                    ..
+                })
+            );
+            if escape {
+                self.pending_restore = None;
+                self.set_summary(cx.tree, "Восстановление отменено.")?;
+                return Ok(());
+            }
+            if clicked.is_some_and(|id| Some(id) == self.cancel_restore) {
+                self.pending_restore = None;
+                let _ = cx.tree.close_dialog()?;
+                self.set_summary(cx.tree, "Восстановление отменено.")?;
+                return Ok(());
+            }
+            if clicked.is_some_and(|id| Some(id) == self.confirm_restore) {
+                if let Some((journal, source, backup, mode)) = self.pending_restore.take() {
+                    let operation = GuardedHistoryOperation::Restore {
+                        journal,
+                        source,
+                        backup,
+                        mode,
+                    };
+                    if !self.start_process_check(cx, operation)? {
+                        let _ = cx.tree.close_dialog()?;
+                        self.set_summary(cx.tree, "Не удалось проверить запущенную игру.")?;
+                    }
+                }
+                return Ok(());
+            }
+            return Ok(());
         }
         if clicked.is_some() && clicked == self.refresh {
             if cx.proxy.is_none() {
@@ -914,31 +1152,6 @@ impl Screen for HistoryScreen {
                 self.render_current_page(cx)?;
             }
         }
-        if clicked.is_some() && clicked == self.cancel_restore {
-            self.pending_restore = None;
-            let _ = cx.tree.close_dialog()?;
-            self.set_summary(cx.tree, "Восстановление отменено.")?;
-        }
-        if clicked.is_some() && clicked == self.confirm_restore {
-            if let Some((journal, source, mode)) = self.pending_restore.take() {
-                let _ = cx.tree.close_dialog()?;
-                let status = match mode {
-                    RestoreMode::Copy => "Проверяю журнал и восстанавливаю копию в новый файл…",
-                    RestoreMode::InPlace => "Проверяю журнал и восстанавливаю сейв на место…",
-                };
-                self.set_summary(cx.tree, status)?;
-                if !self.start_restore(journal, source, mode, cx.proxy.cloned())? {
-                    let text = if self.workspace.is_saving() {
-                        "Дождитесь завершения сохранения, чтобы восстановить сейв на место."
-                    } else if self.workspace.is_restoring() {
-                        "Восстановление сейва уже выполняется."
-                    } else {
-                        "Не удалось начать восстановление сейва."
-                    };
-                    self.set_summary(cx.tree, text)?;
-                }
-            }
-        }
         if let Some(action) = self
             .actions
             .iter()
@@ -946,10 +1159,18 @@ impl Screen for HistoryScreen {
             .map(|value| value.action.clone())
         {
             match action {
-                Action::Restore { journal, source } => {
-                    self.open_restore_confirmation(cx, journal, source, RestoreMode::Copy)?;
+                Action::Restore {
+                    journal,
+                    source,
+                    backup,
+                } => {
+                    self.open_restore_confirmation(cx, journal, source, backup, RestoreMode::Copy)?;
                 }
-                Action::RestoreInPlace { journal, source } => {
+                Action::RestoreInPlace {
+                    journal,
+                    source,
+                    backup,
+                } => {
                     if self.workspace.is_saving() {
                         self.set_summary(
                             cx.tree,
@@ -958,7 +1179,7 @@ impl Screen for HistoryScreen {
                     } else if has_pending_edits_for_selected_source(cx.app, &source) {
                         self.set_summary(cx.tree, "Сначала сохраните или сбросьте черновик выбранного сейва.")?;
                     } else {
-                        self.open_restore_confirmation(cx, journal, source, RestoreMode::InPlace)?;
+                        self.open_restore_confirmation(cx, journal, source, backup, RestoreMode::InPlace)?;
                     }
                 }
                 Action::Compare(path) => {
@@ -1005,14 +1226,29 @@ impl Screen for HistoryScreen {
                     format_id,
                     expected_sha256,
                 } => {
-                    self.set_summary(cx.tree, "Исправляю подтверждённые квесты…")?;
-                    if !self.start_quest_repair(path, expected_sha256, format_id, cx.proxy.cloned())? {
-                        let status = if self.workspace.is_restoring() {
+                    let Some(format_id) = format_id else {
+                        self.set_summary(
+                            cx.tree,
+                            "Не удалось определить формат сейва для проверки запущенной игры.",
+                        )?;
+                        return Ok(());
+                    };
+                    if !self.start_process_check(
+                        cx,
+                        GuardedHistoryOperation::QuestRepair {
+                            path,
+                            format_id,
+                            expected_sha256,
+                        },
+                    )? {
+                        let status = if cx.proxy.is_none() {
+                            "Ремонт доступен только в работающем окне."
+                        } else if self.workspace.is_restoring() {
                             "Дождитесь завершения восстановления сейва."
                         } else if self.workspace.is_saving() {
                             "Запись сейва уже выполняется."
                         } else {
-                            "Ремонт доступен только в работающем окне."
+                            "Не удалось проверить запущенную игру."
                         };
                         self.set_summary(cx.tree, status)?;
                     }
@@ -1047,6 +1283,7 @@ impl Screen for HistoryScreen {
                             }
                         }
                         HistoryResult::Diagnosis { .. } => {}
+                        HistoryResult::ProcessCheck { .. } => {}
                         HistoryResult::QuestRepaired { request_id, result } => {
                             if !self.workspace.session().is_latest_operation(*request_id) {
                                 return Ok(());
@@ -1064,8 +1301,16 @@ impl Screen for HistoryScreen {
                                         ));
                                     }
                                 }
-                                Err(error) => self
-                                    .set_summary(cx.tree, &format!("Не удалось сохранить: {}", truncate(error, 160)))?,
+                                Err(error) => {
+                                    if is_windows_file_busy_error_text(error) {
+                                        self.set_summary(cx.tree, SAVE_WHILE_GAME_RUNNING_WARNING)?;
+                                    } else {
+                                        self.set_summary(
+                                            cx.tree,
+                                            &format!("Не удалось сохранить: {}", truncate(error, 160)),
+                                        )?;
+                                    }
+                                }
                             }
                         }
                         HistoryResult::Restored { request_id, result } => {
@@ -1103,7 +1348,12 @@ impl Screen for HistoryScreen {
                                     }
                                 }
                                 Err(error) => {
-                                    self.set_summary(cx.tree, &format!("Не восстановлено: {}", truncate(error, 160)))?
+                                    let text = if is_windows_file_busy_error_text(error) {
+                                        SAVE_WHILE_GAME_RUNNING_WARNING.to_owned()
+                                    } else {
+                                        format!("Не восстановлено: {}", truncate(error, 160))
+                                    };
+                                    self.set_summary(cx.tree, &text)?;
                                 }
                             }
                         }
@@ -1655,7 +1905,7 @@ mod tests {
         let screen = HistoryScreen::new(ScreenId::Backups, "test", workspace.clone());
         let (proxy, _receiver) = crate::event_loop::channel_pair::<AppMessage>();
 
-        assert!(!screen.start_restore(
+        assert!(!screen.start_restore_write(
             PathBuf::from("fixture-journal.json"),
             path,
             super::RestoreMode::InPlace,
@@ -1846,7 +2096,7 @@ mod tests {
         let screen = HistoryScreen::new(ScreenId::SaveDoctor, "test", workspace.clone());
         let (proxy, _receiver) = crate::event_loop::channel_pair::<AppMessage>();
 
-        assert!(!screen.start_quest_repair(path, "00".repeat(32), None, Some(proxy),)?);
+        assert!(!screen.start_quest_repair_write(path, "00".repeat(32), None, Some(proxy),)?);
         assert!(workspace.is_saving());
         drop(save_guard);
         Ok(())
@@ -2008,6 +2258,7 @@ mod tests {
                 action: Action::Restore {
                     journal: receipt.journal_path.clone(),
                     source: source.clone(),
+                    backup: receipt.backup_path.clone(),
                 },
             });
             let message = Message::User(AppMessage::Tick(0));
@@ -2015,7 +2266,12 @@ mod tests {
         }
         assert_eq!(
             screen.pending_restore,
-            Some((receipt.journal_path.clone(), source.clone(), super::RestoreMode::Copy)),
+            Some((
+                receipt.journal_path.clone(),
+                source.clone(),
+                receipt.backup_path.clone(),
+                super::RestoreMode::Copy
+            )),
             "the first click must only request confirmation"
         );
         assert!(tree.dialog_open(), "restore confirmation must be a modal overlay");

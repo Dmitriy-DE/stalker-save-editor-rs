@@ -21,6 +21,8 @@ pub mod locale;
 pub mod macos_window;
 /// SVG path data, flattening, strokes and the 28 interface icons (X25).
 pub mod path;
+/// Pure game-process matching and Windows busy-file warning helpers for save writes (K29).
+pub mod process_guard;
 /// Software raster primitives over a premultiplied BGRA surface (X14).
 pub mod raster;
 /// Editor screens, the shell and the screen registry (S1–S5).
