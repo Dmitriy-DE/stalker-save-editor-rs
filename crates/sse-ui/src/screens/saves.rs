@@ -109,8 +109,8 @@ pub(crate) fn screens_with_workspace(workspace: Workspace) -> Vec<Box<dyn Screen
     ]
 }
 
-/// S2 stash transfer stays off until a written save is proven to load in the game.
-const S2_STASH_MOVE_ENABLED: bool = false;
+/// S2 stash transfer uses the confirmed writer only for a resolved, non-legacy save.
+const S2_STASH_MOVE_ENABLED: bool = true;
 
 #[derive(Clone)]
 pub(crate) struct Workspace {
@@ -3675,11 +3675,6 @@ fn prepare_save_edits(
             if save.index().is_legacy() {
                 return Err(Error::Refused(S2_LEGACY_EDIT_REFUSAL.to_owned()));
             }
-            if !stash_moves.is_empty() && !S2_STASH_MOVE_ENABLED {
-                return Err(Error::Refused(
-                    "S2 stash transfer is disabled until the written save is verified in the game.".to_owned(),
-                ));
-            }
             if !edits.placements.is_empty()
                 || !edits.upgrades.is_empty()
                 || !edits.removals.is_empty()
@@ -3906,18 +3901,64 @@ fn verify_requested_values(
         }
     }
     for handle in stash_moves {
-        let moved = match &selected.data {
-            SaveData::Stalker2 { save, .. } => {
-                !save.stash_items()?.iter().any(|item| item.handle == *handle)
-                    && save.items().iter().any(|item| item.handle == *handle)
+        let before = match &original.data {
+            SaveData::Stalker2 { stash_items, .. } => stash_items
+                .as_ref()
+                .ok_or_else(|| Error::damaged("original S2 stash is unavailable for read-back verification"))?
+                .as_ref()
+                .map_err(|error| Error::damaged(error.clone()))?
+                .iter()
+                .find(|item| item.handle == *handle)
+                .ok_or_else(|| Error::damaged("requested S2 stash item is missing from the original save"))?,
+            SaveData::Xray { .. } => {
+                return Err(Error::Refused(
+                    "S2 stash transfer cannot be verified against an X-Ray save".to_owned(),
+                ))
             }
-            SaveData::Xray { .. } => false,
         };
-        if !moved {
+        let SaveData::Stalker2 { save, inventory, .. } = &selected.data else {
+            return Err(Error::Refused(
+                "S2 stash transfer cannot be verified against an X-Ray read-back".to_owned(),
+            ));
+        };
+        let after_stash = save.stash_items()?;
+        let mut matching_items = inventory.iter().filter(|item| item.handle == *handle);
+        let Some(after) = matching_items.next() else {
             return Err(Error::damaged("saved stash transfer differs after read-back"));
+        };
+        let after_x = after
+            .x
+            .ok_or_else(|| Error::damaged("moved S2 item has no read-back grid position"))?;
+        let after_y = after
+            .y
+            .ok_or_else(|| Error::damaged("moved S2 item has no read-back grid position"))?;
+        if after_stash.iter().any(|item| item.handle == *handle)
+            || matching_items.next().is_some()
+            || after.count != before.count
+            || after.total_weight.to_bits() != before.total_weight.to_bits()
+            || after.kind_code != before.kind_code
+            || after.type_key != before.type_key
+            || after.display_name != before.display_name
+            || after.width != Some(before.width)
+            || after.height != Some(before.height)
+            || normalized_s2_grid_shape(&before.cells, before.x, before.y)
+                != normalized_s2_grid_shape(&after.cells, after_x, after_y)
+        {
+            return Err(Error::damaged(
+                "saved stash item identity or contents differ after read-back",
+            ));
         }
     }
     Ok(())
+}
+
+fn normalized_s2_grid_shape(cells: &[sse_s2::S2GridCell], x: u16, y: u16) -> Vec<(u16, u16)> {
+    let mut shape = cells
+        .iter()
+        .map(|cell| (cell.x.saturating_sub(x), cell.y.saturating_sub(y)))
+        .collect::<Vec<_>>();
+    shape.sort_unstable();
+    shape
 }
 
 fn default_backup_directory() -> PathBuf {
@@ -4874,8 +4915,7 @@ impl Stashes {
                     ),
                 )?;
                 cx.tree.set_visible(row.row, true)?;
-                // S2 stash -> backpack shifts bytes without fixing outer lengths; C# 1.3.1 kept it disabled
-                // (move_items unsupported). Off until proven in the game.
+                // The move button only appears for a resolved, non-legacy save; transaction read-back verifies it.
                 let can_move =
                     S2_STASH_MOVE_ENABLED && !save.index().is_legacy() && save.unresolved_handles().is_empty();
                 cx.tree.set_text(
@@ -4946,12 +4986,13 @@ impl Stashes {
                 cx.status = Some("Перенос тайника поддерживается только для S2.".to_owned());
                 return Ok(());
             };
-            if !S2_STASH_MOVE_ENABLED {
-                cx.status = Some("Перенос тайника отключён, пока запись не подтверждена в игре.".to_owned());
-                return Ok(());
-            }
             if save.index().is_legacy() || !save.unresolved_handles().is_empty() {
                 cx.status = Some("Перенос недоступен для этого S2-сейва.".to_owned());
+                return Ok(());
+            }
+            if !state.pending_stash_moves.is_empty() && !state.pending_stash_moves.contains(&handle) {
+                cx.status =
+                    Some("За один раз можно перенести только один предмет. Отмените предыдущий перенос.".to_owned());
                 return Ok(());
             }
             let Some(items) = stash_items.as_ref().and_then(|items| items.as_ref().ok()) else {
@@ -5151,6 +5192,7 @@ mod tests {
     use crate::screens::{AppMessage, Context, Screen, ScreenId};
     use crate::widget::{Content, Look, Tree};
     use sse_core::Error;
+    use sse_s2::S2Change;
     use sse_xray::Save;
     use std::collections::{BTreeMap, BTreeSet};
     use std::fs;
@@ -5567,7 +5609,7 @@ mod tests {
     }
 
     #[test]
-    fn unverified_s2_stash_transfer_does_not_write_a_save() -> sse_core::Result<()> {
+    fn s2_stash_transfer_transaction_preserves_the_item_and_verifies_its_backup() -> sse_core::Result<()> {
         let temp = TempDirectory::new();
         let saves = temp.0.join("saves");
         fs::create_dir_all(&saves)?;
@@ -5579,35 +5621,93 @@ mod tests {
         )?;
         let path_string = path.to_string_lossy().into_owned();
         let selected = LoadedSave::read(fixture_slot(&path_string, "stalker2", "stalker2"))?;
-        let handle = match &selected.data {
-            super::SaveData::Stalker2 { stash_items, .. } => stash_items
-                .as_ref()
-                .ok_or_else(|| Error::damaged("S2 stash fixture has no stash index"))?
-                .as_ref()
-                .map_err(|error| Error::damaged(error.clone()))?
-                .first()
-                .map(|item| item.handle)
-                .ok_or_else(|| Error::damaged("S2 stash fixture has no items"))?,
+        let (handle, before) = match &selected.data {
+            super::SaveData::Stalker2 { save, stash_items, .. } => {
+                assert!(!save.index().is_legacy());
+                assert!(save.unresolved_handles().is_empty());
+                let item = stash_items
+                    .as_ref()
+                    .ok_or_else(|| Error::damaged("S2 stash fixture has no stash index"))?
+                    .as_ref()
+                    .map_err(|error| Error::damaged(error.clone()))?
+                    .first()
+                    .cloned()
+                    .ok_or_else(|| Error::damaged("S2 stash fixture has no items"))?;
+                (item.handle, item)
+            }
             super::SaveData::Xray { .. } => return Err(Error::damaged("S2 fixture parsed as X-Ray")),
         };
 
-        let result = commit_save_edits_to(
+        let (after, message) = commit_save_edits_to(
             &selected,
             &PendingInventoryEdits::default(),
             &BTreeSet::from([handle]),
             &backup,
-        );
-        assert!(matches!(result, Err(Error::Refused(_))));
-        assert_eq!(
+        )?;
+        assert!(message.contains("Сохранено успешно"));
+        assert_ne!(
             fs::read(&path)?,
             include_bytes!("../../../../fixtures/synthetic/writer-s2-stash/s2-stash-source.sav")
         );
-        assert!(sse_storage::transaction::list_backups(&backup)?.is_empty());
+        let (after_save, after_item) = match &after.data {
+            super::SaveData::Stalker2 { save, inventory, .. } => {
+                assert_eq!(save.container().stored_crc32(), save.container().computed_crc32());
+                assert!(save.stash_items()?.iter().all(|item| item.handle != handle));
+                let item = inventory
+                    .iter()
+                    .find(|item| item.handle == handle)
+                    .ok_or_else(|| Error::damaged("moved item is missing from the read-back inventory"))?;
+                (save, item)
+            }
+            super::SaveData::Xray { .. } => return Err(Error::damaged("S2 read-back parsed as X-Ray")),
+        };
+        assert_eq!(after_item.count, before.count);
+        assert_eq!(after_item.total_weight.to_bits(), before.total_weight.to_bits());
+        assert_eq!(after_item.kind_code, before.kind_code);
+        assert_eq!(after_item.type_key, before.type_key);
+        assert_eq!(after_item.width, Some(before.width));
+        assert_eq!(after_item.height, Some(before.height));
+        assert_eq!(after_item.cells.len(), before.cells.len());
+        let mut before_shape = before
+            .cells
+            .iter()
+            .map(|cell| (cell.x.saturating_sub(before.x), cell.y.saturating_sub(before.y)))
+            .collect::<Vec<_>>();
+        before_shape.sort_unstable();
+        let mut after_shape = after_item
+            .cells
+            .iter()
+            .map(|cell| {
+                (
+                    cell.x.saturating_sub(after_item.x.unwrap_or_default()),
+                    cell.y.saturating_sub(after_item.y.unwrap_or_default()),
+                )
+            })
+            .collect::<Vec<_>>();
+        after_shape.sort_unstable();
+        assert_eq!(after_shape, before_shape);
+        assert_eq!(
+            after_save.money(),
+            match &selected.data {
+                super::SaveData::Stalker2 { save, .. } => save.money(),
+                super::SaveData::Xray { .. } => 0,
+            }
+        );
+        let backups = sse_storage::transaction::list_backups(&backup)?;
+        assert_eq!(backups.len(), 1);
+        let entry = backups
+            .first()
+            .ok_or_else(|| Error::damaged("verified stash backup entry is missing"))?;
+        assert_eq!(entry.status, sse_storage::transaction::BackupStatus::Verified);
+        assert_eq!(
+            fs::read(&entry.backup_path)?,
+            include_bytes!("../../../../fixtures/synthetic/writer-s2-stash/s2-stash-source.sav")
+        );
         Ok(())
     }
 
     #[test]
-    fn unverified_s2_stash_transfer_is_hidden_and_refused() -> sse_core::Result<()> {
+    fn s2_stash_screen_stages_the_writer_supported_transfer_in_the_shared_draft() -> sse_core::Result<()> {
         let temp = TempDirectory::new();
         let path = temp.0.join("stash.sav");
         let original = include_bytes!("../../../../fixtures/synthetic/writer-s2-stash/s2-stash-source.sav");
@@ -5615,19 +5715,26 @@ mod tests {
         let selected = LoadedSave::read(fixture_slot(&path.to_string_lossy(), "stalker2", "stalker2"))?;
         let source_sha256 = selected.source_sha256.clone();
         let handle = match &selected.data {
-            super::SaveData::Stalker2 { stash_items, .. } => stash_items
-                .as_ref()
-                .ok_or_else(|| Error::damaged("S2 stash fixture has no stash index"))?
-                .as_ref()
-                .map_err(|error| Error::damaged(error.clone()))?
-                .first()
-                .map(|item| item.handle)
-                .ok_or_else(|| Error::damaged("S2 stash fixture has no items"))?,
+            super::SaveData::Stalker2 { save, stash_items, .. } => {
+                assert!(!save.index().is_legacy());
+                assert!(save.unresolved_handles().is_empty());
+                stash_items
+                    .as_ref()
+                    .ok_or_else(|| Error::damaged("S2 stash fixture has no stash index"))?
+                    .as_ref()
+                    .map_err(|error| Error::damaged(error.clone()))?
+                    .first()
+                    .map(|item| item.handle)
+                    .ok_or_else(|| Error::damaged("S2 stash fixture has no items"))?
+            }
             super::SaveData::Xray { .. } => return Err(Error::damaged("S2 fixture parsed as X-Ray")),
         };
         let workspace = Workspace::with_draft_directory(temp.0.join("drafts"));
         workspace.lock().selected = Some(std::sync::Arc::new(selected));
         let mut app = sse_app::AppState::new();
+        app.set_current_save_identity(path.clone(), source_sha256.clone());
+        app.set_current_save_format(Some("stalker2".to_owned()), false);
+        app.set_draft_journal(DraftJournal::new(vec![DraftPlan::empty(&source_sha256)?], 0)?);
         let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
         let host = tree.add(
             None,
@@ -5650,12 +5757,120 @@ mod tests {
             .first()
             .map(|row| row.move_button)
             .ok_or_else(|| Error::damaged("S2 stash row was not built"))?;
-        assert!(!cx.tree.is_visible(move_button));
+        assert!(cx.tree.is_visible(move_button));
         screen.move_item(&mut cx, handle)?;
-        assert!(cx.status.as_deref().is_some_and(|text| text.contains("отключён")));
-        assert!(!workspace.lock().pending_stash_moves.contains(&handle));
-        assert!(cx.app.draft(&source_sha256).is_none());
+        assert!(cx
+            .status
+            .as_deref()
+            .is_some_and(|text| text.contains("будет перенесён")));
+        assert!(workspace.lock().pending_stash_moves.contains(&handle));
+        assert_eq!(
+            cx.app.draft(&source_sha256).map(|plan| plan.s2_stash_takes.as_slice()),
+            Some(&[handle][..])
+        );
         assert_eq!(fs::read(&path)?, original);
+        Ok(())
+    }
+
+    #[test]
+    fn s2_stash_screen_refuses_to_stage_a_second_transfer() -> sse_core::Result<()> {
+        let temp = TempDirectory::new();
+        let path = temp.0.join("stash.sav");
+        let original = include_bytes!("../../../../fixtures/synthetic/writer-s2-stash/s2-stash-source.sav");
+        fs::write(&path, original)?;
+        let selected = LoadedSave::read(fixture_slot(&path.to_string_lossy(), "stalker2", "stalker2"))?;
+        let source_sha256 = selected.source_sha256.clone();
+        let handle = match &selected.data {
+            super::SaveData::Stalker2 { stash_items, .. } => stash_items
+                .as_ref()
+                .ok_or_else(|| Error::damaged("S2 stash fixture has no stash index"))?
+                .as_ref()
+                .map_err(|error| Error::damaged(error.clone()))?
+                .first()
+                .map(|item| item.handle)
+                .ok_or_else(|| Error::damaged("S2 stash fixture has no items"))?,
+            super::SaveData::Xray { .. } => return Err(Error::damaged("S2 fixture parsed as X-Ray")),
+        };
+        let already_pending = handle.wrapping_add(1);
+        let workspace = Workspace::with_draft_directory(temp.0.join("drafts"));
+        workspace.lock().selected = Some(Arc::new(selected));
+        workspace.lock().pending_stash_moves.insert(already_pending);
+        let mut app = sse_app::AppState::new();
+        app.set_current_save_identity(path.clone(), source_sha256.clone());
+        app.set_current_save_format(Some("stalker2".to_owned()), false);
+        let mut plan = DraftPlan::empty(&source_sha256)?;
+        plan.s2_stash_takes.push(already_pending);
+        app.set_draft_journal(DraftJournal::new(vec![plan], 0)?);
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let mut screen = super::Stashes::new(workspace.clone());
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: None,
+            status: None,
+            app: &mut app,
+        };
+        screen.build(&mut cx, host)?;
+        screen.move_item(&mut cx, handle)?;
+
+        assert!(cx
+            .status
+            .as_deref()
+            .is_some_and(|text| text.contains("Отмените предыдущий перенос")));
+        assert_eq!(workspace.lock().pending_stash_moves, BTreeSet::from([already_pending]));
+        assert_eq!(
+            cx.app.draft(&source_sha256).map(|plan| plan.s2_stash_takes.as_slice()),
+            Some(&[already_pending][..])
+        );
+        assert_eq!(fs::read(&path)?, original);
+        Ok(())
+    }
+
+    #[test]
+    fn stash_move_readback_rejects_changed_item_count() -> sse_core::Result<()> {
+        let original_bytes = include_bytes!("../../../../fixtures/synthetic/writer-s2-stash/s2-stash-source.sav");
+        let slot = fixture_slot("stash.sav", "stalker2", "stalker2");
+        let original = LoadedSave::from_bytes(slot.clone(), original_bytes)?;
+        let (handle, count) = match &original.data {
+            super::SaveData::Stalker2 { save, stash_items, .. } => {
+                let item = stash_items
+                    .as_ref()
+                    .ok_or_else(|| Error::damaged("S2 stash fixture has no stash index"))?
+                    .as_ref()
+                    .map_err(|error| Error::damaged(error.clone()))?
+                    .first()
+                    .ok_or_else(|| Error::damaged("S2 stash fixture has no items"))?;
+                let moved = save.write_changes(&[S2Change::MoveStashToBackpack { handle: item.handle }])?;
+                (item.handle, LoadedSave::from_bytes(slot.clone(), &moved)?)
+            }
+            super::SaveData::Xray { .. } => return Err(Error::damaged("S2 fixture parsed as X-Ray")),
+        };
+        let mut corrupted = count;
+        let item_count = match &mut corrupted.data {
+            super::SaveData::Stalker2 { inventory, .. } => {
+                let item = inventory
+                    .iter_mut()
+                    .find(|item| item.handle == handle)
+                    .ok_or_else(|| Error::damaged("moved item is missing from the read-back inventory"))?;
+                item.count = item.count.saturating_add(1);
+                item.count
+            }
+            super::SaveData::Xray { .. } => return Err(Error::damaged("S2 read-back parsed as X-Ray")),
+        };
+        assert!(item_count > 0);
+        assert!(super::verify_requested_values(
+            &original,
+            &corrupted,
+            &PendingInventoryEdits::default(),
+            &BTreeSet::from([handle]),
+        )
+        .is_err());
         Ok(())
     }
 

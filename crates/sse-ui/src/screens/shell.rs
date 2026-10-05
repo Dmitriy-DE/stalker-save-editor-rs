@@ -82,8 +82,8 @@ fn has_unsupported_edit(format_id: Option<&str>, legacy_s2: bool, plan: &sse_sto
                 || !plan.upgrades.is_empty()
                 || !plan.detach_handles.is_empty()
                 || !plan.adds.is_empty()
-                || !plan.s2_stash_takes.is_empty()
                 || !plan.stash_takes.is_empty()
+                || plan.s2_stash_takes.len() > 1
                 || !plan.stash_puts.is_empty()
         }
         Some(id) => {
@@ -1472,6 +1472,23 @@ mod tests {
     }
 
     #[test]
+    fn verified_s2_stash_move_can_be_saved_from_the_draft() -> sse_core::Result<()> {
+        let source_sha256 = "c".repeat(64);
+        let mut plan = DraftPlan::empty(&source_sha256)?;
+        plan.s2_stash_takes.push(0x3000_0010);
+
+        let eligibility = save_eligibility(true, Some("stalker2"), false, Some(&plan), false);
+
+        assert!(eligibility.can_save);
+        assert_eq!(eligibility.change_count, 1);
+        assert_eq!(
+            eligibility.reason,
+            "Сохранить изменения в файл сейва (с созданием резервной копии)."
+        );
+        Ok(())
+    }
+
+    #[test]
     fn saving_uses_a_modal_overlay_and_closes_it_after_completion() -> sse_core::Result<()> {
         let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
         let shell = Shell::build(&mut tree, None)?;
@@ -1532,19 +1549,28 @@ mod tests {
     }
 
     #[test]
-    fn unverified_s2_stash_transfers_are_counted_but_not_saveable() -> sse_core::Result<()> {
+    fn verified_s2_stash_transfers_are_counted_and_saveable_only_for_current_layouts() -> sse_core::Result<()> {
         let source_sha256 = "c".repeat(64);
         let mut plan = DraftPlan::empty(&source_sha256)?;
-        plan.s2_stash_takes.push(0x1234_5678);
+        plan.s2_stash_takes.extend([0x1234_5678, 0x8765_4321]);
 
-        let eligibility = save_eligibility(true, Some("stalker2"), false, Some(&plan), false);
+        let multiple = save_eligibility(true, Some("stalker2"), false, Some(&plan), false);
 
-        assert_eq!(eligibility.change_count, 1);
-        assert!(!eligibility.can_save);
+        assert_eq!(multiple.change_count, 2);
+        assert!(!multiple.can_save);
         assert_eq!(
-            eligibility.reason,
+            multiple.reason,
             "Эта правка для формата S.T.A.L.K.E.R. 2 не поддерживается (см. «Возможности»)."
         );
+        plan.s2_stash_takes.pop();
+        let eligibility = save_eligibility(true, Some("stalker2"), false, Some(&plan), false);
+        assert_eq!(eligibility.change_count, 1);
+        assert!(eligibility.can_save);
+        assert_eq!(
+            eligibility.reason,
+            "Сохранить изменения в файл сейва (с созданием резервной копии)."
+        );
+        assert!(!save_eligibility(true, Some("stalker2"), true, Some(&plan), false).can_save);
         Ok(())
     }
 
