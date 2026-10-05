@@ -871,9 +871,6 @@ impl Shell {
         };
         let initial_collapsed = settings.navigation_collapsed.unwrap_or(false);
         shell.apply_navigation(tree, initial_collapsed)?;
-        for index in 0..shell.screens.len() {
-            shell.prepare(tree, index)?;
-        }
         shell.show(tree, 0)?;
         shell.render_library(tree)?;
         shell.sync_draft_controls(tree)?;
@@ -987,6 +984,12 @@ impl Shell {
     pub fn open(&mut self, tree: &mut Tree, id: ScreenId) -> Result<()> {
         if self.library_workspace.is_saving() {
             return Ok(());
+        }
+        let (width, height) = tree.size();
+        if width > 0 && height > 0 {
+            for index in 0..self.screens.len() {
+                self.prepare(tree, index)?;
+            }
         }
         match self.screens.iter().position(|screen| screen.id() == id) {
             Some(index) => self.select(tree, index),
