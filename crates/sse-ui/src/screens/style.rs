@@ -189,6 +189,41 @@ pub fn button(tree: &mut Tree, parent: WidgetId, text: &str, role: Button) -> Re
     tree.add(Some(parent), NodeKind::Leaf, style, content, look)
 }
 
+/// One-line editable text field.
+///
+/// # Errors
+/// Returns an error from the widget tree.
+pub fn input(tree: &mut Tree, parent: WidgetId, placeholder: &str) -> Result<WidgetId> {
+    let colors = theme::current().colors;
+    tree.add(
+        Some(parent),
+        NodeKind::Leaf,
+        Style {
+            min: Size::new(160.0, theme::BUTTON_HEIGHT),
+            padding: Edges {
+                left: 10.0,
+                top: 0.0,
+                right: 10.0,
+                bottom: 0.0,
+            },
+            grow: 1.0,
+            ..Style::default()
+        },
+        Content::Input {
+            text: String::new(),
+            placeholder: placeholder.to_owned(),
+            style: TextStyle::new(Face::Body, 14.0),
+        },
+        Look {
+            fill: Some(rgb(colors.background[1])),
+            border: Some((rgb(colors.borders[1]), 1.0)),
+            radius: theme::BUTTON_RADIUS,
+            text: rgb(colors.text[0]),
+            ..Look::default()
+        },
+    )
+}
+
 /// Sidebar item look.
 #[must_use]
 pub fn nav(selected: bool) -> Look {
