@@ -8,6 +8,7 @@ use std::ops::Range;
 pub const MAXIMUM_UNPACKED_SIZE: usize = 256 * 1024 * 1024;
 const MAXIMUM_OWNED_HANDLES: usize = 4096;
 const MAXIMUM_GRID_CELLS: usize = 8192;
+const KRAKEN_BLOCK_SIZE: usize = 0x4_0000;
 const GRID_WIDTH: u16 = 8;
 const WALLET_ANCHOR: [u8; 32] = [
     0x00, 0x38, 0x01, 0x00, 0x00, 0x00, 0x01, 0x10, 0xca, 0xcf, 0xa8, 0x48, 0xc8, 0x95, 0x21, 0x49, 0xb5, 0x1b, 0x94,
@@ -2050,13 +2051,23 @@ fn pack_and_verify_s2_image_with_stream(image: &[u8], compressed: &[u8]) -> Resu
         }
     }
 
+    let block_count = image
+        .len()
+        .checked_add(KRAKEN_BLOCK_SIZE - 1)
+        .ok_or_else(|| Error::damaged("S2 stored Kraken block count overflows"))?
+        / KRAKEN_BLOCK_SIZE;
+    let headers_size = block_count
+        .checked_mul(2)
+        .ok_or_else(|| Error::damaged("S2 stored Kraken header length overflows"))?;
     let stored_capacity = image
         .len()
-        .checked_add(2)
-        .ok_or_else(|| Error::damaged("S2 stored Kraken block length overflows"))?;
+        .checked_add(headers_size)
+        .ok_or_else(|| Error::damaged("S2 stored Kraken stream length overflows"))?;
     let mut stored = Vec::with_capacity(stored_capacity);
-    stored.extend_from_slice(&[0xcc, 0x06]);
-    stored.extend_from_slice(image);
+    for block in image.chunks(KRAKEN_BLOCK_SIZE) {
+        stored.extend_from_slice(&[0xcc, 0x06]);
+        stored.extend_from_slice(block);
+    }
     let packed = pack_s2_container(image, &stored)?;
     let verified = S2Container::from_bytes(&packed)?;
     if verified.image() != image {
@@ -2411,6 +2422,24 @@ mod tests {
             (super::read_u32(&packed, trailer), packed.get(..trailer).map(crc32::crc32)),
             (Ok(stored), Some(computed)) if stored == computed
         ));
+    }
+
+    #[test]
+    fn s2_writer_emits_a_stored_header_for_every_kraken_block() {
+        let mut image = vec![0_u8; 0x4_0001];
+        for (index, byte) in image.iter_mut().enumerate() {
+            *byte = u8::try_from(index.wrapping_mul(37) & 0xff).unwrap_or_default();
+        }
+        let rejected_candidate = vec![0_u8; image.len().saturating_add(3)];
+
+        let packed = super::pack_and_verify_s2_image_with_stream(&image, &rejected_candidate);
+        assert!(packed.is_ok());
+        let Ok((packed, verified)) = packed else { return };
+        assert_eq!(verified.image(), image);
+        assert!(packed.get(4..6).is_some_and(|header| header == [0xcc, 0x06]));
+        assert!(packed
+            .get(4 + 2 + 0x4_0000..4 + 2 + 0x4_0000 + 2)
+            .is_some_and(|header| header == [0xcc, 0x06]));
     }
 
     #[test]
