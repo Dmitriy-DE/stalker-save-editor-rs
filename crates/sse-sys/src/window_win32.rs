@@ -225,7 +225,7 @@ struct State {
 /// Win32 implementation.
 pub struct Win32Window {
     hwnd: w::Hwnd,
-    state: Box<State>,
+    state: *mut State,
     wake: WakeHandle,
     hotkeys: Vec<i32>,
     com: bool,
@@ -260,7 +260,7 @@ impl Win32Window {
             small_icon: ptr::null_mut(),
         }; // SAFETY: WNDCLASSEX and UTF-16 name are valid for this call.
         let _ = unsafe { w::RegisterClassExW(&wc) };
-        let mut state = Box::new(State {
+        let state = Box::into_raw(Box::new(State {
             frame: Vec::new(),
             width: options.width,
             height: options.height,
@@ -269,7 +269,7 @@ impl Win32Window {
             min_h: options.min_height,
             high: None,
             cursor: CursorShape::Arrow,
-        });
+        }));
         let width = i32::try_from(options.width).map_err(|_| Error::Refused("window width too large".to_owned()))?;
         let height = i32::try_from(options.height).map_err(|_| Error::Refused("window height too large".to_owned()))?; // SAFETY: registered class, stable Box pointer, NUL-terminated strings.
         let hwnd = unsafe {
@@ -285,13 +285,16 @@ impl Win32Window {
                 ptr::null_mut(),
                 ptr::null_mut(),
                 ptr::null_mut(),
-                state.as_mut() as *mut State as *mut c_void,
+                state.cast::<c_void>(),
             )
         };
         if hwnd.is_null() {
+            // SAFETY: CreateWindowExW failed, so no HWND retained the Box::into_raw pointer.
+            drop(unsafe { Box::from_raw(state) });
             return Err(Error::System("CreateWindowExW failed".to_owned()));
-        } // SAFETY: state remains boxed for HWND lifetime.
-        unsafe { w::SetWindowLongPtrW(hwnd, GWLP_USERDATA, state.as_mut() as *mut State as isize) };
+        }
+        // SAFETY: state is a live Box::into_raw allocation and remains valid until Win32Window::drop.
+        unsafe { w::SetWindowLongPtrW(hwnd, GWLP_USERDATA, state as isize) };
         let dark: i32 = 1; // SAFETY: attribute 20 consumes a BOOL-sized value.
         let _ = unsafe {
             w::DwmSetWindowAttribute(
@@ -312,6 +315,10 @@ impl Win32Window {
             hotkeys: Vec::new(),
             com,
         })
+    }
+    fn state_mut(&mut self) -> &mut State {
+        // SAFETY: Win32Window exclusively owns this Box::into_raw allocation on the window thread.
+        unsafe { &mut *self.state }
     }
     /// Handle suitable for worker threads.
     #[must_use]
@@ -379,12 +386,22 @@ impl Win32Window {
 impl Drop for Win32Window {
     fn drop(&mut self) {
         for id in &self.hotkeys {
+            // SAFETY: hwnd is live here and each ID was registered by this window.
             let _ = unsafe { w::UnregisterHotKey(self.hwnd, *id) };
         }
         if !self.hwnd.is_null() {
+            // SAFETY: clearing user data prevents callbacks during DestroyWindow from borrowing State.
+            unsafe { w::SetWindowLongPtrW(self.hwnd, GWLP_USERDATA, 0) };
+            // SAFETY: hwnd is owned by this Win32Window and is destroyed exactly once.
             let _ = unsafe { w::DestroyWindow(self.hwnd) };
         }
+        if !self.state.is_null() {
+            // SAFETY: state came from Box::into_raw in new and no callback can reach it after user data is cleared.
+            drop(unsafe { Box::from_raw(self.state) });
+            self.state = ptr::null_mut();
+        }
         if self.com {
+            // SAFETY: this thread successfully called CoInitializeEx in new.
             unsafe { w::CoUninitialize() };
         }
     }
@@ -399,10 +416,13 @@ impl Window for Win32Window {
         if frame.len() != bytes {
             return Err(Error::Refused("BGRA frame size mismatch".to_owned()));
         }
-        self.state.frame.clear();
-        self.state.frame.extend_from_slice(frame);
-        self.state.width = width;
-        self.state.height = height;
+        {
+            let state = self.state_mut();
+            state.frame.clear();
+            state.frame.extend_from_slice(frame);
+            state.width = width;
+            state.height = height;
+        }
         for d in damage {
             let r = w::Rect {
                 left: i32::try_from(d.x).unwrap_or_default(),
@@ -422,7 +442,7 @@ impl Window for Win32Window {
         Ok(())
     }
     fn next_event(&mut self, timeout: Option<Duration>) -> Event {
-        if let Some(e) = self.state.events.pop_front() {
+        if let Some(e) = self.state_mut().events.pop_front() {
             return e;
         }
         let ms = timeout.map_or(INFINITE, |d| u32::try_from(d.as_millis()).unwrap_or(u32::MAX));
@@ -451,14 +471,14 @@ impl Window for Win32Window {
                 w::TranslateMessage(&msg);
                 w::DispatchMessageW(&msg);
             }
-            if let Some(e) = self.state.events.pop_front() {
+            if let Some(e) = self.state_mut().events.pop_front() {
                 return e;
             }
         }
         Event::Timeout
     }
     fn set_cursor(&mut self, c: CursorShape) {
-        self.state.cursor = c;
+        self.state_mut().cursor = c;
         let h = cursor_handle(c);
         if !h.is_null() {
             unsafe {
