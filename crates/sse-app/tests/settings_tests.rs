@@ -140,7 +140,6 @@ fn forward_compatibility_unknown_fields_ignored() {
     assert_eq!(settings.theme_id, "zone");
 }
 
-
 #[test]
 fn reads_csharp_snake_case_settings_snapshot() {
     let csharp = br#"{
