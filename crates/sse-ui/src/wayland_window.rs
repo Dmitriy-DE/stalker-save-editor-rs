@@ -530,12 +530,41 @@ fn io(error: std::io::Error) -> Error {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_global, wire_string};
+    use super::{keyboard_event, parse_global, parse_pointer_event, wire_string};
+    use crate::event_loop::WindowEvent;
+
     #[test]
     fn registry_global_decodes() {
         let mut p = 1u32.to_ne_bytes().to_vec();
         p.extend_from_slice(&wire_string("wl_compositor"));
         p.extend_from_slice(&4u32.to_ne_bytes());
         assert_eq!(parse_global(&p), Some((1, "wl_compositor".to_owned(), 4)));
+    }
+
+    #[test]
+    fn pointer_motion_decodes_wayland_fixed_coordinates() {
+        let mut payload = 7_u32.to_ne_bytes().to_vec();
+        payload.extend_from_slice(&(12_i32.checked_mul(256).unwrap_or_default()).to_ne_bytes());
+        payload.extend_from_slice(&(34_i32.checked_mul(256).unwrap_or_default()).to_ne_bytes());
+        let mut position = (0, 0);
+        assert_eq!(
+            parse_pointer_event(2, &payload, 8, &mut position),
+            Some(WindowEvent::PointerMoved { x: 12, y: 34 })
+        );
+        assert_eq!(position, (12, 34));
+    }
+
+    #[test]
+    fn keyboard_event_preserves_ctrl_shortcut_without_text() {
+        assert_eq!(
+            keyboard_event(31, true, true, false),
+            Some(WindowEvent::Key {
+                pressed: true,
+                keysym: u32::from('s'),
+                text: None,
+                ctrl: true,
+                shift: false,
+            })
+        );
     }
 }
