@@ -2570,13 +2570,13 @@ impl Inventory {
                         .clone()
                         .unwrap_or_else(|| "Размещение не прочитано".to_owned()),
                     upgrades,
-                    item.condition.is_some()
+                    item.durability_editable
                         && writer::capability(save.format(), writer::ChangeKind::EditDurability)
                             != writer::Capability::Unsupported,
                     item.placement.is_some()
                         && writer::capability(save.format(), writer::ChangeKind::EditPlacement)
                             != writer::Capability::Unsupported,
-                    item.section.to_ascii_lowercase().starts_with("af_"),
+                    false,
                     writer::capability(save.format(), writer::ChangeKind::RemoveItems)
                         != writer::Capability::Unsupported
                         && item.placement.as_deref() != Some("slot"),
@@ -3648,6 +3648,11 @@ fn prepare_save_edits(
                         "selected X-Ray item has no confirmed condition field".to_owned(),
                     ));
                 };
+                if !item.durability_editable {
+                    return Err(Error::Refused(
+                        "selected X-Ray item has no proven UPDATE condition mirror".to_owned(),
+                    ));
+                }
                 let new_value = f32::from(*percent) / 100.0;
                 if (old_value - new_value).abs() > 0.005 {
                     changes.push(writer::Change::SetDurability {
@@ -5568,19 +5573,43 @@ mod tests {
     }
 
     #[test]
-    fn add_item_draft_uses_a_catalogued_matching_template_and_reads_back() -> sse_core::Result<()> {
+    fn add_item_draft_uses_a_catalogued_template_and_clears_clone_metadata() -> sse_core::Result<()> {
         let source = include_bytes!("../../../../fixtures/synthetic/writer-add/xray-add-cop-ammo-source.sav");
-        let expected = include_bytes!("../../../../fixtures/synthetic/writer-add/xray-add-cop-ammo-expected.sav");
+        let expected = Save::read(include_bytes!(
+            "../../../../fixtures/synthetic/writer-add/xray-add-cop-ammo-expected.sav"
+        ))?;
         let loaded = load_xray(source, "xray-add-cop-ammo-source.sav", "stalker-cop", "cop")?;
         let edits = super::PendingInventoryEdits {
             adds: vec![AddRequest::new("ammo_9x39_pab9", 17, "inventory")?],
             ..super::PendingInventoryEdits::default()
         };
         let (output, _) = prepare_save_edits(&loaded, &edits, &BTreeSet::new())?;
-        assert_eq!(output.as_slice(), expected);
         let reloaded = LoadedSave::from_bytes(loaded.slot.clone(), output.as_slice())?;
         super::verify_requested_values(&loaded, &reloaded, &edits, &BTreeSet::new())?;
         assert_eq!(reloaded.slot.format_id.as_deref(), Some("stalker-cop"));
+        let actual = Save::read(output.as_slice())?;
+        let added = actual
+            .registry_objects()
+            .iter()
+            .find(|record| record.object_id == 4661)
+            .ok_or_else(|| Error::damaged("added inventory object is missing after read-back"))?;
+        assert_eq!(added.name_replace, "");
+        assert_eq!(added.spawn_id, Some(u16::MAX));
+        assert_eq!(added.story_id, Some(u32::MAX));
+        assert_eq!(added.spawn_story_id, Some(u32::MAX));
+        assert_eq!(actual.custom_data(added), Some(&[][..]));
+        let actual_inventory = actual.inventory()?;
+        let expected_inventory = expected.inventory()?;
+        assert_eq!(
+            actual_inventory
+                .iter()
+                .map(|item| (item.handle, item.section.as_str(), item.count))
+                .collect::<Vec<_>>(),
+            expected_inventory
+                .iter()
+                .map(|item| (item.handle, item.section.as_str(), item.count))
+                .collect::<Vec<_>>()
+        );
         Ok(())
     }
 
