@@ -278,17 +278,25 @@ fn window() -> Result<()> {
     let (width, height) = (1280_u16, 800_u16);
     if std::env::var_os("WAYLAND_DISPLAY").is_some() {
         match sse_ui::wayland_window::WaylandWindow::open(
-            "S.T.A.L.K.E.R. Save Editor", u32::from(width), u32::from(height), proxy.clone()
+            "S.T.A.L.K.E.R. Save Editor",
+            u32::from(width),
+            u32::from(height),
+            proxy.clone(),
         ) {
             Ok(mut backend) => {
                 tree.resize(u32::from(width), u32::from(height));
                 let started = Instant::now();
                 std::thread::spawn(move || loop {
                     std::thread::sleep(Duration::from_millis(500));
-                    if !proxy.send(AppMessage::Tick(started.elapsed().as_secs())) { return; }
+                    if !proxy.send(AppMessage::Tick(started.elapsed().as_secs())) {
+                        return;
+                    }
                 });
                 let stats = sse_ui::event_loop::run(&receiver, &mut tree, &mut shell, &mut backend)?;
-                eprintln!("wakes {} frames {} pixels {}" , stats.wakes, stats.frames, stats.pixels, "Wayland");
+                eprintln!(
+                    "wakes {} frames {} pixels {}",
+                    stats.wakes, stats.frames, stats.pixels, "Wayland"
+                );
                 return Ok(());
             }
             Err(error) => eprintln!("Wayland unavailable ({error}); falling back to X11/XWayland"),
