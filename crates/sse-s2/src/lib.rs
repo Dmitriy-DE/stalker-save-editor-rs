@@ -1896,32 +1896,53 @@ fn pack_and_verify_s2_image(image: &[u8], changed_ranges: &[Range<usize>]) -> Re
             "S2 image is outside the supported size range".to_owned(),
         ));
     }
-    let unpacked_size =
-        u32::try_from(image.len()).map_err(|_| Error::Refused("S2 image exceeds u32 length".to_owned()))?;
     for range in changed_ranges {
         if image.get(range.clone()).is_none() {
             return Err(Error::damaged("S2 changed range is out of bounds"));
         }
     }
-    // The LZ+Huffman encoder: its streams decode in the reference ooz (33/33 real saves); the old RLE encoder's did not.
+    // Keep a smaller LZ+Huffman candidate only when the local decoder accepts its complete round-trip.
     let compressed = sse_codecs::kraken_encode::compress(image);
-    if compressed.is_empty() {
-        return Err(Error::Refused("Kraken encoder refused the S2 image".to_owned()));
+    pack_and_verify_s2_image_with_stream(image, &compressed)
+}
+
+fn pack_and_verify_s2_image_with_stream(image: &[u8], compressed: &[u8]) -> Result<Vec<u8>> {
+    if compressed.len() < image.len().saturating_add(2) {
+        if let Ok(packed) = pack_s2_container(image, compressed) {
+            if S2Container::from_bytes(&packed).is_ok_and(|verified| verified.image() == image) {
+                return Ok(packed);
+            }
+        }
     }
-    let capacity = compressed
+
+    // A candidate that is rejected by our reader, or does not beat a raw block, is stored verbatim.
+    let stored_capacity = image
+        .len()
+        .checked_add(2)
+        .ok_or_else(|| Error::damaged("S2 stored Kraken block length overflows"))?;
+    let mut stored = Vec::with_capacity(stored_capacity);
+    stored.extend_from_slice(&[0xcc, 0x06]);
+    stored.extend_from_slice(image);
+    let packed = pack_s2_container(image, &stored)?;
+    let verified = S2Container::from_bytes(&packed)?;
+    if verified.image() != image {
+        return Err(Error::damaged("S2 write verification differs from the complete image"));
+    }
+    Ok(packed)
+}
+
+fn pack_s2_container(image: &[u8], stream: &[u8]) -> Result<Vec<u8>> {
+    let unpacked_size =
+        u32::try_from(image.len()).map_err(|_| Error::Refused("S2 image exceeds u32 length".to_owned()))?;
+    let capacity = stream
         .len()
         .checked_add(8)
         .ok_or_else(|| Error::damaged("S2 output container length overflows"))?;
     let mut packed = Vec::with_capacity(capacity);
     packed.extend_from_slice(&unpacked_size.to_le_bytes());
-    packed.extend_from_slice(&compressed);
+    packed.extend_from_slice(stream);
     let crc = sse_codecs::crc32::crc32(&packed);
     packed.extend_from_slice(&crc.to_le_bytes());
-
-    let verified = S2Container::from_bytes(&packed)?;
-    if verified.image() != image {
-        return Err(Error::damaged("S2 write verification differs from the complete image"));
-    }
     Ok(packed)
 }
 
@@ -2197,6 +2218,26 @@ mod tests {
         let expected_crc = packed.get(..trailer).map(crc32::crc32);
         assert!(matches!(
             (super::read_u32(&packed, trailer), expected_crc),
+            (Ok(stored), Some(computed)) if stored == computed
+        ));
+    }
+
+    #[test]
+    fn s2_writer_uses_a_verified_stored_block_when_kraken_rejects_the_candidate() {
+        let image = b"synthetic S2 image that must survive a rejected compressed candidate";
+        let rejected_candidate = [0x8c, 0x06, 0x00, 0x00, 0x05, 0x80, 0x00, 0x03, 0x20, 0x00, 0x00];
+
+        let packed = super::pack_and_verify_s2_image_with_stream(image, &rejected_candidate);
+        assert!(packed.is_ok());
+        let Ok(packed) = packed else { return };
+        let verified = S2Container::from_bytes(&packed);
+        assert!(verified.is_ok());
+        let Ok(verified) = verified else { return };
+        assert_eq!(verified.image(), image);
+        assert!(packed.get(4..6).is_some_and(|header| header == [0xcc, 0x06]));
+        let trailer = packed.len().saturating_sub(4);
+        assert!(matches!(
+            (super::read_u32(&packed, trailer), packed.get(..trailer).map(crc32::crc32)),
             (Ok(stored), Some(computed)) if stored == computed
         ));
     }
