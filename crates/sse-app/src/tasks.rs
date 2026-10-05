@@ -169,6 +169,18 @@ impl Drop for NamedTaskGuard {
     }
 }
 
+/// Spawns a detached named worker tracked for shutdown deferral.
+pub fn spawn_named_detached<F>(name: &'static str, work: F)
+where
+    F: FnOnce() + Send + 'static,
+{
+    let guard = NamedTaskGuard::enter(name);
+    let _ = thread::Builder::new().name(format!("sse-{name}")).spawn(move || {
+        let _guard = guard;
+        work();
+    });
+}
+
 /// Returns whether any worker with this task name is currently executing.
 #[must_use]
 pub fn named_task_active(name: &str) -> bool {
