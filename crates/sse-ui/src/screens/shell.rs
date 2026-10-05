@@ -355,10 +355,26 @@ impl Shell {
         let mut nav = Vec::with_capacity(screens.len());
         let mut nav_groups = Vec::new();
         let nav_icons = [
-            Icon::Saves, Icon::Inventory, Icon::Factions, Icon::Stash, Icon::MapTransitions,
-            Icon::Backup, Icon::Compare, Icon::Timeline, Icon::Doctor, Icon::Games,
-            Icon::Fixes, Icon::Doctor, Icon::Wrench, Icon::Companion, Icon::Trophy,
-            Icon::Cloud, Icon::Book, Icon::ShieldCapabilities, Icon::Update, Icon::Settings,
+            Icon::Saves,
+            Icon::Inventory,
+            Icon::Factions,
+            Icon::Stash,
+            Icon::MapTransitions,
+            Icon::Backup,
+            Icon::Compare,
+            Icon::Timeline,
+            Icon::Doctor,
+            Icon::Games,
+            Icon::Fixes,
+            Icon::Doctor,
+            Icon::Wrench,
+            Icon::Companion,
+            Icon::Trophy,
+            Icon::Cloud,
+            Icon::Book,
+            Icon::ShieldCapabilities,
+            Icon::Update,
+            Icon::Settings,
         ];
         let mut group: Option<Group> = None;
         for screen in &screens {
@@ -842,12 +858,30 @@ impl Shell {
                 ..Style::default()
             },
         )?;
-        for id in &self.nav_brand { tree.set_visible(*id, !collapsed)?; }
-        for id in &self.nav_groups { tree.set_visible(*id, !collapsed)?; }
+        for id in &self.nav_brand {
+            tree.set_visible(*id, !collapsed)?;
+        }
+        for id in &self.nav_groups {
+            tree.set_visible(*id, !collapsed)?;
+        }
         tree.set_visible(self.nav_version, !collapsed)?;
-        tree.set_text(self.nav_toggle, if collapsed { "☰" } else { "☰  Свернуть меню" })?;
+        tree.set_text(
+            self.nav_toggle,
+            if collapsed {
+                "☰"
+            } else {
+                "☰  Свернуть меню"
+            },
+        )?;
         for (index, id) in self.nav.iter().copied().enumerate() {
-            let text = if collapsed { "" } else { self.screens.get(index).map(|screen| crate::strings::t(screen.id().title())).unwrap_or("") };
+            let text = if collapsed {
+                ""
+            } else {
+                self.screens
+                    .get(index)
+                    .map(|screen| crate::strings::t(screen.id().title()))
+                    .unwrap_or("")
+            };
             tree.set_text(id, text)?;
         }
         Ok(())
@@ -855,7 +889,9 @@ impl Shell {
 
     fn sync_navigation_width(&mut self, tree: &mut Tree, width: u32) -> Result<()> {
         let collapsed = width < 900 || self.nav_user_choice.unwrap_or(width < 1150);
-        if collapsed != self.nav_collapsed { self.apply_navigation(tree, collapsed)?; }
+        if collapsed != self.nav_collapsed {
+            self.apply_navigation(tree, collapsed)?;
+        }
         Ok(())
     }
 
