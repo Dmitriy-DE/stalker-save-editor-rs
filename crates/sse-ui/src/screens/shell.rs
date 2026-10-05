@@ -168,6 +168,7 @@ pub struct Shell {
     reports_ok: WidgetId,
     reports_off: WidgetId,
     saving_dialog: WidgetId,
+    tooltip: WidgetId,
     status: WidgetId,
     selected: usize,
     proxy: Option<Proxy<AppMessage>>,
@@ -809,6 +810,11 @@ impl Shell {
             Text::Body,
         )?;
         tree.set_visible(saving_dialog, false)?;
+        let tooltip = style::label(tree, overlay_host, "", Text::Body)?;
+        tree.set_visible(tooltip, false)?;
+        tree.set_tooltip(nav_toggle, crate::strings::t("Свернуть меню"))?;
+        tree.set_tooltip(library_refresh, crate::strings::t("Обновить"))?;
+        tree.set_tooltip(save, crate::strings::t("Выберите сохранение для редактирования."))?;
 
         let hosts = vec![None; screens.len()];
         let mut shell = Self {
@@ -850,6 +856,7 @@ impl Shell {
             reports_ok,
             reports_off,
             saving_dialog,
+            tooltip,
             status,
             selected: 0,
             proxy,
@@ -892,6 +899,10 @@ impl Shell {
             } else {
                 "☰  Свернуть меню"
             },
+        )?;
+        tree.set_tooltip(
+            self.nav_toggle,
+            crate::strings::t(if collapsed { "Развернуть меню" } else { "Свернуть меню" }),
         )?;
         for (index, id) in self.nav.iter().copied().enumerate() {
             let text = if collapsed {
@@ -1116,6 +1127,7 @@ impl Shell {
         let draft_badge = format!("Черновик: {} действ.", eligibility.change_count);
         tree.set_text(self.draft_badge, &draft_badge)?;
         tree.set_text(self.save_reason, &eligibility.reason)?;
+        tree.set_tooltip(self.save, crate::strings::t(&eligibility.reason))?;
         tree.set_enabled(
             self.undo,
             journal.is_some_and(sse_storage::drafts::DraftJournal::can_undo),
@@ -1156,6 +1168,15 @@ impl Shell {
     }
 
     fn handle(&mut self, tree: &mut Tree, message: &Message<AppMessage>, clicked: Option<WidgetId>) -> Result<Flow> {
+        if matches!(message, Message::User(AppMessage::Tick(_))) {
+            let _ = tree.tick_tooltip();
+            if let Some(text) = tree.active_tooltip().map(str::to_owned) {
+                tree.set_text(self.tooltip, &text)?;
+                tree.set_visible(self.tooltip, true)?;
+            } else {
+                tree.set_visible(self.tooltip, false)?;
+            }
+        }
         if let Message::Window(WindowEvent::Resized { width, .. }) = message {
             self.sync_navigation_width(tree, *width)?;
             let sidebar_width = if self.nav_collapsed { 58 } else { 236 };
