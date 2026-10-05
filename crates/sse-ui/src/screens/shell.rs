@@ -5,6 +5,7 @@ use super::{AppMessage, Context, EditorAction, Group, Screen, ScreenId};
 use crate::event_loop::{App, Flow, Message, Proxy, WindowEvent};
 use crate::glyphs::{to_px, Face, TextStyle};
 use crate::layout::{Align, Edges, NodeKind, Size, Style};
+use crate::path::Icon;
 use crate::widget::{Content, Look, TextAlign, Tree, WidgetId};
 use crate::widgets::scroll::ScrollView;
 use sse_core::Result;
@@ -132,6 +133,13 @@ pub struct Shell {
     screens: Vec<Box<dyn Screen>>,
     hosts: Vec<Option<WidgetId>>,
     nav: Vec<WidgetId>,
+    sidebar: WidgetId,
+    nav_toggle: WidgetId,
+    nav_brand: Vec<WidgetId>,
+    nav_groups: Vec<WidgetId>,
+    nav_version: WidgetId,
+    nav_collapsed: bool,
+    nav_user_choice: Option<bool>,
     content: WidgetId,
     scroll: ScrollView,
     scroll_bar: WidgetId,
@@ -289,8 +297,8 @@ impl Shell {
         )?;
 
         let sidebar_style = Style {
-            preferred: Size::new(232.0, 0.0),
-            min: Size::new(232.0, 0.0),
+            preferred: Size::new(236.0, 0.0),
+            min: Size::new(236.0, 0.0),
             shrink: 0.0,
             padding: padded(0.0, 18.0, 0.0, 12.0),
             align_items: Align::Stretch,
@@ -312,7 +320,7 @@ impl Shell {
             padding: padded(20.0, 0.0, 20.0, 0.0),
             ..Style::default()
         };
-        tree.add(
+        let brand_title = tree.add(
             Some(sidebar),
             NodeKind::Leaf,
             brand,
@@ -325,7 +333,7 @@ impl Shell {
                 ..Look::default()
             },
         )?;
-        tree.add(
+        let brand_subtitle = tree.add(
             Some(sidebar),
             NodeKind::Leaf,
             Style {
@@ -342,15 +350,53 @@ impl Shell {
             },
         )?;
 
+        let nav_toggle = tree.add(
+            Some(sidebar),
+            NodeKind::Leaf,
+            Style {
+                min: Size::new(0.0, 30.0),
+                padding: padded(20.0, 0.0, 12.0, 0.0),
+                ..Style::default()
+            },
+            Content::Button {
+                text: "☰  Свернуть меню".to_owned(),
+                style: TextStyle::new(Face::Heading, 12.0),
+            },
+            style::nav(false),
+        )?;
+
         let library_workspace = super::saves::Workspace::default();
         let screens = super::registry_with_save_workspace(library_workspace.clone());
         let mut nav = Vec::with_capacity(screens.len());
+        let mut nav_groups = Vec::new();
+        let nav_icons = [
+            Icon::Saves,
+            Icon::Inventory,
+            Icon::Factions,
+            Icon::Stash,
+            Icon::MapTransitions,
+            Icon::Backup,
+            Icon::Compare,
+            Icon::Timeline,
+            Icon::Doctor,
+            Icon::Games,
+            Icon::Fixes,
+            Icon::Doctor,
+            Icon::Wrench,
+            Icon::Companion,
+            Icon::Trophy,
+            Icon::Cloud,
+            Icon::Book,
+            Icon::ShieldCapabilities,
+            Icon::Update,
+            Icon::Settings,
+        ];
         let mut group: Option<Group> = None;
         for screen in &screens {
             let id = screen.id();
             if group != Some(id.group()) {
                 group = Some(id.group());
-                tree.add(
+                nav_groups.push(tree.add(
                     Some(sidebar),
                     NodeKind::Leaf,
                     Style {
@@ -365,20 +411,22 @@ impl Shell {
                         text: rgb(style::TEXT_MUTED),
                         ..Look::default()
                     },
-                )?;
+                )?);
             }
             let item = Style {
                 min: Size::new(0.0, 30.0),
                 padding: padded(22.0, 0.0, 12.0, 0.0),
                 ..Style::default()
             };
-            let content = Content::Button {
+            let icon = nav_icons.get(nav.len()).copied().unwrap_or(Icon::Info);
+            let content = Content::IconButton {
+                icon,
                 text: crate::strings::t(id.title()).to_owned(),
                 style: TextStyle::new(Face::Heading, 14.0),
             };
             nav.push(tree.add(Some(sidebar), NodeKind::Leaf, item, content, style::nav(nav.is_empty()))?);
         }
-        tree.add(
+        let nav_version = tree.add(
             Some(sidebar),
             NodeKind::Leaf,
             Style {
@@ -762,6 +810,13 @@ impl Shell {
             screens,
             hosts,
             nav,
+            sidebar,
+            nav_toggle,
+            nav_brand: vec![brand_title, brand_subtitle],
+            nav_groups,
+            nav_version,
+            nav_collapsed: false,
+            nav_user_choice: settings.navigation_collapsed,
             content,
             scroll: ScrollView::new(),
             scroll_bar,
@@ -796,10 +851,63 @@ impl Shell {
             app: sse_app::state::AppState::new(),
             wizard,
         };
+        let initial_collapsed = settings.navigation_collapsed.unwrap_or(false);
+        shell.apply_navigation(tree, initial_collapsed)?;
         shell.show(tree, 0)?;
         shell.render_library(tree)?;
         shell.sync_draft_controls(tree)?;
         Ok(shell)
+    }
+
+    fn apply_navigation(&mut self, tree: &mut Tree, collapsed: bool) -> Result<()> {
+        self.nav_collapsed = collapsed;
+        let width = if collapsed { 58.0 } else { 236.0 };
+        tree.set_style(
+            self.sidebar,
+            Style {
+                preferred: Size::new(width, 0.0),
+                min: Size::new(width, 0.0),
+                shrink: 0.0,
+                padding: padded(0.0, 18.0, 0.0, 12.0),
+                align_items: Align::Stretch,
+                ..Style::default()
+            },
+        )?;
+        for id in &self.nav_brand {
+            tree.set_visible(*id, !collapsed)?;
+        }
+        for id in &self.nav_groups {
+            tree.set_visible(*id, !collapsed)?;
+        }
+        tree.set_visible(self.nav_version, !collapsed)?;
+        tree.set_text(
+            self.nav_toggle,
+            if collapsed {
+                "☰"
+            } else {
+                "☰  Свернуть меню"
+            },
+        )?;
+        for (index, id) in self.nav.iter().copied().enumerate() {
+            let text = if collapsed {
+                ""
+            } else {
+                self.screens
+                    .get(index)
+                    .map(|screen| crate::strings::t(screen.id().title()))
+                    .unwrap_or("")
+            };
+            tree.set_text(id, text)?;
+        }
+        Ok(())
+    }
+
+    fn sync_navigation_width(&mut self, tree: &mut Tree, width: u32) -> Result<()> {
+        let collapsed = width < 900 || self.nav_user_choice.unwrap_or(width < 1150);
+        if collapsed != self.nav_collapsed {
+            self.apply_navigation(tree, collapsed)?;
+        }
+        Ok(())
     }
 
     /// Shared application state.
@@ -1041,7 +1149,9 @@ impl Shell {
 
     fn handle(&mut self, tree: &mut Tree, message: &Message<AppMessage>, clicked: Option<WidgetId>) -> Result<Flow> {
         if let Message::Window(WindowEvent::Resized { width, .. }) = message {
-            let panel_width = width.saturating_sub(232);
+            self.sync_navigation_width(tree, *width)?;
+            let sidebar_width = if self.nav_collapsed { 58 } else { 236 };
+            let panel_width = width.saturating_sub(sidebar_width);
             tree.set_visible(self.edition, panel_width >= 1000)?;
             let middle_width = width.saturating_sub(232);
             let library_width = if middle_width < 1100 {
@@ -1072,6 +1182,19 @@ impl Shell {
             )
         {
             self.sync_saving_overlay(tree)?;
+            return Ok(Flow::Continue);
+        }
+        if clicked == Some(self.nav_toggle) {
+            let wanted = !self.nav_collapsed;
+            self.apply_navigation(tree, wanted)?;
+            self.nav_user_choice = Some(wanted);
+            std::thread::spawn(move || {
+                let path = sse_app::default_settings_path();
+                let mut settings = sse_app::AppSettings::load(&path);
+                settings.navigation_collapsed = Some(wanted);
+                let _ = settings.save(&path);
+            });
+            tree.set_text(self.status, "Состояние меню сохранено.")?;
             return Ok(Flow::Continue);
         }
         if let Message::Window(WindowEvent::Wheel { delta }) = message {
