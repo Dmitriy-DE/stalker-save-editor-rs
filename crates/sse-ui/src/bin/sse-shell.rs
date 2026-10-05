@@ -337,8 +337,7 @@ fn ci_i18n_layout() -> Result<()> {
                 None,
             )?;
             let stride = usize::try_from(width).unwrap_or(0);
-            let mut frame =
-                vec![0_u32; stride.saturating_mul(usize::try_from(height).unwrap_or(0))];
+            let mut frame = vec![0_u32; stride.saturating_mul(usize::try_from(height).unwrap_or(0))];
             for id in ScreenId::ALL {
                 shell.open(&mut tree, id)?;
                 tree.paint(&mut frame, stride)?;
