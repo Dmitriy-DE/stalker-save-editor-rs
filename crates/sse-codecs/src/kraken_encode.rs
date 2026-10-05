@@ -13,7 +13,7 @@ const MAX_HISTORY_SIZE: usize = 0x10000;
 const MAX_INPUT_SIZE: usize = 0x20000000;
 const HASH_BITS: usize = 16;
 const HASH_SIZE: usize = 1 << HASH_BITS;
-const MAX_CHAIN_SEARCH: usize = 8;
+const MAX_CHAIN_SEARCH: usize = 16;
 const MAX_MATCH_LENGTH: usize = SUB_BLOCK_SIZE;
 const MAX_EXTENDED_LENGTHS: usize = 512;
 const NO_POSITION: u32 = u32::MAX;
@@ -202,7 +202,7 @@ fn find_matches(input: &[u8], start_position: usize) -> Option<Vec<MatchToken>> 
 
         let (best_length, best_distance) = find_best_match(input, position, &heads, &previous)?;
         if best_length >= 3 {
-            if best_length <= 4 {
+            if best_length <= 6 {
                 if let Some(future) = find_better_future_match(input, position, best_length, &mut heads, &mut previous)?
                 {
                     position = future;
@@ -286,12 +286,7 @@ fn find_best_match(input: &[u8], position: usize, heads: &[u32], previous: &[u32
             break;
         }
         if distance_code(distance).is_some() {
-            let mut length = 0_usize;
-            while length < max_length
-                && input.get(position.checked_add(length)?)? == input.get(candidate_position.checked_add(length)?)?
-            {
-                length = length.checked_add(1)?;
-            }
+            let length = common_prefix_length(input, position, candidate_position, max_length)?;
             if length > best_length {
                 best_length = length;
                 best_distance = distance;
@@ -304,6 +299,32 @@ fn find_best_match(input: &[u8], position: usize, heads: &[u32], previous: &[u32
         attempts = attempts.checked_add(1)?;
     }
     Some((best_length, best_distance))
+}
+
+fn common_prefix_length(input: &[u8], position: usize, candidate: usize, max_length: usize) -> Option<usize> {
+    let mut length = 0_usize;
+    while length < max_length {
+        let current_at = position.checked_add(length)?;
+        let candidate_at = candidate.checked_add(length)?;
+        if input.get(current_at)? != input.get(candidate_at)? {
+            return Some(length);
+        }
+
+        if max_length.saturating_sub(length) >= 8 {
+            let current_end = current_at.checked_add(8)?;
+            let candidate_end = candidate_at.checked_add(8)?;
+            let current: [u8; 8] = input.get(current_at..current_end)?.try_into().ok()?;
+            let prior: [u8; 8] = input.get(candidate_at..candidate_end)?.try_into().ok()?;
+            let differing_bits = u64::from_le_bytes(current) ^ u64::from_le_bytes(prior);
+            if differing_bits != 0 {
+                return length.checked_add(usize::try_from(differing_bits.trailing_zeros() / 8).ok()?);
+            }
+            length = length.checked_add(8)?;
+        } else {
+            length = length.checked_add(1)?;
+        }
+    }
+    Some(length)
 }
 
 fn hash_at(input: &[u8], position: usize) -> Option<usize> {
@@ -703,8 +724,18 @@ fn push_u24_be(output: &mut Vec<u8>, value: usize) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{append_entropy, push_u24_be};
+    use super::{append_entropy, common_prefix_length, push_u24_be};
     use crate::kraken;
+
+    #[test]
+    fn common_prefix_length_reports_a_mismatch_inside_a_word() {
+        assert_eq!(common_prefix_length(b"abcdefgXabcdefYx", 0, 8, 8), Some(6));
+    }
+
+    #[test]
+    fn common_prefix_length_supports_overlapping_lz_matches() {
+        assert_eq!(common_prefix_length(b"aaaaaaa", 1, 0, 6), Some(6));
+    }
 
     #[test]
     fn sparse_huffman_three_streams_round_trip() {

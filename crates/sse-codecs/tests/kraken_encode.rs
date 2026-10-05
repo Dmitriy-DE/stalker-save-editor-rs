@@ -165,3 +165,46 @@ fn fixture_encoder_throughput_exceeds_target() {
     eprintln!("fixture encoder: {throughput_mib} MiB/s over {total_bytes} input bytes");
     assert!(throughput_mib >= 50, "encoder throughput was below 50 MiB/s");
 }
+
+#[test]
+#[ignore = "local release-mode compressed-size report"]
+fn fixture_encoder_size_report() {
+    let root = fixture_root();
+    let mut seen_raw = std::collections::BTreeSet::new();
+    let mut total_raw = 0_usize;
+    let mut total_encoded = 0_usize;
+    let mut total_reference = 0_usize;
+    for vector in vectors() {
+        if !seen_raw.insert(vector.raw.clone()) {
+            continue;
+        }
+        let raw = fs::read(root.join(&vector.raw)).unwrap_or_else(|error| panic!("read {}: {error}", vector.raw));
+        let encoded = kraken_encode::compress(&raw);
+        let level_four = vector
+            .name
+            .rsplit_once("-l")
+            .map(|(base, _)| format!("{base}-l4.kraken"))
+            .unwrap_or_else(|| panic!("{} has no compression level", vector.name));
+        let reference = fs::read(root.join(&level_four)).unwrap_or_else(|error| panic!("read {level_four}: {error}"));
+        let reference_percent = encoded
+            .len()
+            .saturating_mul(100)
+            .checked_div(reference.len().max(1))
+            .unwrap_or_default();
+        eprintln!(
+            "{}: encoded={} B, raw={} B, level4={} B, encoded/level4={} %",
+            vector.raw,
+            encoded.len(),
+            raw.len(),
+            reference.len(),
+            reference_percent
+        );
+        total_raw = total_raw.saturating_add(raw.len());
+        total_encoded = total_encoded.saturating_add(encoded.len());
+        total_reference = total_reference.saturating_add(reference.len());
+    }
+    eprintln!(
+        "total: encoded={} B / raw={} B; encoded={} B / level4={} B",
+        total_encoded, total_raw, total_encoded, total_reference
+    );
+}
