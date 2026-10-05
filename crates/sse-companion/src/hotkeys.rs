@@ -197,6 +197,11 @@ impl HotkeyLayout {
         self.bindings.get(&action).copied()
     }
 
+    /// Iterates over configured bindings in stable action order.
+    pub fn bindings(&self) -> impl Iterator<Item = (HotkeyAction, HotkeyGesture)> + '_ {
+        self.bindings.iter().map(|(action, gesture)| (*action, *gesture))
+    }
+
     /// Emits deterministic C#-compatible text.
     #[must_use]
     pub fn to_text(&self) -> String {
