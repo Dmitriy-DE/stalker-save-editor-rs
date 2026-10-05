@@ -1179,6 +1179,8 @@ struct Environment {
     profile_ids: Vec<String>,
     selected_profile: Option<String>,
     pending_restore: Option<String>,
+    pending_delete_snapshot: Option<String>,
+    pending_delete_profile: Option<String>,
 }
 
 impl Environment {
@@ -1423,17 +1425,18 @@ impl Screen for Environment {
                     cx.status = Some("Управляемая установка: не выбрана".to_owned());
                     return Ok(());
                 };
-                let selected = self.selected_snapshot.clone();
-                let deleted = if let Some(id) = selected {
-                    sse_fixes::toolkit::ToolkitSnapshotService::delete_snapshot(&directory, &id)?;
-                    Some(id)
-                } else {
-                    None
+                let Some(id) = self.selected_snapshot.clone() else {
+                    cx.status = Some("Снимков пока нет: создайте первый кнопкой ниже.".to_owned());
+                    return Ok(());
                 };
-                match deleted {
-                    Some(id) => cx.status = Some(format!("Снимок удалён: {id}")),
-                    None => cx.status = Some("Снимков пока нет: создайте первый кнопкой ниже.".to_owned()),
+                if self.pending_delete_snapshot.as_deref() != Some(id.as_str()) {
+                    self.pending_delete_snapshot = Some(id.clone());
+                    cx.status = Some(format!("Удаление снимка необратимо. Нажмите «УДАЛИТЬ СНИМОК» ещё раз для подтверждения: {id}"));
+                    return Ok(());
                 }
+                self.pending_delete_snapshot = None;
+                sse_fixes::toolkit::ToolkitSnapshotService::delete_snapshot(&directory, &id)?;
+                cx.status = Some(format!("Снимок удалён: {id}"));
                 self.selected_snapshot = None;
                 self.refresh_lists(cx)?;
                 return Ok(());
@@ -1538,6 +1541,12 @@ impl Screen for Environment {
                     .and_then(|id| profiles.iter().find(|item| item.id == id))
                     .or_else(|| profiles.first());
                 if let Some(selected) = selected {
+                    if self.pending_delete_profile.as_deref() != Some(selected.id.as_str()) {
+                        self.pending_delete_profile = Some(selected.id.clone());
+                        cx.status = Some(format!("Удаление профиля необратимо. Нажмите «УДАЛИТЬ ПРОФИЛЬ» ещё раз для подтверждения: {}", selected.profile.name));
+                        return Ok(());
+                    }
+                    self.pending_delete_profile = None;
                     match sse_fixes::toolkit::ToolkitProfileService::delete_profile(
                         &sse_app::paths::default_data_directory(),
                         &selected.id,
