@@ -423,7 +423,7 @@ impl DraftStore {
         Ok(self.directory.join(format!("{source_sha256}.json")))
     }
 
-    /// Loads schemas 1–3, returning `None` for a missing, invalid, or oversized draft.
+    /// Loads schemas 1–4, returning `None` for a missing, invalid, or oversized draft.
     pub fn load(&self, source_sha256: &str) -> Result<Option<DraftJournal>> {
         let path = self.path_for(source_sha256)?;
         if fs::symlink_metadata(&path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
@@ -544,7 +544,10 @@ fn parse_journal(bytes: &[u8], expected_sha256: &str) -> Result<DraftJournal> {
             .collect::<Result<Vec<_>>>()?,
         3 => plans
             .iter()
-            .map(|plan| parse_current_plan(plan, expected_sha256, true, false))
+            .map(|plan| {
+                let includes_s2_stash_takes = object_entries(plan)?.iter().any(|(name, _)| name == "s2StashTakes");
+                parse_current_plan(plan, expected_sha256, true, includes_s2_stash_takes)
+            })
             .collect::<Result<Vec<_>>>()?,
         4 => plans
             .iter()
@@ -792,6 +795,13 @@ fn parse_legacy_plan(value: &JsonValue, source_sha256: &str) -> Result<DraftPlan
 
 fn serialize_journal(journal: &DraftJournal) -> Result<Vec<u8>> {
     validate_journal(journal)?;
+    let extended = journal.plans.iter().any(|plan| {
+        !plan.durability.is_empty()
+            || !plan.placements.is_empty()
+            || !plan.upgrades.is_empty()
+            || !plan.s2_stash_takes.is_empty()
+    });
+    let schema = if extended { 3 } else { 2 };
     let mut writer = Writer::compact();
     writer.object_start()?;
     writer.key("index")?;
@@ -799,11 +809,11 @@ fn serialize_journal(journal: &DraftJournal) -> Result<Vec<u8>> {
     writer.key("plans")?;
     writer.array_start()?;
     for plan in &journal.plans {
-        write_current_plan(&mut writer, plan)?;
+        write_current_plan(&mut writer, plan, extended)?;
     }
     writer.array_end()?;
     writer.key("schema")?;
-    writer.u64(4)?;
+    writer.u64(schema)?;
     writer.key("source_sha256")?;
     writer.string(
         &journal
@@ -815,7 +825,7 @@ fn serialize_journal(journal: &DraftJournal) -> Result<Vec<u8>> {
     writer.finish()
 }
 
-fn write_current_plan(writer: &mut Writer, plan: &DraftPlan) -> Result<()> {
+fn write_current_plan(writer: &mut Writer, plan: &DraftPlan, extended: bool) -> Result<()> {
     writer.object_start()?;
     writer.key("sourceSha256")?;
     writer.string(&plan.source_sha256)?;
@@ -857,12 +867,14 @@ fn write_current_plan(writer: &mut Writer, plan: &DraftPlan) -> Result<()> {
         writer.u64(u64::from(*handle))?;
     }
     writer.array_end()?;
-    writer.key("s2StashTakes")?;
-    writer.array_start()?;
-    for handle in &plan.s2_stash_takes {
-        writer.u64(u64::from(*handle))?;
+    if extended {
+        writer.key("s2StashTakes")?;
+        writer.array_start()?;
+        for handle in &plan.s2_stash_takes {
+            writer.u64(u64::from(*handle))?;
+        }
+        writer.array_end()?;
     }
-    writer.array_end()?;
     writer.key("stashPuts")?;
     writer.array_start()?;
     for transfer in &plan.stash_puts {
@@ -874,36 +886,38 @@ fn write_current_plan(writer: &mut Writer, plan: &DraftPlan) -> Result<()> {
         writer.object_end()?;
     }
     writer.array_end()?;
-    writer.key("durability")?;
-    writer.object_start()?;
-    for (handle, durability) in &plan.durability {
-        writer.key(&handle.to_string())?;
-        writer.u64(u64::from(*durability))?;
-    }
-    writer.object_end()?;
-    writer.key("placements")?;
-    writer.object_start()?;
-    for (handle, placement) in &plan.placements {
-        writer.key(&handle.to_string())?;
-        let encoded = match placement {
-            DraftPlacement::Ruck => "ruck".to_owned(),
-            DraftPlacement::Belt => "belt".to_owned(),
-            DraftPlacement::Slot(slot) => format!("slot:{slot}"),
-        };
-        writer.string(&encoded)?;
-    }
-    writer.object_end()?;
-    writer.key("upgrades")?;
-    writer.object_start()?;
-    for (handle, upgrades) in &plan.upgrades {
-        writer.key(&handle.to_string())?;
-        writer.array_start()?;
-        for upgrade in upgrades {
-            writer.string(upgrade)?;
+    if extended {
+        writer.key("durability")?;
+        writer.object_start()?;
+        for (handle, durability) in &plan.durability {
+            writer.key(&handle.to_string())?;
+            writer.u64(u64::from(*durability))?;
         }
-        writer.array_end()?;
+        writer.object_end()?;
+        writer.key("placements")?;
+        writer.object_start()?;
+        for (handle, placement) in &plan.placements {
+            writer.key(&handle.to_string())?;
+            let encoded = match placement {
+                DraftPlacement::Ruck => "ruck".to_owned(),
+                DraftPlacement::Belt => "belt".to_owned(),
+                DraftPlacement::Slot(slot) => format!("slot:{slot}"),
+            };
+            writer.string(&encoded)?;
+        }
+        writer.object_end()?;
+        writer.key("upgrades")?;
+        writer.object_start()?;
+        for (handle, upgrades) in &plan.upgrades {
+            writer.key(&handle.to_string())?;
+            writer.array_start()?;
+            for upgrade in upgrades {
+                writer.string(upgrade)?;
+            }
+            writer.array_end()?;
+        }
+        writer.object_end()?;
     }
-    writer.object_end()?;
     writer.key("unmappedLegacyPlan")?;
     if let Some(unmapped) = &plan.unmapped_legacy_plan {
         write_json_value(writer, unmapped)?;

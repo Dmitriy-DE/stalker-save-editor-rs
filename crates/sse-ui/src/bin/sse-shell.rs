@@ -276,6 +276,32 @@ fn window() -> Result<()> {
     let mut tree = Tree::new(Fonts::bundled()?, rgb(BG_BASE));
     let mut shell = Shell::build(&mut tree, Some(proxy.clone()))?;
     let (width, height) = (1280_u16, 800_u16);
+    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        match sse_ui::wayland_window::WaylandWindow::open(
+            "S.T.A.L.K.E.R. Save Editor",
+            u32::from(width),
+            u32::from(height),
+            proxy.clone(),
+        ) {
+            Ok(mut backend) => {
+                tree.resize(u32::from(width), u32::from(height));
+                let started = Instant::now();
+                std::thread::spawn(move || loop {
+                    std::thread::sleep(Duration::from_millis(500));
+                    if !proxy.send(AppMessage::Tick(started.elapsed().as_secs())) {
+                        return;
+                    }
+                });
+                let stats = sse_ui::event_loop::run(&receiver, &mut tree, &mut shell, &mut backend)?;
+                eprintln!(
+                    "Wayland wakes {} frames {} pixels {}",
+                    stats.wakes, stats.frames, stats.pixels
+                );
+                return Ok(());
+            }
+            Err(error) => eprintln!("Wayland unavailable ({error}); falling back to X11/XWayland"),
+        }
+    }
     let mut backend =
         sse_ui::x11_window::X11Window::open("S.T.A.L.K.E.R. Save Editor", width, height, BG_BASE, proxy.clone())?;
     tree.resize(u32::from(width), u32::from(height));

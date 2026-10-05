@@ -400,29 +400,12 @@ fn prepare_and_export(arguments: &[String]) -> Result<(), WriteFailure> {
     for addition in &options.additions {
         let template_object = match addition.template_object {
             Some(handle) => handle,
-            None => {
-                let matching = save
-                    .registry_objects()
-                    .iter()
-                    .filter(|record| record.name.eq_ignore_ascii_case(&addition.item_key))
-                    .map(|record| record.object_id)
-                    .collect::<Vec<_>>();
-                match matching.as_slice() {
-                    [handle] => *handle,
-                    [] => {
-                        return Err(WriteFailure::Core(Error::Refused(format!(
-                            "no confirmed registry template matches item key '{}' (use TEMPLATE:KEY=COUNT)",
-                            addition.item_key
-                        ))));
-                    }
-                    _ => {
-                        return Err(WriteFailure::Core(Error::Refused(format!(
-                            "item key '{}' matches multiple registry templates; specify TEMPLATE:KEY=COUNT",
-                            addition.item_key
-                        ))));
-                    }
-                }
-            }
+            None => automatic_add_template(&save, &addition.item_key).ok_or_else(|| {
+                WriteFailure::Core(Error::Refused(format!(
+                    "no confirmed registry template matches item key '{}'",
+                    addition.item_key
+                )))
+            })?,
         };
         if addition.template_object.is_some() {
             let template = save
@@ -842,6 +825,19 @@ fn allocate_object_id(reserved: &mut HashSet<u16>, template: u16) -> Result<u16,
     Err(WriteFailure::Core(Error::Refused(
         "no unused X-Ray object id is available".to_owned(),
     )))
+}
+
+fn automatic_add_template(save: &Save, item_key: &str) -> Option<u16> {
+    let same_section = |record: &&sse_xray::RegistryObject| record.name.eq_ignore_ascii_case(item_key);
+    let preferred = save.registry_objects().iter().find(|record| {
+        same_section(record)
+            && record.story_id == Some(u32::MAX)
+            && record.spawn_story_id == Some(u32::MAX)
+            && save.custom_data(record).is_some_and(|data| data.is_empty())
+    });
+    preferred
+        .or_else(|| save.registry_objects().iter().find(same_section))
+        .map(|record| record.object_id)
 }
 
 fn placement_name(placement: Placement) -> String {
@@ -1863,6 +1859,95 @@ mod write_tests {
             .find(|item| item.handle == 4661)
             .expect("new stack should be in the actor inventory");
         assert_eq!(added_stack.count, Some(17));
+    }
+
+    #[test]
+    fn edit_add_without_template_selects_when_multiple_same_section_candidates_exist() {
+        let temporary = TempDirectory::new();
+        let saves = temporary.0.join("saves");
+        fs::create_dir(&saves).expect("create save directory");
+        let source = saves.join("source.sav");
+        let output = saves.join("edited.sav");
+        let backups = temporary.0.join("backups");
+        let fixture = include_bytes!("../../../fixtures/synthetic/writer-add/xray-add-cop-ammo-source.sav");
+        let initial = Save::read(fixture).expect("read add fixture");
+        assert_eq!(
+            super::automatic_add_template(&initial, "ammo_9x39_pab9"),
+            Some(4660),
+            "a sole same-section template remains the fallback even with metadata"
+        );
+        assert_eq!(super::automatic_add_template(&initial, "missing_section"), None);
+        let seed = writer::apply(
+            &initial,
+            &writer::ChangeSet::new(vec![writer::Change::AddItem {
+                template_object: 4660,
+                item_key: "ammo_9x39_pab9".to_owned(),
+                object_id: 4661,
+                quantity: 1,
+            }]),
+        )
+        .expect("seed a second same-section template");
+        let seeded = Save::read(seed.as_slice()).expect("read seeded save");
+        let quest_template = seeded
+            .registry_objects()
+            .iter()
+            .find(|record| record.object_id == 4660)
+            .expect("fixture's original candidate should exist");
+        assert_ne!(quest_template.story_id, Some(u32::MAX));
+        assert_ne!(quest_template.spawn_story_id, Some(u32::MAX));
+        assert_ne!(seeded.custom_data(quest_template), Some(&[][..]));
+        let safe_template = seeded
+            .registry_objects()
+            .iter()
+            .find(|record| record.object_id == 4661)
+            .expect("seeded candidate should exist");
+        assert_eq!(safe_template.story_id, Some(u32::MAX));
+        assert_eq!(safe_template.spawn_story_id, Some(u32::MAX));
+        assert_eq!(seeded.custom_data(safe_template), Some(&[][..]));
+        assert_eq!(
+            seeded
+                .registry_objects()
+                .iter()
+                .filter(|record| record.name.eq_ignore_ascii_case("ammo_9x39_pab9"))
+                .count(),
+            2,
+            "test input must have multiple candidates for the requested section"
+        );
+        assert_eq!(
+            super::automatic_add_template(&seeded, "ammo_9x39_pab9"),
+            Some(4661),
+            "prefer the same-section candidate without story metadata or custom data"
+        );
+        fs::write(&source, seed.as_slice()).expect("write seeded save");
+
+        let result = run(&[
+            "edit".to_owned(),
+            source.display().to_string(),
+            "--add".to_owned(),
+            "ammo_9x39_pab9=7".to_owned(),
+            "--output".to_owned(),
+            output.display().to_string(),
+            "--backup-dir".to_owned(),
+            backups.display().to_string(),
+        ]);
+
+        assert_eq!(result, 0, "CLI should select a template when several match");
+        let output_bytes = fs::read(&output).expect("read edited output");
+        let output_save = Save::read(&output_bytes).expect("parse edited output");
+        assert_eq!(
+            output_save
+                .registry_objects()
+                .iter()
+                .filter(|record| record.name.eq_ignore_ascii_case("ammo_9x39_pab9"))
+                .count(),
+            3,
+            "CLI should add one object after selecting among the two candidates"
+        );
+        assert!(output_save
+            .inventory()
+            .expect("read edited inventory")
+            .iter()
+            .any(|item| item.count == Some(7)));
     }
 
     #[test]

@@ -59,7 +59,29 @@ fn reads_the_python_schema_one_fixture_and_preserves_its_edits() {
 }
 
 #[test]
-fn schema_four_roundtrips_all_edits_and_supports_undo_redo_and_branching() {
+fn basic_edits_use_the_schema_two_shape_readable_by_the_reference() {
+    let directory = TemporaryDirectory::new();
+    let store = DraftStore::new(&directory.0);
+    let source_sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let mut plan = DraftPlan::empty(source_sha256).expect("valid plan");
+    plan.money = Some(12_345);
+    plan.stack_counts.insert(0x1234, 8);
+    let journal = DraftJournal::new(vec![plan], 0).expect("valid journal");
+
+    store.save(journal).expect("draft should save");
+    let bytes = fs::read(store.path_for(source_sha256).expect("valid hash")).expect("draft should exist");
+    let serialized = std::str::from_utf8(&bytes).expect("draft JSON should be UTF-8");
+
+    assert!(serialized.contains("\"schema\":2"));
+    assert!(!serialized.contains("\"durability\""));
+    assert!(!serialized.contains("\"placements\""));
+    assert!(!serialized.contains("\"upgrades\""));
+    assert!(!serialized.contains("\"s2StashTakes\""));
+    assert!(store.load(source_sha256).expect("draft read should succeed").is_some());
+}
+
+#[test]
+fn schema_three_roundtrips_all_edits_and_supports_undo_redo_and_branching() {
     let directory = TemporaryDirectory::new();
     let store = DraftStore::new(&directory.0);
     let source_sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -74,6 +96,7 @@ fn schema_four_roundtrips_all_edits_and_supports_undo_redo_and_branching() {
         .adds
         .push(AddRequest::new("wpn_test", 2, "inventory").expect("valid add"));
     second.stash_takes.push(0x3456);
+    second.s2_stash_takes.push(0x789a_bcde);
     second
         .stash_puts
         .push(StashPut::new(0x4567, 0x5678).expect("valid stash transfer"));
@@ -85,7 +108,8 @@ fn schema_four_roundtrips_all_edits_and_supports_undo_redo_and_branching() {
     let saved = store.save(journal).expect("draft should save");
     let bytes = fs::read(store.path_for(source_sha256).expect("valid hash")).expect("draft file should exist");
     let serialized = std::str::from_utf8(&bytes).expect("draft JSON should be UTF-8");
-    assert!(serialized.contains("\"schema\":4"));
+    assert!(serialized.contains("\"schema\":3"));
+    assert!(serialized.contains("\"s2StashTakes\":[2023406814]"));
     assert!(serialized.contains("\"source_sha256\""));
     assert!(serialized.contains("\"sourceSha256\""));
     assert_eq!(current(&saved).money, Some(200));
@@ -101,6 +125,7 @@ fn schema_four_roundtrips_all_edits_and_supports_undo_redo_and_branching() {
         .expect("draft read should succeed")
         .expect("draft should load");
     assert_eq!(current(&restored), current(&saved));
+    assert_eq!(current(&restored).s2_stash_takes, [0x789a_bcde]);
     assert_eq!(current(&restored.undo()).money, Some(100));
     assert_eq!(current(&restored.undo().redo()), current(&restored));
     assert_eq!(current(&restored).durability.get(&0x6789), Some(&75));
@@ -120,7 +145,7 @@ fn schema_four_roundtrips_all_edits_and_supports_undo_redo_and_branching() {
 }
 
 #[test]
-fn schema_four_roundtrips_s2_stash_handles_without_truncation() {
+fn schema_three_roundtrips_s2_stash_handles_without_truncation() {
     let directory = TemporaryDirectory::new();
     let store = DraftStore::new(&directory.0);
     let source_sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -131,7 +156,7 @@ fn schema_four_roundtrips_s2_stash_handles_without_truncation() {
     let saved = store.save(journal).expect("S2 transfer draft should persist");
     let bytes = fs::read(store.path_for(source_sha256).expect("valid hash")).expect("draft should exist");
     let serialized = std::str::from_utf8(&bytes).expect("draft JSON should be UTF-8");
-    assert!(serialized.contains("\"schema\":4"));
+    assert!(serialized.contains("\"schema\":3"));
     assert!(serialized.contains("\"s2StashTakes\":[305419896]"));
 
     let restored = store
@@ -149,7 +174,7 @@ fn schema_three_loads_durability_placement_and_upgrade_edits() {
     let store = DraftStore::new(&directory.0);
     let source_sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     let bytes = format!(
-        "{{\"index\":0,\"plans\":[{{\"sourceSha256\":\"{source_sha256}\",\"money\":null,\"stackCounts\":{{}},\"detachHandles\":[],\"adds\":[],\"stashTakes\":[],\"stashPuts\":[],\"durability\":{{\"4660\":75}},\"placements\":{{\"4660\":\"belt\"}},\"upgrades\":{{\"4660\":[\"wpn_upgrade_scope_1\"]}},\"unmappedLegacyPlan\":null}}],\"schema\":3,\"source_sha256\":\"{source_sha256}\"}}"
+        "{{\"index\":0,\"plans\":[{{\"sourceSha256\":\"{source_sha256}\",\"money\":null,\"stackCounts\":{{}},\"detachHandles\":[],\"adds\":[],\"stashTakes\":[],\"s2StashTakes\":[305419896],\"stashPuts\":[],\"durability\":{{\"4660\":75}},\"placements\":{{\"4660\":\"belt\"}},\"upgrades\":{{\"4660\":[\"wpn_upgrade_scope_1\"]}},\"unmappedLegacyPlan\":null}}],\"schema\":3,\"source_sha256\":\"{source_sha256}\"}}"
     );
     fs::write(store.path_for(source_sha256).expect("valid source hash"), bytes).expect("draft JSON should be written");
 
@@ -159,12 +184,31 @@ fn schema_three_loads_durability_placement_and_upgrade_edits() {
         .expect("draft with all supported inventory edits should load");
 
     assert!(restored.can_apply_current());
+    assert_eq!(current(&restored).s2_stash_takes, [0x1234_5678]);
     assert_eq!(current(&restored).durability.get(&4660), Some(&75));
     assert_eq!(current(&restored).placements.get(&4660), Some(&DraftPlacement::Belt));
     assert_eq!(
         current(&restored).upgrades.get(&4660),
         Some(&vec!["wpn_upgrade_scope_1".to_owned()])
     );
+}
+
+#[test]
+fn schema_four_drafts_remain_readable_after_schema_three_rollout() {
+    let directory = TemporaryDirectory::new();
+    let store = DraftStore::new(&directory.0);
+    let source_sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let bytes = format!(
+        "{{\"index\":0,\"plans\":[{{\"sourceSha256\":\"{source_sha256}\",\"money\":null,\"stackCounts\":{{}},\"detachHandles\":[],\"adds\":[],\"stashTakes\":[],\"s2StashTakes\":[305419896],\"stashPuts\":[],\"durability\":{{}},\"placements\":{{}},\"upgrades\":{{}},\"unmappedLegacyPlan\":null}}],\"schema\":4,\"source_sha256\":\"{source_sha256}\"}}"
+    );
+    fs::write(store.path_for(source_sha256).expect("valid hash"), bytes).expect("schema-four draft should be written");
+
+    let restored = store
+        .load(source_sha256)
+        .expect("draft read should succeed")
+        .expect("previous schema-four draft should remain readable");
+
+    assert_eq!(current(&restored).s2_stash_takes, [0x1234_5678]);
 }
 
 #[test]

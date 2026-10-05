@@ -748,7 +748,7 @@ fn start_background_discovery(workspace: &Workspace, cx: &mut Context<'_>) {
     }
 
     let workspace_clone = workspace.clone();
-    std::thread::spawn(move || {
+    sse_app::tasks::spawn_named_detached("game-background", move || {
         let found = discover_all_installations();
         let status = if found.is_empty() {
             "●  НЕ НАЙДЕНО".to_owned()
@@ -1256,7 +1256,7 @@ impl Environment {
             return;
         };
         let Some(proxy) = cx.proxy.cloned() else { return };
-        std::thread::spawn(move || {
+        sse_app::tasks::spawn_named_detached("game-background", move || {
             let search = sse_content::CompanionArchiveLocator::discover(&directory, &["fsgame.ltx"], game);
             let gamedata = search.game_data_directory.as_ref().is_some_and(|path| path.is_dir());
             let mods = directory.join("mods");
@@ -1511,7 +1511,7 @@ impl Screen for Environment {
                 let Some(proxy) = cx.proxy.cloned() else {
                     return Ok(());
                 };
-                std::thread::spawn(move || {
+                sse_app::tasks::spawn_named_detached("game-background", move || {
                     let engine = sse_fixes::GameFixEngine::new();
                     let catalog = sse_fixes::GameFixCatalog;
                     let lines = match sse_fixes::toolkit::ToolkitProfileService::apply_profile(
@@ -1618,7 +1618,7 @@ impl Screen for Environment {
             };
             let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
             let snapshot_id = snapshot.id.clone();
-            std::thread::spawn(move || {
+            sse_app::tasks::spawn_named_detached("game-background", move || {
                 let engine = sse_fixes::GameFixEngine::new();
                 let catalog = sse_fixes::GameFixCatalog;
                 let lines = sse_fixes::toolkit::ToolkitSnapshotService::restore_snapshot(
@@ -1650,7 +1650,7 @@ impl Screen for Environment {
             let game = cx.app.selected_game().and_then(fix_target);
             let directory = cx.app.game_dir().map(Path::to_path_buf);
             let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
-            std::thread::spawn(move || {
+            sse_app::tasks::spawn_named_detached("game-background", move || {
                 let result = (|| {
                     let game = game.ok_or_else(|| "Выберите поддерживаемую игру".to_owned())?;
                     let directory = directory.ok_or_else(|| "Управляемая установка: не выбрана".to_owned())?;
@@ -1806,7 +1806,7 @@ impl GameFixes {
         let game = cx.app.selected_game().map(str::to_owned);
         let directory = cx.app.game_dir().map(Path::to_path_buf);
         let Some(proxy) = cx.proxy.cloned() else { return };
-        std::thread::spawn(move || {
+        sse_app::tasks::spawn_named_detached("game-background", move || {
             let result = (|| {
                 let target = game
                     .as_deref()
@@ -2040,7 +2040,7 @@ impl Screen for GameFixes {
             let game = cx.app.selected_game().map(str::to_owned);
             let directory = cx.app.game_dir().map(Path::to_path_buf);
             let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
-            std::thread::spawn(move || {
+            sse_app::tasks::spawn_named_detached("game-background", move || {
                 let result = (|| {
                     let game = game.ok_or_else(|| "Игра не поддерживается".to_owned())?;
                     let target = fix_target(&game).ok_or_else(|| "Игра не поддерживается".to_owned())?;
@@ -2193,7 +2193,7 @@ impl Screen for GameFixes {
             let _ = cx.tree.close_dialog()?;
             let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
             self.busy = true;
-            std::thread::spawn(move || {
+            sse_app::tasks::spawn_named_detached("game-background", move || {
                 let result = (|| {
                     let target = fix_target(&game).ok_or_else(|| "Игра не поддерживается".to_owned())?;
                     let engine = sse_fixes::GameFixEngine::new();
@@ -2362,7 +2362,7 @@ impl GameDoctor {
         let Some(proxy) = cx.proxy.cloned() else { return };
         let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         self.cancellation = Some(std::sync::Arc::clone(&cancelled));
-        std::thread::spawn(move || {
+        sse_app::tasks::spawn_named_detached("game-background", move || {
             use std::sync::atomic::Ordering;
             proxy.send(AppMessage::ToScreen(
                 ScreenId::GameDoctor,
@@ -2511,7 +2511,7 @@ impl Screen for GameDoctor {
                 cx.tree.close_dialog()?;
             }
             let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
-            std::thread::spawn(move || {
+            sse_app::tasks::spawn_named_detached("game-background", move || {
                 let result = sse_fixes::toolkit::Stalker2ModToggle::toggle(&directory)
                     .map(|value| format!("S2 mods: {value:?}"))
                     .map_err(|e| e.to_string());
@@ -2638,7 +2638,7 @@ impl Encyclopedia {
             return;
         };
         let Some(proxy) = cx.proxy.cloned() else { return };
-        std::thread::spawn(move || {
+        sse_app::tasks::spawn_named_detached("game-background", move || {
             let cache = std::env::temp_dir().join("stalker-save-editor").join("catalog-cache");
             let result = (|| {
                 let content = sse_catalog::GameContentService::load(game, &directory, &cache, "ru")

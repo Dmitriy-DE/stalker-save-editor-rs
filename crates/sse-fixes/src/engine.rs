@@ -535,8 +535,8 @@ impl GameFixEngine {
             return self.install(definition, game_dir);
         }
 
-        let old_v: Vec<u64> = old_manifest.version.split('.').filter_map(|s| s.parse().ok()).collect();
-        let new_v: Vec<u64> = definition.version.split('.').filter_map(|s| s.parse().ok()).collect();
+        let old_v = parse_numeric_version(&old_manifest.version)?;
+        let new_v = parse_numeric_version(&definition.version)?;
         if new_v <= old_v {
             return Err(Error::Refused(
                 "Fix updates must use an increasing numeric version".to_string(),
@@ -598,11 +598,11 @@ impl GameFixEngine {
             if let Err(restore_error) = AtomicFileWriter::write(&manifest_path, &old_manifest_bytes, true) {
                 rollback_errors.push(format!("manifest: {restore_error}"));
             }
-            delete_journal(&fix_dir);
-
             if rollback_errors.is_empty() {
+                cleanup_update_journal_after_rollback(&fix_dir, &rollback_errors);
                 return Err(error);
             }
+            cleanup_update_journal_after_rollback(&fix_dir, &rollback_errors);
             return Err(Error::System(format!(
                 "Game Fix update failed and rollback to the previous version was incomplete: {}",
                 rollback_errors.join("; ")
@@ -1971,6 +1971,25 @@ fn is_valid_id(id: &str) -> bool {
         .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '-')
 }
 
+fn cleanup_update_journal_after_rollback(fix_dir: &Path, rollback_errors: &[String]) {
+    if rollback_errors.is_empty() {
+        delete_journal(fix_dir);
+    }
+}
+
+fn parse_numeric_version(value: &str) -> Result<Vec<u64>> {
+    value
+        .split('.')
+        .map(|part| {
+            if part.is_empty() {
+                return Err(Error::Refused("Fix version contains an empty numeric part".to_owned()));
+            }
+            part.parse::<u64>()
+                .map_err(|_| Error::Refused(format!("Fix version is not numeric: {value}")))
+        })
+        .collect()
+}
+
 fn validate_definition(def: &GameFixDefinition) -> Result<()> {
     if !is_valid_id(&def.id) {
         return Err(Error::damaged(format!("Invalid fix ID '{}'", def.id)));
@@ -2117,6 +2136,30 @@ mod g13_tests {
             overlays: Vec::new(),
             spawn_edits: Vec::new(),
         }
+    }
+
+    #[test]
+    fn incomplete_update_rollback_preserves_recovery_journal() -> Result<()> {
+        let root = temp_game_root();
+        let fix_dir = get_fix_directory(&root, "test.g13.transaction");
+        fs::create_dir_all(&fix_dir)?;
+        let journal = fix_dir.join(JOURNAL_FILE_NAME);
+        fs::write(&journal, b"recovery")?;
+
+        cleanup_update_journal_after_rollback(&fix_dir, &["restore failed".to_owned()]);
+        assert!(journal.is_file());
+
+        cleanup_update_journal_after_rollback(&fix_dir, &[]);
+        assert!(!journal.exists());
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn update_versions_must_be_fully_numeric() {
+        assert_eq!(parse_numeric_version("1.2.3").ok(), Some(vec![1, 2, 3]));
+        assert!(parse_numeric_version("1.beta.3").is_err());
+        assert!(parse_numeric_version("1..3").is_err());
     }
 
     #[test]

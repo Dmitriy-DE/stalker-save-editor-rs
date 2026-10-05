@@ -177,14 +177,29 @@ impl Workspace {
         self.lock().active_save_request.is_some()
     }
 
+    pub(crate) fn is_restoring(&self) -> bool {
+        self.lock().active_restore_request.is_some()
+    }
+
     pub(crate) fn begin_saving(&self) -> Option<u64> {
         let mut state = self.lock();
-        if state.active_save_request.is_some() {
+        if state.active_save_request.is_some() || state.active_restore_request.is_some() {
             return None;
         }
         let request = state.next_save_request.checked_add(1)?;
         state.next_save_request = request;
         state.active_save_request = Some(request);
+        Some(request)
+    }
+
+    pub(crate) fn begin_restoring(&self) -> Option<u64> {
+        let mut state = self.lock();
+        if state.active_save_request.is_some() || state.active_restore_request.is_some() {
+            return None;
+        }
+        let request = state.next_restore_request.checked_add(1)?;
+        state.next_restore_request = request;
+        state.active_restore_request = Some(request);
         Some(request)
     }
 
@@ -194,6 +209,15 @@ impl Workspace {
             return false;
         }
         state.active_save_request = None;
+        true
+    }
+
+    pub(crate) fn finish_restoring(&self, request: u64) -> bool {
+        let mut state = self.lock();
+        if state.active_restore_request != Some(request) {
+            return false;
+        }
+        state.active_restore_request = None;
         true
     }
 
@@ -361,6 +385,8 @@ struct WorkspaceState {
     file_check_in_flight: bool,
     active_save_request: Option<u64>,
     next_save_request: u64,
+    active_restore_request: Option<u64>,
+    next_restore_request: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -1935,6 +1961,22 @@ struct AddCandidate {
     template_available: bool,
 }
 
+fn add_template_preference(
+    story_id: Option<u32>,
+    spawn_story_id: Option<u32>,
+    has_custom_data: bool,
+    spawn_id: Option<u16>,
+    object_id: u16,
+) -> (bool, bool, bool, bool, u16) {
+    (
+        story_id.is_some_and(|value| value != u32::MAX),
+        spawn_story_id.is_some_and(|value| value != u32::MAX),
+        has_custom_data,
+        spawn_id != Some(u16::MAX),
+        object_id,
+    )
+}
+
 fn add_candidates(selected: &LoadedSave, removed: &BTreeSet<u32>) -> Vec<AddCandidate> {
     let SaveData::Xray { save, inventory } = &selected.data else {
         return Vec::new();
@@ -2159,6 +2201,7 @@ impl Inventory {
             }
             return Ok(());
         };
+        self.set_edit_controls(cx, true)?;
         if self.last_path.as_ref() != Some(&selected.slot.path) {
             self.last_path = Some(selected.slot.path.clone());
             self.page = 0;
@@ -3416,7 +3459,11 @@ impl Inventory {
             }
         }
         let Some(request_id) = self.workspace.begin_saving() else {
-            let text = "Сохранение уже выполняется.";
+            let text = if self.workspace.is_restoring() {
+                "Дождитесь завершения восстановления сейва."
+            } else {
+                "Сохранение уже выполняется."
+            };
             if let Some(status) = self.status {
                 cx.tree.set_text(status, text)?;
             }
@@ -3504,8 +3551,8 @@ fn commit_save_edits_to(
     backup_directory: &Path,
 ) -> Result<(Arc<LoadedSave>, String)> {
     let (packed, summary) = prepare_save_edits(selected, edits, stash_moves)?;
+    // SaveBuffer clones share their Arc<[u8]>; move the one preflight handle into the reloaded save.
     let preflight_image = packed.clone();
-    let readback_image = packed.clone();
     let (receipt, mut reloaded, (size, modified)) =
         transaction::replace_transaction_with_summary_preflight_and_verifier(
             &selected.slot.path,
@@ -3513,16 +3560,16 @@ fn commit_save_edits_to(
             packed.as_slice(),
             backup_directory,
             summary,
-            |_, replacement| {
+            move |_, replacement| {
                 if replacement != preflight_image.as_slice() {
                     return Err(Error::damaged("prepared save bytes changed before semantic preflight"));
                 }
-                let reloaded = LoadedSave::from_buffer(selected.slot.clone(), preflight_image.clone())?;
+                let reloaded = LoadedSave::from_buffer(selected.slot.clone(), preflight_image)?;
                 verify_requested_values(selected, &reloaded, edits, stash_moves)?;
                 Ok(reloaded)
             },
             |read_back| {
-                if read_back != readback_image.as_slice() {
+                if read_back != packed.as_slice() {
                     return Err(Error::damaged("save bytes differ after durable read-back"));
                 }
                 let metadata = std::fs::metadata(&selected.slot.path)?;
@@ -3731,22 +3778,31 @@ fn prepare_save_edits(
                         request.item_key
                     )));
                 }
-                let template = inventory
+                let template_object = inventory
                     .iter()
-                    .find(|item| {
+                    .filter(|item| {
                         item.section == request.item_key && !edits.removals.contains(&ItemHandle::Xray(item.handle))
+                    })
+                    .filter_map(|item| {
+                        save.registry_objects()
+                            .iter()
+                            .find(|object| object.object_id == item.handle && object.parent_id == save.actor_id())
+                    })
+                    .min_by_key(|object| {
+                        add_template_preference(
+                            object.story_id,
+                            object.spawn_story_id,
+                            save.custom_data(object).is_some_and(|data| !data.is_empty()),
+                            object.spawn_id,
+                            object.object_id,
+                        )
                     })
                     .ok_or_else(|| {
                         Error::Refused(format!(
-                            "item '{}' has no matching serialized template in this save",
+                            "item '{}' has no matching actor-owned serialized template in this save",
                             request.item_key
                         ))
                     })?;
-                let template_object = save
-                    .registry_objects()
-                    .iter()
-                    .find(|object| object.object_id == template.handle && object.parent_id == save.actor_id())
-                    .ok_or_else(|| Error::Refused("selected item template is no longer actor-owned".to_owned()))?;
                 let object_id = used_object_ids
                     .iter()
                     .next_back()
@@ -5352,6 +5408,28 @@ mod tests {
     }
 
     #[test]
+    fn save_and_in_place_restore_requests_are_mutually_exclusive() -> sse_core::Result<()> {
+        let workspace = Workspace::default();
+        let save_request = workspace
+            .begin_saving()
+            .ok_or_else(|| Error::Refused("test save did not start".to_owned()))?;
+        assert!(workspace.begin_restoring().is_none());
+        assert!(workspace.finish_saving(save_request));
+
+        let restore_request = workspace
+            .begin_restoring()
+            .ok_or_else(|| Error::Refused("test restore did not start".to_owned()))?;
+        assert!(workspace.is_restoring());
+        assert!(workspace.begin_saving().is_none());
+        assert!(!workspace.finish_restoring(restore_request.saturating_sub(1)));
+        assert!(workspace.is_restoring());
+        assert!(workspace.finish_restoring(restore_request));
+        assert!(!workspace.is_restoring());
+        assert!(workspace.begin_saving().is_some());
+        Ok(())
+    }
+
+    #[test]
     fn backup_directory_is_shared_and_updates_before_settings_are_saved() {
         let workspace = Workspace::with_backup_directory(PathBuf::from("first-backups"));
         assert_eq!(workspace.backup_directory(), PathBuf::from("first-backups"));
@@ -5611,6 +5689,18 @@ mod tests {
                 .collect::<Vec<_>>()
         );
         Ok(())
+    }
+
+    #[test]
+    fn add_template_prefers_unbound_metadata_and_spawn_ffff() {
+        let clean = super::add_template_preference(Some(u32::MAX), Some(u32::MAX), false, Some(u16::MAX), 20);
+        let story_bound = super::add_template_preference(Some(7), Some(u32::MAX), false, Some(u16::MAX), 1);
+        let custom_bound = super::add_template_preference(Some(u32::MAX), Some(u32::MAX), true, Some(u16::MAX), 2);
+        let spawn_bound = super::add_template_preference(Some(u32::MAX), Some(u32::MAX), false, Some(9), 3);
+
+        assert!(clean < story_bound);
+        assert!(clean < custom_bound);
+        assert!(clean < spawn_bound);
     }
 
     #[test]
