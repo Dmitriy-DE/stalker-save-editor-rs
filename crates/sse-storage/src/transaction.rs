@@ -444,12 +444,32 @@ pub fn replace_transaction_with_verifier<T>(
     backup_directory: &Path,
     verify_readback: impl FnOnce(&[u8]) -> Result<T>,
 ) -> Result<(ReplacementReceipt, T)> {
-    replace_with_file_system_and_verifier(
+    replace_transaction_with_summary_and_verifier(
+        source_path,
+        expected_source_sha256,
+        replacement,
+        backup_directory,
+        EditSummary::default(),
+        verify_readback,
+    )
+}
+
+/// Replaces a save, records the edit summary, and verifies durable read-back bytes before commit.
+pub fn replace_transaction_with_summary_and_verifier<T>(
+    source_path: &Path,
+    expected_source_sha256: &str,
+    replacement: &[u8],
+    backup_directory: &Path,
+    summary: EditSummary,
+    verify_readback: impl FnOnce(&[u8]) -> Result<T>,
+) -> Result<(ReplacementReceipt, T)> {
+    replace_with_file_system_and_summary_and_verifier(
         &StdFileSystem,
         source_path,
         expected_source_sha256,
         replacement,
         backup_directory,
+        summary,
         verify_readback,
     )
 }
@@ -480,6 +500,26 @@ pub fn replace_with_file_system_and_verifier<T>(
     expected_source_sha256: &str,
     replacement: &[u8],
     backup_directory: &Path,
+    verify_readback: impl FnOnce(&[u8]) -> Result<T>,
+) -> Result<(ReplacementReceipt, T)> {
+    replace_with_file_system_and_summary_and_verifier(
+        files,
+        source_path,
+        expected_source_sha256,
+        replacement,
+        backup_directory,
+        EditSummary::default(),
+        verify_readback,
+    )
+}
+
+fn replace_with_file_system_and_summary_and_verifier<T>(
+    files: &impl FileSystem,
+    source_path: &Path,
+    expected_source_sha256: &str,
+    replacement: &[u8],
+    backup_directory: &Path,
+    summary: EditSummary,
     verify_readback: impl FnOnce(&[u8]) -> Result<T>,
 ) -> Result<(ReplacementReceipt, T)> {
     if replacement.is_empty() {
@@ -552,6 +592,7 @@ pub fn replace_with_file_system_and_verifier<T>(
                 output_sha256: &output_sha256,
                 backup_path: &backup_path,
                 recovery_path: &recovery_path,
+                summary,
             }),
         )?;
         journal_created = true;
@@ -589,6 +630,7 @@ pub fn replace_with_file_system_and_verifier<T>(
                 output_sha256: &output_sha256,
                 backup_path: &backup_path,
                 recovery_path: &recovery_path,
+                summary,
             }),
         )?;
         files.replace(&temporary_journal, &journal_path)?;
@@ -705,6 +747,7 @@ struct Journal<'a> {
     output_sha256: &'a str,
     backup_path: &'a Path,
     recovery_path: &'a Path,
+    summary: EditSummary,
 }
 
 struct ExportJournal<'a> {
@@ -981,9 +1024,13 @@ fn serialize_journal(journal: &Journal<'_>) -> Vec<u8> {
     let backup_path = json_escape(&journal.backup_path.to_string_lossy());
     let recovery_path = json_escape(&journal.recovery_path.to_string_lossy());
     let created_at = json_escape(journal.created_at);
+    let money = journal
+        .summary
+        .money
+        .map_or_else(|| "null".to_owned(), |value| value.to_string());
     format!(
-        "{{\"version\":1,\"status\":\"{}\",\"created_at\":\"{created_at}\",\"source_path\":\"{source_path}\",\"source_sha256\":\"{}\",\"output_path\":\"{output_path}\",\"output_sha256\":\"{}\",\"backup_path\":\"{backup_path}\",\"recovery_path\":\"{recovery_path}\",\"operation\":{{\"mode\":\"replace\",\"money\":null,\"stack_count\":0}}}}",
-        journal.status, journal.source_sha256, journal.output_sha256
+        "{{\"version\":1,\"status\":\"{}\",\"created_at\":\"{created_at}\",\"source_path\":\"{source_path}\",\"source_sha256\":\"{}\",\"output_path\":\"{output_path}\",\"output_sha256\":\"{}\",\"backup_path\":\"{backup_path}\",\"recovery_path\":\"{recovery_path}\",\"operation\":{{\"mode\":\"replace\",\"money\":{money},\"stack_count\":{}}}}}",
+        journal.status, journal.source_sha256, journal.output_sha256, journal.summary.stack_count
     )
     .into_bytes()
 }

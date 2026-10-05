@@ -16,6 +16,7 @@ mod lint;
 mod update;
 
 const USAGE: &str = "Usage: stalker-save <version|info|inventory|set-money|set-stack|edit|backups|fixes|update|lint|audit> ...\n\
+Write commands accept --in-place for journaled replacement; do not combine it with --output.\n\
 Exit codes: 0 done, 2 wrong arguments, 3 refused (unsupported or unsafe), 4 unreadable or damaged input, 5 file or system error.";
 const S2_LEGACY_WARNING: &str = "Сохранение записано игрой версии 1.0.x: показаны деньги и предметы в сетке рюкзака; надетое снаряжение и состояние предметов не читаются, правка недоступна.";
 const S2_LEGACY_EDIT_REFUSAL: &str = "This save was written by game version 1.0.x. It can be read, but its layout is not supported for editing; load it in the current game and save again.";
@@ -87,6 +88,7 @@ impl From<std::io::Error> for WriteFailure {
 struct WriteOptions {
     output: Option<PathBuf>,
     backup_directory: Option<PathBuf>,
+    in_place: bool,
     money: Option<u32>,
     stacks: HashMap<u32, u32>,
     stack_order: Vec<u32>,
@@ -97,6 +99,23 @@ struct WriteOptions {
     moves: Vec<(u32, MoveDestination)>,
     removals: Vec<u32>,
     unsupported_operations: Vec<String>,
+}
+
+struct PublishedWrite {
+    output_path: PathBuf,
+    backup_path: PathBuf,
+    output_sha256: String,
+    size: usize,
+}
+
+struct WritePublication<'a> {
+    source_path: &'a Path,
+    expected_source_sha256: &'a str,
+    replacement: &'a [u8],
+    output_path: &'a Path,
+    backup_directory: &'a Path,
+    summary: sse_storage::transaction::EditSummary,
+    in_place: bool,
 }
 
 struct AddOption {
@@ -192,6 +211,25 @@ fn prepare_and_export(arguments: &[String]) -> Result<(), WriteFailure> {
         _ => return Err(WriteFailure::Usage("unknown write command".to_owned())),
     }
 
+    if options.in_place && options.output.is_some() {
+        return Err(WriteFailure::Usage(
+            "--in-place cannot be combined with --output.".to_owned(),
+        ));
+    }
+    if options.in_place
+        && (!options.additions.is_empty()
+            || !options.durability.is_empty()
+            || !options.upgrades.is_empty()
+            || !options.placements.is_empty()
+            || !options.moves.is_empty()
+            || !options.removals.is_empty()
+            || !options.unsupported_operations.is_empty())
+    {
+        return Err(WriteFailure::Core(Error::Refused(
+            "In-place CLI writes currently support only money and stack-count edits.".to_owned(),
+        )));
+    }
+
     let source = SaveBuffer::read(&path)?;
     if let Ok(s2_save) = sse_s2::S2Save::from_bytes(source.as_slice()) {
         return prepare_and_export_s2(&path, source.as_slice(), &s2_save, &options);
@@ -228,13 +266,13 @@ fn prepare_and_export(arguments: &[String]) -> Result<(), WriteFailure> {
     };
     if !options.stacks.is_empty() {
         let inventory = inventory.as_deref().unwrap_or(&[]);
-        for handle in options.stack_order {
+        for handle in &options.stack_order {
             let new_value = options
                 .stacks
-                .get(&handle)
+                .get(handle)
                 .copied()
                 .ok_or_else(|| WriteFailure::Core(Error::damaged("missing parsed stack option")))?;
-            let target_object = u16::try_from(handle).map_err(|_| {
+            let target_object = u16::try_from(*handle).map_err(|_| {
                 WriteFailure::Core(Error::Refused(format!(
                     "X-Ray item handle 0x{handle:X} exceeds 16 bits"
                 )))
@@ -382,34 +420,25 @@ fn prepare_and_export(arguments: &[String]) -> Result<(), WriteFailure> {
 
     let output = writer::apply(&save, &ChangeSet::new(changes))?;
     let source_sha256 = sse_codecs::sha256::sha256_hex(source.as_slice());
-    let output_path = options.output.unwrap_or_else(|| default_output_path(&path));
-    let backup_directory = options.backup_directory.unwrap_or_else(default_backup_directory);
-    let receipt = sse_storage::transaction::export_transaction(
-        &path,
-        &source_sha256,
-        output.as_slice(),
-        &output_path,
-        &backup_directory,
-        sse_storage::transaction::EditSummary {
-            money: options.money,
-            stack_count,
-            move_count: options.moves.len(),
-            detach_count: options.removals.len(),
-            add_count: options.additions.len(),
-            durability_count: options.durability.len(),
-            upgrade_count: options.upgrades.len(),
-            ..sse_storage::transaction::EditSummary::default()
+    let output_path = options.output.clone().unwrap_or_else(|| default_output_path(&path));
+    let backup_directory = options
+        .backup_directory
+        .clone()
+        .unwrap_or_else(default_backup_directory);
+    let receipt = publish_cli_write(
+        WritePublication {
+            source_path: &path,
+            expected_source_sha256: &source_sha256,
+            replacement: output.as_slice(),
+            output_path: &output_path,
+            backup_directory: &backup_directory,
+            summary: write_edit_summary(&options),
+            in_place: options.in_place,
         },
+        |bytes| verify_xray_money_and_stacks(bytes, &options),
     )?;
-    let read_back = std::fs::read(&receipt.output_path)?;
-    if read_back.as_slice() != output.as_slice() || sse_codecs::sha256::sha256_hex(&read_back) != receipt.output_sha256
-    {
-        return Err(WriteFailure::Core(Error::System(
-            "export read-back did not match the prepared save".to_owned(),
-        )));
-    }
     println!("Output: {}", receipt.output_path.display());
-    println!("Size: {}", read_back.len());
+    println!("Size: {}", receipt.size);
     println!("Backup: {}", receipt.backup_path.display());
     println!("SHA256: {}", receipt.output_sha256);
     if let Some(money) = options.money {
@@ -435,6 +464,118 @@ fn prepare_and_export(arguments: &[String]) -> Result<(), WriteFailure> {
     }
     for handle in removal_output {
         println!("Remove 0x{handle:04X}");
+    }
+    Ok(())
+}
+
+fn publish_cli_write(
+    publication: WritePublication<'_>,
+    verify_readback: impl FnOnce(&[u8]) -> Result<(), Error>,
+) -> Result<PublishedWrite, WriteFailure> {
+    let WritePublication {
+        source_path,
+        expected_source_sha256,
+        replacement,
+        output_path,
+        backup_directory,
+        summary,
+        in_place,
+    } = publication;
+    if in_place {
+        let (receipt, ()) = sse_storage::transaction::replace_transaction_with_summary_and_verifier(
+            source_path,
+            expected_source_sha256,
+            replacement,
+            backup_directory,
+            summary,
+            verify_readback,
+        )?;
+        return Ok(PublishedWrite {
+            output_path: receipt.source_path,
+            backup_path: receipt.backup_path,
+            output_sha256: receipt.output_sha256,
+            size: replacement.len(),
+        });
+    }
+
+    verify_readback(replacement)?;
+    let receipt = sse_storage::transaction::export_transaction(
+        source_path,
+        expected_source_sha256,
+        replacement,
+        output_path,
+        backup_directory,
+        summary,
+    )?;
+    let read_back = std::fs::read(&receipt.output_path)?;
+    if read_back.as_slice() != replacement || sse_codecs::sha256::sha256_hex(&read_back) != receipt.output_sha256 {
+        return Err(WriteFailure::Core(Error::System(
+            "export read-back did not match the prepared save".to_owned(),
+        )));
+    }
+    Ok(PublishedWrite {
+        output_path: receipt.output_path,
+        backup_path: receipt.backup_path,
+        output_sha256: receipt.output_sha256,
+        size: read_back.len(),
+    })
+}
+
+fn write_edit_summary(options: &WriteOptions) -> sse_storage::transaction::EditSummary {
+    sse_storage::transaction::EditSummary {
+        money: options.money,
+        stack_count: options.stacks.len(),
+        move_count: options.moves.len(),
+        detach_count: options.removals.len(),
+        add_count: options.additions.len(),
+        durability_count: options.durability.len(),
+        upgrade_count: options.upgrades.len(),
+        ..sse_storage::transaction::EditSummary::default()
+    }
+}
+
+fn verify_xray_money_and_stacks(bytes: &[u8], options: &WriteOptions) -> Result<(), Error> {
+    let save = Save::read(bytes)?;
+    if let Some(expected) = options.money {
+        if save.money()? != expected {
+            return Err(Error::damaged("saved wallet value differs after read-back"));
+        }
+    }
+    if options.stacks.is_empty() {
+        return Ok(());
+    }
+    let inventory = save.inventory()?;
+    for (handle, expected) in &options.stacks {
+        let object_id = u16::try_from(*handle).map_err(|_| Error::damaged("X-Ray item handle exceeds 16 bits"))?;
+        let expected = u16::try_from(*expected).map_err(|_| Error::damaged("X-Ray item count exceeds 16 bits"))?;
+        if !inventory
+            .iter()
+            .any(|item| item.handle == object_id && item.count == Some(expected))
+        {
+            return Err(Error::damaged("saved stack count differs after read-back"));
+        }
+    }
+    Ok(())
+}
+
+fn verify_s2_money_and_stacks(bytes: &[u8], options: &WriteOptions) -> Result<(), Error> {
+    let save = sse_s2::S2Save::from_bytes(bytes)?;
+    if let Some(expected) = options.money {
+        if save.money() != expected {
+            return Err(Error::damaged("saved S2 wallet value differs after read-back"));
+        }
+    }
+    let items = save.items();
+    for (handle, expected) in &options.stacks {
+        if !items
+            .iter()
+            .any(|item| item.handle == *handle && item.count == *expected)
+        {
+            return Err(Error::damaged("saved S2 stack count differs after read-back"));
+        }
+    }
+    if save.container().stored_crc32() != save.container().computed_crc32() {
+        return Err(Error::damaged("S2 CRC differs after read-back"));
     }
     Ok(())
 }
@@ -485,27 +626,20 @@ fn prepare_and_export_s2(
         .backup_directory
         .clone()
         .unwrap_or_else(default_backup_directory);
-    let receipt = sse_storage::transaction::export_transaction(
-        path,
-        &source_sha256,
-        &output,
-        &output_path,
-        &backup_directory,
-        sse_storage::transaction::EditSummary {
-            money: options.money,
-            stack_count,
-            ..sse_storage::transaction::EditSummary::default()
+    let receipt = publish_cli_write(
+        WritePublication {
+            source_path: path,
+            expected_source_sha256: &source_sha256,
+            replacement: &output,
+            output_path: &output_path,
+            backup_directory: &backup_directory,
+            summary: write_edit_summary(options),
+            in_place: options.in_place,
         },
+        |bytes| verify_s2_money_and_stacks(bytes, options),
     )?;
-    let read_back = std::fs::read(&receipt.output_path)?;
-    if read_back.as_slice() != output.as_slice() || sse_codecs::sha256::sha256_hex(&read_back) != receipt.output_sha256
-    {
-        return Err(WriteFailure::Core(Error::System(
-            "export read-back did not match the prepared save".to_owned(),
-        )));
-    }
     println!("Output: {}", receipt.output_path.display());
-    println!("Size: {}", read_back.len());
+    println!("Size: {}", receipt.size);
     println!("Backup: {}", receipt.backup_path.display());
     println!("SHA256: {}", receipt.output_sha256);
     if let Some(money) = options.money {
@@ -537,6 +671,13 @@ fn parse_write_options(arguments: &[String], mut index: usize, options: &mut Wri
         index = index
             .checked_add(1)
             .ok_or_else(|| WriteFailure::Usage("write option index overflow".to_owned()))?;
+        if option == "--in-place" {
+            if options.in_place {
+                return Err(WriteFailure::Usage("duplicate --in-place option.".to_owned()));
+            }
+            options.in_place = true;
+            continue;
+        }
         let value = arguments
             .get(index)
             .map(String::as_str)
@@ -1106,6 +1247,62 @@ mod write_tests {
             .expect("S2 export journal exists");
         assert_eq!(entry.status, sse_storage::transaction::BackupStatus::Verified);
         assert_eq!(fs::read(entry.backup_path).expect("S2 source backup"), source_bytes);
+    }
+
+    #[test]
+    fn s2_set_money_in_place_uses_verified_transaction_and_records_edit_summary() {
+        let temporary = TempDirectory::new();
+        let saves = temporary.0.join("saves");
+        fs::create_dir(&saves).expect("create save directory");
+        let source = saves.join("source.sav");
+        let backups = temporary.0.join("backups");
+        let source_bytes = include_bytes!("../../../fixtures/synthetic/writer-s2-money/s2-money-source.sav");
+        fs::write(&source, source_bytes).expect("write S2 source fixture");
+        let args = vec![
+            "set-money".to_owned(),
+            source.display().to_string(),
+            "876543".to_owned(),
+            "--in-place".to_owned(),
+            "--backup-dir".to_owned(),
+            backups.display().to_string(),
+        ];
+
+        assert_eq!(run(&args), 0);
+
+        let actual = fs::read(&source).expect("replaced S2 save");
+        let verified = sse_s2::S2Save::from_bytes(&actual).expect("read back S2 save");
+        assert_eq!(
+            verified.container().image(),
+            include_bytes!("../../../fixtures/synthetic/writer-s2-money/s2-money-expected.raw")
+        );
+        assert_eq!(verified.money(), 876_543);
+        assert_eq!(
+            verified.container().stored_crc32(),
+            verified.container().computed_crc32()
+        );
+        let entry = sse_storage::transaction::list_backups(&backups)
+            .expect("list in-place S2 backups")
+            .into_iter()
+            .next()
+            .expect("in-place transaction journal");
+        assert_eq!(entry.status, sse_storage::transaction::BackupStatus::Verified);
+        assert!(entry.backup_path.to_string_lossy().contains("_ORIGINAL.sav"));
+        assert_eq!(
+            fs::read(&entry.backup_path).expect("original save backup"),
+            source_bytes
+        );
+        let recovery_path = entry.journal_path.with_file_name(
+            entry
+                .journal_path
+                .file_name()
+                .expect("journal file name")
+                .to_string_lossy()
+                .replace("_ORIGINAL.json", "_EDITED.sav"),
+        );
+        assert_eq!(fs::read(recovery_path).expect("edited recovery save"), actual);
+        let journal = fs::read_to_string(entry.journal_path).expect("read replacement journal");
+        assert!(journal.contains("\"status\":\"verified\""));
+        assert!(journal.contains("\"mode\":\"replace\",\"money\":876543,\"stack_count\":0"));
     }
 
     #[test]
