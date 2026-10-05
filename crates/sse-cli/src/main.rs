@@ -965,17 +965,32 @@ fn s2_info_lines(save: &sse_s2::S2Save, packed: &[u8]) -> Vec<String> {
         format!("Inventory objects: {}", items.len()),
         format!("Orphans: {}", orphans.len()),
     ];
-    lines.extend(s2_cli_warnings(save.index().is_legacy(), save.warnings()));
+    let unmatched_grid_cells = items.is_empty() && index.grid_handle_count() > 0;
+    lines.extend(s2_cli_warnings(
+        index.is_legacy(),
+        save.warnings(),
+        unmatched_grid_cells,
+    ));
     lines
 }
 
-fn s2_cli_warnings(is_legacy: bool, warnings: &[String]) -> Vec<String> {
+fn s2_cli_warnings(is_legacy: bool, warnings: &[String], unmatched_grid_cells: bool) -> Vec<String> {
     // C# prints every reader warning and puts the 1.0.x layout warning, in Russian, last.
     let mut lines: Vec<String> = warnings
         .iter()
         .filter(|warning| !warning.contains("1.0.x"))
         .map(|warning| format!("Warning: {warning}"))
         .collect();
+    if unmatched_grid_cells {
+        let insert_at = lines
+            .iter()
+            .position(|line| line.starts_with("Warning: Owned handle "))
+            .unwrap_or(lines.len());
+        lines.insert(
+            insert_at,
+            "Warning: Не удалось сопоставить ни одной grid cell с object record".to_owned(),
+        );
+    }
     if is_legacy || warnings.iter().any(|warning| warning.contains("1.0.x")) {
         lines.push(format!("Warning: {S2_LEGACY_WARNING}"));
     }
@@ -1488,12 +1503,36 @@ mod write_tests {
                 &[
                     "Handle 0x30000001: неизвестный object kind=3, только read-only".to_owned(),
                     "Save uses the game 1.0.x layout".to_owned(),
-                ]
+                ],
+                false,
             ),
             vec![
                 "Warning: Handle 0x30000001: неизвестный object kind=3, только read-only".to_owned(),
                 format!("Warning: {}", super::S2_LEGACY_WARNING),
             ]
+        );
+    }
+
+    #[test]
+    fn s2_info_reports_unmatched_grid_cells_like_the_reference() {
+        let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/synthetic/writer-s2-stash/s2-stash-truncated.sav");
+        let bytes = fs::read(&source).expect("read truncated S2 stash fixture");
+        let save = sse_s2::S2Save::from_bytes(&bytes).expect("parse truncated S2 stash fixture");
+
+        let lines = s2_info_lines(&save, &bytes);
+        let unmatched = lines
+            .iter()
+            .position(|line| line == "Warning: Не удалось сопоставить ни одной grid cell с object record")
+            .expect("report unmatched grid cells");
+        let owned = lines
+            .iter()
+            .position(|line| line.starts_with("Warning: Owned handle "))
+            .expect("report unresolved owned handles");
+
+        assert!(
+            unmatched < owned,
+            "reference prints the grid warning before owned-handle warnings"
         );
     }
 
