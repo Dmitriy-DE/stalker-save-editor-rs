@@ -535,8 +535,20 @@ impl GameFixEngine {
             return self.install(definition, game_dir);
         }
 
-        let old_v: Vec<u64> = old_manifest.version.split('.').filter_map(|s| s.parse().ok()).collect();
-        let new_v: Vec<u64> = definition.version.split('.').filter_map(|s| s.parse().ok()).collect();
+        let parse_version = |value: &str| -> Result<Vec<u64>> {
+            value
+                .split('.')
+                .map(|part| {
+                    if part.is_empty() {
+                        return Err(Error::Refused("Fix version contains an empty numeric part".to_owned()));
+                    }
+                    part.parse::<u64>()
+                        .map_err(|_| Error::Refused(format!("Fix version is not numeric: {value}")))
+                })
+                .collect()
+        };
+        let old_v = parse_version(&old_manifest.version)?;
+        let new_v = parse_version(&definition.version)?;
         if new_v <= old_v {
             return Err(Error::Refused(
                 "Fix updates must use an increasing numeric version".to_string(),
@@ -598,9 +610,8 @@ impl GameFixEngine {
             if let Err(restore_error) = AtomicFileWriter::write(&manifest_path, &old_manifest_bytes, true) {
                 rollback_errors.push(format!("manifest: {restore_error}"));
             }
-            delete_journal(&fix_dir);
-
             if rollback_errors.is_empty() {
+                delete_journal(&fix_dir);
                 return Err(error);
             }
             return Err(Error::System(format!(
