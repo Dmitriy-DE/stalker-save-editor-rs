@@ -454,6 +454,12 @@ impl Screen for Companion {
             "ВКЛЮЧИТЬ ГОРЯЧИЕ КЛАВИШИ",
             Button::Secondary,
         )?);
+        if let Some(reason) = sse_companion::hotkeys::unavailable_reason() {
+            if let Some(button) = self.toggle_hotkeys {
+                cx.tree.set_enabled(button, false)?;
+            }
+            style::label(cx.tree, hot, reason, Text::Note)?;
+        }
         let confirm = style::card(cx.tree, host)?;
         self.confirm_card = Some(confirm);
         style::label(cx.tree, confirm, "ПОДТВЕРЖДЕНИЕ ИЗМЕНЕНИЯ ИГРЫ", Text::Heading)?;
