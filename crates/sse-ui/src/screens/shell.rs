@@ -1775,7 +1775,11 @@ mod tests {
         tree.paint(&mut frame, 1280)?;
 
         for index in [1_usize, 6, 19, 0] {
-            let id = shell.nav[index];
+            let id = shell
+                .nav
+                .get(index)
+                .copied()
+                .ok_or_else(|| sse_core::Error::Refused("missing navigation item".to_owned()))?;
             click(&mut shell, &mut tree, id)?;
             assert_eq!(shell.current(), ScreenId::ALL.get(index).copied());
             tree.paint(&mut frame, 1280)?;
