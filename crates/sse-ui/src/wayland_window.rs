@@ -99,7 +99,7 @@ impl WaylandWindow {
         let sync = Arc::new(Mutex::new(BufferSync {
             ids: [first.buffer, second.buffer],
             released: [true, true],
-            configured_size: None,
+            configured_size: Some((width, height)),
         }));
 
         let closed = Arc::new(Mutex::new(false));
@@ -366,14 +366,22 @@ fn event_reader<U: Send + 'static>(
         }
 
         let released_size = if opcode == 0 {
-            sync.lock().ok().and_then(|mut state| {
-                state.ids.iter().position(|id| *id == object).and_then(|index| {
-                    state.released.get_mut(index).map(|released| {
-                        *released = true;
-                        state.configured_size
-                    })
-                })
-            }).flatten()
+            match sync.lock() {
+                Ok(mut state) => {
+                    let configured_size = state.configured_size;
+                    state
+                        .ids
+                        .iter()
+                        .position(|id| *id == object)
+                        .and_then(|index| state.released.get_mut(index))
+                        .map(|released| {
+                            *released = true;
+                            configured_size
+                        })
+                        .flatten()
+                }
+                Err(_) => None,
+            }
         } else {
             None
         };
@@ -696,7 +704,7 @@ fn io(error: std::io::Error) -> Error {
 
 #[cfg(test)]
 mod tests {
-    use super::{keyboard_event, parse_global, parse_pointer_event, wire_string};
+    use super::{keyboard_event, parse_global, parse_pointer_event, valid_message_size, wire_message, wire_string};
     use crate::event_loop::WindowEvent;
 
     #[test]
@@ -718,6 +726,19 @@ mod tests {
             Some(WindowEvent::PointerMoved { x: 12, y: 34 })
         );
         assert_eq!(position, (12, 34));
+    }
+
+    #[test]
+    fn message_size_requires_four_byte_alignment() {
+        assert!(valid_message_size(8));
+        assert!(valid_message_size(12));
+        assert!(!valid_message_size(10));
+        assert!(!valid_message_size(0));
+    }
+
+    #[test]
+    fn wire_message_rejects_unaligned_payload() {
+        assert!(wire_message(1, 0, &[1, 2]).is_err());
     }
 
     #[test]
