@@ -130,16 +130,28 @@ mod tests {
         impl Drop for EnvGuard {
             fn drop(&mut self) {
                 for (key, value) in self.0.drain(..) {
-                    if let Some(value) = value { std::env::set_var(key, value); } else { std::env::remove_var(key); }
+                    if let Some(value) = value {
+                        std::env::set_var(key, value);
+                    } else {
+                        std::env::remove_var(key);
+                    }
                 }
             }
         }
         let isolated = std::env::temp_dir().join(format!("sse-golden-home-{}", std::process::id()));
         std::fs::create_dir_all(&isolated)?;
-        let keys = ["HOME", "XDG_DATA_HOME", "STALKER_SAVE_EDITOR_DATA", "USERPROFILE", "LOCALAPPDATA"];
+        let keys = [
+            "HOME",
+            "XDG_DATA_HOME",
+            "STALKER_SAVE_EDITOR_DATA",
+            "USERPROFILE",
+            "LOCALAPPDATA",
+        ];
         let previous = keys.into_iter().map(|key| (key, std::env::var_os(key))).collect();
         let _guard = EnvGuard(previous);
-        for key in keys { std::env::set_var(key, &isolated); }
+        for key in keys {
+            std::env::set_var(key, &isolated);
+        }
 
         const EXPECTED: [&str; 20] = [
             "77ee3947e1d0eca5607700d59fa60f8d35916d267c6976545d3ac0ad7a1dac16",
