@@ -111,9 +111,11 @@ fn running_processes_impl() -> io::Result<Vec<String>> {
             .iter()
             .position(|unit| *unit == 0)
             .unwrap_or(entry.executable.len());
-        if let Ok(name) = String::from_utf16(&entry.executable[..len]) {
-            if !name.is_empty() {
-                names.push(name);
+        if let Some(units) = entry.executable.get(..len) {
+            if let Ok(name) = String::from_utf16(units) {
+                if !name.is_empty() {
+                    names.push(name);
+                }
             }
         }
         // SAFETY: snapshot remains live and entry is reusable writable PROCESSENTRY32W storage.
