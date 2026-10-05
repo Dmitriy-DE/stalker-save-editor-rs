@@ -1424,14 +1424,16 @@ impl Screen for Environment {
                     return Ok(());
                 };
                 let selected = self.selected_snapshot.clone();
-                match selected.map_or(Ok(None), |id| {
+                let deleted = if let Some(id) = selected {
                     sse_fixes::toolkit::ToolkitSnapshotService::delete_snapshot(&directory, &id)?;
-                    Ok(Some(id))
-                }) {
-                    Ok(Some(id)) => cx.status = Some(format!("Снимок удалён: {id}")),
-                    Ok(None) => cx.status = Some("Снимков пока нет: создайте первый кнопкой ниже.".to_owned()),
-                    Err(error) => cx.status = Some(format!("Не удалось удалить снимок: {error}")),
-                }
+                    Some(id)
+                } else {
+                    None
+                };
+                match deleted {
+                    Some(id) => cx.status = Some(format!("Снимок удалён: {id}")),
+                    None => cx.status = Some("Снимков пока нет: создайте первый кнопкой ниже.".to_owned()),
+                 }
                 self.selected_snapshot = None;
                 self.refresh_lists(cx)?;
                 return Ok(());
