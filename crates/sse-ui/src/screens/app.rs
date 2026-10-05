@@ -490,6 +490,11 @@ pub struct Settings {
     volume_button: Option<WidgetId>,
     reports_button: Option<WidgetId>,
     send_report_button: Option<WidgetId>,
+    support_check_button: Option<WidgetId>,
+    support_save_button: Option<WidgetId>,
+    support_dismiss_button: Option<WidgetId>,
+    support_result: Option<WidgetId>,
+    environment_report: Option<String>,
     backup_input: Option<WidgetId>,
     scale_value: Option<WidgetId>,
     scale_button: Option<WidgetId>,
@@ -759,7 +764,43 @@ impl Screen for Settings {
             "Диагностика не нужна для обычного использования, но полезна для отчётов об ошибках.",
             Text::Body,
         )?;
-        style::label(cx.tree, support, "Проверка окружения подключена к кнопке «Проверить» в разделе обновлений; CrashReporter/report bundle API в sse-app пока отсутствует.", Text::Note)?;
+        if let Some(crash) = sse_app::diagnostics::pending_crash() {
+            style::label(
+                cx.tree,
+                support,
+                "Прошлый запуск завершился ошибкой. Сохраните отчёт и приложите его к issue.",
+                Text::Value,
+            )?;
+            let preview = crash.lines().next().unwrap_or("Сведения о сбое записаны.");
+            style::label(cx.tree, support, preview, Text::Note)?;
+        }
+        let support_actions = style::row(cx.tree, support)?;
+        self.support_check_button = Some(style::button(
+            cx.tree,
+            support_actions,
+            "Проверить окружение",
+            Button::Secondary,
+        )?);
+        self.support_save_button = Some(style::button(
+            cx.tree,
+            support_actions,
+            "Сохранить отчёт…",
+            Button::Secondary,
+        )?);
+        if sse_app::diagnostics::pending_crash().is_some() {
+            self.support_dismiss_button = Some(style::button(
+                cx.tree,
+                support_actions,
+                "Скрыть ошибку",
+                Button::Secondary,
+            )?);
+        }
+        self.support_result = Some(style::label(
+            cx.tree,
+            support,
+            "Проверка окружения ещё не запускалась.",
+            Text::Note,
+        )?);
         self.section_panels.push(support);
 
         let reports = style::card(cx.tree, content)?;
@@ -852,6 +893,29 @@ impl Screen for Settings {
                 "Громкость: {}%. Нажмите «Сохранить настройки».",
                 self.settings.sound_volume
             ));
+        }
+        if clicked.is_some() && clicked == self.support_check_button {
+            let report = sse_app::diagnostics::environment_report();
+            if let Some(result) = self.support_result {
+                cx.tree.set_text(result, &report.replace('\n', " · "))?;
+            }
+            self.environment_report = Some(report);
+            cx.status = Some("Проверка окружения завершена.".to_owned());
+        }
+        if clicked.is_some() && clicked == self.support_save_button {
+            let path = sse_app::paths::default_data_directory().join("diagnostics-report.txt.gz");
+            match sse_app::diagnostics::save_diagnostics_bundle(&path, self.environment_report.as_deref()) {
+                Ok(()) => {
+                    cx.status = Some(format!("Отчёт сохранён: {}", path.display()));
+                }
+                Err(error) => {
+                    cx.status = Some(format!("Не удалось сохранить отчёт: {error}"));
+                }
+            }
+        }
+        if clicked.is_some() && clicked == self.support_dismiss_button {
+            sse_app::diagnostics::dismiss_crash();
+            cx.status = Some("Ошибка скрыта.".to_owned());
         }
         if clicked.is_some() && clicked == self.reports_button {
             self.settings.send_reports = !self.settings.send_reports;
