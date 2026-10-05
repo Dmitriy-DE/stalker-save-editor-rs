@@ -1677,6 +1677,11 @@ mod tests {
     use crate::widget::Tree;
     use sse_storage::drafts::{DraftPlacement, DraftPlan, JsonValue};
 
+    fn close_task_test_guard() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(())).lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     #[test]
     fn save_disabled_reason_matches_reference_priority_and_capabilities() -> sse_core::Result<()> {
         let source_sha256 = "a".repeat(64);
@@ -1751,6 +1756,7 @@ mod tests {
 
     #[test]
     fn close_request_waits_for_an_active_restore_and_exits_after_completion() -> sse_core::Result<()> {
+        let _guard = close_task_test_guard();
         let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
         let mut shell = Shell::build(&mut tree, None)?;
         let close = Message::Window(WindowEvent::CloseRequested);
@@ -1778,6 +1784,7 @@ mod tests {
 
     #[test]
     fn close_request_waits_for_an_active_save_and_exits_after_completion() -> sse_core::Result<()> {
+        let _guard = close_task_test_guard();
         let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
         let mut shell = Shell::build(&mut tree, None)?;
         let close = Message::Window(WindowEvent::CloseRequested);
