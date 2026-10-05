@@ -17,6 +17,7 @@ sse-s2 = { path = "../sse-s2" }
 sse-storage = { path = "../sse-storage" }
 sse-xray = { path = "../sse-xray" }
 sse-content = { path = "../sse-content" }
+sse-app = { path = "../sse-app" }
 sse-fixes = { path = "../sse-fixes" }
 sse-lint = { path = "../sse-lint" }
 sse-steam = { path = "../sse-steam" }

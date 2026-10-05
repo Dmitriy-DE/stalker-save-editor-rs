@@ -370,7 +370,8 @@ impl Shell {
             style::nav(false),
         )?;
 
-        let library_workspace = super::saves::Workspace::default();
+        let library_workspace =
+            super::saves::Workspace::with_backup_directory(sse_app::paths::backup_directory(&settings));
         let screens = super::registry_with_save_workspace(library_workspace.clone());
         let mut nav = Vec::with_capacity(screens.len());
         let mut nav_groups = Vec::new();

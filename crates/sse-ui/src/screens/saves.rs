@@ -116,6 +116,7 @@ pub(super) const S2_STASH_MOVE_ENABLED: bool = false;
 pub(crate) struct Workspace {
     state: Arc<Mutex<WorkspaceState>>,
     draft_directory: Arc<PathBuf>,
+    backup_directory: Arc<Mutex<PathBuf>>,
     draft_generation: Arc<AtomicU64>,
     draft_latest: Arc<Mutex<BTreeMap<String, u64>>>,
     draft_write_lock: Arc<Mutex<()>>,
@@ -123,19 +124,49 @@ pub(crate) struct Workspace {
 
 impl Default for Workspace {
     fn default() -> Self {
-        Self::with_draft_directory(default_draft_directory())
+        Self::with_paths(
+            default_draft_directory(),
+            sse_app::paths::backup_directory(&sse_app::AppSettings::default()),
+        )
     }
 }
 
 impl Workspace {
+    #[cfg(test)]
     fn with_draft_directory(directory: PathBuf) -> Self {
+        Self::with_paths(
+            directory,
+            sse_app::paths::backup_directory(&sse_app::AppSettings::default()),
+        )
+    }
+
+    pub(crate) fn with_backup_directory(directory: PathBuf) -> Self {
+        Self::with_paths(default_draft_directory(), directory)
+    }
+
+    fn with_paths(draft_directory: PathBuf, backup_directory: PathBuf) -> Self {
         Self {
             state: Arc::new(Mutex::new(WorkspaceState::default())),
-            draft_directory: Arc::new(directory),
+            draft_directory: Arc::new(draft_directory),
+            backup_directory: Arc::new(Mutex::new(backup_directory)),
             draft_generation: Arc::new(AtomicU64::new(0)),
             draft_latest: Arc::new(Mutex::new(BTreeMap::new())),
             draft_write_lock: Arc::new(Mutex::new(())),
         }
+    }
+
+    pub(crate) fn backup_directory(&self) -> PathBuf {
+        self.backup_directory
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    pub(crate) fn set_backup_directory(&self, directory: PathBuf) {
+        *self
+            .backup_directory
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = directory;
     }
 
     fn lock(&self) -> MutexGuard<'_, WorkspaceState> {
@@ -3393,6 +3424,7 @@ impl Inventory {
             return Ok(());
         };
         let source_path = selected.slot.path.clone();
+        let backup_directory = self.workspace.backup_directory();
         if let Some(status) = self.status {
             cx.tree.set_text(status, "Сохранение…")?;
         }
@@ -3400,7 +3432,7 @@ impl Inventory {
             let result = if context.is_cancelled() {
                 Err("Сохранение отменено.".to_owned())
             } else {
-                commit_save_edits(&selected, &edits, &stash_moves).map_err(|error| error.to_string())
+                commit_save_edits(&selected, &edits, &stash_moves, &backup_directory).map_err(|error| error.to_string())
             };
             let _ = proxy.send(AppMessage::ToScreen(
                 ScreenId::Inventory,
@@ -3460,8 +3492,9 @@ fn commit_save_edits(
     selected: &LoadedSave,
     edits: &PendingInventoryEdits,
     stash_moves: &BTreeSet<u32>,
+    backup_directory: &Path,
 ) -> Result<(Arc<LoadedSave>, String)> {
-    commit_save_edits_to(selected, edits, stash_moves, &default_backup_directory())
+    commit_save_edits_to(selected, edits, stash_moves, backup_directory)
 }
 
 fn commit_save_edits_to(
@@ -4037,22 +4070,6 @@ fn normalized_s2_grid_shape(cells: &[sse_s2::S2GridCell], x: u16, y: u16) -> Vec
         .collect::<Vec<_>>();
     shape.sort_unstable();
     shape
-}
-
-fn default_backup_directory() -> PathBuf {
-    #[cfg(target_os = "windows")]
-    let data = std::env::var_os("LOCALAPPDATA")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("USERPROFILE").map(|home| PathBuf::from(home).join("AppData/Local")));
-    #[cfg(target_os = "macos")]
-    let data = std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Library/Application Support"));
-    #[cfg(all(unix, not(target_os = "macos")))]
-    let data = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")));
-    data.unwrap_or_else(|| std::env::temp_dir().join("StalkerSaveEditorData"))
-        .join("StalkerSaveEditor")
-        .join("backups")
 }
 
 impl Screen for Inventory {
@@ -5327,6 +5344,16 @@ mod tests {
         assert!(workspace.finish_saving(second));
         assert!(!workspace.is_saving());
         Ok(())
+    }
+
+    #[test]
+    fn backup_directory_is_shared_and_updates_before_settings_are_saved() {
+        let workspace = Workspace::with_backup_directory(PathBuf::from("first-backups"));
+        assert_eq!(workspace.backup_directory(), PathBuf::from("first-backups"));
+
+        workspace.set_backup_directory(PathBuf::from("next-backups"));
+
+        assert_eq!(workspace.backup_directory(), PathBuf::from("next-backups"));
     }
 
     #[test]

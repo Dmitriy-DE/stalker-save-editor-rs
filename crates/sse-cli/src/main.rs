@@ -449,7 +449,7 @@ fn prepare_and_export(arguments: &[String]) -> Result<(), WriteFailure> {
     let backup_directory = options
         .backup_directory
         .clone()
-        .unwrap_or_else(default_backup_directory);
+        .unwrap_or_else(configured_backup_directory);
     let receipt = publish_cli_write(
         WritePublication {
             source_path: &path,
@@ -650,7 +650,7 @@ fn prepare_and_export_s2(
     let backup_directory = options
         .backup_directory
         .clone()
-        .unwrap_or_else(default_backup_directory);
+        .unwrap_or_else(configured_backup_directory);
     let receipt = publish_cli_write(
         WritePublication {
             source_path: path,
@@ -890,20 +890,9 @@ fn default_output_path(source: &Path) -> PathBuf {
     directory.join(name)
 }
 
-fn default_backup_directory() -> PathBuf {
-    #[cfg(target_os = "windows")]
-    let data = std::env::var_os("LOCALAPPDATA")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("USERPROFILE").map(|home| PathBuf::from(home).join("AppData/Local")));
-    #[cfg(target_os = "macos")]
-    let data = std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Library/Application Support"));
-    #[cfg(all(unix, not(target_os = "macos")))]
-    let data = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")));
-    data.unwrap_or_else(|| std::env::temp_dir().join("StalkerSaveEditorData"))
-        .join("StalkerSaveEditor")
-        .join("backups")
+fn configured_backup_directory() -> PathBuf {
+    let settings = sse_app::AppSettings::load(&sse_app::default_settings_path());
+    sse_app::paths::backup_directory(&settings)
 }
 
 fn report(result: sse_core::Result<()>) -> u8 {
@@ -1087,7 +1076,7 @@ fn s2_category_name(kind: u8, display_name: Option<&str>) -> String {
 fn run_backups(arguments: &[String]) -> u8 {
     match arguments.first().map(String::as_str) {
         Some("list") => {
-            let mut directory = default_backup_directory();
+            let mut directory = configured_backup_directory();
             let mut options = arguments.iter().skip(1);
             while let Some(option) = options.next() {
                 if option != "--backup-dir" {

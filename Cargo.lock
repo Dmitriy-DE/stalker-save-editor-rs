@@ -24,6 +24,7 @@ dependencies = [
 name = "sse-cli"
 version = "2.0.0-dev"
 dependencies = [
+ "sse-app",
  "sse-codecs",
  "sse-content",
  "sse-core",
