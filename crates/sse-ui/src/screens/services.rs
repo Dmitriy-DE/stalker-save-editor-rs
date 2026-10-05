@@ -687,7 +687,7 @@ impl Screen for Companion {
                                 cx.tree.set_text(id, &format!("Инвентарь игрока: {text}"))?;
                             }
                         }
-                        _ => {}
+                        _ => cx.status = Some(format!("Companion: {text}")),
                     },
                     CompanionReply::Protocol(command, Err(e)) => {
                         if let Some(id) = self.latency {
