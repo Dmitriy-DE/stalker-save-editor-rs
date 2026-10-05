@@ -207,13 +207,27 @@ struct CompanionIntent {
 
 #[derive(Default)]
 struct Companion {
-    status: Option<WidgetId>, version: Option<WidgetId>, latency: Option<WidgetId>, path: Option<WidgetId>,
-    install: Option<WidgetId>, remove: Option<WidgetId>, refresh_button: Option<WidgetId>, ping: Option<WidgetId>,
-    inspect: Option<WidgetId>, info: Option<WidgetId>, inventory: Option<WidgetId>,
-    manual_path: Option<WidgetId>, apply_manual: Option<WidgetId>, manual_directory: Option<PathBuf>,
-    hotkey_inputs: Vec<(sse_companion::hotkeys::HotkeyAction, WidgetId)>, save_hotkeys: Option<WidgetId>,
-    default_hotkeys: Option<WidgetId>, confirm_card: Option<WidgetId>, confirm_write: Option<WidgetId>,
-    confirm_cancel: Option<WidgetId>, intent: Option<CompanionIntent>,
+    status: Option<WidgetId>,
+    version: Option<WidgetId>,
+    latency: Option<WidgetId>,
+    path: Option<WidgetId>,
+    install: Option<WidgetId>,
+    remove: Option<WidgetId>,
+    refresh_button: Option<WidgetId>,
+    ping: Option<WidgetId>,
+    inspect: Option<WidgetId>,
+    info: Option<WidgetId>,
+    inventory: Option<WidgetId>,
+    manual_path: Option<WidgetId>,
+    apply_manual: Option<WidgetId>,
+    manual_directory: Option<PathBuf>,
+    hotkey_inputs: Vec<(sse_companion::hotkeys::HotkeyAction, WidgetId)>,
+    save_hotkeys: Option<WidgetId>,
+    default_hotkeys: Option<WidgetId>,
+    confirm_card: Option<WidgetId>,
+    confirm_write: Option<WidgetId>,
+    confirm_cancel: Option<WidgetId>,
+    intent: Option<CompanionIntent>,
 }
 
 impl Companion {
