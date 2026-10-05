@@ -23,6 +23,15 @@ struct Globals {
     seat: Option<(u32, u32)>,
 }
 
+#[derive(Clone, Copy)]
+struct ReaderObjects {
+    xdg_surface: u32,
+    toplevel: u32,
+    wm: u32,
+    seat: Option<u32>,
+    surface: u32,
+}
+
 /// Native Wayland presenter. Input support currently uses wl_seat discovery and falls back to X11 when the
 /// compositor cannot provide the required core objects.
 pub struct WaylandWindow {
@@ -162,14 +171,17 @@ fn connect() -> Result<UnixStream> {
 
 fn event_reader<U: Send + 'static>(
     mut stream: UnixStream,
-    xdg_surface: u32,
-    toplevel: u32,
-    wm: u32,
-    seat: Option<u32>,
-    surface: u32,
+    objects: ReaderObjects,
     proxy: Proxy<U>,
     closed: Arc<Mutex<bool>>,
 ) {
+    let ReaderObjects {
+        xdg_surface,
+        toplevel,
+        wm,
+        seat,
+        surface,
+    } = objects;
     const POINTER_ID: u32 = 13;
     const KEYBOARD_ID: u32 = 14;
     const SEAT_CAP_POINTER: u32 = 1;
@@ -202,15 +214,17 @@ fn event_reader<U: Send + 'static>(
             }
         } else if Some(object) == seat && opcode == 0 {
             if let Some(capabilities) = read_u32(&payload, 0) {
-                if capabilities & SEAT_CAP_POINTER != 0 && pointer.is_none() {
-                    if send(&mut stream, object, 0, &u32s(&[POINTER_ID])).is_ok() {
-                        pointer = Some(POINTER_ID);
-                    }
+                if capabilities & SEAT_CAP_POINTER != 0
+                    && pointer.is_none()
+                    && send(&mut stream, object, 0, &u32s(&[POINTER_ID])).is_ok()
+                {
+                    pointer = Some(POINTER_ID);
                 }
-                if capabilities & SEAT_CAP_KEYBOARD != 0 && keyboard.is_none() {
-                    if send(&mut stream, object, 1, &u32s(&[KEYBOARD_ID])).is_ok() {
-                        keyboard = Some(KEYBOARD_ID);
-                    }
+                if capabilities & SEAT_CAP_KEYBOARD != 0
+                    && keyboard.is_none()
+                    && send(&mut stream, object, 1, &u32s(&[KEYBOARD_ID])).is_ok()
+                {
+                    keyboard = Some(KEYBOARD_ID);
                 }
             }
         } else if Some(object) == pointer {
