@@ -4,7 +4,10 @@
 //! explicitly exports the bundle.
 
 use crate::paths::default_data_directory;
-use sse_codecs::{crc32::crc32, deflate::{compress_raw, Level}};
+use sse_codecs::{
+    crc32::crc32,
+    deflate::{compress_raw, Level},
+};
 use sse_core::{Error, Result};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
