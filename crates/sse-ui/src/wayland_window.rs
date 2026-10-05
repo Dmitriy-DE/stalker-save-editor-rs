@@ -653,11 +653,7 @@ fn create_buffer(
         0,
         &u32s(&[buffer, 0, width, height, stride, WL_SHM_FORMAT_XRGB8888]),
     )?;
-    Ok(BufferSlot {
-        pool,
-        buffer,
-        memory,
-    })
+    Ok(BufferSlot { pool, buffer, memory })
 }
 fn wire_string(value: &str) -> Vec<u8> {
     let len = value.len().saturating_add(1);
