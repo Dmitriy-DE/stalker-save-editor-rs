@@ -147,7 +147,8 @@ mod tests {
             let digest = sse_codecs::sha256::sha256_hex(&bytes);
             actual.push(digest.clone());
             assert_eq!(
-                digest, EXPECTED[index],
+                digest,
+                EXPECTED.get(index).copied().unwrap_or_default(),
                 "golden mismatch for {id:?}; actual set: {actual:?}"
             );
         }
