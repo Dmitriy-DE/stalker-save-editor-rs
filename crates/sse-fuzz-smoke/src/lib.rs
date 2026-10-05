@@ -22,9 +22,11 @@ mod tests {
                 *byte = u8::try_from(next(&mut state) & 0xff).unwrap_or_default();
             }
             // Mix pure random data with structured/truncated container prefixes.
-            if case % 4 == 0 && bytes.len() >= 8 {
+            if case.checked_rem(4).unwrap_or_default() == 0 && bytes.len() >= 8 {
                 let declared = u32::try_from(next(&mut state) & 0x00ff_ffff).unwrap_or_default();
-                bytes[..4].copy_from_slice(&declared.to_le_bytes());
+                if let Some(prefix) = bytes.get_mut(..4) {
+                    prefix.copy_from_slice(&declared.to_le_bytes());
+                }
             }
             let _ = S2Save::from_bytes(&bytes);
             let _ = Save::read(&bytes);
