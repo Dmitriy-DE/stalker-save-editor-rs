@@ -2,8 +2,9 @@
 
 use sse_core::{Error, Result};
 use std::fs::File;
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 use std::fs::OpenOptions;
+use std::io;
 use std::path::Path;
 
 /// Opens a regular file owned by the current user.
@@ -67,6 +68,159 @@ pub fn verify_directory_owner(path: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Copies native ownership metadata from a save onto its staged replacement.
+///
+/// On Unix this copies UID and GID; mode bits remain the caller's responsibility.
+/// On Windows it copies the owner, group, and discretionary ACL.
+pub fn copy_owner_and_group(source: &Path, destination: &Path) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::fs::MetadataExt;
+
+        let source_metadata = std::fs::metadata(source)?;
+        let destination_file = OpenOptions::new().write(true).open(destination)?;
+        let destination_metadata = destination_file.metadata()?;
+        if source_metadata.uid() == destination_metadata.uid() && source_metadata.gid() == destination_metadata.gid() {
+            return Ok(());
+        }
+
+        unsafe extern "C" {
+            fn fchown(fd: i32, owner: u32, group: u32) -> i32;
+        }
+        // SAFETY: the descriptor belongs to the open destination file; fchown reads only its fd and scalar IDs.
+        let result = unsafe {
+            fchown(
+                destination_file.as_raw_fd(),
+                source_metadata.uid(),
+                source_metadata.gid(),
+            )
+        };
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        windows_security::copy_owner_group_and_dacl(source, destination)
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (source, destination);
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
+mod windows_security {
+    use std::ffi::c_void;
+    use std::io;
+    use std::os::windows::ffi::OsStrExt;
+    use std::path::Path;
+
+    const SE_FILE_OBJECT: u32 = 1;
+    const OWNER_SECURITY_INFORMATION: u32 = 0x0000_0001;
+    const GROUP_SECURITY_INFORMATION: u32 = 0x0000_0002;
+    const DACL_SECURITY_INFORMATION: u32 = 0x0000_0004;
+
+    #[link(name = "advapi32")]
+    unsafe extern "system" {
+        fn GetNamedSecurityInfoW(
+            object_name: *mut u16,
+            object_type: u32,
+            security_info: u32,
+            owner: *mut *mut c_void,
+            group: *mut *mut c_void,
+            dacl: *mut *mut c_void,
+            sacl: *mut *mut c_void,
+            descriptor: *mut *mut c_void,
+        ) -> u32;
+        fn SetNamedSecurityInfoW(
+            object_name: *mut u16,
+            object_type: u32,
+            security_info: u32,
+            owner: *mut c_void,
+            group: *mut c_void,
+            dacl: *mut c_void,
+            sacl: *mut c_void,
+        ) -> u32;
+    }
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn LocalFree(memory: *mut c_void) -> *mut c_void;
+    }
+
+    pub(super) fn copy_owner_group_and_dacl(source: &Path, destination: &Path) -> io::Result<()> {
+        let mut source_name = wide(source);
+        let mut destination_name = wide(destination);
+        let security_info = OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
+        let mut owner = std::ptr::null_mut();
+        let mut group = std::ptr::null_mut();
+        let mut dacl = std::ptr::null_mut();
+        let mut descriptor = std::ptr::null_mut();
+        // SAFETY: all output pointers refer to initialized local pointer slots; source_name is NUL-terminated.
+        let read_status = unsafe {
+            GetNamedSecurityInfoW(
+                source_name.as_mut_ptr(),
+                SE_FILE_OBJECT,
+                security_info,
+                &mut owner,
+                &mut group,
+                &mut dacl,
+                std::ptr::null_mut(),
+                &mut descriptor,
+            )
+        };
+        if read_status != 0 {
+            if !descriptor.is_null() {
+                // SAFETY: a non-null descriptor returned by GetNamedSecurityInfoW is owned by the caller.
+                let _ = unsafe { LocalFree(descriptor) };
+            }
+            return Err(io::Error::other(format!(
+                "GetNamedSecurityInfoW failed with Windows error {read_status}"
+            )));
+        }
+        if descriptor.is_null() {
+            return Err(io::Error::other(
+                "GetNamedSecurityInfoW returned no security descriptor",
+            ));
+        }
+
+        // SAFETY: successful GetNamedSecurityInfoW allocated descriptor and returned valid owner/group/DACL pointers into it.
+        let write_status = unsafe {
+            SetNamedSecurityInfoW(
+                destination_name.as_mut_ptr(),
+                SE_FILE_OBJECT,
+                security_info,
+                owner,
+                group,
+                dacl,
+                std::ptr::null_mut(),
+            )
+        };
+        // SAFETY: descriptor is the allocation returned by GetNamedSecurityInfoW and has not been freed yet.
+        let _ = unsafe { LocalFree(descriptor) };
+        if write_status == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::other(format!(
+                "SetNamedSecurityInfoW failed with Windows error {write_status}"
+            )))
+        }
+    }
+
+    fn wide(path: &Path) -> Vec<u16> {
+        let mut value = path.as_os_str().encode_wide().collect::<Vec<_>>();
+        value.push(0);
+        value
+    }
 }
 
 #[cfg(target_os = "linux")]

@@ -322,6 +322,14 @@ impl<'a> Surface<'a> {
         self.clip
     }
 
+    /// Replaces the active clip with the intersection of `clip` and the surface bounds.
+    /// Returns the previous clip so callers can restore nested viewport clipping.
+    pub fn replace_clip(&mut self, clip: Rect) -> Rect {
+        let previous = self.clip;
+        self.clip = clip_to_surface(clip, self.width, self.height);
+        previous
+    }
+
     /// Solid rounded-rectangle fill with analytic edge coverage.
     pub fn fill_rect(&mut self, rect: Rect, radii: Radii, color: Color) {
         let bounds = intersect_rect(rect, self.clip);

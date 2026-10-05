@@ -10,7 +10,8 @@
 //! Emits `AppEvent` notifications when state mutations occur, allowing UI or other
 //! observers to stay synchronized without tight coupling or dependencies on `sse-ui`.
 
-use sse_storage::drafts::DraftPlan;
+use sse_core::Result;
+use sse_storage::drafts::{DraftJournal, DraftPlan};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -63,9 +64,13 @@ pub struct AppState {
     selected_game: Option<String>,
     game_dir: Option<PathBuf>,
     current_save: Option<PathBuf>,
+    current_save_sha256: Option<String>,
+    current_save_format: Option<String>,
+    current_save_legacy: bool,
+    invalid_numeric_input: bool,
     active_screen: String,
     recent_saves: Vec<PathBuf>,
-    drafts: HashMap<String, DraftPlan>,
+    drafts: HashMap<String, DraftJournal>,
     event_sender: Sender<AppEvent>,
     event_receiver: Receiver<AppEvent>,
 }
@@ -85,6 +90,10 @@ impl AppState {
             selected_game: None,
             game_dir: None,
             current_save: None,
+            current_save_sha256: None,
+            current_save_format: None,
+            current_save_legacy: false,
+            invalid_numeric_input: false,
             active_screen: "overview".to_owned(),
             recent_saves: Vec::new(),
             drafts: HashMap::new(),
@@ -154,15 +163,63 @@ impl AppState {
         self.current_save.as_deref()
     }
 
+    /// SHA-256 of the bytes currently loaded from `current_save`.
+    #[must_use]
+    pub fn current_save_sha256(&self) -> Option<&str> {
+        self.current_save_sha256.as_deref()
+    }
+
+    /// Stable format identifier of the currently loaded save.
+    #[must_use]
+    pub fn current_save_format(&self) -> Option<&str> {
+        self.current_save_format.as_deref()
+    }
+
+    /// Whether the current save uses the legacy S2 layout that cannot be edited.
+    #[must_use]
+    pub const fn current_save_is_legacy(&self) -> bool {
+        self.current_save_legacy
+    }
+
+    /// Sets format metadata for the active save used by shared save eligibility controls.
+    pub fn set_current_save_format(&mut self, format: Option<String>, is_legacy: bool) {
+        self.current_save_format = format;
+        self.current_save_legacy = is_legacy;
+    }
+
+    /// Whether an active numeric editor contains a value that cannot be saved.
+    #[must_use]
+    pub const fn has_invalid_numeric_input(&self) -> bool {
+        self.invalid_numeric_input
+    }
+
+    /// Updates the validation state of the active numeric editor.
+    pub fn set_invalid_numeric_input(&mut self, invalid: bool) {
+        self.invalid_numeric_input = invalid;
+    }
+
     /// Sets the active save file path, updating recent saves and emitting `CurrentSaveChanged`.
     pub fn set_current_save(&mut self, save_path: Option<PathBuf>) {
         if self.current_save != save_path {
             self.current_save = save_path.clone();
+            self.current_save_sha256 = None;
+            self.invalid_numeric_input = false;
             if let Some(ref path) = save_path {
                 self.record_recent_save(path.clone());
             }
             let _ = self.event_sender.send(AppEvent::CurrentSaveChanged(save_path));
         }
+        if self.current_save.is_none() {
+            self.current_save_format = None;
+            self.current_save_legacy = false;
+        }
+    }
+
+    /// Sets the current save path and the source bytes' SHA-256 as one loaded-save identity.
+    pub fn set_current_save_identity(&mut self, save_path: PathBuf, source_sha256: String) {
+        self.set_current_save(Some(save_path));
+        self.current_save_sha256 = Some(source_sha256);
+        self.invalid_numeric_input = false;
     }
 
     /// Returns the active screen identifier.
@@ -209,43 +266,109 @@ impl AppState {
     /// Checks if a draft exists for the given save SHA-256.
     #[must_use]
     pub fn has_draft(&self, source_sha256: &str) -> bool {
-        self.drafts.contains_key(source_sha256)
+        self.drafts
+            .get(source_sha256)
+            .and_then(DraftJournal::current)
+            .is_some_and(plan_has_changes)
     }
 
     /// Returns a reference to the active draft plan for a save, if any.
     #[must_use]
     pub fn draft(&self, source_sha256: &str) -> Option<&DraftPlan> {
+        self.drafts.get(source_sha256).and_then(DraftJournal::current)
+    }
+
+    /// Returns the complete undo/redo journal for one source save.
+    #[must_use]
+    pub fn draft_journal(&self, source_sha256: &str) -> Option<&DraftJournal> {
         self.drafts.get(source_sha256)
     }
 
     /// Updates or replaces the draft plan for a save, emitting `DraftChanged`.
     pub fn set_draft(&mut self, plan: DraftPlan) {
+        let journal = DraftJournal::new(vec![plan], 0);
+        if let Ok(journal) = journal {
+            self.set_draft_journal(journal);
+        }
+    }
+
+    /// Replaces the in-memory undo journal for one save.
+    pub fn set_draft_journal(&mut self, journal: DraftJournal) {
+        let Some(plan) = journal.current() else {
+            return;
+        };
         let source_sha256 = plan.source_sha256.clone();
-        let has_changes = plan.money.is_some()
-            || !plan.stack_counts.is_empty()
-            || !plan.durability.is_empty()
-            || !plan.placements.is_empty()
-            || !plan.upgrades.is_empty()
-            || !plan.detach_handles.is_empty()
-            || !plan.adds.is_empty()
-            || !plan.stash_takes.is_empty()
-            || !plan.stash_puts.is_empty()
-            || plan.unmapped_legacy_plan.is_some();
-        self.drafts.insert(source_sha256.clone(), plan);
+        let has_changes = plan_has_changes(plan);
+        self.drafts.insert(source_sha256.clone(), journal);
         let _ = self.event_sender.send(AppEvent::DraftChanged {
             source_sha256,
             has_changes,
         });
     }
 
+    /// Records a new plan in the bounded undo journal for its source save.
+    pub fn record_draft(&mut self, plan: DraftPlan) -> Result<()> {
+        let source_sha256 = plan.source_sha256.clone();
+        let journal = if let Some(journal) = self.drafts.get(&source_sha256).cloned() {
+            journal.record(plan, false)?
+        } else {
+            DraftJournal::new(vec![DraftPlan::empty(&source_sha256)?], 0)?.record(plan, false)?
+        };
+        self.set_draft_journal(journal);
+        Ok(())
+    }
+
+    /// Whether an earlier draft snapshot exists for this source save.
+    #[must_use]
+    pub fn can_undo_draft(&self, source_sha256: &str) -> bool {
+        self.drafts.get(source_sha256).is_some_and(DraftJournal::can_undo)
+    }
+
+    /// Whether a later draft snapshot exists for this source save.
+    #[must_use]
+    pub fn can_redo_draft(&self, source_sha256: &str) -> bool {
+        self.drafts.get(source_sha256).is_some_and(DraftJournal::can_redo)
+    }
+
+    /// Moves to the preceding plan snapshot, emitting `DraftChanged`.
+    pub fn undo_draft(&mut self, source_sha256: &str) -> Result<()> {
+        if let Some(journal) = self.drafts.get(source_sha256).cloned() {
+            self.set_draft_journal(journal.undo());
+        }
+        Ok(())
+    }
+
+    /// Moves to the next plan snapshot, emitting `DraftChanged`.
+    pub fn redo_draft(&mut self, source_sha256: &str) -> Result<()> {
+        if let Some(journal) = self.drafts.get(source_sha256).cloned() {
+            self.set_draft_journal(journal.redo());
+        }
+        Ok(())
+    }
+
     /// Removes a draft for the given save SHA-256, emitting `DraftDiscarded`.
     pub fn discard_draft(&mut self, source_sha256: &str) -> Option<DraftPlan> {
         let removed = self.drafts.remove(source_sha256);
-        if removed.is_some() {
+        if let Some(plan) = removed.as_ref().and_then(DraftJournal::current) {
             let _ = self.event_sender.send(AppEvent::DraftDiscarded {
                 source_sha256: source_sha256.to_owned(),
             });
+            return Some(plan.clone());
         }
-        removed
+        None
     }
+}
+
+fn plan_has_changes(plan: &DraftPlan) -> bool {
+    plan.money.is_some()
+        || !plan.stack_counts.is_empty()
+        || !plan.durability.is_empty()
+        || !plan.placements.is_empty()
+        || !plan.upgrades.is_empty()
+        || !plan.detach_handles.is_empty()
+        || !plan.adds.is_empty()
+        || !plan.stash_takes.is_empty()
+        || !plan.s2_stash_takes.is_empty()
+        || !plan.stash_puts.is_empty()
+        || plan.unmapped_legacy_plan.is_some()
 }

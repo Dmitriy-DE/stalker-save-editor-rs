@@ -35,8 +35,21 @@ pub(crate) fn screens_with_workspace(workspace: Workspace) -> Vec<Box<dyn Screen
 #[derive(Clone, Debug)]
 enum Action {
     Restore { journal: PathBuf, source: PathBuf },
+    RestoreInPlace { journal: PathBuf, source: PathBuf },
     Compare(PathBuf),
     Diagnose { path: PathBuf, format_id: Option<String> },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RestoreMode {
+    Copy,
+    InPlace,
+}
+
+#[derive(Debug)]
+enum RestoredSave {
+    Copy(PathBuf),
+    InPlace(transaction::RestoreReceipt),
 }
 
 #[derive(Clone, Debug)]
@@ -50,6 +63,7 @@ struct ResultRow {
     row: WidgetId,
     label: WidgetId,
     button: WidgetId,
+    secondary_button: WidgetId,
 }
 
 #[derive(Debug)]
@@ -58,7 +72,7 @@ enum HistoryResult {
     Saves(std::result::Result<Vec<SaveSlot>, String>),
     Compare(std::result::Result<CompareReport, String>),
     Diagnosis(std::result::Result<String, String>),
-    Restored(std::result::Result<PathBuf, String>),
+    Restored(std::result::Result<RestoredSave, String>),
 }
 
 #[derive(Debug)]
@@ -110,6 +124,7 @@ pub struct HistoryScreen {
     results: Option<WidgetId>,
     refresh: Option<WidgetId>,
     restore_confirmation: Option<WidgetId>,
+    restore_description: Option<WidgetId>,
     confirm_restore: Option<WidgetId>,
     cancel_restore: Option<WidgetId>,
     previous_page: Option<WidgetId>,
@@ -121,7 +136,7 @@ pub struct HistoryScreen {
     save_entries: Option<Vec<SaveSlot>>,
     page: usize,
     compare_selection: Vec<PathBuf>,
-    pending_restore: Option<(PathBuf, PathBuf)>,
+    pending_restore: Option<(PathBuf, PathBuf, RestoreMode)>,
 }
 
 impl HistoryScreen {
@@ -133,6 +148,7 @@ impl HistoryScreen {
             results: None,
             refresh: None,
             restore_confirmation: None,
+            restore_description: None,
             confirm_restore: None,
             cancel_restore: None,
             previous_page: None,
@@ -203,7 +219,13 @@ impl HistoryScreen {
         });
     }
 
-    fn start_restore(&self, journal: PathBuf, source: PathBuf, proxy: Option<crate::event_loop::Proxy<AppMessage>>) {
+    fn start_restore(
+        &self,
+        journal: PathBuf,
+        source: PathBuf,
+        mode: RestoreMode,
+        proxy: Option<crate::event_loop::Proxy<AppMessage>>,
+    ) {
         let Some(proxy) = proxy else {
             return;
         };
@@ -212,9 +234,40 @@ impl HistoryScreen {
             if context.is_cancelled() {
                 return;
             }
-            let result = restore_to_new_path(&journal, &source);
+            let result = match mode {
+                RestoreMode::Copy => restore_to_new_path(&journal, &source).map(RestoredSave::Copy),
+                RestoreMode::InPlace => transaction::restore_in_place(&journal)
+                    .map(RestoredSave::InPlace)
+                    .map_err(|error| error.to_string()),
+            };
             proxy.send(AppMessage::ToScreen(id, Box::new(HistoryResult::Restored(result))));
         });
+    }
+
+    fn open_restore_confirmation(
+        &mut self,
+        cx: &mut Context<'_>,
+        journal: PathBuf,
+        source: PathBuf,
+        mode: RestoreMode,
+    ) -> Result<()> {
+        self.pending_restore = Some((journal, source, mode));
+        if let (Some(dialog), Some(description)) = (self.restore_confirmation, self.restore_description) {
+            cx.tree.set_text(
+                description,
+                match mode {
+                    RestoreMode::Copy => {
+                        "Создать отдельный файл из проверенной копии? Исходный сейв останется без изменений."
+                    }
+                    RestoreMode::InPlace => {
+                        "Заменить исходный сейв? Текущий файл сверяется с журналом, перед записью создаётся страховочный бэкап."
+                    }
+                },
+            )?;
+            cx.tree.open_dialog(dialog)?;
+        }
+        self.set_summary(cx.tree, "Подтвердите восстановление.")?;
+        Ok(())
     }
 
     fn set_summary(&self, tree: &mut crate::widget::Tree, value: &str) -> Result<()> {
@@ -280,12 +333,22 @@ impl HistoryScreen {
             cx.tree.set_visible(slot.row, true)?;
             cx.tree.set_text(slot.label, &format!("{file} · {status}"))?;
             cx.tree.set_visible(slot.button, false)?;
+            cx.tree.set_visible(slot.secondary_button, false)?;
             if entry.status == BackupStatus::Verified && self.id == ScreenId::Backups {
                 cx.tree.set_visible(slot.button, true)?;
-                cx.tree.set_text(slot.button, "Восстановить копию…")?;
+                cx.tree.set_text(slot.button, "В копию…")?;
                 self.actions.push(ActionButton {
                     widget: slot.button,
                     action: Action::Restore {
+                        journal: entry.journal_path.clone(),
+                        source: entry.source_path.clone(),
+                    },
+                });
+                cx.tree.set_visible(slot.secondary_button, true)?;
+                cx.tree.set_text(slot.secondary_button, "На место…")?;
+                self.actions.push(ActionButton {
+                    widget: slot.secondary_button,
+                    action: Action::RestoreInPlace {
                         journal: entry.journal_path,
                         source: entry.source_path,
                     },
@@ -590,18 +653,25 @@ impl Screen for HistoryScreen {
             let row = style::row(cx.tree, results)?;
             let label = style::label(cx.tree, row, "", Text::Body)?;
             let button = style::button(cx.tree, row, "Действие", Button::Secondary)?;
+            let secondary_button = style::button(cx.tree, row, "Восстановить", Button::Danger)?;
             cx.tree.set_visible(row, false)?;
-            self.rows.push(ResultRow { row, label, button });
+            self.rows.push(ResultRow {
+                row,
+                label,
+                button,
+                secondary_button,
+            });
         }
-        let confirmation = style::card(cx.tree, host)?;
+        let confirmation_host = cx.tree.overlay_host().unwrap_or(host);
+        let confirmation = style::card(cx.tree, confirmation_host)?;
         self.restore_confirmation = Some(confirmation);
         style::label(cx.tree, confirmation, "ВОССТАНОВИТЬ РЕЗЕРВНУЮ КОПИЮ", Text::Heading)?;
-        style::label(
+        self.restore_description = Some(style::label(
             cx.tree,
             confirmation,
             "Подтвердите создание отдельного файла из проверенной копии. Исходный сейв останется без изменений.",
             Text::Body,
-        )?;
+        )?);
         let confirm_row = style::row(cx.tree, confirmation)?;
         self.confirm_restore = Some(style::button(
             cx.tree,
@@ -621,6 +691,19 @@ impl Screen for HistoryScreen {
         clicked: Option<WidgetId>,
     ) -> Result<()> {
         self.workspace.poll_tasks();
+        if self.pending_restore.is_some()
+            && matches!(
+                message,
+                Message::Window(crate::event_loop::WindowEvent::Key {
+                    pressed: true,
+                    keysym: 0xff1b,
+                    ..
+                })
+            )
+        {
+            self.pending_restore = None;
+            self.set_summary(cx.tree, "Восстановление отменено.")?;
+        }
         if clicked.is_some() && clicked == self.refresh {
             if cx.proxy.is_none() {
                 self.set_summary(cx.tree, "В режиме headless screenshot диски не сканируются.")?;
@@ -649,18 +732,18 @@ impl Screen for HistoryScreen {
         }
         if clicked.is_some() && clicked == self.cancel_restore {
             self.pending_restore = None;
-            if let Some(id) = self.restore_confirmation {
-                cx.tree.set_visible(id, false)?;
-            }
+            let _ = cx.tree.close_dialog()?;
             self.set_summary(cx.tree, "Восстановление отменено.")?;
         }
         if clicked.is_some() && clicked == self.confirm_restore {
-            if let Some((journal, source)) = self.pending_restore.take() {
-                if let Some(id) = self.restore_confirmation {
-                    cx.tree.set_visible(id, false)?;
-                }
-                self.set_summary(cx.tree, "Проверяю журнал и восстанавливаю копию в новый файл…")?;
-                self.start_restore(journal, source, cx.proxy.cloned());
+            if let Some((journal, source, mode)) = self.pending_restore.take() {
+                let _ = cx.tree.close_dialog()?;
+                let status = match mode {
+                    RestoreMode::Copy => "Проверяю журнал и восстанавливаю копию в новый файл…",
+                    RestoreMode::InPlace => "Проверяю журнал и восстанавливаю сейв на место…",
+                };
+                self.set_summary(cx.tree, status)?;
+                self.start_restore(journal, source, mode, cx.proxy.cloned());
             }
         }
         if let Some(action) = self
@@ -671,11 +754,14 @@ impl Screen for HistoryScreen {
         {
             match action {
                 Action::Restore { journal, source } => {
-                    self.pending_restore = Some((journal, source));
-                    if let Some(id) = self.restore_confirmation {
-                        cx.tree.set_visible(id, true)?;
+                    self.open_restore_confirmation(cx, journal, source, RestoreMode::Copy)?;
+                }
+                Action::RestoreInPlace { journal, source } => {
+                    if has_pending_edits_for_selected_source(cx.app, &source) {
+                        self.set_summary(cx.tree, "Сначала сохраните или сбросьте черновик выбранного сейва.")?;
+                    } else {
+                        self.open_restore_confirmation(cx, journal, source, RestoreMode::InPlace)?;
                     }
-                    self.set_summary(cx.tree, "Подтвердите восстановление в отдельный файл.")?;
                 }
                 Action::Compare(path) => {
                     if let Some(current) = cx.app.current_save().map(Path::to_path_buf) {
@@ -720,6 +806,9 @@ impl Screen for HistoryScreen {
         }
         if let Message::User(AppMessage::ToScreen(target, payload)) = message {
             if *target == self.id {
+                if payload.is::<()>() {
+                    self.request_refresh(cx.proxy.cloned());
+                }
                 if let Some(payload) = payload.downcast_ref::<HistoryResult>() {
                     match payload {
                         HistoryResult::Backups(Ok(entries)) => self.render_backups(cx, entries.clone())?,
@@ -738,8 +827,26 @@ impl Screen for HistoryScreen {
                         HistoryResult::Diagnosis(Err(error)) => {
                             self.set_summary(cx.tree, &format!("Ошибка чтения: {}", truncate(error, 160)))?
                         }
-                        HistoryResult::Restored(Ok(path)) => {
-                            self.set_summary(cx.tree, &format!("Копия восстановлена в {}", path.display()))?
+                        HistoryResult::Restored(Ok(RestoredSave::Copy(path))) => {
+                            self.set_summary(cx.tree, &format!("Копия восстановлена в {}", path.display()))?;
+                            self.request_refresh(cx.proxy.cloned());
+                            if let Some(proxy) = cx.proxy.as_ref() {
+                                let _ = proxy.send(AppMessage::ToScreen(ScreenId::Overview, Box::new(())));
+                            }
+                        }
+                        HistoryResult::Restored(Ok(RestoredSave::InPlace(receipt))) => {
+                            let backup = receipt.safety_backup_path.as_ref().map_or_else(
+                                || "без страховочного бэкапа (исходного файла не было)".to_owned(),
+                                |path| format!("страховочный бэкап: {}", path.display()),
+                            );
+                            self.set_summary(
+                                cx.tree,
+                                &format!("Восстановлено на место: {} · {backup}", receipt.save_path.display()),
+                            )?;
+                            self.request_refresh(cx.proxy.cloned());
+                            if let Some(proxy) = cx.proxy.as_ref() {
+                                let _ = proxy.send(AppMessage::ToScreen(ScreenId::Overview, Box::new(())));
+                            }
                         }
                         HistoryResult::Restored(Err(error)) => {
                             self.set_summary(cx.tree, &format!("Не восстановлено: {}", truncate(error, 160)))?
@@ -849,6 +956,14 @@ fn format_system_time(value: SystemTime) -> String {
         seconds_of_day % 3_600 / 60,
         seconds_of_day % 60
     )
+}
+
+fn has_pending_edits_for_selected_source(app: &sse_app::AppState, source: &Path) -> bool {
+    app.current_save() == Some(source)
+        && (app.has_invalid_numeric_input()
+            || app
+                .current_save_sha256()
+                .is_some_and(|source_sha256| app.has_draft(source_sha256)))
 }
 
 fn compare_saves(first: &Path, second: &Path) -> std::result::Result<CompareReport, String> {
@@ -1165,6 +1280,36 @@ mod tests {
             restored_output_path_at(source, 123),
             Path::new("/save/game_slot_restored_123.sav")
         );
+        assert_eq!(
+            restored_output_path_at(Path::new("/save/game_slot.scop"), 123),
+            Path::new("/save/game_slot_restored_123.scop")
+        );
+        assert_eq!(
+            restored_output_path_at(Path::new("/save/game_slot.scs"), 123),
+            Path::new("/save/game_slot_restored_123.scs")
+        );
+    }
+
+    #[test]
+    fn in_place_restore_is_blocked_for_the_selected_save_with_pending_draft_edits() -> sse_core::Result<()> {
+        let source = PathBuf::from("/saves/slot.sav");
+        let source_sha256 = "ab".repeat(32);
+        let mut app = sse_app::AppState::new();
+        app.set_current_save_identity(source.clone(), source_sha256.clone());
+        let mut draft = sse_storage::drafts::DraftPlan::empty(&source_sha256)?;
+        draft.money = Some(1234);
+        app.set_draft(draft);
+
+        assert!(super::has_pending_edits_for_selected_source(&app, &source));
+        assert!(!super::has_pending_edits_for_selected_source(
+            &app,
+            Path::new("/saves/other.sav")
+        ));
+
+        app.discard_draft(&source_sha256);
+        app.set_invalid_numeric_input(true);
+        assert!(super::has_pending_edits_for_selected_source(&app, &source));
+        Ok(())
     }
 
     #[test]
@@ -1363,10 +1508,38 @@ mod tests {
         }
         assert_eq!(
             screen.pending_restore,
-            Some((receipt.journal_path.clone(), source.clone())),
+            Some((receipt.journal_path.clone(), source.clone(), super::RestoreMode::Copy)),
             "the first click must only request confirmation"
         );
+        assert!(tree.dialog_open(), "restore confirmation must be a modal overlay");
+        assert_eq!(tree.dialog(), screen.restore_confirmation);
         assert_eq!(fs::read(&source)?, SYNTHETIC_XRAY_SAVE);
+        {
+            let message = Message::Window(crate::event_loop::WindowEvent::Key {
+                pressed: true,
+                keysym: 0xff1b,
+                text: None,
+                ctrl: false,
+                shift: false,
+            });
+            let mut cx = Context {
+                tree: &mut tree,
+                proxy: None,
+                status: None,
+                app: &mut app,
+            };
+            screen.message(&mut cx, &message, None)?;
+        }
+        assert!(
+            screen.pending_restore.is_none(),
+            "Escape must discard the pending confirmation"
+        );
+        assert!(
+            tree.dialog_open(),
+            "the shell owns closing the modal after routing Escape"
+        );
+        tree.close_dialog()?;
+        assert!(!tree.dialog_open());
 
         let restored = super::restore_to_new_path(&receipt.journal_path, &source).map_err(sse_core::Error::System)?;
         assert_ne!(restored, source);

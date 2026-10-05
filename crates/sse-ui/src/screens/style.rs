@@ -78,6 +78,7 @@ pub fn card(tree: &mut Tree, parent: WidgetId) -> Result<WidgetId> {
         padding: Edges::all(theme::CARD_PADDING),
         gap: Size::new(0.0, theme::CONTROL_GAP),
         align_items: Align::Stretch,
+        shrink: 0.0,
         ..Style::default()
     };
     let look = Look {

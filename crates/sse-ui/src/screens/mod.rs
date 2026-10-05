@@ -180,6 +180,21 @@ pub enum AppMessage {
     Tick(u64),
     /// Result of background work for one screen; the screen downcasts the payload it sent itself.
     ToScreen(ScreenId, Box<dyn Any + Send>),
+    /// Global draft command from the shell, dispatched to the selected-save editor screen.
+    EditorAction(EditorAction),
+}
+
+/// Commands available from the shared editor toolbar and keyboard shortcuts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EditorAction {
+    /// Revert to the preceding draft snapshot.
+    Undo,
+    /// Reapply the next draft snapshot.
+    Redo,
+    /// Discard edits and restore the source save values.
+    Reset,
+    /// Validate and write the current draft with a backup.
+    Save,
 }
 
 impl std::fmt::Debug for AppMessage {
@@ -187,6 +202,7 @@ impl std::fmt::Debug for AppMessage {
         match self {
             Self::Tick(seconds) => write!(f, "Tick({seconds})"),
             Self::ToScreen(id, _) => write!(f, "ToScreen({id:?})"),
+            Self::EditorAction(action) => write!(f, "EditorAction({action:?})"),
         }
     }
 }
@@ -250,8 +266,11 @@ pub trait Screen {
 /// All screens, in [`ScreenId::ALL`] order.
 #[must_use]
 pub fn registry() -> Vec<Box<dyn Screen>> {
+    registry_with_save_workspace(saves::Workspace::default())
+}
+
+pub(crate) fn registry_with_save_workspace(save_workspace: saves::Workspace) -> Vec<Box<dyn Screen>> {
     let mut screens: Vec<Box<dyn Screen>> = Vec::new();
-    let save_workspace = saves::Workspace::default();
     screens.extend(saves::screens_with_workspace(save_workspace.clone()));
     screens.extend(history::screens_with_workspace(save_workspace));
     screens.extend(games::screens());
