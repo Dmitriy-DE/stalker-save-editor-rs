@@ -137,10 +137,15 @@ fn make_archive_decoders() -> (HeaderDecoder, EntryDecoder) {
             }
         }
         if candidates.is_empty() {
-            Err(sse_core::Error::damaged("X-Ray archive header could not be decoded"))
-        } else {
-            Ok(candidates)
+            return Err(sse_core::Error::damaged("X-Ray archive header could not be decoded"));
         }
+        candidates.dedup();
+        if candidates.len() != 1 {
+            return Err(sse_core::Error::damaged(
+                "X-Ray archive header decryption is ambiguous: candidates differ",
+            ));
+        }
+        Ok(candidates)
     });
     let entry_decoder: EntryDecoder =
         Arc::new(|data: &[u8], expected_size: usize| sse_codecs::lzo1x::decompress(data, expected_size));
