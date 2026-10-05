@@ -166,6 +166,11 @@ pub struct Shell {
     reports_banner: WidgetId,
     reports_ok: WidgetId,
     reports_off: WidgetId,
+    report_dialog: WidgetId,
+    report_preview: WidgetId,
+    report_send: WidgetId,
+    report_cancel: WidgetId,
+    pending_report: Option<String>,
     saving_dialog: WidgetId,
     tooltip: WidgetId,
     status: WidgetId,
@@ -244,6 +249,10 @@ fn compact_library_button(tree: &mut Tree, parent: WidgetId, text: &str) -> Resu
             ..Look::default()
         },
     )
+}
+
+fn report_text(key: &str) -> String {
+    sse_catalog::I18nService::instance().tr_in(Some(crate::strings::current_language()), key, &[])
 }
 
 fn startup_language(settings: &sse_app::AppSettings) -> String {
@@ -542,37 +551,6 @@ impl Shell {
                 ..Look::default()
             },
         )?;
-        let reports_banner = tree.add(
-            Some(main),
-            NodeKind::Row,
-            Style {
-                min: Size::new(0.0, 58.0),
-                padding: padded(16.0, 6.0, 16.0, 6.0),
-                shrink: 0.0,
-                align_items: Align::Center,
-                ..Style::default()
-            },
-            Content::Panel,
-            Look {
-                fill: Some(rgb(style::BG_PANEL)),
-                border: Some((rgb(style::BORDER_SUBTLE), 1.0)),
-                ..Look::default()
-            },
-        )?;
-        tree.add(
-            Some(reports_banner),
-            NodeKind::Leaf,
-            Style { grow: 1.0, shrink: 1.0, preferred: Size::new(420.0, 0.0), max: Size::new(560.0, f32::INFINITY), ..Style::default() },
-            Content::Paragraph {
-                text: "Редактор раз в сутки и после сбоя отправляет разработчику журнал работы, чтобы находить ошибки. Пути, имена и Steam ID из него вырезаются, сейвы не отправляются.".to_owned(),
-                style: Text::Note.style(),
-            },
-            Look { text: rgb(style::TEXT_MUTED), ..Look::default() },
-        )?;
-        let reports_ok = style::button(tree, reports_banner, "Понятно", style::Button::Secondary)?;
-        let reports_off = style::button(tree, reports_banner, "Не отправлять", style::Button::Secondary)?;
-        tree.set_visible(reports_banner, !settings.reports_notice_shown)?;
-
         let viewport = tree.add(
             Some(main),
             NodeKind::Row,
@@ -804,6 +782,80 @@ impl Shell {
             Look::default(),
         )?;
         tree.set_overlay_host(overlay_host)?;
+
+        let reports_banner = style::card(tree, overlay_host)?;
+        style::label(
+            tree,
+            reports_banner,
+            &report_text("Отправлять анонимные отчёты об ошибках?"),
+            Text::Heading,
+        )?;
+        tree.add(
+            Some(reports_banner),
+            NodeKind::Leaf,
+            Style {
+                preferred: Size::new(560.0, 0.0),
+                max: Size::new(620.0, f32::INFINITY),
+                ..Style::default()
+            },
+            Content::Paragraph {
+                text: report_text(
+                    "В автоматический отчёт входят только версия, ОС, текст ошибки, стек и обезличенный журнал. Сохранения, пути и игровые логи не отправляются.",
+                ),
+                style: Text::Body.style(),
+            },
+            Look {
+                text: rgb(style::TEXT_SECONDARY),
+                ..Look::default()
+            },
+        )?;
+        let reports_actions = style::row(tree, reports_banner)?;
+        let reports_ok = style::button(tree, reports_actions, &report_text("Да"), style::Button::Primary)?;
+        let reports_off = style::button(tree, reports_actions, &report_text("Нет"), style::Button::Secondary)?;
+        tree.set_visible(reports_banner, false)?;
+
+        let report_dialog = style::card(tree, overlay_host)?;
+        style::label(tree, report_dialog, &report_text("Отправить отчёт?"), Text::Heading)?;
+        style::label(
+            tree,
+            report_dialog,
+            &report_text("Ниже показано всё, что войдёт в отчёт."),
+            Text::Note,
+        )?;
+        let report_preview = tree.add(
+            Some(report_dialog),
+            NodeKind::Leaf,
+            Style {
+                preferred: Size::new(620.0, 300.0),
+                max: Size::new(680.0, 360.0),
+                ..Style::default()
+            },
+            Content::Paragraph {
+                text: String::new(),
+                style: Text::Note.style(),
+            },
+            Look {
+                fill: Some(rgb(style::BG_PANEL)),
+                border: Some((rgb(style::BORDER_SUBTLE), 1.0)),
+                text: rgb(style::TEXT_SECONDARY),
+                ..Look::default()
+            },
+        )?;
+        let report_actions = style::row(tree, report_dialog)?;
+        let report_send = style::button(
+            tree,
+            report_actions,
+            &report_text("Отправить"),
+            style::Button::Primary,
+        )?;
+        let report_cancel = style::button(
+            tree,
+            report_actions,
+            &report_text("Не отправлять"),
+            style::Button::Secondary,
+        )?;
+        tree.set_visible(report_dialog, false)?;
+
         let saving_dialog = style::card(tree, overlay_host)?;
         style::label(tree, saving_dialog, "СОХРАНЕНИЕ ФАЙЛА", Text::Heading)?;
         style::label(
@@ -857,6 +909,11 @@ impl Shell {
             reports_banner,
             reports_ok,
             reports_off,
+            report_dialog,
+            report_preview,
+            report_send,
+            report_cancel,
+            pending_report: sse_app::diagnostics::pending_automatic_error_report(),
             saving_dialog,
             tooltip,
             status,
@@ -874,7 +931,38 @@ impl Shell {
         shell.show(tree, 0)?;
         shell.render_library(tree)?;
         shell.sync_draft_controls(tree)?;
+        if !settings.reports_notice_shown {
+            tree.open_dialog(shell.reports_banner)?;
+        } else if settings.send_reports {
+            shell.open_pending_report_dialog(tree)?;
+        }
         Ok(shell)
+    }
+
+    fn open_pending_report_dialog(&mut self, tree: &mut Tree) -> Result<()> {
+        let Some(report) = self.pending_report.as_deref() else {
+            return Ok(());
+        };
+        let preview = if report.chars().count() > 8_000 {
+            report.chars().take(8_000).collect::<String>()
+        } else {
+            report.to_owned()
+        };
+        tree.set_text(self.report_preview, &preview)?;
+        if tree.dialog_open() {
+            let _ = tree.close_dialog()?;
+        }
+        tree.open_dialog(self.report_dialog)
+    }
+
+    fn capture_error_report(&mut self, tree: &mut Tree, error: &str) {
+        sse_app::diagnostics::record_crash("Caught UI error", error);
+        let stack = std::backtrace::Backtrace::force_capture().to_string();
+        self.pending_report = Some(sse_app::diagnostics::automatic_error_report(error, &stack));
+        let settings = sse_app::AppSettings::load(&sse_app::default_settings_path());
+        if settings.send_reports && settings.reports_notice_shown {
+            let _ = self.open_pending_report_dialog(tree);
+        }
     }
 
     fn sync_game_sounds(&mut self) {
@@ -1379,18 +1467,54 @@ impl Shell {
         }
         if clicked.is_some() && clicked == Some(self.reports_ok) {
             let _ = sse_app::settings_writer::submit(sse_app::settings_writer::SettingsPatch::ReportsNotice {
-                send_reports: None,
+                send_reports: Some(true),
             });
-            tree.set_visible(self.reports_banner, false)?;
-            tree.set_text(self.status, "Настройки отчётов сохранены.")?;
+            if tree.dialog() == Some(self.reports_banner) {
+                let _ = tree.close_dialog()?;
+            }
+            tree.set_text(self.status, &report_text("Отправка анонимных отчётов включена."))?;
+            self.open_pending_report_dialog(tree)?;
             return Ok(Flow::Continue);
         }
         if clicked.is_some() && clicked == Some(self.reports_off) {
             let _ = sse_app::settings_writer::submit(sse_app::settings_writer::SettingsPatch::ReportsNotice {
                 send_reports: Some(false),
             });
-            tree.set_visible(self.reports_banner, false)?;
-            tree.set_text(self.status, "Отправка отчётов отключена.")?;
+            if tree.dialog() == Some(self.reports_banner) {
+                let _ = tree.close_dialog()?;
+            }
+            self.pending_report = None;
+            sse_app::diagnostics::dismiss_crash();
+            tree.set_text(self.status, &report_text("Отправка анонимных отчётов отключена."))?;
+            return Ok(Flow::Continue);
+        }
+        if clicked.is_some() && clicked == Some(self.report_cancel) {
+            if tree.dialog() == Some(self.report_dialog) {
+                let _ = tree.close_dialog()?;
+            }
+            self.pending_report = None;
+            sse_app::diagnostics::dismiss_crash();
+            tree.set_text(self.status, &report_text("Отчёт не отправлен."))?;
+            return Ok(Flow::Continue);
+        }
+        if clicked.is_some() && clicked == Some(self.report_send) {
+            if let Some(report) = self.pending_report.take() {
+                match sse_app::diagnostics::save_automatic_error_report(&report) {
+                    Ok(_) => {
+                        let text = if sse_app::diagnostics::automatic_report_endpoint().is_some() {
+                            report_text("Отчёт сохранён локально; HTTPS-приёмник будет использован после включения сервера.")
+                        } else {
+                            report_text("Приёмник отчётов пока не настроен. Отчёт сохранён локально.")
+                        };
+                        tree.set_text(self.status, &text)?;
+                    }
+                    Err(error) => tree.set_text(self.status, &format!("{}: {error}", report_text("Не удалось сохранить отчёт")))?,
+                }
+            }
+            sse_app::diagnostics::dismiss_crash();
+            if tree.dialog() == Some(self.report_dialog) {
+                let _ = tree.close_dialog()?;
+            }
             return Ok(Flow::Continue);
         }
         let editor_action = if clicked.is_some() && clicked == Some(self.undo) {
@@ -1717,6 +1841,7 @@ impl App<AppMessage> for Shell {
             Err(error) => {
                 let text = crate::status::localize_writer_status(&format!("Ошибка: {error}"));
                 let _ = tree.set_text(self.status, &text);
+                self.capture_error_report(tree, &error.to_string());
                 Flow::Continue
             }
         }
