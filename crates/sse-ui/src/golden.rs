@@ -145,10 +145,12 @@ mod tests {
                 bytes.extend_from_slice(&pixel.to_le_bytes());
             }
             let digest = sse_codecs::sha256::sha256_hex(&bytes);
-            actual.push(digest.clone());
+            actual.push(digest);
+        }
+        for (index, (id, digest)) in ScreenId::ALL.iter().zip(actual.iter()).enumerate() {
             assert_eq!(
                 digest,
-                EXPECTED.get(index).copied().unwrap_or_default(),
+                EXPECTED.get(index).unwrap_or(&""),
                 "golden mismatch for {id:?}; actual set: {actual:?}"
             );
         }
