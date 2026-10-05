@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -246,11 +246,7 @@ pub fn export_transaction(
             output_directory.display()
         )));
     }
-    if backup_directory.starts_with(source_directory) {
-        return Err(Error::Refused(
-            "Backup directory must be outside the selected save directory.".to_owned(),
-        ));
-    }
+    ensure_backup_directory_outside(source_directory, &backup_directory)?;
 
     let source_bytes = fs::read(&source_path)?;
     let source_sha256 = sha256::sha256_hex(&source_bytes);
@@ -275,6 +271,7 @@ pub fn export_transaction(
     let temporary_output = output_directory.join(format!(".{output_name}.{token}.tmp"));
     let temporary_journal = backup_directory.join(format!(".{artifact_stem}.json.tmp"));
     fs::create_dir_all(&backup_directory)?;
+    ensure_backup_directory_outside(source_directory, &backup_directory)?;
     let mut published = false;
     let transaction = (|| {
         StdFileSystem.write_new(&backup_path, &source_bytes)?;
@@ -682,16 +679,12 @@ fn replace_with_file_system_and_verifier_operation<T>(
     let source_directory = source_path
         .parent()
         .ok_or_else(|| Error::Refused("source save has no parent directory".to_owned()))?;
-    if backup_directory.starts_with(source_directory) {
-        return Err(Error::Refused(
-            "Backup directory must be outside the selected save directory.".to_owned(),
-        ));
-    }
     if files.is_symlink(&source_path)? {
         return Err(Error::Refused(
             "The save is a symbolic link; open the file it points to instead.".to_owned(),
         ));
     }
+    ensure_backup_directory_outside(source_directory, &backup_directory)?;
 
     let source_bytes = files.read_all(&source_path)?;
     let source_sha256 = sha256::sha256_hex(&source_bytes);
@@ -720,6 +713,7 @@ fn replace_with_file_system_and_verifier_operation<T>(
     let temporary_journal = backup_directory.join(format!(".{artifact_stem}.json.tmp"));
     let temporary_rollback = source_directory.join(format!(".{file_name}.{token}.rollback.tmp"));
     files.create_dir_all(&backup_directory)?;
+    ensure_backup_directory_outside(source_directory, &backup_directory)?;
 
     let mut source_replaced = false;
     let mut backup_created = false;
@@ -858,6 +852,82 @@ fn absolute_path(path: &Path) -> Result<PathBuf> {
         Ok(path.to_path_buf())
     } else {
         Ok(std::env::current_dir()?.join(path))
+    }
+}
+
+fn ensure_backup_directory_outside(source_directory: &Path, backup_directory: &Path) -> Result<()> {
+    let source_directory = canonicalize_path_with_missing_tail(source_directory)?;
+    let backup_directory = canonicalize_path_with_missing_tail(backup_directory)?;
+    if path_starts_with(&backup_directory, &source_directory, cfg!(windows)) {
+        return Err(Error::Refused(
+            "Backup directory must be outside the selected save directory.".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn canonicalize_path_with_missing_tail(path: &Path) -> Result<PathBuf> {
+    let absolute = absolute_path(path)?;
+    let mut resolved = PathBuf::new();
+    let mut has_missing_tail = false;
+
+    for component in absolute.components() {
+        match component {
+            Component::Prefix(prefix) => resolved.push(prefix.as_os_str()),
+            Component::RootDir => resolved.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if resolved.parent().is_some() {
+                    resolved.pop();
+                }
+                if has_missing_tail {
+                    match fs::canonicalize(&resolved) {
+                        Ok(canonical) => {
+                            resolved = canonical;
+                            has_missing_tail = false;
+                        }
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(error) => return Err(error.into()),
+                    }
+                }
+            }
+            Component::Normal(name) => {
+                resolved.push(name);
+                if !has_missing_tail {
+                    match fs::canonicalize(&resolved) {
+                        Ok(canonical) => resolved = canonical,
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                            if fs::symlink_metadata(&resolved).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+                                return Err(Error::Refused(
+                                    "Backup path contains an unresolved symbolic link.".to_owned(),
+                                ));
+                            }
+                            has_missing_tail = true;
+                        }
+                        Err(error) => return Err(error.into()),
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(resolved)
+}
+
+fn path_starts_with(path: &Path, prefix: &Path, case_insensitive: bool) -> bool {
+    let mut path_components = path.components();
+    prefix.components().all(|prefix_component| {
+        path_components
+            .next()
+            .is_some_and(|path_component| path_components_equal(path_component, prefix_component, case_insensitive))
+    })
+}
+
+fn path_components_equal(left: Component<'_>, right: Component<'_>, case_insensitive: bool) -> bool {
+    if case_insensitive {
+        left.as_os_str().to_string_lossy().to_lowercase() == right.as_os_str().to_string_lossy().to_lowercase()
+    } else {
+        left == right
     }
 }
 
@@ -1632,6 +1702,78 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(std::fs::read(&target)?, source_bytes);
         assert!(std::fs::read_dir(&backups)?.next().is_none());
+        std::fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn backup_directory_symlink_alias_inside_save_folder_is_refused() -> TestResult {
+        let unique = format!(
+            "sse-storage-backup-alias-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        );
+        let root = std::env::temp_dir().join(unique);
+        let save_directory = root.join("real/saves");
+        let alias = root.join("alias");
+        std::fs::create_dir_all(&save_directory)?;
+        std::os::unix::fs::symlink(root.join("real"), &alias)?;
+        let source = save_directory.join("save.sav");
+        let source_bytes = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-source.sav");
+        let replacement = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-expected.sav");
+        std::fs::write(&source, source_bytes)?;
+        let source_hash = sse_codecs::sha256::sha256_hex(source_bytes);
+
+        let result = super::replace_transaction(&source, &source_hash, replacement, &alias.join("saves/backups"));
+
+        assert!(result.is_err());
+        assert_eq!(std::fs::read(&source)?, source_bytes);
+        assert!(!save_directory.join("backups").exists());
+        std::fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn backup_path_containment_compares_windows_components_without_case() {
+        let source_directory = Path::new("C:/Users/Player/Saves");
+        let backup_directory = Path::new("c:/users/player/saves/Backups");
+
+        assert!(super::path_starts_with(backup_directory, source_directory, true));
+        assert!(!super::path_starts_with(
+            Path::new("C:/Users/Player/Saves-old"),
+            source_directory,
+            true
+        ));
+        assert!(!super::path_starts_with(backup_directory, source_directory, false));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn backup_directory_inside_save_folder_is_refused_when_windows_case_differs() -> TestResult {
+        let unique = format!(
+            "sse-storage-backup-case-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        );
+        let root = std::env::temp_dir().join(unique);
+        let saves = root.join("Saves");
+        std::fs::create_dir_all(&saves)?;
+        let source = saves.join("save.sav");
+        let source_bytes = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-source.sav");
+        let replacement = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-expected.sav");
+        std::fs::write(&source, source_bytes)?;
+        let source_hash = sse_codecs::sha256::sha256_hex(source_bytes);
+
+        let result = super::replace_transaction(&source, &source_hash, replacement, &root.join("saves/backups"));
+
+        assert!(result.is_err());
+        assert_eq!(std::fs::read(&source)?, source_bytes);
+        assert!(!saves.join("backups").exists());
         std::fs::remove_dir_all(root)?;
         Ok(())
     }
