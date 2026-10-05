@@ -110,7 +110,6 @@ struct PlannedFileChange {
     after: Option<Vec<u8>>,
 }
 
-
 fn refuse_active_game_fix_overlap(root: &Path, payloads: &[PayloadFile]) -> Result<(), InstallError> {
     let managed = sse_fixes::GameFixEngine::get_active_managed_paths(root)
         .map_err(|error| InstallError::new(format!("cannot verify active Game Fix files: {error}")))?;
@@ -143,9 +142,8 @@ fn make_archive_decoders() -> (HeaderDecoder, EntryDecoder) {
             Ok(candidates)
         }
     });
-    let entry_decoder: EntryDecoder = Arc::new(|data: &[u8], expected_size: usize| {
-        sse_codecs::lzo1x::decompress(data, expected_size)
-    });
+    let entry_decoder: EntryDecoder =
+        Arc::new(|data: &[u8], expected_size: usize| sse_codecs::lzo1x::decompress(data, expected_size));
     (header_decoder, entry_decoder)
 }
 
@@ -385,11 +383,7 @@ pub fn install_bundled(root: &Path, game: crate::bundled::Game) -> Result<(), In
             CompanionGame::ShadowOfChernobyl,
             &["fsgame.ltx", "fsgame_soc.ltx"][..],
         ),
-        crate::bundled::Game::ClearSky => (
-            "cs",
-            CompanionGame::ClearSky,
-            &["fsgame.ltx", "fsgame_cs.ltx"][..],
-        ),
+        crate::bundled::Game::ClearSky => ("cs", CompanionGame::ClearSky, &["fsgame.ltx", "fsgame_cs.ltx"][..]),
         crate::bundled::Game::CallOfPripyat => (
             "cop",
             CompanionGame::CallOfPripyat,
@@ -1570,16 +1564,16 @@ mod g14_tests {
             .files
             .get("scripts/bind_stalker.script")
             .and_then(|file| file.read().ok());
-        assert_eq!(bytes.as_deref(), Some(b"function actor_binder:update(delta) end".as_slice()));
+        assert_eq!(
+            bytes.as_deref(),
+            Some(b"function actor_binder:update(delta) end".as_slice())
+        );
     }
 
     #[test]
     fn overlap_check_is_case_insensitive_after_normalization() {
         let payload = PayloadFile::new("GameData/Scripts/bind_stalker.script", vec![1]);
         let normalized = normalize_relative(&payload.relative_path).expect("path");
-        assert_eq!(
-            normalized.to_ascii_lowercase(),
-            "gamedata/scripts/bind_stalker.script"
-        );
+        assert_eq!(normalized.to_ascii_lowercase(), "gamedata/scripts/bind_stalker.script");
     }
 }
