@@ -626,22 +626,23 @@ fn collect_modules(dump: &Minidump<'_>) -> Result<Vec<Module>> {
     for module in dump.modules()? {
         modules.push(module?);
     }
+    modules.sort_unstable_by_key(|module| module.base);
     Ok(modules)
 }
 
 fn frame_for_address(modules: &[Module], address: u64) -> Option<Frame> {
-    for module in modules {
-        let end = module.base.checked_add(u64::from(module.size))?;
-        if address >= module.base && address < end {
-            let offset = address.checked_sub(module.base)?;
-            return Some(Frame {
-                address,
-                module: module.name.clone(),
-                offset,
-            });
-        }
+    let insertion = modules.partition_point(|module| module.base <= address);
+    let module = modules.get(insertion.checked_sub(1)?)?;
+    let end = module.base.checked_add(u64::from(module.size))?;
+    if address >= end {
+        return None;
     }
-    None
+    let offset = address.checked_sub(module.base)?;
+    Some(Frame {
+        address,
+        module: module.name.clone(),
+        offset,
+    })
 }
 
 fn memory_subslice(
@@ -827,6 +828,19 @@ mod tests {
             target.copy_from_slice(text);
         }
         dump
+    }
+
+    #[test]
+    fn module_lookup_uses_sorted_binary_partition() {
+        let modules = vec![
+            super::Module { base: 0x3000, size: 0x100, timestamp: 0, version: (0, 0, 0, 0), name: "c".to_owned() },
+            super::Module { base: 0x1000, size: 0x100, timestamp: 0, version: (0, 0, 0, 0), name: "a".to_owned() },
+            super::Module { base: 0x2000, size: 0x100, timestamp: 0, version: (0, 0, 0, 0), name: "b".to_owned() },
+        ];
+        let mut modules = modules;
+        modules.sort_unstable_by_key(|module| module.base);
+        assert_eq!(super::frame_for_address(&modules, 0x2050).map(|frame| frame.module), Some("b".to_owned()));
+        assert!(super::frame_for_address(&modules, 0x2500).is_none());
     }
 
     #[test]
