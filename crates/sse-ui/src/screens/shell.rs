@@ -1270,6 +1270,7 @@ impl Shell {
                 return Ok(Flow::Exit);
             }
             Message::Window(WindowEvent::Disconnected) => {
+                wait_for_save_io();
                 return Ok(Flow::Exit);
             }
             _ => {}
@@ -1687,6 +1688,13 @@ impl Shell {
     }
 }
 
+fn wait_for_save_io() {
+    const SAVE_TASKS: [&str; 2] = ["save-write", "save-restore"];
+    while SAVE_TASKS.iter().any(|name| sse_app::tasks::named_task_active(name)) {
+        let _ = sse_app::tasks::wait_for_named_tasks(&SAVE_TASKS, std::time::Duration::from_secs(1));
+    }
+}
+
 impl App<AppMessage> for Shell {
     fn message(&mut self, tree: &mut Tree, message: &Message<AppMessage>, clicked: Option<WidgetId>) -> Flow {
         match self.handle(tree, message, clicked) {
@@ -1706,7 +1714,7 @@ impl App<AppMessage> for Shell {
 
 #[cfg(test)]
 mod tests {
-    use super::{save_eligibility, ScreenId, Shell};
+    use super::{save_eligibility, wait_for_save_io, ScreenId, Shell};
     use crate::event_loop::{channel_pair, Flow, Message, WindowEvent};
     use crate::glyphs::Fonts;
     use crate::raster::Color;
@@ -1924,6 +1932,24 @@ mod tests {
         );
         assert!(!save_eligibility(true, Some("stalker2"), true, Some(&plan), false).can_save);
         Ok(())
+    }
+
+    #[test]
+    fn disconnect_waits_until_save_write_finishes() {
+        let _guard = close_task_test_guard();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        sse_app::tasks::spawn_named_detached("save-write", move || {
+            let _ = release_rx.recv();
+        });
+        let releaser = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            let _ = release_tx.send(());
+        });
+
+        wait_for_save_io();
+
+        assert!(!sse_app::tasks::named_task_active("save-write"));
+        let _ = releaser.join();
     }
 
     #[test]
