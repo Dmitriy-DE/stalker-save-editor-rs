@@ -708,8 +708,7 @@ impl Tree {
             let Content::Button { text, style } = &node.content else {
                 continue;
             };
-            let available =
-                u32_to_f32(node.rect.width) - node.style.padding.left - node.style.padding.right;
+            let available = u32_to_f32(node.rect.width) - node.style.padding.left - node.style.padding.right;
             if self.fonts.measure(text, *style) > available.max(0.0) + 0.5 {
                 clipped.push(text.clone());
             }
