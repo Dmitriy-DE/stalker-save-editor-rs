@@ -132,6 +132,31 @@ pub struct RegistryObject {
     pub client_data_length: usize,
 }
 
+/// Validated creature-state prefix read from one registry object.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CreatureVitals<'a> {
+    /// Registry object identifier.
+    pub object_id: u16,
+    /// Object name from the SPAWN record.
+    pub name: &'a str,
+    /// Replacement section name from the SPAWN record.
+    pub name_replace: &'a str,
+    /// Health value stored in the creature STATE.
+    pub health: f32,
+    /// Last killer, when this object version serializes it.
+    pub killer_id: Option<u16>,
+    /// Game death time, when this object version serializes it.
+    pub death_time: Option<u64>,
+}
+
+impl CreatureVitals<'_> {
+    /// Whether the parsed, finite health value marks this creature as dead.
+    #[must_use]
+    pub const fn is_dead(self) -> bool {
+        self.health <= 0.0
+    }
+}
+
 struct DynamicVisualFields {
     custom_data_range: Option<std::ops::Range<usize>>,
     story_id: Option<u32>,
@@ -320,6 +345,44 @@ impl Save {
     #[must_use]
     pub const fn player_faction(&self) -> Option<i32> {
         self.player_faction
+    }
+
+    /// Actor-to-community goodwill values from the validated relation registry.
+    #[must_use]
+    pub fn actor_relations(&self) -> Option<Vec<(i32, i32)>> {
+        let registry = self.relation_registry.as_ref()?;
+        let actor = registry
+            .relation_rows
+            .iter()
+            .find(|row| row.object_id == self.actor_id)?;
+        Some(
+            actor
+                .communities
+                .iter()
+                .map(|relation| (relation.community_id, relation.goodwill))
+                .collect(),
+        )
+    }
+
+    /// Actor info portions from the validated relation registry, or `None` when the registry is unavailable.
+    #[must_use]
+    pub fn actor_known_info(&self) -> Option<&[String]> {
+        let registry = self.relation_registry.as_ref()?;
+        registry
+            .info_rows
+            .iter()
+            .find(|row| row.object_id == self.actor_id)
+            .map(|row| row.names.as_slice())
+    }
+
+    /// Reads supported creature-state prefixes for objects matching a known section, as in the reference reader.
+    #[must_use]
+    pub fn find_creature_vitals(&self, section: &str) -> Vec<CreatureVitals<'_>> {
+        self.records
+            .iter()
+            .filter(|record| record.name == section || record.name_replace == section)
+            .filter_map(|record| read_creature_vitals(self.container.image(), record))
+            .collect()
     }
 
     /// Registry id of the save's unique actor object.
@@ -703,6 +766,58 @@ pub(crate) fn parse_spawn(packet: &[u8], packet_offset: usize) -> Result<ObjectR
         update_length: 0,
         client_data_offset,
         client_data_length,
+    })
+}
+
+fn read_creature_vitals<'a>(raw: &[u8], item: &'a RegistryObject) -> Option<CreatureVitals<'a>> {
+    if item.version <= 18 || item.state_length == 0 || item.version < 105 {
+        return None;
+    }
+    let state_end = item.state_offset.checked_add(item.state_length)?;
+    let state = raw.get(item.state_offset..state_end)?;
+    let mut reader = Cursor::new(state);
+
+    // Human stalkers serialize trader fields before the dynamic-visual and creature fields.
+    reader.skip(4).ok()?;
+    reader.zero_terminated(MAXIMUM_STRING_LENGTH).ok()?;
+    reader.skip(4).ok()?;
+    reader.zero_terminated(MAXIMUM_STRING_LENGTH).ok()?;
+    reader.skip(12).ok()?;
+    reader.zero_terminated(MAXIMUM_STRING_LENGTH).ok()?;
+    if item.version > 124 {
+        reader.skip(2).ok()?;
+    }
+
+    skip_dynamic_visual(&mut reader, item.version).ok()?;
+    reader.skip(3).ok()?;
+    let health = reader.f32().ok()?;
+    if item.version < 32 {
+        reader.zero_terminated(MAXIMUM_STRING_LENGTH).ok()?;
+    }
+    if item.version > 87 {
+        skip_u16_vector(&mut reader).ok()?;
+        skip_u16_vector(&mut reader).ok()?;
+    }
+    let killer_id = if item.version > 94 {
+        Some(reader.u16().ok()?)
+    } else {
+        None
+    };
+    let death_time = if item.version > 115 {
+        Some(reader.u64().ok()?)
+    } else {
+        None
+    };
+    if !health.is_finite() || !(-1.0..=1.0).contains(&health) {
+        return None;
+    }
+    Some(CreatureVitals {
+        object_id: item.object_id,
+        name: &item.name,
+        name_replace: &item.name_replace,
+        health,
+        killer_id,
+        death_time,
     })
 }
 
@@ -1295,6 +1410,133 @@ mod tests {
                     parse_relation_registry(data, timestamps).map(|_| ())
                 })
             );
+        }
+    }
+
+    #[test]
+    fn exposes_the_actor_relation_values_from_the_validated_registry(
+    ) -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let packed = include_bytes!("../../../fixtures/synthetic/writer-factions/soc-relations.sav");
+        let save = Save::read(packed)?;
+        let values = save
+            .actor_relations()
+            .ok_or("fixture should expose the actor relation row")?;
+        if values.is_empty() {
+            return Err("actor relation row should contain catalog values".into());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn missing_actor_info_row_remains_unknown_instead_of_becoming_an_empty_list() {
+        let packed = include_bytes!("../../../fixtures/synthetic/writer-factions/soc-relations.sav");
+        let parsed = Save::read(packed);
+        assert!(parsed.is_ok(), "fixture should parse: {parsed:?}");
+        let Ok(mut save) = parsed else { return };
+        let actor_id = save.actor_id;
+        let Some(registry) = save.relation_registry.as_mut() else {
+            panic!("fixture should expose a relation registry");
+        };
+        registry.info_rows.retain(|row| row.object_id != actor_id);
+
+        assert!(save.actor_known_info().is_none());
+    }
+
+    #[test]
+    fn creature_state_reader_matches_the_supported_csharp_prefix_and_rejects_hostile_inputs() {
+        let (state, vector_offsets) = synthetic_creature_state(1.0);
+        let record = synthetic_creature_record(state.len());
+        let alive = super::read_creature_vitals(&state, &record);
+        assert_eq!(alive.as_ref().map(|vitals| vitals.health), Some(1.0));
+        assert_eq!(alive.as_ref().and_then(|vitals| vitals.killer_id), Some(u16::MAX));
+        assert_eq!(alive.as_ref().and_then(|vitals| vitals.death_time), Some(0));
+        assert!(alive.is_some_and(|vitals| !vitals.is_dead()));
+
+        let (dead_state, _) = synthetic_creature_state(0.0);
+        let dead = super::read_creature_vitals(&dead_state, &record);
+        assert!(dead.is_some_and(|vitals| vitals.is_dead()));
+
+        for length in 0..state.len() {
+            assert!(
+                super::read_creature_vitals(&state[..length], &record).is_none(),
+                "accepted truncated creature STATE of length {length}"
+            );
+        }
+
+        for offset in vector_offsets {
+            let mut hostile = state.clone();
+            let Some(count) = hostile.get_mut(offset..offset.saturating_add(4)) else {
+                panic!("synthetic vector count should fit");
+            };
+            count.copy_from_slice(&u32::MAX.to_le_bytes());
+            assert!(super::read_creature_vitals(&hostile, &record).is_none());
+        }
+
+        let mut seed = 0xA341_316C_u32;
+        for _ in 0..256 {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            let mut mutated = state.clone();
+            let index = usize::try_from(seed).unwrap_or_default() % mutated.len();
+            let Some(byte) = mutated.get_mut(index) else { continue };
+            *byte ^= 1_u8.checked_shl(seed % 8).unwrap_or_default();
+            let _ = super::read_creature_vitals(&mutated, &record);
+        }
+    }
+
+    fn synthetic_creature_state(health: f32) -> (Vec<u8>, [usize; 2]) {
+        let mut state = Vec::new();
+        state.extend_from_slice(&0_u32.to_le_bytes());
+        state.push(0);
+        state.extend_from_slice(&0_u32.to_le_bytes());
+        state.push(0);
+        state.extend_from_slice(&[0; 12]);
+        state.push(0);
+        state.extend_from_slice(&[0; 6]);
+        state.extend_from_slice(&[0; 8]);
+        state.extend_from_slice(&0_u32.to_le_bytes());
+        state.push(0);
+        state.extend_from_slice(&0_u32.to_le_bytes());
+        state.extend_from_slice(&u32::MAX.to_le_bytes());
+        state.push(0);
+        state.push(0);
+        state.extend_from_slice(&[0; 3]);
+        state.extend_from_slice(&health.to_le_bytes());
+        let first_vector = state.len();
+        state.extend_from_slice(&0_u32.to_le_bytes());
+        let second_vector = state.len();
+        state.extend_from_slice(&0_u32.to_le_bytes());
+        state.extend_from_slice(&u16::MAX.to_le_bytes());
+        state.extend_from_slice(&0_u64.to_le_bytes());
+        (state, [first_vector, second_vector])
+    }
+
+    fn synthetic_creature_record(state_length: usize) -> super::RegistryObject {
+        super::RegistryObject {
+            name: "esc_wolf".to_owned(),
+            name_replace: "esc_wolf".to_owned(),
+            name_replace_range: 0..0,
+            object_id: 1,
+            parent_id: u16::MAX,
+            object_id_offset: 0,
+            parent_id_offset: 0,
+            version: 124,
+            spawn_id: Some(u16::MAX),
+            spawn_id_offset: None,
+            story_id: Some(u32::MAX),
+            story_id_offset: None,
+            spawn_story_id: Some(u32::MAX),
+            spawn_story_id_offset: None,
+            custom_data_range: None,
+            record_offset: 0,
+            record_length: state_length,
+            state_offset: 0,
+            state_length,
+            update_offset: 0,
+            update_length: 0,
+            client_data_offset: None,
+            client_data_length: 0,
         }
     }
 

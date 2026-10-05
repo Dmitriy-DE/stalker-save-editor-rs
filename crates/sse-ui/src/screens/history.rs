@@ -1,11 +1,11 @@
 //! S3 screens: verified backups, bounded save comparison, history, and read-only diagnostics.
 
-use super::saves::Workspace;
+use super::saves::{RefreshOverview, Workspace};
 use super::style::{self, Button, Text};
 use super::{AppMessage, Context, Screen, ScreenId};
 use crate::event_loop::Message;
 use crate::widget::WidgetId;
-use sse_core::{Result, SaveBuffer};
+use sse_core::{Error, Result, SaveBuffer};
 use sse_storage::discovery::{SaveDirectoryLocator, SaveSlot, SaveSlotDiscovery};
 use sse_storage::transaction::{self, BackupEntry, BackupStatus};
 use std::collections::{BTreeMap, BTreeSet};
@@ -34,10 +34,24 @@ pub(crate) fn screens_with_workspace(workspace: Workspace) -> Vec<Box<dyn Screen
 
 #[derive(Clone, Debug)]
 enum Action {
-    Restore { journal: PathBuf, source: PathBuf },
-    RestoreInPlace { journal: PathBuf, source: PathBuf },
+    Restore {
+        journal: PathBuf,
+        source: PathBuf,
+    },
+    RestoreInPlace {
+        journal: PathBuf,
+        source: PathBuf,
+    },
     Compare(PathBuf),
-    Diagnose { path: PathBuf, format_id: Option<String> },
+    Diagnose {
+        path: PathBuf,
+        format_id: Option<String>,
+    },
+    RepairQuests {
+        path: PathBuf,
+        format_id: Option<String>,
+        expected_sha256: String,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -49,6 +63,17 @@ enum RestoreMode {
 struct RestoreRequestGuard {
     workspace: Workspace,
     request_id: u64,
+}
+
+struct SaveRequestGuard {
+    workspace: Workspace,
+    request_id: u64,
+}
+
+impl Drop for SaveRequestGuard {
+    fn drop(&mut self) {
+        let _ = self.workspace.finish_saving(self.request_id);
+    }
 }
 
 impl Drop for RestoreRequestGuard {
@@ -82,8 +107,28 @@ enum HistoryResult {
     Backups(std::result::Result<Vec<BackupEntry>, String>),
     Saves(std::result::Result<Vec<SaveSlot>, String>),
     Compare(std::result::Result<CompareReport, String>),
-    Diagnosis(std::result::Result<String, String>),
+    Diagnosis {
+        request_id: u64,
+        result: std::result::Result<(PathBuf, DiagnosisReport), String>,
+    },
+    QuestRepaired(std::result::Result<QuestRepairCompletion, String>),
     Restored(std::result::Result<RestoredSave, String>),
+}
+
+#[derive(Debug, Clone)]
+struct DiagnosisReport {
+    summary: String,
+    source_sha256: String,
+    format_id: Option<String>,
+    quest_states: Vec<sse_doctor::QuestTaskState>,
+    can_repair_quests: bool,
+}
+
+#[derive(Debug, Clone)]
+struct QuestRepairCompletion {
+    path: PathBuf,
+    backup_path: PathBuf,
+    report: std::result::Result<DiagnosisReport, String>,
 }
 
 #[derive(Debug)]
@@ -148,6 +193,8 @@ pub struct HistoryScreen {
     page: usize,
     compare_selection: Vec<PathBuf>,
     pending_restore: Option<(PathBuf, PathBuf, RestoreMode)>,
+    diagnosis_request_id: u64,
+    diagnosed_selection: Option<(PathBuf, String)>,
 }
 
 impl HistoryScreen {
@@ -172,6 +219,8 @@ impl HistoryScreen {
             page: 0,
             compare_selection: Vec::new(),
             pending_restore: None,
+            diagnosis_request_id: 0,
+            diagnosed_selection: None,
         }
     }
 
@@ -213,22 +262,68 @@ impl HistoryScreen {
     }
 
     fn start_diagnosis(
-        &self,
+        &mut self,
         path: PathBuf,
         format_id: Option<String>,
         proxy: Option<crate::event_loop::Proxy<AppMessage>>,
-    ) {
+    ) -> bool {
         let Some(proxy) = proxy else {
-            return;
+            return false;
         };
+        self.diagnosis_request_id = self.diagnosis_request_id.saturating_add(1);
+        let request_id = self.diagnosis_request_id;
         let id = self.id;
         self.workspace.spawn("save-diagnosis", move |context| {
             if context.is_cancelled() {
                 return;
             }
             let result = diagnose_save(&path, format_id.as_deref());
-            proxy.send(AppMessage::ToScreen(id, Box::new(HistoryResult::Diagnosis(result))));
+            proxy.send(AppMessage::ToScreen(
+                id,
+                Box::new(HistoryResult::Diagnosis { request_id, result }),
+            ));
         });
+        true
+    }
+
+    fn start_quest_repair(
+        &self,
+        path: PathBuf,
+        expected_sha256: String,
+        format_id: Option<String>,
+        proxy: Option<crate::event_loop::Proxy<AppMessage>>,
+    ) -> bool {
+        let Some(proxy) = proxy else {
+            return false;
+        };
+        let Some(request_id) = self.workspace.begin_saving() else {
+            return false;
+        };
+        let save_guard = SaveRequestGuard {
+            workspace: self.workspace.clone(),
+            request_id,
+        };
+        let backup_directory = self.workspace.backup_directory();
+        let id = self.id;
+        self.workspace.spawn("quest-repair", move |context| {
+            let _save_guard = save_guard;
+            let result = if context.is_cancelled() {
+                Err("Операция ремонта отменена.".to_owned())
+            } else {
+                repair_quest_save(&path, &expected_sha256, &backup_directory).map(|backup_path| {
+                    let report = diagnose_save(&path, format_id.as_deref())
+                        .map(|(_, report)| report)
+                        .map_err(|error| error.to_string());
+                    QuestRepairCompletion {
+                        path,
+                        backup_path,
+                        report,
+                    }
+                })
+            };
+            proxy.send(AppMessage::ToScreen(id, Box::new(HistoryResult::QuestRepaired(result))));
+        });
+        true
     }
 
     fn start_restore(
@@ -602,8 +697,62 @@ impl HistoryScreen {
         Ok(())
     }
 
-    fn render_diagnosis(&self, cx: &mut Context<'_>, text: &str) -> Result<()> {
-        self.set_summary(cx.tree, text)?;
+    fn render_diagnosis(&mut self, cx: &mut Context<'_>, path: &Path, report: DiagnosisReport) -> Result<()> {
+        self.clear_results(cx.tree)?;
+        self.set_summary(cx.tree, &report.summary)?;
+        let mut repair_button_added = false;
+        for (index, state) in report.quest_states.iter().enumerate() {
+            let Some(row) = self.rows.get(index).copied() else {
+                break;
+            };
+            cx.tree.set_visible(row.row, true)?;
+            cx.tree.set_text(
+                row.label,
+                &format!("{} · {}", quest_title(state.id), quest_detail(state)),
+            )?;
+            cx.tree.set_visible(row.button, false)?;
+            cx.tree.set_visible(row.secondary_button, false)?;
+            if report.can_repair_quests && !repair_button_added && state.status == sse_doctor::QuestTaskStatus::Broken {
+                cx.tree.set_text(row.button, "ИСПРАВИТЬ КВЕСТЫ")?;
+                cx.tree.set_visible(row.button, true)?;
+                self.actions.push(ActionButton {
+                    widget: row.button,
+                    action: Action::RepairQuests {
+                        path: path.to_path_buf(),
+                        format_id: report.format_id.clone(),
+                        expected_sha256: report.source_sha256.clone(),
+                    },
+                });
+                repair_button_added = true;
+            }
+        }
+        Ok(())
+    }
+
+    fn render_quest_repair(&mut self, cx: &mut Context<'_>, completion: QuestRepairCompletion) -> Result<()> {
+        let QuestRepairCompletion {
+            path,
+            backup_path,
+            report,
+        } = completion;
+        let backup_name = backup_path.file_name().map_or_else(
+            || backup_path.display().to_string(),
+            |name| name.to_string_lossy().into_owned(),
+        );
+        let status = match report {
+            Ok(report) => {
+                self.render_diagnosis(cx, &path, report)?;
+                format!("КВЕСТЫ ИСПРАВЛЕНЫ. Backup: {backup_name}")
+            }
+            Err(error) => {
+                self.clear_results(cx.tree)?;
+                format!(
+                    "КВЕСТЫ ИСПРАВЛЕНЫ. Backup: {backup_name} · повторная проверка: {}",
+                    truncate(&error, 120)
+                )
+            }
+        };
+        self.set_summary(cx.tree, &status)?;
         Ok(())
     }
 }
@@ -623,6 +772,26 @@ impl Screen for HistoryScreen {
             let selected = cx.app.current_save().map(Path::to_path_buf);
             if self.compare_selection.first().cloned() != selected {
                 self.compare_selection = selected.into_iter().collect();
+            }
+        } else if self.id == ScreenId::SaveDoctor {
+            let selected = cx
+                .app
+                .current_save()
+                .zip(cx.app.current_save_sha256())
+                .map(|(path, sha256)| (path.to_path_buf(), sha256.to_owned()));
+            if selected != self.diagnosed_selection {
+                if let Some((path, source_sha256)) = selected {
+                    let format_id = cx.app.current_save_format().map(str::to_owned);
+                    self.set_summary(cx.tree, &format!("Проверяю {}…", display_name(&path)))?;
+                    if self.start_diagnosis(path.clone(), format_id, cx.proxy.cloned()) {
+                        self.diagnosed_selection = Some((path, source_sha256));
+                    }
+                } else {
+                    self.diagnosis_request_id = self.diagnosis_request_id.saturating_add(1);
+                    self.diagnosed_selection = None;
+                    self.clear_results(cx.tree)?;
+                    self.set_summary(cx.tree, "ВЫБЕРИТЕ ФАЙЛ СОХРАНЕНИЯ ДЛЯ ПРОВЕРКИ.")?;
+                }
             }
         }
         Ok(())
@@ -841,6 +1010,23 @@ impl Screen for HistoryScreen {
                     self.set_summary(cx.tree, &format!("Проверяю {}…", display_name(&path)))?;
                     self.start_diagnosis(path, format_id, cx.proxy.cloned());
                 }
+                Action::RepairQuests {
+                    path,
+                    format_id,
+                    expected_sha256,
+                } => {
+                    self.set_summary(cx.tree, "Исправляю подтверждённые квесты…")?;
+                    if !self.start_quest_repair(path, expected_sha256, format_id, cx.proxy.cloned()) {
+                        let status = if self.workspace.is_restoring() {
+                            "Дождитесь завершения восстановления сейва."
+                        } else if self.workspace.is_saving() {
+                            "Запись сейва уже выполняется."
+                        } else {
+                            "Ремонт доступен только в работающем окне."
+                        };
+                        self.set_summary(cx.tree, status)?;
+                    }
+                }
             }
         }
         if let Message::User(AppMessage::ToScreen(target, payload)) = message {
@@ -862,9 +1048,27 @@ impl Screen for HistoryScreen {
                         HistoryResult::Compare(Err(error)) => {
                             self.set_summary(cx.tree, &format!("Ошибка сравнения: {}", truncate(error, 160)))?
                         }
-                        HistoryResult::Diagnosis(Ok(text)) => self.render_diagnosis(cx, text)?,
-                        HistoryResult::Diagnosis(Err(error)) => {
-                            self.set_summary(cx.tree, &format!("Ошибка чтения: {}", truncate(error, 160)))?
+                        HistoryResult::Diagnosis { request_id, result } if *request_id == self.diagnosis_request_id => {
+                            match result {
+                                Ok((path, report)) => self.render_diagnosis(cx, path, report.clone())?,
+                                Err(error) => {
+                                    self.set_summary(cx.tree, &format!("Ошибка чтения: {}", truncate(error, 160)))?
+                                }
+                            }
+                        }
+                        HistoryResult::Diagnosis { .. } => {}
+                        HistoryResult::QuestRepaired(Ok(completion)) => {
+                            let path = completion.path.clone();
+                            self.render_quest_repair(cx, completion.clone())?;
+                            if let Some(proxy) = cx.proxy.as_ref() {
+                                let _ = proxy.send(AppMessage::ToScreen(
+                                    ScreenId::Overview,
+                                    Box::new(RefreshOverview { path: Some(path) }),
+                                ));
+                            }
+                        }
+                        HistoryResult::QuestRepaired(Err(error)) => {
+                            self.set_summary(cx.tree, &format!("Не удалось сохранить: {}", truncate(error, 160)))?
                         }
                         HistoryResult::Restored(Ok(RestoredSave::Copy(path))) => {
                             self.set_summary(cx.tree, &format!("Копия восстановлена в {}", path.display()))?;
@@ -1164,37 +1368,129 @@ fn difference_kind_text(kind: DifferenceKind) -> &'static str {
     }
 }
 
-fn diagnose_save(path: &Path, format_id: Option<&str>) -> std::result::Result<String, String> {
+fn diagnose_save(path: &Path, format_id: Option<&str>) -> std::result::Result<(PathBuf, DiagnosisReport), String> {
     let packed = SaveBuffer::read(path).map_err(|error| error.to_string())?;
-    diagnose_packed(packed.as_slice(), format_id)
+    diagnose_packed(packed.as_slice(), format_id).map(|report| (path.to_path_buf(), report))
 }
 
-fn diagnose_packed(packed: &[u8], format_id: Option<&str>) -> std::result::Result<String, String> {
+fn diagnose_packed(packed: &[u8], format_id: Option<&str>) -> std::result::Result<DiagnosisReport, String> {
+    let source_sha256 = sse_codecs::sha256::sha256_hex(packed);
     if format_id == Some("stalker2") {
         let save = sse_s2::S2Save::from_bytes(packed).map_err(|error| error.to_string())?;
         let container = save.container();
         let items = save.items();
-        return Ok(format!(
-            "S2: {} байт · CRC {:08X}/{:08X} · деньги {} · предметов {} · тайник {} · предупреждений {} · неразрешённых ссылок {}. Только диагностика; запись S2 не поддержана.",
-            packed.len(),
-            container.stored_crc32(),
-            container.computed_crc32(),
-            save.money(),
-            items.len(),
-            if save.stash().is_ok() { "найден" } else { "не найден" },
-            save.warnings().len(),
-            save.unresolved_handles().len(),
-        ));
+        return Ok(DiagnosisReport {
+            summary: format!(
+                "S2: {} байт · CRC {:08X}/{:08X} · деньги {} · предметов {} · тайник {} · предупреждений {} · неразрешённых ссылок {}. Правила Quest Doctor для S2 недоступны.",
+                packed.len(),
+                container.stored_crc32(),
+                container.computed_crc32(),
+                save.money(),
+                items.len(),
+                if save.stash().is_ok() { "найден" } else { "не найден" },
+                save.warnings().len(),
+                save.unresolved_handles().len(),
+            ),
+            source_sha256,
+            format_id: Some("stalker2".to_owned()),
+            quest_states: Vec::new(),
+            can_repair_quests: false,
+        });
     }
     if format_id.is_some_and(|id| id.starts_with("stalker-")) {
         let save = sse_xray::Save::read(packed).map_err(|error| error.to_string())?;
         let inventory = save.inventory().map_err(|error| error.to_string())?;
-        return Ok(format!(
-            "X-Ray {}: упакованный файл {} байт · реестр {} · предметов инвентаря {} · деньги {} · игровой тик {}. Структура прочитана; ремонт не выполнялся.",
-            save.format().id(), packed.len(), save.registry_objects().len(), inventory.len(), save.money().map_err(|error| error.to_string())?, save.game_time(),
-        ));
+        let quests = sse_doctor::analyze_quests_from_save(&save);
+        let broken = quests
+            .states
+            .iter()
+            .filter(|state| state.status == sse_doctor::QuestTaskStatus::Broken)
+            .count();
+        let quest_summary = if !quests.quest_states_available {
+            "Нет проверенных правил квестов для этого формата.".to_owned()
+        } else if broken > 0 {
+            format!("Подтверждённо сломанных квестов: {broken}; доступен ремонт.")
+        } else {
+            "Подтверждённых сломанных квестов не найдено.".to_owned()
+        };
+        return Ok(DiagnosisReport {
+            summary: format!(
+                "X-Ray {}: упакованный файл {} байт · реестр {} · предметов инвентаря {} · деньги {} · игровой тик {}. Структура прочитана. {quest_summary}",
+                save.format().id(), packed.len(), save.registry_objects().len(), inventory.len(), save.money().map_err(|error| error.to_string())?, save.game_time(),
+            ),
+            source_sha256,
+            format_id: Some(save.format().id().to_owned()),
+            quest_states: quests.states,
+            can_repair_quests: broken > 0,
+        });
     }
     Err("формат не распознан; структурная проверка не запускалась".to_owned())
+}
+
+fn repair_quest_save(
+    path: &Path,
+    expected_source_sha256: &str,
+    backup_directory: &Path,
+) -> std::result::Result<PathBuf, String> {
+    let original = SaveBuffer::read(path).map_err(|error| error.to_string())?;
+    let actual_sha256 = sse_codecs::sha256::sha256_hex(original.as_slice());
+    if actual_sha256 != expected_source_sha256 {
+        return Err("Файл изменился после проверки. Проверьте его ещё раз.".to_owned());
+    }
+    let Some(prepared) = sse_doctor::prepare_quest_repair(original.as_slice()).map_err(|error| error.to_string())?
+    else {
+        return Err("НЕТ ПОДТВЕРЖДЁННЫХ СЛОМАННЫХ КВЕСТОВ.".to_owned());
+    };
+    let preflight_image = prepared.clone();
+    let (receipt, (), ()) = transaction::replace_transaction_with_summary_preflight_and_verifier(
+        path,
+        expected_source_sha256,
+        prepared.as_slice(),
+        backup_directory,
+        transaction::EditSummary::default(),
+        move |_, replacement| {
+            if replacement != preflight_image.as_slice() {
+                return Err(Error::damaged(
+                    "prepared quest repair changed before transaction preflight",
+                ));
+            }
+            sse_doctor::verify_quest_repair(replacement)
+        },
+        sse_doctor::verify_quest_repair,
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(receipt.backup_path)
+}
+
+fn quest_title(id: &str) -> &'static str {
+    match id {
+        "cs.wild-napr-dead" => "КВЕСТ: ЗАДАНИЯ НАПРА НА БАРАХОЛКЕ ПОСЛЕ ЕГО СМЕРТИ",
+        "cs.wolf-dead" => "КВЕСТ: ЗАДАНИЯ ВОЛКА ПОСЛЕ ЕГО СМЕРТИ",
+        "cs.hog-dead" => "КВЕСТ: СЮЖЕТ НА АРМЕЙСКИХ СКЛАДАХ ПОСЛЕ СМЕРТИ КАБАНА",
+        "soc.mole-dead" => "КВЕСТ: ВСТРЕЧА С КРОТОМ НА АГРОПРОМЕ ПОСЛЕ ЕГО СМЕРТИ",
+        "soc.prisoner-dead" => "КВЕСТ: ПЛЕННЫЙ ДОЛГОВЕЦ В ТЁМНОЙ ДОЛИНЕ ПОСЛЕ ЕГО СМЕРТИ",
+        "soc.courier-dead" => "КВЕСТ: КУРЬЕР СВОБОДЫ ПОСЛЕ ЕГО СМЕРТИ",
+        "soc.informer-dead" => "КВЕСТ: ИНФОРМАТОР СВОБОДЫ ПОСЛЕ ЕГО СМЕРТИ",
+        _ => "КВЕСТ",
+    }
+}
+
+fn quest_detail(state: &sse_doctor::QuestTaskState) -> String {
+    match (state.status, state.reason) {
+        (sse_doctor::QuestTaskStatus::Ok, "alive") => "✓ NPC ЖИВ.".to_owned(),
+        (sse_doctor::QuestTaskStatus::Ok, _) => "✓ ФЛАГ УЖЕ ВЫДАН.".to_owned(),
+        (sse_doctor::QuestTaskStatus::Broken, _) => format!(
+            "⚠ NPC МЁРТВ, НО ФЛАГ {} НЕ ВЫДАН: ЗАДАНИЕ ЗАВИСНЕТ.",
+            state.missing_info.unwrap_or("неизвестный")
+        ),
+        (sse_doctor::QuestTaskStatus::Unknown, "too-late") => {
+            "× NPC МЁРТВ БЕЗ ФЛАГА, НО СЮЖЕТ УЖЕ ПОШЁЛ ДАЛЬШЕ: ДОБАВЛЕНИЕ ФЛАГА НЕ ПОМОЖЕТ. НУЖЕН БОЛЕЕ РАННИЙ СЕЙВ."
+                .to_owned()
+        }
+        (sse_doctor::QuestTaskStatus::Unknown, _) => {
+            "? NPC НЕ НАЙДЕН ИЛИ НЕ ЧИТАЕТСЯ; СОСТОЯНИЕ НЕИЗВЕСТНО.".to_owned()
+        }
+    }
 }
 
 fn restore_to_new_path(journal: &Path, source: &Path) -> std::result::Result<PathBuf, String> {
@@ -1238,7 +1534,7 @@ fn truncate(value: &str, maximum: usize) -> String {
 mod tests {
     use super::{
         compare_packed, diagnose_packed, format_system_time, page_count, restored_output_path_at, timeline_order,
-        truncate, Action, ActionButton, HistoryScreen, Workspace,
+        truncate, Action, ActionButton, DiagnosisReport, HistoryScreen, Workspace,
     };
     use crate::event_loop::Message;
     use crate::glyphs::Fonts;
@@ -1374,9 +1670,12 @@ mod tests {
 
     #[test]
     fn doctor_identifies_synthetic_xray_save() {
-        let report = diagnose_packed(SYNTHETIC_XRAY_SAVE, Some("stalker-soc-ee")).unwrap_or_else(|error| error);
-        assert!(report.starts_with("X-Ray stalker-soc-ee:"));
-        assert!(report.contains("Структура прочитана"));
+        let report = diagnose_packed(SYNTHETIC_XRAY_SAVE, Some("stalker-soc-ee"))
+            .unwrap_or_else(|error| panic!("diagnose X-Ray fixture: {error}"));
+        assert!(report.summary.starts_with("X-Ray stalker-soc-ee:"));
+        assert!(report.summary.contains("Структура прочитана"));
+        assert!(!report.can_repair_quests);
+        assert!(report.quest_states.is_empty());
     }
 
     #[test]
@@ -1386,10 +1685,154 @@ mod tests {
 
     #[test]
     fn doctor_identifies_synthetic_s2_save_and_reports_crc() {
-        let report = diagnose_packed(SYNTHETIC_S2_SAVE, Some("stalker2")).unwrap_or_else(|error| error);
-        assert!(report.starts_with("S2:"));
-        assert!(report.contains("CRC"));
-        assert!(report.contains("запись S2 не поддержана"));
+        let report = diagnose_packed(SYNTHETIC_S2_SAVE, Some("stalker2"))
+            .unwrap_or_else(|error| panic!("diagnose S2 fixture: {error}"));
+        assert!(report.summary.starts_with("S2:"));
+        assert!(report.summary.contains("CRC"));
+        assert!(report.summary.contains("Quest Doctor для S2 недоступны"));
+        assert!(!report.can_repair_quests);
+        assert!(report.quest_states.is_empty());
+    }
+
+    #[test]
+    fn doctor_refuses_repair_without_a_proven_broken_quest_and_leaves_the_save_untouched() -> sse_core::Result<()> {
+        let temp = TempDirectory::new();
+        let path = temp.0.join("unknown-quest-state.sav");
+        let original = SYNTHETIC_XRAY_SAVE;
+        fs::write(&path, original)?;
+        let expected_sha256 = sse_codecs::sha256::sha256_hex(original);
+
+        let result = super::repair_quest_save(&path, &expected_sha256, &temp.0.join("backups"));
+
+        assert!(result.is_err());
+        assert_eq!(fs::read(&path)?, original);
+        assert!(!temp.0.join("backups").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn doctor_shows_repair_only_for_a_proven_broken_quest() -> sse_core::Result<()> {
+        let mut screen = HistoryScreen::new(ScreenId::SaveDoctor, "test", Workspace::default());
+        let mut app = sse_app::state::AppState::new();
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: None,
+            status: None,
+            app: &mut app,
+        };
+        screen.build(&mut cx, host)?;
+        screen.render_diagnosis(
+            &mut cx,
+            Path::new("fixture.sav"),
+            DiagnosisReport {
+                summary: "Подтверждённо сломанный квест.".to_owned(),
+                source_sha256: "ab".repeat(32),
+                format_id: Some("stalker-cs".to_owned()),
+                quest_states: vec![sse_doctor::QuestTaskState {
+                    id: "cs.wolf-dead",
+                    title: "Wolf's tasks after his death",
+                    status: sse_doctor::QuestTaskStatus::Broken,
+                    reason: "dead-without-flag",
+                    missing_info: Some("esc_wolf_dead"),
+                    preventing_fix_id: Some("cs.quest.wolf-offline-cancellation"),
+                    needs_preventing_fix: true,
+                    detail: "Wolf is dead, but his offline-death cancellation flag is missing.",
+                    references: &[],
+                }],
+                can_repair_quests: true,
+            },
+        )?;
+
+        let row = screen
+            .rows
+            .first()
+            .ok_or_else(|| sse_core::Error::damaged("quest state row was not built"))?;
+        assert!(cx.tree.is_visible(row.row));
+        assert!(cx.tree.is_visible(row.button));
+        assert!(matches!(
+            screen.actions.first().map(|action| &action.action),
+            Some(Action::RepairQuests { .. })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn stale_diagnosis_result_cannot_replace_the_newer_report() -> sse_core::Result<()> {
+        let mut screen = HistoryScreen::new(ScreenId::SaveDoctor, "test", Workspace::default());
+        screen.diagnosis_request_id = 2;
+        let mut app = sse_app::state::AppState::new();
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: None,
+            status: None,
+            app: &mut app,
+        };
+        screen.build(&mut cx, host)?;
+        screen.message(
+            &mut cx,
+            &Message::User(AppMessage::ToScreen(
+                ScreenId::SaveDoctor,
+                Box::new(super::HistoryResult::Diagnosis {
+                    request_id: 1,
+                    result: Ok((
+                        PathBuf::from("stale.sav"),
+                        DiagnosisReport {
+                            summary: "stale report".to_owned(),
+                            source_sha256: "ab".repeat(32),
+                            format_id: Some("stalker-cs".to_owned()),
+                            quest_states: vec![sse_doctor::QuestTaskState {
+                                id: "cs.wolf-dead",
+                                title: "Wolf's tasks after his death",
+                                status: sse_doctor::QuestTaskStatus::Broken,
+                                reason: "dead-without-flag",
+                                missing_info: Some("esc_wolf_dead"),
+                                preventing_fix_id: None,
+                                needs_preventing_fix: false,
+                                detail: "The actor is dead.",
+                                references: &[],
+                            }],
+                            can_repair_quests: true,
+                        },
+                    )),
+                }),
+            )),
+            None,
+        )?;
+
+        assert!(screen.actions.is_empty());
+        assert!(screen.rows.iter().all(|row| !cx.tree.is_visible(row.row)));
+        Ok(())
+    }
+
+    #[test]
+    fn quest_repair_cannot_start_while_another_save_is_active() -> sse_core::Result<()> {
+        let workspace = Workspace::default();
+        let save_request = workspace
+            .begin_saving()
+            .ok_or_else(|| sse_core::Error::Refused("test save did not start".to_owned()))?;
+        let screen = HistoryScreen::new(ScreenId::SaveDoctor, "test", workspace.clone());
+        let (proxy, _receiver) = crate::event_loop::channel_pair::<AppMessage>();
+
+        assert!(!screen.start_quest_repair(PathBuf::from("fixture.sav"), "00".repeat(32), None, Some(proxy),));
+        assert!(workspace.is_saving());
+        assert!(workspace.finish_saving(save_request));
+        Ok(())
     }
 
     #[test]
