@@ -6,8 +6,10 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+sse-core = { path = "../sse-core" }
 sse-codecs = { path = "../sse-codecs" }
 sse-content = { path = "../sse-content" }
+sse-fixes = { path = "../sse-fixes" }
 
 [lints]
 workspace = true

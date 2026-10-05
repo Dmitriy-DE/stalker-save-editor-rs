@@ -5,6 +5,9 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+
+use sse_content::{CompanionGame, EntryDecoder, GameFileTree, HeaderDecoder};
 
 use sse_codecs::{
     json::{Event, Reader, Text},
@@ -107,6 +110,93 @@ struct PlannedFileChange {
     after: Option<Vec<u8>>,
 }
 
+fn refuse_active_game_fix_overlap(root: &Path, payloads: &[PayloadFile]) -> Result<(), InstallError> {
+    let managed = sse_fixes::GameFixEngine::get_active_managed_paths(root)
+        .map_err(|error| InstallError::new(format!("cannot verify active Game Fix files: {error}")))?;
+    for payload in payloads {
+        let relative = normalize_relative(&payload.relative_path)?;
+        if managed.contains(&relative.to_ascii_lowercase()) {
+            return Err(InstallError::new(format!(
+                "Companion refuses to overwrite a file managed by an active Game Fix: {relative}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn make_archive_decoders() -> (HeaderDecoder, EntryDecoder) {
+    let header_decoder: HeaderDecoder = Arc::new(|data: &[u8]| {
+        let mut candidates = Vec::new();
+        if let Ok(decoded) = sse_codecs::lzhuf::decode(data) {
+            candidates.push(decoded);
+        }
+        for world_wide in [true, false] {
+            let descrambled = sse_codecs::lzhuf::descramble(data, world_wide);
+            if let Ok(decoded) = sse_codecs::lzhuf::decode(&descrambled) {
+                candidates.push(decoded);
+            }
+        }
+        if candidates.is_empty() {
+            Err(sse_core::Error::damaged("X-Ray archive header could not be decoded"))
+        } else {
+            Ok(candidates)
+        }
+    });
+    let entry_decoder: EntryDecoder =
+        Arc::new(|data: &[u8], expected_size: usize| sse_codecs::lzo1x::decompress(data, expected_size));
+    (header_decoder, entry_decoder)
+}
+
+fn read_xray_hook_source(
+    root: &Path,
+    game: CompanionGame,
+    fsgame_names: &[&str],
+    tree_path: &str,
+    game_path: &str,
+) -> Result<Vec<u8>, InstallError> {
+    let loose_path = safe_game_path(root, game_path)?;
+    if loose_path.is_file() {
+        return read_companion_file(&loose_path);
+    }
+    if loose_path.exists() {
+        return Err(InstallError::new("hook source path exists as a non-file"));
+    }
+
+    let (header_decoder, entry_decoder) = make_archive_decoders();
+    let wanted_path = tree_path.to_ascii_lowercase();
+    let tree = GameFileTree::load(
+        game,
+        root,
+        |path| path.eq_ignore_ascii_case(&wanted_path),
+        Some(fsgame_names),
+        false,
+        true,
+        true,
+        Some(header_decoder),
+        Some(entry_decoder),
+    )
+    .map_err(|error| InstallError::new(format!("could not read X-Ray archives: {error}")))?;
+
+    let source = tree
+        .files
+        .iter()
+        .find(|(path, _)| path.eq_ignore_ascii_case(tree_path))
+        .map(|(_, file)| file)
+        .ok_or_else(|| {
+            let issues = if tree.issues.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", tree.issues.join("; "))
+            };
+            InstallError::new(format!(
+                "required hook source {tree_path} was not found in loose gamedata or game archives{issues}"
+            ))
+        })?;
+    source
+        .read()
+        .map_err(|error| InstallError::new(format!("could not read archived {tree_path}: {error}")))
+}
+
 /// Installs the requested payload only when called. Source originals are kept in the C#-compatible state directory.
 pub fn install_files(root: &Path, game: &str, version: &str, payloads: &[PayloadFile]) -> Result<(), InstallError> {
     validate_game(game)?;
@@ -115,6 +205,7 @@ pub fn install_files(root: &Path, game: &str, version: &str, payloads: &[Payload
     }
     let root = fs::canonicalize(root)?;
     recover_install_transaction(&root)?;
+    refuse_active_game_fix_overlap(&root, payloads)?;
     let state = root.join(STATE_DIRECTORY);
     let manifest_path = safe_game_path(&root, &format!("{STATE_DIRECTORY}/{MANIFEST_FILE}"))?;
     let state_preexisted = state.exists();
@@ -286,20 +377,41 @@ pub fn install_files(root: &Path, game: &str, version: &str, payloads: &[Payload
 pub fn install_bundled(root: &Path, game: crate::bundled::Game) -> Result<(), InstallError> {
     let root = fs::canonicalize(root)?;
     recover_install_transaction(&root)?;
-    let game_id = match game {
-        crate::bundled::Game::ShadowOfChernobyl => "soc",
-        crate::bundled::Game::ClearSky => "cs",
-        crate::bundled::Game::CallOfPripyat => "cop",
+    let (game_id, content_game, fsgame_names) = match game {
+        crate::bundled::Game::ShadowOfChernobyl => (
+            "soc",
+            CompanionGame::ShadowOfChernobyl,
+            &["fsgame.ltx", "fsgame_soc.ltx"][..],
+        ),
+        crate::bundled::Game::ClearSky => ("cs", CompanionGame::ClearSky, &["fsgame.ltx", "fsgame_cs.ltx"][..]),
+        crate::bundled::Game::CallOfPripyat => (
+            "cop",
+            CompanionGame::CallOfPripyat,
+            &["fsgame.ltx", "fsgame_cop.ltx"][..],
+        ),
     };
     let mut payloads = crate::bundled::payloads(game)?;
+
     let bind_path = "gamedata/scripts/bind_stalker.script";
-    let bind_bytes = read_companion_file(&safe_game_path(&root, bind_path)?)?;
+    let bind_bytes = read_xray_hook_source(
+        &root,
+        content_game,
+        fsgame_names,
+        "scripts/bind_stalker.script",
+        bind_path,
+    )?;
     let hooked_bind =
         crate::hook::patch_bind_stalker(&bind_bytes, game).map_err(|error| InstallError::new(error.to_string()))?;
     payloads.push(PayloadFile::new(bind_path, hooked_bind));
 
     let menu_path = "gamedata/scripts/ui_main_menu.script";
-    let menu_bytes = read_companion_file(&safe_game_path(&root, menu_path)?)?;
+    let menu_bytes = read_xray_hook_source(
+        &root,
+        content_game,
+        fsgame_names,
+        "scripts/ui_main_menu.script",
+        menu_path,
+    )?;
     let hooked_menu =
         crate::hook::patch_main_menu(&menu_bytes).map_err(|error| InstallError::new(error.to_string()))?;
     payloads.push(PayloadFile::new(menu_path, hooked_menu));
@@ -1421,5 +1533,48 @@ mod transaction_tests {
         assert_eq!(fs::read(&target).expect("read final original file"), b"original");
         assert!(!state.exists());
         let _ = fs::remove_dir_all(root);
+    }
+}
+
+#[cfg(test)]
+mod g14_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn archived_hook_file_can_be_read_from_content_tree() {
+        let mut files = HashMap::new();
+        files.insert(
+            "scripts/bind_stalker.script".to_owned(),
+            sse_content::GameFile::from_bytes(
+                "scripts/bind_stalker.script",
+                "fixture.db",
+                b"function actor_binder:update(delta) end".to_vec(),
+            ),
+        );
+        let tree = GameFileTree {
+            files,
+            fingerprint: "fixture".to_owned(),
+            has_loose_overlay: false,
+            config_prefix: "config/".to_owned(),
+            data_directory: None,
+            issues: Vec::new(),
+        };
+        let bytes = tree
+            .files
+            .get("scripts/bind_stalker.script")
+            .and_then(|file| file.read().ok());
+        assert_eq!(
+            bytes.as_deref(),
+            Some(b"function actor_binder:update(delta) end".as_slice())
+        );
+    }
+
+    #[test]
+    fn overlap_check_is_case_insensitive_after_normalization() -> Result<(), InstallError> {
+        let payload = PayloadFile::new("GameData/Scripts/bind_stalker.script", vec![1]);
+        let normalized = normalize_relative(&payload.relative_path)?;
+        assert_eq!(normalized.to_ascii_lowercase(), "gamedata/scripts/bind_stalker.script");
+        Ok(())
     }
 }
