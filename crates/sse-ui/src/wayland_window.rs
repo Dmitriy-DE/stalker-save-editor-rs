@@ -106,9 +106,16 @@ impl WaylandWindow {
         let closed = Arc::new(Mutex::new(false));
         let reader = stream.try_clone().map_err(io)?;
         let reader_closed = Arc::clone(&closed);
+        let reader_objects = ReaderObjects {
+            xdg_surface,
+            toplevel,
+            wm,
+            seat,
+            surface,
+        };
         std::thread::Builder::new()
             .name("wayland-events".to_owned())
-            .spawn(move || event_reader(reader, xdg_surface, toplevel, wm, seat, surface, proxy, reader_closed))
+            .spawn(move || event_reader(reader, reader_objects, proxy, reader_closed))
             .map_err(io)?;
         Ok(Self {
             stream,
