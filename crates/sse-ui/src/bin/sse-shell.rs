@@ -22,6 +22,7 @@ fn main() {
     let result = match args.first().map(String::as_str) {
         Some("--screenshot") => screenshot(&args),
         Some("--bench") => bench(&args),
+        Some("--ci-budget") => ci_budget(),
         Some("--companion") => companion_command(&args),
         _ => window(),
     };
@@ -199,6 +200,54 @@ fn bench(args: &[String]) -> Result<()> {
     Ok(())
 }
 
+fn ci_budget() -> Result<()> {
+    const START_BUDGET: Duration = Duration::from_millis(200);
+    const SWITCH_BUDGET: Duration = Duration::from_millis(16);
+    const RSS_BUDGET_KIB: u64 = 30 * 1024;
+
+    let started = Instant::now();
+    let mut tree = Tree::new(Fonts::bundled()?, rgb(BG_BASE));
+    let mut shell = Shell::build(&mut tree, None)?;
+    tree.resize(1280, 860);
+    let mut frame = vec![0_u32; 1280 * 860];
+    tree.paint(&mut frame, 1280)?;
+    let startup = started.elapsed();
+    if startup > START_BUDGET {
+        return Err(Error::Refused(format!("startup budget exceeded: {startup:?} > {START_BUDGET:?}")));
+    }
+
+    let mut worst_switch = Duration::ZERO;
+    for id in ScreenId::ALL {
+        let switch_started = Instant::now();
+        shell.open(&mut tree, *id)?;
+        tree.paint(&mut frame, 1280)?;
+        worst_switch = worst_switch.max(switch_started.elapsed());
+    }
+    if worst_switch > SWITCH_BUDGET {
+        return Err(Error::Refused(format!(
+            "screen-switch budget exceeded: {worst_switch:?} > {SWITCH_BUDGET:?}"
+        )));
+    }
+
+    #[cfg(target_os = "linux")]
+    if let Some(rss_kib) = linux_rss_kib() {
+        if rss_kib > RSS_BUDGET_KIB {
+            return Err(Error::Refused(format!("idle RSS budget exceeded: {rss_kib} KiB > {RSS_BUDGET_KIB} KiB")));
+        }
+        println!("budget startup={startup:?} switch_worst={worst_switch:?} rss={rss_kib}KiB");
+    }
+    #[cfg(not(target_os = "linux"))]
+    println!("budget startup={startup:?} switch_worst={worst_switch:?}");
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn linux_rss_kib() -> Option<u64> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    let line = status.lines().find(|line| line.starts_with("VmRSS:"))?;
+    line.split_whitespace().nth(1)?.parse().ok()
+}
+
 fn bench_size(args: &[String]) -> (u32, u32) {
     args.get(1)
         .and_then(|value| value.split_once('x'))
@@ -226,7 +275,7 @@ fn window() -> Result<()> {
             if !proxy.send(AppMessage::Tick(started.elapsed().as_secs())) { return; }
         });
         let stats = sse_ui::event_loop::run(&receiver, &mut tree, &mut shell, &mut backend)?;
-        eprintln!("wakes {} frames {} pixels {}", stats.wakes, stats.frames, stats.pixels, "wayland");
+        eprintln!("wakes {} frames {} pixels {}" , stats.wakes, stats.frames, stats.pixels, "wayland");
         return Ok(());
     }
     let mut backend =
