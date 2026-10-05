@@ -23,10 +23,14 @@ pub struct HotkeyBinding {
 impl HotkeyBinding {
     fn validate(self) -> Result<Self> {
         if self.id == 0 || !self.key.is_ascii_uppercase() {
-            return Err(Error::Refused("hotkey binding must have a non-zero ID and A-Z key".to_owned()));
+            return Err(Error::Refused(
+                "hotkey binding must have a non-zero ID and A-Z key".to_owned(),
+            ));
         }
         if !self.control && !self.alt && !self.shift {
-            return Err(Error::Refused("hotkey binding requires at least one modifier".to_owned()));
+            return Err(Error::Refused(
+                "hotkey binding requires at least one modifier".to_owned(),
+            ));
         }
         Ok(self)
     }
@@ -204,7 +208,9 @@ mod platform {
             }
             let mut done = Vec::new();
             for binding in &self.bindings {
-                let Ok(id) = i32::try_from(binding.id) else { return false };
+                let Ok(id) = i32::try_from(binding.id) else {
+                    return false;
+                };
                 let mut modifiers = MOD_NOREPEAT;
                 if binding.control {
                     modifiers |= MOD_CONTROL;
@@ -244,7 +250,9 @@ mod platform {
         let mut name = [0_u16; 256];
         // SAFETY: name is writable UTF-16 storage and window is a live borrowed foreground HWND.
         let length = unsafe { GetClassNameW(window, name.as_mut_ptr(), 256) };
-        let Ok(length) = usize::try_from(length) else { return false };
+        let Ok(length) = usize::try_from(length) else {
+            return false;
+        };
         is_game_name(&String::from_utf16_lossy(name.get(..length).unwrap_or_default()))
     }
 
@@ -396,7 +404,10 @@ mod platform {
                 if keycode == 0 {
                     // SAFETY: display is live and owned by this constructor on the failure path.
                     let _ = unsafe { XCloseDisplay(display) };
-                    return Err(Error::System(format!("X11 could not resolve hotkey {}", char::from(binding.key))));
+                    return Err(Error::System(format!(
+                        "X11 could not resolve hotkey {}",
+                        char::from(binding.key)
+                    )));
                 }
                 let mut modifiers = 0;
                 if binding.control {
@@ -449,11 +460,10 @@ mod platform {
                     // SAFETY: KEY_PRESS means the XKeyEvent union field is initialized.
                     let key = unsafe { *event.key };
                     let state = key.state & !(LOCK_MASK | MOD2_MASK);
-                    if let Some(binding) = self
-                        .bindings
-                        .iter()
-                        .find(|binding| binding.keycode == c_int::try_from(key.keycode).unwrap_or_default() && binding.modifiers == state)
-                    {
+                    if let Some(binding) = self.bindings.iter().find(|binding| {
+                        binding.keycode == c_int::try_from(key.keycode).unwrap_or_default()
+                            && binding.modifiers == state
+                    }) {
                         return Ok(Some(binding.binding.id));
                     }
                 }
