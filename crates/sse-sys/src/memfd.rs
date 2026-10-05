@@ -27,7 +27,7 @@ pub struct MappedFile {
 impl MappedFile {
     /// Creates an owner-private anonymous file and maps it read/write.
     pub fn new(len: usize) -> io::Result<Self> {
-        if len == 0 || len > i64::MAX as usize {
+        if len == 0 || i64::try_from(len).is_err() {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid mapping length"));
         }
         let name = b"sse-wayland\0";
