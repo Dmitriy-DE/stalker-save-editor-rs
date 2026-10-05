@@ -67,6 +67,8 @@ pub struct InventoryItem {
     pub(crate) placement_base_slot: Option<u8>,
     /// Confirmed equipment condition in the serialized STATE field.
     pub condition: Option<f32>,
+    /// Durability can be changed only when the matching UPDATE byte is unique and proven.
+    pub durability_editable: bool,
     pub(crate) condition_offset: Option<usize>,
     pub(crate) update_condition_offset: Option<usize>,
     pub(crate) client_condition_offset: Option<usize>,
@@ -86,6 +88,8 @@ pub struct RegistryObject {
     pub name: String,
     /// Section or replacement name from the spawn record.
     pub name_replace: String,
+    /// SPAWN byte range containing `name_replace`, including its zero terminator.
+    pub(crate) name_replace_range: std::ops::Range<usize>,
     /// Registry object id.
     pub object_id: u16,
     /// Parent object id.
@@ -96,6 +100,20 @@ pub struct RegistryObject {
     pub parent_id_offset: usize,
     /// Spawn serialization version.
     pub version: u16,
+    /// SPAWN identifier, when the version serializes one.
+    pub spawn_id: Option<u16>,
+    /// Byte offset of `spawn_id` in the unpacked image.
+    pub(crate) spawn_id_offset: Option<usize>,
+    /// Story identifier from STATE (`u32::MAX` means no story object).
+    pub story_id: Option<u32>,
+    /// Byte offset of `story_id` in the unpacked image.
+    pub(crate) story_id_offset: Option<usize>,
+    /// Spawn story identifier from STATE (`u32::MAX` means none).
+    pub spawn_story_id: Option<u32>,
+    /// Byte offset of `spawn_story_id` in the unpacked image.
+    pub(crate) spawn_story_id_offset: Option<usize>,
+    /// SPAWN STATE custom-data byte range, including its zero terminator.
+    pub(crate) custom_data_range: Option<std::ops::Range<usize>>,
     /// Complete record start in the raw image.
     pub record_offset: usize,
     /// Complete record byte length.
@@ -112,6 +130,14 @@ pub struct RegistryObject {
     pub client_data_offset: Option<usize>,
     /// Client data byte length.
     pub client_data_length: usize,
+}
+
+struct DynamicVisualFields {
+    custom_data_range: Option<std::ops::Range<usize>>,
+    story_id: Option<u32>,
+    story_id_offset: Option<usize>,
+    spawn_story_id: Option<u32>,
+    spawn_story_id_offset: Option<usize>,
 }
 
 type ObjectRecord = RegistryObject;
@@ -257,6 +283,14 @@ impl Save {
     #[must_use]
     pub fn registry_objects(&self) -> &[RegistryObject] {
         &self.records
+    }
+
+    /// Returns an object's custom data as borrowed bytes without copying the save image.
+    #[must_use]
+    pub fn custom_data<'a>(&'a self, object: &RegistryObject) -> Option<&'a [u8]> {
+        let range = object.custom_data_range.as_ref()?;
+        let content_end = range.end.checked_sub(1)?;
+        self.container.image().get(range.start..content_end)
     }
 
     /// In-game clock value.
@@ -418,6 +452,7 @@ impl Save {
                 placement_value: placement_fields.as_ref().map(|fields| fields.packed),
                 placement_base_slot: placement_fields.as_ref().and_then(|fields| fields.base_slot),
                 condition: condition_fields.map(|fields| fields.0),
+                durability_editable: condition_fields.is_some_and(|fields| fields.2.is_some()),
                 condition_offset: condition_fields.map(|fields| fields.1),
                 update_condition_offset: condition_fields.and_then(|fields| fields.2),
                 client_condition_offset: condition_fields.and_then(|fields| fields.3),
@@ -557,13 +592,20 @@ fn parse_objects(container: &Container, chunk: Chunk) -> Result<Vec<ObjectRecord
     Ok(records)
 }
 
-fn parse_spawn(packet: &[u8], packet_offset: usize) -> Result<ObjectRecord> {
+pub(crate) fn parse_spawn(packet: &[u8], packet_offset: usize) -> Result<ObjectRecord> {
     let mut reader = Cursor::new(packet);
     if reader.u16()? != SPAWN_MESSAGE {
         return Err(Error::damaged("X-Ray object does not begin with M_SPAWN"));
     }
     let name = decode_cp1251(reader.zero_terminated(MAXIMUM_STRING_LENGTH)?);
+    let name_replace_start = reader.position();
     let name_replace = decode_cp1251(reader.zero_terminated(MAXIMUM_STRING_LENGTH)?);
+    let name_replace_range = packet_offset
+        .checked_add(name_replace_start)
+        .ok_or_else(|| Error::damaged("X-Ray name-replacement offset overflow"))?
+        ..packet_offset
+            .checked_add(reader.position())
+            .ok_or_else(|| Error::damaged("X-Ray name-replacement range overflow"))?;
     reader.skip(2)?;
     reader.skip(6 * 4)?;
     reader.skip(2)?;
@@ -606,9 +648,14 @@ fn parse_spawn(packet: &[u8], packet_offset: usize) -> Result<ObjectRecord> {
     } else {
         (None, 0)
     };
-    if version > 79 {
-        reader.skip(2)?;
-    }
+    let (spawn_id, spawn_id_offset) = if version > 79 {
+        let offset = packet_offset
+            .checked_add(reader.position())
+            .ok_or_else(|| Error::damaged("X-Ray spawn-id offset overflow"))?;
+        (Some(reader.u16()?), Some(offset))
+    } else {
+        (None, None)
+    };
     let state_size = usize::from(reader.u16()?);
     if state_size < 2 {
         return Err(Error::damaged(format!(
@@ -626,15 +673,28 @@ fn parse_spawn(packet: &[u8], packet_offset: usize) -> Result<ObjectRecord> {
     let state_offset = packet_offset
         .checked_add(reader.position())
         .ok_or_else(|| Error::damaged("X-Ray state offset overflow"))?;
+    let state = packet
+        .get(reader.position()..)
+        .ok_or_else(|| Error::damaged("X-Ray STATE starts outside its SPAWN packet"))?;
+    let mut state_reader = Cursor::new(state);
+    let dynamic_fields = read_dynamic_visual_fields(&mut state_reader, version, state_offset)?;
     reader.skip(state_length)?;
     Ok(ObjectRecord {
         name,
         name_replace,
+        name_replace_range,
         object_id,
         parent_id,
         object_id_offset,
         parent_id_offset,
         version,
+        spawn_id,
+        spawn_id_offset,
+        story_id: dynamic_fields.story_id,
+        story_id_offset: dynamic_fields.story_id_offset,
+        spawn_story_id: dynamic_fields.spawn_story_id,
+        spawn_story_id_offset: dynamic_fields.spawn_story_id_offset,
+        custom_data_range: dynamic_fields.custom_data_range,
         record_offset: 0,
         record_length: 0,
         state_offset,
@@ -847,6 +907,15 @@ pub(crate) fn parse_relation_registry(payload: &[u8], has_timestamps: bool) -> R
 }
 
 pub(crate) fn skip_dynamic_visual(reader: &mut Cursor<'_>, version: u16) -> Result<()> {
+    let _ = read_dynamic_visual_fields(reader, version, 0)?;
+    Ok(())
+}
+
+fn read_dynamic_visual_fields(
+    reader: &mut Cursor<'_>,
+    version: u16,
+    image_offset: usize,
+) -> Result<DynamicVisualFields> {
     if version >= 1 {
         if version > 24 {
             if version < 83 {
@@ -875,22 +944,47 @@ pub(crate) fn skip_dynamic_visual(reader: &mut Cursor<'_>, version: u16) -> Resu
     if version > 49 {
         reader.skip(4)?;
     }
-    if version > 57 {
-        let _ini = reader.zero_terminated(MAXIMUM_STRING_LENGTH)?;
-    }
-    if version > 61 {
-        reader.skip(4)?;
-    }
-    if version > 111 {
-        reader.skip(4)?;
-    }
+    let custom_data_range = if version > 57 {
+        let start = image_offset
+            .checked_add(reader.position())
+            .ok_or_else(|| Error::damaged("X-Ray custom-data offset overflow"))?;
+        reader.zero_terminated(MAXIMUM_STRING_LENGTH)?;
+        let end = image_offset
+            .checked_add(reader.position())
+            .ok_or_else(|| Error::damaged("X-Ray custom-data range overflow"))?;
+        Some(start..end)
+    } else {
+        None
+    };
+    let (story_id, story_id_offset) = if version > 61 {
+        let offset = image_offset
+            .checked_add(reader.position())
+            .ok_or_else(|| Error::damaged("X-Ray story-id offset overflow"))?;
+        (Some(reader.u32()?), Some(offset))
+    } else {
+        (None, None)
+    };
+    let (spawn_story_id, spawn_story_id_offset) = if version > 111 {
+        let offset = image_offset
+            .checked_add(reader.position())
+            .ok_or_else(|| Error::damaged("X-Ray spawn-story-id offset overflow"))?;
+        (Some(reader.u32()?), Some(offset))
+    } else {
+        (None, None)
+    };
     if version > 31 {
         let _visual = reader.zero_terminated(MAXIMUM_STRING_LENGTH)?;
         if version > 103 {
             reader.skip(1)?;
         }
     }
-    Ok(())
+    Ok(DynamicVisualFields {
+        custom_data_range,
+        story_id,
+        story_id_offset,
+        spawn_story_id,
+        spawn_story_id_offset,
+    })
 }
 
 fn skip_u16_vector(reader: &mut Cursor<'_>) -> Result<()> {
@@ -1019,14 +1113,14 @@ fn read_condition_fields(raw: &[u8], record: &ObjectRecord) -> Option<(f32, usiz
         return None;
     }
 
+    let update_start = record.update_offset.checked_add(2)?;
+    let update_end = record.update_offset.checked_add(record.update_length)?;
+    let update_payload = raw.get(update_start..update_end)?;
     let mut update_match = None;
     let mut update_matches = 0_u8;
-    for relative in [3_usize, 4] {
-        let candidate = record.update_offset.checked_add(relative)?;
-        if relative >= record.update_length {
-            continue;
-        }
-        let encoded = f32::from(*raw.get(candidate)?) / 255.0;
+    for (relative, byte) in update_payload.iter().enumerate() {
+        let candidate = update_start.checked_add(relative)?;
+        let encoded = f32::from(*byte) / 255.0;
         if (encoded - condition).abs() <= (1.0 / 255.0) + 1.0e-6 {
             update_match = Some(candidate);
             update_matches = update_matches.saturating_add(1);
@@ -1163,7 +1257,7 @@ fn cp1251_char(byte: u8) -> char {
     clippy::type_complexity
 )]
 mod tests {
-    use super::{parse_relation_registry, Format, Save};
+    use super::{parse_relation_registry, parse_spawn, Format, Save};
     use crate::container::Container;
     use sse_core::Error;
 
@@ -1250,6 +1344,135 @@ mod tests {
                 .unwrap_or_default();
             let _ = parse_relation_registry(&mutated, true);
         }
+    }
+
+    #[test]
+    fn spawn_parser_rejects_unterminated_dynamic_custom_data() {
+        let packet = synthetic_spawn_packet(&synthetic_dynamic_visual_state(b"logic = true", false));
+        assert!(parse_spawn(&packet, 0).is_err());
+    }
+
+    #[test]
+    fn spawn_parser_reads_clone_metadata_fields() {
+        let state = synthetic_dynamic_visual_state(b"logic = true", true);
+        let packet = synthetic_spawn_packet(&state);
+        let packet_offset = 0x1000;
+        let parsed = parse_spawn(&packet, packet_offset).expect("synthetic SPAWN should parse");
+
+        assert_eq!(parsed.name_replace, "replace_me");
+        assert_eq!(parsed.spawn_id, Some(0x1234));
+        assert_eq!(parsed.story_id, Some(0x5555_5555));
+        assert_eq!(parsed.spawn_story_id, Some(0x4444_4444));
+        let name_replace = parsed
+            .name_replace_range
+            .start
+            .checked_sub(packet_offset)
+            .expect("name replacement range should use the packet base")
+            ..parsed
+                .name_replace_range
+                .end
+                .checked_sub(packet_offset)
+                .expect("name replacement range should use the packet base");
+        assert_eq!(packet.get(name_replace), Some(&b"replace_me\0"[..]));
+        let custom_data = parsed
+            .custom_data_range
+            .as_ref()
+            .expect("version 128 should expose custom data");
+        let custom_data = custom_data
+            .start
+            .checked_sub(packet_offset)
+            .expect("custom-data range should use the packet base")
+            ..custom_data
+                .end
+                .checked_sub(packet_offset)
+                .expect("custom-data range should use the packet base");
+        assert_eq!(packet.get(custom_data), Some(&b"logic = true\0"[..]));
+    }
+
+    #[test]
+    fn spawn_parser_rejects_truncated_dynamic_story_fields() {
+        let mut state = synthetic_dynamic_visual_state(b"", true);
+        state.truncate(state.len().saturating_sub(5));
+        let packet = synthetic_spawn_packet(&state);
+        assert!(parse_spawn(&packet, 0).is_err());
+    }
+
+    #[test]
+    fn spawn_parser_rejects_truncation_and_survives_deterministic_mutations() {
+        let packet = synthetic_spawn_packet(&synthetic_dynamic_visual_state(b"logic = true", true));
+        for end in 0..packet.len() {
+            assert!(
+                parse_spawn(&packet[..end], 0).is_err(),
+                "accepted truncated SPAWN prefix of length {end}"
+            );
+        }
+
+        let parsed = parse_spawn(&packet, 0).expect("baseline SPAWN should parse");
+        let mut hostile_client_length = packet.clone();
+        let client_length_offset = parsed
+            .client_data_offset
+            .expect("version 128 should have client data")
+            .checked_sub(2)
+            .expect("client length precedes payload");
+        let Some(length) = hostile_client_length.get_mut(client_length_offset..client_length_offset + 2) else {
+            panic!("client length field should fit the synthetic packet")
+        };
+        length.copy_from_slice(&u16::MAX.to_le_bytes());
+        assert!(parse_spawn(&hostile_client_length, 0).is_err());
+
+        let mut hostile_state_length = packet.clone();
+        let state_size_offset = parsed
+            .state_offset
+            .checked_sub(2)
+            .expect("state length precedes payload");
+        let Some(length) = hostile_state_length.get_mut(state_size_offset..state_size_offset + 2) else {
+            panic!("state length field should fit the synthetic packet")
+        };
+        length.copy_from_slice(&u16::MAX.to_le_bytes());
+        assert!(parse_spawn(&hostile_state_length, 0).is_err());
+
+        for index in 0..packet.len() {
+            for bit in 0..8 {
+                let mut mutated = packet.clone();
+                let Some(byte) = mutated.get_mut(index) else { continue };
+                *byte ^= 1_u8.checked_shl(bit).unwrap_or_default();
+                let _ = parse_spawn(&mutated, 0);
+            }
+        }
+    }
+
+    fn synthetic_dynamic_visual_state(custom_data: &[u8], terminate: bool) -> Vec<u8> {
+        let mut state = Vec::new();
+        state.extend_from_slice(&[0_u8; 6 + 4 + 4 + 4]);
+        state.extend_from_slice(custom_data);
+        if terminate {
+            state.push(0);
+        }
+        state.extend_from_slice(&0x5555_5555_u32.to_le_bytes());
+        state.extend_from_slice(&0x4444_4444_u32.to_le_bytes());
+        state.extend_from_slice(b"visual\0");
+        state.push(0);
+        state
+    }
+
+    fn synthetic_spawn_packet(state: &[u8]) -> Vec<u8> {
+        let mut packet = Vec::new();
+        packet.extend_from_slice(&1_u16.to_le_bytes());
+        packet.extend_from_slice(b"item_test\0replace_me\0");
+        packet.extend_from_slice(&[0_u8; 2 + 6 * 4 + 2]);
+        packet.extend_from_slice(&7_u16.to_le_bytes());
+        packet.extend_from_slice(&8_u16.to_le_bytes());
+        packet.extend_from_slice(&9_u16.to_le_bytes());
+        packet.extend_from_slice(&(1_u16 << 5).to_le_bytes());
+        packet.extend_from_slice(&128_u16.to_le_bytes());
+        packet.extend_from_slice(&0_u16.to_le_bytes());
+        packet.extend_from_slice(&0_u16.to_le_bytes());
+        packet.extend_from_slice(&0_u16.to_le_bytes());
+        packet.extend_from_slice(&0x1234_u16.to_le_bytes());
+        let state_size = u16::try_from(state.len().saturating_add(2)).unwrap_or_default();
+        packet.extend_from_slice(&state_size.to_le_bytes());
+        packet.extend_from_slice(state);
+        packet
     }
 
     #[test]

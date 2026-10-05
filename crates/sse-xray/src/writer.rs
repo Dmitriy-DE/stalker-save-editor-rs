@@ -364,6 +364,9 @@ fn apply_with_catalog_internal(
     } else {
         None
     };
+    if let Some(inventory) = inventory.as_deref() {
+        validate_slot_occupancy(inventory, changes)?;
+    }
     let mut seen_money = false;
     let mut seen_stacks = HashSet::new();
     let mut seen_durability = HashSet::new();
@@ -491,12 +494,13 @@ fn apply_with_catalog_internal(
                 let state_offset = item.condition_offset.ok_or_else(|| {
                     Error::Refused(format!("object 0x{target_object:04X} has no proven condition field"))
                 })?;
+                let update_offset = item.update_condition_offset.ok_or_else(|| {
+                    Error::Refused(format!(
+                        "object 0x{target_object:04X} has no proven UPDATE condition field"
+                    ))
+                })?;
                 writes.push(PendingWrite::f32(state_offset, *new_value));
-                if let Some(offset) = item.update_condition_offset {
-                    #[allow(clippy::cast_possible_truncation)]
-                    let encoded = ((*new_value * 255.0) + 0.5).floor().clamp(0.0, 255.0) as u8;
-                    writes.push(PendingWrite::u8(offset, encoded));
-                }
+                writes.push(PendingWrite::u8(update_offset, encode_condition_q8(*new_value)));
                 if let Some(offset) = item.client_condition_offset {
                     writes.push(PendingWrite::f32(offset, *new_value));
                 }
@@ -524,7 +528,14 @@ fn apply_with_catalog_internal(
                 })?;
                 let replacement = match destination {
                     Placement::Ruck => (current & 0xFFF0) | 3,
-                    Placement::Belt if item.section.to_ascii_lowercase().starts_with("af_") => (current & 0xFFF0) | 2,
+                    Placement::Belt if item.section.to_ascii_lowercase().starts_with("af_") && current & 0x0F == 2 => {
+                        current
+                    }
+                    Placement::Belt if item.section.to_ascii_lowercase().starts_with("af_") => {
+                        return Err(Error::Refused(
+                            "belt capacity cannot be proven without the active armor's game configuration".to_owned(),
+                        ));
+                    }
                     Placement::Belt => {
                         return Err(Error::Refused(
                             "only artifact sections may be moved to the belt".to_owned(),
@@ -645,6 +656,11 @@ fn apply_with_catalog_internal(
                     .iter()
                     .find(|record| record.object_id == *target_object)
                     .ok_or_else(|| Error::Refused(format!("object 0x{target_object:04X} is unresolved or missing")))?;
+                if record.story_id != Some(u32::MAX) {
+                    return Err(Error::Refused(format!(
+                        "story-linked object 0x{target_object:04X} cannot be removed"
+                    )));
+                }
                 if record.object_id == save.actor_id() {
                     return Err(Error::Refused("the actor object cannot be removed".to_owned()));
                 }
@@ -690,6 +706,11 @@ fn apply_with_catalog_internal(
                 if !seen_additions.insert(*object_id) {
                     return Err(Error::Refused(format!("duplicate new object id 0x{object_id:04X}")));
                 }
+                if *object_id == u16::MAX || *template_object == u16::MAX {
+                    return Err(Error::Refused(
+                        "0xFFFF is reserved as the ALife no-object sentinel".to_owned(),
+                    ));
+                }
                 if save
                     .registry_objects()
                     .iter()
@@ -710,6 +731,12 @@ fn apply_with_catalog_internal(
                     .iter()
                     .find(|record| record.object_id == *template_object)
                     .ok_or_else(|| Error::Refused(format!("template object 0x{template_object:04X} is missing")))?;
+                if !template.name.eq_ignore_ascii_case(item_key) {
+                    return Err(Error::Refused(format!(
+                        "template section does not match requested item section '{item_key}' (template '{}', replacement '{}')",
+                        template.name, template.name_replace
+                    )));
+                }
                 if item_key.is_empty()
                     || !item_key
                         .bytes()
@@ -1154,6 +1181,16 @@ fn apply_with_catalog_internal(
                             "durability read-back failed for 0x{target_object:04X}"
                         )));
                     }
+                    let update_offset = item.update_condition_offset.ok_or_else(|| {
+                        Error::Refused(format!(
+                            "durability UPDATE read-back is unavailable for 0x{target_object:04X}"
+                        ))
+                    })?;
+                    if verified.raw_image().get(update_offset).copied() != Some(encode_condition_q8(*new_value)) {
+                        return Err(Error::Refused(format!(
+                            "durability UPDATE read-back failed for 0x{target_object:04X}"
+                        )));
+                    }
                 }
                 Change::SetPlacement {
                     target_object,
@@ -1231,6 +1268,16 @@ fn apply_with_catalog_internal(
         if record.parent_id != *parent_id {
             return Err(Error::Refused(format!(
                 "added object 0x{object_id:04X} has the wrong parent after read-back"
+            )));
+        }
+        if !record.name_replace.is_empty()
+            || record.story_id != Some(u32::MAX)
+            || record.spawn_story_id != Some(u32::MAX)
+            || record.spawn_id != Some(u16::MAX)
+            || verified.custom_data(record) != Some(&[][..])
+        {
+            return Err(Error::Refused(format!(
+                "added object 0x{object_id:04X} retained template-bound SPAWN/STATE metadata"
             )));
         }
         if let Some(expected_count) = expected_count {
@@ -1316,6 +1363,86 @@ fn build_undo_token(source: &Save, applied: &Save) -> Result<UndoToken> {
         applied_image_sha256: sse_codecs::sha256::sha256(applied.raw_image()),
         patches,
     })
+}
+
+fn encode_condition_q8(value: f32) -> u8 {
+    #[allow(clippy::cast_possible_truncation)]
+    let encoded = ((value * 255.0) + 0.5).floor().clamp(0.0, 255.0) as u8;
+    encoded
+}
+
+fn validate_slot_occupancy(inventory: &[crate::InventoryItem], changes: &ChangeSet) -> Result<()> {
+    let mut requested_slots = HashSet::new();
+    let mut placements = HashMap::new();
+    let mut removed = HashSet::new();
+    for change in changes.changes() {
+        match change {
+            Change::SetPlacement {
+                target_object,
+                destination: Placement::Slot(slot),
+            } => {
+                requested_slots.insert(*slot);
+                placements.insert(*target_object, Placement::Slot(*slot));
+            }
+            Change::SetPlacement {
+                target_object,
+                destination,
+            } => {
+                placements.insert(*target_object, *destination);
+            }
+            Change::RemoveItem { target_object } => {
+                removed.insert(*target_object);
+            }
+            Change::SetMoney { .. }
+            | Change::SetStack { .. }
+            | Change::SetDurability { .. }
+            | Change::MoveItem { .. }
+            | Change::AddItem { .. }
+            | Change::SetPlayerFaction { .. }
+            | Change::SetFactionRelation { .. }
+            | Change::SetUpgrades { .. }
+            | Change::AddInfoPortions { .. }
+            | Change::RelocateActor { .. } => {}
+        }
+    }
+    if requested_slots.is_empty() {
+        return Ok(());
+    }
+
+    let mut occupied = HashMap::new();
+    for item in inventory {
+        if removed.contains(&item.handle) {
+            continue;
+        }
+        let destination = placements.get(&item.handle).copied();
+        let slot = match destination {
+            Some(Placement::Slot(slot)) => Some(slot),
+            Some(Placement::Ruck | Placement::Belt) => None,
+            None => match item.placement_value {
+                Some(value) if value & 0x0F == 1 => {
+                    let raw_slot = (value >> 4) & 0x3F;
+                    Some(u8::try_from(raw_slot).map_err(|_| Error::damaged("X-Ray slot id exceeds 8 bits"))?)
+                }
+                Some(_) => None,
+                None => {
+                    return Err(Error::Refused(format!(
+                        "slot occupancy cannot be proven because object 0x{:04X} has unknown placement",
+                        item.handle
+                    )));
+                }
+            },
+        };
+        let Some(slot) = slot.filter(|slot| requested_slots.contains(slot)) else {
+            continue;
+        };
+        if let Some(previous) = occupied.insert(slot, item.handle) {
+            return Err(Error::Refused(format!(
+                "slot {slot} is already occupied by objects 0x{previous:04X} and 0x{:04X}",
+                item.handle
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn verify_extended_changes(
@@ -1455,6 +1582,12 @@ struct PendingWrite {
     offset: usize,
     bytes: [u8; 4],
     length: usize,
+}
+
+#[derive(Debug)]
+struct SpawnSplice {
+    range: Range<usize>,
+    replacement: Vec<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2119,6 +2252,21 @@ fn clone_template_record(
     object_id: u16,
     quantity: u16,
 ) -> Result<Vec<u8>> {
+    if item_key.contains('\0') {
+        return Err(Error::Refused("item key contains a zero byte".to_owned()));
+    }
+    if template.story_id_offset.is_none()
+        || template.spawn_story_id_offset.is_none()
+        || template.spawn_id_offset.is_none()
+    {
+        return Err(Error::Refused(
+            "template has no proven SPAWN/STATE identity fields".to_owned(),
+        ));
+    }
+    let custom_data_range = template
+        .custom_data_range
+        .clone()
+        .ok_or_else(|| Error::Refused("template STATE has no proven custom-data field".to_owned()))?;
     let raw = save.raw_image();
     let record_end = template
         .record_offset
@@ -2170,102 +2318,131 @@ fn clone_template_record(
         .ok_or_else(|| Error::damaged("X-Ray template section name range overflow"))?;
     let mut replacement_name = item_key.as_bytes().to_vec();
     replacement_name.push(0);
-    let original_name_length = name_end
-        .checked_sub(name_start)
-        .ok_or_else(|| Error::damaged("template section name range underflow"))?;
-    let name_delta = isize::try_from(replacement_name.len())
-        .map_err(|_| Error::Refused("item key length overflow".to_owned()))?
-        .checked_sub(
-            isize::try_from(original_name_length)
-                .map_err(|_| Error::damaged("template section name length overflow"))?,
-        )
-        .ok_or_else(|| Error::Refused("item key length delta overflow".to_owned()))?;
-    spawn.splice(name_start..name_end, replacement_name);
-    let adjust = |offset: usize| -> Result<usize> {
-        usize::try_from(
-            isize::try_from(offset)
-                .map_err(|_| Error::damaged("X-Ray template field offset overflow"))?
-                .checked_add(name_delta)
-                .ok_or_else(|| Error::damaged("X-Ray template field offset overflow"))?,
-        )
-        .map_err(|_| Error::damaged("negative X-Ray template field offset"))
+    let relative_range = |range: &Range<usize>, label: &str| -> Result<Range<usize>> {
+        let start = range
+            .start
+            .checked_sub(spawn_absolute)
+            .ok_or_else(|| Error::damaged(format!("X-Ray {label} starts outside its SPAWN")))?;
+        let end = range
+            .end
+            .checked_sub(spawn_absolute)
+            .ok_or_else(|| Error::damaged(format!("X-Ray {label} ends outside its SPAWN")))?;
+        if start > end || end > spawn.len() {
+            return Err(Error::damaged(format!("X-Ray {label} range exceeds its SPAWN")));
+        }
+        Ok(start..end)
     };
-    let object_id_offset = adjust(
-        template
-            .object_id_offset
-            .checked_sub(spawn_absolute)
-            .ok_or_else(|| Error::damaged("X-Ray object id is outside its SPAWN"))?,
-    )?;
-    let parent_id_offset = adjust(
-        template
-            .parent_id_offset
-            .checked_sub(spawn_absolute)
-            .ok_or_else(|| Error::damaged("X-Ray parent id is outside its SPAWN"))?,
-    )?;
-    write_u16(&mut spawn, object_id_offset, object_id)?;
-    write_u16(&mut spawn, parent_id_offset, save.actor_id())?;
+    let name_replace_range = relative_range(&template.name_replace_range, "name-replacement")?;
+    let custom_data_range = relative_range(&custom_data_range, "custom-data")?;
+    let mut splices = vec![
+        SpawnSplice {
+            range: name_start..name_end,
+            replacement: replacement_name,
+        },
+        SpawnSplice {
+            range: name_replace_range,
+            replacement: vec![0],
+        },
+        SpawnSplice {
+            range: custom_data_range.clone(),
+            replacement: vec![0],
+        },
+    ];
+    splices.sort_unstable_by_key(|splice| splice.range.start);
+    for pair in splices.windows(2) {
+        let first = pair
+            .first()
+            .ok_or_else(|| Error::damaged("X-Ray SPAWN splice list is incomplete"))?;
+        let second = pair
+            .get(1)
+            .ok_or_else(|| Error::damaged("X-Ray SPAWN splice list is incomplete"))?;
+        if first.range.end > second.range.start {
+            return Err(Error::damaged("X-Ray SPAWN metadata ranges overlap"));
+        }
+    }
+    for splice in splices.iter().rev() {
+        if splice.range.end > spawn.len() {
+            return Err(Error::damaged("X-Ray SPAWN metadata range is outside its packet"));
+        }
+        spawn.splice(splice.range.clone(), splice.replacement.iter().copied());
+    }
 
-    let state_offset = adjust(
-        template
-            .state_offset
-            .checked_sub(spawn_absolute)
-            .ok_or_else(|| Error::damaged("X-Ray STATE is outside its SPAWN"))?,
-    )?;
-    let mut state_length = template.state_length;
+    let template_state_start = template
+        .state_offset
+        .checked_sub(spawn_absolute)
+        .ok_or_else(|| Error::damaged("X-Ray STATE is outside its SPAWN"))?;
+    let mut state_offset = adjust_spawn_offset(template_state_start, &splices)?;
+    let custom_data_delta = splice_delta(&splices, &custom_data_range)?;
+    let mut state_length = adjust_length(template.state_length, custom_data_delta)?;
+    let mut upgrade_splice = None;
     if template.version > 123 {
         let (vector_offset, vector_length, vector_count) = upgrade_vector_range(raw, template)?;
         if vector_count > 0 {
-            let vector_offset = adjust(
-                vector_offset
-                    .checked_sub(spawn_absolute)
-                    .ok_or_else(|| Error::damaged("X-Ray upgrades are outside their SPAWN"))?,
-            )?;
+            let original_vector_offset = vector_offset
+                .checked_sub(spawn_absolute)
+                .ok_or_else(|| Error::damaged("X-Ray upgrades are outside their SPAWN"))?;
+            let vector_offset = adjust_spawn_offset(original_vector_offset, &splices)?;
             let vector_end = vector_offset
                 .checked_add(vector_length)
                 .ok_or_else(|| Error::damaged("X-Ray upgrades range overflow"))?;
             if spawn.get(vector_offset..vector_end).is_none() {
                 return Err(Error::damaged("X-Ray upgrades vector is outside the template SPAWN"));
             }
-            let size_offset = state_offset
-                .checked_sub(2)
-                .ok_or_else(|| Error::damaged("X-Ray STATE size field is outside the SPAWN"))?;
-            let old_size = read_u16(&spawn, size_offset)?;
-            let delta = 4_isize
+            let replacement = [0_u8; 4];
+            let delta = isize::try_from(replacement.len())
+                .map_err(|_| Error::damaged("X-Ray empty-upgrades length overflow"))?
                 .checked_sub(
                     isize::try_from(vector_length)
                         .map_err(|_| Error::damaged("X-Ray upgrades vector length overflow"))?,
                 )
                 .ok_or_else(|| Error::damaged("X-Ray upgrades size delta overflow"))?;
-            let delta_i32 =
-                i32::try_from(delta).map_err(|_| Error::damaged("X-Ray upgrades size delta exceeds i32"))?;
-            let new_size = i32::from(old_size)
-                .checked_add(delta_i32)
-                .filter(|size| (2..=i32::from(u16::MAX)).contains(size))
-                .ok_or_else(|| Error::Refused("cloned X-Ray STATE size exceeds its u16 framing".to_owned()))?;
-            spawn.splice(vector_offset..vector_end, [0_u8; 4]);
-            write_u16(
-                &mut spawn,
-                size_offset,
-                u16::try_from(new_size)
-                    .map_err(|_| Error::Refused("cloned X-Ray STATE size exceeds u16".to_owned()))?,
-            )?;
-            state_length = usize::try_from(
-                isize::try_from(state_length)
-                    .map_err(|_| Error::damaged("X-Ray STATE length overflow"))?
-                    .checked_add(delta)
-                    .ok_or_else(|| Error::damaged("X-Ray STATE length overflow"))?,
-            )
-            .map_err(|_| Error::damaged("negative X-Ray STATE length"))?;
+            state_length = adjust_length(state_length, delta)?;
+            upgrade_splice = Some((vector_offset..vector_end, replacement.to_vec()));
         }
     }
 
-    if let Some(client_offset) = template.client_data_offset {
-        if template.client_data_length >= 2 {
-            let client_offset = adjust(
-                client_offset
-                    .checked_sub(spawn_absolute)
-                    .ok_or_else(|| Error::damaged("X-Ray client data is outside its SPAWN"))?,
-            )?;
+    if let Some((range, replacement)) = &upgrade_splice {
+        spawn.splice(range.clone(), replacement.iter().copied());
+    }
+    let state_size_offset = state_offset
+        .checked_sub(2)
+        .ok_or_else(|| Error::damaged("X-Ray STATE size field is outside the SPAWN"))?;
+    let state_size = state_length
+        .checked_add(2)
+        .ok_or_else(|| Error::damaged("X-Ray STATE size overflow"))?;
+    write_u16(
+        &mut spawn,
+        state_size_offset,
+        u16::try_from(state_size).map_err(|_| Error::Refused("cloned X-Ray STATE exceeds u16 framing".to_owned()))?,
+    )?;
+
+    let parsed_spawn = crate::save::parse_spawn(&spawn, 0)?;
+    write_u16(&mut spawn, parsed_spawn.object_id_offset, object_id)?;
+    write_u16(&mut spawn, parsed_spawn.parent_id_offset, save.actor_id())?;
+    write_u16(
+        &mut spawn,
+        parsed_spawn
+            .spawn_id_offset
+            .ok_or_else(|| Error::Refused("cloned SPAWN has no proven spawn-id field".to_owned()))?,
+        u16::MAX,
+    )?;
+    write_u32(
+        &mut spawn,
+        parsed_spawn
+            .story_id_offset
+            .ok_or_else(|| Error::Refused("cloned STATE has no proven story-id field".to_owned()))?,
+        u32::MAX,
+    )?;
+    write_u32(
+        &mut spawn,
+        parsed_spawn
+            .spawn_story_id_offset
+            .ok_or_else(|| Error::Refused("cloned STATE has no proven spawn-story-id field".to_owned()))?,
+        u32::MAX,
+    )?;
+
+    if let Some(client_offset) = parsed_spawn.client_data_offset {
+        if parsed_spawn.client_data_length >= 2 {
             let place_offset = client_offset
                 .checked_add(1)
                 .ok_or_else(|| Error::damaged("X-Ray client placement offset overflow"))?;
@@ -2291,6 +2468,8 @@ fn clone_template_record(
     }
 
     if item_key.to_ascii_lowercase().starts_with("ammo_") {
+        state_offset = parsed_spawn.state_offset;
+        state_length = parsed_spawn.state_length;
         let state_end = state_offset
             .checked_add(state_length)
             .ok_or_else(|| Error::damaged("cloned ammo STATE range overflow"))?;
@@ -2339,6 +2518,52 @@ fn clone_template_record(
     }
     cloned.extend_from_slice(&update);
     Ok(cloned)
+}
+
+fn adjust_spawn_offset(offset: usize, splices: &[SpawnSplice]) -> Result<usize> {
+    let mut delta = 0_isize;
+    for splice in splices {
+        if offset >= splice.range.end {
+            delta = delta
+                .checked_add(splice_delta_for(splice)?)
+                .ok_or_else(|| Error::damaged("X-Ray SPAWN offset delta overflow"))?;
+        } else if offset > splice.range.start {
+            return Err(Error::damaged("X-Ray field overlaps a replaced SPAWN string"));
+        }
+    }
+    let adjusted = isize::try_from(offset)
+        .map_err(|_| Error::damaged("X-Ray SPAWN offset exceeds isize"))?
+        .checked_add(delta)
+        .ok_or_else(|| Error::damaged("X-Ray adjusted SPAWN offset overflow"))?;
+    usize::try_from(adjusted).map_err(|_| Error::damaged("negative X-Ray adjusted SPAWN offset"))
+}
+
+fn splice_delta(splices: &[SpawnSplice], range: &Range<usize>) -> Result<isize> {
+    let splice = splices
+        .iter()
+        .find(|splice| &splice.range == range)
+        .ok_or_else(|| Error::damaged("X-Ray custom-data splice is missing"))?;
+    splice_delta_for(splice)
+}
+
+fn splice_delta_for(splice: &SpawnSplice) -> Result<isize> {
+    let old_length = splice
+        .range
+        .end
+        .checked_sub(splice.range.start)
+        .ok_or_else(|| Error::damaged("X-Ray SPAWN splice length underflow"))?;
+    isize::try_from(splice.replacement.len())
+        .map_err(|_| Error::damaged("X-Ray SPAWN replacement length exceeds isize"))?
+        .checked_sub(isize::try_from(old_length).map_err(|_| Error::damaged("X-Ray SPAWN range exceeds isize"))?)
+        .ok_or_else(|| Error::damaged("X-Ray SPAWN splice delta overflow"))
+}
+
+fn adjust_length(length: usize, delta: isize) -> Result<usize> {
+    let adjusted = isize::try_from(length)
+        .map_err(|_| Error::damaged("X-Ray STATE length exceeds isize"))?
+        .checked_add(delta)
+        .ok_or_else(|| Error::damaged("X-Ray STATE length delta overflow"))?;
+    usize::try_from(adjusted).map_err(|_| Error::damaged("negative X-Ray STATE length"))
 }
 
 fn upgrade_vector_range(raw: &[u8], record: &crate::RegistryObject) -> Result<(usize, usize, u32)> {
@@ -2423,12 +2648,13 @@ fn write_u16(bytes: &mut [u8], offset: usize, value: u16) -> Result<()> {
 )]
 mod tests {
     use super::{
-        actor_spawn_position_offset, apply, apply_inverse, apply_with_catalog, apply_with_undo, capability, read_u16,
-        read_u32, read_vector, verify_changed_image_ranges, Capability, Change, ChangeKind, ChangeSet, PendingWrite,
-        Placement,
+        actor_spawn_position_offset, apply, apply_inverse, apply_with_catalog, apply_with_undo, capability,
+        encode_condition_q8, read_u16, read_u32, read_vector, verify_changed_image_ranges, write_u16, write_u32,
+        Capability, Change, ChangeKind, ChangeSet, PendingWrite, Placement,
     };
     use crate::{Format, Save};
     use sse_catalog::{CatalogBundleReader, UpgradeCatalog, UpgradeDefinition};
+    use sse_core::Cursor;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -2448,6 +2674,411 @@ mod tests {
             .expect_err("a collateral byte outside the money field must be rejected");
         assert!(error.to_string().contains("outside declared changed ranges"));
         Ok(())
+    }
+
+    #[test]
+    fn added_clone_does_not_keep_template_story_ids() -> TestResult {
+        let packed = include_bytes!("../../../fixtures/synthetic/writer-add/xray-add-soc-ammo-source.sav");
+        let initial = Save::read(packed)?;
+        let template = initial
+            .registry_objects()
+            .iter()
+            .find(|record| record.object_id == 4660)
+            .ok_or("add fixture template should exist")?;
+        let modified_source = seed_template_metadata(&initial, template)?;
+        let source = Save::read(modified_source.as_slice())?;
+        let seeded_template = source
+            .registry_objects()
+            .iter()
+            .find(|record| record.object_id == 4660)
+            .ok_or("seeded template should remain in the registry")?;
+        assert_eq!(seeded_template.story_id, Some(73));
+        assert_eq!(seeded_template.spawn_story_id, Some(91));
+        assert_eq!(seeded_template.spawn_id, Some(0x1234));
+        assert_eq!(seeded_template.name_replace, "quest_template");
+        assert_eq!(source.custom_data(seeded_template), Some(&b"logic = true"[..]));
+        assert_eq!(
+            source
+                .inventory()?
+                .iter()
+                .find(|item| item.handle == 4660)
+                .and_then(|item| item.count),
+            Some(30)
+        );
+        let changes = ChangeSet::new(vec![Change::AddItem {
+            template_object: 4660,
+            item_key: "ammo_9x39_pab9".to_owned(),
+            object_id: 4661,
+            quantity: 17,
+        }]);
+
+        let output = apply(&source, &changes)?;
+        let read_back = Save::read(output.as_slice())?;
+        let cloned = read_back
+            .registry_objects()
+            .iter()
+            .find(|record| record.object_id == 4661)
+            .ok_or("added clone should be present after read-back")?;
+        assert_eq!(cloned.story_id, Some(u32::MAX));
+        assert_eq!(cloned.spawn_story_id, Some(u32::MAX));
+        assert_eq!(cloned.spawn_id, Some(u16::MAX));
+        assert_eq!(cloned.name_replace, "");
+        assert_eq!(read_back.custom_data(cloned), Some(&[][..]));
+        Ok(())
+    }
+
+    fn seed_template_metadata(
+        initial: &Save,
+        template: &crate::RegistryObject,
+    ) -> std::result::Result<sse_core::SaveBuffer, Box<dyn std::error::Error>> {
+        let mut raw = initial.raw_image().to_vec();
+        let (story_offset, spawn_story_offset) = state_story_offsets(&raw, template)?;
+        write_u32(&mut raw, story_offset, 73)?;
+        write_u32(&mut raw, spawn_story_offset, 91)?;
+        write_u16(
+            &mut raw,
+            template.spawn_id_offset.ok_or("template should expose spawn id")?,
+            0x1234,
+        )?;
+
+        let spawn_absolute = template
+            .record_offset
+            .checked_add(2)
+            .ok_or("template SPAWN offset overflow")?;
+        let record_end = template
+            .record_offset
+            .checked_add(template.record_length)
+            .ok_or("template record range overflow")?;
+        let record = raw
+            .get(template.record_offset..record_end)
+            .ok_or("template record should fit")?
+            .to_vec();
+        let spawn_length = usize::from(read_u16(&record, 0)?);
+        let spawn_end = 2_usize
+            .checked_add(spawn_length)
+            .ok_or("template SPAWN range overflow")?;
+        let update_size_end = spawn_end.checked_add(2).ok_or("template UPDATE size overflow")?;
+        let update_length = usize::from(read_u16(&record, spawn_end)?);
+        let update_end = update_size_end
+            .checked_add(update_length)
+            .ok_or("template UPDATE range overflow")?;
+        let mut spawn = record
+            .get(2..spawn_end)
+            .ok_or("template SPAWN should fit its record")?
+            .to_vec();
+        let relative = |range: &std::ops::Range<usize>| -> std::result::Result<
+            std::ops::Range<usize>,
+            Box<dyn std::error::Error>,
+        > {
+            Ok(range
+                .start
+                .checked_sub(spawn_absolute)
+                .ok_or("template metadata starts before SPAWN")?
+                ..range
+                    .end
+                    .checked_sub(spawn_absolute)
+                    .ok_or("template metadata ends before SPAWN")?)
+        };
+        let name_replace_range = relative(&template.name_replace_range)?;
+        let custom_data_range = relative(
+            template
+                .custom_data_range
+                .as_ref()
+                .ok_or("template should expose custom data")?,
+        )?;
+        let mut name_replace = b"quest_template".to_vec();
+        name_replace.push(0);
+        let mut custom_data = b"logic = true".to_vec();
+        custom_data.push(0);
+        let name_delta = isize::try_from(name_replace.len())?
+            .checked_sub(isize::try_from(name_replace_range.len())?)
+            .ok_or("name-replacement delta overflow")?;
+        let custom_delta = isize::try_from(custom_data.len())?
+            .checked_sub(isize::try_from(custom_data_range.len())?)
+            .ok_or("custom-data delta overflow")?;
+        spawn.splice(custom_data_range, custom_data);
+        spawn.splice(name_replace_range, name_replace);
+
+        let old_state_start = template
+            .state_offset
+            .checked_sub(spawn_absolute)
+            .ok_or("template STATE begins before SPAWN")?;
+        let state_start = usize::try_from(
+            isize::try_from(old_state_start)?
+                .checked_add(name_delta)
+                .ok_or("seeded STATE offset overflow")?,
+        )?;
+        let state_length = usize::try_from(
+            isize::try_from(template.state_length)?
+                .checked_add(custom_delta)
+                .ok_or("seeded STATE length overflow")?,
+        )?;
+        let size_offset = state_start.checked_sub(2).ok_or("STATE size field precedes SPAWN")?;
+        let size = state_length.checked_add(2).ok_or("seeded STATE size overflow")?;
+        write_u16(&mut spawn, size_offset, u16::try_from(size)?)?;
+
+        let mut replacement_record = Vec::with_capacity(4 + spawn.len() + update_length);
+        replacement_record.extend_from_slice(&u16::try_from(spawn.len())?.to_le_bytes());
+        replacement_record.extend_from_slice(&spawn);
+        replacement_record.extend_from_slice(&u16::try_from(update_length)?.to_le_bytes());
+        replacement_record.extend_from_slice(
+            record
+                .get(update_size_end..update_end)
+                .ok_or("template UPDATE should fit its record")?,
+        );
+
+        let object_chunk = initial
+            .chunks()
+            .iter()
+            .find(|chunk| chunk.kind == 2)
+            .ok_or("template save should have an OBJECT chunk")?;
+        let object_payload = initial.object_chunk_bytes(&raw)?;
+        let start = template
+            .record_offset
+            .checked_sub(object_chunk.offset)
+            .ok_or("template record precedes OBJECT chunk")?;
+        let end = start
+            .checked_add(template.record_length)
+            .ok_or("template record range overflow")?;
+        let mut replacement_payload = Vec::with_capacity(
+            object_payload
+                .len()
+                .checked_sub(template.record_length)
+                .and_then(|length| length.checked_add(replacement_record.len()))
+                .ok_or("seeded OBJECT payload length overflow")?,
+        );
+        replacement_payload.extend_from_slice(
+            object_payload
+                .get(..start)
+                .ok_or("template record start should fit OBJECT payload")?,
+        );
+        replacement_payload.extend_from_slice(&replacement_record);
+        replacement_payload.extend_from_slice(
+            object_payload
+                .get(end..)
+                .ok_or("template record end should fit OBJECT payload")?,
+        );
+        let rebuilt = initial.rebuild_chunks(&raw, &[(2, replacement_payload.as_slice())])?;
+        Ok(initial.repack(&rebuilt)?)
+    }
+
+    fn state_story_offsets(
+        raw: &[u8],
+        record: &crate::RegistryObject,
+    ) -> std::result::Result<(usize, usize), Box<dyn std::error::Error>> {
+        let state_end = record
+            .state_offset
+            .checked_add(record.state_length)
+            .ok_or("STATE test range overflow")?;
+        let state = raw
+            .get(record.state_offset..state_end)
+            .ok_or("STATE test range should fit")?;
+        let mut reader = Cursor::new(state);
+        let version = record.version;
+        if version >= 1 {
+            if version > 24 {
+                if version < 83 {
+                    reader.skip(4)?;
+                }
+            } else {
+                reader.skip(1)?;
+            }
+            if version < 4 {
+                reader.skip(2)?;
+            }
+            reader.skip(6)?;
+        }
+        if version >= 4 {
+            reader.skip(4)?;
+        }
+        if version >= 8 {
+            reader.skip(4)?;
+        }
+        if version > 22 && version <= 79 {
+            reader.skip(2)?;
+        }
+        if version > 23 && version < 84 {
+            reader.zero_terminated(1 << 20)?;
+        }
+        if version > 49 {
+            reader.skip(4)?;
+        }
+        if version > 57 {
+            reader.zero_terminated(1 << 20)?;
+        }
+        let story_offset = record
+            .state_offset
+            .checked_add(reader.position())
+            .ok_or("story offset overflow")?;
+        reader.u32()?;
+        let spawn_story_offset = record
+            .state_offset
+            .checked_add(reader.position())
+            .ok_or("spawn story offset overflow")?;
+        reader.u32()?;
+        Ok((story_offset, spawn_story_offset))
+    }
+
+    fn reference_image_with_cleared_clone_metadata(
+        expected: &Save,
+        object_id: u16,
+    ) -> std::result::Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let added = expected
+            .registry_objects()
+            .iter()
+            .find(|record| record.object_id == object_id)
+            .ok_or("reference add fixture should contain the added object")?;
+        let spawn_absolute = added
+            .record_offset
+            .checked_add(2)
+            .ok_or("spawn absolute offset overflow")?;
+        let record_end = added
+            .record_offset
+            .checked_add(added.record_length)
+            .ok_or("expected added record range overflow")?;
+        let record = expected
+            .raw_image()
+            .get(added.record_offset..record_end)
+            .ok_or("reference added record should fit the image")?;
+        let spawn_length = usize::from(read_u16(record, 0)?);
+        let spawn_end = 2_usize
+            .checked_add(spawn_length)
+            .ok_or("reference SPAWN range overflow")?;
+        let update_size_end = spawn_end.checked_add(2).ok_or("UPDATE size range overflow")?;
+        let update_length = usize::from(read_u16(record, spawn_end)?);
+        let update_end = update_size_end
+            .checked_add(update_length)
+            .ok_or("reference UPDATE range overflow")?;
+        if update_end != record.len() {
+            return Err("reference add record framing should be exact".into());
+        }
+        let mut spawn = record
+            .get(2..spawn_end)
+            .ok_or("reference SPAWN should fit its record")?
+            .to_vec();
+        let relative = |range: &std::ops::Range<usize>| -> std::result::Result<
+            std::ops::Range<usize>,
+            Box<dyn std::error::Error>,
+        > {
+            Ok(range
+                .start
+                .checked_sub(spawn_absolute)
+                .ok_or("reference string begins before SPAWN")?
+                ..range
+                    .end
+                    .checked_sub(spawn_absolute)
+                    .ok_or("reference string ends before SPAWN")?)
+        };
+        let name_replace_range = relative(&added.name_replace_range)?;
+        let custom_data_range = relative(
+            added
+                .custom_data_range
+                .as_ref()
+                .ok_or("reference added object should expose custom data")?,
+        )?;
+        let splices = [name_replace_range, custom_data_range];
+        let mut replacement_ranges = splices.to_vec();
+        replacement_ranges.sort_unstable_by_key(|range| range.start);
+        if replacement_ranges.windows(2).any(|pair| pair[0].end > pair[1].start) {
+            return Err("reference SPAWN metadata ranges should not overlap".into());
+        }
+        for range in replacement_ranges.iter().rev() {
+            if range.end > spawn.len() {
+                return Err("reference SPAWN metadata range should fit".into());
+            }
+            spawn.splice(range.clone(), [0_u8]);
+        }
+
+        let name_delta = 1_isize
+            .checked_sub(isize::try_from(splices[0].len())?)
+            .ok_or("name-replacement size delta overflow")?;
+        let custom_delta = 1_isize
+            .checked_sub(isize::try_from(splices[1].len())?)
+            .ok_or("custom-data size delta overflow")?;
+        let original_state_start = added
+            .state_offset
+            .checked_sub(spawn_absolute)
+            .ok_or("reference STATE begins before SPAWN")?;
+        let state_start = usize::try_from(
+            isize::try_from(original_state_start)?
+                .checked_add(name_delta)
+                .ok_or("normalized STATE offset overflow")?,
+        )?;
+        let state_length = usize::try_from(
+            isize::try_from(added.state_length)?
+                .checked_add(custom_delta)
+                .ok_or("normalized STATE length overflow")?,
+        )?;
+        let state_size = state_length.checked_add(2).ok_or("normalized STATE size overflow")?;
+        let state_size_offset = state_start.checked_sub(2).ok_or("STATE size field precedes SPAWN")?;
+        write_u16(&mut spawn, state_size_offset, u16::try_from(state_size)?)?;
+
+        let parsed = crate::save::parse_spawn(&spawn, 0)?;
+        write_u16(
+            &mut spawn,
+            parsed
+                .spawn_id_offset
+                .ok_or("reference added SPAWN should expose spawn id")?,
+            u16::MAX,
+        )?;
+        write_u32(
+            &mut spawn,
+            parsed
+                .story_id_offset
+                .ok_or("reference added STATE should expose story id")?,
+            u32::MAX,
+        )?;
+        write_u32(
+            &mut spawn,
+            parsed
+                .spawn_story_id_offset
+                .ok_or("reference added STATE should expose spawn story id")?,
+            u32::MAX,
+        )?;
+
+        let new_spawn_length = u16::try_from(spawn.len())?;
+        let mut normalized_record = Vec::with_capacity(4 + spawn.len() + update_length);
+        normalized_record.extend_from_slice(&new_spawn_length.to_le_bytes());
+        normalized_record.extend_from_slice(&spawn);
+        normalized_record.extend_from_slice(&u16::try_from(update_length)?.to_le_bytes());
+        normalized_record.extend_from_slice(
+            record
+                .get(update_size_end..update_end)
+                .ok_or("reference UPDATE should fit its record")?,
+        );
+
+        let object_chunk = expected
+            .chunks()
+            .iter()
+            .find(|chunk| chunk.kind == 2)
+            .ok_or("reference save should contain OBJECT chunk")?;
+        let expected_payload = expected.object_chunk_bytes(expected.raw_image())?;
+        let start = added
+            .record_offset
+            .checked_sub(object_chunk.offset)
+            .ok_or("added record offset precedes OBJECT payload")?;
+        let end = start
+            .checked_add(added.record_length)
+            .ok_or("expected record range overflow")?;
+        let mut payload = Vec::with_capacity(
+            expected_payload
+                .len()
+                .checked_sub(added.record_length)
+                .and_then(|length| length.checked_add(normalized_record.len()))
+                .ok_or("normalized OBJECT chunk length overflow")?,
+        );
+        payload.extend_from_slice(
+            expected_payload
+                .get(..start)
+                .ok_or("expected record start should fit OBJECT chunk")?,
+        );
+        payload.extend_from_slice(&normalized_record);
+        payload.extend_from_slice(
+            expected_payload
+                .get(end..)
+                .ok_or("expected record end should fit OBJECT chunk")?,
+        );
+        Ok(expected.rebuild_chunks(expected.raw_image(), &[(2, payload.as_slice())])?)
     }
 
     #[test]
@@ -3161,8 +3792,95 @@ mod tests {
     }
 
     #[test]
+    fn durability_refuses_when_update_condition_position_is_not_proven() -> TestResult {
+        let packed = include_bytes!("../../../fixtures/synthetic/writer-durability/xray-durability-cop-source.sav");
+        let initial = Save::read(packed)?;
+        let item = initial
+            .inventory()?
+            .into_iter()
+            .find(|item| item.handle == 0x3456)
+            .ok_or("durability fixture target should be actor-owned")?;
+        let update_offset = item
+            .update_condition_offset
+            .ok_or("durability fixture should prove its UPDATE condition")?;
+        let mut raw = initial.raw_image().to_vec();
+        let update = raw
+            .get_mut(update_offset)
+            .ok_or("UPDATE condition offset should be in the image")?;
+        *update ^= 0xFF;
+        let unproven_packed = initial.repack(&raw)?;
+        let source = Save::read(unproven_packed.as_slice())?;
+        let item = source
+            .inventory()?
+            .into_iter()
+            .find(|item| item.handle == 0x3456)
+            .ok_or("durability fixture target should remain actor-owned")?;
+        assert!(item.update_condition_offset.is_none());
+
+        let changes = ChangeSet::new(vec![Change::SetDurability {
+            target_object: 0x3456,
+            old_value: 0.25,
+            new_value: 0.75,
+        }]);
+        let error = match apply(&source, &changes) {
+            Ok(_) => return Err("durability write must fail without a proven UPDATE offset".into()),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("proven UPDATE condition field"));
+        Ok(())
+    }
+
+    #[test]
+    fn durability_refuses_multiple_matching_bytes_in_the_update_record() -> TestResult {
+        let packed = include_bytes!("../../../fixtures/synthetic/writer-durability/xray-durability-cop-source.sav");
+        let initial = Save::read(packed)?;
+        let item = initial
+            .inventory()?
+            .into_iter()
+            .find(|item| item.handle == 0x3456)
+            .ok_or("durability fixture target should be actor-owned")?;
+        let condition = item.condition.ok_or("durability fixture should expose condition")?;
+        let confirmed_offset = item
+            .update_condition_offset
+            .ok_or("durability fixture should prove its UPDATE condition")?;
+        let record = initial
+            .registry_objects()
+            .iter()
+            .find(|record| record.object_id == item.handle)
+            .ok_or("durability fixture record should exist")?;
+        let update_end = record
+            .update_offset
+            .checked_add(record.update_length)
+            .ok_or("UPDATE record range should fit usize")?;
+        let update_payload = record
+            .update_offset
+            .checked_add(2)
+            .ok_or("UPDATE message header should fit usize")?;
+        let duplicate_offset = (update_payload..update_end)
+            .find(|offset| {
+                *offset != confirmed_offset
+                    && initial.raw_image().get(*offset).copied() != Some(encode_condition_q8(condition))
+            })
+            .ok_or("UPDATE fixture needs a spare byte for an ambiguity regression")?;
+        let mut raw = initial.raw_image().to_vec();
+        let duplicate = raw
+            .get_mut(duplicate_offset)
+            .ok_or("duplicate UPDATE candidate should be in the image")?;
+        *duplicate = encode_condition_q8(condition);
+        let ambiguous_packed = initial.repack(&raw)?;
+        let ambiguous = Save::read(ambiguous_packed.as_slice())?;
+        let ambiguous_item = ambiguous
+            .inventory()?
+            .into_iter()
+            .find(|item| item.handle == 0x3456)
+            .ok_or("durability fixture target should remain actor-owned")?;
+        assert!(ambiguous_item.update_condition_offset.is_none());
+        Ok(())
+    }
+
+    #[test]
     fn placement_change_matches_the_reference_raw_and_packed_fixture() -> TestResult {
-        let pairs: [(&[u8], &[u8], &[u8], Placement); 9] = [
+        let pairs: [(&[u8], &[u8], &[u8], Placement); 6] = [
             (
                 include_bytes!("../../../fixtures/synthetic/writer-placement/xray-placement-soc-source.sav"),
                 include_bytes!("../../../fixtures/synthetic/writer-placement/xray-placement-soc-expected.sav"),
@@ -3180,24 +3898,6 @@ mod tests {
                 include_bytes!("../../../fixtures/synthetic/writer-placement/xray-placement-cop-expected.sav"),
                 include_bytes!("../../../fixtures/synthetic/writer-placement/xray-placement-cop-expected.raw"),
                 Placement::Slot(3),
-            ),
-            (
-                include_bytes!("../../../fixtures/synthetic/writer-placement/xray-placement-soc-belt-source.sav"),
-                include_bytes!("../../../fixtures/synthetic/writer-placement/xray-placement-soc-belt-expected.sav"),
-                include_bytes!("../../../fixtures/synthetic/writer-placement/xray-placement-soc-belt-expected.raw"),
-                Placement::Belt,
-            ),
-            (
-                include_bytes!("../../../fixtures/synthetic/writer-placement/xray-placement-cs-belt-source.sav"),
-                include_bytes!("../../../fixtures/synthetic/writer-placement/xray-placement-cs-belt-expected.sav"),
-                include_bytes!("../../../fixtures/synthetic/writer-placement/xray-placement-cs-belt-expected.raw"),
-                Placement::Belt,
-            ),
-            (
-                include_bytes!("../../../fixtures/synthetic/writer-placement/xray-placement-cop-belt-source.sav"),
-                include_bytes!("../../../fixtures/synthetic/writer-placement/xray-placement-cop-belt-expected.sav"),
-                include_bytes!("../../../fixtures/synthetic/writer-placement/xray-placement-cop-belt-expected.raw"),
-                Placement::Belt,
             ),
             (
                 include_bytes!("../../../fixtures/synthetic/writer-placement/xray-placement-soc-ruck-source.sav"),
@@ -3230,6 +3930,69 @@ mod tests {
             assert_eq!(verified.raw_image(), expected_raw);
             assert_eq!(apply_inverse(&verified, &undo)?.as_slice(), source_bytes);
         }
+        Ok(())
+    }
+
+    #[test]
+    fn belt_placement_refuses_without_capacity_evidence() -> TestResult {
+        let packed = include_bytes!("../../../fixtures/synthetic/writer-placement/xray-placement-cop-belt-source.sav");
+        let source = Save::read(packed)?;
+        let changes = ChangeSet::new(vec![Change::SetPlacement {
+            target_object: 0x3456,
+            destination: Placement::Belt,
+        }]);
+        let error = match apply(&source, &changes) {
+            Ok(_) => return Err("belt placement must fail without capacity evidence".into()),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("belt capacity cannot be proven"));
+        Ok(())
+    }
+
+    #[test]
+    fn placement_refuses_an_occupied_slot() -> TestResult {
+        let packed = include_bytes!("../../../fixtures/synthetic/writer-placement/xray-placement-cop-source.sav");
+        let initial = Save::read(packed)?;
+        let target = 0x3456;
+        let template = initial
+            .registry_objects()
+            .iter()
+            .find(|record| record.object_id == target)
+            .ok_or("placement fixture target should exist")?;
+        let duplicated = apply(
+            &initial,
+            &ChangeSet::new(vec![Change::AddItem {
+                template_object: target,
+                item_key: template.name.clone(),
+                object_id: 0x3457,
+                quantity: 1,
+            }]),
+        )?;
+        let duplicated = Save::read(duplicated.as_slice())?;
+        let occupier = duplicated
+            .inventory()?
+            .into_iter()
+            .find(|item| item.handle == 0x3457)
+            .ok_or("cloned occupier should be actor-owned")?;
+        assert_eq!(occupier.placement_base_slot, Some(3));
+        let offset = occupier
+            .placement_offset
+            .ok_or("selected slot occupier should expose its place offset")?;
+        let mut raw = duplicated.raw_image().to_vec();
+        let occupied_slot = (3 << 10) | (3 << 4) | 1;
+        write_u16(&mut raw, offset, occupied_slot)?;
+        let occupied_packed = duplicated.repack(&raw)?;
+        let source = Save::read(occupied_packed.as_slice())?;
+
+        let changes = ChangeSet::new(vec![Change::SetPlacement {
+            target_object: target,
+            destination: Placement::Slot(3),
+        }]);
+        let error = match apply(&source, &changes) {
+            Ok(_) => return Err("placement must fail when its destination slot is occupied".into()),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("slot 3 is already occupied"));
         Ok(())
     }
 
@@ -3332,13 +4095,14 @@ mod tests {
     fn undo_token_restores_a_removed_item_fixture() -> TestResult {
         let source_bytes = include_bytes!("../../../fixtures/synthetic/writer-delete/xray-delete-soc-source.sav");
         let expected_bytes = include_bytes!("../../../fixtures/synthetic/writer-delete/xray-delete-soc-expected.sav");
-        let source = Save::read(source_bytes)?;
+        let safe_source_bytes = seed_removable_source(source_bytes, 4660)?;
+        let source = Save::read(safe_source_bytes.as_slice())?;
         let changes = ChangeSet::new(vec![Change::RemoveItem { target_object: 4660 }]);
 
         let (output, undo) = apply_with_undo(&source, &changes)?;
         assert_eq!(output.as_slice(), expected_bytes);
         let written = Save::read(output.as_slice())?;
-        assert_eq!(apply_inverse(&written, &undo)?.as_slice(), source_bytes);
+        assert_eq!(apply_inverse(&written, &undo)?.as_slice(), safe_source_bytes.as_slice());
 
         let current_money = written.money()?;
         let different_money = if current_money < 2_000_000_000 {
@@ -3356,6 +4120,30 @@ mod tests {
         )?;
         let altered = Save::read(altered.as_slice())?;
         assert!(apply_inverse(&altered, &undo).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn item_removal_refuses_objects_with_story_ids() -> TestResult {
+        let packed = include_bytes!("../../../fixtures/synthetic/writer-delete/xray-delete-soc-source.sav");
+        let initial = Save::read(packed)?;
+        let target = initial
+            .registry_objects()
+            .iter()
+            .find(|record| record.object_id == 4660)
+            .ok_or("delete fixture target should exist")?;
+        let story_id_offset = target.story_id_offset.ok_or("delete fixture should expose story id")?;
+        let mut raw = initial.raw_image().to_vec();
+        write_u32(&mut raw, story_id_offset, 73)?;
+        let story_packed = initial.repack(&raw)?;
+        let source = Save::read(story_packed.as_slice())?;
+
+        let changes = ChangeSet::new(vec![Change::RemoveItem { target_object: 4660 }]);
+        let error = match apply(&source, &changes) {
+            Ok(_) => return Err("story-linked objects must not be removed".into()),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("story-linked object"));
         Ok(())
     }
 
@@ -3394,19 +4182,23 @@ mod tests {
             ),
         ];
         for (source_bytes, expected_bytes, expected_raw) in pairs {
-            let source = Save::read(source_bytes)?;
+            let safe_source_bytes = seed_removable_source(source_bytes, 4660)?;
+            let source = Save::read(safe_source_bytes.as_slice())?;
             let changes = ChangeSet::new(vec![Change::RemoveItem { target_object: 4660 }]);
             let (output, undo) = apply_with_undo(&source, &changes)?;
             assert_eq!(output.as_slice(), expected_bytes);
             let verified = Save::read(output.as_slice())?;
             assert_eq!(verified.raw_image(), expected_raw);
-            assert_eq!(apply_inverse(&verified, &undo)?.as_slice(), source_bytes);
+            assert_eq!(
+                apply_inverse(&verified, &undo)?.as_slice(),
+                safe_source_bytes.as_slice()
+            );
         }
         Ok(())
     }
 
     #[test]
-    fn item_addition_matches_all_twelve_reference_fixtures() -> TestResult {
+    fn item_addition_matches_same_section_fixtures_and_refuses_cross_section_templates() -> TestResult {
         let cases: [(&[u8], &[u8], &[u8], u16, &str, u16, u16); 12] = [
             (
                 include_bytes!("../../../fixtures/synthetic/writer-add/xray-add-soc-source.sav"),
@@ -3519,6 +4311,27 @@ mod tests {
         ];
         for (source_bytes, expected_bytes, expected_raw, template_object, item_key, object_id, quantity) in cases {
             let source = Save::read(source_bytes)?;
+            let template = source
+                .registry_objects()
+                .iter()
+                .find(|record| record.object_id == template_object)
+                .ok_or("add template should exist")?;
+            if !template.name.eq_ignore_ascii_case(item_key) {
+                let error = match apply(
+                    &source,
+                    &ChangeSet::new(vec![Change::AddItem {
+                        template_object,
+                        item_key: item_key.to_owned(),
+                        object_id,
+                        quantity,
+                    }]),
+                ) {
+                    Ok(_) => return Err("a different-section template must be refused".into()),
+                    Err(error) => error,
+                };
+                assert!(error.to_string().contains("template section does not match"));
+                continue;
+            }
             let changes = ChangeSet::new(vec![Change::AddItem {
                 template_object,
                 item_key: item_key.to_owned(),
@@ -3527,13 +4340,80 @@ mod tests {
             }]);
             let output = apply(&source, &changes)?;
             let actual_raw = Save::read(output.as_slice())?;
-            assert_eq!(actual_raw.raw_image(), expected_raw);
-            assert_eq!(output.as_slice(), expected_bytes);
+            let expected = Save::read(expected_bytes)?;
+            assert_eq!(expected.raw_image(), expected_raw);
+            assert_eq!(
+                actual_raw.raw_image(),
+                reference_image_with_cleared_clone_metadata(&expected, object_id)?.as_slice()
+            );
+            let added = actual_raw
+                .registry_objects()
+                .iter()
+                .find(|record| record.object_id == object_id)
+                .ok_or("added object should be in the parsed output")?;
+            assert_eq!(added.story_id, Some(u32::MAX));
+            assert_eq!(added.spawn_story_id, Some(u32::MAX));
+            assert_eq!(added.spawn_id, Some(u16::MAX));
+            assert_eq!(added.name_replace, "");
+            assert_eq!(actual_raw.custom_data(added), Some(&[][..]));
             let inverse = ChangeSet::new(vec![Change::RemoveItem {
                 target_object: object_id,
             }]);
             assert_eq!(apply(&actual_raw, &inverse)?.as_slice(), source_bytes);
         }
         Ok(())
+    }
+
+    #[test]
+    fn item_addition_rejects_sentinel_ids() -> TestResult {
+        let packed = include_bytes!("../../../fixtures/synthetic/writer-add/xray-add-soc-ammo-source.sav");
+        let source = Save::read(packed)?;
+        let expected_message = "0xFFFF is reserved";
+        let changes = ChangeSet::new(vec![Change::AddItem {
+            template_object: 4660,
+            item_key: "ammo_9x39_pab9".to_owned(),
+            object_id: u16::MAX,
+            quantity: 1,
+        }]);
+        let error = match apply(&source, &changes) {
+            Ok(_) => return Err(format!("addition must refuse {expected_message}").into()),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains(expected_message), "{error}");
+        Ok(())
+    }
+
+    #[test]
+    fn item_addition_refuses_a_template_from_another_section() -> TestResult {
+        let packed = include_bytes!("../../../fixtures/synthetic/writer-add/xray-add-soc-ammo-source.sav");
+        let source = Save::read(packed)?;
+        let changes = ChangeSet::new(vec![Change::AddItem {
+            template_object: 4660,
+            item_key: "exo_outfit".to_owned(),
+            object_id: 4661,
+            quantity: 1,
+        }]);
+        let error = match apply(&source, &changes) {
+            Ok(_) => return Err("an add template from another section must be refused".into()),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("template section does not match"), "{error}");
+        Ok(())
+    }
+
+    fn seed_removable_source(
+        packed: &[u8],
+        target_object: u16,
+    ) -> std::result::Result<sse_core::SaveBuffer, Box<dyn std::error::Error>> {
+        let initial = Save::read(packed)?;
+        let record = initial
+            .registry_objects()
+            .iter()
+            .find(|record| record.object_id == target_object)
+            .ok_or("delete fixture target should exist")?;
+        let story_id_offset = record.story_id_offset.ok_or("delete fixture should expose story id")?;
+        let mut raw = initial.raw_image().to_vec();
+        write_u32(&mut raw, story_id_offset, u32::MAX)?;
+        Ok(initial.repack(&raw)?)
     }
 }
