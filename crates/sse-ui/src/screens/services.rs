@@ -1059,7 +1059,10 @@ impl Cloud {
             return;
         }
         let remote = item.name.clone();
-        let remote_name = Path::new(&remote).file_name().and_then(|name| name.to_str()).unwrap_or(&remote);
+        let remote_name = Path::new(&remote)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(&remote);
         let snapshot = cx.app.snapshot();
         let mut candidates = snapshot.recent_saves;
         if let Some(current) = snapshot.current_save {
@@ -1077,7 +1080,8 @@ impl Cloud {
             return;
         };
         if matching.next().is_some() {
-            cx.status = Some("Найдено несколько локальных сейвов с тем же именем; запись в облако отменена.".to_owned());
+            cx.status =
+                Some("Найдено несколько локальных сейвов с тем же именем; запись в облако отменена.".to_owned());
             return;
         };
 
