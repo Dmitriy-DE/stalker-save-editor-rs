@@ -555,7 +555,7 @@ fn read_message(stream: &mut UnixStream) -> Result<(u32, u16, Vec<u8>)> {
     let object = u32::from_ne_bytes(head[..4].try_into().map_err(|_| Error::damaged("Wayland header"))?);
     let word = u32::from_ne_bytes(head[4..].try_into().map_err(|_| Error::damaged("Wayland header"))?);
     let size = usize::try_from(word >> 16).map_err(|_| Error::damaged("Wayland size"))?;
-    if !(8..=1_048_576).contains(&size) {
+    if !valid_message_size(size) {
         return Err(Error::damaged("invalid Wayland message size"));
     }
     let payload_len = size
@@ -566,26 +566,13 @@ fn read_message(stream: &mut UnixStream) -> Result<(u32, u16, Vec<u8>)> {
     let opcode = u16::try_from(word & 0xffff).map_err(|_| Error::damaged("Wayland opcode"))?;
     Ok((object, opcode, payload))
 }
-fn send(stream: &mut UnixStream, object: u32, opcode: u16, payload: &[u8]) -> Result<()> {
+fn wire_message(object: u32, opcode: u16, payload: &[u8]) -> Result<Vec<u8>> {
     let size = 8usize
         .checked_add(payload.len())
         .ok_or_else(|| Error::damaged("Wayland message overflow"))?;
-    let size_word = u32::try_from(size)
-        .map_err(|_| Error::damaged("Wayland message too large"))?
-        .checked_shl(16)
-        .ok_or_else(|| Error::damaged("Wayland message size shift overflow"))?;
-    let word = size_word | u32::from(opcode);
-    stream.write_all(&object.to_ne_bytes()).map_err(io)?;
-    stream.write_all(&word.to_ne_bytes()).map_err(io)?;
-    stream.write_all(payload).map_err(io)
-}
-fn send_string(stream: &mut UnixStream, object: u32, opcode: u16, value: &str) -> Result<()> {
-    send(stream, object, opcode, &wire_string(value))
-}
-fn send_with_fd(stream: &UnixStream, object: u32, opcode: u16, payload: &[u8], fd: std::os::fd::RawFd) -> Result<()> {
-    let size = 8usize
-        .checked_add(payload.len())
-        .ok_or_else(|| Error::damaged("Wayland fd message overflow"))?;
+    if !valid_message_size(size) {
+        return Err(Error::damaged("Wayland message size is not 4-byte aligned"));
+    }
     let size_word = u32::try_from(size)
         .map_err(|_| Error::damaged("Wayland message too large"))?
         .checked_shl(16)
@@ -595,7 +582,74 @@ fn send_with_fd(stream: &UnixStream, object: u32, opcode: u16, payload: &[u8], f
     bytes.extend_from_slice(&object.to_ne_bytes());
     bytes.extend_from_slice(&word.to_ne_bytes());
     bytes.extend_from_slice(payload);
-    sse_sys::unix_fd::send_fd(stream, &bytes, fd).map_err(io)
+    Ok(bytes)
+}
+
+fn send(stream: &mut UnixStream, object: u32, opcode: u16, payload: &[u8]) -> Result<()> {
+    let bytes = wire_message(object, opcode, payload)?;
+    stream.write_all(&bytes).map_err(io)
+}
+
+fn send_shared(writer: &Mutex<UnixStream>, object: u32, opcode: u16, payload: &[u8]) -> Result<()> {
+    let bytes = wire_message(object, opcode, payload)?;
+    let mut stream = writer
+        .lock()
+        .map_err(|_| Error::System("Wayland writer lock poisoned".to_owned()))?;
+    stream.write_all(&bytes).map_err(io)
+}
+
+fn send_string(stream: &mut UnixStream, object: u32, opcode: u16, value: &str) -> Result<()> {
+    send(stream, object, opcode, &wire_string(value))
+}
+
+fn send_with_fd_shared(
+    writer: &Mutex<UnixStream>,
+    object: u32,
+    opcode: u16,
+    payload: &[u8],
+    fd: std::os::fd::RawFd,
+) -> Result<()> {
+    let bytes = wire_message(object, opcode, payload)?;
+    let stream = writer
+        .lock()
+        .map_err(|_| Error::System("Wayland writer lock poisoned".to_owned()))?;
+    sse_sys::unix_fd::send_fd(&stream, &bytes, fd).map_err(io)
+}
+
+fn create_buffer(
+    writer: &Mutex<UnixStream>,
+    shm: u32,
+    width: u32,
+    height: u32,
+    pool: u32,
+    buffer: u32,
+) -> Result<BufferSlot> {
+    let byte_len = frame_bytes(width, height)?;
+    let memory = MappedFile::new(byte_len).map_err(io)?;
+    send_with_fd_shared(
+        writer,
+        shm,
+        0,
+        &u32s(&[
+            pool,
+            u32::try_from(byte_len).map_err(|_| Error::Refused("Wayland buffer too large".to_owned()))?,
+        ]),
+        memory.raw_fd(),
+    )?;
+    let stride = width
+        .checked_mul(4)
+        .ok_or_else(|| Error::Refused("Wayland stride overflow".to_owned()))?;
+    send_shared(
+        writer,
+        pool,
+        0,
+        &u32s(&[buffer, 0, width, height, stride, WL_SHM_FORMAT_XRGB8888]),
+    )?;
+    Ok(BufferSlot {
+        pool,
+        buffer,
+        memory,
+    })
 }
 fn wire_string(value: &str) -> Vec<u8> {
     let len = value.len().saturating_add(1);
@@ -623,6 +677,10 @@ fn read_i32(bytes: &[u8], offset: usize) -> Option<i32> {
 }
 fn align4(value: usize) -> usize {
     value.saturating_add(3) & !3
+}
+
+fn valid_message_size(size: usize) -> bool {
+    (8..=1_048_576).contains(&size) && size.checked_rem(4) == Some(0)
 }
 fn frame_bytes(width: u32, height: u32) -> Result<usize> {
     usize::try_from(width)
