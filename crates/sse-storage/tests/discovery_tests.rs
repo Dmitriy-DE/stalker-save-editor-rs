@@ -91,6 +91,8 @@ fn finds_windows_game_save_paths_from_steam_manifests_and_fsgame_override() {
         user_profile_directory: Some(home.clone()),
         public_directory: Some(temp.path.join("Public")),
         local_app_data_directory: Some(home.join("AppData").join("Local")),
+        known_documents_directory: None,
+        known_saved_games_directory: None,
         environment: None,
         steam_roots: Some(vec![steam_root]),
     };
@@ -120,6 +122,81 @@ fn finds_windows_game_save_paths_from_steam_manifests_and_fsgame_override() {
             .any(|c| c.directory_path.to_string_lossy().contains("Documents")),
         "should find localized Documents paths"
     );
+}
+
+#[test]
+fn finds_windows_save_paths_from_redirected_known_folders_and_onedrive_roots() {
+    let temp = TempDir::new("locator-known-folders");
+    let profile = temp.path.join("Profile");
+    let documents = temp.path.join("Redirected").join("MyDocs");
+    let saved_games = temp.path.join("Redirected").join("MySavedGames");
+    let one_drive = temp.path.join("OneDrive");
+    let one_drive_consumer = temp.path.join("OneDriveConsumer");
+    let fallback_documents = profile.join("Documents");
+    let soc_folder = "stalker-shoc";
+    let cs_folder = "Stalker-STCS";
+    let cop_folder = "S.T.A.L.K.E.R. - Call of Pripyat";
+    let ee_folder = "STALKER Shadow of Chornobyl - EE";
+
+    for path in [
+        documents.join(soc_folder).join("savedgames"),
+        one_drive.join("Documents").join(cs_folder).join("savedgames"),
+        one_drive_consumer.join("Documents").join(cop_folder).join("savedgames"),
+        saved_games.join(ee_folder).join("STEAM").join("savedgames"),
+        fallback_documents.join("Stalker-SHOC").join("savedgames"),
+    ] {
+        fs::create_dir_all(path).expect("create synthetic save directory");
+    }
+
+    let environment = std::collections::HashMap::from([
+        ("HOME".to_owned(), profile.to_string_lossy().into_owned()),
+        ("USERPROFILE".to_owned(), profile.to_string_lossy().into_owned()),
+        ("OneDrive".to_owned(), one_drive.to_string_lossy().into_owned()),
+        (
+            "OneDriveConsumer".to_owned(),
+            one_drive_consumer.to_string_lossy().into_owned(),
+        ),
+    ]);
+    let options = SaveDirectoryDiscoveryOptions {
+        platform: Some(SaveDiscoveryPlatform::Windows),
+        home_directory: Some(profile.clone()),
+        user_profile_directory: Some(profile),
+        public_directory: None,
+        local_app_data_directory: Some(temp.path.join("LocalAppData")),
+        environment: Some(environment),
+        steam_roots: Some(Vec::new()),
+        known_documents_directory: Some(documents.clone()),
+        known_saved_games_directory: Some(saved_games.clone()),
+    };
+
+    let candidates = SaveDirectoryLocator::find_candidate_directories(Some(&options));
+    for (release_id, directory) in [
+        ("stalker-soc", documents.join(soc_folder).join("savedgames")),
+        (
+            "stalker-cs",
+            one_drive.join("Documents").join(cs_folder).join("savedgames"),
+        ),
+        (
+            "stalker-cop",
+            one_drive_consumer.join("Documents").join(cop_folder).join("savedgames"),
+        ),
+        (
+            "stalker-soc-ee",
+            saved_games.join(ee_folder).join("STEAM").join("savedgames"),
+        ),
+        (
+            "stalker-soc",
+            fallback_documents.join("Stalker-SHOC").join("savedgames"),
+        ),
+    ] {
+        assert!(
+            candidates
+                .iter()
+                .any(|candidate| candidate.release_id == release_id && candidate.directory_path == directory),
+            "missing candidate for {release_id} at {}",
+            directory.display()
+        );
+    }
 }
 
 #[test]
@@ -166,6 +243,8 @@ fn finds_proton_save_paths_in_a_secondary_library_even_without_a_game_manifest()
         user_profile_directory: None,
         public_directory: None,
         local_app_data_directory: None,
+        known_documents_directory: None,
+        known_saved_games_directory: None,
         environment: None,
         steam_roots: Some(vec![steam_root]),
     };
