@@ -6,6 +6,10 @@ pub mod secure_fs;
 
 #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
 pub mod shm;
+#[cfg(target_os = "linux")]
+pub mod memfd;
+#[cfg(target_os = "linux")]
+pub mod unix_fd;
 
 #[cfg(target_os = "windows")]
 mod win32_ffi;
