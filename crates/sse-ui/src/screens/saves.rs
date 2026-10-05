@@ -3731,22 +3731,31 @@ fn prepare_save_edits(
                         request.item_key
                     )));
                 }
-                let template = inventory
+                let template_object = inventory
                     .iter()
-                    .find(|item| {
+                    .filter(|item| {
                         item.section == request.item_key && !edits.removals.contains(&ItemHandle::Xray(item.handle))
+                    })
+                    .filter_map(|item| {
+                        save.registry_objects()
+                            .iter()
+                            .find(|object| object.object_id == item.handle && object.parent_id == save.actor_id())
+                    })
+                    .min_by_key(|object| {
+                        (
+                            object.story_id.is_some_and(|value| value != u32::MAX),
+                            object.spawn_story_id.is_some_and(|value| value != u32::MAX),
+                            save.custom_data(object).is_some_and(|data| !data.is_empty()),
+                            object.spawn_id != Some(u16::MAX),
+                            object.object_id,
+                        )
                     })
                     .ok_or_else(|| {
                         Error::Refused(format!(
-                            "item '{}' has no matching serialized template in this save",
+                            "item '{}' has no matching actor-owned serialized template in this save",
                             request.item_key
                         ))
                     })?;
-                let template_object = save
-                    .registry_objects()
-                    .iter()
-                    .find(|object| object.object_id == template.handle && object.parent_id == save.actor_id())
-                    .ok_or_else(|| Error::Refused("selected item template is no longer actor-owned".to_owned()))?;
                 let object_id = used_object_ids
                     .iter()
                     .next_back()
