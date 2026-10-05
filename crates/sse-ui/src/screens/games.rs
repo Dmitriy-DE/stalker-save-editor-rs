@@ -2298,6 +2298,8 @@ impl Screen for GameFixes {
 #[derive(Clone, Debug)]
 struct DoctorFinding {
     file: String,
+    line: usize,
+    checker: String,
     severity: String,
     message: String,
 }
@@ -2384,46 +2386,19 @@ impl GameDoctor {
                     .into_iter()
                     .map(|finding| DoctorFinding {
                         file: finding.file,
+                        line: finding.line,
+                        checker: finding.checker,
                         severity: finding.severity.as_str().to_owned(),
                         message: finding.message,
                     })
                     .collect();
-
-                let row_ids: Vec<u64> = (0..findings.len())
-                    .filter_map(|index| u64::try_from(index).ok())
-                    .collect();
-                let headers = vec![
-                    crate::widgets::table::Header {
-                        label: "Файл".to_owned(),
-                        sortable: true,
-                        direction: None,
-                    },
-                    crate::widgets::table::Header {
-                        label: "Тяжесть".to_owned(),
-                        sortable: true,
-                        direction: None,
-                    },
-                ];
-                if let Ok(mut table) = crate::widgets::table::Table::new(row_ids, 24.0, headers) {
-                    let _ = table.header_click(0, false, |left, right, _| {
-                        let a = usize::try_from(left).ok().and_then(|i| findings.get(i));
-                        let b = usize::try_from(right).ok().and_then(|i| findings.get(i));
-                        a.map(|v| (&v.file, &v.severity))
-                            .cmp(&b.map(|v| (&v.file, &v.severity)))
-                    });
-                    let mut ordered = Vec::with_capacity(findings.len());
-                    for index in 0..findings.len() {
-                        if let Some(row) = table
-                            .visible_row(index)
-                            .and_then(|id| usize::try_from(id).ok())
-                            .and_then(|i| findings.get(i))
-                            .cloned()
-                        {
-                            ordered.push(row);
-                        }
-                    }
-                    findings = ordered;
-                }
+                findings.sort_by(|left, right| {
+                    left.file
+                        .cmp(&right.file)
+                        .then_with(|| left.line.cmp(&right.line))
+                        .then_with(|| left.checker.cmp(&right.checker))
+                        .then_with(|| left.message.cmp(&right.message))
+                });
                 Ok((report.files_checked, report.elapsed_ms, findings))
             })();
             proxy.send(AppMessage::ToScreen(
@@ -2563,7 +2538,10 @@ impl Screen for GameDoctor {
                                 cx.tree.set_visible(widget, true)?;
                                 cx.tree.set_text(
                                     widget,
-                                    &format!("{} · {} · {}", finding.file, finding.severity, finding.message),
+                                    &format!(
+                                        "{}:{} · {} · {} · {}",
+                                        finding.file, finding.line, finding.severity, finding.checker, finding.message
+                                    ),
                                 )?;
                             } else {
                                 cx.tree.set_visible(widget, false)?;
