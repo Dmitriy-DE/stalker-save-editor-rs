@@ -1256,7 +1256,13 @@ impl Shell {
             }
             Message::Window(WindowEvent::CloseRequested) => {
                 let _ = sse_app::tasks::wait_for_named_tasks(
-                    &["draft-save", "draft-reset", "save-restore", "game-background", "companion-background"],
+                    &[
+                        "draft-save",
+                        "draft-reset",
+                        "save-restore",
+                        "game-background",
+                        "companion-background",
+                    ],
                     std::time::Duration::from_secs(2),
                 );
                 return Ok(Flow::Exit);
