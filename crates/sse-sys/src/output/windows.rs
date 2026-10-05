@@ -41,6 +41,7 @@ unsafe extern "system" {
     ) -> u32;
     fn waveOutPrepareHeader(out: Hwaveout, header: *mut WaveHdr, size: u32) -> u32;
     fn waveOutWrite(out: Hwaveout, header: *mut WaveHdr, size: u32) -> u32;
+    fn waveOutReset(out: Hwaveout) -> u32;
     fn waveOutUnprepareHeader(out: Hwaveout, header: *mut WaveHdr, size: u32) -> u32;
     fn waveOutClose(out: Hwaveout) -> u32;
 }
@@ -81,23 +82,42 @@ fn run(mut pcm: Vec<i16>, channels: u8, rate: u32, volume: f32) {
         next: ptr::null_mut(),
         reserved: 0,
     };
-    // SAFETY: the PCM vector and header stay alive until unprepare succeeds below.
-    if unsafe { waveOutPrepareHeader(handle, &mut header, header_size) } == 0
-        && unsafe { waveOutWrite(handle, &mut header, header_size) } == 0
-    {
-        for _ in 0..500 {
-            // SAFETY: handle/header are the same live objects passed to prepare/write.
-            let result = unsafe { waveOutUnprepareHeader(handle, &mut header, header_size) };
-            if result == 0 {
-                break;
+    // SAFETY: the PCM vector and header stay alive until the prepared header is released below.
+    if unsafe { waveOutPrepareHeader(handle, &mut header, header_size) } == 0 {
+        // SAFETY: the prepared header and its PCM buffer remain live for the duration of playback.
+        let written = unsafe { waveOutWrite(handle, &mut header, header_size) } == 0;
+        let mut released = false;
+        if written {
+            for _ in 0..500 {
+                // SAFETY: handle/header are the same live objects passed to prepare/write.
+                let result = unsafe { waveOutUnprepareHeader(handle, &mut header, header_size) };
+                if result == 0 {
+                    released = true;
+                    break;
+                }
+                if result != WAVERR_STILLPLAYING {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(10));
             }
-            if result != WAVERR_STILLPLAYING {
-                break;
+        }
+        if !released {
+            // SAFETY: reset synchronously returns queued buffers to the application before PCM can be dropped.
+            let _ = unsafe { waveOutReset(handle) };
+            for _ in 0..50 {
+                // SAFETY: reset has returned the buffer; retry until WinMM releases the prepared header.
+                let result = unsafe { waveOutUnprepareHeader(handle, &mut header, header_size) };
+                if result == 0 {
+                    break;
+                }
+                if result != WAVERR_STILLPLAYING {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(1));
             }
-            thread::sleep(Duration::from_millis(10));
         }
     }
-    // SAFETY: handle was returned by waveOutOpen and is no longer used afterwards.
+    // SAFETY: all queued buffers were completed or reset before closing this live waveOut handle.
     let _ = unsafe { waveOutClose(handle) };
 }
 

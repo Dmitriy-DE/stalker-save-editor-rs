@@ -166,6 +166,7 @@ unsafe extern "system" {
     pub fn IsClipboardFormatAvailable(format: Uint) -> Bool;
     pub fn SystemParametersInfoW(action: Uint, param: Uint, data: *mut c_void, flags: Uint) -> Bool;
     pub fn CreateIconIndirect(info: *const IconInfo) -> Hicon;
+    pub fn DestroyIcon(icon: Hicon) -> Bool;
 }
 #[link(name = "gdi32")]
 unsafe extern "system" {
@@ -203,6 +204,7 @@ unsafe extern "system" {
     pub fn GlobalLock(memory: Handle) -> *mut c_void;
     pub fn GlobalUnlock(memory: Handle) -> Bool;
     pub fn GlobalSize(memory: Handle) -> usize;
+    pub fn GlobalFree(memory: Handle) -> Handle;
 }
 #[link(name = "ole32")]
 unsafe extern "system" {

@@ -6,7 +6,13 @@
 
 use crate::win32_ffi as w;
 use sse_core::{Error, Result};
-use std::{collections::VecDeque, ffi::c_void, mem, ptr, sync::Arc, time::Duration};
+use std::{
+    collections::VecDeque,
+    ffi::c_void,
+    mem, ptr,
+    sync::{Arc, Mutex, MutexGuard},
+    time::Duration,
+};
 
 const WM_DESTROY: u32 = 2;
 const WM_SIZE: u32 = 5;
@@ -225,9 +231,10 @@ struct State {
 /// Win32 implementation.
 pub struct Win32Window {
     hwnd: w::Hwnd,
-    state: Box<State>,
+    state: *mut Mutex<State>,
     wake: WakeHandle,
     hotkeys: Vec<i32>,
+    icons: Vec<w::Hicon>,
     com: bool,
 }
 impl Win32Window {
@@ -260,7 +267,7 @@ impl Win32Window {
             small_icon: ptr::null_mut(),
         }; // SAFETY: WNDCLASSEX and UTF-16 name are valid for this call.
         let _ = unsafe { w::RegisterClassExW(&wc) };
-        let mut state = Box::new(State {
+        let state = Box::into_raw(Box::new(Mutex::new(State {
             frame: Vec::new(),
             width: options.width,
             height: options.height,
@@ -269,7 +276,7 @@ impl Win32Window {
             min_h: options.min_height,
             high: None,
             cursor: CursorShape::Arrow,
-        });
+        })));
         let width = i32::try_from(options.width).map_err(|_| Error::Refused("window width too large".to_owned()))?;
         let height = i32::try_from(options.height).map_err(|_| Error::Refused("window height too large".to_owned()))?; // SAFETY: registered class, stable Box pointer, NUL-terminated strings.
         let hwnd = unsafe {
@@ -285,13 +292,16 @@ impl Win32Window {
                 ptr::null_mut(),
                 ptr::null_mut(),
                 ptr::null_mut(),
-                state.as_mut() as *mut State as *mut c_void,
+                state.cast::<c_void>(),
             )
         };
         if hwnd.is_null() {
+            // SAFETY: CreateWindowExW failed, so no HWND can retain the raw Box allocation.
+            drop(unsafe { Box::from_raw(state) });
             return Err(Error::System("CreateWindowExW failed".to_owned()));
-        } // SAFETY: state remains boxed for HWND lifetime.
-        unsafe { w::SetWindowLongPtrW(hwnd, GWLP_USERDATA, state.as_mut() as *mut State as isize) };
+        }
+        // SAFETY: state came from Box::into_raw and remains allocated until Win32Window::drop.
+        unsafe { w::SetWindowLongPtrW(hwnd, GWLP_USERDATA, state as isize) };
         let dark: i32 = 1; // SAFETY: attribute 20 consumes a BOOL-sized value.
         let _ = unsafe {
             w::DwmSetWindowAttribute(
@@ -301,6 +311,7 @@ impl Win32Window {
                 u32::try_from(mem::size_of::<i32>()).unwrap_or_default(),
             )
         };
+        // SAFETY: this Win32 FFI boundary uses the live handles/pointers established by the surrounding checks.
         unsafe {
             w::ShowWindow(hwnd, 5);
             w::UpdateWindow(hwnd);
@@ -310,9 +321,17 @@ impl Win32Window {
             state,
             wake,
             hotkeys: Vec::new(),
+            icons: Vec::new(),
             com,
         })
     }
+    fn state(&self) -> MutexGuard<'_, State> {
+        // SAFETY: state is a Box::into_raw allocation owned by this window and reclaimed only after HWND destruction.
+        unsafe { &*self.state }
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     /// Handle suitable for worker threads.
     #[must_use]
     pub fn wake_handle(&self) -> WakeHandle {
@@ -347,8 +366,17 @@ impl Win32Window {
                     .unwrap_or(0)
             )
         ];
+        // SAFETY: CreateBitmap copies the live monochrome mask bytes during the call.
         let mono = unsafe { w::CreateBitmap(wi, hi, 1, 1, mask.as_ptr().cast()) };
         if color.is_null() || mono.is_null() {
+            if !color.is_null() {
+                // SAFETY: color is an owned HBITMAP returned by CreateBitmap and was not transferred.
+                let _ = unsafe { w::DeleteObject(color) };
+            }
+            if !mono.is_null() {
+                // SAFETY: mono is an owned HBITMAP returned by CreateBitmap and was not transferred.
+                let _ = unsafe { w::DeleteObject(mono) };
+            }
             return Err(Error::System("icon bitmap creation failed".to_owned()));
         }
         let info = w::IconInfo {
@@ -365,11 +393,13 @@ impl Win32Window {
         }
         if icon.is_null() {
             return Err(Error::System("CreateIconIndirect failed".to_owned()));
-        } // SAFETY: WM_SETICON accepts HICON in lParam.
+        }
+        // SAFETY: WM_SETICON accepts the live HICON in lParam; ownership remains with this window.
         unsafe {
             w::PostMessageW(self.hwnd, 0x80, 1, icon as isize);
             w::PostMessageW(self.hwnd, 0x80, 0, icon as isize);
         }
+        self.icons.push(icon);
         Ok(())
     }
     fn dialog(&mut self, folders: bool) -> Result<Option<String>> {
@@ -379,12 +409,28 @@ impl Win32Window {
 impl Drop for Win32Window {
     fn drop(&mut self) {
         for id in &self.hotkeys {
+            // SAFETY: hwnd is live until DestroyWindow below and each id was registered on it.
             let _ = unsafe { w::UnregisterHotKey(self.hwnd, *id) };
         }
         if !self.hwnd.is_null() {
+            // SAFETY: clearing GWLP_USERDATA prevents destruction callbacks from observing the state allocation.
+            unsafe { w::SetWindowLongPtrW(self.hwnd, GWLP_USERDATA, 0) };
+            // SAFETY: hwnd is owned by this Win32Window and is destroyed exactly once.
             let _ = unsafe { w::DestroyWindow(self.hwnd) };
         }
+        for icon in self.icons.drain(..) {
+            if !icon.is_null() {
+                // SAFETY: each icon was created by CreateIconIndirect and ownership was retained by this window.
+                let _ = unsafe { w::DestroyIcon(icon) };
+            }
+        }
+        if !self.state.is_null() {
+            // SAFETY: state came from Box::into_raw, GWLP_USERDATA is cleared, and the HWND is already destroyed.
+            drop(unsafe { Box::from_raw(self.state) });
+            self.state = ptr::null_mut();
+        }
         if self.com {
+            // SAFETY: this thread successfully initialized COM in Win32Window::new.
             unsafe { w::CoUninitialize() };
         }
     }
@@ -399,10 +445,13 @@ impl Window for Win32Window {
         if frame.len() != bytes {
             return Err(Error::Refused("BGRA frame size mismatch".to_owned()));
         }
-        self.state.frame.clear();
-        self.state.frame.extend_from_slice(frame);
-        self.state.width = width;
-        self.state.height = height;
+        {
+            let mut state = self.state();
+            state.frame.clear();
+            state.frame.extend_from_slice(frame);
+            state.width = width;
+            state.height = height;
+        }
         for d in damage {
             let r = w::Rect {
                 left: i32::try_from(d.x).unwrap_or_default(),
@@ -415,6 +464,7 @@ impl Window for Win32Window {
             }
         }
         if damage.is_empty() {
+            // SAFETY: this Win32 FFI boundary uses the live handles/pointers established by the surrounding checks.
             unsafe {
                 w::InvalidateRect(self.hwnd, ptr::null(), 0);
             }
@@ -422,7 +472,7 @@ impl Window for Win32Window {
         Ok(())
     }
     fn next_event(&mut self, timeout: Option<Duration>) -> Event {
-        if let Some(e) = self.state.events.pop_front() {
+        if let Some(e) = self.state().events.pop_front() {
             return e;
         }
         let ms = timeout.map_or(INFINITE, |d| u32::try_from(d.as_millis()).unwrap_or(u32::MAX));
@@ -444,23 +494,26 @@ impl Window for Win32Window {
             private: 0,
         };
         loop {
+            // SAFETY: this Win32 FFI boundary uses the live handles/pointers established by the surrounding checks.
             if unsafe { w::PeekMessageW(&mut msg, ptr::null_mut(), 0, 0, PM_REMOVE) } == 0 {
                 break;
             }
+            // SAFETY: this Win32 FFI boundary uses the live handles/pointers established by the surrounding checks.
             unsafe {
                 w::TranslateMessage(&msg);
                 w::DispatchMessageW(&msg);
             }
-            if let Some(e) = self.state.events.pop_front() {
+            if let Some(e) = self.state().events.pop_front() {
                 return e;
             }
         }
         Event::Timeout
     }
     fn set_cursor(&mut self, c: CursorShape) {
-        self.state.cursor = c;
+        self.state().cursor = c;
         let h = cursor_handle(c);
         if !h.is_null() {
+            // SAFETY: this Win32 FFI boundary uses the live handles/pointers established by the surrounding checks.
             unsafe {
                 w::SetCursor(h);
             }
@@ -472,53 +525,73 @@ impl Window for Win32Window {
             .len()
             .checked_mul(2)
             .ok_or_else(|| Error::Refused("clipboard too large".to_owned()))?;
+        // SAFETY: hwnd is live and clipboard ownership is released on every return path below.
+        // SAFETY: hwnd is live and clipboard ownership is released on every return path below.
         if unsafe { w::OpenClipboard(self.hwnd) } == 0 {
             return Err(Error::System("OpenClipboard failed".to_owned()));
         }
+        // SAFETY: this Win32 FFI boundary uses the live handles/pointers established by the surrounding checks.
         unsafe { w::EmptyClipboard() };
         let mem = unsafe { w::GlobalAlloc(GMEM_MOVEABLE, bytes) };
         if mem.is_null() {
+            // SAFETY: this Win32 FFI boundary uses the live handles/pointers established by the surrounding checks.
             unsafe { w::CloseClipboard() };
             return Err(Error::System("GlobalAlloc failed".to_owned()));
         }
+        // SAFETY: mem is the movable global allocation created above.
         let dst = unsafe { w::GlobalLock(mem) };
         if dst.is_null() {
+            // SAFETY: SetClipboardData has not taken ownership, so this allocation is still ours.
+            let _ = unsafe { w::GlobalFree(mem) };
+            // SAFETY: this call closes the clipboard opened above.
             unsafe { w::CloseClipboard() };
             return Err(Error::System("GlobalLock failed".to_owned()));
         }
+        // SAFETY: this Win32 FFI boundary uses the live handles/pointers established by the surrounding checks.
         unsafe {
             ptr::copy_nonoverlapping(data.as_ptr().cast::<u8>(), dst.cast::<u8>(), bytes);
             w::GlobalUnlock(mem);
         }
+        // SAFETY: mem contains a NUL-terminated UTF-16 buffer and remains owned by us until this succeeds.
         let set = unsafe { w::SetClipboardData(CF_UNICODETEXT, mem) };
+        // SAFETY: this call closes the clipboard opened above.
         unsafe { w::CloseClipboard() };
         if set.is_null() {
+            // SAFETY: failed SetClipboardData did not transfer ownership of mem.
+            let _ = unsafe { w::GlobalFree(mem) };
             Err(Error::System("SetClipboardData failed".to_owned()))
         } else {
             Ok(())
         }
     }
     fn clipboard_text(&mut self) -> Result<Option<String>> {
+        // SAFETY: querying clipboard format availability has no pointer preconditions.
         if unsafe { w::IsClipboardFormatAvailable(CF_UNICODETEXT) } == 0 {
             return Ok(None);
         }
+        // SAFETY: this Win32 FFI boundary uses the live handles/pointers established by the surrounding checks.
         if unsafe { w::OpenClipboard(self.hwnd) } == 0 {
             return Err(Error::System("OpenClipboard failed".to_owned()));
         }
+        // SAFETY: clipboard is open and CF_UNICODETEXT availability was checked above.
         let mem = unsafe { w::GetClipboardData(CF_UNICODETEXT) };
         if mem.is_null() {
             unsafe { w::CloseClipboard() };
             return Ok(None);
         }
+        // SAFETY: this Win32 FFI boundary uses the live handles/pointers established by the surrounding checks.
         let units = unsafe { w::GlobalSize(mem) }.checked_div(2).unwrap_or(0);
         let raw = unsafe { w::GlobalLock(mem) };
         if raw.is_null() {
+            // SAFETY: this Win32 FFI boundary uses the live handles/pointers established by the surrounding checks.
             unsafe { w::CloseClipboard() };
             return Err(Error::System("GlobalLock failed".to_owned()));
         }
+        // SAFETY: GlobalLock returned a buffer of GlobalSize(mem) bytes, so units u16 values are readable.
         let slice = unsafe { std::slice::from_raw_parts(raw.cast::<u16>(), units) };
         let end = slice.iter().position(|v| *v == 0).unwrap_or(slice.len());
         let text = String::from_utf16_lossy(slice.get(..end).unwrap_or_default());
+        // SAFETY: this Win32 FFI boundary uses the live handles/pointers established by the surrounding checks.
         unsafe {
             w::GlobalUnlock(mem);
             w::CloseClipboard();
@@ -526,6 +599,7 @@ impl Window for Win32Window {
         Ok(Some(text))
     }
     fn register_hotkey(&mut self, id: i32, modifiers: u32, key: u32) -> Result<()> {
+        // SAFETY: hwnd is live; id/modifier/key are plain Win32 hotkey values.
         if unsafe { w::RegisterHotKey(self.hwnd, id, modifiers | MOD_NOREPEAT, key) } == 0 {
             return Err(Error::System("RegisterHotKey failed".to_owned()));
         }
@@ -544,11 +618,13 @@ impl Window for Win32Window {
             flags: 0,
             scheme: ptr::null_mut(),
         };
+        // SAFETY: v points to writable HIGHCONTRAST storage with the documented size.
         (unsafe { w::SystemParametersInfoW(0x42, v.size, (&mut v as *mut w::HighContrast).cast(), 0) }) != 0
             && v.flags & 1 != 0
     }
     fn reduced_motion(&self) -> bool {
         let mut enabled: i32 = 1;
+        // SAFETY: enabled points to writable BOOL-sized storage for SPI_GETCLIENTAREAANIMATION.
         (unsafe { w::SystemParametersInfoW(0x1042, 0, (&mut enabled as *mut i32).cast(), 0) }) != 0 && enabled == 0
     }
 }
@@ -579,148 +655,218 @@ fn cursor_handle(c: CursorShape) -> w::Hcursor {
         CursorShape::ResizeVertical => 32645,
         CursorShape::Hand => 32649,
     };
+    // SAFETY: MAKEINTRESOURCE-style cursor IDs are documented for LoadCursorW with a null instance.
     unsafe { w::LoadCursorW(ptr::null_mut(), id as usize as *const u16) }
 }
 unsafe extern "system" fn proc(hwnd: w::Hwnd, msg: u32, wp: usize, lp: isize) -> isize {
-    let raw = unsafe { w::GetWindowLongPtrW(hwnd, GWLP_USERDATA) } as *mut State;
+    // SAFETY: hwnd is supplied by Windows to this registered window procedure.
+    let raw = unsafe { w::GetWindowLongPtrW(hwnd, GWLP_USERDATA) } as *const Mutex<State>;
     if raw.is_null() {
+        // SAFETY: forwarding unhandled messages to the default procedure is required by Win32.
         return unsafe { w::DefWindowProcW(hwnd, msg, wp, lp) };
     }
-    let s = unsafe { &mut *raw };
+    // SAFETY: GWLP_USERDATA is set from Box::into_raw after window creation and cleared before destruction.
+    let state = unsafe { &*raw };
     match msg {
         WM_CLOSE => {
-            s.events.push_back(Event::Close);
+            state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .events
+                .push_back(Event::Close);
             0
         }
         WM_DESTROY => {
+            // SAFETY: posting WM_QUIT does not retain hwnd or Rust references.
             unsafe { w::PostQuitMessage(0) };
             0
         }
         WM_ERASEBKGND => 1,
         WM_SETFOCUS => {
-            s.events.push_back(Event::Focus(true));
+            state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .events
+                .push_back(Event::Focus(true));
             0
         }
         WM_KILLFOCUS => {
-            s.events.push_back(Event::Focus(false));
+            state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .events
+                .push_back(Event::Focus(false));
             0
         }
         WM_SIZE => {
             let width = u32::try_from(word(lp, false)).unwrap_or_default();
             let height = u32::try_from(word(lp, true)).unwrap_or_default();
+            // SAFETY: hwnd is the live window receiving WM_SIZE.
             let dpi = unsafe { w::GetDpiForWindow(hwnd) };
-            s.events.push_back(Event::Resized {
-                width,
-                height,
-                scale: (dpi as f32).mul_add(0.010416667, 0.0),
-            });
+            state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .events
+                .push_back(Event::Resized {
+                    width,
+                    height,
+                    scale: (dpi as f32).mul_add(0.010416667, 0.0),
+                });
             0
         }
         WM_DPICHANGED => {
+            // SAFETY: WM_DPICHANGED lParam points to a RECT valid for the duration of this callback.
             let rect = unsafe { &*(lp as *const w::Rect) };
             let width = rect.right.saturating_sub(rect.left);
             let height = rect.bottom.saturating_sub(rect.top);
+            // SAFETY: hwnd and the suggested rectangle are valid for this WM_DPICHANGED callback.
             unsafe { w::SetWindowPos(hwnd, ptr::null_mut(), rect.left, rect.top, width, height, 0x14) };
             0
         }
         WM_GETMINMAXINFO => {
-            let m = unsafe { &mut *(lp as *mut w::MinMax) };
-            m.min_track.x = i32::try_from(s.min_w).unwrap_or(i32::MAX);
-            m.min_track.y = i32::try_from(s.min_h).unwrap_or(i32::MAX);
+            let (min_w, min_h) = {
+                let state = state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                (state.min_w, state.min_h)
+            };
+            // SAFETY: WM_GETMINMAXINFO lParam points to writable MINMAXINFO for this callback.
+            let limits = unsafe { &mut *(lp as *mut w::MinMax) };
+            limits.min_track.x = i32::try_from(min_w).unwrap_or(i32::MAX);
+            limits.min_track.y = i32::try_from(min_h).unwrap_or(i32::MAX);
             0
         }
         WM_KEYDOWN => {
-            s.events.push_back(Event::Key {
-                code: u32::try_from(wp).unwrap_or_default(),
-                down: true,
-                repeat: (lp & (1isize.checked_shl(30).unwrap_or(0))) != 0,
-            });
+            state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .events
+                .push_back(Event::Key {
+                    code: u32::try_from(wp).unwrap_or_default(),
+                    down: true,
+                    repeat: (lp & (1isize.checked_shl(30).unwrap_or(0))) != 0,
+                });
             0
         }
         WM_KEYUP => {
-            s.events.push_back(Event::Key {
-                code: u32::try_from(wp).unwrap_or_default(),
-                down: false,
-                repeat: false,
-            });
+            state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .events
+                .push_back(Event::Key {
+                    code: u32::try_from(wp).unwrap_or_default(),
+                    down: false,
+                    repeat: false,
+                });
             0
         }
         WM_CHAR => {
             let u = u16::try_from(wp).unwrap_or_default();
+            let mut state = state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             if (0xd800..=0xdbff).contains(&u) {
-                s.high = Some(u);
+                state.high = Some(u);
             } else if (0xdc00..=0xdfff).contains(&u) {
-                if let Some(h) = s.high.take() {
-                    if let Some(Ok(c)) = char::decode_utf16([h, u]).next() {
-                        s.events.push_back(Event::Text(c));
+                if let Some(high) = state.high.take() {
+                    if let Some(Ok(character)) = char::decode_utf16([high, u]).next() {
+                        state.events.push_back(Event::Text(character));
                     }
                 }
-            } else if let Some(c) = char::from_u32(u32::from(u)) {
-                s.high = None;
-                s.events.push_back(Event::Text(c));
+            } else if let Some(character) = char::from_u32(u32::from(u)) {
+                state.high = None;
+                state.events.push_back(Event::Text(character));
             }
             0
         }
         WM_MOUSEMOVE => {
-            s.events.push_back(Event::PointerMoved {
-                x: word(lp, false),
-                y: word(lp, true),
-            });
+            state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .events
+                .push_back(Event::PointerMoved {
+                    x: word(lp, false),
+                    y: word(lp, true),
+                });
             0
         }
         WM_LDOWN | WM_RDOWN | WM_MDOWN => {
+            // SAFETY: hwnd is the live window receiving this mouse-button message.
             unsafe { w::SetCapture(hwnd) };
-            s.events.push_back(Event::PointerButton {
-                button: if msg == WM_LDOWN {
-                    MouseButton::Left
-                } else if msg == WM_RDOWN {
-                    MouseButton::Right
-                } else {
-                    MouseButton::Middle
-                },
-                down: true,
-            });
+            state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .events
+                .push_back(Event::PointerButton {
+                    button: if msg == WM_LDOWN {
+                        MouseButton::Left
+                    } else if msg == WM_RDOWN {
+                        MouseButton::Right
+                    } else {
+                        MouseButton::Middle
+                    },
+                    down: true,
+                });
             0
         }
         WM_LUP | WM_RUP | WM_MUP => {
+            // SAFETY: releasing mouse capture is valid while handling a button-up message.
             unsafe { w::ReleaseCapture() };
-            s.events.push_back(Event::PointerButton {
-                button: if msg == WM_LUP {
-                    MouseButton::Left
-                } else if msg == WM_RUP {
-                    MouseButton::Right
-                } else {
-                    MouseButton::Middle
-                },
-                down: false,
-            });
+            state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .events
+                .push_back(Event::PointerButton {
+                    button: if msg == WM_LUP {
+                        MouseButton::Left
+                    } else if msg == WM_RUP {
+                        MouseButton::Right
+                    } else {
+                        MouseButton::Middle
+                    },
+                    down: false,
+                });
             0
         }
         WM_WHEEL => {
-            s.events.push_back(Event::Wheel { x: 0, y: wheel(wp) });
+            state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .events
+                .push_back(Event::Wheel { x: 0, y: wheel(wp) });
             0
         }
         WM_HWHEEL => {
-            s.events.push_back(Event::Wheel { x: wheel(wp), y: 0 });
+            state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .events
+                .push_back(Event::Wheel { x: wheel(wp), y: 0 });
             0
         }
         WM_HOTKEY => {
-            s.events.push_back(Event::HotKey(i32::try_from(wp).unwrap_or_default()));
+            state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .events
+                .push_back(Event::HotKey(i32::try_from(wp).unwrap_or_default()));
             0
         }
         WM_SETCURSOR => {
-            unsafe { w::SetCursor(cursor_handle(s.cursor)) };
+            let cursor = state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).cursor;
+            // SAFETY: cursor_handle returns a shared system cursor handle valid for SetCursor.
+            unsafe { w::SetCursor(cursor_handle(cursor)) };
             1
         }
         WM_PAINT => {
-            paint(hwnd, s);
+            paint(hwnd, state);
             0
         }
-        _ => unsafe { w::DefWindowProcW(hwnd, msg, wp, lp) },
+        _ => {
+            // SAFETY: forwarding unhandled messages to the default procedure is required by Win32.
+            unsafe { w::DefWindowProcW(hwnd, msg, wp, lp) }
+        }
     }
 }
-fn paint(hwnd: w::Hwnd, s: &State) {
-    let mut p = w::Paint {
+
+fn paint(hwnd: w::Hwnd, state: &Mutex<State>) {
+    let mut paint = w::Paint {
         hdc: ptr::null_mut(),
         erase: 0,
         paint: w::Rect {
@@ -733,50 +879,54 @@ fn paint(hwnd: w::Hwnd, s: &State) {
         inc_update: 0,
         reserved: [0; 32],
     };
-    let dc = unsafe { w::BeginPaint(hwnd, &mut p) };
-    if !dc.is_null() && !s.frame.is_empty() {
-        let info = w::Bmi {
-            header: w::BmiHeader {
-                size: u32::try_from(mem::size_of::<w::BmiHeader>()).unwrap_or_default(),
-                width: i32::try_from(s.width).unwrap_or_default(),
-                height: i32::try_from(s.height).unwrap_or_default().saturating_neg(),
-                planes: 1,
-                bit_count: 32,
-                compression: 0,
-                size_image: 0,
-                x: 0,
-                y: 0,
-                used: 0,
-                important: 0,
-            },
-            colors: [0],
-        };
-        let left = p.paint.left.max(0);
-        let top = p.paint.top.max(0);
-        let right = p.paint.right.max(left);
-        let bottom = p.paint.bottom.max(top);
-        let width = u32::try_from(right.saturating_sub(left)).unwrap_or_default();
-        let height = u32::try_from(bottom.saturating_sub(top)).unwrap_or_default();
-        unsafe {
-            w::SetDIBitsToDevice(
-                dc,
-                left,
-                top,
-                width,
-                height,
-                left,
-                top,
-                0,
-                s.height,
-                s.frame.as_ptr().cast(),
-                &info,
-                DIB_RGB_COLORS,
-            );
+    // SAFETY: hwnd is live and paint points to writable PAINTSTRUCT storage for this WM_PAINT.
+    let dc = unsafe { w::BeginPaint(hwnd, &mut paint) };
+    if !dc.is_null() {
+        let state = state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !state.frame.is_empty() {
+            let info = w::Bmi {
+                header: w::BmiHeader {
+                    size: u32::try_from(mem::size_of::<w::BmiHeader>()).unwrap_or_default(),
+                    width: i32::try_from(state.width).unwrap_or_default(),
+                    height: i32::try_from(state.height).unwrap_or_default().saturating_neg(),
+                    planes: 1,
+                    bit_count: 32,
+                    compression: 0,
+                    size_image: 0,
+                    x: 0,
+                    y: 0,
+                    used: 0,
+                    important: 0,
+                },
+                colors: [0],
+            };
+            let left = paint.paint.left.max(0);
+            let top = paint.paint.top.max(0);
+            let right = paint.paint.right.max(left);
+            let bottom = paint.paint.bottom.max(top);
+            let width = u32::try_from(right.saturating_sub(left)).unwrap_or_default();
+            let height = u32::try_from(bottom.saturating_sub(top)).unwrap_or_default();
+            // SAFETY: dc is from BeginPaint; frame and info remain live and immutable for the duration of this call.
+            unsafe {
+                w::SetDIBitsToDevice(
+                    dc,
+                    left,
+                    top,
+                    width,
+                    height,
+                    left,
+                    top,
+                    0,
+                    state.height,
+                    state.frame.as_ptr().cast(),
+                    &info,
+                    DIB_RGB_COLORS,
+                );
+            }
         }
     }
-    unsafe {
-        w::EndPaint(hwnd, &p);
-    }
+    // SAFETY: every successful BeginPaint for this PAINTSTRUCT is paired with EndPaint before returning.
+    unsafe { w::EndPaint(hwnd, &paint) };
 }
 
 // IFileOpenDialog and IShellItem vtable prefixes, in documented COM order.
@@ -827,37 +977,49 @@ const IID: w::Guid = w::Guid {
 };
 fn file_dialog(owner: w::Hwnd, folders: bool) -> Result<Option<String>> {
     let mut raw: *mut c_void = ptr::null_mut();
+    // SAFETY: COM is initialized by Win32Window::new; CLSID/IID and out pointer match IFileOpenDialog.
     let hr = unsafe { w::CoCreateInstance(&CLSID, ptr::null_mut(), 1, &IID, &mut raw) };
     if hr < 0 || raw.is_null() {
         return Err(Error::System("IFileOpenDialog unavailable".to_owned()));
     }
+    // SAFETY: successful CoCreateInstance returned an IFileOpenDialog pointer with this vtable prefix.
     let v = unsafe { &**(raw as *mut *mut DialogV) };
     let mut options = 0;
+    // SAFETY: raw is a live IFileOpenDialog and options is writable.
     let _ = unsafe { (v.get_options)(raw, &mut options) };
+    // SAFETY: raw is a live IFileOpenDialog and the option bits are documented FOS flags.
     let _ = unsafe { (v.set_options)(raw, options | 0x40 | if folders { 0x20 } else { 0 }) };
+    // SAFETY: raw is live and owner is the live parent HWND.
     let shown = unsafe { (v.show)(raw, owner) };
     if shown < 0 {
+        // SAFETY: release balances the CoCreateInstance reference exactly once on this path.
         unsafe { (v.release)(raw) };
         return Ok(None);
     }
     let mut item: *mut c_void = ptr::null_mut();
+    // SAFETY: raw is live and item is a writable COM out pointer.
     if unsafe { (v.get_result)(raw, &mut item) } < 0 || item.is_null() {
         unsafe { (v.release)(raw) };
         return Ok(None);
     }
+    // SAFETY: get_result returned a live IShellItem pointer with this vtable prefix.
     let iv = unsafe { &**(item as *mut *mut ItemV) };
     let mut path: *mut u16 = ptr::null_mut();
+    // SAFETY: item is live and path is a writable PWSTR out pointer.
     let ok = unsafe { (iv.name)(item, 0x80058000, &mut path) };
     let result = if ok >= 0 && !path.is_null() {
         let mut n = 0usize;
+        // SAFETY: SIGDN_FILESYSPATH returns a NUL-terminated CoTaskMemAlloc UTF-16 string.
         while unsafe { *path.add(n) } != 0 {
             n = n.saturating_add(1);
         }
+        // SAFETY: n was found before the terminating NUL in the live UTF-16 allocation.
         Some(String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(path, n) }))
     } else {
         None
     };
     if !path.is_null() {
+        // SAFETY: path was allocated by the shell for SIGDN_FILESYSPATH and is freed exactly once.
         unsafe { w::CoTaskMemFree(path.cast()) }
     }
     unsafe {
