@@ -1054,7 +1054,30 @@ impl Shell {
         self.show(tree, index)
     }
 
+    fn prepare(&mut self, tree: &mut Tree, index: usize) -> Result<()> {
+        let (Some(screen), Some(slot)) = (self.screens.get_mut(index), self.hosts.get_mut(index)) else {
+            return Ok(());
+        };
+        if slot.is_some() {
+            return Ok(());
+        }
+        let host_style = Style {
+            grow: 1.0,
+            shrink: 0.0,
+            gap: Size::new(0.0, 16.0),
+            align_items: Align::Stretch,
+            ..Style::default()
+        };
+        let host = tree.add(Some(self.content), NodeKind::Column, host_style, Content::Panel, Look::default())?;
+        *slot = Some(host);
+        let mut cx = Context { tree, proxy: self.proxy.as_ref(), status: None, app: &mut self.app };
+        screen.build(&mut cx, host)?;
+        cx.tree.set_visible(host, false)?;
+        Ok(())
+    }
+
     fn show(&mut self, tree: &mut Tree, index: usize) -> Result<()> {
+        self.prepare(tree, index)?;
         let (Some(screen), Some(slot)) = (self.screens.get_mut(index), self.hosts.get_mut(index)) else {
             return Ok(());
         };
@@ -1075,26 +1098,8 @@ impl Shell {
             status: None,
             app: &mut self.app,
         };
-        match *slot {
-            Some(host) => cx.tree.set_visible(host, true)?,
-            None => {
-                let host_style = Style {
-                    grow: 1.0,
-                    shrink: 0.0,
-                    gap: Size::new(0.0, 16.0),
-                    align_items: Align::Stretch,
-                    ..Style::default()
-                };
-                let host = cx.tree.add(
-                    Some(self.content),
-                    NodeKind::Column,
-                    host_style,
-                    Content::Panel,
-                    Look::default(),
-                )?;
-                *slot = Some(host);
-                screen.build(&mut cx, host)?;
-            }
+        if let Some(host) = *slot {
+            cx.tree.set_visible(host, true)?;
         }
         screen.shown(&mut cx)?;
         let screen_id = screen.id();
