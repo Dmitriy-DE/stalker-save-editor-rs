@@ -13,29 +13,37 @@ pub enum SettingsPatch {
     ReportsNotice { send_reports: Option<bool> },
 }
 
-struct Request { patch: SettingsPatch, done: mpsc::Sender<Result<()>> }
+struct Request {
+    patch: SettingsPatch,
+    done: mpsc::Sender<Result<()>>,
+}
 static WRITER: OnceLock<mpsc::Sender<Request>> = OnceLock::new();
 
 fn sender() -> &'static mpsc::Sender<Request> {
     WRITER.get_or_init(|| {
         let (tx, rx) = mpsc::channel::<Request>();
-        std::thread::Builder::new().name("settings-writer".to_owned()).spawn(move || {
-            let path = default_settings_path();
-            let mut current = AppSettings::load(&path);
-            while let Ok(request) = rx.recv() {
-                match request.patch {
-                    SettingsPatch::Replace(value) => current = value,
-                    SettingsPatch::Theme(value) => current.theme_id = value,
-                    SettingsPatch::Accent(value) => current.accent_id = value,
-                    SettingsPatch::Scale(value) => current.ui_scale_percent = value,
-                    SettingsPatch::ReportsNotice { send_reports } => {
-                        current.reports_notice_shown = true;
-                        if let Some(value) = send_reports { current.send_reports = value; }
+        std::thread::Builder::new()
+            .name("settings-writer".to_owned())
+            .spawn(move || {
+                let path = default_settings_path();
+                let mut current = AppSettings::load(&path);
+                while let Ok(request) = rx.recv() {
+                    match request.patch {
+                        SettingsPatch::Replace(value) => current = value,
+                        SettingsPatch::Theme(value) => current.theme_id = value,
+                        SettingsPatch::Accent(value) => current.accent_id = value,
+                        SettingsPatch::Scale(value) => current.ui_scale_percent = value,
+                        SettingsPatch::ReportsNotice { send_reports } => {
+                            current.reports_notice_shown = true;
+                            if let Some(value) = send_reports {
+                                current.send_reports = value;
+                            }
+                        }
                     }
+                    let _ = request.done.send(current.save(&path));
                 }
-                let _ = request.done.send(current.save(&path));
-            }
-        }).expect("settings writer thread");
+            })
+            .expect("settings writer thread");
         tx
     })
 }
@@ -54,5 +62,7 @@ pub fn submit(patch: SettingsPatch) -> mpsc::Receiver<Result<()>> {
 mod tests {
     use super::*;
     #[test]
-    fn patch_variants_are_cloneable() { let _ = SettingsPatch::Scale(125).clone(); }
+    fn patch_variants_are_cloneable() {
+        let _ = SettingsPatch::Scale(125).clone();
+    }
 }
