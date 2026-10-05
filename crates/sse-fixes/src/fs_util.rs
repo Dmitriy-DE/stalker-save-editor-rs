@@ -1,9 +1,9 @@
 //! Safe transactional filesystem utilities and link traversal protection.
 
-use std::fs::{self, OpenOptions};
-use std::io::Write;
 #[cfg(test)]
 use std::cell::Cell;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
