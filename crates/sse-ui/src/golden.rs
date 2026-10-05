@@ -133,7 +133,7 @@ mod tests {
             "golden set must cover every menu screen"
         );
         let mut actual = Vec::with_capacity(ScreenId::ALL.len());
-        for (index, id) in ScreenId::ALL.iter().enumerate() {
+        for id in &ScreenId::ALL {
             let mut tree = Tree::new(Fonts::bundled()?, crate::screens::style::rgb(BG_BASE));
             let mut shell = Shell::build(&mut tree, None)?;
             shell.open(&mut tree, *id)?;
