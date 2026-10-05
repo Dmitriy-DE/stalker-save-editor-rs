@@ -1222,7 +1222,18 @@ impl Shell {
                 self.sync_saving_overlay(tree)?;
                 return Ok(Flow::Continue);
             }
-            Message::Window(WindowEvent::CloseRequested) | Message::Window(WindowEvent::Disconnected) => {
+            Message::Window(WindowEvent::CloseRequested) if sse_app::tasks::named_task_active("save-restore") => {
+                tree.set_text(self.status, "Дождитесь завершения восстановления, чтобы закрыть окно.")?;
+                return Ok(Flow::Continue);
+            }
+            Message::Window(WindowEvent::CloseRequested) => {
+                let _ = sse_app::tasks::wait_for_named_tasks(
+                    &["draft-save", "draft-reset"],
+                    std::time::Duration::from_secs(2),
+                );
+                return Ok(Flow::Exit);
+            }
+            Message::Window(WindowEvent::Disconnected) => {
                 return Ok(Flow::Exit);
             }
             _ => {}
@@ -1666,6 +1677,11 @@ mod tests {
     use crate::widget::Tree;
     use sse_storage::drafts::{DraftPlacement, DraftPlan, JsonValue};
 
+    fn close_task_test_guard() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(())).lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     #[test]
     fn save_disabled_reason_matches_reference_priority_and_capabilities() -> sse_core::Result<()> {
         let source_sha256 = "a".repeat(64);
@@ -1739,7 +1755,36 @@ mod tests {
     }
 
     #[test]
+    fn close_request_waits_for_an_active_restore_and_exits_after_completion() -> sse_core::Result<()> {
+        let _guard = close_task_test_guard();
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut shell = Shell::build(&mut tree, None)?;
+        let close = Message::Window(WindowEvent::CloseRequested);
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let tasks = sse_app::TaskManager::new();
+        let _restore = tasks.spawn("save-restore", move |_context| {
+            release_rx.recv().map_err(|error| error.to_string())?;
+            Ok(())
+        });
+
+        assert_eq!(shell.handle(&mut tree, &close, None)?, Flow::Continue);
+        release_tx
+            .send(())
+            .map_err(|error| sse_core::Error::System(error.to_string()))?;
+        for _ in 0..100 {
+            if !sse_app::tasks::named_task_active("save-restore") {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert!(!sse_app::tasks::named_task_active("save-restore"));
+        assert_eq!(shell.handle(&mut tree, &close, None)?, Flow::Exit);
+        Ok(())
+    }
+
+    #[test]
     fn close_request_waits_for_an_active_save_and_exits_after_completion() -> sse_core::Result<()> {
+        let _guard = close_task_test_guard();
         let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
         let mut shell = Shell::build(&mut tree, None)?;
         let close = Message::Window(WindowEvent::CloseRequested);

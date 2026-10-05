@@ -8,8 +8,9 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
 /// Unique identifier for a background task.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -133,6 +134,88 @@ impl TaskHandle {
     }
 }
 
+type NamedTaskRegistry = (Mutex<HashMap<&'static str, usize>>, Condvar);
+
+fn named_task_registry() -> &'static NamedTaskRegistry {
+    static REGISTRY: OnceLock<NamedTaskRegistry> = OnceLock::new();
+    REGISTRY.get_or_init(|| (Mutex::new(HashMap::new()), Condvar::new()))
+}
+
+struct NamedTaskGuard {
+    name: &'static str,
+}
+
+impl NamedTaskGuard {
+    fn enter(name: &'static str) -> Self {
+        let (lock, _) = named_task_registry();
+        let mut active = lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let count = active.entry(name).or_insert(0);
+        *count = count.saturating_add(1);
+        Self { name }
+    }
+}
+
+impl Drop for NamedTaskGuard {
+    fn drop(&mut self) {
+        let (lock, changed) = named_task_registry();
+        let mut active = lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(count) = active.get_mut(self.name) {
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                active.remove(self.name);
+            }
+        }
+        changed.notify_all();
+    }
+}
+
+/// Returns whether any worker with this task name is currently executing.
+#[must_use]
+pub fn named_task_active(name: &str) -> bool {
+    let (lock, _) = named_task_registry();
+    let active = lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    active.get(name).copied().unwrap_or_default() != 0
+}
+
+/// Waits only during application shutdown for named workers to finish.
+///
+/// Returns `true` if all matching workers completed before the deadline.
+#[must_use]
+pub fn wait_for_named_tasks(names: &[&str], timeout: Duration) -> bool {
+    let (lock, changed) = named_task_registry();
+    let now = Instant::now();
+    let deadline = now.checked_add(timeout).unwrap_or(now);
+    let mut active = lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    loop {
+        if names
+            .iter()
+            .all(|name| active.get(name).copied().unwrap_or_default() == 0)
+        {
+            return true;
+        }
+        let now = Instant::now();
+        if now >= deadline {
+            return false;
+        }
+        let remaining = deadline.saturating_duration_since(now);
+        let waited = changed.wait_timeout(active, remaining);
+        match waited {
+            Ok((next, result)) => {
+                active = next;
+                if result.timed_out() {
+                    return names
+                        .iter()
+                        .all(|name| active.get(name).copied().unwrap_or_default() == 0);
+                }
+            }
+            Err(poisoned) => {
+                let (next, _) = poisoned.into_inner();
+                active = next;
+            }
+        }
+    }
+}
+
 type TaskEntry = (CancellationToken, Option<JoinHandle<()>>);
 
 /// Manages background task execution and non-blocking event dispatch.
@@ -183,9 +266,11 @@ impl TaskManager {
         };
 
         let sender = self.event_sender.clone();
+        let named_guard = NamedTaskGuard::enter(name);
         let join_handle = thread::Builder::new()
             .name(format!("sse-worker-{name}"))
             .spawn(move || {
+                let _named_guard = named_guard;
                 let _ = sender.send(TaskEvent::Started(task_id));
                 if task_context.is_cancelled() {
                     let _ = sender.send(TaskEvent::Cancelled(task_id));
