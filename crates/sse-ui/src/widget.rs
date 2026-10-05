@@ -402,6 +402,18 @@ impl Tree {
         self.restyle(id)
     }
 
+    /// Returns the displayed text of a label, input, paragraph, or button.
+    ///
+    /// # Errors
+    /// Returns an error for an unknown widget or a widget without text content.
+    pub fn text(&self, id: WidgetId) -> Result<&str> {
+        self.node(id)?
+            .content
+            .text()
+            .map(|(text, _)| text)
+            .ok_or_else(|| Error::Refused("widget has no text".to_owned()))
+    }
+
     /// Returns the current value of an input widget.
     ///
     /// # Errors
