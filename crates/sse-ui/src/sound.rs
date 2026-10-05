@@ -11,7 +11,7 @@ pub enum Cue { Select, Switch, Decline }
 #[derive(Clone, Debug)]
 struct Clip { samples: Vec<i16>, channels: u8, rate: u32 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct GameUiSounds { select: Option<Clip>, switch: Option<Clip>, decline: Option<Clip> }
 
 impl GameUiSounds {
