@@ -1073,9 +1073,20 @@ impl Shell {
             align_items: Align::Stretch,
             ..Style::default()
         };
-        let host = tree.add(Some(self.content), NodeKind::Column, host_style, Content::Panel, Look::default())?;
+        let host = tree.add(
+            Some(self.content),
+            NodeKind::Column,
+            host_style,
+            Content::Panel,
+            Look::default(),
+        )?;
         *slot = Some(host);
-        let mut cx = Context { tree, proxy: self.proxy.as_ref(), status: None, app: &mut self.app };
+        let mut cx = Context {
+            tree,
+            proxy: self.proxy.as_ref(),
+            status: None,
+            app: &mut self.app,
+        };
         screen.build(&mut cx, host)?;
         cx.tree.set_visible(host, false)?;
         Ok(())
