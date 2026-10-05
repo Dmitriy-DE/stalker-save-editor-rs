@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use sse_codecs::sha256;
 
-use crate::api::{SteamApi, SteamError, WriteFailure};
+use crate::api::{SteamApi, SteamError, WriteFailure, WriteStage};
 
 /// Maximum bytes accepted in a cloud file frame.
 pub const MAX_CLOUD_FILE_BYTES: usize = 64 * 1024 * 1024;
@@ -40,6 +40,8 @@ impl PreparedEdit {
 pub struct WriteReceipt {
     /// Final status.
     pub status: WriteStatus,
+    /// Write phase for an uncertain result; verified writes have no failure stage.
+    pub stage: Option<WriteStage>,
     /// Backup containing the source bytes.
     pub backup_path: PathBuf,
     /// Recovery copy containing intended output bytes.
@@ -105,25 +107,42 @@ impl SteamCloudWriteTransaction {
         write_enabled: bool,
     ) -> Result<WriteReceipt, SteamError> {
         if !write_enabled {
-            return Err(SteamError::new("cloud writing is disabled before I/O"));
+            return Err(SteamError::new("cloud writing is disabled before I/O").at_stage(WriteStage::BeforeWrite));
         }
-        validate_size(prepared.output.len())?;
+        validate_size(prepared.output.len()).map_err(|error| error.at_stage(WriteStage::BeforeWrite))?;
         if sha256::sha256(&prepared.output) != prepared.output_sha256 {
-            return Err(SteamError::new("prepared output hash does not match its bytes"));
+            return Err(
+                SteamError::new("prepared output hash does not match its bytes").at_stage(WriteStage::BeforeWrite)
+            );
         }
-        let remote_name = validate_remote_save_path(app_id, remote_name)?;
-        let fresh = api.read_file(&remote_name)?;
+        let remote_name =
+            validate_remote_save_path(app_id, remote_name).map_err(|error| error.at_stage(WriteStage::BeforeWrite))?;
+        let fresh = api
+            .read_file(&remote_name)
+            .map_err(|error| error.at_stage(WriteStage::BeforeWrite))?;
         if sha256::sha256(&fresh) != prepared.source_sha256 {
-            return Err(SteamError::new("cloud source changed after analysis"));
+            return Err(SteamError::new("cloud source changed after analysis").at_stage(WriteStage::BeforeWrite));
         }
-        validate_size(fresh.len())?;
-        verifier.verify(app_id, &remote_name, &fresh)?;
-        verifier.verify(app_id, &remote_name, &prepared.output)?;
-        let (backup_path, recovery_path) = write_artifacts(artifact_directory, &remote_name, &fresh, &prepared.output)?;
+        validate_size(fresh.len()).map_err(|error| error.at_stage(WriteStage::BeforeWrite))?;
+        verifier
+            .verify(app_id, &remote_name, &fresh)
+            .map_err(|error| error.at_stage(WriteStage::BeforeWrite))?;
+        verifier
+            .verify(app_id, &remote_name, &prepared.output)
+            .map_err(|error| error.at_stage(WriteStage::BeforeWrite))?;
+        let (backup_path, recovery_path) = write_artifacts(artifact_directory, &remote_name, &fresh, &prepared.output)
+            .map_err(|error| error.at_stage(WriteStage::BeforeWrite))?;
 
         match api.write_file(&remote_name, &prepared.output) {
             Err(WriteFailure::NotAttempted(error)) => {
-                return Err(SteamError::new(format!("cloud write was not attempted: {error}")));
+                return Err(SteamError::new(format!("cloud write was not attempted: {error}"))
+                    .at_stage(WriteStage::BeforeWrite));
+            }
+            Err(WriteFailure::Rejected(error)) => {
+                return Err(
+                    SteamError::new(format!("Steam RemoteStorage rejected the write: {error}"))
+                        .at_stage(WriteStage::WriteRejected),
+                );
             }
             Err(WriteFailure::Uncertain(error)) => {
                 return Ok(uncertain_receipt(
@@ -192,6 +211,7 @@ impl SteamCloudWriteTransaction {
         }
         Ok(WriteReceipt {
             status: WriteStatus::Verified,
+            stage: None,
             backup_path,
             recovery_path,
             output_sha256: prepared.output_sha256,
@@ -330,9 +350,84 @@ fn uncertain_receipt(
 ) -> WriteReceipt {
     WriteReceipt {
         status: WriteStatus::Uncertain,
+        stage: Some(WriteStage::AfterWrite),
         backup_path,
         recovery_path,
         output_sha256,
         reason: Some(reason),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        verifier_sealed, PreparedEdit, SaveFormatVerifier, SteamCloudWriteTransaction, SteamError, WriteStatus,
+    };
+    use crate::api::{ScriptedSteamApi, WriteBehavior, WriteStage};
+    use std::path::Path;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct AcceptFixtureBytes;
+
+    impl verifier_sealed::Sealed for AcceptFixtureBytes {}
+
+    impl SaveFormatVerifier for AcceptFixtureBytes {
+        fn verify(&mut self, _app_id: u32, _remote_name: &str, _bytes: &[u8]) -> Result<(), SteamError> {
+            Ok(())
+        }
+    }
+
+    fn artifacts_directory() -> std::path::PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        let directory = std::env::temp_dir().join(format!("sse-steam-stage-{}-{nanos}", std::process::id()));
+        assert!(std::fs::create_dir_all(&directory).is_ok());
+        directory
+    }
+
+    fn upload(api: &mut ScriptedSteamApi, artifacts: &Path) -> Result<super::WriteReceipt, SteamError> {
+        let source = b"source fixture";
+        let prepared = PreparedEdit::new(source, b"edited fixture");
+        let mut verifier = AcceptFixtureBytes;
+        SteamCloudWriteTransaction::upload(
+            api,
+            &mut verifier,
+            4500,
+            "_appdata_/savedgames/slot.sav",
+            &prepared,
+            artifacts,
+            true,
+        )
+    }
+
+    #[test]
+    fn explicit_filewrite_rejection_is_classified_before_uncertain_results() {
+        let artifacts = artifacts_directory();
+        let mut api = ScriptedSteamApi::default();
+        api.files
+            .insert("_appdata_/savedgames/slot.sav".into(), b"source fixture".to_vec());
+        api.write_behavior = WriteBehavior::RejectWrite("FileWrite returned false".to_owned());
+
+        let result = upload(&mut api, &artifacts);
+        assert!(result.is_err_and(|error| error.stage == Some(WriteStage::WriteRejected)));
+        assert_eq!(api.write_count, 0);
+        assert!(std::fs::remove_dir_all(artifacts).is_ok());
+    }
+
+    #[test]
+    fn lost_write_response_keeps_an_after_write_stage() {
+        let artifacts = artifacts_directory();
+        let mut api = ScriptedSteamApi::default();
+        api.files
+            .insert("_appdata_/savedgames/slot.sav".into(), b"source fixture".to_vec());
+        api.write_behavior = WriteBehavior::FailAfterWrite("response lost".to_owned());
+
+        let result = upload(&mut api, &artifacts);
+        assert!(result.is_ok_and(|receipt| {
+            receipt.status == WriteStatus::Uncertain && receipt.stage == Some(WriteStage::AfterWrite)
+        }));
+        assert_eq!(api.write_count, 1);
+        assert!(std::fs::remove_dir_all(artifacts).is_ok());
     }
 }

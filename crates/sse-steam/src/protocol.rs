@@ -5,7 +5,7 @@ use std::ops::Range;
 use std::path::PathBuf;
 
 use crate::achievements::AchievementConfirmation;
-use crate::api::{Achievement, CloudFile, SteamApi, SteamError};
+use crate::api::{Achievement, CloudFile, SteamApi, SteamError, WriteStage};
 use crate::cloud::{PreparedEdit, SteamCloudWriteTransaction, UnavailableSaveFormatVerifier, WriteStatus};
 
 /// Maximum body size accepted by the worker protocol.
@@ -70,6 +70,8 @@ pub enum Request {
 pub struct Response {
     /// False means the request failed; `payload` then contains a UTF-8 error message.
     pub ok: bool,
+    /// Cloud-write transaction phase, when the response belongs to a write failure or uncertainty.
+    pub stage: Option<WriteStage>,
     /// Operation data in the operation-specific binary layout.
     pub payload: Vec<u8>,
 }
@@ -163,7 +165,7 @@ pub fn decode_request(frame: &[u8]) -> Result<Request, ProtocolError> {
 
 /// Encodes a response frame using the same length prefix.
 pub fn encode_response(response: &Response) -> Result<Vec<u8>, ProtocolError> {
-    let body_length = response.payload.len().saturating_add(2);
+    let body_length = response.payload.len().saturating_add(3);
     if body_length > MAX_FRAME_BYTES {
         return Err(ProtocolError::new("worker response exceeds the frame limit"));
     }
@@ -171,6 +173,7 @@ pub fn encode_response(response: &Response) -> Result<Vec<u8>, ProtocolError> {
     frame.extend_from_slice(&[0_u8; 4]);
     frame.push(PROTOCOL_VERSION);
     frame.push(u8::from(response.ok));
+    frame.push(encode_stage(response.stage));
     frame.extend_from_slice(&response.payload);
     finish_frame(frame, "worker response")
 }
@@ -182,17 +185,31 @@ pub fn decode_response_body(body: &[u8]) -> Result<Response, ProtocolError> {
         return Err(ProtocolError::new("unsupported Steam worker response version"));
     }
     let ok = cursor.boolean()?;
+    let stage = decode_stage(cursor.u8()?)?;
     let remaining = cursor.remaining();
     let payload = cursor.take(remaining)?.to_vec();
-    Ok(Response { ok, payload })
+    Ok(Response { ok, stage, payload })
 }
 
 /// Decodes one request, runs it through the API and returns an operation-specific response.
 pub fn handle_request(api: &mut dyn SteamApi, request: Request) -> Response {
+    let is_write = matches!(&request, Request::Write { .. });
     match handle_request_inner(api, request) {
-        Ok(payload) => Response { ok: true, payload },
+        Ok(payload) => {
+            let stage = if is_write && payload.first() == Some(&1) {
+                Some(WriteStage::AfterWrite)
+            } else {
+                None
+            };
+            Response {
+                ok: true,
+                stage,
+                payload,
+            }
+        }
         Err(error) => Response {
             ok: false,
+            stage: error.stage,
             payload: error.to_string().into_bytes(),
         },
     }
@@ -207,7 +224,7 @@ pub fn serve_one(api: &mut dyn SteamApi, input: &mut impl Read, output: &mut imp
 }
 
 fn write_response(output: &mut impl Write, response: &Response) -> Result<(), ProtocolError> {
-    let body_length = response.payload.len().saturating_add(2);
+    let body_length = response.payload.len().saturating_add(3);
     if body_length > MAX_FRAME_BYTES {
         return Err(ProtocolError::new("worker response exceeds the frame limit"));
     }
@@ -216,11 +233,30 @@ fn write_response(output: &mut impl Write, response: &Response) -> Result<(), Pr
         .write_all(&length.to_le_bytes())
         .map_err(|error| ProtocolError::new(error.to_string()))?;
     output
-        .write_all(&[PROTOCOL_VERSION, u8::from(response.ok)])
+        .write_all(&[PROTOCOL_VERSION, u8::from(response.ok), encode_stage(response.stage)])
         .map_err(|error| ProtocolError::new(error.to_string()))?;
     output
         .write_all(&response.payload)
         .map_err(|error| ProtocolError::new(error.to_string()))
+}
+
+fn encode_stage(stage: Option<WriteStage>) -> u8 {
+    match stage {
+        None => 0,
+        Some(WriteStage::BeforeWrite) => 1,
+        Some(WriteStage::WriteRejected) => 2,
+        Some(WriteStage::AfterWrite) => 3,
+    }
+}
+
+fn decode_stage(value: u8) -> Result<Option<WriteStage>, ProtocolError> {
+    match value {
+        0 => Ok(None),
+        1 => Ok(Some(WriteStage::BeforeWrite)),
+        2 => Ok(Some(WriteStage::WriteRejected)),
+        3 => Ok(Some(WriteStage::AfterWrite)),
+        _ => Err(ProtocolError::new("unknown Steam write stage")),
+    }
 }
 
 fn finish_frame(mut frame: Vec<u8>, label: &str) -> Result<Vec<u8>, ProtocolError> {
@@ -300,8 +336,7 @@ fn handle_request_inner(api: &mut dyn SteamApi, request: Request) -> Result<Vec<
                 &prepared,
                 &artifact_directory,
                 true,
-            )
-            .map_err(|error| SteamError::new(error.to_string()))?;
+            )?;
             let mut payload = vec![match receipt.status {
                 WriteStatus::Verified => 0,
                 WriteStatus::Uncertain => 1,

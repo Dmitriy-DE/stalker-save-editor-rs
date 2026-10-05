@@ -85,7 +85,7 @@ fn installed_version(root: &Path) -> Option<String> {
 }
 
 fn worker(request: &Request) -> std::result::Result<Vec<u8>, String> {
-    let Response { ok, payload } =
+    let Response { ok, payload, .. } =
         sse_steam::worker::run_sibling_worker(request, TIMEOUT).map_err(|e| e.to_string())?;
     if ok {
         Ok(payload)
@@ -1225,7 +1225,7 @@ impl Cloud {
                     output,
                 };
                 match sse_steam::worker::run_sibling_worker(&request, TIMEOUT) {
-                    Ok(Response { ok: true, payload }) => match payload.first().copied() {
+                    Ok(Response { ok: true, payload, .. }) => match payload.first().copied() {
                         Some(0) => Ok(format!("Записано и проверено: {}", intent.remote)),
                         Some(1) => Ok(format!(
                             "Результат записи не подтверждён (повтор не выполняется): {}",
@@ -1236,7 +1236,7 @@ impl Cloud {
                             intent.remote
                         )),
                     },
-                    Ok(Response { ok: false, payload }) => Ok(format!(
+                    Ok(Response { ok: false, payload, .. }) => Ok(format!(
                         "Запись отменена: {}",
                         String::from_utf8(payload).unwrap_or_else(|_| "Steam отклонил запись".to_owned())
                     )),

@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use sse_steam::achievements::{AchievementConfirmation, AchievementService};
-use sse_steam::api::{CloudFile, ScriptedSteamApi, SteamApi};
+use sse_steam::api::{CloudFile, ScriptedSteamApi, SteamApi, WriteStage};
 use sse_steam::autocloud::AutoCloudSteamApi;
 use sse_steam::cloud::{
     validate_remote_save_path, write_auto_cloud, PreparedEdit, SteamCloudWriteTransaction,
@@ -16,7 +16,8 @@ use sse_steam::discovery::{
     STALKER_2_APP_ID,
 };
 use sse_steam::protocol::{
-    decode_request, decode_response_body, encode_frame, handle_request, read_frame, serve_one, Request, MAX_FRAME_BYTES,
+    decode_request, decode_response_body, encode_frame, encode_response, handle_request, read_frame, serve_one,
+    Request, Response, MAX_FRAME_BYTES,
 };
 use sse_steam::worker::{classify_worker_args, WorkerArgs};
 
@@ -313,7 +314,36 @@ fn worker_write_fails_closed_without_a_release_format_reader() {
         },
     );
     assert!(!response.ok);
+    assert_eq!(response.stage, Some(WriteStage::BeforeWrite));
     assert_eq!(api.write_count, 0);
+}
+
+#[test]
+fn worker_response_preserves_the_cloud_write_stage() {
+    for stage in [
+        None,
+        Some(WriteStage::BeforeWrite),
+        Some(WriteStage::WriteRejected),
+        Some(WriteStage::AfterWrite),
+    ] {
+        let response = Response {
+            ok: stage.is_none(),
+            stage,
+            payload: b"worker result".to_vec(),
+        };
+        let encoded = encode_response(&response);
+        assert!(encoded.is_ok());
+        let Ok(encoded) = encoded else { return };
+        let decoded_frame = read_frame(&mut encoded.as_slice());
+        assert!(decoded_frame.is_ok());
+        let Ok(decoded_frame) = decoded_frame else { return };
+        assert_eq!(decode_response_body(&decoded_frame), Ok(response));
+    }
+}
+
+#[test]
+fn worker_response_rejects_unknown_write_stage_values() {
+    assert!(decode_response_body(&[1, 1, 4]).is_err());
 }
 
 #[test]

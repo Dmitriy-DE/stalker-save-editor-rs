@@ -8,6 +8,8 @@ use std::fmt::{Display, Formatter};
 pub struct SteamError {
     /// Human-readable operation failure.
     pub message: String,
+    /// Transaction phase when the error came from a cloud write.
+    pub stage: Option<WriteStage>,
 }
 
 impl SteamError {
@@ -16,7 +18,15 @@ impl SteamError {
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
+            stage: None,
         }
+    }
+
+    /// Marks this error with the cloud-write phase where it occurred.
+    #[must_use]
+    pub fn at_stage(mut self, stage: WriteStage) -> Self {
+        self.stage = Some(stage);
+        self
     }
 }
 
@@ -27,6 +37,29 @@ impl Display for SteamError {
 }
 
 impl std::error::Error for SteamError {}
+
+/// Transaction phase used to distinguish a rejected request from an uncertain write.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WriteStage {
+    /// Validation or setup failed before Steam was asked to write.
+    BeforeWrite,
+    /// Steam's `FileWrite` call explicitly returned false.
+    WriteRejected,
+    /// Steam accepted the request, but persistence or read-back could not be confirmed.
+    AfterWrite,
+}
+
+impl WriteStage {
+    /// Returns the stable worker-protocol spelling required by the Steam contract.
+    #[must_use]
+    pub const fn as_protocol_value(self) -> &'static str {
+        match self {
+            Self::BeforeWrite => "before_write",
+            Self::WriteRejected => "write_rejected",
+            Self::AfterWrite => "after_write",
+        }
+    }
+}
 
 /// A Steam Remote Storage entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,8 +94,22 @@ pub struct Achievement {
 pub enum WriteFailure {
     /// The operation was rejected before a write request was issued.
     NotAttempted(SteamError),
+    /// Steam explicitly rejected the write request.
+    Rejected(SteamError),
     /// The write request was issued but its result could not be established.
     Uncertain(SteamError),
+}
+
+impl WriteFailure {
+    /// Returns the phase corresponding to this low-level write result.
+    #[must_use]
+    pub const fn stage(&self) -> WriteStage {
+        match self {
+            Self::NotAttempted(_) => WriteStage::BeforeWrite,
+            Self::Rejected(_) => WriteStage::WriteRejected,
+            Self::Uncertain(_) => WriteStage::AfterWrite,
+        }
+    }
 }
 
 /// Operations required by cloud and achievement services.
@@ -114,6 +161,8 @@ pub enum WriteBehavior {
     Succeed,
     /// Fail before any write request is issued.
     FailBeforeWrite(String),
+    /// Simulate Steam returning false from `FileWrite`.
+    RejectWrite(String),
     /// Store the bytes, then simulate a lost response.
     FailAfterWrite(String),
 }
@@ -154,6 +203,7 @@ impl SteamApi for ScriptedSteamApi {
     fn write_file(&mut self, name: &str, data: &[u8]) -> Result<(), WriteFailure> {
         match self.write_behavior.clone() {
             WriteBehavior::FailBeforeWrite(message) => Err(WriteFailure::NotAttempted(SteamError::new(message))),
+            WriteBehavior::RejectWrite(message) => Err(WriteFailure::Rejected(SteamError::new(message))),
             WriteBehavior::FailAfterWrite(message) => {
                 self.files.insert(name.to_owned(), data.to_vec());
                 self.write_count = self.write_count.saturating_add(1);
@@ -208,5 +258,33 @@ impl SteamApi for ScriptedSteamApi {
 
     fn store_stats(&mut self) -> Result<(), SteamError> {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SteamError, WriteFailure, WriteStage};
+
+    #[test]
+    fn write_failure_stage_names_match_worker_contract() {
+        assert_eq!(WriteStage::BeforeWrite.as_protocol_value(), "before_write");
+        assert_eq!(WriteStage::WriteRejected.as_protocol_value(), "write_rejected");
+        assert_eq!(WriteStage::AfterWrite.as_protocol_value(), "after_write");
+    }
+
+    #[test]
+    fn rejected_filewrite_is_distinct_from_an_unattempted_or_uncertain_write() {
+        assert_eq!(
+            WriteFailure::NotAttempted(SteamError::new("validation failed")).stage(),
+            WriteStage::BeforeWrite
+        );
+        assert_eq!(
+            WriteFailure::Rejected(SteamError::new("FileWrite returned false")).stage(),
+            WriteStage::WriteRejected
+        );
+        assert_eq!(
+            WriteFailure::Uncertain(SteamError::new("response lost")).stage(),
+            WriteStage::AfterWrite
+        );
     }
 }
