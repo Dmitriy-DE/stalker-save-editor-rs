@@ -10,6 +10,7 @@ use crate::glyphs::{Face, TextStyle};
 use crate::layout::{GridPlacement, NodeKind, Size, Style, Track};
 use crate::widget::{Content, Look, TextAlign, WidgetId};
 use sse_core::Result;
+use std::path::PathBuf;
 
 /// Screens of this package.
 #[must_use]
@@ -479,6 +480,10 @@ const LANGUAGE_NAMES: [&str; 15] = [
 /// Result of the background check started by the settings screen.
 struct Checked(String);
 
+struct DiagnosticReportFinished {
+    result: std::result::Result<PathBuf, String>,
+}
+
 /// Settings screen.
 #[derive(Default)]
 pub struct Settings {
@@ -492,9 +497,14 @@ pub struct Settings {
     send_report_button: Option<WidgetId>,
     support_check_button: Option<WidgetId>,
     support_save_button: Option<WidgetId>,
+    game_logs_button: Option<WidgetId>,
+    game_logs_confirmation: Option<WidgetId>,
+    confirm_game_logs: Option<WidgetId>,
+    cancel_game_logs: Option<WidgetId>,
     support_dismiss_button: Option<WidgetId>,
     support_result: Option<WidgetId>,
-    environment_report: Option<String>,
+    include_game_logs: bool,
+    report_pending: bool,
     backup_input: Option<WidgetId>,
     scale_value: Option<WidgetId>,
     scale_button: Option<WidgetId>,
@@ -784,9 +794,22 @@ impl Screen for Settings {
         self.support_save_button = Some(style::button(
             cx.tree,
             support_actions,
-            "Сохранить отчёт…",
+            crate::strings::t("Сохранить отчёт…"),
             Button::Secondary,
         )?);
+        let game_logs_row = style::row(cx.tree, support)?;
+        self.game_logs_button = Some(style::button(
+            cx.tree,
+            game_logs_row,
+            crate::strings::t("Игровые логи: ВЫКЛ"),
+            Button::Secondary,
+        )?);
+        style::label(
+            cx.tree,
+            game_logs_row,
+            crate::strings::t("Отчёт сохраняется локально; ничего не отправляется."),
+            Text::Note,
+        )?;
         if sse_app::diagnostics::pending_crash().is_some() {
             self.support_dismiss_button = Some(style::button(
                 cx.tree,
@@ -802,6 +825,38 @@ impl Screen for Settings {
             Text::Note,
         )?);
         self.section_panels.push(support);
+
+        let dialog_host = cx.tree.overlay_host().unwrap_or(host);
+        let game_logs_confirmation = style::card(cx.tree, dialog_host)?;
+        self.game_logs_confirmation = Some(game_logs_confirmation);
+        style::label(
+            cx.tree,
+            game_logs_confirmation,
+            crate::strings::t("ЛОГИ ИГРЫ В ОТЧЁТЕ"),
+            Text::Heading,
+        )?;
+        style::label(
+            cx.tree,
+            game_logs_confirmation,
+            crate::strings::t(
+                "Логи игры могут содержать имя пользователя и список модов. Добавить их только в локальный ZIP-отчёт?",
+            ),
+            Text::Body,
+        )?;
+        let game_logs_actions = style::row(cx.tree, game_logs_confirmation)?;
+        self.confirm_game_logs = Some(style::button(
+            cx.tree,
+            game_logs_actions,
+            crate::strings::t("Добавить"),
+            Button::Primary,
+        )?);
+        self.cancel_game_logs = Some(style::button(
+            cx.tree,
+            game_logs_actions,
+            crate::strings::t("Отмена"),
+            Button::Secondary,
+        )?);
+        cx.tree.set_visible(game_logs_confirmation, false)?;
 
         let reports = style::card(cx.tree, content)?;
         style::label(cx.tree, reports, "ОТЧЁТЫ ОБ ОШИБКАХ", Text::Heading)?;
@@ -865,6 +920,39 @@ impl Screen for Settings {
         clicked: Option<WidgetId>,
     ) -> Result<()> {
         self.sync_backup_directory(cx.tree);
+        if clicked.is_some() && clicked == self.game_logs_button {
+            if self.include_game_logs {
+                self.include_game_logs = false;
+                if let Some(button) = self.game_logs_button {
+                    cx.tree.set_text(button, crate::strings::t("Игровые логи: ВЫКЛ"))?;
+                }
+            } else if let Some(dialog) = self.game_logs_confirmation {
+                cx.tree.open_dialog(dialog)?;
+            }
+            return Ok(());
+        }
+        if clicked.is_some() && clicked == self.cancel_game_logs {
+            if self
+                .game_logs_confirmation
+                .is_some_and(|dialog| cx.tree.dialog() == Some(dialog))
+            {
+                cx.tree.close_dialog()?;
+            }
+            return Ok(());
+        }
+        if clicked.is_some() && clicked == self.confirm_game_logs {
+            if self
+                .game_logs_confirmation
+                .is_some_and(|dialog| cx.tree.dialog() == Some(dialog))
+            {
+                cx.tree.close_dialog()?;
+            }
+            self.include_game_logs = true;
+            if let Some(button) = self.game_logs_button {
+                cx.tree.set_text(button, crate::strings::t("Игровые логи: ВКЛ"))?;
+            }
+            return Ok(());
+        }
         if clicked.is_some() {
             if let Some(index) = self.section_buttons.iter().position(|id| Some(*id) == clicked) {
                 self.selected_section = index;
@@ -899,18 +987,42 @@ impl Screen for Settings {
             if let Some(result) = self.support_result {
                 cx.tree.set_text(result, &report.replace('\n', " · "))?;
             }
-            self.environment_report = Some(report);
             cx.status = Some("Проверка окружения завершена.".to_owned());
         }
         if clicked.is_some() && clicked == self.support_save_button {
-            let path = sse_app::paths::default_data_directory().join("diagnostics-report.txt.gz");
-            match sse_app::diagnostics::save_diagnostics_bundle(&path, self.environment_report.as_deref()) {
-                Ok(()) => {
-                    cx.status = Some(format!("Отчёт сохранён: {}", path.display()));
+            if self.report_pending {
+                cx.status = Some(crate::strings::t("Отчёт уже собирается.").to_owned());
+            } else if let Some(proxy) = cx.proxy.cloned() {
+                self.report_pending = true;
+                if let Some(button) = self.support_save_button {
+                    cx.tree.set_text(button, crate::strings::t("Собираю отчёт в фоне…"))?;
                 }
-                Err(error) => {
-                    cx.status = Some(format!("Не удалось сохранить отчёт: {error}"));
-                }
+                let path = sse_app::paths::default_data_directory().join("diagnostics-report.zip");
+                let worker_path = path.clone();
+                let include_game_logs = self.include_game_logs;
+                sse_app::tasks::spawn_named_detached("diagnostics-background", move || {
+                    let games = crate::screens::games::discover_game_installations()
+                        .into_iter()
+                        .map(|installation| sse_app::diagnostics::DiagnosticGame {
+                            title: installation.title,
+                            install_directory: installation.directory,
+                            is_stalker2: installation.target == crate::screens::games::GameTarget::Stalker2,
+                        })
+                        .collect::<Vec<_>>();
+                    let result = sse_app::diagnostics::save_diagnostics_zip(&worker_path, &games, include_game_logs)
+                        .map(|()| worker_path.clone())
+                        .map_err(|error| {
+                            sse_app::diagnostics::error(&format!("diagnostic report: {error}"));
+                            error.to_string()
+                        });
+                    proxy.send(AppMessage::ToScreen(
+                        ScreenId::Settings,
+                        Box::new(DiagnosticReportFinished { result }),
+                    ));
+                });
+                cx.status = Some(crate::strings::t("Собираю отчёт в фоне…").to_owned());
+            } else {
+                cx.status = Some(crate::strings::t("Фоновая очередь недоступна.").to_owned());
             }
         }
         if clicked.is_some() && clicked == self.support_dismiss_button {
@@ -1036,6 +1148,16 @@ impl Screen for Settings {
             }
         }
         if let Message::User(AppMessage::ToScreen(_, payload)) = message {
+            if let Some(DiagnosticReportFinished { result }) = payload.downcast_ref::<DiagnosticReportFinished>() {
+                self.report_pending = false;
+                if let Some(button) = self.support_save_button {
+                    cx.tree.set_text(button, crate::strings::t("Сохранить отчёт…"))?;
+                }
+                cx.status = Some(match result {
+                    Ok(path) => format!("{}{}", crate::strings::t("Отчёт сохранён: "), path.display()),
+                    Err(error) => format!("{}{error}", crate::strings::t("Не удалось сохранить отчёт: ")),
+                });
+            }
             if let (Some(Checked(text)), Some(result)) = (payload.downcast_ref::<Checked>(), self.check_result) {
                 cx.tree.set_text(result, text)?;
             }
@@ -1078,6 +1200,67 @@ mod tests {
         settings.sync_backup_directory(&tree);
 
         assert_eq!(workspace.backup_directory(), PathBuf::from("custom-backups"));
+        Ok(())
+    }
+
+    #[test]
+    fn game_log_collection_requires_a_warning_confirmation() -> sse_core::Result<()> {
+        use crate::screens::{AppMessage, Context, Screen};
+        use crate::widget::Content;
+        use crate::{event_loop::Message, layout::NodeKind};
+
+        assert_eq!(crate::strings::t_in("en", "Игровые логи: ВЫКЛ"), "Game logs: OFF");
+        assert_eq!(
+            crate::strings::t_in("de", "Отчёт сохраняется локально; ничего не отправляется."),
+            "Der Bericht wird lokal gespeichert; es wird nichts gesendet."
+        );
+
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let toggle = crate::screens::style::button(
+            &mut tree,
+            host,
+            "Игровые логи: ВЫКЛ",
+            crate::screens::style::Button::Secondary,
+        )?;
+        let dialog = crate::screens::style::card(&mut tree, host)?;
+        let confirm =
+            crate::screens::style::button(&mut tree, dialog, "Добавить", crate::screens::style::Button::Primary)?;
+        let cancel =
+            crate::screens::style::button(&mut tree, dialog, "Отмена", crate::screens::style::Button::Secondary)?;
+        tree.set_visible(dialog, false)?;
+        let mut screen = Settings {
+            game_logs_button: Some(toggle),
+            game_logs_confirmation: Some(dialog),
+            confirm_game_logs: Some(confirm),
+            cancel_game_logs: Some(cancel),
+            ..Settings::default()
+        };
+        let mut app = sse_app::AppState::new();
+        let message = Message::User(AppMessage::Tick(0));
+        let mut context = Context {
+            tree: &mut tree,
+            proxy: None,
+            status: None,
+            app: &mut app,
+        };
+
+        screen.message(&mut context, &message, Some(toggle))?;
+        assert!(context.tree.dialog_open());
+        assert!(!screen.include_game_logs);
+        screen.message(&mut context, &message, Some(cancel))?;
+        assert!(!context.tree.dialog_open());
+        assert!(!screen.include_game_logs);
+        screen.message(&mut context, &message, Some(toggle))?;
+        screen.message(&mut context, &message, Some(confirm))?;
+        assert!(!context.tree.dialog_open());
+        assert!(screen.include_game_logs);
         Ok(())
     }
 }

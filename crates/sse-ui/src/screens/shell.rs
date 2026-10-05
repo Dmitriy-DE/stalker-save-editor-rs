@@ -1201,13 +1201,13 @@ impl Shell {
             journal.is_some_and(sse_storage::drafts::DraftJournal::can_redo),
         )?;
         tree.set_enabled(self.reset, has_changes)?;
-        let save_busy = self.library_workspace.is_saving() || sse_app::tasks::named_task_active("save-restore");
+        let save_busy = self.library_workspace.is_saving() || self.library_workspace.is_restoring();
         tree.set_enabled(self.save, eligibility.can_save && !save_busy)?;
         Ok(())
     }
 
     fn dispatch_editor_action(&mut self, tree: &mut Tree, action: EditorAction) -> Result<()> {
-        if action == EditorAction::Save && sse_app::tasks::named_task_active("save-restore") {
+        if action == EditorAction::Save && self.library_workspace.is_restoring() {
             tree.set_text(
                 self.status,
                 "Сохранение недоступно: дождитесь завершения восстановления сейва.",
@@ -1242,27 +1242,45 @@ impl Shell {
     }
 
     fn handle(&mut self, tree: &mut Tree, message: &Message<AppMessage>, clicked: Option<WidgetId>) -> Result<Flow> {
-        match message {
-            Message::Window(WindowEvent::CloseRequested) if self.library_workspace.is_saving() => {
-                tree.set_text(self.status, "Дождитесь завершения сохранения, чтобы закрыть окно.")?;
-                self.sync_saving_overlay(tree)?;
-                return Ok(Flow::Continue);
-            }
-            Message::Window(WindowEvent::CloseRequested) if sse_app::tasks::named_task_active("save-restore") => {
-                tree.set_text(self.status, "Дождитесь завершения восстановления, чтобы закрыть окно.")?;
-                return Ok(Flow::Continue);
-            }
-            Message::Window(WindowEvent::CloseRequested)
-                if sse_app::tasks::named_task_active("game-background")
-                    || sse_app::tasks::named_task_active("companion-background") =>
+        let save_session = self.library_workspace.session();
+        if save_session.deferred_close_ready() {
+            if sse_app::tasks::named_task_active("game-background")
+                || sse_app::tasks::named_task_active("companion-background")
             {
                 tree.set_text(
                     self.status,
                     "Дождитесь завершения фоновой операции с игрой, чтобы закрыть окно.",
                 )?;
+                self.sync_saving_overlay(tree)?;
                 return Ok(Flow::Continue);
             }
+            let _ =
+                sse_app::tasks::wait_for_named_tasks(&["draft-save", "draft-reset"], std::time::Duration::from_secs(2));
+            if save_session.take_deferred_close_ready() {
+                return Ok(Flow::Exit);
+            }
+        }
+        match message {
             Message::Window(WindowEvent::CloseRequested) => {
+                if save_session.request_close() == sse_app::CloseDecision::Deferred {
+                    let text = if save_session.is_restoring() {
+                        "Дождитесь завершения восстановления, чтобы закрыть окно."
+                    } else {
+                        "Дождитесь завершения сохранения, чтобы закрыть окно."
+                    };
+                    tree.set_text(self.status, text)?;
+                    self.sync_saving_overlay(tree)?;
+                    return Ok(Flow::Continue);
+                }
+                if sse_app::tasks::named_task_active("game-background")
+                    || sse_app::tasks::named_task_active("companion-background")
+                {
+                    tree.set_text(
+                        self.status,
+                        "Дождитесь завершения фоновой операции с игрой, чтобы закрыть окно.",
+                    )?;
+                    return Ok(Flow::Continue);
+                }
                 let _ = sse_app::tasks::wait_for_named_tasks(
                     &["draft-save", "draft-reset"],
                     std::time::Duration::from_secs(2),
@@ -1270,7 +1288,7 @@ impl Shell {
                 return Ok(Flow::Exit);
             }
             Message::Window(WindowEvent::Disconnected) => {
-                wait_for_save_io();
+                wait_for_save_io(&save_session);
                 return Ok(Flow::Exit);
             }
             _ => {}
@@ -1688,11 +1706,8 @@ impl Shell {
     }
 }
 
-fn wait_for_save_io() {
-    const SAVE_TASKS: [&str; 2] = ["save-write", "save-restore"];
-    while SAVE_TASKS.iter().any(|name| sse_app::tasks::named_task_active(name)) {
-        let _ = sse_app::tasks::wait_for_named_tasks(&SAVE_TASKS, std::time::Duration::from_secs(1));
-    }
+fn wait_for_save_io(session: &sse_app::SaveSession) {
+    session.wait_until_idle();
 }
 
 impl App<AppMessage> for Shell {
@@ -1786,15 +1801,15 @@ mod tests {
         let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
         let shell = Shell::build(&mut tree, None)?;
 
-        let request = shell
-            .library_workspace
-            .begin_saving()
+        let session = shell.library_workspace.session();
+        let operation = session
+            .begin_save(std::path::Path::new("fixture.sav"))
             .ok_or_else(|| sse_core::Error::Refused("test save did not start".to_owned()))?;
         shell.sync_saving_overlay(&mut tree)?;
         assert!(tree.dialog_open());
         assert_eq!(tree.dialog(), Some(shell.saving_dialog));
 
-        assert!(shell.library_workspace.finish_saving(request));
+        drop(operation);
         shell.sync_saving_overlay(&mut tree)?;
         assert!(!tree.dialog_open());
         Ok(())
@@ -1806,25 +1821,52 @@ mod tests {
         let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
         let mut shell = Shell::build(&mut tree, None)?;
         let close = Message::Window(WindowEvent::CloseRequested);
-        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
-        let tasks = sse_app::TaskManager::new();
-        let _restore = tasks.spawn("save-restore", move |_context| {
-            release_rx.recv().map_err(|error| error.to_string())?;
-            Ok(())
-        });
+        let session = shell.library_workspace.session();
+        let operation = session
+            .begin_restore(std::path::Path::new("fixture.sav"))
+            .ok_or_else(|| sse_core::Error::Refused("test restore did not start".to_owned()))?;
 
         assert_eq!(shell.handle(&mut tree, &close, None)?, Flow::Continue);
-        release_tx
+        drop(operation);
+        let tick = Message::User(super::AppMessage::Tick(1));
+        assert_eq!(shell.handle(&mut tree, &tick, None)?, Flow::Exit);
+        Ok(())
+    }
+
+    #[test]
+    fn deferred_close_keeps_game_operation_blocker_until_it_finishes() -> sse_core::Result<()> {
+        let _guard = close_task_test_guard();
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut shell = Shell::build(&mut tree, None)?;
+        let session = shell.library_workspace.session();
+        let operation = session
+            .begin_restore(std::path::Path::new("fixture.sav"))
+            .ok_or_else(|| sse_core::Error::Refused("test restore did not start".to_owned()))?;
+        let (started_sender, started_receiver) = std::sync::mpsc::channel();
+        let (release_sender, release_receiver) = std::sync::mpsc::channel();
+        sse_app::tasks::spawn_named_detached("game-background", move || {
+            let _ = started_sender.send(());
+            let _ = release_receiver.recv();
+        });
+        started_receiver
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .map_err(|error| sse_core::Error::System(error.to_string()))?;
+
+        let close = Message::Window(WindowEvent::CloseRequested);
+        assert_eq!(shell.handle(&mut tree, &close, None)?, Flow::Continue);
+        drop(operation);
+        let tick = Message::User(super::AppMessage::Tick(1));
+        let while_game_operation_active = shell.handle(&mut tree, &tick, None)?;
+        release_sender
             .send(())
             .map_err(|error| sse_core::Error::System(error.to_string()))?;
-        for _ in 0..100 {
-            if !sse_app::tasks::named_task_active("save-restore") {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(2));
-        }
-        assert!(!sse_app::tasks::named_task_active("save-restore"));
-        assert_eq!(shell.handle(&mut tree, &close, None)?, Flow::Exit);
+        assert!(sse_app::tasks::wait_for_named_tasks(
+            &["game-background"],
+            std::time::Duration::from_secs(1)
+        ));
+
+        assert_eq!(while_game_operation_active, Flow::Continue);
+        assert_eq!(shell.handle(&mut tree, &tick, None)?, Flow::Exit);
         Ok(())
     }
 
@@ -1835,13 +1877,15 @@ mod tests {
         let mut shell = Shell::build(&mut tree, None)?;
         let close = Message::Window(WindowEvent::CloseRequested);
 
-        let request = shell
+        let operation = shell
             .library_workspace
-            .begin_saving()
+            .session()
+            .begin_save(std::path::Path::new("fixture.sav"))
             .ok_or_else(|| sse_core::Error::Refused("test save did not start".to_owned()))?;
         assert_eq!(shell.handle(&mut tree, &close, None)?, Flow::Continue);
-        assert!(shell.library_workspace.finish_saving(request));
-        assert_eq!(shell.handle(&mut tree, &close, None)?, Flow::Exit);
+        drop(operation);
+        let tick = Message::User(super::AppMessage::Tick(1));
+        assert_eq!(shell.handle(&mut tree, &tick, None)?, Flow::Exit);
         Ok(())
     }
 
@@ -1850,9 +1894,10 @@ mod tests {
         let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
         let mut shell = Shell::build(&mut tree, None)?;
         let current = shell.current();
-        let request = shell
+        let operation = shell
             .library_workspace
-            .begin_saving()
+            .session()
+            .begin_save(std::path::Path::new("fixture.sav"))
             .ok_or_else(|| sse_core::Error::Refused("test save did not start".to_owned()))?;
 
         shell.open(&mut tree, ScreenId::Inventory)?;
@@ -1860,7 +1905,7 @@ mod tests {
         assert!(!shell.open_save(&mut tree, std::path::Path::new("other-save.sav"))?);
         assert_eq!(shell.current(), current);
 
-        assert!(shell.library_workspace.finish_saving(request));
+        drop(operation);
         Ok(())
     }
 
@@ -1935,21 +1980,20 @@ mod tests {
     }
 
     #[test]
-    fn disconnect_waits_until_save_write_finishes() {
+    fn disconnect_waits_until_save_write_finishes() -> sse_core::Result<()> {
         let _guard = close_task_test_guard();
-        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
-        sse_app::tasks::spawn_named_detached("save-write", move || {
-            let _ = release_rx.recv();
-        });
-        let releaser = std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(20));
-            let _ = release_tx.send(());
-        });
-
-        wait_for_save_io();
-
-        assert!(!sse_app::tasks::named_task_active("save-write"));
-        let _ = releaser.join();
+        let session = sse_app::SaveSession::new();
+        let operation = session
+            .begin_save(std::path::Path::new("fixture.sav"))
+            .ok_or_else(|| sse_core::Error::Refused("save lease should start".to_owned()))?;
+        let waiter_session = session.clone();
+        let waiter = std::thread::spawn(move || wait_for_save_io(&waiter_session));
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        assert!(session.is_busy());
+        drop(operation);
+        assert!(waiter.join().is_ok());
+        assert!(!session.is_busy());
+        Ok(())
     }
 
     #[test]
@@ -1997,12 +2041,11 @@ mod tests {
         let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
         let mut shell = Shell::build(&mut tree, None)?;
         let initial = shell.current();
-        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
-        let tasks = sse_app::TaskManager::new();
-        let _restore = tasks.spawn("save-restore", move |_context| {
-            release_rx.recv().map_err(|error| error.to_string())?;
-            Ok(())
-        });
+        let operation = shell
+            .library_workspace
+            .session()
+            .begin_restore(std::path::Path::new("fixture.sav"))
+            .ok_or_else(|| sse_core::Error::Refused("test restore did not start".to_owned()))?;
         let save = Message::Window(WindowEvent::Key {
             pressed: true,
             keysym: u32::from('s'),
@@ -2013,16 +2056,8 @@ mod tests {
 
         assert!(matches!(shell.handle(&mut tree, &save, None)?, Flow::Continue));
         assert_eq!(shell.current(), initial);
-
-        release_tx
-            .send(())
-            .map_err(|error| sse_core::Error::System(error.to_string()))?;
-        for _ in 0..100 {
-            if !sse_app::tasks::named_task_active("save-restore") {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(2));
-        }
+        drop(operation);
+        assert!(!shell.library_workspace.is_restoring());
         Ok(())
     }
 

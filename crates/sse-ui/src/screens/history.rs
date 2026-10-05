@@ -60,28 +60,6 @@ enum RestoreMode {
     InPlace,
 }
 
-struct RestoreRequestGuard {
-    workspace: Workspace,
-    request_id: u64,
-}
-
-struct SaveRequestGuard {
-    workspace: Workspace,
-    request_id: u64,
-}
-
-impl Drop for SaveRequestGuard {
-    fn drop(&mut self) {
-        let _ = self.workspace.finish_saving(self.request_id);
-    }
-}
-
-impl Drop for RestoreRequestGuard {
-    fn drop(&mut self) {
-        let _ = self.workspace.finish_restoring(self.request_id);
-    }
-}
-
 #[derive(Debug)]
 enum RestoredSave {
     Copy(PathBuf),
@@ -111,8 +89,14 @@ enum HistoryResult {
         request_id: u64,
         result: std::result::Result<(PathBuf, DiagnosisReport), String>,
     },
-    QuestRepaired(std::result::Result<QuestRepairCompletion, String>),
-    Restored(std::result::Result<RestoredSave, String>),
+    QuestRepaired {
+        request_id: sse_app::SaveOperationId,
+        result: std::result::Result<QuestRepairCompletion, String>,
+    },
+    Restored {
+        request_id: Option<sse_app::SaveOperationId>,
+        result: std::result::Result<RestoredSave, String>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -224,9 +208,9 @@ impl HistoryScreen {
         }
     }
 
-    fn request_refresh(&self, proxy: Option<crate::event_loop::Proxy<AppMessage>>) {
+    fn request_refresh(&self, proxy: Option<crate::event_loop::Proxy<AppMessage>>) -> Result<()> {
         let Some(proxy) = proxy else {
-            return;
+            return Ok(());
         };
         let id = self.id;
         let backup_directory = self.workspace.backup_directory();
@@ -244,12 +228,17 @@ impl HistoryScreen {
                 _ => return,
             };
             proxy.send(AppMessage::ToScreen(id, Box::new(result)));
-        });
+        })
     }
 
-    fn start_compare(&self, first: PathBuf, second: PathBuf, proxy: Option<crate::event_loop::Proxy<AppMessage>>) {
+    fn start_compare(
+        &self,
+        first: PathBuf,
+        second: PathBuf,
+        proxy: Option<crate::event_loop::Proxy<AppMessage>>,
+    ) -> Result<()> {
         let Some(proxy) = proxy else {
-            return;
+            return Ok(());
         };
         let id = self.id;
         self.workspace.spawn("save-compare", move |context| {
@@ -258,7 +247,7 @@ impl HistoryScreen {
             }
             let result = compare_saves(&first, &second);
             proxy.send(AppMessage::ToScreen(id, Box::new(HistoryResult::Compare(result))));
-        });
+        })
     }
 
     fn start_diagnosis(
@@ -266,9 +255,9 @@ impl HistoryScreen {
         path: PathBuf,
         format_id: Option<String>,
         proxy: Option<crate::event_loop::Proxy<AppMessage>>,
-    ) -> bool {
+    ) -> Result<bool> {
         let Some(proxy) = proxy else {
-            return false;
+            return Ok(false);
         };
         self.diagnosis_request_id = self.diagnosis_request_id.saturating_add(1);
         let request_id = self.diagnosis_request_id;
@@ -282,8 +271,8 @@ impl HistoryScreen {
                 id,
                 Box::new(HistoryResult::Diagnosis { request_id, result }),
             ));
-        });
-        true
+        })?;
+        Ok(true)
     }
 
     fn start_quest_repair(
@@ -292,21 +281,17 @@ impl HistoryScreen {
         expected_sha256: String,
         format_id: Option<String>,
         proxy: Option<crate::event_loop::Proxy<AppMessage>>,
-    ) -> bool {
+    ) -> Result<bool> {
         let Some(proxy) = proxy else {
-            return false;
+            return Ok(false);
         };
-        let Some(request_id) = self.workspace.begin_saving() else {
-            return false;
+        let Some(save_guard) = self.workspace.session().begin_save(&path) else {
+            return Ok(false);
         };
-        let save_guard = SaveRequestGuard {
-            workspace: self.workspace.clone(),
-            request_id,
-        };
+        let request_id = save_guard.id();
         let backup_directory = self.workspace.backup_directory();
         let id = self.id;
         self.workspace.spawn("quest-repair", move |context| {
-            let _save_guard = save_guard;
             let result = if context.is_cancelled() {
                 Err("Операция ремонта отменена.".to_owned())
             } else {
@@ -321,9 +306,13 @@ impl HistoryScreen {
                     }
                 })
             };
-            proxy.send(AppMessage::ToScreen(id, Box::new(HistoryResult::QuestRepaired(result))));
-        });
-        true
+            drop(save_guard);
+            proxy.send(AppMessage::ToScreen(
+                id,
+                Box::new(HistoryResult::QuestRepaired { request_id, result }),
+            ));
+        })?;
+        Ok(true)
     }
 
     fn start_restore(
@@ -332,24 +321,21 @@ impl HistoryScreen {
         source: PathBuf,
         mode: RestoreMode,
         proxy: Option<crate::event_loop::Proxy<AppMessage>>,
-    ) -> bool {
+    ) -> Result<bool> {
         let Some(proxy) = proxy else {
-            return false;
+            return Ok(false);
         };
         let restore_guard = if mode == RestoreMode::InPlace {
-            let Some(request_id) = self.workspace.begin_restoring() else {
-                return false;
+            let Some(guard) = self.workspace.session().begin_restore(&source) else {
+                return Ok(false);
             };
-            Some(RestoreRequestGuard {
-                workspace: self.workspace.clone(),
-                request_id,
-            })
+            Some(guard)
         } else {
             None
         };
+        let request_id = restore_guard.as_ref().map(sse_app::SaveOperationGuard::id);
         let id = self.id;
         self.workspace.spawn("save-restore", move |context| {
-            let _restore_guard = restore_guard;
             if context.is_cancelled() {
                 return;
             }
@@ -359,9 +345,13 @@ impl HistoryScreen {
                     .map(RestoredSave::InPlace)
                     .map_err(|error| error.to_string()),
             };
-            proxy.send(AppMessage::ToScreen(id, Box::new(HistoryResult::Restored(result))));
-        });
-        true
+            drop(restore_guard);
+            proxy.send(AppMessage::ToScreen(
+                id,
+                Box::new(HistoryResult::Restored { request_id, result }),
+            ));
+        })?;
+        Ok(true)
     }
 
     fn open_restore_confirmation(
@@ -783,7 +773,7 @@ impl Screen for HistoryScreen {
                 if let Some((path, source_sha256)) = selected {
                     let format_id = cx.app.current_save_format().map(str::to_owned);
                     self.set_summary(cx.tree, &format!("Проверяю {}…", display_name(&path)))?;
-                    if self.start_diagnosis(path.clone(), format_id, cx.proxy.cloned()) {
+                    if self.start_diagnosis(path.clone(), format_id, cx.proxy.cloned())? {
                         self.diagnosed_selection = Some((path, source_sha256));
                     }
                 } else {
@@ -903,7 +893,7 @@ impl Screen for HistoryScreen {
                 self.set_summary(cx.tree, "В режиме headless screenshot диски не сканируются.")?;
             } else {
                 self.set_summary(cx.tree, "Загрузка…")?;
-                self.request_refresh(cx.proxy.cloned());
+                self.request_refresh(cx.proxy.cloned())?;
             }
         }
         if clicked.is_some() && clicked == self.previous_page && self.page > 0 {
@@ -937,7 +927,7 @@ impl Screen for HistoryScreen {
                     RestoreMode::InPlace => "Проверяю журнал и восстанавливаю сейв на место…",
                 };
                 self.set_summary(cx.tree, status)?;
-                if !self.start_restore(journal, source, mode, cx.proxy.cloned()) {
+                if !self.start_restore(journal, source, mode, cx.proxy.cloned())? {
                     let text = if self.workspace.is_saving() {
                         "Дождитесь завершения сохранения, чтобы восстановить сейв на место."
                     } else if self.workspace.is_restoring() {
@@ -978,7 +968,7 @@ impl Screen for HistoryScreen {
                         } else {
                             self.compare_selection = vec![current.clone(), path.clone()];
                             self.set_summary(cx.tree, "Сравниваю…")?;
-                            self.start_compare(current, path, cx.proxy.cloned());
+                            self.start_compare(current, path, cx.proxy.cloned())?;
                         }
                     } else {
                         match self.compare_selection.first().cloned() {
@@ -992,7 +982,7 @@ impl Screen for HistoryScreen {
                                 if first_family.is_some() && first_family == second_family {
                                     self.compare_selection = vec![first.clone(), path.clone()];
                                     self.set_summary(cx.tree, "Сравниваю…")?;
-                                    self.start_compare(first, path, cx.proxy.cloned());
+                                    self.start_compare(first, path, cx.proxy.cloned())?;
                                 } else {
                                     self.set_summary(cx.tree, "Это сейвы разных игр.")?;
                                 }
@@ -1008,7 +998,7 @@ impl Screen for HistoryScreen {
                 }
                 Action::Diagnose { path, format_id } => {
                     self.set_summary(cx.tree, &format!("Проверяю {}…", display_name(&path)))?;
-                    self.start_diagnosis(path, format_id, cx.proxy.cloned());
+                    self.start_diagnosis(path, format_id, cx.proxy.cloned())?;
                 }
                 Action::RepairQuests {
                     path,
@@ -1016,7 +1006,7 @@ impl Screen for HistoryScreen {
                     expected_sha256,
                 } => {
                     self.set_summary(cx.tree, "Исправляю подтверждённые квесты…")?;
-                    if !self.start_quest_repair(path, expected_sha256, format_id, cx.proxy.cloned()) {
+                    if !self.start_quest_repair(path, expected_sha256, format_id, cx.proxy.cloned())? {
                         let status = if self.workspace.is_restoring() {
                             "Дождитесь завершения восстановления сейва."
                         } else if self.workspace.is_saving() {
@@ -1032,7 +1022,7 @@ impl Screen for HistoryScreen {
         if let Message::User(AppMessage::ToScreen(target, payload)) = message {
             if *target == self.id {
                 if payload.is::<()>() {
-                    self.request_refresh(cx.proxy.cloned());
+                    self.request_refresh(cx.proxy.cloned())?;
                 }
                 if let Some(payload) = payload.downcast_ref::<HistoryResult>() {
                     match payload {
@@ -1057,42 +1047,65 @@ impl Screen for HistoryScreen {
                             }
                         }
                         HistoryResult::Diagnosis { .. } => {}
-                        HistoryResult::QuestRepaired(Ok(completion)) => {
-                            let path = completion.path.clone();
-                            self.render_quest_repair(cx, completion.clone())?;
-                            if let Some(proxy) = cx.proxy.as_ref() {
-                                let _ = proxy.send(AppMessage::ToScreen(
-                                    ScreenId::Overview,
-                                    Box::new(RefreshOverview { path: Some(path) }),
-                                ));
+                        HistoryResult::QuestRepaired { request_id, result } => {
+                            if !self.workspace.session().is_latest_operation(*request_id) {
+                                return Ok(());
+                            }
+                            match result {
+                                Ok(completion) => {
+                                    let path = completion.path.clone();
+                                    self.render_quest_repair(cx, completion.clone())?;
+                                    if let Some(proxy) = cx.proxy.as_ref() {
+                                        let reload_path =
+                                            (cx.app.current_save() == Some(path.as_path())).then_some(path);
+                                        let _ = proxy.send(AppMessage::ToScreen(
+                                            ScreenId::Overview,
+                                            Box::new(RefreshOverview { path: reload_path }),
+                                        ));
+                                    }
+                                }
+                                Err(error) => self
+                                    .set_summary(cx.tree, &format!("Не удалось сохранить: {}", truncate(error, 160)))?,
                             }
                         }
-                        HistoryResult::QuestRepaired(Err(error)) => {
-                            self.set_summary(cx.tree, &format!("Не удалось сохранить: {}", truncate(error, 160)))?
-                        }
-                        HistoryResult::Restored(Ok(RestoredSave::Copy(path))) => {
-                            self.set_summary(cx.tree, &format!("Копия восстановлена в {}", path.display()))?;
-                            self.request_refresh(cx.proxy.cloned());
-                            if let Some(proxy) = cx.proxy.as_ref() {
-                                let _ = proxy.send(AppMessage::ToScreen(ScreenId::Overview, Box::new(())));
+                        HistoryResult::Restored { request_id, result } => {
+                            if request_id.is_some_and(|id| !self.workspace.session().is_latest_operation(id)) {
+                                return Ok(());
                             }
-                        }
-                        HistoryResult::Restored(Ok(RestoredSave::InPlace(receipt))) => {
-                            let backup = receipt.safety_backup_path.as_ref().map_or_else(
-                                || "без страховочного бэкапа (исходного файла не было)".to_owned(),
-                                |path| format!("страховочный бэкап: {}", path.display()),
-                            );
-                            self.set_summary(
-                                cx.tree,
-                                &format!("Восстановлено на место: {} · {backup}", receipt.save_path.display()),
-                            )?;
-                            self.request_refresh(cx.proxy.cloned());
-                            if let Some(proxy) = cx.proxy.as_ref() {
-                                let _ = proxy.send(AppMessage::ToScreen(ScreenId::Overview, Box::new(())));
+                            match result {
+                                Ok(RestoredSave::Copy(path)) => {
+                                    self.set_summary(cx.tree, &format!("Копия восстановлена в {}", path.display()))?;
+                                    self.request_refresh(cx.proxy.cloned())?;
+                                    if let Some(proxy) = cx.proxy.as_ref() {
+                                        let _ = proxy.send(AppMessage::ToScreen(
+                                            ScreenId::Overview,
+                                            Box::new(RefreshOverview { path: None }),
+                                        ));
+                                    }
+                                }
+                                Ok(RestoredSave::InPlace(receipt)) => {
+                                    let backup = receipt.safety_backup_path.as_ref().map_or_else(
+                                        || "без страховочного бэкапа (исходного файла не было)".to_owned(),
+                                        |path| format!("страховочный бэкап: {}", path.display()),
+                                    );
+                                    self.set_summary(
+                                        cx.tree,
+                                        &format!("Восстановлено на место: {} · {backup}", receipt.save_path.display()),
+                                    )?;
+                                    self.request_refresh(cx.proxy.cloned())?;
+                                    if let Some(proxy) = cx.proxy.as_ref() {
+                                        let reload_path = (cx.app.current_save() == Some(receipt.save_path.as_path()))
+                                            .then(|| receipt.save_path.clone());
+                                        let _ = proxy.send(AppMessage::ToScreen(
+                                            ScreenId::Overview,
+                                            Box::new(RefreshOverview { path: reload_path }),
+                                        ));
+                                    }
+                                }
+                                Err(error) => {
+                                    self.set_summary(cx.tree, &format!("Не восстановлено: {}", truncate(error, 160)))?
+                                }
                             }
-                        }
-                        HistoryResult::Restored(Err(error)) => {
-                            self.set_summary(cx.tree, &format!("Не восстановлено: {}", truncate(error, 160)))?
                         }
                     }
                 }
@@ -1634,20 +1647,22 @@ mod tests {
     #[test]
     fn in_place_restore_does_not_start_while_a_save_is_active() -> sse_core::Result<()> {
         let workspace = Workspace::default();
-        let save_request = workspace
-            .begin_saving()
+        let path = PathBuf::from("fixture.sav");
+        let save_guard = workspace
+            .session()
+            .begin_save(&path)
             .ok_or_else(|| sse_core::Error::Refused("test save did not start".to_owned()))?;
         let screen = HistoryScreen::new(ScreenId::Backups, "test", workspace.clone());
         let (proxy, _receiver) = crate::event_loop::channel_pair::<AppMessage>();
 
         assert!(!screen.start_restore(
             PathBuf::from("fixture-journal.json"),
-            PathBuf::from("fixture.sav"),
+            path,
             super::RestoreMode::InPlace,
             Some(proxy),
-        ));
+        )?);
         assert!(!workspace.is_restoring());
-        assert!(workspace.finish_saving(save_request));
+        drop(save_guard);
         Ok(())
     }
 
@@ -1823,15 +1838,17 @@ mod tests {
     #[test]
     fn quest_repair_cannot_start_while_another_save_is_active() -> sse_core::Result<()> {
         let workspace = Workspace::default();
-        let save_request = workspace
-            .begin_saving()
+        let path = PathBuf::from("fixture.sav");
+        let save_guard = workspace
+            .session()
+            .begin_save(&path)
             .ok_or_else(|| sse_core::Error::Refused("test save did not start".to_owned()))?;
         let screen = HistoryScreen::new(ScreenId::SaveDoctor, "test", workspace.clone());
         let (proxy, _receiver) = crate::event_loop::channel_pair::<AppMessage>();
 
-        assert!(!screen.start_quest_repair(PathBuf::from("fixture.sav"), "00".repeat(32), None, Some(proxy),));
+        assert!(!screen.start_quest_repair(path, "00".repeat(32), None, Some(proxy),)?);
         assert!(workspace.is_saving());
-        assert!(workspace.finish_saving(save_request));
+        drop(save_guard);
         Ok(())
     }
 

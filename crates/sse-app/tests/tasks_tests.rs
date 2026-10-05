@@ -1,5 +1,4 @@
 //! Tests for background task manager, worker cancellation, progress reporting, and non-blocking event receipt.
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use sse_app::tasks::{TaskEvent, TaskManager};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -8,9 +7,9 @@ use std::thread;
 use std::time::Duration;
 
 #[test]
-fn task_execution_and_completion() {
+fn task_execution_and_completion() -> std::io::Result<()> {
     let manager = TaskManager::new();
-    let handle = manager.spawn("simple_calc", |_ctx| Ok(42_u64));
+    let handle = manager.spawn("simple_calc", |_ctx| Ok(42_u64))?;
 
     let mut completed = false;
     for _ in 0..50 {
@@ -19,9 +18,10 @@ fn task_execution_and_completion() {
         for event in events {
             if let TaskEvent::Completed(id, payload) = event {
                 if id == handle.id() {
-                    let val = payload.downcast_ref::<u64>().expect("downcast u64");
-                    assert_eq!(*val, 42);
-                    completed = true;
+                    if let Some(value) = payload.downcast_ref::<u64>() {
+                        assert_eq!(*value, 42);
+                        completed = true;
+                    }
                 }
             }
         }
@@ -31,10 +31,11 @@ fn task_execution_and_completion() {
     }
 
     assert!(completed, "task must complete and report result");
+    Ok(())
 }
 
 #[test]
-fn task_progress_reporting() {
+fn task_progress_reporting() -> std::io::Result<()> {
     let manager = TaskManager::new();
     let handle = manager.spawn("with_progress", |ctx| {
         ctx.report_progress(Some(0.25), Some("Quarter done".to_owned()));
@@ -43,7 +44,7 @@ fn task_progress_reporting() {
         thread::sleep(Duration::from_millis(15));
         ctx.report_progress(Some(1.0), Some("Finished".to_owned()));
         Ok("done".to_owned())
-    });
+    })?;
 
     let mut progress_reports = Vec::new();
     let mut completed = false;
@@ -70,10 +71,11 @@ fn task_progress_reporting() {
     assert!(!progress_reports.is_empty());
     assert!(progress_reports.iter().any(|p| p.fraction == Some(0.25)));
     assert!(progress_reports.iter().any(|p| p.fraction == Some(1.0)));
+    Ok(())
 }
 
 #[test]
-fn task_cancellation_honored() {
+fn task_cancellation_honored() -> std::io::Result<()> {
     let manager = TaskManager::new();
     let iterations = Arc::new(AtomicU32::new(0));
     let iters_clone = iterations.clone();
@@ -87,7 +89,7 @@ fn task_cancellation_honored() {
             }
         }
         Ok(())
-    });
+    })?;
 
     // Let it run a few iterations then cancel
     thread::sleep(Duration::from_millis(20));
@@ -110,14 +112,15 @@ fn task_cancellation_honored() {
     }
 
     assert!(got_cancelled_event, "cancellation event must be emitted");
+    Ok(())
 }
 
 #[test]
-fn task_failure_reporting() {
+fn task_failure_reporting() -> std::io::Result<()> {
     let manager = TaskManager::new();
     let handle = manager.spawn("failing_task", |_ctx| -> Result<(), String> {
         Err("file not found".to_owned())
-    });
+    })?;
 
     let mut got_failure = false;
     for _ in 0..50 {
@@ -136,6 +139,7 @@ fn task_failure_reporting() {
     }
 
     assert!(got_failure, "failure event must be received");
+    Ok(())
 }
 
 #[test]

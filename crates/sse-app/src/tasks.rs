@@ -228,7 +228,7 @@ pub fn wait_for_named_tasks(names: &[&str], timeout: Duration) -> bool {
     }
 }
 
-type TaskEntry = (CancellationToken, Option<JoinHandle<()>>);
+type TaskEntry = (CancellationToken, JoinHandle<()>);
 
 /// Manages background task execution and non-blocking event dispatch.
 ///
@@ -264,7 +264,9 @@ impl TaskManager {
     /// and send progress updates.
     ///
     /// Returns a `TaskHandle` that can be used to cancel the task.
-    pub fn spawn<F, R>(&self, name: &'static str, work: F) -> TaskHandle
+    ///
+    /// Returns the operating-system thread creation error if the task could not start.
+    pub fn spawn<F, R>(&self, name: &'static str, work: F) -> std::io::Result<TaskHandle>
     where
         F: FnOnce(TaskContext) -> Result<R, String> + Send + 'static,
         R: Any + Send + 'static,
@@ -304,12 +306,12 @@ impl TaskManager {
                         let _ = sender.send(TaskEvent::Failed(task_id, err));
                     }
                 }
-            });
+            })?;
 
         let mut tasks_lock = self.tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        tasks_lock.insert(task_id, (cancellation.clone(), join_handle.ok()));
+        tasks_lock.insert(task_id, (cancellation.clone(), join_handle));
 
-        TaskHandle { task_id, cancellation }
+        Ok(TaskHandle { task_id, cancellation })
     }
 
     /// Non-blocking check for events arriving from worker threads.
@@ -328,8 +330,8 @@ impl TaskManager {
                     _ => unreachable!(),
                 };
                 let mut tasks_lock = self.tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                if let Some((_, Some(handle))) = tasks_lock.remove(&id) {
-                    // Joining finished thread handle if completed
+                if let Some((_, handle)) = tasks_lock.remove(&id) {
+                    // Joining a finished thread is non-blocking.
                     if handle.is_finished() {
                         let _ = handle.join();
                     }
