@@ -871,6 +871,11 @@ impl Shell {
         };
         let initial_collapsed = settings.navigation_collapsed.unwrap_or(false);
         shell.apply_navigation(tree, initial_collapsed)?;
+        // Cache every screen's retained widget subtree before interactive navigation begins.
+        // Shell::open then only toggles already-built hosts and refreshes screen state.
+        for index in 0..shell.screens.len() {
+            shell.prepare(tree, index)?;
+        }
         shell.show(tree, 0)?;
         shell.render_library(tree)?;
         shell.sync_draft_controls(tree)?;
