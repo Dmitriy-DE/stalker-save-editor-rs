@@ -152,7 +152,6 @@ pub struct Shell {
     undo: WidgetId,
     redo: WidgetId,
     reset: WidgetId,
-    open_button: WidgetId,
     refresh: WidgetId,
     save: WidgetId,
     library: WidgetId,
@@ -519,7 +518,6 @@ impl Shell {
         let undo = top_button(tree, top, crate::strings::t("Отменить"), false)?;
         let redo = top_button(tree, top, crate::strings::t("Вернуть"), false)?;
         let reset = top_button(tree, top, crate::strings::t("Сбросить"), false)?;
-        let open_button = top_button(tree, top, crate::strings::t("Открыть…"), false)?;
         let refresh = top_button(tree, top, crate::strings::t("Обновить"), false)?;
         let save = top_button(tree, top, crate::strings::t("СОХРАНИТЬ"), true)?;
         let save_reason = style::label(
@@ -844,7 +842,6 @@ impl Shell {
             undo,
             redo,
             reset,
-            open_button,
             refresh,
             save,
             library,
@@ -1339,13 +1336,6 @@ impl Shell {
         };
         if let Some(action) = editor_action {
             self.dispatch_editor_action(tree, action)?;
-            return Ok(Flow::Continue);
-        }
-        if clicked.is_some() && clicked == Some(self.open_button) {
-            tree.set_text(
-                self.status,
-                "Открыть… недоступно: системный file-picker ещё не подключён к Shell.",
-            )?;
             return Ok(Flow::Continue);
         }
         if clicked.is_some() && clicked == Some(self.refresh) {
