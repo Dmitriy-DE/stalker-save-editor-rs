@@ -1431,7 +1431,9 @@ impl Screen for Environment {
                 };
                 if self.pending_delete_snapshot.as_deref() != Some(id.as_str()) {
                     self.pending_delete_snapshot = Some(id.clone());
-                    cx.status = Some(format!("Удаление снимка необратимо. Нажмите «УДАЛИТЬ СНИМОК» ещё раз для подтверждения: {id}"));
+                    cx.status = Some(format!(
+                        "Удаление снимка необратимо. Нажмите «УДАЛИТЬ СНИМОК» ещё раз для подтверждения: {id}"
+                    ));
                     return Ok(());
                 }
                 self.pending_delete_snapshot = None;
@@ -1543,7 +1545,10 @@ impl Screen for Environment {
                 if let Some(selected) = selected {
                     if self.pending_delete_profile.as_deref() != Some(selected.id.as_str()) {
                         self.pending_delete_profile = Some(selected.id.clone());
-                        cx.status = Some(format!("Удаление профиля необратимо. Нажмите «УДАЛИТЬ ПРОФИЛЬ» ещё раз для подтверждения: {}", selected.profile.name));
+                        cx.status = Some(format!(
+                            "Удаление профиля необратимо. Нажмите «УДАЛИТЬ ПРОФИЛЬ» ещё раз для подтверждения: {}",
+                            selected.profile.name
+                        ));
                         return Ok(());
                     }
                     self.pending_delete_profile = None;
