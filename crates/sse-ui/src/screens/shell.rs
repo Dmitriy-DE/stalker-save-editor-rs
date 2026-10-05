@@ -1254,15 +1254,19 @@ impl Shell {
                 tree.set_text(self.status, "Дождитесь завершения восстановления, чтобы закрыть окно.")?;
                 return Ok(Flow::Continue);
             }
+            Message::Window(WindowEvent::CloseRequested)
+                if sse_app::tasks::named_task_active("game-background")
+                    || sse_app::tasks::named_task_active("companion-background") =>
+            {
+                tree.set_text(
+                    self.status,
+                    "Дождитесь завершения фоновой операции с игрой, чтобы закрыть окно.",
+                )?;
+                return Ok(Flow::Continue);
+            }
             Message::Window(WindowEvent::CloseRequested) => {
                 let _ = sse_app::tasks::wait_for_named_tasks(
-                    &[
-                        "draft-save",
-                        "draft-reset",
-                        "save-restore",
-                        "game-background",
-                        "companion-background",
-                    ],
+                    &["draft-save", "draft-reset"],
                     std::time::Duration::from_secs(2),
                 );
                 return Ok(Flow::Exit);
