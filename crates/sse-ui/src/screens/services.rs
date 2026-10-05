@@ -8,6 +8,7 @@ use sse_core::Result;
 use sse_steam::api::{Achievement, CloudFile};
 use sse_steam::protocol::{Request, Response};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 const TIMEOUT: Duration = Duration::from_secs(15);
@@ -225,6 +226,8 @@ struct Companion {
     hotkey_inputs: Vec<(sse_companion::hotkeys::HotkeyAction, WidgetId)>,
     save_hotkeys: Option<WidgetId>,
     default_hotkeys: Option<WidgetId>,
+    toggle_hotkeys: Option<WidgetId>,
+    hotkey_runtime: Arc<Mutex<Option<sse_companion::hotkey_runtime::HotkeyRuntime>>>,
     confirm_card: Option<WidgetId>,
     confirm_write: Option<WidgetId>,
     confirm_cancel: Option<WidgetId>,
@@ -445,6 +448,12 @@ impl Screen for Companion {
         let hot_row = style::row(cx.tree, hot)?;
         self.save_hotkeys = Some(style::button(cx.tree, hot_row, "СОХРАНИТЬ КЛАВИШИ", Button::Primary)?);
         self.default_hotkeys = Some(style::button(cx.tree, hot_row, "ПО УМОЛЧАНИЮ", Button::Secondary)?);
+        self.toggle_hotkeys = Some(style::button(
+            cx.tree,
+            hot_row,
+            "ВКЛЮЧИТЬ ГОРЯЧИЕ КЛАВИШИ",
+            Button::Secondary,
+        )?);
         let confirm = style::card(cx.tree, host)?;
         self.confirm_card = Some(confirm);
         style::label(cx.tree, confirm, "ПОДТВЕРЖДЕНИЕ ИЗМЕНЕНИЯ ИГРЫ", Text::Heading)?;
@@ -466,6 +475,17 @@ impl Screen for Companion {
             cx.tree.close_dialog().ok();
         }
         self.load_hotkeys(cx, false)?;
+        if let Some(button) = self.toggle_hotkeys {
+            let active = self.hotkey_runtime.lock().ok().is_some_and(|runtime| runtime.is_some());
+            cx.tree.set_text(
+                button,
+                if active {
+                    "ВЫКЛЮЧИТЬ ГОРЯЧИЕ КЛАВИШИ"
+                } else {
+                    "ВКЛЮЧИТЬ ГОРЯЧИЕ КЛАВИШИ"
+                },
+            )?;
+        }
         let s2 = cx
             .app
             .selected_game()
@@ -527,6 +547,54 @@ impl Screen for Companion {
         }
         if clicked.is_some() && clicked == self.default_hotkeys {
             self.load_hotkeys(cx, true)?;
+            return Ok(());
+        }
+        if clicked.is_some() && clicked == self.toggle_hotkeys {
+            let active = self.hotkey_runtime.lock().ok().is_some_and(|runtime| runtime.is_some());
+            let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
+            if active {
+                let runtime = self.hotkey_runtime.lock().ok().and_then(|mut runtime| runtime.take());
+                sse_app::tasks::spawn_named_detached("companion-hotkeys-stop", move || {
+                    let result = runtime
+                        .map_or(Ok(()), |mut runtime| runtime.stop())
+                        .map(|()| "Горячие клавиши выключены.".to_owned())
+                        .map_err(|error| error.to_string());
+                    proxy.send(AppMessage::ToScreen(
+                        ScreenId::Companion,
+                        Box::new(CompanionReply::Hotkeys(result)),
+                    ));
+                });
+            } else {
+                let selected = self.selected(cx).and_then(|(game, directory)| {
+                    if xray_game(&game).is_none() {
+                        return Err("Горячие клавиши поддерживаются только для игр X-Ray.".to_owned());
+                    }
+                    Self::exchange_directory(&game, &directory)
+                });
+                let path = sse_app::paths::default_data_directory().join("hotkeys.txt");
+                let layout = sse_companion::hotkeys::HotkeyLayout::load(&path);
+                let runtime_slot = Arc::clone(&self.hotkey_runtime);
+                sse_app::tasks::spawn_named_detached("companion-hotkeys-start", move || {
+                    let result = selected.and_then(|directory| {
+                        sse_companion::hotkey_runtime::HotkeyRuntime::start(&layout, directory)
+                            .map_err(|error| error.to_string())
+                            .and_then(|runtime| {
+                                runtime_slot
+                                    .lock()
+                                    .map_err(|_| "hotkey runtime lock was poisoned".to_owned())
+                                    .map(|mut slot| {
+                                        *slot = Some(runtime);
+                                    })
+                            })
+                    });
+                    proxy.send(AppMessage::ToScreen(
+                        ScreenId::Companion,
+                        Box::new(CompanionReply::Hotkeys(
+                            result.map(|()| "Горячие клавиши включены.".to_owned()),
+                        )),
+                    ));
+                });
+            }
             return Ok(());
         }
         if clicked.is_some() && clicked == self.save_hotkeys {
@@ -701,6 +769,17 @@ impl Screen for Companion {
                     }
                     CompanionReply::Changed(Ok(text)) | CompanionReply::Hotkeys(Ok(text)) => {
                         cx.status = Some(text.clone());
+                        if let Some(button) = self.toggle_hotkeys {
+                            let active = self.hotkey_runtime.lock().ok().is_some_and(|runtime| runtime.is_some());
+                            cx.tree.set_text(
+                                button,
+                                if active {
+                                    "ВЫКЛЮЧИТЬ ГОРЯЧИЕ КЛАВИШИ"
+                                } else {
+                                    "ВКЛЮЧИТЬ ГОРЯЧИЕ КЛАВИШИ"
+                                },
+                            )?;
+                        }
                         self.refresh(cx);
                     }
                     CompanionReply::Changed(Err(e)) => cx.status = Some(format!("Ошибка установки: {e}")),
