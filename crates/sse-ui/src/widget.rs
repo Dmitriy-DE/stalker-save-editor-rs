@@ -977,11 +977,7 @@ impl Tree {
                 .unwrap_or(true);
             shown.push(node.visible && parent_shown);
 
-            let inherited_clip = node
-                .parent
-                .and_then(|parent| clips.get(parent.0))
-                .copied()
-                .flatten();
+            let inherited_clip = node.parent.and_then(|parent| clips.get(parent.0)).copied().flatten();
             let clip = node
                 .parent
                 .and_then(|parent| self.nodes.get(parent.0))
