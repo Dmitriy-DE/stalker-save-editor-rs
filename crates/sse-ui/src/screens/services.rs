@@ -286,8 +286,12 @@ impl Companion {
                         .map_err(|e| e.to_string())
                         .and_then(|reply| match reply.status {
                             sse_companion::protocol::ReplyStatus::Ok => Ok(reply.text),
-                            sse_companion::protocol::ReplyStatus::Error => Err(format!("Game returned error: {}", reply.text)),
-                            sse_companion::protocol::ReplyStatus::Unsupported => Err(format!("Game returned unsupported: {}", reply.text)),
+                            sse_companion::protocol::ReplyStatus::Error => {
+                                Err(format!("Game returned error: {}", reply.text))
+                            }
+                            sse_companion::protocol::ReplyStatus::Unsupported => {
+                                Err(format!("Game returned unsupported: {}", reply.text))
+                            }
                         })
                 });
             proxy.send(AppMessage::ToScreen(
@@ -380,7 +384,12 @@ impl Screen for Companion {
             let id = style::button(cx.tree, s2, label, Button::Secondary)?;
             self.s2_commands.push((id, command, argument));
         }
-        style::label(cx.tree, s2, "Команды отправляются через протокол Companion в Stalker2\\Saved.", Text::Note)?;
+        style::label(
+            cx.tree,
+            s2,
+            "Команды отправляются через протокол Companion в Stalker2\\Saved.",
+            Text::Note,
+        )?;
         let all = style::card(cx.tree, host)?;
         style::label(cx.tree, all, "ВСЕ ИГРЫ", Text::Heading)?;
         for game in [
@@ -457,7 +466,10 @@ impl Screen for Companion {
             cx.tree.close_dialog().ok();
         }
         self.load_hotkeys(cx, false)?;
-        let s2 = cx.app.selected_game().is_some_and(|game| matches!(game, "s2" | "stalker2") || game.contains("stalker2"));
+        let s2 = cx
+            .app
+            .selected_game()
+            .is_some_and(|game| matches!(game, "s2" | "stalker2") || game.contains("stalker2"));
         for (id, _, _) in &self.s2_commands {
             cx.tree.set_enabled(*id, s2)?;
         }
@@ -636,7 +648,14 @@ impl Screen for Companion {
                                 .set_text(id, &format!("Версия мода: {}", version.as_deref().unwrap_or("—")))?;
                         }
                         if let Some(id) = self.install {
-                            cx.tree.set_text(id, if version.is_some() { "ОБНОВИТЬ" } else { "УСТАНОВИТЬ" })?;
+                            cx.tree.set_text(
+                                id,
+                                if version.is_some() {
+                                    "ОБНОВИТЬ"
+                                } else {
+                                    "УСТАНОВИТЬ"
+                                },
+                            )?;
                         }
                         if let (Some(id), Ok((_, dir))) = (self.path, self.selected(cx)) {
                             cx.tree.set_text(id, &format!("Путь установки: {}", dir.display()))?;
@@ -1067,10 +1086,7 @@ impl Cloud {
             let result = (|| {
                 let output = std::fs::read(&intent.local).map_err(|error| format!("Ошибка записи: {error}"))?;
                 if sse_codecs::sha256::sha256(&output) != intent.local_sha256 {
-                    return Ok(
-                        "Локальный файл изменился после запроса записи; подтвердите запись ещё раз."
-                            .to_owned(),
-                    );
+                    return Ok("Локальный файл изменился после запроса записи; подтвердите запись ещё раз.".to_owned());
                 }
                 let source = worker(&Request::Read {
                     app_id: intent.app_id,
