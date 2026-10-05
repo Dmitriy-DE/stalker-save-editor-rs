@@ -78,7 +78,6 @@ pub fn card(tree: &mut Tree, parent: WidgetId) -> Result<WidgetId> {
         padding: Edges::all(theme::CARD_PADDING),
         gap: Size::new(0.0, theme::CONTROL_GAP),
         align_items: Align::Stretch,
-        shrink: 0.0,
         ..Style::default()
     };
     let look = Look {
@@ -117,6 +116,40 @@ pub fn label(tree: &mut Tree, parent: WidgetId, text: &str, role: Text) -> Resul
         ..Look::default()
     };
     tree.add(Some(parent), NodeKind::Leaf, Style::default(), content, look)
+}
+
+/// One-line editable input field.
+///
+/// # Errors
+/// Returns an error from the widget tree.
+pub fn input(tree: &mut Tree, parent: WidgetId, value: &str) -> Result<WidgetId> {
+    let colors = theme::current().colors;
+    tree.add(
+        Some(parent),
+        NodeKind::Leaf,
+        Style {
+            min: Size::new(120.0, theme::BUTTON_HEIGHT),
+            padding: Edges {
+                left: 10.0,
+                top: 0.0,
+                right: 10.0,
+                bottom: 0.0,
+            },
+            grow: 1.0,
+            ..Style::default()
+        },
+        Content::Input {
+            text: value.to_owned(),
+            style: TextStyle::new(Face::Body, 14.0),
+        },
+        Look {
+            fill: Some(rgb(colors.background[3])),
+            border: Some((rgb(colors.borders[1]), 1.0)),
+            radius: theme::BUTTON_RADIUS,
+            text: rgb(colors.text[0]),
+            ..Look::default()
+        },
+    )
 }
 
 /// A button.
