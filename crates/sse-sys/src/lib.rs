@@ -4,6 +4,7 @@ pub mod fetch;
 pub mod hotkeys;
 pub mod output;
 pub mod secure_fs;
+pub mod system;
 
 #[cfg(target_os = "linux")]
 pub mod memfd;
