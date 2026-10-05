@@ -1310,17 +1310,17 @@ impl Shell {
             tree.set_text(self.status, &text)?;
         }
         if clicked.is_some() && clicked == Some(self.reports_ok) {
-            let _ = sse_app::settings_writer::submit(
-                sse_app::settings_writer::SettingsPatch::ReportsNotice { send_reports: None },
-            );
+            let _ = sse_app::settings_writer::submit(sse_app::settings_writer::SettingsPatch::ReportsNotice {
+                send_reports: None,
+            });
             tree.set_visible(self.reports_banner, false)?;
             tree.set_text(self.status, "Настройки отчётов сохранены.")?;
             return Ok(Flow::Continue);
         }
         if clicked.is_some() && clicked == Some(self.reports_off) {
-            let _ = sse_app::settings_writer::submit(
-                sse_app::settings_writer::SettingsPatch::ReportsNotice { send_reports: Some(false) },
-            );
+            let _ = sse_app::settings_writer::submit(sse_app::settings_writer::SettingsPatch::ReportsNotice {
+                send_reports: Some(false),
+            });
             tree.set_visible(self.reports_banner, false)?;
             tree.set_text(self.status, "Отправка отчётов отключена.")?;
             return Ok(Flow::Continue);
