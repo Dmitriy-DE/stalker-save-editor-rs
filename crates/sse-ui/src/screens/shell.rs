@@ -265,8 +265,11 @@ impl Shell {
             Look::default(),
         )?;
         let header_style = Style {
-            padding: padded(24.0, 16.0, 24.0, 12.0),
+            min: Size::new(0.0, 118.0),
+            padding: padded(24.0, 12.0, 24.0, 10.0),
+            gap: Size::new(0.0, 2.0),
             align_items: Align::Stretch,
+            shrink: 0.0,
             ..Style::default()
         };
         let header = tree.add(
@@ -333,8 +336,9 @@ impl Shell {
             Some(main),
             NodeKind::Row,
             Style {
-                min: Size::new(0.0, 44.0),
+                min: Size::new(0.0, 58.0),
                 padding: padded(16.0, 6.0, 16.0, 6.0),
+                shrink: 0.0,
                 align_items: Align::Center,
                 ..Style::default()
             },
