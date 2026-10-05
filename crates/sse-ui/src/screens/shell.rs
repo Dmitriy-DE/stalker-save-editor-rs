@@ -33,7 +33,7 @@ fn save_eligibility(
 ) -> SaveEligibility {
     if !has_save {
         return SaveEligibility {
-            reason: "Выберите сохранение для редактирования.".to_owned(),
+            reason: crate::strings::t("Выберите сохранение для редактирования.").to_owned(),
             can_save: false,
             change_count: 0,
         };
@@ -341,7 +341,7 @@ impl Shell {
                 ..Style::default()
             },
             Content::Label {
-                text: "РЕДАКТОР СОХРАНЕНИЙ".to_owned(),
+                text: crate::strings::t("РЕДАКТОР СОХРАНЕНИЙ").to_owned(),
                 style: TextStyle::new(Face::Heading, 12.0),
             },
             Look {
@@ -359,7 +359,7 @@ impl Shell {
                 ..Style::default()
             },
             Content::Button {
-                text: "☰  Свернуть меню".to_owned(),
+                text: crate::strings::t("☰  Свернуть меню").to_owned(),
                 style: TextStyle::new(Face::Heading, 12.0),
             },
             style::nav(false),
@@ -510,14 +510,14 @@ impl Shell {
         let _ = brand;
         let edition = style::label(tree, top, "X-Ray / S2", Text::Value)?;
         tree.set_visible(edition, false)?;
-        let draft_badge = style::label(tree, top, "Черновик: 0 действ.", Text::Note)?;
-        let undo = top_button(tree, top, "Отменить", false)?;
-        let redo = top_button(tree, top, "Вернуть", false)?;
-        let reset = top_button(tree, top, "Сбросить", false)?;
-        let open_button = top_button(tree, top, "Открыть…", false)?;
-        let refresh = top_button(tree, top, "Обновить", false)?;
-        let save = top_button(tree, top, "СОХРАНИТЬ", true)?;
-        let save_reason = style::label(tree, header, "Выберите сохранение для редактирования.", Text::Note)?;
+        let draft_badge = style::label(tree, top, crate::strings::t("Черновик: 0 действ."), Text::Note)?;
+        let undo = top_button(tree, top, crate::strings::t("Отменить"), false)?;
+        let redo = top_button(tree, top, crate::strings::t("Вернуть"), false)?;
+        let reset = top_button(tree, top, crate::strings::t("Сбросить"), false)?;
+        let open_button = top_button(tree, top, crate::strings::t("Открыть…"), false)?;
+        let refresh = top_button(tree, top, crate::strings::t("Обновить"), false)?;
+        let save = top_button(tree, top, crate::strings::t("СОХРАНИТЬ"), true)?;
+        let save_reason = style::label(tree, header, crate::strings::t("Выберите сохранение для редактирования."), Text::Note)?;
         let breadcrumb = style::label(tree, header, "", Text::Note)?;
         let title = style::label(tree, header, "", Text::Title)?;
         let subtitle = tree.add(
@@ -1086,8 +1086,8 @@ impl Shell {
     fn sync_draft_controls(&self, tree: &mut Tree) -> Result<()> {
         tree.set_text(self.edition, self.app.selected_game().unwrap_or("X-Ray / S2"))?;
         let Some(source_sha256) = self.app.current_save_sha256() else {
-            tree.set_text(self.draft_badge, "Черновик: 0 действ.")?;
-            tree.set_text(self.save_reason, "Выберите сохранение для редактирования.")?;
+            tree.set_text(self.draft_badge, crate::strings::t("Черновик: 0 действ."))?;
+            tree.set_text(self.save_reason, crate::strings::t("Выберите сохранение для редактирования."))?;
             tree.set_enabled(self.undo, false)?;
             tree.set_enabled(self.redo, false)?;
             tree.set_enabled(self.reset, false)?;
@@ -1574,7 +1574,7 @@ mod tests {
         let source_sha256 = "a".repeat(64);
         assert_eq!(
             save_eligibility(false, None, false, None, false).reason,
-            "Выберите сохранение для редактирования."
+            crate::strings::t("Выберите сохранение для редактирования.")
         );
         assert_eq!(
             save_eligibility(true, None, false, None, true).reason,
