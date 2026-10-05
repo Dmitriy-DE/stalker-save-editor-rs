@@ -182,6 +182,8 @@ pub enum AppMessage {
     ToScreen(ScreenId, Box<dyn Any + Send>),
     /// Global draft command from the shell, dispatched to the selected-save editor screen.
     EditorAction(EditorAction),
+    /// UI sound clips decoded from the selected game's files by a worker.
+    SoundLoaded(String, Box<crate::sound::GameUiSounds>),
 }
 
 /// Commands available from the shared editor toolbar and keyboard shortcuts.
@@ -203,6 +205,7 @@ impl std::fmt::Debug for AppMessage {
             Self::Tick(seconds) => write!(f, "Tick({seconds})"),
             Self::ToScreen(id, _) => write!(f, "ToScreen({id:?})"),
             Self::EditorAction(action) => write!(f, "EditorAction({action:?})"),
+            Self::SoundLoaded(game, _) => write!(f, "SoundLoaded({game})"),
         }
     }
 }
