@@ -1195,7 +1195,7 @@ impl Shell {
     fn handle(&mut self, tree: &mut Tree, message: &Message<AppMessage>, clicked: Option<WidgetId>) -> Result<Flow> {
         if let Message::User(AppMessage::SoundLoaded(game, sounds)) = message {
             if self.sound_game.as_deref() == Some(game.as_str()) {
-                self.sounds = std::mem::take(&mut **sounds.clone());
+                self.sounds = (**sounds).clone();
             }
             return Ok(Flow::Continue);
         }
