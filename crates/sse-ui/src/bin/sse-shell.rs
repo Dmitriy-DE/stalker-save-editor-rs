@@ -239,9 +239,12 @@ fn ci_budget() -> Result<()> {
     for id in ScreenId::ALL {
         let switch_started = Instant::now();
         shell.open(&mut tree, id)?;
+        let open_elapsed = switch_started.elapsed();
+        let paint_started = Instant::now();
         tree.paint(&mut frame, 1280)?;
+        let paint_elapsed = paint_started.elapsed();
         let elapsed = switch_started.elapsed();
-        println!("budget switch {id:?}={elapsed:?}");
+        println!("budget switch {id:?}={elapsed:?} open={open_elapsed:?} paint={paint_elapsed:?}");
         worst_switch = worst_switch.max(elapsed);
     }
     if worst_switch > SWITCH_BUDGET {
