@@ -1164,8 +1164,9 @@ mod write_tests {
     use super::s2_legacy_write_error;
     use super::{
         allocate_object_id, read_info, read_inventory, run, s2_cli_warnings, s2_info_lines, s2_inventory_lines,
-        s2_type_key, writer, Save,
+        s2_type_key, writer, Save, WriteFailure,
     };
+    use sse_core::Error;
     use std::collections::HashSet;
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -1727,6 +1728,22 @@ mod write_tests {
     fn object_id_allocator_skips_the_alife_sentinel() {
         let mut reserved = HashSet::new();
         assert!(matches!(allocate_object_id(&mut reserved, u16::MAX - 1), Ok(1)));
+        assert!(!reserved.contains(&u16::MAX));
+    }
+
+    #[test]
+    fn object_id_allocator_refuses_a_registry_filled_through_0xfffe() {
+        let mut reserved = (1..u16::MAX).collect::<HashSet<_>>();
+        let before = reserved.len();
+
+        let error = allocate_object_id(&mut reserved, u16::MAX - 1)
+            .expect_err("all non-sentinel object ids through 0xFFFE are occupied");
+
+        assert!(matches!(
+            error,
+            WriteFailure::Core(Error::Refused(message)) if message.contains("no unused X-Ray object id")
+        ));
+        assert_eq!(reserved.len(), before);
         assert!(!reserved.contains(&u16::MAX));
     }
 
