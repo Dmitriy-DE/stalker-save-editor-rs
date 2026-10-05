@@ -17,18 +17,117 @@ use sse_ui::widget::Tree;
 use std::time::Duration;
 use std::time::Instant;
 
-fn main() {
+fn main() -> std::process::ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(exit) = sse_steam::worker::run_if_worker(&args) {
+        return exit;
+    }
     let result = match args.first().map(String::as_str) {
         Some("--screenshot") => screenshot(&args),
         Some("--bench") => bench(&args),
         Some("--ci-budget") => ci_budget(),
         Some("--companion") => companion_command(&args),
+        Some("--hotkey-helper") => hotkey_helper(),
         _ => window(),
     };
     if let Err(error) = result {
         eprintln!("sse-shell: {error}");
-        std::process::exit(1);
+        return std::process::ExitCode::FAILURE;
+    }
+    std::process::ExitCode::SUCCESS
+}
+
+fn hotkey_helper() -> Result<()> {
+    use std::io::{BufRead, Write};
+
+    let stdin = std::io::stdin();
+    let mut input = stdin.lock();
+    let mut bindings = Vec::new();
+    loop {
+        let mut line = String::new();
+        let read = input
+            .read_line(&mut line)
+            .map_err(|error| Error::System(format!("hotkey helper stdin: {error}")))?;
+        if read == 0 {
+            return Ok(());
+        }
+        let line = line.trim();
+        if line == "start" {
+            break;
+        }
+        let mut fields = line.split_whitespace();
+        if fields.next() != Some("bind") {
+            return Err(Error::Refused(format!("unexpected hotkey helper command: {line}")));
+        }
+        let id = fields
+            .next()
+            .and_then(|value| value.parse::<u32>().ok())
+            .ok_or_else(|| Error::Refused(format!("invalid hotkey helper ID: {line}")))?;
+        let modifiers = fields
+            .next()
+            .and_then(|value| value.parse::<u8>().ok())
+            .filter(|value| *value <= 7)
+            .ok_or_else(|| Error::Refused(format!("invalid hotkey helper modifiers: {line}")))?;
+        let key = fields
+            .next()
+            .and_then(|value| value.as_bytes().first().copied())
+            .filter(u8::is_ascii_uppercase)
+            .ok_or_else(|| Error::Refused(format!("invalid hotkey helper key: {line}")))?;
+        if fields.next().is_some() {
+            return Err(Error::Refused(format!("unexpected hotkey helper fields: {line}")));
+        }
+        bindings.push(sse_sys::hotkeys::HotkeyBinding {
+            id,
+            key,
+            control: modifiers & 1 != 0,
+            alt: modifiers & 2 != 0,
+            shift: modifiers & 4 != 0,
+        });
+    }
+    drop(input);
+
+    let mut session = match sse_sys::hotkeys::HotkeySession::open(&bindings) {
+        Ok(session) => session,
+        Err(error) => {
+            println!("error {}", error.to_string().replace(['\r', '\n'], " "));
+            let _ = std::io::stdout().flush();
+            return Err(error);
+        }
+    };
+    println!("ready");
+    std::io::stdout()
+        .flush()
+        .map_err(|error| Error::System(format!("hotkey helper stdout: {error}")))?;
+
+    let (stop_tx, stop_rx) = std::sync::mpsc::channel();
+    let _reader = std::thread::Builder::new()
+        .name("hotkey-helper-stdin".to_owned())
+        .spawn(move || {
+            let stdin = std::io::stdin();
+            let mut input = stdin.lock();
+            loop {
+                let mut line = String::new();
+                match input.read_line(&mut line) {
+                    Ok(0) => break,
+                    Ok(_) if line.trim() == "stop" => break,
+                    Ok(_) => {}
+                    Err(_) => break,
+                }
+            }
+            let _ = stop_tx.send(());
+        })
+        .map_err(|error| Error::System(format!("hotkey helper reader: {error}")))?;
+
+    loop {
+        if stop_rx.try_recv().is_ok() {
+            return Ok(());
+        }
+        if let Some(id) = session.poll(Duration::from_millis(50))? {
+            println!("pressed {id}");
+            std::io::stdout()
+                .flush()
+                .map_err(|error| Error::System(format!("hotkey helper stdout: {error}")))?;
+        }
     }
 }
 

@@ -6,6 +6,7 @@ pub mod bundled;
 /// Exact-source Lua hook patching.
 pub mod hook;
 /// Hotkey layout parsing and game-window matching.
+pub mod hotkey_runtime;
 pub mod hotkeys;
 /// Explicit companion install and removal transactions.
 pub mod installer;
