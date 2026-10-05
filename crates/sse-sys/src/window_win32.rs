@@ -760,7 +760,11 @@ unsafe extern "system" fn proc(hwnd: w::Hwnd, msg: u32, wp: usize, lp: isize) ->
                 MouseButton::Middle
             };
             // SAFETY: no State reference is held across SetCapture; raw remains live afterwards.
-            unsafe { (&mut *raw).events.push_back(Event::PointerButton { button, down: true }) };
+            unsafe {
+                (&mut *raw)
+                    .events
+                    .push_back(Event::PointerButton { button, down: true })
+            };
             0
         }
         WM_LUP | WM_RUP | WM_MUP => {
@@ -774,7 +778,11 @@ unsafe extern "system" fn proc(hwnd: w::Hwnd, msg: u32, wp: usize, lp: isize) ->
                 MouseButton::Middle
             };
             // SAFETY: no State reference is held across ReleaseCapture; raw remains live afterwards.
-            unsafe { (&mut *raw).events.push_back(Event::PointerButton { button, down: false }) };
+            unsafe {
+                (&mut *raw)
+                    .events
+                    .push_back(Event::PointerButton { button, down: false })
+            };
             0
         }
         WM_WHEEL => {
