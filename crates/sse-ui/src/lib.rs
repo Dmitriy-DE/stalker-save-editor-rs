@@ -48,6 +48,8 @@ pub mod widget;
 /// Win32 window adapter over the safe `sse-sys` window API.
 #[cfg(any(windows, test))]
 pub mod win32_window;
+/// Shared application icon pixels for native window backends.
+mod window_icon;
 /// X11 core protocol, MIT-SHM, XKB and clipboard encoding over a transport trait (X11).
 pub mod x11;
 /// X11 window backend over a Unix socket (U1).

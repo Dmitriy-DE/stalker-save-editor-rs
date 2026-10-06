@@ -419,22 +419,6 @@ fn tail_utf8(value: &str, maximum_bytes: usize) -> &str {
     value.get(start..).unwrap_or("")
 }
 
-/// Writes a diagnostics bundle to a user-selected path.
-///
-/// # Errors
-/// Returns an error if bundle creation or file writing fails.
-pub fn save_diagnostics_bundle(path: &Path, environment_report: Option<&str>) -> Result<()> {
-    if path.as_os_str().is_empty() {
-        return Err(Error::Refused("diagnostics path is empty".to_owned()));
-    }
-    let bundle = diagnostics_bundle(environment_report)?;
-    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(path, bundle)?;
-    Ok(())
-}
-
 /// Returns a small local-only environment report suitable for an exported diagnostics bundle.
 #[must_use]
 pub fn environment_report() -> String {
@@ -704,6 +688,29 @@ mod tests {
         assert!(redacted.contains("<home>"));
         assert!(redacted.contains("<steamid>"));
         assert!(redacted.contains("userdata/<id>"));
+    }
+
+    #[test]
+    fn warning_lines_are_written_with_redacted_paths() -> Result<()> {
+        let _guard = TEST_GATE
+            .lock()
+            .map_err(|_| Error::System("diagnostics test gate poisoned".to_owned()))?;
+        let directory = std::env::temp_dir().join(format!("sse-warning-log-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory)?;
+        configure_log_directory(Some(directory.clone()));
+
+        let result = {
+            warn("failed to read /home/alice/steamapps/appmanifest_123.acf: permission denied");
+            fs::read_to_string(directory.join(LOG_FILE))
+        };
+        configure_log_directory(None);
+        let _ = fs::remove_dir_all(&directory);
+        let log = result?;
+        assert!(log.contains(" WARN "));
+        assert!(log.contains("<home>/steamapps/appmanifest_123.acf"));
+        assert!(!log.contains("alice"));
+        Ok(())
     }
 
     #[test]

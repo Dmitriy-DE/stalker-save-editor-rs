@@ -362,13 +362,6 @@ impl TaskManager {
             token.cancel();
         }
     }
-
-    /// Returns the number of currently tracked tasks.
-    #[must_use]
-    pub fn active_task_count(&self) -> usize {
-        let tasks_lock = self.tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        tasks_lock.len()
-    }
 }
 
 impl Drop for TaskManager {

@@ -131,19 +131,6 @@ impl Transform {
         }
     }
 
-    /// Translation.
-    #[must_use]
-    pub const fn translate(x: f64, y: f64) -> Self {
-        Self {
-            a: 1.0,
-            b: 0.0,
-            c: 0.0,
-            d: 1.0,
-            e: x,
-            f: y,
-        }
-    }
-
     /// Non-uniform scale.
     #[must_use]
     pub const fn scale(x: f64, y: f64) -> Self {

@@ -255,14 +255,6 @@ impl AppState {
             .send(AppEvent::RecentSavesChanged(self.recent_saves.clone()));
     }
 
-    /// Clears the recent saves list.
-    pub fn clear_recent_saves(&mut self) {
-        if !self.recent_saves.is_empty() {
-            self.recent_saves.clear();
-            let _ = self.event_sender.send(AppEvent::RecentSavesChanged(Vec::new()));
-        }
-    }
-
     /// Checks if a draft exists for the given save SHA-256.
     #[must_use]
     pub fn has_draft(&self, source_sha256: &str) -> bool {

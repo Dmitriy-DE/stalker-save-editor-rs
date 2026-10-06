@@ -397,25 +397,6 @@ impl Layout {
         self.invalidate(id)
     }
 
-    /// Replaces the node kind and invalidates cached measurements.
-    ///
-    /// # Errors
-    /// Returns an error for an unknown handle.
-    pub fn set_kind(&mut self, id: NodeId, kind: NodeKind) -> Result<()> {
-        self.node_mut(id)?.kind = kind;
-        self.invalidate(id)
-    }
-
-    /// Invalidates all cached text/container measurements, for example after changing the font scale.
-    pub fn invalidate_all(&mut self) {
-        self.revision_clock = self.revision_clock.saturating_add(1);
-        let revision = self.revision_clock;
-        for node in &mut self.nodes {
-            node.revision = revision;
-            node.cache = None;
-        }
-    }
-
     /// Measures `root` under `constraints`.
     ///
     /// `text` receives the node text and available content width and returns its measured content size. The callback

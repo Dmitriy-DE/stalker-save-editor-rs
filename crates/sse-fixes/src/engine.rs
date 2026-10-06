@@ -22,9 +22,9 @@ use crate::fs_util::{
 use crate::identify::identify_game;
 use crate::models::{
     FileOverlayOperation, GameFixCategory, GameFixDefinition, GameFixImplementationType, GameFixInstallResult,
-    GameFixInstalledInfo, GameFixManagedFileStatus, GameFixManifest, GameFixMaturity, GameFixPreset,
-    GameFixPresetResult, GameFixSaveCompatibility, GameFixState, GameFixUninstallCheck, GameFixVerificationState,
-    GameTarget, ManagedGameFile, SpawnEditOperation,
+    GameFixInstalledInfo, GameFixManifest, GameFixMaturity, GameFixPreset, GameFixPresetResult,
+    GameFixSaveCompatibility, GameFixState, GameFixUninstallCheck, GameFixVerificationState, GameTarget,
+    ManagedGameFile, SpawnEditOperation,
 };
 use crate::store::GameFixContentStore;
 
@@ -77,18 +77,6 @@ impl GameFixEngine {
         Self {
             allow_synthetic_definitions,
             overlay_reader: Arc::new(|sha| GameFixContentStore::read(&GameFixContentStore::default_directory(), sha)),
-        }
-    }
-
-    /// Creates an engine with a custom overlay reader callback.
-    #[must_use]
-    pub fn with_overlay_reader<F>(allow_synthetic: bool, reader: F) -> Self
-    where
-        F: Fn(&str) -> Option<Vec<u8>> + Send + Sync + 'static,
-    {
-        Self {
-            allow_synthetic_definitions: allow_synthetic,
-            overlay_reader: Arc::new(reader),
         }
     }
 
@@ -171,36 +159,6 @@ impl GameFixEngine {
     pub fn get_manifest(&self, fix_id: &str, game_dir: &Path) -> Result<GameFixManifest> {
         let manifest_path = get_manifest_path(game_dir, fix_id);
         read_manifest(&manifest_path, fix_id)
-    }
-
-    /// Returns file status for all files managed by active fixes in the game directory.
-    ///
-    /// # Errors
-    /// Returns [`Error::System`] on failure.
-    pub fn get_managed_file_status(
-        &self,
-        game_dir: &Path,
-        issues: Option<&mut Vec<String>>,
-    ) -> Result<Vec<GameFixManagedFileStatus>> {
-        let active = read_active_manifests(game_dir, issues)?;
-        let mut statuses = Vec::new();
-
-        for manifest in active {
-            for file in manifest.files {
-                let resolved = resolve_game_path(game_dir, &file.relative_path)?;
-                let exists = resolved.is_file();
-                let matches_expected_hash = exists && matches_file_hash(&resolved, &file.after_sha256);
-
-                statuses.push(GameFixManagedFileStatus {
-                    fix_id: manifest.fix_id.clone(),
-                    relative_path: file.relative_path,
-                    exists,
-                    matches_expected_hash,
-                });
-            }
-        }
-
-        Ok(statuses)
     }
 
     /// Installs a game fix.

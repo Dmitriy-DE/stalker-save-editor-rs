@@ -52,13 +52,6 @@ impl UpdateService {
         self
     }
 
-    /// Sets a custom public key PEM (e.g. for testing).
-    #[must_use]
-    pub fn with_public_key_pem(mut self, pem: impl Into<String>) -> Self {
-        self.public_key_pem = Some(pem.into());
-        self
-    }
-
     /// Returns the current installed version.
     #[must_use]
     pub fn current_version(&self) -> &str {

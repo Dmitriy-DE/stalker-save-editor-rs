@@ -125,19 +125,6 @@ impl ItemIconService {
         icons.saturating_add(misses)
     }
 
-    /// Clears cached decoded pages and images, returning to idle memory state.
-    pub fn clear_cache(&self) {
-        if let Ok(mut page_cache) = self.decoded_page_cache.lock() {
-            *page_cache = None;
-        }
-        if let Ok(mut icon_cache) = self.icon_cache.lock() {
-            icon_cache.clear();
-        }
-        if let Ok(mut miss_cache) = self.miss_cache.lock() {
-            miss_cache.clear();
-        }
-    }
-
     fn record_miss(&self, key: String) {
         if let Ok(mut misses) = self.miss_cache.lock() {
             if misses.len() >= MAXIMUM_CACHED_KEYS {

@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex};
 
 const WL_DISPLAY: u32 = 1;
 const WL_REGISTRY: u32 = 2;
+const WL_SHM_FORMAT_ARGB8888: u32 = 0;
 const WL_SHM_FORMAT_XRGB8888: u32 = 1;
 #[derive(Clone, Copy, Default)]
 struct Globals {
@@ -21,6 +22,8 @@ struct Globals {
     shm: Option<(u32, u32)>,
     wm_base: Option<(u32, u32)>,
     seat: Option<(u32, u32)>,
+    text_input_manager: Option<(u32, u32)>,
+    toplevel_icon_manager: Option<(u32, u32)>,
 }
 
 #[derive(Clone, Copy)]
@@ -29,6 +32,7 @@ struct ReaderObjects {
     toplevel: u32,
     wm: u32,
     seat: Option<u32>,
+    text_input: Option<u32>,
     surface: u32,
 }
 
@@ -51,7 +55,11 @@ pub struct WaylandWindow {
     writer: Arc<Mutex<UnixStream>>,
     shm: u32,
     surface: u32,
+    toplevel: u32,
+    icon_manager: Option<u32>,
+    icon: Option<u32>,
     buffers: [BufferSlot; 2],
+    icon_buffer: Option<BufferSlot>,
     size: (u32, u32),
     next_object_id: u32,
     sync: Arc<Mutex<BufferSync>>,
@@ -80,6 +88,40 @@ impl WaylandWindow {
         } else {
             None
         };
+        let text_input = if let (Some(manager_global), Some(seat)) = (globals.text_input_manager, seat) {
+            let manager = bind(&mut stream, Some(manager_global), "zwp_text_input_manager_v3", 1, 17)?;
+            let text_input = 18;
+            send(&mut stream, manager, 1, &u32s(&[text_input, seat]))?;
+            Some(text_input)
+        } else {
+            None
+        };
+        let next_object_id = if text_input.is_some() { 19 } else { 17 };
+        let (icon_manager, next_object_id) = if globals.toplevel_icon_manager.is_some() {
+            let manager_id = next_object_id;
+            let manager = bind(
+                &mut stream,
+                globals.toplevel_icon_manager,
+                "xdg_toplevel_icon_manager_v1",
+                1,
+                manager_id,
+            )?;
+            let icon = manager_id
+                .checked_add(1)
+                .ok_or_else(|| Error::Refused("Wayland object ID overflow".to_owned()))?;
+            let pool = icon
+                .checked_add(1)
+                .ok_or_else(|| Error::Refused("Wayland object ID overflow".to_owned()))?;
+            let buffer = pool
+                .checked_add(1)
+                .ok_or_else(|| Error::Refused("Wayland object ID overflow".to_owned()))?;
+            let next = buffer
+                .checked_add(1)
+                .ok_or_else(|| Error::Refused("Wayland object ID overflow".to_owned()))?;
+            (Some((manager, icon, pool, buffer)), next)
+        } else {
+            (None, next_object_id)
+        };
 
         let surface = 8;
         send(&mut stream, compositor, 0, &u32s(&[surface]))?;
@@ -89,6 +131,26 @@ impl WaylandWindow {
         send(&mut stream, xdg_surface, 1, &u32s(&[toplevel]))?;
         send_string(&mut stream, toplevel, 2, title)?;
         send_string(&mut stream, toplevel, 3, "stalker-save-editor")?;
+        let icon_buffer = if let Some((manager, icon, pool, buffer)) = icon_manager {
+            let pixels = crate::window_icon::rgba_to_premultiplied_argb32(
+                crate::window_icon::APP_ICON_SIZE,
+                crate::window_icon::APP_ICON_SIZE,
+                crate::window_icon::app_icon_rgba(),
+            )?;
+            let icon_buffer = create_icon_buffer(
+                &mut stream,
+                shm,
+                crate::window_icon::APP_ICON_SIZE,
+                crate::window_icon::APP_ICON_SIZE,
+                pool,
+                buffer,
+                &pixels,
+            )?;
+            set_named_toplevel_icon(&mut stream, manager, toplevel, icon, buffer)?;
+            Some(icon_buffer)
+        } else {
+            None
+        };
         send(&mut stream, surface, 6, &[])?; // initial commit
         stream.flush().map_err(io)?;
 
@@ -111,6 +173,7 @@ impl WaylandWindow {
             toplevel,
             wm,
             seat,
+            text_input,
             surface,
         };
         std::thread::Builder::new()
@@ -121,9 +184,13 @@ impl WaylandWindow {
             writer,
             shm,
             surface,
+            toplevel,
+            icon_manager: icon_manager.map(|(manager, _, _, _)| manager),
+            icon: icon_manager.map(|(_, icon, _, _)| icon),
             buffers: [first, second],
+            icon_buffer,
             size: (width, height),
-            next_object_id: 17,
+            next_object_id,
             sync,
             closed,
         })
@@ -239,9 +306,39 @@ impl Present for WaylandWindow {
 impl Drop for WaylandWindow {
     fn drop(&mut self) {
         let _ = self.closed.lock().map(|mut value| *value = true);
-        for slot in &self.buffers {
-            let _ = send_shared(&self.writer, slot.buffer, 0, &[]);
-            let _ = send_shared(&self.writer, slot.pool, 1, &[]);
+        if let Ok(mut stream) = self.writer.lock() {
+            if let Some(manager) = self.icon_manager {
+                let clear_icon = wire_message(manager, 2, &u32s(&[self.toplevel, 0]));
+                let commit = wire_message(self.surface, 6, &[]);
+                for request in [clear_icon, commit].into_iter().flatten() {
+                    let _ = stream.write_all(&request);
+                }
+                if let Some(icon) = self.icon {
+                    if let Ok(request) = wire_message(icon, 0, &[]) {
+                        let _ = stream.write_all(&request);
+                    }
+                }
+                if let Ok(request) = wire_message(manager, 0, &[]) {
+                    let _ = stream.write_all(&request);
+                }
+            }
+            for slot in &self.buffers {
+                for request in [wire_message(slot.buffer, 0, &[]), wire_message(slot.pool, 1, &[])]
+                    .into_iter()
+                    .flatten()
+                {
+                    let _ = stream.write_all(&request);
+                }
+            }
+            if let Some(slot) = &self.icon_buffer {
+                for request in [wire_message(slot.buffer, 0, &[]), wire_message(slot.pool, 1, &[])]
+                    .into_iter()
+                    .flatten()
+                {
+                    let _ = stream.write_all(&request);
+                }
+            }
+            let _ = stream.flush();
         }
     }
 }
@@ -268,6 +365,7 @@ fn event_reader<U: Send + 'static>(
         toplevel,
         wm,
         seat,
+        text_input,
         surface,
     } = objects;
     const POINTER_ID: u32 = 13;
@@ -280,6 +378,7 @@ fn event_reader<U: Send + 'static>(
     let mut pointer_position = (0_i32, 0_i32);
     let mut ctrl = false;
     let mut shift = false;
+    let mut pending_ime = PendingTextInput::default();
 
     loop {
         if closed.lock().map(|value| *value).unwrap_or(true) {
@@ -316,6 +415,20 @@ fn event_reader<U: Send + 'static>(
             if let Some(serial) = read_u32(&payload, 0) {
                 let _ = send_shared(&writer, wm, 3, &u32s(&[serial]));
             }
+        } else if Some(object) == text_input {
+            if opcode == 1 && read_u32(&payload, 0) == Some(surface) {
+                for event in pending_ime.cancel() {
+                    if !proxy.window(WindowEvent::Ime(event)) {
+                        return;
+                    }
+                }
+            } else if let Some(events) = pending_ime.receive(opcode, &payload) {
+                for event in events {
+                    if !proxy.window(WindowEvent::Ime(event)) {
+                        return;
+                    }
+                }
+            }
         } else if Some(object) == seat && opcode == 0 {
             if let Some(capabilities) = read_u32(&payload, 0) {
                 if capabilities & SEAT_CAP_POINTER != 0
@@ -339,17 +452,39 @@ fn event_reader<U: Send + 'static>(
             match opcode {
                 1 => {
                     if read_u32(&payload, 4) == Some(surface) {
+                        if let Some(text_input) = text_input {
+                            let content_type = u32s(&[0, 0]);
+                            let cursor = i32s(&[0, 0, 1, 18]);
+                            let _ = send_shared(&writer, text_input, 5, &content_type);
+                            let _ = send_shared(&writer, text_input, 6, &cursor);
+                            let _ = send_shared(&writer, text_input, 1, &[]);
+                            let _ = send_shared(&writer, text_input, 7, &[]);
+                        }
                         let _ = proxy.window(WindowEvent::Focus(true));
                     }
                 }
                 2 => {
                     if read_u32(&payload, 4) == Some(surface) {
+                        if let Some(text_input) = text_input {
+                            let _ = send_shared(&writer, text_input, 2, &[]);
+                            let _ = send_shared(&writer, text_input, 7, &[]);
+                            for event in pending_ime.cancel() {
+                                if !proxy.window(WindowEvent::Ime(event)) {
+                                    return;
+                                }
+                            }
+                        }
                         let _ = proxy.window(WindowEvent::Focus(false));
                     }
                 }
                 3 => {
                     if let (Some(key), Some(state)) = (read_u32(&payload, 8), read_u32(&payload, 12)) {
                         if let Some(event) = keyboard_event(key, state != 0, ctrl, shift) {
+                            let event = if text_input.is_some() {
+                                without_key_text(event)
+                            } else {
+                                event
+                            };
                             let _ = proxy.window(event);
                         }
                     }
@@ -442,6 +577,25 @@ fn keyboard_event(key: u32, pressed: bool, ctrl: bool, shift: bool) -> Option<Wi
         ctrl,
         shift,
     })
+}
+
+fn without_key_text(event: WindowEvent) -> WindowEvent {
+    match event {
+        WindowEvent::Key {
+            text: _,
+            pressed,
+            keysym,
+            ctrl,
+            shift,
+        } => WindowEvent::Key {
+            pressed,
+            keysym,
+            text: None,
+            ctrl,
+            shift,
+        },
+        other => other,
+    }
 }
 
 fn evdev_key(key: u32, shift: bool) -> Option<(u32, Option<char>)> {
@@ -537,16 +691,29 @@ fn read_registry_until_done(stream: &mut UnixStream, callback: u32, globals: &mu
         }
         if object == WL_REGISTRY && opcode == 0 {
             if let Some((name, iface, version)) = parse_global(&payload) {
-                match iface.as_str() {
-                    "wl_compositor" => globals.compositor = Some((name, version)),
-                    "wl_shm" => globals.shm = Some((name, version)),
-                    "xdg_wm_base" => globals.wm_base = Some((name, version)),
-                    "wl_seat" => globals.seat = Some((name, version)),
-                    _ => {}
-                }
+                record_global(globals, name, &iface, version);
             }
         }
     }
+}
+
+fn record_global(globals: &mut Globals, name: u32, interface: &str, version: u32) {
+    match interface {
+        "wl_compositor" => globals.compositor = Some((name, version)),
+        "wl_shm" => globals.shm = Some((name, version)),
+        "xdg_wm_base" => globals.wm_base = Some((name, version)),
+        "wl_seat" => globals.seat = Some((name, version)),
+        "zwp_text_input_manager_v3" => globals.text_input_manager = Some((name, version)),
+        "xdg_toplevel_icon_manager_v1" => globals.toplevel_icon_manager = Some((name, version)),
+        _ => {}
+    }
+}
+
+fn set_named_toplevel_icon(stream: &mut UnixStream, manager: u32, toplevel: u32, icon: u32, buffer: u32) -> Result<()> {
+    send(stream, manager, 1, &u32s(&[icon]))?;
+    send_string(stream, icon, 1, "stalker-save-editor")?;
+    send(stream, icon, 2, &u32s(&[buffer, 1]))?;
+    send(stream, manager, 2, &u32s(&[toplevel, icon]))
 }
 
 fn parse_global(payload: &[u8]) -> Option<(u32, String, u32)> {
@@ -655,6 +822,39 @@ fn create_buffer(
     )?;
     Ok(BufferSlot { pool, buffer, memory })
 }
+
+fn create_icon_buffer(
+    stream: &mut UnixStream,
+    shm: u32,
+    width: u32,
+    height: u32,
+    pool: u32,
+    buffer: u32,
+    pixels: &[u32],
+) -> Result<BufferSlot> {
+    let byte_len = frame_bytes(width, height)?;
+    if width != height || pixels.len() != byte_len / 4 {
+        return Err(Error::Refused(
+            "Wayland icon buffer dimensions or pixels are invalid".to_owned(),
+        ));
+    }
+    let mut memory = MappedFile::new(byte_len).map_err(io)?;
+    memory.write_u32_le(pixels).map_err(io)?;
+    let pool_size = u32::try_from(byte_len).map_err(|_| Error::Refused("Wayland icon buffer too large".to_owned()))?;
+    let pool_request = wire_message(shm, 0, &u32s(&[pool, pool_size]))?;
+    sse_sys::unix_fd::send_fd(stream, &pool_request, memory.raw_fd()).map_err(io)?;
+    let stride = width
+        .checked_mul(4)
+        .ok_or_else(|| Error::Refused("Wayland icon stride overflow".to_owned()))?;
+    send(
+        stream,
+        pool,
+        0,
+        &u32s(&[buffer, 0, width, height, stride, WL_SHM_FORMAT_ARGB8888]),
+    )?;
+    Ok(BufferSlot { pool, buffer, memory })
+}
+
 fn wire_string(value: &str) -> Vec<u8> {
     let len = value.len().saturating_add(1);
     let mut out = u32s(&[u32::try_from(len).unwrap_or(u32::MAX)]);
@@ -679,6 +879,76 @@ fn read_i32(bytes: &[u8], offset: usize) -> Option<i32> {
     let end = offset.checked_add(4)?;
     Some(i32::from_ne_bytes(bytes.get(offset..end)?.try_into().ok()?))
 }
+
+#[derive(Default)]
+struct PendingTextInput {
+    preedit: Option<String>,
+    commit: Option<String>,
+    active: bool,
+}
+
+impl PendingTextInput {
+    fn receive(&mut self, opcode: u16, payload: &[u8]) -> Option<Vec<crate::event_loop::ImeEvent>> {
+        use crate::event_loop::ImeEvent;
+        match opcode {
+            2 => {
+                self.preedit = Some(read_wire_string(payload, 0)?);
+                None
+            }
+            3 => {
+                self.commit = Some(read_wire_string(payload, 0)?);
+                None
+            }
+            5 => {
+                let mut events = Vec::with_capacity(3);
+                if let Some(text) = self.commit.take().filter(|text| !text.is_empty()) {
+                    self.active = false;
+                    events.push(ImeEvent::Commit(text));
+                }
+                if let Some(text) = self.preedit.take() {
+                    if text.is_empty() {
+                        if self.active {
+                            self.active = false;
+                            events.push(ImeEvent::Cancel);
+                        }
+                    } else {
+                        if !self.active {
+                            self.active = true;
+                            events.push(ImeEvent::Start);
+                        }
+                        events.push(ImeEvent::Update(text));
+                    }
+                }
+                Some(events)
+            }
+            _ => None,
+        }
+    }
+
+    fn cancel(&mut self) -> Vec<crate::event_loop::ImeEvent> {
+        self.preedit = None;
+        self.commit = None;
+        if std::mem::replace(&mut self.active, false) {
+            vec![crate::event_loop::ImeEvent::Cancel]
+        } else {
+            Vec::new()
+        }
+    }
+}
+
+fn read_wire_string(bytes: &[u8], offset: usize) -> Option<String> {
+    let length = usize::try_from(read_u32(bytes, offset)?).ok()?;
+    let start = offset.checked_add(4)?;
+    if length == 0 {
+        return Some(String::new());
+    }
+    let end = start.checked_add(length)?;
+    let raw = bytes.get(start..end)?;
+    if raw.last() != Some(&0) {
+        return None;
+    }
+    String::from_utf8(raw.get(..length.checked_sub(1)?)?.to_vec()).ok()
+}
 fn align4(value: usize) -> usize {
     value.saturating_add(3) & !3
 }
@@ -700,8 +970,13 @@ fn io(error: std::io::Error) -> Error {
 
 #[cfg(test)]
 mod tests {
-    use super::{keyboard_event, parse_global, parse_pointer_event, valid_message_size, wire_message, wire_string};
-    use crate::event_loop::WindowEvent;
+    use super::{
+        keyboard_event, parse_global, parse_pointer_event, read_message, read_wire_string, record_global,
+        set_named_toplevel_icon, u32s, valid_message_size, wire_message, wire_string, without_key_text, Globals,
+        PendingTextInput,
+    };
+    use crate::event_loop::{ImeEvent, WindowEvent};
+    use std::os::unix::net::UnixStream;
 
     #[test]
     fn registry_global_decodes() {
@@ -709,6 +984,78 @@ mod tests {
         p.extend_from_slice(&wire_string("wl_compositor"));
         p.extend_from_slice(&4u32.to_ne_bytes());
         assert_eq!(parse_global(&p), Some((1, "wl_compositor".to_owned(), 4)));
+    }
+
+    #[test]
+    fn registry_keeps_the_optional_toplevel_icon_manager() {
+        let mut globals = Globals::default();
+        record_global(&mut globals, 42, "xdg_toplevel_icon_manager_v1", 1);
+        assert_eq!(globals.toplevel_icon_manager, Some((42, 1)));
+
+        record_global(&mut globals, 43, "zwp_text_input_manager_v3", 1);
+        assert_eq!(globals.text_input_manager, Some((43, 1)));
+    }
+
+    #[test]
+    fn named_icon_is_assigned_with_pixel_data() {
+        let (mut client, mut server) = UnixStream::pair().unwrap_or_else(|error| panic!("{error}"));
+        set_named_toplevel_icon(&mut client, 19, 10, 20, 22).unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(
+            read_message(&mut server).unwrap_or_else(|error| panic!("{error}")),
+            (19, 1, u32s(&[20]))
+        );
+        assert_eq!(
+            read_message(&mut server).unwrap_or_else(|error| panic!("{error}")),
+            (20, 1, wire_string("stalker-save-editor"))
+        );
+        assert_eq!(
+            read_message(&mut server).unwrap_or_else(|error| panic!("{error}")),
+            (20, 2, u32s(&[22, 1]))
+        );
+        assert_eq!(
+            read_message(&mut server).unwrap_or_else(|error| panic!("{error}")),
+            (19, 2, u32s(&[10, 20]))
+        );
+    }
+
+    #[test]
+    fn icon_buffer_is_shm_argb_with_immutable_pixels() {
+        use std::io::Read;
+
+        let (mut client, mut server) = UnixStream::pair().unwrap_or_else(|error| panic!("{error}"));
+        let slot = super::create_icon_buffer(&mut client, 5, 2, 2, 7, 8, &[0x1122_3344; 4])
+            .unwrap_or_else(|error| panic!("{error}"));
+
+        let mut pool_message = [0_u8; 16];
+        let (received, fd) =
+            sse_sys::unix_fd::recv_fd(&server, &mut pool_message).unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(received, pool_message.len());
+        assert!(fd.is_some());
+        assert_eq!(
+            pool_message.as_slice(),
+            super::wire_message(5, 0, &u32s(&[7, 16])).unwrap_or_default()
+        );
+        assert_eq!(
+            read_message(&mut server).unwrap_or_else(|error| panic!("{error}")),
+            (7, 0, u32s(&[8, 0, 2, 2, 8, super::WL_SHM_FORMAT_ARGB8888]))
+        );
+        assert_eq!(slot.pool, 7);
+        assert_eq!(slot.buffer, 8);
+
+        let Some(fd) = fd else {
+            panic!("wl_shm.create_pool did not pass a file descriptor");
+        };
+        let mut file = std::fs::File::from(fd);
+        let mut pixels = [0_u8; 16];
+        file.read_exact(&mut pixels).unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(pixels.as_slice(), [0x44, 0x33, 0x22, 0x11].repeat(4));
+    }
+
+    #[test]
+    fn icon_buffer_rejects_non_square_or_mismatched_pixels() {
+        let (mut client, _server) = UnixStream::pair().unwrap_or_else(|error| panic!("{error}"));
+        assert!(super::create_icon_buffer(&mut client, 5, 2, 1, 7, 8, &[0; 2]).is_err());
+        assert!(super::create_icon_buffer(&mut client, 5, 2, 2, 7, 8, &[0; 3]).is_err());
     }
 
     #[test]
@@ -748,6 +1095,71 @@ mod tests {
                 ctrl: true,
                 shift: false,
             })
+        );
+    }
+
+    #[test]
+    fn text_input_v3_decodes_utf8_and_rejects_malformed_strings() {
+        let encoded = wire_string("かな");
+        assert_eq!(read_wire_string(&encoded, 0), Some("かな".to_owned()));
+        assert_eq!(read_wire_string(&[0, 0, 0, 0], 0), Some(String::new()));
+
+        assert_eq!(read_wire_string(&[8, 0, 0, 0, 0xc3, 0x28, 0, 0], 0), None);
+        assert_eq!(read_wire_string(&[2, 0, 0, 0, b'a'], 0), None);
+        assert_eq!(read_wire_string(&[1, 0, 0, 0, b'a'], 0), None);
+    }
+
+    #[test]
+    fn text_input_v3_updates_only_after_done_and_commits_once() {
+        let mut input = PendingTextInput::default();
+        let mut preedit = wire_string("かな");
+        preedit.extend_from_slice(&0_i32.to_ne_bytes());
+        preedit.extend_from_slice(&2_i32.to_ne_bytes());
+        assert_eq!(input.receive(2, &preedit), None);
+        assert_eq!(
+            input.receive(5, &[]),
+            Some(vec![ImeEvent::Start, ImeEvent::Update("かな".to_owned())])
+        );
+
+        let commit = wire_string("仮名");
+        assert_eq!(input.receive(3, &commit), None);
+        let empty_preedit = wire_string("");
+        assert_eq!(input.receive(2, &empty_preedit), None);
+        assert_eq!(input.receive(5, &[]), Some(vec![ImeEvent::Commit("仮名".to_owned())]));
+        assert!(input.cancel().is_empty());
+    }
+
+    #[test]
+    fn text_input_v3_cancels_active_preedit_on_empty_string_or_focus_loss() {
+        let mut input = PendingTextInput::default();
+        let preedit = wire_string("にほん");
+        assert_eq!(input.receive(2, &preedit), None);
+        assert_eq!(
+            input.receive(5, &[]),
+            Some(vec![ImeEvent::Start, ImeEvent::Update("にほん".to_owned())])
+        );
+        assert_eq!(input.receive(2, &wire_string("")), None);
+        assert_eq!(input.receive(5, &[]), Some(vec![ImeEvent::Cancel]));
+
+        assert_eq!(input.receive(2, &preedit), None);
+        assert_eq!(
+            input.receive(5, &[]),
+            Some(vec![ImeEvent::Start, ImeEvent::Update("にほん".to_owned())])
+        );
+        assert_eq!(input.cancel(), vec![ImeEvent::Cancel]);
+    }
+
+    #[test]
+    fn wayland_text_input_does_not_insert_keymap_fallback_before_commit() {
+        assert_eq!(
+            without_key_text(keyboard_event(30, true, false, false).unwrap_or_else(|| panic!("letter key expected"))),
+            WindowEvent::Key {
+                pressed: true,
+                keysym: u32::from('a'),
+                text: None,
+                ctrl: false,
+                shift: false,
+            }
         );
     }
 }

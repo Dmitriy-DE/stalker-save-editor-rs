@@ -49,14 +49,6 @@ impl Table {
         }
     }
 
-    /// Change the hovered virtual row.
-    pub fn hover_view(&mut self, index: Option<usize>) -> bool {
-        let next = index.and_then(|i| self.visible_row(i));
-        let changed = next != self.hover;
-        self.hover = next;
-        changed
-    }
-
     /// Stable id of the hovered row.
     #[must_use]
     pub const fn hovered(&self) -> Option<RowId> {

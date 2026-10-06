@@ -150,7 +150,7 @@ impl KeyModifiers {
 #[cfg(windows)]
 mod platform {
     use super::{clip_rect, frame_to_bgra_into, win32_keysym, KeyModifiers};
-    use crate::event_loop::{Present, Proxy, WindowEvent};
+    use crate::event_loop::{ImeEvent, Present, Proxy, WindowEvent};
     use crate::raster::Rect;
     use sse_core::{Error, Result};
     use sse_sys::window_win32::{Event, Rect as NativeRect, WakeHandle, Win32Window, Window, WindowOptions};
@@ -209,6 +209,14 @@ mod platform {
                             return;
                         }
                     };
+                    if let Err(error) = window.set_icon_rgba(
+                        crate::window_icon::app_icon_rgba(),
+                        crate::window_icon::APP_ICON_SIZE,
+                        crate::window_icon::APP_ICON_SIZE,
+                    ) {
+                        let _ = ready_tx.send(Err(error));
+                        return;
+                    }
                     let wake = window.wake_handle();
                     if ready_tx.send(Ok(wake)).is_err() {
                         return;
@@ -333,6 +341,10 @@ mod platform {
                 ctrl: modifiers.control(),
                 shift: modifiers.shift(),
             }),
+            Event::ImeStart => proxy.window(WindowEvent::Ime(ImeEvent::Start)),
+            Event::ImeUpdate(text) => proxy.window(WindowEvent::Ime(ImeEvent::Update(text))),
+            Event::ImeCommit(text) => proxy.window(WindowEvent::Ime(ImeEvent::Commit(text))),
+            Event::ImeCancel => proxy.window(WindowEvent::Ime(ImeEvent::Cancel)),
             Event::PointerMoved { x, y } => {
                 *pointer = (x, y);
                 proxy.window(WindowEvent::PointerMoved { x, y })

@@ -793,16 +793,23 @@ pub fn discover_game_installations() -> Vec<DiscoveredInstallation> {
     for target in GameTarget::ALL {
         if let Some(app_id) = target.steam_app_id() {
             for library in &libraries {
-                if let Some(install_dir) = find_manifest_install_directory(library, app_id) {
+                let manifest = read_steam_app_manifest(library, app_id);
+                let build_id = manifest
+                    .as_deref()
+                    .and_then(|content| parse_acf_string_value(content, "buildid"))
+                    .map(|build_id| build_id.trim().to_owned());
+                if let Some(install_dir) = manifest
+                    .as_deref()
+                    .and_then(|content| find_manifest_install_directory(library, app_id, content))
+                {
                     if has_expected_marker(target, &install_dir) {
-                        let build_id = try_read_steam_build_id(library, app_id);
                         add_installation(
                             &mut installations,
                             &mut seen_dirs,
                             target,
                             install_dir,
                             GameInstallSource::Steam,
-                            build_id,
+                            build_id.clone(),
                         );
                     }
                 }
@@ -811,14 +818,13 @@ pub fn discover_game_installations() -> Vec<DiscoveredInstallation> {
                 for install_name in target.install_directories() {
                     let common_path = library.join("steamapps").join("common").join(install_name);
                     if has_expected_marker(target, &common_path) {
-                        let build_id = try_read_steam_build_id(library, app_id);
                         add_installation(
                             &mut installations,
                             &mut seen_dirs,
                             target,
                             common_path,
                             GameInstallSource::Steam,
-                            build_id,
+                            build_id.clone(),
                         );
                     }
                 }
@@ -1013,13 +1019,22 @@ fn get_steam_libraries_list(steam_roots: &[PathBuf]) -> Vec<PathBuf> {
         }
 
         let vdf_file = resolved.join("steamapps").join("libraryfolders.vdf");
-        if let Ok(vdf_text) = fs::read_to_string(&vdf_file) {
-            for path_str in parse_vdf_library_paths(&vdf_text) {
-                let full_path = normalize_full_path(Path::new(&path_str));
-                let resolved_path = resolve_links(&full_path);
-                if resolved_path.is_dir() && seen.insert(resolved_path.clone()) {
-                    libraries.push(resolved_path);
+        match fs::read_to_string(&vdf_file) {
+            Ok(vdf_text) => {
+                for path_str in parse_vdf_library_paths(&vdf_text) {
+                    let full_path = normalize_full_path(Path::new(&path_str));
+                    let resolved_path = resolve_links(&full_path);
+                    if resolved_path.is_dir() && seen.insert(resolved_path.clone()) {
+                        libraries.push(resolved_path);
+                    }
                 }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                sse_app::diagnostics::warn(&format!(
+                    "failed to read Steam library folders index ({:?})",
+                    error.kind()
+                ));
             }
         }
     }
@@ -1048,14 +1063,30 @@ fn parse_vdf_library_paths(text: &str) -> Vec<String> {
     paths
 }
 
-fn find_manifest_install_directory(library_root: &Path, app_id: u32) -> Option<PathBuf> {
+fn read_steam_app_manifest(library_root: &Path, app_id: u32) -> Option<String> {
     let manifest = library_root.join("steamapps").join(format!("appmanifest_{app_id}.acf"));
-    let content = fs::read_to_string(&manifest).ok()?;
-    let parsed_app_id = parse_acf_string_value(&content, "appid")?;
+    match fs::read_to_string(manifest) {
+        Ok(content) => Some(content),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => {
+            report_steam_manifest_read_error(app_id, error);
+            None
+        }
+    }
+}
+
+fn report_steam_manifest_read_error(app_id: u32, error: std::io::Error) {
+    sse_app::diagnostics::warn(&format!(
+        "failed to read Steam app manifest for app id {app_id}: {error}"
+    ));
+}
+
+fn find_manifest_install_directory(library_root: &Path, app_id: u32, content: &str) -> Option<PathBuf> {
+    let parsed_app_id = parse_acf_string_value(content, "appid")?;
     if parsed_app_id.trim() != app_id.to_string() {
         return None;
     }
-    let install_dir = parse_acf_string_value(&content, "installdir")?;
+    let install_dir = parse_acf_string_value(content, "installdir")?;
     if install_dir.trim().is_empty() {
         return None;
     }
@@ -1065,12 +1096,6 @@ fn find_manifest_install_directory(library_root: &Path, app_id: u32) -> Option<P
     } else {
         None
     }
-}
-
-fn try_read_steam_build_id(library_root: &Path, app_id: u32) -> Option<String> {
-    let manifest = library_root.join("steamapps").join(format!("appmanifest_{app_id}.acf"));
-    let content = fs::read_to_string(&manifest).ok()?;
-    parse_acf_string_value(&content, "buildid").map(|s| s.trim().to_owned())
 }
 
 fn parse_acf_string_value<'a>(text: &'a str, key: &str) -> Option<&'a str> {
@@ -3050,6 +3075,29 @@ impl Screen for Encyclopedia {
                 cx.status = Some("Поиск активен: вводите текст с клавиатуры".to_owned());
             }
         }
+        if let Message::Window(crate::event_loop::WindowEvent::Ime(event)) = message {
+            if self
+                .search
+                .as_ref()
+                .is_some_and(crate::widgets::text_input::TextInput::focused)
+            {
+                if let Some(search) = self.search.as_mut() {
+                    search.apply_ime_event(event)?;
+                }
+                if matches!(event, crate::event_loop::ImeEvent::Commit(_))
+                    || matches!(event, crate::event_loop::ImeEvent::Cancel)
+                {
+                    return self.apply_search(cx);
+                }
+                if let (Some(search), Some(label)) = (self.search.as_ref(), self.search_label) {
+                    cx.tree.set_text(
+                        label,
+                        &format!("Поиск: {} · результатов: {}", search.display_text(), self.visible.len()),
+                    )?;
+                }
+            }
+            return Ok(());
+        }
         if let Message::Window(crate::event_loop::WindowEvent::Key {
             pressed: true,
             keysym,
@@ -3349,5 +3397,42 @@ mod encyclopedia_result_tests {
             Some(Ok(entries)) if entries.is_empty()
         ));
         assert!(current.take_if_current(Some("stalker-cop"), 5).is_none());
+    }
+}
+
+#[cfg(test)]
+mod steam_manifest_warning_tests {
+    use super::report_steam_manifest_read_error;
+    use sse_core::{Error, Result};
+    use std::sync::Mutex;
+
+    static TEST_GATE: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn unreadable_manifest_is_logged_without_its_path() -> Result<()> {
+        let _guard = TEST_GATE
+            .lock()
+            .map_err(|_| Error::System("Steam manifest test gate poisoned".to_owned()))?;
+        let root = std::env::temp_dir().join(format!("sse-manifest-warning-{}", std::process::id()));
+        let logs = root.join("logs");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&logs)?;
+        sse_app::diagnostics::configure_log_directory(Some(logs.clone()));
+
+        let result = (|| -> Result<String> {
+            report_steam_manifest_read_error(
+                123,
+                std::io::Error::new(std::io::ErrorKind::PermissionDenied, "simulated read failure"),
+            );
+            Ok(std::fs::read_to_string(logs.join("save-editor.log"))?)
+        })();
+        sse_app::diagnostics::configure_log_directory(None);
+        let _ = std::fs::remove_dir_all(&root);
+        let log = result?;
+
+        assert!(log.contains(" WARN "));
+        assert!(log.contains("app id 123"));
+        assert!(!log.contains(&root.to_string_lossy().to_string()));
+        Ok(())
     }
 }

@@ -244,7 +244,7 @@ mod platform {
     use super::{
         clip_rect, frame_to_bgra_into, macos_keysym, point_to_pixels, rounded_i32, scale_to_f32, KeyModifiers,
     };
-    use crate::event_loop::{Message, Present, Proxy, WindowEvent};
+    use crate::event_loop::{ImeEvent, Message, Present, Proxy, WindowEvent};
     use crate::raster::Rect;
     use sse_core::Result;
     use sse_sys::window_macos::{Event, MacWindow, MouseButton, Rect as NativeRect, Window, WindowOptions};
@@ -274,6 +274,7 @@ mod platform {
                 min_height: 400,
             };
             let window = MacWindow::new(options)?;
+            window.set_icon_png(&crate::window_icon::app_icon_png()?)?;
             let wake = window.wake_handle();
             let ui_thread = std::thread::current().id();
             proxy.set_wake_callback(Some(Arc::new(move || {
@@ -309,6 +310,10 @@ mod platform {
                     }
                     sent
                 }
+                Event::ImeStart => self.proxy.window(WindowEvent::Ime(ImeEvent::Start)),
+                Event::ImeUpdate(text) => self.proxy.window(WindowEvent::Ime(ImeEvent::Update(text))),
+                Event::ImeCommit(text) => self.proxy.window(WindowEvent::Ime(ImeEvent::Commit(text))),
+                Event::ImeCancel => self.proxy.window(WindowEvent::Ime(ImeEvent::Cancel)),
                 Event::Key { code, down, .. } => {
                     self.modifiers.update(code, down);
                     self.proxy.window(WindowEvent::Key {

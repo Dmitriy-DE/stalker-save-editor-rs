@@ -240,3 +240,10 @@ unsafe extern "system" {
     pub fn CoTaskMemFree(p: *mut c_void);
     pub fn CoUninitialize();
 }
+
+#[link(name = "imm32")]
+unsafe extern "system" {
+    pub fn ImmGetContext(hwnd: Hwnd) -> Handle;
+    pub fn ImmReleaseContext(hwnd: Hwnd, context: Handle) -> Bool;
+    pub fn ImmGetCompositionStringW(context: Handle, index: Dword, buffer: Handle, length: Dword) -> i32;
+}

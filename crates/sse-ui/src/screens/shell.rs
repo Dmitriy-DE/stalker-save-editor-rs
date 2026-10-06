@@ -7,13 +7,15 @@ use crate::event_loop::{App, Flow, Message, Proxy, WindowEvent};
 use crate::glyphs::{to_px, Face, TextStyle};
 use crate::layout::{Align, Edges, NodeKind, Size, Style};
 use crate::path::Icon;
-use crate::widget::{Content, Look, TextAlign, Tree, WidgetId};
+use crate::widget::{Content, ImageData, Look, TextAlign, Tree, WidgetId};
 use crate::widgets::scroll::ScrollView;
 use crate::widgets::text_input::TextInput;
+use sse_content::{SavePreviewReader, Stalker2SlotMeta};
 use sse_core::Result;
+use sse_storage::discovery::SaveSlot;
 use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 const KEY_ESCAPE: u32 = 0xff1b;
 const KEY_TAB: u32 = 0xff09;
@@ -21,6 +23,9 @@ const KEY_RETURN: u32 = 0xff0d;
 const KEY_UP: u32 = 0xff52;
 const KEY_DOWN: u32 = 0xff54;
 const SAVE_LIBRARY_PAGE_SIZE: usize = 8;
+const LIBRARY_PREVIEW_WIDTH: u32 = 96;
+const LIBRARY_PREVIEW_HEIGHT: u32 = 54;
+const LIBRARY_PREVIEW_CACHE_ENTRIES: usize = 32;
 const DRAFT_CLOSE_WARNING: &str = "Последняя правка не сохранена в черновик.";
 const FORCE_CLOSE_DEFAULT_MESSAGE: &str =
     "Фоновая операция ещё записывает файлы. Принудительное закрытие может оставить операцию незавершённой.";
@@ -57,6 +62,84 @@ struct OpenFilesQueue {
     completed: usize,
     opened: usize,
     last_error: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PreviewKey {
+    path: PathBuf,
+    size: u64,
+    modified: SystemTime,
+}
+
+impl From<&SaveSlot> for PreviewKey {
+    fn from(slot: &SaveSlot) -> Self {
+        Self {
+            path: slot.path.clone(),
+            size: slot.size,
+            modified: slot.last_write_time_utc,
+        }
+    }
+}
+
+#[derive(Clone)]
+struct LibraryPreviewEntry {
+    key: PreviewKey,
+    image: Option<ImageData>,
+    s2_detail: Option<String>,
+    s2_jpeg_available: bool,
+}
+
+#[derive(Clone)]
+struct PreviewRequest {
+    id: u64,
+    key: PreviewKey,
+}
+
+#[derive(Default)]
+struct LibraryPreviewState {
+    entries: VecDeque<LibraryPreviewEntry>,
+    pending: Option<PreviewRequest>,
+    next_request: u64,
+}
+
+impl LibraryPreviewState {
+    fn get(&mut self, key: &PreviewKey) -> Option<LibraryPreviewEntry> {
+        let index = self.entries.iter().position(|entry| entry.key == *key)?;
+        let entry = self.entries.remove(index)?;
+        self.entries.push_back(entry.clone());
+        Some(entry)
+    }
+
+    fn contains(&self, key: &PreviewKey) -> bool {
+        self.entries.iter().any(|entry| entry.key == *key)
+    }
+
+    fn insert(&mut self, entry: LibraryPreviewEntry) {
+        self.entries.retain(|cached| cached.key != entry.key);
+        self.entries.push_back(entry);
+        while self.entries.len() > LIBRARY_PREVIEW_CACHE_ENTRIES {
+            self.entries.pop_front();
+        }
+    }
+}
+
+#[derive(Clone)]
+struct LibraryPreviewFinished {
+    request: u64,
+    key: PreviewKey,
+    image: Option<ImageData>,
+    s2_detail: Option<String>,
+    s2_jpeg_available: bool,
+}
+
+fn format_s2_preview_detail(meta: Option<Stalker2SlotMeta>) -> Option<String> {
+    let meta = meta?;
+    let hours = if (meta.play_hours.fract()).abs() < 0.05 {
+        format!("{:.0}", meta.play_hours)
+    } else {
+        format!("{:.1}", meta.play_hours)
+    };
+    Some(format!("{} · {hours} ч", meta.region_slug()))
 }
 
 fn format_open_error(path: &Path, error: &str, io_error: bool) -> String {
@@ -219,8 +302,9 @@ pub struct Shell {
     library_next: WidgetId,
     library_count: WidgetId,
     library_status: WidgetId,
-    library_rows: Vec<(WidgetId, WidgetId, WidgetId)>,
+    library_rows: Vec<(WidgetId, WidgetId, WidgetId, WidgetId)>,
     library_page: usize,
+    library_previews: LibraryPreviewState,
     library_workspace: super::saves::Workspace,
     reports_banner: WidgetId,
     reports_ok: WidgetId,
@@ -739,9 +823,37 @@ impl Shell {
         for _ in 0..SAVE_LIBRARY_PAGE_SIZE {
             let row = tree.add(
                 Some(library),
+                NodeKind::Row,
+                Style {
+                    gap: Size::new(5.0, 0.0),
+                    align_items: Align::Center,
+                    ..Style::default()
+                },
+                Content::Panel,
+                Look::default(),
+            )?;
+            let image = tree.add(
+                Some(row),
+                NodeKind::Leaf,
+                Style {
+                    min: Size::new(LIBRARY_PREVIEW_WIDTH as f32, LIBRARY_PREVIEW_HEIGHT as f32),
+                    preferred: Size::new(LIBRARY_PREVIEW_WIDTH as f32, LIBRARY_PREVIEW_HEIGHT as f32),
+                    shrink: 0.0,
+                    ..Style::default()
+                },
+                Content::Image(None),
+                Look {
+                    fill: Some(rgb(crate::theme::current().colors.background[1])),
+                    border: Some((rgb(crate::theme::current().colors.borders[0]), 1.0)),
+                    radius: crate::theme::BUTTON_RADIUS,
+                    ..Look::default()
+                },
+            )?;
+            let details_column = tree.add(
+                Some(row),
                 NodeKind::Column,
                 Style {
-                    gap: Size::new(0.0, 2.0),
+                    grow: 1.0,
                     align_items: Align::Stretch,
                     ..Style::default()
                 },
@@ -749,7 +861,7 @@ impl Shell {
                 Look::default(),
             )?;
             let select = tree.add(
-                Some(row),
+                Some(details_column),
                 NodeKind::Leaf,
                 Style {
                     min: Size::new(0.0, 30.0),
@@ -770,7 +882,7 @@ impl Shell {
                 },
             )?;
             let details = tree.add(
-                Some(row),
+                Some(details_column),
                 NodeKind::Leaf,
                 Style {
                     padding: padded(7.0, 0.0, 4.0, 3.0),
@@ -786,7 +898,8 @@ impl Shell {
                 },
             )?;
             tree.set_visible(row, false)?;
-            library_rows.push((row, select, details));
+            tree.set_tooltip(image, crate::strings::t("нет снимка"))?;
+            library_rows.push((row, image, select, details));
         }
         let library_pages = tree.add(
             Some(library),
@@ -1050,6 +1163,7 @@ impl Shell {
             library_status,
             library_rows,
             library_page: 0,
+            library_previews: LibraryPreviewState::default(),
             library_workspace,
             reports_banner,
             reports_ok,
@@ -2122,7 +2236,9 @@ impl Shell {
             self.render_library(tree)?;
             return Ok(Flow::Continue);
         }
-        if let Some(offset) = clicked.and_then(|id| self.library_rows.iter().position(|(_, select, _)| *select == id)) {
+        if let Some(offset) =
+            clicked.and_then(|id| self.library_rows.iter().position(|(_, _, select, _)| *select == id))
+        {
             let index = self
                 .library_page
                 .saturating_mul(SAVE_LIBRARY_PAGE_SIZE)
@@ -2151,6 +2267,13 @@ impl Shell {
             }
             self.select(tree, index)?;
             return Ok(Flow::Continue);
+        }
+        if let Message::Window(WindowEvent::Ime(event)) = message {
+            if tree.dialog() == Some(self.open_file_dialog) && tree.focused() == Some(self.open_path_widget) {
+                self.open_path_input.apply_ime_event(event)?;
+                tree.set_input_text(self.open_path_widget, &self.open_path_input.display_text())?;
+                return Ok(Flow::Continue);
+            }
         }
         if let Some(clicked) = clicked {
             tree.set_focus(Some(clicked))?;
@@ -2278,6 +2401,35 @@ impl Shell {
         self.route(tree, message, clicked)?;
         self.cancel_superseded_open_queue();
         self.advance_open_files_queue(tree, message)?;
+        let library_preview = match message {
+            Message::User(AppMessage::ToScreen(ScreenId::Overview, payload)) => {
+                payload.downcast_ref::<LibraryPreviewFinished>().cloned()
+            }
+            _ => None,
+        };
+        if let Some(finished) = library_preview {
+            let matches_pending = self
+                .library_previews
+                .pending
+                .as_ref()
+                .is_some_and(|pending| pending.id == finished.request && pending.key == finished.key);
+            if matches_pending {
+                self.library_previews.pending = None;
+                self.library_previews.insert(LibraryPreviewEntry {
+                    key: finished.key,
+                    image: finished.image,
+                    s2_detail: finished.s2_detail,
+                    s2_jpeg_available: finished.s2_jpeg_available,
+                });
+                self.render_library(tree)?;
+            }
+        } else if matches!(
+            message,
+            Message::User(AppMessage::ToScreen(ScreenId::Overview, payload))
+                if payload.is::<super::saves::LoadFinished>()
+        ) {
+            self.render_library(tree)?;
+        }
         if let Message::User(AppMessage::ToScreen(ScreenId::Overview, payload)) = message {
             if payload.is::<()>() {
                 self.library_page = 0;
@@ -2332,9 +2484,12 @@ impl Shell {
         };
         tree.set_text(self.library_count, &text)?;
         let start = self.library_page.saturating_mul(SAVE_LIBRARY_PAGE_SIZE);
+        let visible_slots: Vec<SaveSlot> = slots.iter().skip(start).take(SAVE_LIBRARY_PAGE_SIZE).cloned().collect();
         let selected_path = self.app.current_save();
-        for (offset, (row, select, details)) in self.library_rows.iter().enumerate() {
-            if let Some(slot) = slots.get(start.saturating_add(offset)) {
+        let row_widgets = self.library_rows.clone();
+        for (offset, (row, image, select, details)) in row_widgets.iter().enumerate() {
+            if let Some(slot) = visible_slots.get(offset) {
+                let preview = self.library_previews.get(&PreviewKey::from(slot));
                 let filename = slot
                     .path
                     .file_name()
@@ -2343,15 +2498,35 @@ impl Shell {
                 let game =
                     super::saves::format_display_name(slot.format_id.as_deref().unwrap_or(&slot.candidate_release_id));
                 let displayed_filename = super::saves::short_text(&filename, 24);
-                tree.set_text(*select, &format!("нет снимка · {displayed_filename}"))?;
+                tree.set_image(*image, preview.as_ref().and_then(|entry| entry.image.clone()))?;
+                let image_tooltip = if preview.as_ref().is_some_and(|entry| entry.image.is_some()) {
+                    crate::strings::t("Скриншот, сохранённый игрой вместе с этим сохранением.")
+                } else {
+                    crate::strings::t("нет снимка")
+                };
+                tree.set_tooltip(*image, image_tooltip)?;
+                let selection_label = if preview.as_ref().is_some_and(|entry| entry.image.is_some()) {
+                    displayed_filename.to_string()
+                } else if preview.as_ref().is_some_and(|entry| entry.s2_jpeg_available) {
+                    format!("JPEG · {displayed_filename}")
+                } else {
+                    format!("нет снимка · {displayed_filename}")
+                };
+                tree.set_text(*select, &selection_label)?;
                 tree.set_enabled(*select, slot.detection_error.is_none())?;
+                let s2_detail = preview
+                    .as_ref()
+                    .and_then(|entry| entry.s2_detail.as_deref())
+                    .map(|detail| format!(" · {detail}"))
+                    .unwrap_or_default();
                 tree.set_text(
                     *details,
                     &format!(
-                        "{} · {} · {}",
+                        "{} · {} · {}{}",
                         game,
                         super::saves::display_file_time(slot.last_write_time_utc, true, false),
-                        super::saves::display_size(slot.size)
+                        super::saves::display_size(slot.size),
+                        s2_detail
                     ),
                 )?;
                 let is_selected = selected_path.is_some_and(|path| path == slot.path);
@@ -2391,8 +2566,176 @@ impl Shell {
             self.library_next,
             pages > 1 && self.library_page.saturating_add(1) < pages,
         )?;
+        self.schedule_library_preview(&visible_slots);
         Ok(())
     }
+
+    fn schedule_library_preview(&mut self, visible_slots: &[SaveSlot]) {
+        if self.library_previews.pending.is_some() {
+            return;
+        }
+        let Some(proxy) = self.proxy.clone() else {
+            return;
+        };
+        let Some(slot) = visible_slots
+            .iter()
+            .find(|slot| !self.library_previews.contains(&PreviewKey::from(*slot)))
+            .cloned()
+        else {
+            return;
+        };
+        let key = PreviewKey::from(&slot);
+        let request = self.library_previews.next_request;
+        self.library_previews.next_request = request.saturating_add(1);
+        let fallback_key = key.clone();
+        self.library_previews.pending = Some(PreviewRequest {
+            id: request,
+            key: key.clone(),
+        });
+        let workspace = self.library_workspace.clone();
+        if workspace
+            .spawn("save-preview", move |context| {
+                if context.is_cancelled() {
+                    return;
+                }
+                let result = load_library_preview(request, key, &slot);
+                let _ = proxy.send(AppMessage::ToScreen(ScreenId::Overview, Box::new(result)));
+            })
+            .is_err()
+        {
+            self.library_previews.pending = None;
+            self.library_previews.insert(LibraryPreviewEntry {
+                key: fallback_key,
+                image: None,
+                s2_detail: None,
+                s2_jpeg_available: false,
+            });
+        }
+    }
+}
+
+fn load_library_preview(request: u64, key: PreviewKey, slot: &SaveSlot) -> LibraryPreviewFinished {
+    let image = SavePreviewReader::preview_xray(&slot.path).and_then(thumbnail_image);
+    let is_s2 = slot.format_id.as_deref() == Some("stalker2")
+        || slot.candidate_game_id == "stalker2"
+        || slot.candidate_release_id == "stalker2";
+    let (s2_detail, s2_jpeg_available) = if is_s2 {
+        (
+            format_s2_preview_detail(SavePreviewReader::s2_slot_meta(&slot.path)),
+            SavePreviewReader::preview_s2(&slot.path).is_some(),
+        )
+    } else {
+        (None, false)
+    };
+    LibraryPreviewFinished {
+        request,
+        key,
+        image,
+        s2_detail,
+        s2_jpeg_available,
+    }
+}
+
+fn thumbnail_image(image: sse_content::RgbaImage) -> Option<ImageData> {
+    let source_width = u64::try_from(image.width).ok()?;
+    let source_height = u64::try_from(image.height).ok()?;
+    let source_pixels = source_width.checked_mul(source_height)?;
+    let expected_bytes = usize::try_from(source_pixels).ok()?.checked_mul(4)?;
+    if source_width == 0 || source_height == 0 || source_pixels > 16_777_216 || image.pixels.len() != expected_bytes {
+        return None;
+    }
+
+    let target_width = u64::from(LIBRARY_PREVIEW_WIDTH);
+    let target_height = u64::from(LIBRARY_PREVIEW_HEIGHT);
+    let (draw_width, draw_height) =
+        if source_width.saturating_mul(target_height) >= source_height.saturating_mul(target_width) {
+            (
+                target_width,
+                source_height
+                    .saturating_mul(target_width)
+                    .checked_div(source_width)?
+                    .max(1),
+            )
+        } else {
+            (
+                source_width
+                    .saturating_mul(target_height)
+                    .checked_div(source_height)?
+                    .max(1),
+                target_height,
+            )
+        };
+    let draw_width_usize = usize::try_from(draw_width).ok()?;
+    let draw_height_usize = usize::try_from(draw_height).ok()?;
+    let target_width_usize = usize::try_from(target_width).ok()?;
+    let target_height_usize = usize::try_from(target_height).ok()?;
+    let pixel_count = target_width_usize.checked_mul(target_height_usize)?;
+    let background = crate::raster::Color::rgba(20, 24, 30, 255).to_u32();
+    let mut pixels = vec![background; pixel_count];
+    let left = (target_width_usize.saturating_sub(draw_width_usize)) / 2;
+    let top = (target_height_usize.saturating_sub(draw_height_usize)) / 2;
+    let denominator = u128::from(source_width).checked_mul(u128::from(source_height))?;
+
+    for dy in 0..draw_height {
+        let y0 = dy.checked_mul(source_height)?;
+        let y1 = dy.saturating_add(1).checked_mul(source_height)?;
+        let first_source_y = y0.checked_div(draw_height)?;
+        let end_source_y = y1
+            .saturating_add(draw_height.saturating_sub(1))
+            .checked_div(draw_height)?;
+        for dx in 0..draw_width {
+            let x0 = dx.checked_mul(source_width)?;
+            let x1 = dx.saturating_add(1).checked_mul(source_width)?;
+            let first_source_x = x0.checked_div(draw_width)?;
+            let end_source_x = x1
+                .saturating_add(draw_width.saturating_sub(1))
+                .checked_div(draw_width)?;
+            let mut red_sum = 0_u128;
+            let mut green_sum = 0_u128;
+            let mut blue_sum = 0_u128;
+            let mut alpha_sum = 0_u128;
+
+            for sy in first_source_y..end_source_y {
+                let overlap_y = y1
+                    .min(sy.saturating_add(1).saturating_mul(draw_height))
+                    .saturating_sub(y0.max(sy.saturating_mul(draw_height)));
+                for sx in first_source_x..end_source_x {
+                    let overlap_x = x1
+                        .min(sx.saturating_add(1).saturating_mul(draw_width))
+                        .saturating_sub(x0.max(sx.saturating_mul(draw_width)));
+                    let weight = u128::from(overlap_x.checked_mul(overlap_y)?);
+                    let source_index = sy.checked_mul(source_width)?.checked_add(sx)?;
+                    let byte_offset = usize::try_from(source_index).ok()?.checked_mul(4)?;
+                    let source = image.pixels.get(byte_offset..byte_offset.checked_add(4)?)?;
+                    let red = u16::from(*source.first()?);
+                    let green = u16::from(*source.get(1)?);
+                    let blue = u16::from(*source.get(2)?);
+                    let alpha = u16::from(*source.get(3)?);
+                    let premultiply = |channel: u16| channel.checked_mul(alpha)?.checked_add(127)?.checked_div(255);
+                    red_sum = red_sum.checked_add(u128::from(premultiply(red)?).checked_mul(weight)?)?;
+                    green_sum = green_sum.checked_add(u128::from(premultiply(green)?).checked_mul(weight)?)?;
+                    blue_sum = blue_sum.checked_add(u128::from(premultiply(blue)?).checked_mul(weight)?)?;
+                    alpha_sum = alpha_sum.checked_add(u128::from(alpha).checked_mul(weight)?)?;
+                }
+            }
+
+            let average = |sum: u128| {
+                let half = denominator.checked_div(2)?;
+                let rounded = sum.saturating_add(half);
+                u8::try_from(rounded.checked_div(denominator)?).ok()
+            };
+            let red = average(red_sum)?;
+            let green = average(green_sum)?;
+            let blue = average(blue_sum)?;
+            let alpha = average(alpha_sum)?;
+            let dest_x = left.checked_add(usize::try_from(dx).ok()?)?;
+            let dest_y = top.checked_add(usize::try_from(dy).ok()?)?;
+            let dest_index = dest_y.checked_mul(target_width_usize)?.checked_add(dest_x)?;
+            *pixels.get_mut(dest_index)? = crate::raster::Color::premultiplied_bgra(blue, green, red, alpha).to_u32();
+        }
+    }
+
+    ImageData::new(LIBRARY_PREVIEW_WIDTH, LIBRARY_PREVIEW_HEIGHT, pixels).ok()
 }
 
 fn wait_for_save_io(session: &sse_app::SaveSession) {
@@ -2432,6 +2775,125 @@ mod tests {
         LOCK.get_or_init(|| std::sync::Mutex::new(()))
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn write_test_bytes(target: &mut [u8], offset: usize, bytes: &[u8]) -> sse_core::Result<()> {
+        let end = offset
+            .checked_add(bytes.len())
+            .ok_or_else(|| sse_core::Error::Damaged("test image range overflow".to_owned()))?;
+        let destination = target
+            .get_mut(offset..end)
+            .ok_or_else(|| sse_core::Error::Damaged("test image range is out of bounds".to_owned()))?;
+        destination.copy_from_slice(bytes);
+        Ok(())
+    }
+
+    #[test]
+    fn preview_thumbnail_preserves_aspect_and_averages_source_pixels() -> sse_core::Result<()> {
+        let source = sse_content::RgbaImage::new(2, 1, vec![255, 0, 0, 255, 0, 0, 255, 255]);
+        let image = super::thumbnail_image(source)
+            .ok_or_else(|| sse_core::Error::System("test thumbnail could not be built".to_owned()))?;
+        assert_eq!((image.width, image.height), (96, 54));
+        let left = image
+            .pixels
+            .get(2_616)
+            .copied()
+            .ok_or_else(|| sse_core::Error::System("left test pixel is missing".to_owned()))?;
+        let right = image
+            .pixels
+            .get(2_664)
+            .copied()
+            .ok_or_else(|| sse_core::Error::System("right test pixel is missing".to_owned()))?;
+        assert!(left & 0x00ff_0000 > 0x00c8_0000);
+        assert!(right & 0x0000_00ff > 0x0000_00c8);
+        Ok(())
+    }
+
+    #[test]
+    fn library_loads_visible_save_previews_in_background() -> sse_core::Result<()> {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| sse_core::Error::System(error.to_string()))?
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!("sse-shell-preview-{}-{nonce}", std::process::id()));
+        std::fs::create_dir(&directory)?;
+        let path = directory.join("preview.sav");
+        std::fs::write(
+            &path,
+            include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-source.sav"),
+        )?;
+        let canonical_path = std::fs::canonicalize(&path)?;
+        let mut dds = vec![0_u8; 132];
+        write_test_bytes(&mut dds, 0, b"DDS ")?;
+        write_test_bytes(&mut dds, 12, &1_u32.to_le_bytes())?;
+        write_test_bytes(&mut dds, 16, &1_u32.to_le_bytes())?;
+        write_test_bytes(&mut dds, 20, &4_u32.to_le_bytes())?;
+        write_test_bytes(&mut dds, 80, &0x40_u32.to_le_bytes())?;
+        write_test_bytes(&mut dds, 88, &32_u32.to_le_bytes())?;
+        write_test_bytes(&mut dds, 92, &0x00ff_0000_u32.to_le_bytes())?;
+        write_test_bytes(&mut dds, 96, &0x0000_ff00_u32.to_le_bytes())?;
+        write_test_bytes(&mut dds, 100, &0x0000_00ff_u32.to_le_bytes())?;
+        write_test_bytes(&mut dds, 104, &0xff00_0000_u32.to_le_bytes())?;
+        write_test_bytes(&mut dds, 128, &[0, 0, 255, 255])?;
+        std::fs::write(path.with_extension("dds"), dds)?;
+        let result = (|| {
+            let (proxy, receiver) = channel_pair::<super::super::AppMessage>();
+            let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+            let mut shell = Shell::build_for_test(&mut tree, None)?;
+            shell.set_proxy(proxy);
+
+            assert!(shell.open_save(&mut tree, &path)?);
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            let mut load_finished = false;
+            let mut preview_finished = None;
+            while std::time::Instant::now() < deadline {
+                let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                let message = receiver
+                    .recv_timeout(remaining.min(std::time::Duration::from_millis(100)))
+                    .ok();
+                let Some(message) = message else {
+                    shell.render_library(&mut tree)?;
+                    continue;
+                };
+                if let Message::User(super::super::AppMessage::ToScreen(ScreenId::Overview, payload)) = &message {
+                    if let Some(finished) = payload.downcast_ref::<super::super::saves::LoadFinished>() {
+                        load_finished = finished.requested_path == path && finished.selected_path.is_some();
+                    }
+                    if let Some(finished) = payload.downcast_ref::<super::LibraryPreviewFinished>() {
+                        if finished.key.path == canonical_path {
+                            preview_finished = Some(finished.clone());
+                        }
+                    }
+                }
+                shell.handle(&mut tree, &message, None)?;
+                shell.render_library(&mut tree)?;
+                if load_finished && preview_finished.is_some() {
+                    break;
+                }
+            }
+            assert!(load_finished, "the fixture save should finish loading");
+            let finished = preview_finished.ok_or_else(|| {
+                sse_core::Error::System("visible library preview did not finish in background".to_owned())
+            })?;
+            let image = finished
+                .image
+                .ok_or_else(|| sse_core::Error::System("fixture DDS did not decode".to_owned()))?;
+            assert_eq!((image.width, image.height), (96, 54));
+            let center = image.pixels.get(2_640).copied().unwrap_or_default();
+            assert!(
+                center & 0x00ff_0000 > 0x00c8_0000,
+                "the preview should preserve its red pixel"
+            );
+            let first_image = shell
+                .library_rows
+                .first()
+                .map(|row| row.1)
+                .ok_or_else(|| sse_core::Error::System("save library has no preview row".to_owned()))?;
+            assert!(tree.image(first_image)?.is_some());
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&directory);
+        result
     }
 
     #[test]

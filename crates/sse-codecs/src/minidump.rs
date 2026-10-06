@@ -276,15 +276,6 @@ impl<'a> Minidump<'a> {
             .map(Some)
     }
 
-    /// Context from a ThreadList record.
-    pub fn thread_context(&self, thread: Thread) -> Result<Option<ThreadContext>> {
-        let Some(system) = self.system_info()? else {
-            return Ok(None);
-        };
-        self.decode_context(thread.context_rva, thread.context_size, system.architecture)
-            .map(Some)
-    }
-
     /// Returns a memory view containing `address`, checking MemoryList and Memory64List.
     pub fn memory_at(&self, address: u64, maximum: usize) -> Result<Option<&[u8]>> {
         if let Some(bytes) = self.memory_list_at(address, maximum)? {

@@ -170,6 +170,13 @@ impl Wizard {
         if clicked.is_some() && clicked == Some(self.path_input) {
             self.input.focus(true, 0);
         }
+        if let Message::Window(WindowEvent::Ime(event)) = message {
+            if self.input.focused() {
+                self.input.apply_ime_event(event)?;
+                tree.set_input_text(self.path_input, &self.input.display_text())?;
+            }
+            return Ok(None);
+        }
         if clicked.is_some() && clicked == Some(self.auto) {
             let added = Self::auto_search()?;
             *status = Some(if added == 0 {

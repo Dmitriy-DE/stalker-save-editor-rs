@@ -155,13 +155,6 @@ impl I18nService {
         format_placeholders(&pattern, args)
     }
 
-    /// Plural translation according to CLDR rules for the active language.
-    #[must_use]
-    pub fn trn(&self, count: i64, one: &str, few: &str, many: &str, args: &[&dyn std::fmt::Display]) -> String {
-        let lang = self.current_language();
-        self.trn_in(Some(&lang), count, one, few, many, args)
-    }
-
     /// Plural translation according to CLDR rules for a specific language.
     #[must_use]
     pub fn trn_in(

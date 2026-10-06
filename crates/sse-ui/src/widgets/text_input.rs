@@ -1,6 +1,7 @@
 //! TextBox interaction state backed by edit::EditModel.
 
 use crate::edit::{Clipboard, EditConfig, EditModel, Key, Modifiers, MouseSelect, Selection};
+use crate::event_loop::ImeEvent;
 use sse_core::Result;
 
 /// C# TextBox background RGB.
@@ -34,6 +35,56 @@ impl TextInput {
     #[must_use]
     pub fn text(&self) -> String {
         self.model.text()
+    }
+
+    /// Text shown while an input method has uncommitted preedit text.
+    #[must_use]
+    pub fn display_text(&self) -> String {
+        let text = self.model.text();
+        let Some(composition) = self.model.composition() else {
+            return text;
+        };
+        let (start, end) = composition.range.ordered();
+        let mut chars = text.chars();
+        let mut displayed = String::new();
+        for _ in 0..start {
+            let Some(character) = chars.next() else {
+                break;
+            };
+            displayed.push(character);
+        }
+        displayed.push_str(&composition.text);
+        for _ in start..end {
+            let _ = chars.next();
+        }
+        displayed.extend(chars);
+        displayed
+    }
+
+    /// Applies one platform input-method event. A commit is one undoable text edit.
+    ///
+    /// # Errors
+    /// Returns an error when the committed text violates the edit model's structural limits.
+    pub fn apply_ime_event(&mut self, event: &ImeEvent) -> Result<bool> {
+        match event {
+            ImeEvent::Start => {
+                self.model.set_composition(String::new());
+                Ok(true)
+            }
+            ImeEvent::Update(text) => {
+                self.model.update_composition(text.clone());
+                Ok(true)
+            }
+            ImeEvent::Commit(text) => {
+                self.model.update_composition(text.clone());
+                self.model.commit_composition()
+            }
+            ImeEvent::Cancel => {
+                let changed = self.model.composition().is_some();
+                self.model.cancel_composition();
+                Ok(changed)
+            }
+        }
     }
 
     /// Current scalar selection.
@@ -131,6 +182,7 @@ impl TextInput {
 mod tests {
     use super::*;
     use crate::edit::{FieldMode, InputFilter};
+    use crate::event_loop::ImeEvent;
 
     struct Clip(String);
 
@@ -185,6 +237,27 @@ mod tests {
             )
             .unwrap_or_else(|error| panic!("{error:?}")));
         assert_eq!(c.0, "Ж");
+    }
+
+    #[test]
+    fn ime_preedit_is_visible_without_mutating_text_until_commit() {
+        let mut input = TextInput::new("x", EditConfig::default()).unwrap_or_else(|error| panic!("{error:?}"));
+
+        assert!(input
+            .apply_ime_event(&ImeEvent::Start)
+            .unwrap_or_else(|error| panic!("{error:?}")));
+        assert!(input
+            .apply_ime_event(&ImeEvent::Update("かな".to_owned()))
+            .unwrap_or_else(|error| panic!("{error:?}")));
+        assert_eq!(input.text(), "x");
+        assert_eq!(input.display_text(), "xかな");
+
+        assert!(input
+            .apply_ime_event(&ImeEvent::Commit("仮名".to_owned()))
+            .unwrap_or_else(|error| panic!("{error:?}")));
+        assert_eq!(input.text(), "x仮名");
+        assert!(input.undo().unwrap_or_else(|error| panic!("{error:?}")));
+        assert_eq!(input.text(), "x");
     }
 
     #[test]

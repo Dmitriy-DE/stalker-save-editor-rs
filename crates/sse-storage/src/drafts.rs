@@ -320,12 +320,6 @@ impl DraftJournal {
         self.plans.get(self.index)
     }
 
-    /// Whether the current plan contains edits that this build cannot apply.
-    #[must_use]
-    pub fn current_has_unmapped_edits(&self) -> bool {
-        self.current().is_some_and(|plan| plan.unmapped_legacy_plan.is_some())
-    }
-
     /// Whether the current plan can safely be handed to a writer.
     #[must_use]
     pub fn can_apply_current(&self) -> bool {

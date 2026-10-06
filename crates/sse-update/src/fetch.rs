@@ -47,11 +47,6 @@ impl MemoryFetch {
     pub fn register(&mut self, url: impl Into<String>, payload: Vec<u8>) {
         self.routes.insert(url.into(), payload);
     }
-
-    /// Registers a redirect from one URL to another.
-    pub fn register_redirect(&mut self, from_url: impl Into<String>, to_url: impl Into<String>) {
-        self.redirects.insert(from_url.into(), to_url.into());
-    }
 }
 
 impl Fetch for MemoryFetch {

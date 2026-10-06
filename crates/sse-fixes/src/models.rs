@@ -81,12 +81,6 @@ impl GameTarget {
         !matches!(self, Self::Stalker2)
     }
 
-    /// Returns true if Companion mod is supported.
-    #[must_use]
-    pub const fn companion_supported(self) -> bool {
-        matches!(self, Self::ShadowOfChernobyl | Self::ClearSky | Self::CallOfPripyat)
-    }
-
     /// Parses a game target from its short id or JSON name.
     #[must_use]
     pub fn parse(s: &str) -> Option<Self> {
@@ -622,19 +616,6 @@ pub struct GameFixInstalledInfo {
     pub state: GameFixState,
     /// Managed file relative paths.
     pub files: Vec<String>,
-}
-
-/// Status of a file managed by an installed fix.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GameFixManagedFileStatus {
-    /// Owning fix ID.
-    pub fix_id: String,
-    /// Managed relative path.
-    pub relative_path: String,
-    /// True if the file exists on disk.
-    pub exists: bool,
-    /// True if the file matches its recorded after-patch hash.
-    pub matches_expected_hash: bool,
 }
 
 /// Managed file record inside a manifest or journal.

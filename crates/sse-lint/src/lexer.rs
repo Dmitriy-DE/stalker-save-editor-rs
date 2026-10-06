@@ -73,13 +73,6 @@ impl<'a> LuaLexer<'a> {
         }
     }
 
-    /// Configures whether comments should be returned as tokens.
-    #[must_use]
-    pub fn with_comments(mut self, include_comments: bool) -> Self {
-        self.include_comments = include_comments;
-        self
-    }
-
     /// Peeks the byte at current position without advancing.
     fn peek(&self) -> Option<u8> {
         self.source.get(self.pos).copied()

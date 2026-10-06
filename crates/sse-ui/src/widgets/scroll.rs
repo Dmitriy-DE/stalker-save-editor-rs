@@ -1,9 +1,6 @@
 //! Scroll viewport state for a retained widget tree.
 //! Wheel movement is clamped; repaint damage is limited to the viewport.
 
-use crate::raster::Rect;
-use crate::widget::Tree;
-
 /// C# thin scrollbar colour.
 pub const THUMB: u32 = 0x3D4837;
 /// Lighter hover thumb.
@@ -67,23 +64,6 @@ impl ScrollView {
         old != self.offset_y
     }
 
-    /// Update scrollbar-thumb hover state; true when it changed.
-    pub fn set_thumb_hover(&mut self, hover: bool) -> bool {
-        let changed = self.hover_thumb != hover;
-        self.hover_thumb = hover;
-        changed
-    }
-
-    /// Current scrollbar thumb RGB colour.
-    #[must_use]
-    pub const fn thumb_color(self) -> u32 {
-        if self.hover_thumb {
-            THUMB_HOVER
-        } else {
-            THUMB
-        }
-    }
-
     /// Thumb y/height inside a viewport, or None when all content fits.
     #[must_use]
     pub fn thumb(self) -> Option<(f32, f32)> {
@@ -95,11 +75,6 @@ impl ScrollView {
             .min(self.viewport_height);
         let travel = self.viewport_height - h;
         Some((self.offset_y / self.max_offset() * travel, h))
-    }
-
-    /// Damage only the visible viewport in the retained tree.
-    pub fn damage_visible(&self, tree: &mut Tree, viewport: Rect) {
-        tree.add_damage(viewport);
     }
 }
 

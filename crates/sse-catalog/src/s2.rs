@@ -11,7 +11,6 @@ const EMBEDDED_S2_UPGRADES_RAW: &[u8] = include_bytes!("../data/s2_upgrades.json
 
 static EMBEDDED_S2_ITEMS: OnceLock<Stalker2ItemCatalog> = OnceLock::new();
 static EMBEDDED_S2_ARMOR_MAP: OnceLock<HashMap<String, Stalker2ArmorUpgrade>> = OnceLock::new();
-static EMBEDDED_S2_WEAPON_MAP: OnceLock<HashMap<String, Stalker2WeaponUpgrade>> = OnceLock::new();
 
 /// Item entry in the S.T.A.L.K.E.R. 2 catalog.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -181,12 +180,6 @@ impl Stalker2ItemCatalog {
         }
         None
     }
-
-    /// Resolves icon path returning a String.
-    #[must_use]
-    pub fn icon_path(&self, sid: Option<&str>) -> Option<String> {
-        self.icon(sid).map(ToString::to_string)
-    }
 }
 
 fn parse_strings(val: Option<&JsonValue>) -> Vec<(String, String)> {
@@ -211,15 +204,6 @@ pub struct Stalker2ArmorUpgrade {
     pub effect: String,
     /// Tier level (1, 2, 3).
     pub tier: i32,
-}
-
-/// S2 weapon upgrade metadata.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Stalker2WeaponUpgrade {
-    /// Weapon part (e.g. "Barrel", "Stock").
-    pub part: String,
-    /// Effect icon / type (e.g. "Recoil").
-    pub effect: String,
 }
 
 /// S2 armor and weapon upgrade lookup.
@@ -249,36 +233,10 @@ impl Stalker2ArmorUpgrades {
         armors
     }
 
-    fn load_weapons() -> HashMap<String, Stalker2WeaponUpgrade> {
-        let json_str = std::str::from_utf8(EMBEDDED_S2_UPGRADES_RAW).unwrap_or("");
-        let value = parse_json(json_str).unwrap_or(JsonValue::Null);
-
-        let mut weapons = HashMap::new();
-        if let Some(upgrades) = value.get("weapon_upgrades").and_then(JsonValue::as_object) {
-            for (sid, up_val) in upgrades {
-                let part = up_val.get("part").and_then(JsonValue::as_str).unwrap_or("").to_string();
-                let effect = up_val
-                    .get("effect")
-                    .and_then(JsonValue::as_str)
-                    .unwrap_or("")
-                    .to_string();
-                weapons.insert(sid.clone(), Stalker2WeaponUpgrade { part, effect });
-            }
-        }
-        weapons
-    }
-
     /// Finds an armor upgrade by its save prototype SID.
     #[must_use]
     pub fn find_armor(sid: &str) -> Option<&'static Stalker2ArmorUpgrade> {
         let map = EMBEDDED_S2_ARMOR_MAP.get_or_init(Self::load_armors);
-        map.get(sid)
-    }
-
-    /// Finds a weapon upgrade by its save prototype SID.
-    #[must_use]
-    pub fn find_weapon(sid: &str) -> Option<&'static Stalker2WeaponUpgrade> {
-        let map = EMBEDDED_S2_WEAPON_MAP.get_or_init(Self::load_weapons);
         map.get(sid)
     }
 

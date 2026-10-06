@@ -518,15 +518,6 @@ impl ListModel {
         })
     }
 
-    /// Removes the filter and restores the sorted permutation.
-    ///
-    /// # Errors
-    /// Returns an error only if rebuilding the virtual extent fails.
-    pub fn clear_filter(&mut self) -> Result<()> {
-        self.clear_filter_state();
-        self.rebuild_view()
-    }
-
     /// Replaces all row-to-group assignments. Rows omitted from `assignments` remain ungrouped.
     ///
     /// # Errors
@@ -610,13 +601,6 @@ impl ListModel {
                 }
             }
         }
-    }
-
-    /// Clears selection and keyboard anchor.
-    pub fn clear_selection(&mut self) {
-        self.selected.clear();
-        self.selection_anchor = None;
-        self.focus = None;
     }
 
     /// Stable selection membership by row ID.
@@ -716,13 +700,6 @@ impl ListModel {
         };
         column.user_width = Some(clamp_width(width, column.min, column.max));
         Ok(())
-    }
-
-    /// Clears one user-resize override.
-    pub fn clear_column_resize(&mut self, index: usize) {
-        if let Some(column) = self.columns.get_mut(index) {
-            column.user_width = None;
-        }
     }
 
     /// Resolves column widths. Allocation happens only for the returned width vector; this method
