@@ -7,6 +7,13 @@ use std::fs::OpenOptions;
 use std::io;
 use std::path::Path;
 
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const LINUX_O_NOFOLLOW: Option<i32> = Some(0o400_000);
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+const LINUX_O_NOFOLLOW: Option<i32> = Some(0o100_000);
+#[cfg(all(target_os = "linux", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
+const LINUX_O_NOFOLLOW: Option<i32> = None;
+
 /// Opens a regular file owned by the current user.
 ///
 /// On Linux the final path component is opened with `O_NOFOLLOW`, so a symlink
@@ -16,10 +23,14 @@ pub fn open_owned_regular(path: &Path) -> Result<File> {
     {
         use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 
-        const O_NOFOLLOW: i32 = 0o400_000;
+        let Some(no_follow_flag) = LINUX_O_NOFOLLOW else {
+            return Err(Error::Refused(
+                "Secure file opening is unavailable on this Linux architecture".to_owned(),
+            ));
+        };
         let file = OpenOptions::new()
             .read(true)
-            .custom_flags(O_NOFOLLOW)
+            .custom_flags(no_follow_flag)
             .open(path)
             .map_err(Error::from)?;
         let metadata = file.metadata().map_err(Error::from)?;
@@ -230,4 +241,44 @@ fn current_effective_uid() -> u32 {
     }
     // SAFETY: geteuid takes no arguments and has no preconditions.
     unsafe { geteuid() }
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    use super::{open_owned_regular, LINUX_O_NOFOLLOW};
+
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    #[test]
+    fn x86_64_uses_the_linux_o_nofollow_value() {
+        assert_eq!(LINUX_O_NOFOLLOW, Some(0o400_000));
+    }
+
+    #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+    #[test]
+    fn aarch64_uses_the_linux_o_nofollow_value() {
+        assert_eq!(LINUX_O_NOFOLLOW, Some(0o100_000));
+    }
+
+    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    #[test]
+    fn refuses_a_symlink_as_the_final_file_component() -> std::io::Result<()> {
+        use std::os::unix::fs::symlink;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        let directory = std::env::temp_dir().join(format!("sse-secure-fs-{}-{unique}", std::process::id()));
+        std::fs::create_dir(&directory)?;
+        let target = directory.join("target");
+        let link = directory.join("link");
+        std::fs::write(&target, b"fixture")?;
+        symlink(&target, &link)?;
+
+        let result = open_owned_regular(&link);
+        std::fs::remove_dir_all(directory)?;
+        assert!(result.is_err(), "final-component symlink unexpectedly opened");
+        Ok(())
+    }
 }
