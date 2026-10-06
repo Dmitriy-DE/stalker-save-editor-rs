@@ -212,6 +212,9 @@ impl SaveDirectoryLocator {
             .unwrap_or(SaveDiscoveryPlatform::Current)
             .resolve();
 
+        let (known_documents_directory, known_saved_games_directory) =
+            resolve_known_folder_paths(options, platform, sse_sys::system::known_folder);
+
         let home = options
             .and_then(|opts| opts.home_directory.clone())
             .or_else(|| get_env(&env_map, "HOME").map(PathBuf::from))
@@ -267,10 +270,7 @@ impl SaveDirectoryLocator {
             .iter()
             .map(|path| known_root_key(path, windows_paths_are_case_insensitive))
             .collect();
-        if let Some(path) = options
-            .filter(|_| platform == SaveDiscoveryPlatform::Windows)
-            .and_then(|opts| opts.known_documents_directory.as_deref())
-        {
+        if let Some(path) = known_documents_directory.as_deref() {
             add_known_root(
                 &mut document_roots,
                 &mut document_root_keys,
@@ -289,10 +289,7 @@ impl SaveDirectoryLocator {
             .iter()
             .map(|path| known_root_key(path, windows_paths_are_case_insensitive))
             .collect();
-        if let Some(path) = options
-            .filter(|_| platform == SaveDiscoveryPlatform::Windows)
-            .and_then(|opts| opts.known_saved_games_directory.as_deref())
-        {
+        if let Some(path) = known_saved_games_directory.as_deref() {
             add_known_root(
                 &mut saved_game_roots,
                 &mut saved_game_root_keys,
@@ -823,6 +820,26 @@ fn get_known_roots(parents: &[&Path], known_names: &[&str], case_insensitive: bo
     roots
 }
 
+fn resolve_known_folder_paths(
+    options: Option<&SaveDirectoryDiscoveryOptions>,
+    platform: SaveDiscoveryPlatform,
+    mut query: impl FnMut(sse_sys::system::KnownFolder) -> Option<PathBuf>,
+) -> (Option<PathBuf>, Option<PathBuf>) {
+    if platform != SaveDiscoveryPlatform::Windows {
+        return (None, None);
+    }
+    if let Some(options) = options {
+        return (
+            options.known_documents_directory.clone(),
+            options.known_saved_games_directory.clone(),
+        );
+    }
+    (
+        query(sse_sys::system::KnownFolder::Documents),
+        query(sse_sys::system::KnownFolder::SavedGames),
+    )
+}
+
 fn add_known_root(
     roots: &mut Vec<PathBuf>,
     seen: &mut HashSet<String>,
@@ -982,4 +999,51 @@ fn resolve_links_internal(path: &Path, depth: usize) -> PathBuf {
     }
 
     normalize_full_path(&current)
+}
+
+#[cfg(test)]
+mod known_folder_tests {
+    use super::{resolve_known_folder_paths, SaveDirectoryDiscoveryOptions, SaveDiscoveryPlatform};
+    use sse_sys::system::KnownFolder;
+    use std::path::PathBuf;
+
+    #[test]
+    fn default_windows_discovery_queries_both_known_folders() {
+        let documents = PathBuf::from(r"C:\redirected\Documents");
+        let saved_games = PathBuf::from(r"D:\redirected\Saved Games");
+        let mut queried = Vec::new();
+
+        let (actual_documents, actual_saved_games) =
+            resolve_known_folder_paths(None, SaveDiscoveryPlatform::Windows, |folder| {
+                queried.push(folder);
+                match folder {
+                    KnownFolder::Documents => Some(documents.clone()),
+                    KnownFolder::SavedGames => Some(saved_games.clone()),
+                }
+            });
+
+        assert_eq!(queried, [KnownFolder::Documents, KnownFolder::SavedGames]);
+        assert_eq!(actual_documents, Some(documents));
+        assert_eq!(actual_saved_games, Some(saved_games));
+    }
+
+    #[test]
+    fn explicit_discovery_options_do_not_query_host_known_folders() {
+        let documents = PathBuf::from(r"C:\test-profile\Documents");
+        let saved_games = PathBuf::from(r"C:\test-profile\Saved Games");
+        let options = SaveDirectoryDiscoveryOptions {
+            platform: Some(SaveDiscoveryPlatform::Windows),
+            known_documents_directory: Some(documents.clone()),
+            known_saved_games_directory: Some(saved_games.clone()),
+            ..SaveDirectoryDiscoveryOptions::default()
+        };
+
+        let (actual_documents, actual_saved_games) =
+            resolve_known_folder_paths(Some(&options), SaveDiscoveryPlatform::Windows, |_| {
+                panic!("explicit test options must not query the host")
+            });
+
+        assert_eq!(actual_documents, Some(documents));
+        assert_eq!(actual_saved_games, Some(saved_games));
+    }
 }
