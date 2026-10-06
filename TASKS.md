@@ -1054,3 +1054,19 @@ ChatGPT больше не участвует; все оставшиеся G- и 
 - Сжатие S2 (после K27): не дожимать, пока владелец не проверит в игре, что запись S2 нашим Kraken грузится.
 
 **Интегратор:** в CI задача `packages` — `tools/package.sh` для Linux (.tar.gz/.deb), Windows (gnu) и macOS (arm64/x86_64) по тегу `v*` или вручную; без подписи, манифест владелец подписывает локально `--manifest-only`.
+
+### После K32–K36 (2026-10-06, вечер)
+
+**Кодекс — порядок:** гонка K4 → K37 → K11.
+- K4-гонка. `OpenFilesQueue` (`sse-ui/src/screens/shell.rs`): `LoadFinished` первого файла теряется, если следующая загрузка уже стартовала; тест `opening_multiple_saves_keeps_each_success_in_the_library` нестабилен на macOS. Чинить код, тест не трогать; прогнать 20 раз.
+- K37. Отправка отчётов (G38): сервер уже есть — Worker `save-editor-downloads` (исходник в старом репозитории `S.T.A.L.K.E.R.-Save-Editor/infra/downloads-worker/worker.js`), `POST https://save-editor-downloads.save-editor.workers.dev/diagnostics`, тело — gzip (`Content-Type: application/gzip`), ≤ 2 МБ, ответ `201 {"report_id"}`, 429 при превышении частоты. Сделать: адрес по умолчанию вместо пустого `SSE_REPORT_ENDPOINT`; отправка только после согласия и подтверждения в окне (G38), HTTPS через `sse-sys`, в фоне; при ошибке — отчёт остаётся локально, текст пользователю; показать `report_id`. Тест на локальном фейковом ответчике, без сети в CI.
+- K11. Веб-версия заново от main — последней, после всего остального (без цикла зависимостей: `sse-sys` не зависит от `sse-web`).
+
+**Выпуск релиза — делает владелец (или его локальный Claude с доступом к ключу).** Облачные агенты ключ не трогают.
+1. Actions → `ci` → Run workflow на нужном коммите (или тег `v<версия>`): задача `packages` собирает `packages-Linux` (tar.gz, deb, Windows zip) и `packages-macOS` (dmg).
+2. Скачать оба артефакта в одну папку `dist/`, затем `tools/package.sh --manifest-only` → `dist/latest.json` и пустой `dist/latest.json.sig`.
+3. Подпись (ECDSA P-256/SHA-256, DER, base64), ключ `~/.config/stalker-save-editor/update-signing-key.pem`:
+   `openssl dgst -sha256 -sign ~/.config/stalker-save-editor/update-signing-key.pem dist/latest.json | base64 -w0 > dist/latest.json.sig`.
+   Перед первой подписью сверить открытый ключ: `openssl pkey -in <ключ> -pubout` должен совпасть с `PUBLIC_KEY_PEM` в `crates/sse-update/src/signature.rs`, иначе приложение отвергнет обновление.
+4. Выкладка в R2 (`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`): `npx wrangler r2 object put save-editor-downloads/<файл> --file dist/<файл> --remote` для каждого пакета, **`latest.json.sig`, затем `latest.json` последними**. Образец всей процедуры — `tools/release/publish_release.py` в старом C#-репозитории.
+5. Проверка: `curl -sI https://save-editor-downloads.save-editor.workers.dev/latest.json` и запуск старой версии редактора — должна предложить обновление.
