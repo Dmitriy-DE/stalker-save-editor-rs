@@ -5,6 +5,7 @@ use super::{AppMessage, Context, EditorAction, Screen, ScreenId};
 use crate::edit::{Clipboard, EditConfig, FieldMode, InputFilter, Key, Modifiers};
 use crate::event_loop::Message;
 use crate::layout::{NodeKind, Size, Style};
+use crate::process_guard::{is_windows_file_busy_error_text, running_game_for_format, SAVE_WHILE_GAME_RUNNING_WARNING};
 use crate::raster::Color;
 use crate::widget::{Content, Look, WidgetId};
 use crate::widgets::table::{Header, Table};
@@ -409,6 +410,17 @@ struct LoadedSave {
     parameters: String,
     integrity: String,
     data: SaveData,
+}
+
+struct PendingSaveRequest {
+    selected: Arc<LoadedSave>,
+    edits: PendingInventoryEdits,
+    stash_moves: BTreeSet<u32>,
+}
+
+struct SaveProcessCheckFinished {
+    request_id: u64,
+    result: std::result::Result<bool, String>,
 }
 
 enum SaveData {
@@ -1980,6 +1992,13 @@ struct Inventory {
     external_banner_row: Option<WidgetId>,
     external_banner: Option<WidgetId>,
     external_reload: Option<WidgetId>,
+    process_confirmation: Option<WidgetId>,
+    process_description: Option<WidgetId>,
+    process_continue: Option<WidgetId>,
+    process_cancel: Option<WidgetId>,
+    next_process_check_id: u64,
+    pending_save_request: Option<(u64, PendingSaveRequest)>,
+    process_check_complete: bool,
 }
 
 fn money_input_config() -> EditConfig {
@@ -2084,6 +2103,13 @@ impl Inventory {
             external_banner_row: None,
             external_banner: None,
             external_reload: None,
+            process_confirmation: None,
+            process_description: None,
+            process_continue: None,
+            process_cancel: None,
+            next_process_check_id: 0,
+            pending_save_request: None,
+            process_check_complete: false,
         }
     }
 
@@ -3330,11 +3356,11 @@ impl Inventory {
         Ok(())
     }
 
-    fn save(&self, cx: &mut Context<'_>) -> Result<()> {
-        let Some(proxy) = cx.proxy.cloned() else {
-            cx.status = Some("Сохранение доступно в работающем окне редактора.".to_owned());
+    fn save(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        if self.pending_save_request.is_some() {
+            cx.status = Some("Проверка запущенной игры уже выполняется.".to_owned());
             return Ok(());
-        };
+        }
         let (selected, edits, stash_moves) = {
             let state = self.workspace.lock();
             (
@@ -3375,7 +3401,6 @@ impl Inventory {
             cx.status = Some("Нет несохранённых изменений.".to_owned());
             return Ok(());
         }
-        let source_sha256 = selected.source_sha256.clone();
         if let Some(plan) = cx.app.draft(&selected.source_sha256) {
             if plan.unmapped_legacy_plan.is_some() {
                 cx.status =
@@ -3383,6 +3408,93 @@ impl Inventory {
                 return Ok(());
             }
         }
+        if self.workspace.is_saving() || self.workspace.is_restoring() {
+            let text = if self.workspace.is_restoring() {
+                "Дождитесь завершения восстановления сейва."
+            } else {
+                "Сохранение уже выполняется."
+            };
+            if let Some(status) = self.status {
+                cx.tree.set_text(status, text)?;
+            }
+            cx.status = Some(text.to_owned());
+            return Ok(());
+        }
+        self.start_save_process_check(
+            cx,
+            PendingSaveRequest {
+                selected,
+                edits,
+                stash_moves,
+            },
+        )
+    }
+
+    fn start_save_process_check(&mut self, cx: &mut Context<'_>, request: PendingSaveRequest) -> Result<()> {
+        let Some(proxy) = cx.proxy.cloned() else {
+            cx.status = Some("Сохранение доступно в работающем окне редактора.".to_owned());
+            return Ok(());
+        };
+        let Some(format_id) = request.selected.slot.format_id.clone() else {
+            cx.status = Some("Не удалось определить формат сейва для проверки запущенной игры.".to_owned());
+            return Ok(());
+        };
+        let Some(request_id) = self.next_process_check_id.checked_add(1) else {
+            cx.status = Some("Исчерпан номер проверки запущенной игры.".to_owned());
+            return Ok(());
+        };
+        self.next_process_check_id = request_id;
+        self.pending_save_request = Some((request_id, request));
+        self.process_check_complete = false;
+        if let (Some(dialog), Some(description), Some(continue_button)) = (
+            self.process_confirmation,
+            self.process_description,
+            self.process_continue,
+        ) {
+            cx.tree
+                .set_text(description, "Проверяю, запущена ли игра для выбранного сейва…")?;
+            cx.tree.set_text(continue_button, "Проверка…")?;
+            cx.tree.set_enabled(continue_button, false)?;
+            cx.tree.open_dialog(dialog)?;
+        }
+        if let Some(status) = self.status {
+            cx.tree.set_text(status, "Проверяю запущенную игру…")?;
+        }
+        cx.status = Some("Проверяю запущенную игру…".to_owned());
+        if let Err(error) = self.workspace.spawn("save-process-check", move |context| {
+            let result = if context.is_cancelled() {
+                Err("process check was cancelled".to_owned())
+            } else {
+                running_game_for_format(&format_id)
+            };
+            let _ = proxy.send(AppMessage::ToScreen(
+                ScreenId::Inventory,
+                Box::new(SaveProcessCheckFinished { request_id, result }),
+            ));
+        }) {
+            self.pending_save_request = None;
+            self.process_check_complete = false;
+            let _ = cx.tree.close_dialog()?;
+            let text = format!("Не удалось начать проверку запущенной игры: {error}");
+            if let Some(status) = self.status {
+                cx.tree.set_text(status, &text)?;
+            }
+            cx.status = Some(text);
+        }
+        Ok(())
+    }
+
+    fn start_save_write(&self, cx: &mut Context<'_>, request: PendingSaveRequest) -> Result<()> {
+        let Some(proxy) = cx.proxy.cloned() else {
+            cx.status = Some("Сохранение доступно в работающем окне редактора.".to_owned());
+            return Ok(());
+        };
+        let PendingSaveRequest {
+            selected,
+            edits,
+            stash_moves,
+        } = request;
+        let source_sha256 = selected.source_sha256.clone();
         let session = self.workspace.session();
         let Some(operation_guard) = session.begin_save(&selected.slot.path) else {
             let text = if session.is_restoring() {
@@ -4553,6 +4665,23 @@ impl Screen for Inventory {
         self.add_confirm = Some(style::button(cx.tree, add_actions, "Добавить", Button::Primary)?);
         self.add_cancel = Some(style::button(cx.tree, add_actions, "Отмена", Button::Secondary)?);
         cx.tree.set_visible(panel, false)?;
+        let overlay_host = cx.tree.overlay_host().unwrap_or(host);
+        let confirmation = style::card(cx.tree, overlay_host)?;
+        self.process_confirmation = Some(confirmation);
+        style::label(cx.tree, confirmation, "ПРОВЕРКА ЗАПУЩЕННОЙ ИГРЫ", Text::Heading)?;
+        self.process_description = Some(style::label(
+            cx.tree,
+            confirmation,
+            "Проверяю, запущена ли игра для выбранного сейва…",
+            Text::Body,
+        )?);
+        let process_actions = style::row(cx.tree, confirmation)?;
+        self.process_continue = Some(style::button(cx.tree, process_actions, "Проверка…", Button::Primary)?);
+        self.process_cancel = Some(style::button(cx.tree, process_actions, "Отмена", Button::Secondary)?);
+        if let Some(continue_button) = self.process_continue {
+            cx.tree.set_enabled(continue_button, false)?;
+        }
+        cx.tree.set_visible(confirmation, false)?;
         self.render(cx)
     }
 
@@ -4567,6 +4696,83 @@ impl Screen for Inventory {
         clicked: Option<WidgetId>,
     ) -> Result<()> {
         self.workspace.poll_tasks();
+        if let Message::User(AppMessage::ToScreen(ScreenId::Inventory, payload)) = message {
+            if let Some(SaveProcessCheckFinished { request_id, result }) =
+                payload.downcast_ref::<SaveProcessCheckFinished>()
+            {
+                let is_current = self
+                    .pending_save_request
+                    .as_ref()
+                    .is_some_and(|(pending_id, _)| pending_id == request_id);
+                if is_current {
+                    match result {
+                        Ok(false) => {
+                            let Some((_, request)) = self.pending_save_request.take() else {
+                                return Ok(());
+                            };
+                            self.process_check_complete = false;
+                            let _ = cx.tree.close_dialog()?;
+                            self.start_save_write(cx, request)?;
+                        }
+                        Ok(true) => {
+                            self.process_check_complete = true;
+                            if let Some(description) = self.process_description {
+                                cx.tree.set_text(description, SAVE_WHILE_GAME_RUNNING_WARNING)?;
+                            }
+                            if let Some(continue_button) = self.process_continue {
+                                cx.tree.set_text(continue_button, "Всё равно сохранить")?;
+                                cx.tree.set_enabled(continue_button, true)?;
+                            }
+                            if let Some(status) = self.status {
+                                cx.tree.set_text(status, SAVE_WHILE_GAME_RUNNING_WARNING)?;
+                            }
+                            cx.status = Some(SAVE_WHILE_GAME_RUNNING_WARNING.to_owned());
+                        }
+                        Err(error) => {
+                            self.pending_save_request = None;
+                            self.process_check_complete = false;
+                            let _ = cx.tree.close_dialog()?;
+                            let text = format!("Не удалось проверить запущенную игру; сохранение отменено: {error}");
+                            if let Some(status) = self.status {
+                                cx.tree.set_text(status, &text)?;
+                            }
+                            cx.status = Some(text);
+                        }
+                    }
+                }
+                return self.render(cx);
+            }
+        }
+        if self.pending_save_request.is_some() {
+            let escape = matches!(
+                message,
+                Message::Window(crate::event_loop::WindowEvent::Key {
+                    pressed: true,
+                    keysym: 0xff1b,
+                    ..
+                })
+            );
+            if escape || clicked.is_some_and(|id| Some(id) == self.process_cancel) {
+                self.pending_save_request = None;
+                self.process_check_complete = false;
+                let _ = cx.tree.close_dialog()?;
+                if let Some(status) = self.status {
+                    cx.tree.set_text(status, "Сохранение отменено.")?;
+                }
+                cx.status = Some("Сохранение отменено.".to_owned());
+                return self.render(cx);
+            }
+            if clicked.is_some_and(|id| Some(id) == self.process_continue) && self.process_check_complete {
+                let Some((_, request)) = self.pending_save_request.take() else {
+                    return Ok(());
+                };
+                self.process_check_complete = false;
+                let _ = cx.tree.close_dialog()?;
+                self.start_save_write(cx, request)?;
+                return self.render(cx);
+            }
+            return Ok(());
+        }
         if let Message::User(AppMessage::Tick(seconds)) = message {
             schedule_file_check(&self.workspace, cx, *seconds);
         }
@@ -5030,7 +5236,11 @@ impl Screen for Inventory {
                         }
                     }
                     Err(error) => {
-                        let text = format!("Не удалось сохранить: {error}");
+                        let text = if is_windows_file_busy_error_text(error) {
+                            SAVE_WHILE_GAME_RUNNING_WARNING.to_owned()
+                        } else {
+                            format!("Не удалось сохранить: {error}")
+                        };
                         if let Some(id) = self.status {
                             cx.tree.set_text(id, &text)?;
                         }
