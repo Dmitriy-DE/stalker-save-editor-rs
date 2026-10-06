@@ -87,7 +87,7 @@ impl HotkeyGesture {
             alt: false,
             shift: false,
         };
-        for modifier in parts.iter().take(parts.len().saturating_sub(1)).copied() {
+        for modifier in parts.iter().take(parts.len().saturating_sub(1)) {
             match modifier.to_ascii_lowercase().as_str() {
                 "ctrl" | "control" if !modifiers.control => modifiers.control = true,
                 "alt" if !modifiers.alt => modifiers.alt = true,
