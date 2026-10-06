@@ -758,17 +758,17 @@ fn start_load_from<F>(
         });
         let io_error = matches!(&result, Err(Error::System(_)));
         let mut state = shared.lock();
-        if state.load_request != request {
-            return;
-        }
+        let is_current_request = state.load_request == request;
         let completion = match result {
             Ok((save, journal)) => {
-                state.load_error = None;
                 if include_discovery {
                     upsert_slot(&mut state.manually_opened, save.slot.clone());
                 }
                 let path = save.slot.path.clone();
-                state.selected = Some(Arc::new(save));
+                if is_current_request {
+                    state.load_error = None;
+                    state.selected = Some(Arc::new(save));
+                }
                 LoadFinished {
                     request,
                     selected_path: Some(path),
@@ -779,9 +779,11 @@ fn start_load_from<F>(
                 }
             }
             Err(error) => {
-                state.selected = None;
                 let error = error.to_string();
-                state.load_error = Some(error.clone());
+                if is_current_request {
+                    state.selected = None;
+                    state.load_error = Some(error.clone());
+                }
                 LoadFinished {
                     request,
                     selected_path: None,
