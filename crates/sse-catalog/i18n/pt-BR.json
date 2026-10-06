@@ -2307,5 +2307,16 @@
  "●  НЕ НАЙДЕНО": "●  NÃO ENCONTRADO",
  "● БУДЕТ СОЗДАНО": "● SERÁ CRIADA",
  "● ГОТОВО": "● PRONTO",
- "♡  ПОДДЕРЖАТЬ ПРОЕКТ": "♡  APOIAR O PROJETO"
+ "♡  ПОДДЕРЖАТЬ ПРОЕКТ": "♡  APOIAR O PROJETO",
+ "Отправлять анонимные отчёты об ошибках?": "Enviar relatórios anônimos de erros?",
+ "В автоматический отчёт входят только версия, ОС, текст ошибки, стек и обезличенный журнал. Сохранения, пути и игровые логи не отправляются.": "O relatório automático contém apenas a versão, o sistema operacional, o texto do erro, a pilha e o log do aplicativo anonimizado. Saves, caminhos e logs do jogo não são enviados.",
+ "Отправить отчёт?": "Enviar relatório?",
+ "Ниже показано всё, что войдёт в отчёт.": "Abaixo está tudo o que será incluído no relatório.",
+ "Отправить": "Enviar",
+ "Отправка анонимных отчётов включена.": "Relatórios anônimos de erros ativados.",
+ "Отправка анонимных отчётов отключена.": "Relatórios anônimos de erros desativados.",
+ "Отчёт не отправлен.": "O relatório não foi enviado.",
+ "Приёмник отчётов пока не настроен. Отчёт сохранён локально.": "O receptor de relatórios ainda não está configurado. O relatório foi salvo localmente.",
+ "Отчёт сохранён локально; HTTPS-приёмник будет использован после включения сервера.": "O relatório foi salvo localmente; o receptor HTTPS será usado após a ativação do servidor.",
+ "Не удалось сохранить отчёт": "Não foi possível salvar o relatório"
 }

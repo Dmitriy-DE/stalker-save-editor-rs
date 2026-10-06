@@ -2307,5 +2307,16 @@
  "●  НЕ НАЙДЕНО": "●  NON TROVATO",
  "● БУДЕТ СОЗДАНО": "● VERRÀ CREATA",
  "● ГОТОВО": "● PRONTO",
- "♡  ПОДДЕРЖАТЬ ПРОЕКТ": "♡  SOSTIENI IL PROGETTO"
+ "♡  ПОДДЕРЖАТЬ ПРОЕКТ": "♡  SOSTIENI IL PROGETTO",
+ "Отправлять анонимные отчёты об ошибках?": "Inviare rapporti anonimi sugli errori?",
+ "В автоматический отчёт входят только версия, ОС, текст ошибки, стек и обезличенный журнал. Сохранения, пути и игровые логи не отправляются.": "Il rapporto automatico contiene solo versione, sistema operativo, testo dell’errore, stack e registro dell’applicazione anonimizzato. Salvataggi, percorsi e registri di gioco non vengono inviati.",
+ "Отправить отчёт?": "Inviare il rapporto?",
+ "Ниже показано всё, что войдёт в отчёт.": "Di seguito è mostrato tutto ciò che verrà incluso nel rapporto.",
+ "Отправить": "Invia",
+ "Отправка анонимных отчётов включена.": "I rapporti anonimi sugli errori sono attivi.",
+ "Отправка анонимных отчётов отключена.": "I rapporti anonimi sugli errori sono disattivati.",
+ "Отчёт не отправлен.": "Il rapporto non è stato inviato.",
+ "Приёмник отчётов пока не настроен. Отчёт сохранён локально.": "Il destinatario dei rapporti non è ancora configurato. Il rapporto è stato salvato localmente.",
+ "Отчёт сохранён локально; HTTPS-приёмник будет использован после включения сервера.": "Il rapporto è stato salvato localmente; il destinatario HTTPS verrà usato dopo l’attivazione del server.",
+ "Не удалось сохранить отчёт": "Impossibile salvare il rapporto"
 }

@@ -2092,7 +2092,10 @@ mod g13_tests {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |duration| duration.as_nanos());
-        std::env::temp_dir().join(format!("sse-g13-update-{}-{nonce:x}", std::process::id()))
+        // macOS clocks tick in microseconds, so parallel tests need a counter as well.
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let sequence = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        std::env::temp_dir().join(format!("sse-g13-update-{}-{nonce:x}-{sequence}", std::process::id()))
     }
 
     fn definition(version: &str, a: &str, b: &str, a_sha: &str, b_sha: &str) -> GameFixDefinition {
