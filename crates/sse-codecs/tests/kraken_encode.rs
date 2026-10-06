@@ -174,6 +174,9 @@ fn fixture_encoder_size_report() {
     let mut total_raw = 0_usize;
     let mut total_encoded = 0_usize;
     let mut total_reference = 0_usize;
+    let mut save_like_raw = 0_usize;
+    let mut save_like_encoded = 0_usize;
+    let mut save_like_reference = 0_usize;
     for vector in vectors() {
         if !seen_raw.insert(vector.raw.clone()) {
             continue;
@@ -186,25 +189,61 @@ fn fixture_encoder_size_report() {
             .map(|(base, _)| format!("{base}-l4.kraken"))
             .unwrap_or_else(|| panic!("{} has no compression level", vector.name));
         let reference = fs::read(root.join(&level_four)).unwrap_or_else(|error| panic!("read {level_four}: {error}"));
+        let raw_percent = encoded
+            .len()
+            .saturating_mul(100)
+            .checked_div(raw.len().max(1))
+            .unwrap_or_default();
         let reference_percent = encoded
             .len()
             .saturating_mul(100)
             .checked_div(reference.len().max(1))
             .unwrap_or_default();
         eprintln!(
-            "{}: encoded={} B, raw={} B, level4={} B, encoded/level4={} %",
+            "{}: encoded={} B, raw={} B, encoded/raw={} %, level4={} B, encoded/level4={} %",
             vector.raw,
             encoded.len(),
             raw.len(),
+            raw_percent,
             reference.len(),
             reference_percent
         );
         total_raw = total_raw.saturating_add(raw.len());
         total_encoded = total_encoded.saturating_add(encoded.len());
         total_reference = total_reference.saturating_add(reference.len());
+        if vector.raw.starts_with("save-like-") {
+            save_like_raw = save_like_raw.saturating_add(raw.len());
+            save_like_encoded = save_like_encoded.saturating_add(encoded.len());
+            save_like_reference = save_like_reference.saturating_add(reference.len());
+        }
     }
+    let all_raw_percent = total_encoded
+        .saturating_mul(100)
+        .checked_div(total_raw.max(1))
+        .unwrap_or_default();
+    let all_reference_percent = total_encoded
+        .saturating_mul(100)
+        .checked_div(total_reference.max(1))
+        .unwrap_or_default();
+    let save_like_raw_percent = save_like_encoded
+        .saturating_mul(100)
+        .checked_div(save_like_raw.max(1))
+        .unwrap_or_default();
+    let save_like_reference_percent = save_like_encoded
+        .saturating_mul(100)
+        .checked_div(save_like_reference.max(1))
+        .unwrap_or_default();
     eprintln!(
-        "total: encoded={} B / raw={} B; encoded={} B / level4={} B",
-        total_encoded, total_raw, total_encoded, total_reference
+        "total: encoded={} B / raw={} B ({} %); encoded={} B / level4={} B ({} %)",
+        total_encoded, total_raw, all_raw_percent, total_encoded, total_reference, all_reference_percent
+    );
+    eprintln!(
+        "save-like: encoded={} B / raw={} B ({} %); encoded={} B / level4={} B ({} %)",
+        save_like_encoded,
+        save_like_raw,
+        save_like_raw_percent,
+        save_like_encoded,
+        save_like_reference,
+        save_like_reference_percent
     );
 }
