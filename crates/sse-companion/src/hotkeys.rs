@@ -72,37 +72,41 @@ pub struct HotkeyGesture {
 impl HotkeyGesture {
     /// Parses the persisted `Ctrl+Alt+H` syntax.
     pub fn parse(text: &str) -> Result<Self, HotkeyError> {
-        let parts = text.split('+').map(str::trim);
+        let parts = text
+            .split('+')
+            .map(str::trim)
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>();
+        if parts.len() < 2 {
+            return Err(HotkeyError::new(format!(
+                "Hotkey '{text}' must include a modifier and one letter."
+            )));
+        }
         let mut modifiers = Modifiers {
             control: false,
             alt: false,
             shift: false,
         };
-        let mut key = None;
-        for part in parts {
-            if key.is_some() {
-                return Err(HotkeyError::new("hotkey modifiers must precede the key"));
-            }
-            match part.to_ascii_lowercase().as_str() {
+        for modifier in parts.iter().take(parts.len().saturating_sub(1)) {
+            match modifier.to_ascii_lowercase().as_str() {
                 "ctrl" | "control" if !modifiers.control => modifiers.control = true,
                 "alt" if !modifiers.alt => modifiers.alt = true,
                 "shift" if !modifiers.shift => modifiers.shift = true,
-                "ctrl" | "control" | "alt" | "shift" => return Err(HotkeyError::new("hotkey repeats a modifier")),
-                _ if part.len() == 1
-                    && part.as_bytes().first().is_some_and(u8::is_ascii_alphabetic)
-                    && key.is_none() =>
-                {
-                    key = part.chars().next().map(|letter| letter.to_ascii_uppercase());
+                "ctrl" | "control" | "alt" | "shift" => {
+                    return Err(HotkeyError::new(format!(
+                        "Hotkey '{text}' repeats modifier '{modifier}'."
+                    )))
                 }
-                _ => return Err(HotkeyError::new("hotkey needs modifiers and one A-Z letter")),
+                _ => return Err(HotkeyError::new(format!("Unknown hotkey modifier '{modifier}'."))),
             }
         }
-        if !modifiers.control && !modifiers.alt && !modifiers.shift {
-            return Err(HotkeyError::new("hotkey must include at least one modifier"));
+        let key_text = parts.last().copied().unwrap_or_default();
+        if key_text.len() != 1 || !key_text.as_bytes().first().is_some_and(u8::is_ascii_alphabetic) {
+            return Err(HotkeyError::new(format!("Hotkey '{text}' must end in one A-Z letter.")));
         }
         Ok(Self {
             modifiers,
-            key: key.ok_or_else(|| HotkeyError::new("hotkey is missing its letter"))?,
+            key: key_text.chars().next().unwrap_or('A').to_ascii_uppercase(),
         })
     }
 }

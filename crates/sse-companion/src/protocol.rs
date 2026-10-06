@@ -26,6 +26,18 @@ pub enum ReplyStatus {
     Unsupported,
 }
 
+impl ReplyStatus {
+    /// Stable protocol token.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Ok => "ok",
+            Self::Error => "error",
+            Self::Unsupported => "unsupported",
+        }
+    }
+}
+
 /// A single reply line from the game mod.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProtocolReply {
@@ -154,6 +166,66 @@ impl CompanionClient {
             }
             std::thread::sleep(remaining.min(Duration::from_millis(50)));
         }
+    }
+
+    fn send_ok(&self, command: &str, arguments: &[&str], timeout: Duration) -> Result<String, ProtocolError> {
+        let reply = self.send(command, arguments, timeout)?;
+        if reply.status == ReplyStatus::Ok {
+            Ok(reply.text)
+        } else {
+            Err(ProtocolError::Invalid(format!(
+                "{command} failed: {} {}",
+                reply.status.as_str(),
+                reply.text
+            )))
+        }
+    }
+
+    /// Pings the running game and returns the measured round-trip latency.
+    pub fn ping(&self, timeout: Duration) -> Result<(Duration, String), ProtocolError> {
+        let started = Instant::now();
+        let text = self.send_ok("ping", &[], timeout)?;
+        Ok((started.elapsed(), text))
+    }
+
+    /// Reads the player's live info payload.
+    pub fn info(&self, timeout: Duration) -> Result<String, ProtocolError> {
+        self.send_ok("info", &[], timeout)
+    }
+
+    /// Reads the live inventory payload.
+    pub fn list_inventory(&self, timeout: Duration) -> Result<String, ProtocolError> {
+        self.send_ok("list_inventory", &[], timeout)
+    }
+
+    /// Gives an item through the installed Companion protocol.
+    pub fn give(&self, section: &str, count: u8, timeout: Duration) -> Result<String, ProtocolError> {
+        let count = count.to_string();
+        self.send_ok("give", &[section, count.as_str()], timeout)
+    }
+
+    /// Enables or disables the Companion side of global hotkeys.
+    pub fn hotkeys(&self, enabled: bool, timeout: Duration) -> Result<String, ProtocolError> {
+        self.send_ok("hotkeys", &[if enabled { "on" } else { "off" }], timeout)
+    }
+
+    /// Sends an experimental S.T.A.L.K.E.R. 2 god-mode command.
+    pub fn s2_god(&self, enabled: bool, timeout: Duration) -> Result<String, ProtocolError> {
+        self.send_ok("god", &[if enabled { "on" } else { "off" }], timeout)
+    }
+
+    /// Sends an experimental S.T.A.L.K.E.R. 2 noclip command.
+    pub fn s2_noclip(&self, enabled: bool, timeout: Duration) -> Result<String, ProtocolError> {
+        self.send_ok("noclip", &[if enabled { "on" } else { "off" }], timeout)
+    }
+
+    /// Sends an experimental S.T.A.L.K.E.R. 2 time-speed command.
+    pub fn s2_time_speed(&self, speed: f32, timeout: Duration) -> Result<String, ProtocolError> {
+        if !speed.is_finite() || !(0.0..=100.0).contains(&speed) {
+            return Err(ProtocolError::Invalid("time speed is outside 0..100".to_owned()));
+        }
+        let speed = speed.to_string();
+        self.send_ok("timespeed", &[speed.as_str()], timeout)
     }
 
     /// Exchange directory used by this client.

@@ -214,18 +214,37 @@ impl Companion {
             let result = selected
                 .and_then(|(game, directory)| Self::exchange_directory(&game, &directory))
                 .and_then(|directory| {
-                    sse_companion::protocol::CompanionClient::new(directory)
-                        .send(command, argument.as_slice(), Duration::from_secs(3))
-                        .map_err(|e| e.to_string())
-                        .and_then(|reply| match reply.status {
-                            sse_companion::protocol::ReplyStatus::Ok => Ok(reply.text),
-                            sse_companion::protocol::ReplyStatus::Error => {
-                                Err(format!("Game returned error: {}", reply.text))
+                    let client = sse_companion::protocol::CompanionClient::new(directory);
+                    let timeout = Duration::from_secs(3);
+                    let result = match (command, argument) {
+                        ("ping", _) => client
+                            .ping(timeout)
+                            .map(|(latency, _)| format!("{:.0} мс", latency.as_secs_f64() * 1000.0)),
+                        ("info", _) => client.info(timeout),
+                        ("list_inventory", _) => client.list_inventory(timeout),
+                        ("god", Some("on")) => client.s2_god(true, timeout),
+                        ("god", Some("off")) => client.s2_god(false, timeout),
+                        ("noclip", Some("on")) => client.s2_noclip(true, timeout),
+                        ("noclip", Some("off")) => client.s2_noclip(false, timeout),
+                        ("timespeed", Some(value)) => value
+                            .parse::<f32>()
+                            .map_err(|_| {
+                                sse_companion::protocol::ProtocolError::Invalid("time speed is invalid".to_owned())
+                            })
+                            .and_then(|speed| client.s2_time_speed(speed, timeout)),
+                        _ => client.send(command, argument.as_slice(), timeout).and_then(|reply| {
+                            if reply.status == sse_companion::protocol::ReplyStatus::Ok {
+                                Ok(reply.text)
+                            } else {
+                                Err(sse_companion::protocol::ProtocolError::Invalid(format!(
+                                    "{command} failed: {} {}",
+                                    reply.status.as_str(),
+                                    reply.text
+                                )))
                             }
-                            sse_companion::protocol::ReplyStatus::Unsupported => {
-                                Err(format!("Game returned unsupported: {}", reply.text))
-                            }
-                        })
+                        }),
+                    };
+                    result.map_err(|error| error.to_string())
                 });
             proxy.send(AppMessage::ToScreen(
                 ScreenId::Companion,
@@ -694,9 +713,9 @@ impl Screen for Companion {
                                 cx.tree.set_text(id, "РАБОТАЕТ (ПОДКЛЮЧЁН)")?;
                             }
                             if let Some(id) = self.latency {
-                                cx.tree.set_text(id, "Связь / Задержка: мод отвечает")?;
+                                cx.tree.set_text(id, &format!("Связь / Задержка: {text}"))?;
                             }
-                            cx.status = Some(format!("Мод отвечает. {text}"));
+                            cx.status = Some(format!("Мод отвечает. Задержка: {text}"));
                         }
                         "info" => {
                             if let Some(id) = self.info {
@@ -708,6 +727,9 @@ impl Screen for Companion {
                                 cx.tree.set_text(id, &format!("Инвентарь игрока: {text}"))?;
                             }
                         }
+                        "god" | "noclip" | "timespeed" => {
+                            cx.status = Some(format!("Игра выполнила: {text}"));
+                        }
                         _ => cx.status = Some(format!("Companion: {text}")),
                     },
                     CompanionReply::Protocol(command, Err(e)) => {
@@ -716,6 +738,8 @@ impl Screen for Companion {
                         }
                         cx.status = Some(if *command == "ping" {
                             format!("Ошибка пинга: {e}")
+                        } else if matches!(*command, "god" | "noclip" | "timespeed") {
+                            format!("Не выполнено: {e}")
                         } else {
                             format!("Не удалось получить данные Companion: {e}")
                         });
