@@ -167,6 +167,10 @@ pub struct Shell {
     reports_ok: WidgetId,
     reports_off: WidgetId,
     saving_dialog: WidgetId,
+    force_close_dialog: WidgetId,
+    force_close_yes: WidgetId,
+    force_close_no: WidgetId,
+    close_waiting: bool,
     tooltip: WidgetId,
     status: WidgetId,
     selected: usize,
@@ -813,6 +817,20 @@ impl Shell {
             Text::Body,
         )?;
         tree.set_visible(saving_dialog, false)?;
+
+        let force_close_dialog = style::card(tree, overlay_host)?;
+        style::label(tree, force_close_dialog, "ЗАКРЫТЬ, НЕ ДОЖИДАЯСЬ?", Text::Heading)?;
+        style::label(
+            tree,
+            force_close_dialog,
+            "Фоновая операция ещё записывает файлы. Принудительное закрытие может оставить операцию незавершённой.",
+            Text::Body,
+        )?;
+        let force_close_actions = style::row(tree, force_close_dialog)?;
+        let force_close_yes = style::button(tree, force_close_actions, "ЗАКРЫТЬ", style::Button::Danger)?;
+        let force_close_no = style::button(tree, force_close_actions, "ПОДОЖДАТЬ", style::Button::Secondary)?;
+        tree.set_visible(force_close_dialog, false)?;
+
         let tooltip = style::label(tree, overlay_host, "", Text::Body)?;
         tree.set_visible(tooltip, false)?;
         tree.set_tooltip(nav_toggle, crate::strings::t("Свернуть меню"))?;
@@ -858,6 +876,10 @@ impl Shell {
             reports_ok,
             reports_off,
             saving_dialog,
+            force_close_dialog,
+            force_close_yes,
+            force_close_no,
+            close_waiting: false,
             tooltip,
             status,
             selected: 0,
@@ -1243,10 +1265,14 @@ impl Shell {
 
     fn handle(&mut self, tree: &mut Tree, message: &Message<AppMessage>, clicked: Option<WidgetId>) -> Result<Flow> {
         let save_session = self.library_workspace.session();
+        let write_active =
+            sse_app::tasks::named_task_active("game-write") || sse_app::tasks::named_task_active("companion-write");
+        if self.close_waiting && !write_active && !save_session.is_saving() && !save_session.is_restoring() {
+            self.close_waiting = false;
+            return Ok(Flow::Exit);
+        }
         if save_session.deferred_close_ready() {
-            if sse_app::tasks::named_task_active("game-background")
-                || sse_app::tasks::named_task_active("companion-background")
-            {
+            if write_active {
                 tree.set_text(
                     self.status,
                     "Дождитесь завершения фоновой операции с игрой, чтобы закрыть окно.",
@@ -1272,13 +1298,21 @@ impl Shell {
                     self.sync_saving_overlay(tree)?;
                     return Ok(Flow::Continue);
                 }
-                if sse_app::tasks::named_task_active("game-background")
-                    || sse_app::tasks::named_task_active("companion-background")
-                {
-                    tree.set_text(
-                        self.status,
-                        "Дождитесь завершения фоновой операции с игрой, чтобы закрыть окно.",
-                    )?;
+                if write_active {
+                    if self.close_waiting {
+                        if tree.dialog() != Some(self.force_close_dialog) {
+                            if tree.dialog_open() {
+                                let _ = tree.close_dialog()?;
+                            }
+                            tree.open_dialog(self.force_close_dialog)?;
+                        }
+                    } else {
+                        self.close_waiting = true;
+                        tree.set_text(
+                            self.status,
+                            "Дождитесь завершения записи в игру/компаньон, чтобы закрыть окно.",
+                        )?;
+                    }
                     return Ok(Flow::Continue);
                 }
                 let _ = sse_app::tasks::wait_for_named_tasks(
@@ -1292,6 +1326,16 @@ impl Shell {
                 return Ok(Flow::Exit);
             }
             _ => {}
+        }
+        if clicked == Some(self.force_close_yes) {
+            return Ok(Flow::Exit);
+        }
+        if clicked == Some(self.force_close_no) {
+            if tree.dialog() == Some(self.force_close_dialog) {
+                let _ = tree.close_dialog()?;
+            }
+            tree.set_text(self.status, "Ожидаю завершения записи в игру/компаньон…")?;
+            return Ok(Flow::Continue);
         }
         if let Message::User(AppMessage::SoundLoaded(game, sounds)) = message {
             if self.sound_game.as_deref() == Some(game.as_str()) {
@@ -1844,7 +1888,7 @@ mod tests {
             .ok_or_else(|| sse_core::Error::Refused("test restore did not start".to_owned()))?;
         let (started_sender, started_receiver) = std::sync::mpsc::channel();
         let (release_sender, release_receiver) = std::sync::mpsc::channel();
-        sse_app::tasks::spawn_named_detached("game-background", move || {
+        sse_app::tasks::spawn_named_detached("game-write", move || {
             let _ = started_sender.send(());
             let _ = release_receiver.recv();
         });
@@ -1861,7 +1905,7 @@ mod tests {
             .send(())
             .map_err(|error| sse_core::Error::System(error.to_string()))?;
         assert!(sse_app::tasks::wait_for_named_tasks(
-            &["game-background"],
+            &["game-write"],
             std::time::Duration::from_secs(1)
         ));
 
@@ -2210,6 +2254,44 @@ mod tests {
         shell.handle(&mut tree, &backwards, None)?;
         assert_ne!(first, second);
         assert_eq!(tree.focused(), first);
+        Ok(())
+    }
+    #[test]
+    fn close_ignores_reads_and_confirms_second_request_during_write() -> sse_core::Result<()> {
+        let _guard = close_task_test_guard();
+        let close = Message::Window(WindowEvent::CloseRequested);
+
+        let (read_tx, read_rx) = std::sync::mpsc::channel();
+        sse_app::tasks::spawn_named_detached("game-read", move || {
+            let _ = read_rx.recv();
+        });
+        let mut read_tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut read_shell = Shell::build(&mut read_tree, None)?;
+        assert_eq!(read_shell.handle(&mut read_tree, &close, None)?, Flow::Exit);
+        let _ = read_tx.send(());
+
+        let (write_tx, write_rx) = std::sync::mpsc::channel();
+        sse_app::tasks::spawn_named_detached("game-write", move || {
+            let _ = write_rx.recv();
+        });
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut shell = Shell::build(&mut tree, None)?;
+        assert_eq!(shell.handle(&mut tree, &close, None)?, Flow::Continue);
+        assert!(!tree.dialog_open());
+        assert_eq!(shell.handle(&mut tree, &close, None)?, Flow::Continue);
+        assert_eq!(tree.dialog(), Some(shell.force_close_dialog));
+
+        let tick = Message::User(super::AppMessage::Tick(0));
+        assert_eq!(
+            shell.handle(&mut tree, &tick, Some(shell.force_close_no))?,
+            Flow::Continue
+        );
+        assert!(!tree.dialog_open());
+        assert_eq!(shell.handle(&mut tree, &close, None)?, Flow::Continue);
+        assert_eq!(tree.dialog(), Some(shell.force_close_dialog));
+        assert_eq!(shell.handle(&mut tree, &tick, Some(shell.force_close_yes))?, Flow::Exit);
+        let _ = write_tx.send(());
+        let _ = sse_app::tasks::wait_for_named_tasks(&["game-read", "game-write"], std::time::Duration::from_secs(1));
         Ok(())
     }
 }
