@@ -96,6 +96,7 @@ impl SteamLibrary {
                 // pointer was resolved from this live library handle, and the call receives a live 1024-byte error buffer. The installed
                 // SDK ABI is not runtime-verified in this environment.
                 let mut error_message = [0_u8; 1024];
+                // SAFETY: `error_message` is writable and remains alive for the synchronous SteamAPI_InitFlat call.
                 unsafe { initialize(error_message.as_mut_ptr().cast()) == 0 }
             }
             None => false,
