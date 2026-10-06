@@ -3,7 +3,9 @@
 pub mod fetch;
 pub mod hotkeys;
 pub mod output;
+pub mod process;
 pub mod secure_fs;
+pub mod steam;
 pub mod system;
 
 #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
