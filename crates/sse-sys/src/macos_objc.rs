@@ -146,6 +146,13 @@ pub unsafe fn id_id(r: Id, s: Sel, a: Id) -> Id {
     let f: F = unsafe { mem::transmute(objc_msgSend as *const c_void) };
     unsafe { f(r, s, a) }
 }
+pub unsafe fn id_usize(r: Id, s: Sel, a: usize) -> Id {
+    type F = unsafe extern "C" fn(Id, Sel, usize) -> Id;
+    // SAFETY: objc_msgSend is called with the exact object/object/NSUInteger ABI for NSArray::objectAtIndex:.
+    let f: F = unsafe { mem::transmute(objc_msgSend as *const c_void) };
+    // SAFETY: the caller supplies a live NSArray receiver and an in-range index.
+    unsafe { f(r, s, a) }
+}
 pub unsafe fn id_rect(r: Id, s: Sel, a: Rect) -> Id {
     type F = unsafe extern "C" fn(Id, Sel, Rect) -> Id;
     let f: F = unsafe { mem::transmute(objc_msgSend as *const c_void) };
