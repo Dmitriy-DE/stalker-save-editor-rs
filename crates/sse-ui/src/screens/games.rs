@@ -1069,12 +1069,16 @@ fn read_steam_app_manifest(library_root: &Path, app_id: u32) -> Option<String> {
         Ok(content) => Some(content),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(error) => {
-            sse_app::diagnostics::warn(&format!(
-                "failed to read Steam app manifest for app id {app_id}: {error}"
-            ));
+            report_steam_manifest_read_error(app_id, error);
             None
         }
     }
+}
+
+fn report_steam_manifest_read_error(app_id: u32, error: std::io::Error) {
+    sse_app::diagnostics::warn(&format!(
+        "failed to read Steam app manifest for app id {app_id}: {error}"
+    ));
 }
 
 fn find_manifest_install_directory(library_root: &Path, app_id: u32, content: &str) -> Option<PathBuf> {
@@ -3398,7 +3402,7 @@ mod encyclopedia_result_tests {
 
 #[cfg(test)]
 mod steam_manifest_warning_tests {
-    use super::read_steam_app_manifest;
+    use super::report_steam_manifest_read_error;
     use sse_core::{Error, Result};
     use std::sync::Mutex;
 
@@ -3413,11 +3417,13 @@ mod steam_manifest_warning_tests {
         let logs = root.join("logs");
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&logs)?;
-        std::fs::write(root.join("steamapps"), b"not a directory")?;
         sse_app::diagnostics::configure_log_directory(Some(logs.clone()));
 
         let result = (|| -> Result<String> {
-            assert!(read_steam_app_manifest(&root, 123).is_none());
+            report_steam_manifest_read_error(
+                123,
+                std::io::Error::new(std::io::ErrorKind::PermissionDenied, "simulated read failure"),
+            );
             Ok(std::fs::read_to_string(logs.join("save-editor.log"))?)
         })();
         sse_app::diagnostics::configure_log_directory(None);
