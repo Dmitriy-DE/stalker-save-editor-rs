@@ -206,6 +206,7 @@ pub struct Shell {
     save: WidgetId,
     open_button: WidgetId,
     open_files_queue: Option<OpenFilesQueue>,
+    open_return_screen: Option<ScreenId>,
     open_file_dialog: WidgetId,
     open_path_widget: WidgetId,
     open_confirm: WidgetId,
@@ -1034,6 +1035,7 @@ impl Shell {
             save,
             open_button,
             open_files_queue: None,
+            open_return_screen: None,
             open_file_dialog,
             open_path_widget,
             open_confirm,
@@ -1350,6 +1352,9 @@ impl Shell {
                 && !self.library_workspace.is_restoring()
                 && !self.library_workspace.is_loading(),
         )?;
+        if let Some(screen) = self.open_return_screen.take() {
+            self.open(tree, screen)?;
+        }
         Ok(())
     }
 
@@ -1615,6 +1620,8 @@ impl Shell {
             }
             let wanted = match message {
                 Message::User(AppMessage::Tick(_)) => true,
+                Message::User(AppMessage::OpenGameFix { .. }) => screen.id() == ScreenId::GameFixes,
+                Message::User(AppMessage::OpenSavePicker { .. }) => false,
                 Message::User(AppMessage::ToScreen(id, _)) => *id == screen.id(),
                 Message::User(AppMessage::EditorAction(_)) => screen.id() == ScreenId::Inventory,
                 Message::User(AppMessage::SoundLoaded(_, _)) => false,
@@ -1924,6 +1931,23 @@ impl Shell {
             self.sync_saving_overlay(tree)?;
             return Ok(Flow::Continue);
         }
+        if let Message::User(AppMessage::OpenSavePicker { return_to }) = message {
+            self.open_return_screen = Some(*return_to);
+            self.show_open_file_dialog(tree)?;
+            if self.open_files_queue.is_none() && tree.dialog() != Some(self.open_file_dialog) {
+                self.open_return_screen = None;
+            }
+            return Ok(Flow::Continue);
+        }
+        if let Message::User(AppMessage::OpenGameFix { game_id, .. }) = message {
+            if self.app.selected_game() != Some(game_id.as_str()) {
+                self.app.set_game_dir(None);
+            }
+            self.app.set_selected_game(Some(game_id.clone()));
+            self.open(tree, ScreenId::GameFixes)?;
+            self.route(tree, message, None)?;
+            return Ok(Flow::Continue);
+        }
         if clicked == Some(self.nav_toggle) {
             let wanted = !self.nav_collapsed;
             self.apply_navigation(tree, wanted)?;
@@ -2019,6 +2043,7 @@ impl Shell {
         }
         if clicked.is_some() && clicked == Some(self.open_cancel) {
             self.close_open_file_dialog(tree)?;
+            self.open_return_screen = None;
             return Ok(Flow::Continue);
         }
         if clicked.is_some() && clicked == Some(self.open_confirm) {
@@ -2130,6 +2155,7 @@ impl Shell {
                 if tree.dialog_open() {
                     if tree.dialog() == Some(self.open_file_dialog) {
                         self.open_path_input.focus(false, 0);
+                        self.open_return_screen = None;
                     }
                     let _ = tree.close_dialog()?;
                 } else {
@@ -2520,6 +2546,71 @@ mod tests {
             };
             shell.handle(&mut tree, &message, None)?;
         }
+        std::fs::remove_file(path)?;
+        Ok(())
+    }
+
+    #[test]
+    fn shared_save_picker_returns_to_doctor_after_background_load() -> sse_core::Result<()> {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| sse_core::Error::System(error.to_string()))?
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("sse-doctor-picker-{nonce}.sav"));
+        std::fs::write(
+            &path,
+            include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-source.sav"),
+        )?;
+        let expected_path = std::fs::canonicalize(&path)?;
+        let (proxy, receiver) = channel_pair::<super::super::AppMessage>();
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut shell = Shell::build_for_test(&mut tree, None)?;
+        shell.open(&mut tree, ScreenId::Overview)?;
+        shell.set_proxy(proxy);
+
+        shell.handle(
+            &mut tree,
+            &Message::User(super::super::AppMessage::OpenSavePicker {
+                return_to: ScreenId::SaveDoctor,
+            }),
+            None,
+        )?;
+        assert_eq!(tree.dialog(), Some(shell.open_file_dialog));
+        for character in path.to_string_lossy().chars() {
+            shell.handle(
+                &mut tree,
+                &Message::Window(WindowEvent::Key {
+                    pressed: true,
+                    keysym: u32::from(character),
+                    text: Some(character),
+                    ctrl: false,
+                    shift: false,
+                }),
+                None,
+            )?;
+        }
+        shell.handle(
+            &mut tree,
+            &Message::User(super::super::AppMessage::Tick(0)),
+            Some(shell.open_confirm),
+        )?;
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        while shell.app.current_save() != Some(expected_path.as_path()) {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                let _ = std::fs::remove_file(&path);
+                return Err(sse_core::Error::System(
+                    "timed out loading the Save Doctor fixture".to_owned(),
+                ));
+            }
+            let message = receiver
+                .recv_timeout(remaining)
+                .map_err(|error| sse_core::Error::System(error.to_string()))?;
+            shell.handle(&mut tree, &message, None)?;
+        }
+
+        assert_eq!(shell.current(), Some(ScreenId::SaveDoctor));
         std::fs::remove_file(path)?;
         Ok(())
     }

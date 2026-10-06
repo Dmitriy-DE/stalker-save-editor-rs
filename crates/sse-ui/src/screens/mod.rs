@@ -178,6 +178,18 @@ impl ScreenId {
 pub enum AppMessage {
     /// Seconds since start, once per second (status line, caret blink, relative times).
     Tick(u64),
+    /// Ask the shell to open its shared save picker and return after loading.
+    OpenSavePicker {
+        /// Screen to show after the selected save finishes loading.
+        return_to: ScreenId,
+    },
+    /// Open the linked game fix in the Game Fixes screen without installing it.
+    OpenGameFix {
+        /// Canonical game identifier from the fix catalog.
+        game_id: String,
+        /// Identifier of the catalog fix to select.
+        fix_id: String,
+    },
     /// Result of background work for one screen; the screen downcasts the payload it sent itself.
     ToScreen(ScreenId, Box<dyn Any + Send>),
     /// Global draft command from the shell, dispatched to the selected-save editor screen.
@@ -203,6 +215,8 @@ impl std::fmt::Debug for AppMessage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Tick(seconds) => write!(f, "Tick({seconds})"),
+            Self::OpenSavePicker { return_to } => write!(f, "OpenSavePicker({return_to:?})"),
+            Self::OpenGameFix { game_id, fix_id } => write!(f, "OpenGameFix({game_id}, {fix_id})"),
             Self::ToScreen(id, _) => write!(f, "ToScreen({id:?})"),
             Self::EditorAction(action) => write!(f, "EditorAction({action:?})"),
             Self::SoundLoaded(game, _) => write!(f, "SoundLoaded({game})"),

@@ -56,6 +56,10 @@ enum Action {
         path: PathBuf,
         format_id: Option<String>,
     },
+    OpenGameFix {
+        game_id: String,
+        fix_id: String,
+    },
     RepairQuests {
         path: PathBuf,
         format_id: Option<String>,
@@ -210,6 +214,7 @@ pub struct HistoryScreen {
     process_check_complete: bool,
     diagnosis_request_id: u64,
     diagnosed_selection: Option<(PathBuf, String)>,
+    doctor_open_save: Option<WidgetId>,
     doctor_path_input: Option<WidgetId>,
     doctor_check: Option<WidgetId>,
     doctor_path: Option<TextInput>,
@@ -245,6 +250,7 @@ impl HistoryScreen {
             process_check_complete: false,
             diagnosis_request_id: 0,
             diagnosed_selection: None,
+            doctor_open_save: None,
             doctor_path_input: None,
             doctor_check: None,
             doctor_path: None,
@@ -946,6 +952,21 @@ impl HistoryScreen {
                 });
                 repair_button_added = true;
             }
+            if state.status == sse_doctor::QuestTaskStatus::Broken && state.needs_preventing_fix {
+                if let Some(fix_id) = state.preventing_fix_id {
+                    if let Some(definition) = sse_fixes::GameFixCatalog::try_get(fix_id) {
+                        cx.tree.set_text(row.secondary_button, "УСТАНОВИТЬ ИСПРАВЛЕНИЕ ИГРЫ")?;
+                        cx.tree.set_visible(row.secondary_button, true)?;
+                        self.actions.push(ActionButton {
+                            widget: row.secondary_button,
+                            action: Action::OpenGameFix {
+                                game_id: definition.game.id().to_owned(),
+                                fix_id: fix_id.to_owned(),
+                            },
+                        });
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -1021,7 +1042,7 @@ impl Screen for HistoryScreen {
                         self.diagnosed_selection = Some((path, source_sha256));
                     }
                     self.sync_doctor_check(cx.tree)?;
-                } else if self.diagnosed_selection.is_some() {
+                } else if self.diagnosed_selection.is_some() || self.diagnosis_running {
                     self.diagnosis_request_id = self.diagnosis_request_id.saturating_add(1);
                     self.diagnosed_selection = None;
                     self.diagnosis_running = false;
@@ -1081,6 +1102,12 @@ impl Screen for HistoryScreen {
                 path_row,
                 "ПРОВЕРИТЬ СОХРАНЕНИЕ",
                 Button::Primary,
+            )?);
+            self.doctor_open_save = Some(style::button(
+                cx.tree,
+                path_row,
+                "Открыть сохранение",
+                Button::Secondary,
             )?);
             if let Some(check) = self.doctor_check {
                 cx.tree.set_enabled(check, false)?;
@@ -1296,6 +1323,17 @@ impl Screen for HistoryScreen {
                 self.check_doctor_path(cx)?;
                 return Ok(());
             }
+            if clicked.is_some() && clicked == self.doctor_open_save {
+                if let Some(proxy) = cx.proxy.cloned() {
+                    let _ = proxy.send(AppMessage::OpenSavePicker {
+                        return_to: ScreenId::SaveDoctor,
+                    });
+                    self.set_summary(cx.tree, "Открываю выбор файла сохранения…")?;
+                } else {
+                    self.set_summary(cx.tree, "Выбор файла доступен только в рабочем окне.")?;
+                }
+                return Ok(());
+            }
         }
         if self.pending_restore.is_some() {
             let escape = matches!(
@@ -1430,6 +1468,17 @@ impl Screen for HistoryScreen {
                     self.set_summary(cx.tree, &format!("Проверяю {}…", display_name(&path)))?;
                     self.start_diagnosis(path, format_id, cx.proxy.cloned())?;
                     self.sync_doctor_check(cx.tree)?;
+                }
+                Action::OpenGameFix { game_id, fix_id } => {
+                    if let Some(proxy) = cx.proxy.cloned() {
+                        let _ = proxy.send(AppMessage::OpenGameFix {
+                            game_id: game_id.clone(),
+                            fix_id: fix_id.clone(),
+                        });
+                        self.set_summary(cx.tree, "Открываю связанное исправление игры…")?;
+                    } else {
+                        self.set_summary(cx.tree, "Исправление игры можно открыть только в рабочем окне.")?;
+                    }
                 }
                 Action::RepairQuests {
                     path,
@@ -2139,6 +2188,41 @@ mod tests {
     }
 
     #[test]
+    fn doctor_open_save_button_requests_the_shared_picker_and_returns_to_doctor() -> sse_core::Result<()> {
+        let mut screen = HistoryScreen::new(ScreenId::SaveDoctor, "test", Workspace::default());
+        let mut app = sse_app::state::AppState::new();
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let (proxy, receiver) = crate::event_loop::channel_pair::<AppMessage>();
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: Some(&proxy),
+            status: None,
+            app: &mut app,
+        };
+        screen.build(&mut cx, host)?;
+        let open = screen
+            .doctor_open_save
+            .ok_or_else(|| sse_core::Error::damaged("doctor open-save button was not built"))?;
+
+        screen.message(&mut cx, &Message::User(AppMessage::Tick(0)), Some(open))?;
+
+        assert!(matches!(
+            receiver.recv_timeout(Duration::from_secs(1)),
+            Ok(Message::User(AppMessage::OpenSavePicker {
+                return_to: ScreenId::SaveDoctor
+            }))
+        ));
+        Ok(())
+    }
+
+    #[test]
     fn doctor_error_uses_acceptance_structure_row() {
         assert_eq!(
             super::doctor_error_detail("file not found"),
@@ -2389,9 +2473,10 @@ mod tests {
             Content::Panel,
             Look::default(),
         )?;
+        let (proxy, receiver) = crate::event_loop::channel_pair::<AppMessage>();
         let mut cx = Context {
             tree: &mut tree,
-            proxy: None,
+            proxy: Some(&proxy),
             status: None,
             app: &mut app,
         };
@@ -2427,6 +2512,19 @@ mod tests {
         assert!(matches!(
             screen.actions.first().map(|action| &action.action),
             Some(Action::RepairQuests { .. })
+        ));
+        assert!(cx.tree.is_visible(row.secondary_button));
+        assert!(matches!(
+            screen.actions.get(1).map(|action| &action.action),
+            Some(Action::OpenGameFix { game_id, fix_id })
+                if game_id == "cs" && fix_id == "cs.quest.wolf-offline-cancellation"
+        ));
+
+        screen.message(&mut cx, &Message::User(AppMessage::Tick(0)), Some(row.secondary_button))?;
+        assert!(matches!(
+            receiver.recv_timeout(Duration::from_secs(1)),
+            Ok(Message::User(AppMessage::OpenGameFix { game_id, fix_id }))
+                if game_id == "cs" && fix_id == "cs.quest.wolf-offline-cancellation"
         ));
         Ok(())
     }
