@@ -195,19 +195,6 @@ impl XRayArchive {
         Self::from_reader(Box::new(file), header_decoder, entry_decoder)
     }
 
-    /// Opens an archive from a filesystem path using a pre-parsed entries table.
-    ///
-    /// # Errors
-    /// Returns [`Error::System`] on I/O error.
-    pub fn open_with_entries(
-        path: impl AsRef<Path>,
-        entries: Vec<XRayArchiveEntry>,
-        entry_decoder: Option<EntryDecoder>,
-    ) -> Result<Self> {
-        let file = File::open(path.as_ref()).map_err(|e| Error::System(e.to_string()))?;
-        Self::from_reader_with_entries(Box::new(file), entries, entry_decoder)
-    }
-
     /// Opens an archive from any positional reader.
     ///
     /// # Errors
@@ -277,17 +264,6 @@ impl XRayArchive {
     #[must_use]
     pub fn entries(&self) -> &[XRayArchiveEntry] {
         &self.entries
-    }
-
-    /// Checks if a file exists in this archive.
-    #[must_use]
-    pub fn contains_file(&self, name: &str) -> bool {
-        let normalized = normalize_name(name);
-        if self.by_name.contains_key(&normalized) {
-            return true;
-        }
-        let lower = normalized.to_ascii_lowercase();
-        self.by_name_lower.contains_key(&lower)
     }
 
     /// Reads and decompresses a file from the archive by path.

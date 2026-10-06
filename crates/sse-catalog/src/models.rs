@@ -486,19 +486,6 @@ impl FactionCatalog {
         }
         Ok(addresses)
     }
-
-    /// Clones the catalog with new factions.
-    pub fn with_factions(&self, factions: Vec<FactionDefinition>) -> Result<Self> {
-        Self::new(
-            self.release_id.clone(),
-            factions,
-            self.relations.clone(),
-            self.goodwill_min,
-            self.goodwill_max,
-            self.attitude_neutral_threshold,
-            self.attitude_friend_threshold,
-        )
-    }
 }
 
 /// An upgrade definition.
@@ -698,17 +685,6 @@ impl CatalogBundle {
             items,
             factions,
             upgrades,
-        })
-    }
-
-    /// Returns the complete `GameCatalog` if factions are present.
-    #[must_use]
-    pub fn game_catalog(&self) -> Option<GameCatalog> {
-        self.factions.as_ref().map(|factions| GameCatalog {
-            release_id: self.release_id.clone(),
-            items: self.items.clone(),
-            factions: factions.clone(),
-            upgrades: self.upgrades.clone(),
         })
     }
 

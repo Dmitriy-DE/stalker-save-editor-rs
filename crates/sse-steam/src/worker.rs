@@ -446,16 +446,6 @@ impl WorkerSteamApi {
         Self::default()
     }
 
-    /// Overrides process deadlines for deterministic hosts and tests.
-    #[must_use]
-    pub fn with_timeouts(remote_storage: Duration, achievements: Duration) -> Self {
-        Self {
-            remote_timeout: remote_storage,
-            achievement_timeout: achievements,
-            ..Self::default()
-        }
-    }
-
     fn app_id(&self) -> Result<u32, SteamError> {
         self.app_id
             .ok_or_else(|| SteamError::new("Steam RemoteStorage is not connected."))

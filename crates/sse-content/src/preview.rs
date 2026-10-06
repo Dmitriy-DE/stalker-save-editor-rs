@@ -265,12 +265,6 @@ impl PreviewCache {
         }
     }
 
-    /// Default preview cache with a 32 MiB budget.
-    #[must_use]
-    pub fn default_32mb() -> Self {
-        Self::new(32 * 1024 * 1024)
-    }
-
     /// Current memory usage of cached images in bytes.
     #[must_use]
     pub fn current_memory_bytes(&self) -> usize {

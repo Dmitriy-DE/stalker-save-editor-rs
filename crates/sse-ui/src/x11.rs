@@ -4,8 +4,7 @@
 //! feeds/receives exact protocol byte sequences. All length arithmetic and slicing is checked.
 
 use sse_core::{Error, Result};
-use std::collections::{BTreeMap, VecDeque};
-use std::path::Path;
+use std::collections::BTreeMap;
 
 const SETUP_MAJOR: u16 = 11;
 const SETUP_MINOR: u16 = 0;
@@ -63,12 +62,6 @@ pub struct Auth {
     pub name: Vec<u8>,
     /// Cookie bytes.
     pub data: Vec<u8>,
-}
-
-/// Reads and parses a `.Xauthority` file.
-pub fn read_xauthority(path: &Path) -> Result<Vec<XAuthorityEntry>> {
-    let data = std::fs::read(path)?;
-    parse_xauthority(&data)
 }
 
 /// Parses Xauthority records. Xauthority itself is always big-endian.
@@ -562,7 +555,6 @@ pub struct Connection<T: Transport> {
     max_request_units: u32,
     extension_opcodes: BTreeMap<Vec<u8>, u8>,
     expose_pending: BTreeMap<Window, Rect>,
-    queued_events: VecDeque<Event>,
 }
 
 impl<T: Transport> Connection<T> {
@@ -575,7 +567,6 @@ impl<T: Transport> Connection<T> {
             max_request_units: u32::from(setup.maximum_request_length),
             extension_opcodes: BTreeMap::new(),
             expose_pending: BTreeMap::new(),
-            queued_events: VecDeque::new(),
         }
     }
 
@@ -605,13 +596,6 @@ impl<T: Transport> Connection<T> {
         self.send_request(req)
     }
 
-    /// Parses a QueryExtension reply and records the opcode when present.
-    pub fn parse_query_extension_reply(&mut self, name: &[u8], packet: &[u8]) -> Result<Option<u8>> {
-        Ok(self
-            .parse_query_extension_reply_details(name, packet)?
-            .map(|(opcode, _)| opcode))
-    }
-
     /// Parses a QueryExtension reply and returns its major opcode and first event type.
     pub fn parse_query_extension_reply_details(&mut self, name: &[u8], packet: &[u8]) -> Result<Option<(u8, u8)>> {
         ensure_reply(packet)?;
@@ -636,25 +620,6 @@ impl<T: Transport> Connection<T> {
     /// Sends GetInputFocus as a reply barrier after an asynchronous extension request.
     pub fn get_input_focus(&mut self) -> Result<u16> {
         self.send_request(request_header(43, 0, 4, self.order)?)
-    }
-
-    /// Sends BIG-REQUESTS Enable after QueryExtension discovered its opcode.
-    pub fn enable_big_requests(&mut self) -> Result<u16> {
-        let opcode = self.extension_opcode(b"BIG-REQUESTS")?;
-        self.send_request(request_header(opcode, 0, 4, self.order)?)
-    }
-
-    /// Parses BIG-REQUESTS Enable reply and updates the request limit.
-    pub fn parse_big_requests_reply(&mut self, packet: &[u8]) -> Result<u32> {
-        ensure_reply(packet)?;
-        let mut rd = Reader::new(packet, self.order);
-        rd.skip(8)?;
-        let max = rd.u32()?;
-        if max < u32::from(u16::MAX) {
-            return Err(Error::damaged("BIG-REQUESTS maximum is implausibly small"));
-        }
-        self.max_request_units = max;
-        Ok(max)
     }
 
     /// CreateWindow request.
@@ -782,19 +747,6 @@ impl<T: Transport> Connection<T> {
     pub fn map_window(&mut self, window: Window) -> Result<u16> {
         let mut req = request_header(8, 0, 8, self.order)?;
         push_u32(&mut req, self.order, window.0);
-        self.send_request(req)
-    }
-
-    /// ConfigureWindow using caller-provided mask/value pairs.
-    pub fn configure_window(&mut self, window: Window, values: &[(u16, u32)]) -> Result<u16> {
-        let mask = values.iter().fold(0_u16, |acc, (bit, _)| acc | *bit);
-        let mut req = request_header(12, 0, checked_add(12, checked_mul(values.len(), 4)?)?, self.order)?;
-        push_u32(&mut req, self.order, window.0);
-        push_u16(&mut req, self.order, mask);
-        push_u16(&mut req, self.order, 0);
-        for (_, value) in values {
-            push_u32(&mut req, self.order, *value);
-        }
         self.send_request(req)
     }
 
@@ -1000,150 +952,6 @@ impl<T: Transport> Connection<T> {
         Ok(rows)
     }
 
-    /// Sends XKB GetMap for the core keyboard. The extension must have been queried first.
-    #[allow(clippy::too_many_arguments)]
-    pub fn xkb_get_map(
-        &mut self,
-        device_spec: u16,
-        full: u16,
-        partial: u16,
-        first_type: u8,
-        n_types: u8,
-        first_key_sym: u8,
-        n_key_syms: u8,
-        first_key_action: u8,
-        n_key_actions: u8,
-    ) -> Result<u16> {
-        let opcode = self.extension_opcode(b"XKEYBOARD")?;
-        let mut req = request_header(opcode, 8, 28, self.order)?;
-        push_u16(&mut req, self.order, device_spec);
-        push_u16(&mut req, self.order, full);
-        push_u16(&mut req, self.order, partial);
-        req.extend_from_slice(&[
-            first_type,
-            n_types,
-            first_key_sym,
-            n_key_syms,
-            first_key_action,
-            n_key_actions,
-        ]);
-        req.extend_from_slice(&[0; 10]);
-        self.send_request(req)
-    }
-
-    /// SetSelectionOwner request.
-    pub fn set_selection_owner(&mut self, owner: Window, selection: Atom, time: u32) -> Result<u16> {
-        let mut req = request_header(22, 0, 16, self.order)?;
-        push_u32(&mut req, self.order, owner.0);
-        push_u32(&mut req, self.order, selection.0);
-        push_u32(&mut req, self.order, time);
-        self.send_request(req)
-    }
-
-    /// ConvertSelection request.
-    pub fn convert_selection(
-        &mut self,
-        requestor: Window,
-        selection: Atom,
-        target: Atom,
-        property: Atom,
-        time: u32,
-    ) -> Result<u16> {
-        let mut req = request_header(24, 0, 24, self.order)?;
-        for value in [requestor.0, selection.0, target.0, property.0, time] {
-            push_u32(&mut req, self.order, value);
-        }
-        self.send_request(req)
-    }
-
-    /// SendEvent carrying SelectionNotify.
-    pub fn send_selection_notify(
-        &mut self,
-        requestor: Window,
-        selection: Atom,
-        target: Atom,
-        property: Atom,
-        time: u32,
-    ) -> Result<u16> {
-        let mut event = [0_u8; 32];
-        set_u8(&mut event, 0, 31)?;
-        write_u32_at(&mut event, 4, self.order, time)?;
-        write_u32_at(&mut event, 8, self.order, requestor.0)?;
-        write_u32_at(&mut event, 12, self.order, selection.0)?;
-        write_u32_at(&mut event, 16, self.order, target.0)?;
-        write_u32_at(&mut event, 20, self.order, property.0)?;
-        let mut req = request_header(25, 0, 44, self.order)?;
-        push_u32(&mut req, self.order, requestor.0);
-        push_u32(&mut req, self.order, 0);
-        req.extend_from_slice(&event);
-        self.send_request(req)
-    }
-
-    /// Deletes a property, used by INCR handshakes.
-    pub fn delete_property(&mut self, window: Window, property: Atom) -> Result<u16> {
-        let mut req = request_header(19, 0, 12, self.order)?;
-        push_u32(&mut req, self.order, window.0);
-        push_u32(&mut req, self.order, property.0);
-        self.send_request(req)
-    }
-
-    /// GetProperty request.
-    pub fn get_property(
-        &mut self,
-        delete: bool,
-        window: Window,
-        property: Atom,
-        property_type: Atom,
-        offset_words: u32,
-        length_words: u32,
-    ) -> Result<u16> {
-        let mut req = request_header(20, u8::from(delete), 24, self.order)?;
-        push_u32(&mut req, self.order, window.0);
-        push_u32(&mut req, self.order, property.0);
-        push_u32(&mut req, self.order, property_type.0);
-        push_u32(&mut req, self.order, offset_words);
-        push_u32(&mut req, self.order, length_words);
-        self.send_request(req)
-    }
-
-    /// Creates a core glyph cursor using CreateGlyphCursor.
-    #[allow(clippy::too_many_arguments)]
-    pub fn create_glyph_cursor(
-        &mut self,
-        cid: u32,
-        source_font: u32,
-        mask_font: u32,
-        source_char: u16,
-        mask_char: u16,
-        foreground: (u16, u16, u16),
-        background: (u16, u16, u16),
-    ) -> Result<u16> {
-        let mut req = request_header(94, 0, 32, self.order)?;
-        for value in [cid, source_font, mask_font] {
-            push_u32(&mut req, self.order, value);
-        }
-        push_u16(&mut req, self.order, source_char);
-        push_u16(&mut req, self.order, mask_char);
-        for value in [
-            foreground.0,
-            foreground.1,
-            foreground.2,
-            background.0,
-            background.1,
-            background.2,
-        ] {
-            push_u16(&mut req, self.order, value);
-        }
-        self.send_request(req)
-    }
-
-    /// Receives and decodes the next 32-byte core event/error packet.
-    pub fn receive_packet(&mut self) -> Result<Packet> {
-        let mut packet = [0_u8; CORE_PACKET];
-        self.transport.receive(&mut packet);
-        self.decode_packet(&packet)
-    }
-
     /// Decodes an already received 32-byte core event/error packet.
     pub fn decode_packet(&mut self, packet: &[u8; 32]) -> Result<Packet> {
         let response = packet
@@ -1180,16 +988,6 @@ impl<T: Transport> Connection<T> {
             return Ok(Packet::Deferred);
         }
         Ok(Packet::Event(event))
-    }
-
-    /// Queues an event for caller-side dispatch.
-    pub fn queue_event(&mut self, event: Event) {
-        self.queued_events.push_back(event);
-    }
-
-    /// Pops a queued event.
-    pub fn pop_queued_event(&mut self) -> Option<Event> {
-        self.queued_events.pop_front()
     }
 
     fn extension_opcode(&self, name: &[u8]) -> Result<u8> {
@@ -1282,77 +1080,6 @@ impl ClipboardOffer {
         let out = self.bytes.get(self.cursor..end)?;
         self.cursor = end;
         Some(out)
-    }
-}
-
-/// Clipboard receive-side INCR accumulator.
-#[derive(Clone, Debug, Default)]
-pub struct ClipboardPaste {
-    bytes: Vec<u8>,
-    expected: Option<usize>,
-    complete: bool,
-}
-
-impl ClipboardPaste {
-    /// Starts a direct non-INCR paste.
-    pub fn direct(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() > MAX_PROPERTY_BYTES {
-            return Err(Error::damaged("clipboard payload exceeds limit"));
-        }
-        Ok(Self {
-            bytes: bytes.to_vec(),
-            expected: Some(bytes.len()),
-            complete: true,
-        })
-    }
-
-    /// Starts an INCR paste with the announced byte count.
-    pub fn incr(expected: usize) -> Result<Self> {
-        if expected > MAX_PROPERTY_BYTES {
-            return Err(Error::damaged("clipboard INCR size exceeds limit"));
-        }
-        Ok(Self {
-            bytes: Vec::with_capacity(expected.min(INCR_THRESHOLD)),
-            expected: Some(expected),
-            complete: false,
-        })
-    }
-
-    /// Appends one INCR property chunk. Empty data terminates the transfer.
-    pub fn push_chunk(&mut self, bytes: &[u8]) -> Result<()> {
-        if self.complete {
-            return Err(Error::damaged("clipboard transfer already complete"));
-        }
-        if bytes.is_empty() {
-            if let Some(expected) = self.expected {
-                if self.bytes.len() != expected {
-                    return Err(Error::damaged("clipboard INCR byte count mismatch"));
-                }
-            }
-            self.complete = true;
-            return Ok(());
-        }
-        let new_len = checked_add(self.bytes.len(), bytes.len())?;
-        if new_len > MAX_PROPERTY_BYTES {
-            return Err(Error::damaged("clipboard payload exceeds limit"));
-        }
-        if let Some(expected) = self.expected {
-            if new_len > expected {
-                return Err(Error::damaged("clipboard INCR exceeds announced size"));
-            }
-        }
-        self.bytes.extend_from_slice(bytes);
-        Ok(())
-    }
-
-    /// Returns completed UTF-8 text.
-    pub fn text(&self) -> Result<Option<String>> {
-        if !self.complete {
-            return Ok(None);
-        }
-        String::from_utf8(self.bytes.clone())
-            .map(Some)
-            .map_err(|_| Error::damaged("clipboard is not valid UTF-8"))
     }
 }
 
@@ -1793,24 +1520,6 @@ fn read_u32_at(data: &[u8], offset: usize, order: ByteOrder) -> Result<u32> {
         ByteOrder::Big => u32::from_be_bytes(bytes),
     })
 }
-fn write_u32_at(data: &mut [u8], offset: usize, order: ByteOrder, value: u32) -> Result<()> {
-    let end = checked_add(offset, 4)?;
-    let dst = data
-        .get_mut(offset..end)
-        .ok_or_else(|| Error::damaged("short X11 field"))?;
-    let bytes = match order {
-        ByteOrder::Little => value.to_le_bytes(),
-        ByteOrder::Big => value.to_be_bytes(),
-    };
-    dst.copy_from_slice(&bytes);
-    Ok(())
-}
-fn set_u8(data: &mut [u8], offset: usize, value: u8) -> Result<()> {
-    let slot = data.get_mut(offset).ok_or_else(|| Error::damaged("short X11 field"))?;
-    *slot = value;
-    Ok(())
-}
-
 struct Reader<'a> {
     data: &'a [u8],
     pos: usize,
@@ -1871,6 +1580,7 @@ impl<'a> Reader<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::VecDeque;
 
     #[derive(Default)]
     struct FakeTransport {
