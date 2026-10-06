@@ -197,6 +197,13 @@ impl Workspace {
         self.lock().loading
     }
 
+    fn finish_load_request(&self, request: u64) {
+        let mut state = self.lock();
+        if state.load_request == request {
+            state.loading = false;
+        }
+    }
+
     pub(crate) fn load_request(&self) -> u64 {
         self.lock().load_request
     }
@@ -754,7 +761,6 @@ fn start_load_from<F>(
         if state.load_request != request {
             return;
         }
-        state.loading = false;
         let completion = match result {
             Ok((save, journal)) => {
                 state.load_error = None;
@@ -935,7 +941,6 @@ fn start_reload_selected(workspace: &Workspace, cx: &mut Context<'_>) -> Result<
         if state.load_request != request {
             return;
         }
-        state.loading = false;
         let completion = match result {
             Ok((loaded, journal)) => {
                 let path = loaded.slot.path.clone();
@@ -1778,6 +1783,7 @@ impl Screen for Overview {
                 io_error,
             }) = payload.downcast_ref::<LoadFinished>()
             {
+                self.workspace.finish_load_request(*request);
                 if self.workspace.lock().load_request == *request {
                     if let (Some(path), Some(journal)) = (selected_path.as_ref(), journal.as_ref()) {
                         let source_sha256 = journal

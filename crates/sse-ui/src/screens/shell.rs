@@ -11,7 +11,7 @@ use crate::widget::{Content, Look, TextAlign, Tree, WidgetId};
 use crate::widgets::scroll::ScrollView;
 use crate::widgets::text_input::TextInput;
 use sse_core::Result;
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -51,8 +51,8 @@ impl Clipboard for ShellClipboard {
 
 struct OpenFilesQueue {
     remaining: VecDeque<PathBuf>,
+    pending_requests: BTreeMap<u64, PathBuf>,
     active_request: Option<u64>,
-    active_path: Option<PathBuf>,
     total: usize,
     completed: usize,
     opened: usize,
@@ -206,6 +206,7 @@ pub struct Shell {
     save: WidgetId,
     open_button: WidgetId,
     open_files_queue: Option<OpenFilesQueue>,
+    open_return_screen: Option<ScreenId>,
     open_file_dialog: WidgetId,
     open_path_widget: WidgetId,
     open_confirm: WidgetId,
@@ -1034,6 +1035,7 @@ impl Shell {
             save,
             open_button,
             open_files_queue: None,
+            open_return_screen: None,
             open_file_dialog,
             open_path_widget,
             open_confirm,
@@ -1286,8 +1288,8 @@ impl Shell {
         self.open_files_queue = Some(OpenFilesQueue {
             total: paths.len(),
             remaining: paths.into(),
+            pending_requests: BTreeMap::new(),
             active_request: None,
-            active_path: None,
             completed: 0,
             opened: 0,
             last_error: None,
@@ -1315,8 +1317,8 @@ impl Shell {
             let request = self.library_workspace.load_request();
             if self.library_workspace.is_loading() {
                 if let Some(queue) = self.open_files_queue.as_mut() {
+                    queue.pending_requests.insert(request, path.clone());
                     queue.active_request = Some(request);
-                    queue.active_path = Some(path);
                 }
                 return Ok(());
             }
@@ -1335,6 +1337,14 @@ impl Shell {
     }
 
     fn finish_open_files_queue(&mut self, tree: &mut Tree) -> Result<()> {
+        if self.open_files_queue.as_ref().is_some_and(|queue| {
+            !queue.remaining.is_empty()
+                || !queue.pending_requests.is_empty()
+                || queue.active_request.is_some()
+                || queue.completed < queue.total
+        }) {
+            return Ok(());
+        }
         let Some(queue) = self.open_files_queue.take() else {
             return Ok(());
         };
@@ -1350,6 +1360,9 @@ impl Shell {
                 && !self.library_workspace.is_restoring()
                 && !self.library_workspace.is_loading(),
         )?;
+        if let Some(screen) = self.open_return_screen.take() {
+            self.open(tree, screen)?;
+        }
         Ok(())
     }
 
@@ -1365,26 +1378,31 @@ impl Shell {
         let Some(queue) = self.open_files_queue.as_mut() else {
             return Ok(());
         };
-        if queue.active_request != Some(finished.request) {
-            return Ok(());
-        }
-        if queue.active_path.as_deref() != Some(finished.requested_path.as_path()) {
+        if queue.pending_requests.get(&finished.request) != Some(&finished.requested_path) {
             return Ok(());
         }
 
-        queue.active_request = None;
-        queue.active_path = None;
+        queue.pending_requests.remove(&finished.request);
+        if queue.active_request == Some(finished.request) {
+            queue.active_request = None;
+        }
         queue.completed = queue.completed.saturating_add(1);
         if finished.selected_path.is_some() {
             queue.opened = queue.opened.saturating_add(1);
         } else if let Some(error) = finished.error.as_deref() {
             queue.last_error = Some(format_open_error(&finished.requested_path, error, finished.io_error));
         }
-        if queue.remaining.is_empty() {
+        if queue.remaining.is_empty() && queue.pending_requests.is_empty() {
             return self.finish_open_files_queue(tree);
         }
 
-        self.start_next_open_file(tree)?;
+        if self
+            .open_files_queue
+            .as_ref()
+            .is_some_and(|queue| queue.active_request.is_none() && !queue.remaining.is_empty())
+        {
+            self.start_next_open_file(tree)?;
+        }
         if let Some(queue) = self.open_files_queue.as_ref() {
             let status = queue.last_error.clone().unwrap_or_else(|| {
                 format!(
@@ -1615,6 +1633,8 @@ impl Shell {
             }
             let wanted = match message {
                 Message::User(AppMessage::Tick(_)) => true,
+                Message::User(AppMessage::OpenGameFix { .. }) => screen.id() == ScreenId::GameFixes,
+                Message::User(AppMessage::OpenSavePicker { .. }) => false,
                 Message::User(AppMessage::ToScreen(id, _)) => *id == screen.id(),
                 Message::User(AppMessage::EditorAction(_)) => screen.id() == ScreenId::Inventory,
                 Message::User(AppMessage::SoundLoaded(_, _)) => false,
@@ -1924,6 +1944,23 @@ impl Shell {
             self.sync_saving_overlay(tree)?;
             return Ok(Flow::Continue);
         }
+        if let Message::User(AppMessage::OpenSavePicker { return_to }) = message {
+            self.open_return_screen = Some(*return_to);
+            self.show_open_file_dialog(tree)?;
+            if self.open_files_queue.is_none() && tree.dialog() != Some(self.open_file_dialog) {
+                self.open_return_screen = None;
+            }
+            return Ok(Flow::Continue);
+        }
+        if let Message::User(AppMessage::OpenGameFix { game_id, .. }) = message {
+            if self.app.selected_game() != Some(game_id.as_str()) {
+                self.app.set_game_dir(None);
+            }
+            self.app.set_selected_game(Some(game_id.clone()));
+            self.open(tree, ScreenId::GameFixes)?;
+            self.route(tree, message, None)?;
+            return Ok(Flow::Continue);
+        }
         if clicked == Some(self.nav_toggle) {
             let wanted = !self.nav_collapsed;
             self.apply_navigation(tree, wanted)?;
@@ -2019,6 +2056,7 @@ impl Shell {
         }
         if clicked.is_some() && clicked == Some(self.open_cancel) {
             self.close_open_file_dialog(tree)?;
+            self.open_return_screen = None;
             return Ok(Flow::Continue);
         }
         if clicked.is_some() && clicked == Some(self.open_confirm) {
@@ -2130,6 +2168,7 @@ impl Shell {
                 if tree.dialog_open() {
                     if tree.dialog() == Some(self.open_file_dialog) {
                         self.open_path_input.focus(false, 0);
+                        self.open_return_screen = None;
                     }
                     let _ = tree.close_dialog()?;
                 } else {
@@ -2380,7 +2419,7 @@ impl App<AppMessage> for Shell {
 
 #[cfg(test)]
 mod tests {
-    use super::{save_eligibility, wait_for_save_io, ScreenId, Shell};
+    use super::{save_eligibility, wait_for_save_io, OpenFilesQueue, ScreenId, Shell};
     use crate::event_loop::{channel_pair, Flow, Message, WindowEvent};
     use crate::glyphs::Fonts;
     use crate::raster::Color;
@@ -2393,6 +2432,45 @@ mod tests {
         LOCK.get_or_init(|| std::sync::Mutex::new(()))
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    #[test]
+    fn late_open_result_is_counted_while_next_request_is_active() -> sse_core::Result<()> {
+        let first = Path::new("first.sav").to_path_buf();
+        let second = Path::new("second.sav").to_path_buf();
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut shell = Shell::build_for_test(&mut tree, None)?;
+        shell.open_files_queue = Some(OpenFilesQueue {
+            remaining: std::collections::VecDeque::new(),
+            pending_requests: [(1, first.clone()), (2, second.clone())].into_iter().collect(),
+            active_request: Some(2),
+            total: 2,
+            completed: 0,
+            opened: 0,
+            last_error: None,
+        });
+        let message = Message::User(super::super::AppMessage::ToScreen(
+            ScreenId::Overview,
+            Box::new(super::super::saves::LoadFinished {
+                request: 1,
+                selected_path: Some(first.clone()),
+                requested_path: first,
+                journal: None,
+                error: None,
+                io_error: false,
+            }),
+        ));
+
+        shell.advance_open_files_queue(&mut tree, &message)?;
+
+        assert!(shell.open_files_queue.as_ref().is_some_and(|queue| {
+            queue.completed == 1
+                && queue.opened == 1
+                && queue.active_request == Some(2)
+                && queue.pending_requests.len() == 1
+                && queue.pending_requests.contains_key(&2)
+        }));
+        Ok(())
     }
 
     #[test]
@@ -2520,6 +2598,71 @@ mod tests {
             };
             shell.handle(&mut tree, &message, None)?;
         }
+        std::fs::remove_file(path)?;
+        Ok(())
+    }
+
+    #[test]
+    fn shared_save_picker_returns_to_doctor_after_background_load() -> sse_core::Result<()> {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| sse_core::Error::System(error.to_string()))?
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("sse-doctor-picker-{nonce}.sav"));
+        std::fs::write(
+            &path,
+            include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-source.sav"),
+        )?;
+        let expected_path = std::fs::canonicalize(&path)?;
+        let (proxy, receiver) = channel_pair::<super::super::AppMessage>();
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut shell = Shell::build_for_test(&mut tree, None)?;
+        shell.open(&mut tree, ScreenId::Overview)?;
+        shell.set_proxy(proxy);
+
+        shell.handle(
+            &mut tree,
+            &Message::User(super::super::AppMessage::OpenSavePicker {
+                return_to: ScreenId::SaveDoctor,
+            }),
+            None,
+        )?;
+        assert_eq!(tree.dialog(), Some(shell.open_file_dialog));
+        for character in path.to_string_lossy().chars() {
+            shell.handle(
+                &mut tree,
+                &Message::Window(WindowEvent::Key {
+                    pressed: true,
+                    keysym: u32::from(character),
+                    text: Some(character),
+                    ctrl: false,
+                    shift: false,
+                }),
+                None,
+            )?;
+        }
+        shell.handle(
+            &mut tree,
+            &Message::User(super::super::AppMessage::Tick(0)),
+            Some(shell.open_confirm),
+        )?;
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        while shell.app.current_save() != Some(expected_path.as_path()) {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                let _ = std::fs::remove_file(&path);
+                return Err(sse_core::Error::System(
+                    "timed out loading the Save Doctor fixture".to_owned(),
+                ));
+            }
+            let message = receiver
+                .recv_timeout(remaining)
+                .map_err(|error| sse_core::Error::System(error.to_string()))?;
+            shell.handle(&mut tree, &message, None)?;
+        }
+
+        assert_eq!(shell.current(), Some(ScreenId::SaveDoctor));
         std::fs::remove_file(path)?;
         Ok(())
     }
