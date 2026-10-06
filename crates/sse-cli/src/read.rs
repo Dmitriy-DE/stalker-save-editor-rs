@@ -66,6 +66,7 @@ pub(super) fn s2_info_lines(save: &sse_s2::S2Save, packed: &[u8]) -> Vec<String>
     let index = save.index();
     let items = save.items();
     let orphans = save.orphans();
+    let parsed_grid_handles = items.iter().filter(|item| item.x.is_some()).count();
     let mut lines = vec![
         "CRC: OK".to_owned(),
         "Format: stalker2".to_owned(),
@@ -74,7 +75,10 @@ pub(super) fn s2_info_lines(save: &sse_s2::S2Save, packed: &[u8]) -> Vec<String>
         format!("SHA256: {}", sse_codecs::sha256::sha256_hex(packed)),
         format!("Money: {}", save.money()),
         format!("Owned handles: {}", index.owned_handles().len()),
-        format!("Grid handles parsed/total: {}", index.grid_handle_count()),
+        format!(
+            "Grid handles parsed/total: {parsed_grid_handles}/{}",
+            index.grid_handle_count()
+        ),
         format!("Grid cells: {}", index.grid_cells().len()),
         format!("Inventory objects: {}", items.len()),
         format!("Orphans: {}", orphans.len()),

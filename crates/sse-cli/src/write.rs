@@ -1153,7 +1153,7 @@ mod write_tests {
                 "SHA256: 2fe435d0909e812c362c7577e5adaaef1390e22ea06a46571510530caae92408\n",
                 "Money: 100\n",
                 "Owned handles: 4\n",
-                "Grid handles parsed/total: 2\n",
+                "Grid handles parsed/total: 2/2\n",
                 "Grid cells: 2\n",
                 "Inventory objects: 2\n",
                 "Orphans: 2\n",
