@@ -276,22 +276,18 @@ fn decode_dxt(payload: &[u8], width: usize, height: usize, fourcc: &[u8]) -> Res
                 alpha_values[1] = u8::try_from(a1).unwrap_or(0);
 
                 if a0 > a1 {
-                    for step in 1..=6u32 {
+                    for (step, slot) in (1u32..).zip(&mut alpha_values[2..]) {
                         let numer = (7u32.saturating_sub(step))
                             .wrapping_mul(a0)
                             .wrapping_add(step.wrapping_mul(a1));
-                        if let Some(slot) = alpha_values.get_mut(step as usize + 1) {
-                            *slot = numer.checked_div(7).and_then(|v| u8::try_from(v).ok()).unwrap_or(0);
-                        }
+                        *slot = numer.checked_div(7).and_then(|v| u8::try_from(v).ok()).unwrap_or(0);
                     }
                 } else {
-                    for step in 1..=4u32 {
+                    for (step, slot) in (1u32..).zip(&mut alpha_values[2..6]) {
                         let numer = (5u32.saturating_sub(step))
                             .wrapping_mul(a0)
                             .wrapping_add(step.wrapping_mul(a1));
-                        if let Some(slot) = alpha_values.get_mut(step as usize + 1) {
-                            *slot = numer.checked_div(5).and_then(|v| u8::try_from(v).ok()).unwrap_or(0);
-                        }
+                        *slot = numer.checked_div(5).and_then(|v| u8::try_from(v).ok()).unwrap_or(0);
                     }
                     alpha_values[6] = 0;
                     alpha_values[7] = 255;
