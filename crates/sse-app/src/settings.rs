@@ -303,7 +303,13 @@ impl AppSettings {
         })();
 
         if write_result.is_err() {
-            let _ = fs::remove_file(&temp_path);
+            if let Err(error) = fs::remove_file(&temp_path) {
+                if error.kind() != std::io::ErrorKind::NotFound {
+                    crate::diagnostics::warn(&format!(
+                        "failed to remove temporary settings file after a write failure: {error}"
+                    ));
+                }
+            }
         }
 
         write_result
@@ -373,8 +379,17 @@ fn parse_optional_path_array(reader: &mut Reader<'_>) -> Result<Option<Vec<PathB
 
 fn sync_directory(directory: &Path) {
     #[cfg(unix)]
-    if let Ok(handle) = File::open(directory) {
-        let _ = handle.sync_all();
+    match File::open(directory) {
+        Ok(handle) => {
+            if let Err(error) = handle.sync_all() {
+                crate::diagnostics::warn(&format!("failed to sync settings directory after rename: {error}"));
+            }
+        }
+        Err(error) => {
+            crate::diagnostics::warn(&format!(
+                "failed to open settings directory for sync after rename: {error}"
+            ));
+        }
     }
     #[cfg(not(unix))]
     let _ = directory;

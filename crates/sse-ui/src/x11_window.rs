@@ -39,16 +39,31 @@ const CONTROL_MASK: u16 = 4;
 #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
 const MAX_SHM_SEGMENT_BYTES: usize = 128 * 1024 * 1024;
 
-struct Stream(UnixStream);
+struct Stream {
+    socket: UnixStream,
+    reported_io_failure: bool,
+}
+
+impl Stream {
+    fn report_io_failure(&mut self, error: &std::io::Error) {
+        if !self.reported_io_failure {
+            self.reported_io_failure = true;
+            sse_app::diagnostics::warn(&format!("X11 socket I/O failed: {error}"));
+        }
+    }
+}
 
 impl Transport for Stream {
     fn send(&mut self, data: &[u8]) {
         // A failed write surfaces as a disconnect on the reader thread.
-        let _ = self.0.write_all(data);
+        if let Err(error) = self.socket.write_all(data) {
+            self.report_io_failure(&error);
+        }
     }
 
     fn receive(&mut self, out: &mut [u8]) {
-        if self.0.read_exact(out).is_err() {
+        if let Err(error) = self.socket.read_exact(out) {
+            self.report_io_failure(&error);
             out.fill(0);
         }
     }
@@ -123,12 +138,30 @@ impl X11Window {
         let number = display_number(&display)?;
         let stream = connect(number)?;
         let mut reader = stream.try_clone().map_err(io)?;
-        let mut writer = Stream(stream);
+        let mut writer = Stream {
+            socket: stream,
+            reported_io_failure: false,
+        };
 
-        let auth = xauthority_path()
-            .and_then(|path| std::fs::read(path).ok())
-            .and_then(|data| parse_xauthority(&data).ok())
-            .and_then(|entries| find_mit_cookie(&entries, number));
+        let auth = xauthority_path().and_then(|path| match std::fs::read(path) {
+            Ok(data) => match parse_xauthority(&data) {
+                Ok(entries) => find_mit_cookie(&entries, number),
+                Err(_) => {
+                    sse_app::diagnostics::warn(
+                        "X11 authorization data could not be parsed; attempting unauthenticated setup",
+                    );
+                    None
+                }
+            },
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => {
+                sse_app::diagnostics::warn(&format!(
+                    "failed to read X11 authorization data ({:?}); attempting unauthenticated setup",
+                    error.kind()
+                ));
+                None
+            }
+        });
         writer.send(&crate::x11::encode_setup(ORDER, auth.as_ref())?);
         let mut head = [0_u8; 8];
         reader.read_exact(&mut head).map_err(io)?;

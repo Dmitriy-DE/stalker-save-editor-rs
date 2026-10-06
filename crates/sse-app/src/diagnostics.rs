@@ -707,6 +707,29 @@ mod tests {
     }
 
     #[test]
+    fn warning_lines_are_written_with_redacted_paths() -> Result<()> {
+        let _guard = TEST_GATE
+            .lock()
+            .map_err(|_| Error::System("diagnostics test gate poisoned".to_owned()))?;
+        let directory = std::env::temp_dir().join(format!("sse-warning-log-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory)?;
+        configure_log_directory(Some(directory.clone()));
+
+        let result = {
+            warn("failed to read /home/alice/steamapps/appmanifest_123.acf: permission denied");
+            fs::read_to_string(directory.join(LOG_FILE))
+        };
+        configure_log_directory(None);
+        let _ = fs::remove_dir_all(&directory);
+        let log = result?;
+        assert!(log.contains(" WARN "));
+        assert!(log.contains("<home>/steamapps/appmanifest_123.acf"));
+        assert!(!log.contains("alice"));
+        Ok(())
+    }
+
+    #[test]
     fn automatic_report_contains_only_redacted_diagnostics() -> Result<()> {
         let _guard = TEST_GATE
             .lock()
