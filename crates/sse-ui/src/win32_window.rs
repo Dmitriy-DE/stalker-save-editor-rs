@@ -209,6 +209,14 @@ mod platform {
                             return;
                         }
                     };
+                    if let Err(error) = window.set_icon_rgba(
+                        crate::window_icon::app_icon_rgba(),
+                        crate::window_icon::APP_ICON_SIZE,
+                        crate::window_icon::APP_ICON_SIZE,
+                    ) {
+                        let _ = ready_tx.send(Err(error));
+                        return;
+                    }
                     let wake = window.wake_handle();
                     if ready_tx.send(Ok(wake)).is_err() {
                         return;

@@ -226,6 +226,17 @@ pub unsafe fn id_id(r: Id, s: Sel, a: Id) -> Id {
     // SAFETY: the caller upholds the receiver, selector, and object argument requirements documented above.
     unsafe { f(r, s, a) }
 }
+/// Sends an Objective-C message with a pointer and `NSUInteger` argument and returns an object.
+///
+/// # Safety
+/// `r` must be a live object or class, `s` must select a method with this exact ABI, and `bytes` must point to `length` readable bytes for the duration of the call.
+pub unsafe fn id_bytes_len(r: Id, s: Sel, bytes: *const c_void, length: usize) -> Id {
+    type F = unsafe extern "C" fn(Id, Sel, *const c_void, usize) -> Id;
+    // SAFETY: the caller selects the pointer/NSUInteger object-returning ABI required by NSData.
+    let f: F = unsafe { mem::transmute(objc_msgSend as *const c_void) };
+    // SAFETY: the caller guarantees that `bytes` remains readable for the synchronous call.
+    unsafe { f(r, s, bytes, length) }
+}
 /// Sends an Objective-C message with one NSUInteger argument and returns an object.
 ///
 /// # Safety

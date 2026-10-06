@@ -338,6 +338,41 @@ impl MacWindow {
             shared,
         })
     }
+    /// Sets the application icon using PNG data decoded by AppKit.
+    pub fn set_icon_png(&self, png: &[u8]) -> Result<()> {
+        if png.is_empty() {
+            return Err(Error::Refused("application icon PNG is empty".to_owned()));
+        }
+        // SAFETY: NSData copies the live byte slice synchronously, and the class/selector match `+dataWithBytes:length:`.
+        let data = unsafe {
+            o::id_bytes_len(
+                o::class(c"NSData"),
+                o::sel(c"dataWithBytes:length:"),
+                png.as_ptr().cast(),
+                png.len(),
+            )
+        };
+        if data.is_null() {
+            return Err(Error::System("NSData could not load application icon bytes".to_owned()));
+        }
+        // SAFETY: NSImage alloc/initWithData: has the object/object ABI; AppKit owns `data` for this synchronous decode.
+        let image = unsafe {
+            o::id_id(
+                o::id(o::class(c"NSImage"), o::sel(c"alloc")),
+                o::sel(c"initWithData:"),
+                data,
+            )
+        };
+        if image.is_null() {
+            return Err(Error::System("AppKit could not decode application icon PNG".to_owned()));
+        }
+        // SAFETY: `self.app` is the live NSApplication and `image` is a live NSImage; the setter retains the image.
+        unsafe {
+            o::void_id(self.app, o::sel(c"setApplicationIconImage:"), image);
+            o::void(image, o::sel(c"release"));
+        }
+        Ok(())
+    }
     /// Worker wake handle.
     #[must_use]
     pub fn wake_handle(&self) -> WakeHandle {

@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex};
 
 const WL_DISPLAY: u32 = 1;
 const WL_REGISTRY: u32 = 2;
+const WL_SHM_FORMAT_ARGB8888: u32 = 0;
 const WL_SHM_FORMAT_XRGB8888: u32 = 1;
 #[derive(Clone, Copy, Default)]
 struct Globals {
@@ -22,6 +23,7 @@ struct Globals {
     wm_base: Option<(u32, u32)>,
     seat: Option<(u32, u32)>,
     text_input_manager: Option<(u32, u32)>,
+    toplevel_icon_manager: Option<(u32, u32)>,
 }
 
 #[derive(Clone, Copy)]
@@ -53,7 +55,11 @@ pub struct WaylandWindow {
     writer: Arc<Mutex<UnixStream>>,
     shm: u32,
     surface: u32,
+    toplevel: u32,
+    icon_manager: Option<u32>,
+    icon: Option<u32>,
     buffers: [BufferSlot; 2],
+    icon_buffer: Option<BufferSlot>,
     size: (u32, u32),
     next_object_id: u32,
     sync: Arc<Mutex<BufferSync>>,
@@ -90,6 +96,32 @@ impl WaylandWindow {
         } else {
             None
         };
+        let next_object_id = if text_input.is_some() { 19 } else { 17 };
+        let (icon_manager, next_object_id) = if globals.toplevel_icon_manager.is_some() {
+            let manager_id = next_object_id;
+            let manager = bind(
+                &mut stream,
+                globals.toplevel_icon_manager,
+                "xdg_toplevel_icon_manager_v1",
+                1,
+                manager_id,
+            )?;
+            let icon = manager_id
+                .checked_add(1)
+                .ok_or_else(|| Error::Refused("Wayland object ID overflow".to_owned()))?;
+            let pool = icon
+                .checked_add(1)
+                .ok_or_else(|| Error::Refused("Wayland object ID overflow".to_owned()))?;
+            let buffer = pool
+                .checked_add(1)
+                .ok_or_else(|| Error::Refused("Wayland object ID overflow".to_owned()))?;
+            let next = buffer
+                .checked_add(1)
+                .ok_or_else(|| Error::Refused("Wayland object ID overflow".to_owned()))?;
+            (Some((manager, icon, pool, buffer)), next)
+        } else {
+            (None, next_object_id)
+        };
 
         let surface = 8;
         send(&mut stream, compositor, 0, &u32s(&[surface]))?;
@@ -99,6 +131,26 @@ impl WaylandWindow {
         send(&mut stream, xdg_surface, 1, &u32s(&[toplevel]))?;
         send_string(&mut stream, toplevel, 2, title)?;
         send_string(&mut stream, toplevel, 3, "stalker-save-editor")?;
+        let icon_buffer = if let Some((manager, icon, pool, buffer)) = icon_manager {
+            let pixels = crate::window_icon::rgba_to_premultiplied_argb32(
+                crate::window_icon::APP_ICON_SIZE,
+                crate::window_icon::APP_ICON_SIZE,
+                crate::window_icon::app_icon_rgba(),
+            )?;
+            let icon_buffer = create_icon_buffer(
+                &mut stream,
+                shm,
+                crate::window_icon::APP_ICON_SIZE,
+                crate::window_icon::APP_ICON_SIZE,
+                pool,
+                buffer,
+                &pixels,
+            )?;
+            set_named_toplevel_icon(&mut stream, manager, toplevel, icon, buffer)?;
+            Some(icon_buffer)
+        } else {
+            None
+        };
         send(&mut stream, surface, 6, &[])?; // initial commit
         stream.flush().map_err(io)?;
 
@@ -132,9 +184,13 @@ impl WaylandWindow {
             writer,
             shm,
             surface,
+            toplevel,
+            icon_manager: icon_manager.map(|(manager, _, _, _)| manager),
+            icon: icon_manager.map(|(_, icon, _, _)| icon),
             buffers: [first, second],
+            icon_buffer,
             size: (width, height),
-            next_object_id: 19,
+            next_object_id,
             sync,
             closed,
         })
@@ -250,9 +306,39 @@ impl Present for WaylandWindow {
 impl Drop for WaylandWindow {
     fn drop(&mut self) {
         let _ = self.closed.lock().map(|mut value| *value = true);
-        for slot in &self.buffers {
-            let _ = send_shared(&self.writer, slot.buffer, 0, &[]);
-            let _ = send_shared(&self.writer, slot.pool, 1, &[]);
+        if let Ok(mut stream) = self.writer.lock() {
+            if let Some(manager) = self.icon_manager {
+                let clear_icon = wire_message(manager, 2, &u32s(&[self.toplevel, 0]));
+                let commit = wire_message(self.surface, 6, &[]);
+                for request in [clear_icon, commit].into_iter().flatten() {
+                    let _ = stream.write_all(&request);
+                }
+                if let Some(icon) = self.icon {
+                    if let Ok(request) = wire_message(icon, 0, &[]) {
+                        let _ = stream.write_all(&request);
+                    }
+                }
+                if let Ok(request) = wire_message(manager, 0, &[]) {
+                    let _ = stream.write_all(&request);
+                }
+            }
+            for slot in &self.buffers {
+                for request in [wire_message(slot.buffer, 0, &[]), wire_message(slot.pool, 1, &[])]
+                    .into_iter()
+                    .flatten()
+                {
+                    let _ = stream.write_all(&request);
+                }
+            }
+            if let Some(slot) = &self.icon_buffer {
+                for request in [wire_message(slot.buffer, 0, &[]), wire_message(slot.pool, 1, &[])]
+                    .into_iter()
+                    .flatten()
+                {
+                    let _ = stream.write_all(&request);
+                }
+            }
+            let _ = stream.flush();
         }
     }
 }
@@ -605,17 +691,29 @@ fn read_registry_until_done(stream: &mut UnixStream, callback: u32, globals: &mu
         }
         if object == WL_REGISTRY && opcode == 0 {
             if let Some((name, iface, version)) = parse_global(&payload) {
-                match iface.as_str() {
-                    "wl_compositor" => globals.compositor = Some((name, version)),
-                    "wl_shm" => globals.shm = Some((name, version)),
-                    "xdg_wm_base" => globals.wm_base = Some((name, version)),
-                    "wl_seat" => globals.seat = Some((name, version)),
-                    "zwp_text_input_manager_v3" => globals.text_input_manager = Some((name, version)),
-                    _ => {}
-                }
+                record_global(globals, name, &iface, version);
             }
         }
     }
+}
+
+fn record_global(globals: &mut Globals, name: u32, interface: &str, version: u32) {
+    match interface {
+        "wl_compositor" => globals.compositor = Some((name, version)),
+        "wl_shm" => globals.shm = Some((name, version)),
+        "xdg_wm_base" => globals.wm_base = Some((name, version)),
+        "wl_seat" => globals.seat = Some((name, version)),
+        "zwp_text_input_manager_v3" => globals.text_input_manager = Some((name, version)),
+        "xdg_toplevel_icon_manager_v1" => globals.toplevel_icon_manager = Some((name, version)),
+        _ => {}
+    }
+}
+
+fn set_named_toplevel_icon(stream: &mut UnixStream, manager: u32, toplevel: u32, icon: u32, buffer: u32) -> Result<()> {
+    send(stream, manager, 1, &u32s(&[icon]))?;
+    send_string(stream, icon, 1, "stalker-save-editor")?;
+    send(stream, icon, 2, &u32s(&[buffer, 1]))?;
+    send(stream, manager, 2, &u32s(&[toplevel, icon]))
 }
 
 fn parse_global(payload: &[u8]) -> Option<(u32, String, u32)> {
@@ -724,6 +822,39 @@ fn create_buffer(
     )?;
     Ok(BufferSlot { pool, buffer, memory })
 }
+
+fn create_icon_buffer(
+    stream: &mut UnixStream,
+    shm: u32,
+    width: u32,
+    height: u32,
+    pool: u32,
+    buffer: u32,
+    pixels: &[u32],
+) -> Result<BufferSlot> {
+    let byte_len = frame_bytes(width, height)?;
+    if width != height || pixels.len() != byte_len / 4 {
+        return Err(Error::Refused(
+            "Wayland icon buffer dimensions or pixels are invalid".to_owned(),
+        ));
+    }
+    let mut memory = MappedFile::new(byte_len).map_err(io)?;
+    memory.write_u32_le(pixels).map_err(io)?;
+    let pool_size = u32::try_from(byte_len).map_err(|_| Error::Refused("Wayland icon buffer too large".to_owned()))?;
+    let pool_request = wire_message(shm, 0, &u32s(&[pool, pool_size]))?;
+    sse_sys::unix_fd::send_fd(stream, &pool_request, memory.raw_fd()).map_err(io)?;
+    let stride = width
+        .checked_mul(4)
+        .ok_or_else(|| Error::Refused("Wayland icon stride overflow".to_owned()))?;
+    send(
+        stream,
+        pool,
+        0,
+        &u32s(&[buffer, 0, width, height, stride, WL_SHM_FORMAT_ARGB8888]),
+    )?;
+    Ok(BufferSlot { pool, buffer, memory })
+}
+
 fn wire_string(value: &str) -> Vec<u8> {
     let len = value.len().saturating_add(1);
     let mut out = u32s(&[u32::try_from(len).unwrap_or(u32::MAX)]);
@@ -840,10 +971,12 @@ fn io(error: std::io::Error) -> Error {
 #[cfg(test)]
 mod tests {
     use super::{
-        keyboard_event, parse_global, parse_pointer_event, read_wire_string, valid_message_size, wire_message,
-        wire_string, without_key_text, PendingTextInput,
+        keyboard_event, parse_global, parse_pointer_event, read_message, read_wire_string, record_global,
+        set_named_toplevel_icon, u32s, valid_message_size, wire_message, wire_string, without_key_text, Globals,
+        PendingTextInput,
     };
     use crate::event_loop::{ImeEvent, WindowEvent};
+    use std::os::unix::net::UnixStream;
 
     #[test]
     fn registry_global_decodes() {
@@ -851,6 +984,78 @@ mod tests {
         p.extend_from_slice(&wire_string("wl_compositor"));
         p.extend_from_slice(&4u32.to_ne_bytes());
         assert_eq!(parse_global(&p), Some((1, "wl_compositor".to_owned(), 4)));
+    }
+
+    #[test]
+    fn registry_keeps_the_optional_toplevel_icon_manager() {
+        let mut globals = Globals::default();
+        record_global(&mut globals, 42, "xdg_toplevel_icon_manager_v1", 1);
+        assert_eq!(globals.toplevel_icon_manager, Some((42, 1)));
+
+        record_global(&mut globals, 43, "zwp_text_input_manager_v3", 1);
+        assert_eq!(globals.text_input_manager, Some((43, 1)));
+    }
+
+    #[test]
+    fn named_icon_is_assigned_with_pixel_data() {
+        let (mut client, mut server) = UnixStream::pair().unwrap_or_else(|error| panic!("{error}"));
+        set_named_toplevel_icon(&mut client, 19, 10, 20, 22).unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(
+            read_message(&mut server).unwrap_or_else(|error| panic!("{error}")),
+            (19, 1, u32s(&[20]))
+        );
+        assert_eq!(
+            read_message(&mut server).unwrap_or_else(|error| panic!("{error}")),
+            (20, 1, wire_string("stalker-save-editor"))
+        );
+        assert_eq!(
+            read_message(&mut server).unwrap_or_else(|error| panic!("{error}")),
+            (20, 2, u32s(&[22, 1]))
+        );
+        assert_eq!(
+            read_message(&mut server).unwrap_or_else(|error| panic!("{error}")),
+            (19, 2, u32s(&[10, 20]))
+        );
+    }
+
+    #[test]
+    fn icon_buffer_is_shm_argb_with_immutable_pixels() {
+        use std::io::Read;
+
+        let (mut client, mut server) = UnixStream::pair().unwrap_or_else(|error| panic!("{error}"));
+        let slot = super::create_icon_buffer(&mut client, 5, 2, 2, 7, 8, &[0x1122_3344; 4])
+            .unwrap_or_else(|error| panic!("{error}"));
+
+        let mut pool_message = [0_u8; 16];
+        let (received, fd) =
+            sse_sys::unix_fd::recv_fd(&server, &mut pool_message).unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(received, pool_message.len());
+        assert!(fd.is_some());
+        assert_eq!(
+            pool_message.as_slice(),
+            super::wire_message(5, 0, &u32s(&[7, 16])).unwrap_or_default()
+        );
+        assert_eq!(
+            read_message(&mut server).unwrap_or_else(|error| panic!("{error}")),
+            (7, 0, u32s(&[8, 0, 2, 2, 8, super::WL_SHM_FORMAT_ARGB8888]))
+        );
+        assert_eq!(slot.pool, 7);
+        assert_eq!(slot.buffer, 8);
+
+        let Some(fd) = fd else {
+            panic!("wl_shm.create_pool did not pass a file descriptor");
+        };
+        let mut file = std::fs::File::from(fd);
+        let mut pixels = [0_u8; 16];
+        file.read_exact(&mut pixels).unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(pixels.as_slice(), [0x44, 0x33, 0x22, 0x11].repeat(4));
+    }
+
+    #[test]
+    fn icon_buffer_rejects_non_square_or_mismatched_pixels() {
+        let (mut client, _server) = UnixStream::pair().unwrap_or_else(|error| panic!("{error}"));
+        assert!(super::create_icon_buffer(&mut client, 5, 2, 1, 7, 8, &[0; 2]).is_err());
+        assert!(super::create_icon_buffer(&mut client, 5, 2, 2, 7, 8, &[0; 3]).is_err());
     }
 
     #[test]

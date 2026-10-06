@@ -274,6 +274,7 @@ mod platform {
                 min_height: 400,
             };
             let window = MacWindow::new(options)?;
+            window.set_icon_png(&crate::window_icon::app_icon_png()?)?;
             let wake = window.wake_handle();
             let ui_thread = std::thread::current().id();
             proxy.set_wake_callback(Some(Arc::new(move || {

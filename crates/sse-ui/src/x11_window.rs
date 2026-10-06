@@ -169,9 +169,11 @@ impl X11Window {
                 b"ATOM",
                 b"STRING",
                 b"WM_NAME",
+                b"_NET_WM_ICON",
+                b"CARDINAL",
             ],
         )?;
-        let [protocols, delete, net_name, utf8, atom_type, string, wm_name] = atoms;
+        let [protocols, delete, net_name, utf8, atom_type, string, wm_name, net_wm_icon, cardinal] = atoms;
 
         let count = max_keycode.saturating_sub(min_keycode).saturating_add(1);
         connection.get_keyboard_mapping(min_keycode, count)?;
@@ -213,6 +215,19 @@ impl X11Window {
         connection.set_text_property(window, wm_name, string, title)?;
         connection.set_text_property(window, net_name, utf8, title)?;
         connection.set_wm_delete_window(window, protocols, delete, atom_type)?;
+        let icon = crate::window_icon::rgba_to_argb32(
+            crate::window_icon::APP_ICON_SIZE,
+            crate::window_icon::APP_ICON_SIZE,
+            crate::window_icon::app_icon_rgba(),
+        )?;
+        connection.set_net_wm_icon(
+            window,
+            net_wm_icon,
+            cardinal,
+            crate::window_icon::APP_ICON_SIZE,
+            crate::window_icon::APP_ICON_SIZE,
+            &icon,
+        )?;
         connection.create_gc(gc, Drawable(window.0), &[])?;
         connection.map_window(window)?;
 

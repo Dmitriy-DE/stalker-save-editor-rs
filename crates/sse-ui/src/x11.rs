@@ -1983,6 +1983,18 @@ mod tests {
     }
 
     #[test]
+    fn net_wm_icon_request_contains_cardinal_dimensions_and_argb_word() {
+        let mut connection = Connection::new(FakeTransport::default(), ByteOrder::Little, &minimal_setup());
+        assert!(connection
+            .set_net_wm_icon(Window(9), Atom(12), Atom(6), 1, 1, &[0x0401_0203])
+            .is_ok());
+        let transport = connection.into_inner();
+        let request = transport.sent.first().map(Vec::as_slice).unwrap_or_default();
+        assert_eq!(request.first().copied(), Some(18));
+        assert_eq!(request.get(24..36), Some(&[1, 0, 0, 0, 1, 0, 0, 0, 3, 2, 1, 4][..]));
+    }
+
+    #[test]
     fn expose_packets_merge() {
         let transport = FakeTransport::default();
         let mut c = Connection::new(transport, ByteOrder::Little, &minimal_setup());
