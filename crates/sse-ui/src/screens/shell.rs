@@ -2815,6 +2815,7 @@ mod tests {
             &path,
             include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-source.sav"),
         )?;
+        let canonical_path = std::fs::canonicalize(&path)?;
         let mut dds = vec![0_u8; 132];
         write_test_bytes(&mut dds, 0, b"DDS ")?;
         write_test_bytes(&mut dds, 12, &1_u32.to_le_bytes())?;
@@ -2852,7 +2853,7 @@ mod tests {
                         load_finished = finished.requested_path == path && finished.selected_path.is_some();
                     }
                     if let Some(finished) = payload.downcast_ref::<super::LibraryPreviewFinished>() {
-                        if finished.key.path == path {
+                        if finished.key.path == canonical_path {
                             preview_finished = Some(finished.clone());
                         }
                     }
