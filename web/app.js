@@ -145,6 +145,8 @@ try {
   const bytes = await response.arrayBuffer();
   const { instance } = await WebAssembly.instantiate(bytes, {});
   api = instance.exports;
+  if (typeof api.main !== "function") throw new Error("browser callback registration export is missing");
+  api.main();
   if (api.sse_web_init() !== 0) throw new Error("could not initialize editor fonts or shell");
   status.hidden = true;
   canvas.focus();

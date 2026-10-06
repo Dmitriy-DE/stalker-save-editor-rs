@@ -201,7 +201,6 @@ pub fn frame_len(width: u32, height: u32) -> Result<usize> {
     usize::try_from(pixels).map_err(|_| Error::Refused("frame is too large for this target".to_owned()))
 }
 
-#[cfg(target_arch = "wasm32")]
 mod wasm_abi {
     use super::{decode_event, WebRuntime};
     use std::cell::RefCell;
@@ -215,8 +214,7 @@ mod wasm_abi {
         static RUNTIME: RefCell<Option<WebRuntime>> = const { RefCell::new(None) };
     }
 
-    #[no_mangle]
-    pub extern "C" fn sse_web_init() -> u32 {
+    pub(super) extern "C" fn init() -> u32 {
         RUNTIME.with(|runtime| {
             let Ok(mut runtime) = runtime.try_borrow_mut() else {
                 return RUNTIME_UNAVAILABLE;
@@ -231,8 +229,7 @@ mod wasm_abi {
         })
     }
 
-    #[no_mangle]
-    pub extern "C" fn sse_web_event(code: u32, a: i32, b: i32, c: i32, d: i32, e: i32) -> u32 {
+    pub(super) extern "C" fn event(code: u32, a: i32, b: i32, c: i32, d: i32, e: i32) -> u32 {
         let Some(event) = decode_event(code, a, b, c, d, e) else {
             return INVALID_EVENT;
         };
@@ -251,8 +248,7 @@ mod wasm_abi {
         })
     }
 
-    #[no_mangle]
-    pub extern "C" fn sse_web_render(width: u32, height: u32) -> u32 {
+    pub(super) extern "C" fn render(width: u32, height: u32) -> u32 {
         RUNTIME.with(|runtime| {
             let Ok(mut runtime) = runtime.try_borrow_mut() else {
                 return 0;
@@ -266,4 +262,13 @@ mod wasm_abi {
             u32::try_from(frame.as_ptr() as usize).unwrap_or(0)
         })
     }
+}
+
+/// Registers the browser runtime callbacks that `sse-sys` exposes to JavaScript.
+pub fn register_browser_callbacks() {
+    sse_sys::web_abi::register_callbacks(sse_sys::web_abi::WebCallbacks {
+        init: wasm_abi::init,
+        event: wasm_abi::event,
+        render: wasm_abi::render,
+    });
 }
