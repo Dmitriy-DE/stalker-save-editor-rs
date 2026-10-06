@@ -12,7 +12,9 @@ const CURLE_OK: c_int = 0;
 const CURLOPT_WRITEDATA: c_int = 10_001;
 const CURLOPT_URL: c_int = 10_002;
 const CURLOPT_RANGE: c_int = 10_007;
+const CURLOPT_POSTFIELDS: c_int = 10_015;
 const CURLOPT_WRITEFUNCTION: c_int = 20_011;
+const CURLOPT_POSTFIELDSIZE: c_int = 60;
 const CURLOPT_FOLLOWLOCATION: c_int = 52;
 const CURLOPT_MAXREDIRS: c_int = 68;
 const CURLOPT_NOSIGNAL: c_int = 99;
@@ -20,6 +22,7 @@ const CURLOPT_CONNECTTIMEOUT_MS: c_int = 156;
 const CURLOPT_TIMEOUT_MS: c_int = 155;
 const CURLOPT_PROTOCOLS: c_int = 181;
 const CURLOPT_REDIR_PROTOCOLS: c_int = 182;
+const CURLOPT_HTTPHEADER: c_int = 10_023;
 const CURLPROTO_HTTPS: c_long = 1 << 1;
 const CURLINFO_EFFECTIVE_URL: c_int = 0x10_0001;
 const CURLINFO_RESPONSE_CODE: c_int = 0x20_0002;
@@ -33,6 +36,8 @@ type EasyGetinfo = unsafe extern "C" fn(*mut c_void, c_int, ...) -> c_int;
 type EasyStrerror = unsafe extern "C" fn(c_int) -> *const c_char;
 type GlobalInit = unsafe extern "C" fn(c_long) -> c_int;
 type WriteCallback = unsafe extern "C" fn(*mut c_char, usize, usize, *mut c_void) -> usize;
+type SlistAppend = unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void;
+type SlistFreeAll = unsafe extern "C" fn(*mut c_void);
 
 #[derive(Clone, Copy)]
 struct Api {
@@ -42,6 +47,8 @@ struct Api {
     easy_setopt: EasySetopt,
     easy_getinfo: EasyGetinfo,
     easy_strerror: EasyStrerror,
+    slist_append: SlistAppend,
+    slist_free_all: SlistFreeAll,
 }
 
 static API: OnceLock<std::result::Result<Api, String>> = OnceLock::new();
@@ -99,6 +106,10 @@ fn load() -> std::result::Result<Api, String> {
     let easy_getinfo: EasyGetinfo = unsafe { std::mem::transmute(symbol(c"curl_easy_getinfo")?) };
     // SAFETY: same argument as above for the exact named libcurl function.
     let easy_strerror: EasyStrerror = unsafe { std::mem::transmute(symbol(c"curl_easy_strerror")?) };
+    // SAFETY: same argument as above for the exact named libcurl function.
+    let slist_append: SlistAppend = unsafe { std::mem::transmute(symbol(c"curl_slist_append")?) };
+    // SAFETY: same argument as above for the exact named libcurl function.
+    let slist_free_all: SlistFreeAll = unsafe { std::mem::transmute(symbol(c"curl_slist_free_all")?) };
     // SAFETY: global initialization is called once by OnceLock before any easy handle is created.
     let result = unsafe { global_init(CURL_GLOBAL_DEFAULT) };
     if result != CURLE_OK {
@@ -111,6 +122,8 @@ fn load() -> std::result::Result<Api, String> {
         easy_setopt,
         easy_getinfo,
         easy_strerror,
+        slist_append,
+        slist_free_all,
     })
 }
 
@@ -282,5 +295,136 @@ pub(super) fn get(
     })();
     // SAFETY: handle came from curl_easy_init and is cleaned exactly once after all getinfo calls.
     unsafe { (api.easy_cleanup)(handle) };
+    result
+}
+
+pub(super) fn post(
+    config: &SystemFetch,
+    url: &str,
+    content_type: &str,
+    body: &[u8],
+    sink: &mut dyn FnMut(&[u8]) -> bool,
+) -> Result<Response> {
+    let api = api()?;
+    let url_c = CString::new(url).map_err(|_| Error::Refused("URL contains NUL".to_owned()))?;
+    let header = CString::new(format!("Content-Type: {content_type}"))
+        .map_err(|_| Error::Refused("POST header contains NUL".to_owned()))?;
+    // SAFETY: API was resolved from libcurl and global initialization succeeded.
+    let handle = unsafe { (api.easy_init)() };
+    if handle.is_null() {
+        return Err(Error::System("curl_easy_init returned null".to_owned()));
+    }
+    // SAFETY: libcurl copies the header string into the list; `header` lives through the call.
+    let headers = unsafe { (api.slist_append)(ptr::null_mut(), header.as_ptr()) };
+    if headers.is_null() {
+        // SAFETY: handle came from curl_easy_init and is cleaned exactly once.
+        unsafe { (api.easy_cleanup)(handle) };
+        return Err(Error::System("curl_slist_append returned null".to_owned()));
+    }
+    let mut state = CallbackState {
+        sink,
+        received: 0,
+        limit: config.max_bytes,
+        cancelled: false,
+        too_large: false,
+    };
+    let result = (|| -> Result<Response> {
+        let set_long = |option: c_int, value: c_long| -> Result<()> {
+            // SAFETY: option is a CURLOPT_LONG option and value has C long ABI.
+            let code = unsafe { (api.easy_setopt)(handle, option, value) };
+            if code == CURLE_OK {
+                Ok(())
+            } else {
+                Err(curl_error(api, code))
+            }
+        };
+        // SAFETY: URL and request body pointers stay alive through synchronous curl_easy_perform.
+        let code = unsafe { (api.easy_setopt)(handle, CURLOPT_URL, url_c.as_ptr()) };
+        if code != CURLE_OK {
+            return Err(curl_error(api, code));
+        }
+        set_long(CURLOPT_PROTOCOLS, CURLPROTO_HTTPS)?;
+        set_long(CURLOPT_REDIR_PROTOCOLS, CURLPROTO_HTTPS)?;
+        // Reports are never redirected: this prevents a POST body being replayed at another URL.
+        set_long(CURLOPT_FOLLOWLOCATION, 0)?;
+        set_long(CURLOPT_NOSIGNAL, 1)?;
+        set_long(CURLOPT_CONNECTTIMEOUT_MS, milliseconds(config.connect_timeout)?)?;
+        set_long(CURLOPT_TIMEOUT_MS, milliseconds(config.total_timeout)?)?;
+        // SAFETY: the header list remains live until after handle cleanup.
+        let code = unsafe { (api.easy_setopt)(handle, CURLOPT_HTTPHEADER, headers) };
+        if code != CURLE_OK {
+            return Err(curl_error(api, code));
+        }
+        // SAFETY: body storage remains borrowed through the synchronous transfer; POSTFIELDS is read-only.
+        let code = unsafe { (api.easy_setopt)(handle, CURLOPT_POSTFIELDS, body.as_ptr().cast::<c_char>()) };
+        if code != CURLE_OK {
+            return Err(curl_error(api, code));
+        }
+        set_long(
+            CURLOPT_POSTFIELDSIZE,
+            c_long::try_from(body.len()).map_err(|_| Error::Refused("POST body is too large".to_owned()))?,
+        )?;
+        // SAFETY: function pointer matches curl_write_callback and state remains live through perform.
+        let code = unsafe { (api.easy_setopt)(handle, CURLOPT_WRITEFUNCTION, write_callback as WriteCallback) };
+        if code != CURLE_OK {
+            return Err(curl_error(api, code));
+        }
+        // SAFETY: state address is stable until perform returns.
+        let code = unsafe {
+            (api.easy_setopt)(
+                handle,
+                CURLOPT_WRITEDATA,
+                (&mut state as *mut CallbackState<'_>).cast::<c_void>(),
+            )
+        };
+        if code != CURLE_OK {
+            return Err(curl_error(api, code));
+        }
+        // SAFETY: all configured pointers remain live for this synchronous call.
+        let code = unsafe { (api.easy_perform)(handle) };
+        if code != CURLE_OK {
+            if state.cancelled {
+                return Err(Error::Refused("fetch cancelled by sink".to_owned()));
+            }
+            if state.too_large {
+                return Err(Error::Refused("HTTPS response exceeds size limit".to_owned()));
+            }
+            return Err(curl_error(api, code));
+        }
+        let mut status: c_long = 0;
+        let mut content_length: i64 = -1;
+        let mut effective: *mut c_char = ptr::null_mut();
+        // SAFETY: output pointers match the documented CURLINFO result types and handle is live.
+        if unsafe { (api.easy_getinfo)(handle, CURLINFO_RESPONSE_CODE, &mut status) } != CURLE_OK {
+            return Err(Error::System("libcurl could not report HTTP status".to_owned()));
+        }
+        // SAFETY: curl_off_t is a signed 64-bit integer on the supported 64-bit targets.
+        let _ = unsafe { (api.easy_getinfo)(handle, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &mut content_length) };
+        // SAFETY: EFFECTIVE_URL returns a libcurl-owned char pointer.
+        let _ = unsafe { (api.easy_getinfo)(handle, CURLINFO_EFFECTIVE_URL, &mut effective) };
+        let status = u16::try_from(status).map_err(|_| Error::damaged("HTTP status out of range"))?;
+        let content_length = u64::try_from(content_length).ok();
+        if content_length.is_some_and(|length| length > config.max_bytes) {
+            return Err(Error::Refused("HTTPS response exceeds size limit".to_owned()));
+        }
+        let final_url = if effective.is_null() {
+            url.to_owned()
+        } else {
+            // SAFETY: non-null EFFECTIVE_URL is a NUL-terminated string owned until cleanup.
+            unsafe { CStr::from_ptr(effective) }.to_string_lossy().into_owned()
+        };
+        if !final_url.starts_with("https://") {
+            return Err(Error::Refused("redirect left HTTPS".to_owned()));
+        }
+        Ok(Response {
+            status,
+            content_length,
+            final_url,
+        })
+    })();
+    // SAFETY: handle came from curl_easy_init and is cleaned exactly once after all getinfo calls.
+    unsafe { (api.easy_cleanup)(handle) };
+    // SAFETY: headers came from curl_slist_append and are no longer referenced after handle cleanup.
+    unsafe { (api.slist_free_all)(headers) };
     result
 }

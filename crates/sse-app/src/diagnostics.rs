@@ -1,7 +1,4 @@
-//! Local diagnostics: rotating redacted log, crash marker, and an exportable gzip bundle.
-//!
-//! K10 intentionally does not implement report upload. Diagnostics stay on disk until the user
-//! explicitly exports the bundle.
+//! Local diagnostics: rotating redacted logs, crash markers, and user-approved report exports.
 
 use crate::paths::default_data_directory;
 use sse_codecs::{
@@ -10,6 +7,7 @@ use sse_codecs::{
     zip::{self, Entry},
 };
 use sse_core::{Error, Result};
+use sse_sys::fetch::{Fetch, SystemFetch};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -22,6 +20,9 @@ const AUTOMATIC_REPORT_FILE: &str = "automatic-error-report.txt";
 const MAX_LOG_BYTES: u64 = 1024 * 1024;
 const MAX_CRASH_BYTES: usize = 64 * 1024;
 const MAX_BUNDLE_BYTES: usize = 2 * 1024 * 1024;
+const MAX_AUTOMATIC_REPORT_BYTES: usize = 2 * 1024 * 1024;
+const MAX_REPORT_RESPONSE_BYTES: usize = 16 * 1024;
+const DEFAULT_REPORT_ENDPOINT: &str = "https://save-editor-downloads.save-editor.workers.dev/diagnostics";
 const PART_BYTES: usize = 256 * 1024;
 const ROTATIONS: usize = 3;
 const MAX_DIAGNOSTIC_GAME_LOG_BYTES: usize = 1024 * 1024;
@@ -309,7 +310,7 @@ pub fn pending_automatic_error_report() -> Option<String> {
 
 /// Saves the user-approved automatic report locally.
 ///
-/// The receiver endpoint is intentionally not contacted until the owner configures the HTTPS service.
+/// The report is written to the application data directory before any upload is attempted.
 ///
 /// # Errors
 /// Returns an error when the local report cannot be written.
@@ -321,10 +322,160 @@ pub fn save_automatic_error_report(report: &str) -> Result<PathBuf> {
     Ok(path)
 }
 
-/// Compile-time HTTPS receiver configured by the owner, if one is available.
+/// HTTPS receiver configured at compile time, or the existing diagnostics Worker by default.
 #[must_use]
-pub fn automatic_report_endpoint() -> Option<&'static str> {
-    option_env!("SSE_REPORT_ENDPOINT").filter(|value| value.starts_with("https://"))
+pub fn automatic_report_endpoint() -> &'static str {
+    option_env!("SSE_REPORT_ENDPOINT")
+        .filter(|value| valid_https_endpoint(value))
+        .unwrap_or(DEFAULT_REPORT_ENDPOINT)
+}
+
+/// Sends a user-approved automatic error report as a bounded gzip POST.
+///
+/// The caller must first save the plain-text report locally and obtain the user's explicit
+/// confirmation in the UI. The system transport accepts only HTTPS and never follows redirects.
+///
+/// # Errors
+/// Returns an error for compression or transport failures, a non-201 response, an invalid
+/// response body, or a missing/invalid report identifier.
+pub fn upload_automatic_error_report(report: &str) -> Result<String> {
+    let endpoint = automatic_report_endpoint();
+    let mut fetch = SystemFetch {
+        max_bytes: u64::try_from(MAX_REPORT_RESPONSE_BYTES).unwrap_or(u64::MAX),
+        ..SystemFetch::default()
+    };
+    upload_automatic_error_report_with(&mut fetch, endpoint, report)
+}
+
+fn upload_automatic_error_report_with(fetch: &mut dyn Fetch, endpoint: &str, report: &str) -> Result<String> {
+    if !valid_https_endpoint(endpoint) {
+        return Err(Error::Refused("only HTTPS report endpoints are allowed".to_owned()));
+    }
+    let body = automatic_report_gzip(report)?;
+    let mut response_body = Vec::new();
+    let response = fetch.post(endpoint, "application/gzip", &body, &mut |chunk| {
+        let Some(next_len) = response_body.len().checked_add(chunk.len()) else {
+            return false;
+        };
+        if next_len > MAX_REPORT_RESPONSE_BYTES {
+            return false;
+        }
+        response_body.extend_from_slice(chunk);
+        true
+    })?;
+    if response.final_url != endpoint || !valid_https_endpoint(&response.final_url) {
+        return Err(Error::Refused("report endpoint redirected".to_owned()));
+    }
+    match response.status {
+        201 => parse_report_id(&response_body),
+        429 => Err(Error::Refused(
+            "report service rate limit reached (HTTP 429)".to_owned(),
+        )),
+        status => Err(Error::System(format!("report service returned HTTP {status}"))),
+    }
+}
+
+fn valid_https_endpoint(value: &str) -> bool {
+    value.starts_with("https://")
+        && value.len() > "https://".len()
+        && value
+            .bytes()
+            .all(|byte| !byte.is_ascii_control() && !byte.is_ascii_whitespace())
+}
+
+fn automatic_report_gzip(report: &str) -> Result<Vec<u8>> {
+    let sanitized = redact_paths(&redact(report));
+    if sanitized.len() > MAX_AUTOMATIC_REPORT_BYTES {
+        return Err(Error::Refused("automatic report exceeds size limit".to_owned()));
+    }
+    let raw = sanitized.as_bytes();
+    let compressed = compress_raw(raw, Level::Default)?;
+    let total = compressed
+        .len()
+        .checked_add(18)
+        .ok_or_else(|| Error::Refused("automatic report size overflow".to_owned()))?;
+    if total > MAX_AUTOMATIC_REPORT_BYTES {
+        return Err(Error::Refused("compressed report exceeds 2 MiB".to_owned()));
+    }
+    let mut gzip = Vec::with_capacity(total);
+    gzip.extend_from_slice(&[0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 255]);
+    gzip.extend_from_slice(&compressed);
+    gzip.extend_from_slice(&crc32(raw).to_le_bytes());
+    gzip.extend_from_slice(&u32::try_from(raw.len()).unwrap_or(u32::MAX).to_le_bytes());
+    Ok(gzip)
+}
+
+fn parse_report_id(payload: &[u8]) -> Result<String> {
+    use sse_codecs::json::{Event, Reader};
+
+    let mut reader = Reader::new(payload);
+    if !matches!(reader.next_event()?, Some(Event::ObjectStart)) {
+        return Err(Error::damaged("report service response is not a JSON object"));
+    }
+    let mut report_id: Option<String> = None;
+    loop {
+        match reader
+            .next_event()?
+            .ok_or_else(|| Error::damaged("truncated report service response"))?
+        {
+            Event::ObjectEnd => break,
+            Event::Key(key) => {
+                let value = reader
+                    .next_event()?
+                    .ok_or_else(|| Error::damaged("missing report service field value"))?;
+                if key.as_str() == "report_id" {
+                    if report_id.is_some() {
+                        return Err(Error::damaged("duplicate report_id in service response"));
+                    }
+                    let Event::String(value) = value else {
+                        return Err(Error::damaged("report_id is not a string"));
+                    };
+                    report_id = Some(value.into_owned());
+                } else {
+                    skip_json_value(&mut reader, value)?;
+                }
+            }
+            _ => return Err(Error::damaged("unexpected report service response field")),
+        }
+    }
+    if reader.next_event()?.is_some() {
+        return Err(Error::damaged("trailing data in report service response"));
+    }
+    let report_id = report_id.ok_or_else(|| Error::damaged("report service omitted report_id"))?;
+    if report_id.is_empty()
+        || report_id.len() > 128
+        || !report_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        return Err(Error::damaged("invalid report_id from service"));
+    }
+    Ok(report_id)
+}
+
+fn skip_json_value(reader: &mut sse_codecs::json::Reader<'_>, first: sse_codecs::json::Event<'_>) -> Result<()> {
+    use sse_codecs::json::Event;
+
+    let mut depth = usize::from(matches!(first, Event::ObjectStart | Event::ArrayStart));
+    while depth > 0 {
+        match reader
+            .next_event()?
+            .ok_or_else(|| Error::damaged("truncated report service JSON value"))?
+        {
+            Event::ObjectStart | Event::ArrayStart => {
+                depth = depth
+                    .checked_add(1)
+                    .ok_or_else(|| Error::damaged("report service JSON nesting overflow"))?;
+            }
+            Event::ObjectEnd | Event::ArrayEnd => {
+                depth = depth
+                    .checked_sub(1)
+                    .ok_or_else(|| Error::damaged("invalid report service JSON nesting"))?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 fn redact_paths(text: &str) -> String {
@@ -673,8 +824,43 @@ fn single_line(value: &str) -> String {
 mod tests {
     use super::*;
     use sse_codecs::inflate::inflate_raw;
+    use sse_sys::fetch::Response;
 
     static TEST_GATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    struct FakeResponder {
+        status: u16,
+        response: Vec<u8>,
+        request_body: Vec<u8>,
+        request_url: String,
+        content_type: String,
+    }
+
+    impl Fetch for FakeResponder {
+        fn get(&mut self, _url: &str, _range_from: u64, _sink: &mut dyn FnMut(&[u8]) -> bool) -> Result<Response> {
+            Err(Error::Refused("fake responder only accepts POST".to_owned()))
+        }
+
+        fn post(
+            &mut self,
+            url: &str,
+            content_type: &str,
+            body: &[u8],
+            sink: &mut dyn FnMut(&[u8]) -> bool,
+        ) -> Result<Response> {
+            self.request_url = url.to_owned();
+            self.content_type = content_type.to_owned();
+            self.request_body.extend_from_slice(body);
+            if !sink(&self.response) {
+                return Err(Error::Refused("fake response rejected by sink".to_owned()));
+            }
+            Ok(Response {
+                status: self.status,
+                content_length: Some(u64::try_from(self.response.len()).unwrap_or(u64::MAX)),
+                final_url: url.to_owned(),
+            })
+        }
+    }
 
     #[test]
     fn redacts_home_steam_and_wine_identifiers() {
@@ -688,6 +874,11 @@ mod tests {
         assert!(redacted.contains("<home>"));
         assert!(redacted.contains("<steamid>"));
         assert!(redacted.contains("userdata/<id>"));
+    }
+
+    #[test]
+    fn automatic_report_endpoint_defaults_to_the_https_worker() {
+        assert_eq!(automatic_report_endpoint(), DEFAULT_REPORT_ENDPOINT);
     }
 
     #[test]
@@ -739,6 +930,59 @@ mod tests {
         configure_log_directory(None);
         let _ = fs::remove_dir_all(directory);
         Ok(())
+    }
+
+    #[test]
+    fn report_upload_uses_gzip_and_reads_report_id_from_fake_responder() -> Result<()> {
+        let url = "https://example.test/diagnostics";
+        let mut fake = FakeResponder {
+            status: 201,
+            response: br#"{"meta":{"accepted":true},"report_id":"diag_123"}"#.to_vec(),
+            request_body: Vec::new(),
+            request_url: String::new(),
+            content_type: String::new(),
+        };
+
+        let report_id = upload_automatic_error_report_with(&mut fake, url, "diagnostic message")?;
+
+        assert_eq!(report_id, "diag_123");
+        assert_eq!(fake.request_url, url);
+        assert_eq!(fake.content_type, "application/gzip");
+        assert_eq!(fake.request_body.get(..3), Some(&[0x1f, 0x8b, 8][..]));
+        let deflate_end = fake.request_body.len().saturating_sub(8);
+        let raw_size = fake
+            .request_body
+            .get(deflate_end.saturating_add(4)..)
+            .and_then(|bytes| <[u8; 4]>::try_from(bytes).ok())
+            .map(u32::from_le_bytes)
+            .unwrap_or_default();
+        let payload = inflate_raw(
+            fake.request_body.get(10..deflate_end).unwrap_or_default(),
+            usize::try_from(raw_size).unwrap_or_default(),
+        )?;
+        assert_eq!(payload, b"diagnostic message");
+        assert!(
+            u64::try_from(fake.request_body.len()).unwrap_or(u64::MAX)
+                <= u64::try_from(MAX_AUTOMATIC_REPORT_BYTES).unwrap_or(u64::MAX)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn report_upload_surfaces_worker_rate_limit_without_following_redirects() {
+        let url = "https://example.test/diagnostics";
+        let mut fake = FakeResponder {
+            status: 429,
+            response: Vec::new(),
+            request_body: Vec::new(),
+            request_url: String::new(),
+            content_type: String::new(),
+        };
+
+        let result = upload_automatic_error_report_with(&mut fake, url, "diagnostic message");
+
+        assert!(matches!(result, Err(Error::Refused(message)) if message.contains("429")));
+        assert_eq!(fake.request_url, url);
     }
 
     #[test]
