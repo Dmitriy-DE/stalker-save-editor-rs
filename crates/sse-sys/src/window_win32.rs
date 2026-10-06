@@ -941,7 +941,8 @@ fn ime_composition_string(hwnd: w::Hwnd, index: u32) -> Option<String> {
                 bytes.truncate(usize::try_from(written).ok()?);
                 let units = bytes
                     .chunks_exact(2)
-                    .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                    .filter_map(|pair| <[u8; 2]>::try_from(pair).ok())
+                    .map(u16::from_le_bytes)
                     .collect::<Vec<_>>();
                 Some(String::from_utf16_lossy(&units))
             } else {
