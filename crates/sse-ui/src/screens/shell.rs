@@ -11,7 +11,7 @@ use crate::widget::{Content, Look, TextAlign, Tree, WidgetId};
 use crate::widgets::scroll::ScrollView;
 use crate::widgets::text_input::TextInput;
 use sse_core::Result;
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -51,8 +51,8 @@ impl Clipboard for ShellClipboard {
 
 struct OpenFilesQueue {
     remaining: VecDeque<PathBuf>,
+    pending_requests: BTreeMap<u64, PathBuf>,
     active_request: Option<u64>,
-    active_path: Option<PathBuf>,
     total: usize,
     completed: usize,
     opened: usize,
@@ -1288,8 +1288,8 @@ impl Shell {
         self.open_files_queue = Some(OpenFilesQueue {
             total: paths.len(),
             remaining: paths.into(),
+            pending_requests: BTreeMap::new(),
             active_request: None,
-            active_path: None,
             completed: 0,
             opened: 0,
             last_error: None,
@@ -1317,8 +1317,8 @@ impl Shell {
             let request = self.library_workspace.load_request();
             if self.library_workspace.is_loading() {
                 if let Some(queue) = self.open_files_queue.as_mut() {
+                    queue.pending_requests.insert(request, path.clone());
                     queue.active_request = Some(request);
-                    queue.active_path = Some(path);
                 }
                 return Ok(());
             }
@@ -1337,6 +1337,14 @@ impl Shell {
     }
 
     fn finish_open_files_queue(&mut self, tree: &mut Tree) -> Result<()> {
+        if self.open_files_queue.as_ref().is_some_and(|queue| {
+            !queue.remaining.is_empty()
+                || !queue.pending_requests.is_empty()
+                || queue.active_request.is_some()
+                || queue.completed < queue.total
+        }) {
+            return Ok(());
+        }
         let Some(queue) = self.open_files_queue.take() else {
             return Ok(());
         };
@@ -1370,26 +1378,31 @@ impl Shell {
         let Some(queue) = self.open_files_queue.as_mut() else {
             return Ok(());
         };
-        if queue.active_request != Some(finished.request) {
-            return Ok(());
-        }
-        if queue.active_path.as_deref() != Some(finished.requested_path.as_path()) {
+        if queue.pending_requests.get(&finished.request) != Some(&finished.requested_path) {
             return Ok(());
         }
 
-        queue.active_request = None;
-        queue.active_path = None;
+        queue.pending_requests.remove(&finished.request);
+        if queue.active_request == Some(finished.request) {
+            queue.active_request = None;
+        }
         queue.completed = queue.completed.saturating_add(1);
         if finished.selected_path.is_some() {
             queue.opened = queue.opened.saturating_add(1);
         } else if let Some(error) = finished.error.as_deref() {
             queue.last_error = Some(format_open_error(&finished.requested_path, error, finished.io_error));
         }
-        if queue.remaining.is_empty() {
+        if queue.remaining.is_empty() && queue.pending_requests.is_empty() {
             return self.finish_open_files_queue(tree);
         }
 
-        self.start_next_open_file(tree)?;
+        if self
+            .open_files_queue
+            .as_ref()
+            .is_some_and(|queue| queue.active_request.is_none() && !queue.remaining.is_empty())
+        {
+            self.start_next_open_file(tree)?;
+        }
         if let Some(queue) = self.open_files_queue.as_ref() {
             let status = queue.last_error.clone().unwrap_or_else(|| {
                 format!(
@@ -2406,7 +2419,7 @@ impl App<AppMessage> for Shell {
 
 #[cfg(test)]
 mod tests {
-    use super::{save_eligibility, wait_for_save_io, ScreenId, Shell};
+    use super::{save_eligibility, wait_for_save_io, OpenFilesQueue, ScreenId, Shell};
     use crate::event_loop::{channel_pair, Flow, Message, WindowEvent};
     use crate::glyphs::Fonts;
     use crate::raster::Color;
@@ -2419,6 +2432,45 @@ mod tests {
         LOCK.get_or_init(|| std::sync::Mutex::new(()))
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    #[test]
+    fn late_open_result_is_counted_while_next_request_is_active() -> sse_core::Result<()> {
+        let first = Path::new("first.sav").to_path_buf();
+        let second = Path::new("second.sav").to_path_buf();
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut shell = Shell::build_for_test(&mut tree, None)?;
+        shell.open_files_queue = Some(OpenFilesQueue {
+            remaining: std::collections::VecDeque::new(),
+            pending_requests: [(1, first.clone()), (2, second.clone())].into_iter().collect(),
+            active_request: Some(2),
+            total: 2,
+            completed: 0,
+            opened: 0,
+            last_error: None,
+        });
+        let message = Message::User(super::super::AppMessage::ToScreen(
+            ScreenId::Overview,
+            Box::new(super::super::saves::LoadFinished {
+                request: 1,
+                selected_path: Some(first.clone()),
+                requested_path: first,
+                journal: None,
+                error: None,
+                io_error: false,
+            }),
+        ));
+
+        shell.advance_open_files_queue(&mut tree, &message)?;
+
+        assert!(shell.open_files_queue.as_ref().is_some_and(|queue| {
+            queue.completed == 1
+                && queue.opened == 1
+                && queue.active_request == Some(2)
+                && queue.pending_requests.len() == 1
+                && queue.pending_requests.contains_key(&2)
+        }));
+        Ok(())
     }
 
     #[test]
