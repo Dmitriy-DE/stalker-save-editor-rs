@@ -7,7 +7,7 @@ use sse_companion::hotkeys::{
     replace_hotkey_layout, HotkeyAction, HotkeyBackend, HotkeyError, HotkeyGesture, HotkeyLayout, HotkeyMatcher,
 };
 use sse_companion::installer::{install_bundled, install_files, install_stalker2, uninstall, PayloadFile};
-use sse_companion::protocol::{CompanionClient, ReplyStatus};
+use sse_companion::protocol::CompanionClient;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -160,6 +160,27 @@ fn hotkey_layout_roundtrips_and_rejects_duplicate_gestures() -> Result<(), Box<d
     assert!(HotkeyLayout::parse("heal=Ctrl+H\nmark=Ctrl+H\n").is_err());
     assert!(HotkeyLayout::parse("heal=Ctrl+F13\n").is_err());
     Ok(())
+}
+
+#[test]
+fn hotkey_gesture_errors_match_csharp_and_empty_segments_are_ignored() {
+    for (input, expected) in [
+        ("H", "Hotkey 'H' must include a modifier and one letter."),
+        ("Super+H", "Unknown hotkey modifier 'Super'."),
+        ("Ctrl+Ctrl+H", "Hotkey 'Ctrl+Ctrl+H' repeats modifier 'Ctrl'."),
+        ("Ctrl+F13", "Hotkey 'Ctrl+F13' must end in one A-Z letter."),
+        ("Bogus+1", "Unknown hotkey modifier 'Bogus'."),
+        ("  H ", "Hotkey '  H ' must include a modifier and one letter."),
+    ] {
+        assert_eq!(
+            HotkeyGesture::parse(input).map_err(|error| error.to_string()),
+            Err(expected.to_owned())
+        );
+    }
+    assert_eq!(
+        HotkeyGesture::parse("Ctrl++A").map(|gesture| gesture.to_string()),
+        Ok("Ctrl+A".to_owned())
+    );
 }
 
 #[derive(Default)]
@@ -354,10 +375,10 @@ fn protocol_client_waits_for_the_matching_reply_id() -> Result<(), Box<dyn std::
         let _ = fs::write(worker_reply, format!("v1 {id} ok ready\n"));
     });
 
-    let reply = client.send("ping", &[], Duration::from_secs(2))?;
+    let (latency, reply) = client.ping(Duration::from_secs(2))?;
     assert!(worker.join().is_ok());
-    assert_eq!(reply.status, ReplyStatus::Ok);
-    assert_eq!(reply.text, "ready");
+    assert!(latency <= Duration::from_secs(2));
+    assert_eq!(reply, "ready");
     let _ = fs::remove_dir_all(root);
     Ok(())
 }
