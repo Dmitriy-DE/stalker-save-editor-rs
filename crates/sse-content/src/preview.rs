@@ -175,7 +175,7 @@ fn parse_campaign_record(
     let region = read_campaign_string(raw, &mut offset, strings)?;
     let quest = read_campaign_string(raw, &mut offset, strings)?;
 
-    if ticks <= 0 || seconds < 0.0 || seconds >= 1e8 || seconds.is_nan() {
+    if ticks <= 0 || !(0.0..1e8).contains(&seconds) {
         return None;
     }
 
