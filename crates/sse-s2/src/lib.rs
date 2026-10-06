@@ -3315,6 +3315,41 @@ mod tests {
     }
 
     #[test]
+    fn unknown_kind_three_item_remains_visible_but_read_only() -> sse_core::Result<()> {
+        let save = S2Save::from_bytes(WRITER_S2_STACK_SOURCE)?;
+        let handle = 0x3000_0001;
+        let record = save
+            .objects
+            .unique(handle)
+            .ok_or_else(|| Error::Refused("synthetic test object is missing".to_owned()))?;
+        let mut image = save.container().image().to_vec();
+        super::write_u8_at(&mut image, record.record_offset.saturating_add(31), 3)?;
+
+        // Mutate the known synthetic record only in memory; this does not assert the unknown live layout.
+        let packed = pack_raw(&image);
+        let unknown = S2Save::from_bytes(&packed)?;
+        let item = unknown
+            .items()
+            .into_iter()
+            .find(|item| item.handle == handle)
+            .ok_or_else(|| Error::Refused("synthetic kind-three item is missing".to_owned()))?;
+
+        assert_eq!(item.kind_code, 3);
+        assert!(!item.editable_count);
+        assert!(unknown.unresolved_handles().contains(&handle));
+        assert!(unknown
+            .warnings()
+            .iter()
+            .any(|warning| warning.contains("object kind=3, только read-only")));
+
+        let original_image = unknown.container().image().to_vec();
+        let result = unknown.write_changes(&[S2Change::SetStackCount { handle, count: 7 }]);
+        assert!(matches!(result, Err(Error::Refused(_))));
+        assert_eq!(unknown.container().image(), original_image);
+        Ok(())
+    }
+
+    #[test]
     fn duplicate_owned_handles_and_grid_positions_are_marked_unresolved() {
         let index = S2InventoryIndex::locate(SYNTHETIC_RAW);
         assert!(index.is_ok());
