@@ -26,6 +26,12 @@ const WM_GETMINMAXINFO: u32 = 36;
 const WM_KEYDOWN: u32 = 0x100;
 const WM_KEYUP: u32 = 0x101;
 const WM_CHAR: u32 = 0x102;
+const WM_IME_STARTCOMPOSITION: u32 = 0x10d;
+const WM_IME_ENDCOMPOSITION: u32 = 0x10e;
+const WM_IME_COMPOSITION: u32 = 0x10f;
+const WM_IME_CHAR: u32 = 0x286;
+const GCS_COMPSTR: u32 = 0x0008;
+const GCS_RESULTSTR: u32 = 0x0800;
 const WM_MOUSEMOVE: u32 = 0x200;
 const WM_LDOWN: u32 = 0x201;
 const WM_LUP: u32 = 0x202;
@@ -117,6 +123,14 @@ pub enum Event {
     },
     /// Decoded WM_CHAR text.
     Text(char),
+    /// Input method started a composition.
+    ImeStart,
+    /// Input method changed its preedit text.
+    ImeUpdate(String),
+    /// Input method committed text.
+    ImeCommit(String),
+    /// Input method cancelled its composition.
+    ImeCancel,
     /// Pointer position.
     PointerMoved {
         /// X.
@@ -226,6 +240,7 @@ struct State {
     min_w: u32,
     min_h: u32,
     high: Option<u16>,
+    ime_active: bool,
     cursor: CursorShape,
 }
 /// Win32 implementation.
@@ -275,6 +290,7 @@ impl Win32Window {
             min_w: options.min_width,
             min_h: options.min_height,
             high: None,
+            ime_active: false,
             cursor: CursorShape::Arrow,
         })));
         let width = i32::try_from(options.width).map_err(|_| Error::Refused("window width too large".to_owned()))?;
@@ -758,6 +774,42 @@ unsafe extern "system" fn proc(hwnd: w::Hwnd, msg: u32, wp: usize, lp: isize) ->
                 });
             0
         }
+        WM_IME_STARTCOMPOSITION => {
+            let mut state = state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            state.ime_active = true;
+            state.events.push_back(Event::ImeStart);
+            0
+        }
+        WM_IME_COMPOSITION => {
+            let flags = u32::try_from(lp).unwrap_or_default();
+            if flags & GCS_RESULTSTR != 0 {
+                if let Some(text) = ime_composition_string(hwnd, GCS_RESULTSTR) {
+                    let mut state = state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                    state.ime_active = false;
+                    state.events.push_back(Event::ImeCommit(text));
+                }
+            } else if flags & GCS_COMPSTR != 0 {
+                if let Some(text) = ime_composition_string(hwnd, GCS_COMPSTR) {
+                    state
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .events
+                        .push_back(Event::ImeUpdate(text));
+                }
+            }
+            0
+        }
+        WM_IME_ENDCOMPOSITION => {
+            let mut state = state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            if state.ime_active {
+                state.events.push_back(Event::ImeCancel);
+            }
+            state.ime_active = false;
+            0
+        }
+        // WM_IME_CHAR's default processing generates WM_CHAR. The UTF-16 result was already delivered
+        // as one ImeCommit from WM_IME_COMPOSITION, so consume this message to avoid duplicate insertion.
+        WM_IME_CHAR => 0,
         WM_CHAR => {
             let u = u16::try_from(wp).unwrap_or_default();
             let mut state = state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -863,6 +915,43 @@ unsafe extern "system" fn proc(hwnd: w::Hwnd, msg: u32, wp: usize, lp: isize) ->
             unsafe { w::DefWindowProcW(hwnd, msg, wp, lp) }
         }
     }
+}
+
+fn ime_composition_string(hwnd: w::Hwnd, index: u32) -> Option<String> {
+    const MAX_IME_STRING_BYTES: i32 = 1_048_576;
+    // SAFETY: hwnd is the live window receiving the IME message on this UI thread.
+    let context = unsafe { w::ImmGetContext(hwnd) };
+    if context.is_null() {
+        return None;
+    }
+    // SAFETY: a null buffer with length zero is the documented size-query form for ImmGetCompositionStringW.
+    let byte_count = unsafe { w::ImmGetCompositionStringW(context, index, ptr::null_mut(), 0) };
+    let result = (|| {
+        if !(0..=MAX_IME_STRING_BYTES).contains(&byte_count) {
+            return None;
+        }
+        let mut bytes = vec![0_u8; usize::try_from(byte_count).ok()?];
+        if byte_count == 0 {
+            Some(String::new())
+        } else {
+            let length = u32::try_from(bytes.len()).ok()?;
+            // SAFETY: bytes is writable for `length` bytes and remains alive for the synchronous native call.
+            let written = unsafe { w::ImmGetCompositionStringW(context, index, bytes.as_mut_ptr().cast(), length) };
+            if written >= 0 && written <= byte_count {
+                bytes.truncate(usize::try_from(written).ok()?);
+                let units = bytes
+                    .chunks_exact(2)
+                    .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                    .collect::<Vec<_>>();
+                Some(String::from_utf16_lossy(&units))
+            } else {
+                None
+            }
+        }
+    })();
+    // SAFETY: context was returned by ImmGetContext for this live hwnd and is released exactly once.
+    let _ = unsafe { w::ImmReleaseContext(hwnd, context) };
+    result
 }
 
 fn paint(hwnd: w::Hwnd, state: &Mutex<State>) {

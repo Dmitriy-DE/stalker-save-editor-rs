@@ -1,7 +1,7 @@
 //! Objective-C/CoreGraphics ABI for the Cocoa window backend.
 //!
-//! objc_msgSend is cast at each call site to the exact selector signature. This is valid on arm64 and x86_64
-//! for the scalar/object-returning selectors used here; no large-structure return requires objc_msgSend_stret.
+//! objc_msgSend is cast at each call site to the exact selector signature. NSRect returns use
+//! objc_msgSend_stret on x86_64 and the normal register return ABI on arm64.
 
 use std::{
     ffi::{c_char, c_void, CStr, CString},
@@ -40,11 +40,15 @@ pub struct Range {
 // SAFETY: these declarations use the Objective-C runtime C ABI; callers provide live objects and NUL-terminated names.
 unsafe extern "C" {
     fn objc_getClass(n: *const c_char) -> Class;
+    fn objc_getProtocol(n: *const c_char) -> *mut c_void;
     fn sel_registerName(n: *const c_char) -> Sel;
     pub fn objc_allocateClassPair(s: Class, n: *const c_char, e: usize) -> Class;
     pub fn objc_registerClassPair(c: Class);
     pub fn class_addMethod(c: Class, s: Sel, i: *const c_void, t: *const c_char) -> Bool;
+    pub fn class_addProtocol(c: Class, protocol: *mut c_void) -> Bool;
     fn objc_msgSend();
+    #[cfg(target_arch = "x86_64")]
+    fn objc_msgSend_stret();
 }
 #[link(name = "CoreGraphics", kind = "framework")]
 // SAFETY: these declarations match the CoreGraphics C ABI; ownership and pointer lifetimes are checked by the window backend.
@@ -81,6 +85,10 @@ pub fn class(n: &'static CStr) -> Class {
 pub fn sel(n: &'static CStr) -> Sel {
     // SAFETY: static NUL-terminated selector name.
     unsafe { sel_registerName(n.as_ptr()) }
+}
+pub fn protocol(n: &'static CStr) -> *mut c_void {
+    // SAFETY: static NUL-terminated protocol name.
+    unsafe { objc_getProtocol(n.as_ptr()) }
 }
 pub fn string(value: &str) -> Option<Id> {
     let c = CString::new(value).ok()?;
@@ -162,6 +170,17 @@ pub unsafe fn bool_(r: Id, s: Sel) -> Bool {
     let f: F = unsafe { mem::transmute(objc_msgSend as *const c_void) };
     // SAFETY: the caller upholds the receiver and selector requirements documented above.
     unsafe { f(r, s) }
+}
+/// Sends an Objective-C message with one object argument and returns BOOL.
+///
+/// # Safety
+/// `r` must be a live object and `s` must select a method with this exact ABI.
+pub unsafe fn bool_id(r: Id, s: Sel, a: Id) -> Bool {
+    type F = unsafe extern "C" fn(Id, Sel, Id) -> Bool;
+    // SAFETY: the caller selects an object-argument BOOL ABI.
+    let f: F = unsafe { mem::transmute(objc_msgSend as *const c_void) };
+    // SAFETY: the caller upholds the receiver, selector, and argument requirements documented above.
+    unsafe { f(r, s, a) }
 }
 /// Sends a zero-argument Objective-C message returning `usize`.
 ///
@@ -283,6 +302,36 @@ pub unsafe fn point(r: Id, s: Sel) -> Point {
     let f: F = unsafe { mem::transmute(objc_msgSend as *const c_void) };
     // SAFETY: the caller upholds the receiver and selector requirements documented above.
     unsafe { f(r, s) }
+}
+/// Sends a zero-argument Objective-C message returning an NSRect-compatible structure.
+///
+/// # Safety
+/// `r` must be a live object and `s` must select a method returning `Rect`.
+pub unsafe fn rect(r: Id, s: Sel) -> Rect {
+    #[cfg(target_arch = "x86_64")]
+    {
+        type F = unsafe extern "C" fn(*mut Rect, Id, Sel);
+        // SAFETY: x86_64 Objective-C uses objc_msgSend_stret for this 32-byte NSRect return ABI.
+        let f: F = unsafe { mem::transmute(objc_msgSend_stret as *const c_void) };
+        let mut result = Rect {
+            origin: Point { x: 0.0, y: 0.0 },
+            size: Size {
+                width: 0.0,
+                height: 0.0,
+            },
+        };
+        // SAFETY: the caller guarantees a live receiver and a selector returning NSRect.
+        unsafe { f(&mut result, r, s) };
+        result
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        type F = unsafe extern "C" fn(Id, Sel) -> Rect;
+        // SAFETY: arm64 returns this homogeneous floating-point aggregate in registers.
+        let f: F = unsafe { mem::transmute(objc_msgSend as *const c_void) };
+        // SAFETY: the caller guarantees a live receiver and a selector returning NSRect.
+        unsafe { f(r, s) }
+    }
 }
 /// Sends an Objective-C message with one time interval and returns an object.
 ///

@@ -1638,6 +1638,21 @@ impl Screen for Overview {
                 input.focus(self.search_focused, 0);
             }
         }
+        if let Message::Window(crate::event_loop::WindowEvent::Ime(event)) = message {
+            if let Some(input) = self.search_input.as_mut().filter(|input| input.focused()) {
+                input.apply_ime_event(event)?;
+                let display = input.display_text();
+                if let Some(widget) = self.search_text {
+                    cx.tree.set_input_text(widget, &display)?;
+                }
+                if matches!(event, crate::event_loop::ImeEvent::Commit(_)) {
+                    self.search_query = input.text();
+                    self.page = 0;
+                    return self.render(cx);
+                }
+            }
+            return Ok(());
+        }
         if let Message::Window(crate::event_loop::WindowEvent::Key {
             pressed: true,
             keysym,
@@ -4870,6 +4885,77 @@ impl Screen for Inventory {
         }
         if let (Some(widget), Some(input)) = (self.add_quantity_widget, self.add_quantity.as_mut()) {
             input.focus(cx.tree.focused() == Some(widget), 0);
+        }
+        if let Message::Window(crate::event_loop::WindowEvent::Ime(event)) = message {
+            let committed = matches!(event, crate::event_loop::ImeEvent::Commit(_));
+            if self.add_panel_open && self.add_search.as_ref().is_some_and(TextInput::focused) {
+                let (query, display) = if let Some(input) = self.add_search.as_mut() {
+                    input.apply_ime_event(event)?;
+                    (committed.then(|| input.text()), Some(input.display_text()))
+                } else {
+                    (None, None)
+                };
+                if let (Some(widget), Some(display)) = (self.add_search_widget, display) {
+                    cx.tree.set_input_text(widget, &display)?;
+                }
+                if let Some(query) = query {
+                    self.add_search_query = query;
+                    self.add_page = 0;
+                    self.render_add_panel(cx)?;
+                }
+                return Ok(());
+            }
+            if self.search.as_ref().is_some_and(TextInput::focused) {
+                let (query, display) = if let Some(input) = self.search.as_mut() {
+                    input.apply_ime_event(event)?;
+                    (committed.then(|| input.text()), Some(input.display_text()))
+                } else {
+                    (None, None)
+                };
+                if let (Some(widget), Some(display)) = (self.search_widget, display) {
+                    cx.tree.set_input_text(widget, &display)?;
+                }
+                if let Some(query) = query {
+                    self.search_query = query;
+                    self.page = 0;
+                    return self.render(cx);
+                }
+                return Ok(());
+            }
+            if self.money_input.as_ref().is_some_and(TextInput::focused) {
+                let (value, display) = if let Some(input) = self.money_input.as_mut() {
+                    input.apply_ime_event(event)?;
+                    (committed.then(|| input.text()), Some(input.display_text()))
+                } else {
+                    (None, None)
+                };
+                if let (Some(widget), Some(display)) = (self.money_input_widget, display) {
+                    cx.tree.set_input_text(widget, &display)?;
+                }
+                if let Some(value) = value {
+                    match value.parse::<u32>() {
+                        Ok(value) if value <= 2_000_000_000 => {
+                            cx.app.set_invalid_numeric_input(false);
+                            self.stage_money_value(cx, value)?;
+                        }
+                        _ => cx.app.set_invalid_numeric_input(true),
+                    }
+                    return self.render(cx);
+                }
+                return Ok(());
+            }
+            if self.add_panel_open && self.add_quantity.as_ref().is_some_and(TextInput::focused) {
+                let display = if let Some(input) = self.add_quantity.as_mut() {
+                    input.apply_ime_event(event)?;
+                    Some(input.display_text())
+                } else {
+                    None
+                };
+                if let (Some(widget), Some(display)) = (self.add_quantity_widget, display) {
+                    cx.tree.set_input_text(widget, &display)?;
+                }
+                return Ok(());
+            }
         }
         if clicked.is_some() && clicked == self.search_widget {
             if let Some(input) = self.search.as_mut() {

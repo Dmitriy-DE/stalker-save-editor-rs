@@ -83,6 +83,14 @@ pub enum Event {
     },
     /// Cocoa text input.
     Text(String),
+    /// Input method began marked-text composition.
+    ImeStart,
+    /// Input method changed marked preedit text.
+    ImeUpdate(String),
+    /// Input method committed text.
+    ImeCommit(String),
+    /// Input method cancelled marked text.
+    ImeCancel,
     /// Pointer movement.
     PointerMoved {
         /// X.
@@ -154,6 +162,8 @@ pub trait Window {
 
 struct Shared {
     events: Mutex<VecDeque<Event>>,
+    ime_active: Mutex<bool>,
+    ime_text_len: Mutex<usize>,
 }
 static OBJECTS: OnceLock<Mutex<HashMap<usize, Weak<Shared>>>> = OnceLock::new();
 fn objects() -> &'static Mutex<HashMap<usize, Weak<Shared>>> {
@@ -298,6 +308,8 @@ impl MacWindow {
         let delegate = unsafe { o::id(o::id(o::class(c"SseWindowDelegate"), o::sel(c"alloc")), o::sel(c"init")) };
         let shared = Arc::new(Shared {
             events: Mutex::new(VecDeque::new()),
+            ime_active: Mutex::new(false),
+            ime_text_len: Mutex::new(0),
         });
         attach(view, &shared);
         attach(delegate, &shared);
@@ -316,6 +328,7 @@ impl MacWindow {
         unsafe {
             o::void(window, o::sel(c"center"));
             o::void_id(window, o::sel(c"makeKeyAndOrderFront:"), ptr::null_mut());
+            let _ = o::bool_id(window, o::sel(c"makeFirstResponder:"), view);
             o::void_bool(app, o::sel(c"activateIgnoringOtherApps:"), YES)
         };
         Ok(Self {
@@ -585,13 +598,86 @@ fn register_classes() -> Result<()> {
         if cls.is_null() {
             return Err(Error::System("view class allocation failed".to_owned()));
         }
+        let text_input_client = o::protocol(c"NSTextInputClient");
+        if text_input_client.is_null() {
+            return Err(Error::System("NSTextInputClient protocol unavailable".to_owned()));
+        }
         // SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
         unsafe {
+            if o::class_addProtocol(cls, text_input_client) == 0 {
+                return Err(Error::System("could not register NSTextInputClient".to_owned()));
+            }
+            o::class_addMethod(
+                cls,
+                o::sel(c"acceptsFirstResponder"),
+                accepts_first_responder as *const c_void,
+                c"c@:".as_ptr(),
+            );
             o::class_addMethod(
                 cls,
                 o::sel(c"insertText:replacementRange:"),
                 insert_text as *const c_void,
                 c"v@:@{_NSRange=QQ}".as_ptr(),
+            );
+            o::class_addMethod(
+                cls,
+                o::sel(c"setMarkedText:selectedRange:replacementRange:"),
+                set_marked_text as *const c_void,
+                c"v@:@{_NSRange=QQ}{_NSRange=QQ}".as_ptr(),
+            );
+            o::class_addMethod(
+                cls,
+                o::sel(c"unmarkText"),
+                unmark_text as *const c_void,
+                c"v@:".as_ptr(),
+            );
+            o::class_addMethod(
+                cls,
+                o::sel(c"hasMarkedText"),
+                has_marked_text as *const c_void,
+                c"c@:".as_ptr(),
+            );
+            o::class_addMethod(
+                cls,
+                o::sel(c"markedRange"),
+                marked_range as *const c_void,
+                c"{_NSRange=QQ}@:".as_ptr(),
+            );
+            o::class_addMethod(
+                cls,
+                o::sel(c"selectedRange"),
+                selected_range as *const c_void,
+                c"{_NSRange=QQ}@:".as_ptr(),
+            );
+            o::class_addMethod(
+                cls,
+                o::sel(c"validAttributesForMarkedText"),
+                valid_attributes as *const c_void,
+                c"@@:".as_ptr(),
+            );
+            o::class_addMethod(
+                cls,
+                o::sel(c"attributedSubstringForProposedRange:actualRange:"),
+                attributed_substring as *const c_void,
+                c"@@:{_NSRange=QQ}^{_NSRange=QQ}".as_ptr(),
+            );
+            o::class_addMethod(
+                cls,
+                o::sel(c"characterIndexForPoint:"),
+                character_index_for_point as *const c_void,
+                c"Q@:{CGPoint=dd}".as_ptr(),
+            );
+            o::class_addMethod(
+                cls,
+                o::sel(c"firstRectForCharacterRange:actualRange:"),
+                first_rect_for_range as *const c_void,
+                c"{CGRect={CGPoint=dd}{CGSize=dd}}@:@{_NSRange=QQ}^{_NSRange=QQ}".as_ptr(),
+            );
+            o::class_addMethod(
+                cls,
+                o::sel(c"doCommandBySelector:"),
+                do_command as *const c_void,
+                c"v@::".as_ptr(),
             );
             o::objc_registerClassPair(cls)
         }
@@ -625,6 +711,9 @@ unsafe extern "C" fn should_close(this: o::Id, _: o::Sel, _: o::Id) -> o::Bool {
     push(this, Event::Close);
     NO
 }
+unsafe extern "C" fn accepts_first_responder(_: o::Id, _: o::Sel) -> o::Bool {
+    YES
+}
 unsafe extern "C" fn backing_changed(this: o::Id, _: o::Sel, note: o::Id) {
     // SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
     let window = unsafe { o::id(note, o::sel(c"object")) };
@@ -643,11 +732,146 @@ unsafe extern "C" fn backing_changed(this: o::Id, _: o::Sel, note: o::Id) {
         },
     );
 }
-unsafe extern "C" fn insert_text(this: o::Id, _: o::Sel, text: o::Id, _: o::Range) {
-    if let Some(value) = o::rust_string(text) {
-        push(this, Event::Text(value));
+fn object_responds_to(object: o::Id, selector: o::Sel) -> bool {
+    type F = unsafe extern "C" fn(o::Id, o::Sel, o::Sel) -> o::Bool;
+    // SAFETY: objc_msgSend is called using the exact `respondsToSelector:` ABI.
+    let f: F = unsafe { mem::transmute(objc_msg_send_ptr()) };
+    // SAFETY: object is a live Objective-C object and selector is a registered selector.
+    unsafe { f(object, o::sel(c"respondsToSelector:"), selector) != 0 }
+}
+
+fn marked_text_string(text: o::Id) -> Option<String> {
+    if text.is_null() {
+        return None;
+    }
+    let string_selector = o::sel(c"string");
+    if object_responds_to(text, string_selector) {
+        // SAFETY: the object reports the NSAttributedString-compatible `string` selector.
+        o::rust_string(unsafe { o::id(text, string_selector) })
+    } else {
+        o::rust_string(text)
     }
 }
+
+unsafe extern "C" fn insert_text(this: o::Id, _: o::Sel, text: o::Id, _: o::Range) {
+    let Some(value) = marked_text_string(text) else { return };
+    let event = shared(this).map(|state| {
+        let mut active = state
+            .ime_active
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let event = if *active {
+            *active = false;
+            if let Ok(mut length) = state.ime_text_len.lock() {
+                *length = 0;
+            }
+            Event::ImeCommit(value)
+        } else {
+            Event::Text(value)
+        };
+        event
+    });
+    if let Some(event) = event {
+        push(this, event);
+    }
+}
+
+unsafe extern "C" fn set_marked_text(this: o::Id, _: o::Sel, text: o::Id, _: o::Range, _: o::Range) {
+    let Some(value) = marked_text_string(text) else { return };
+    let Some(state) = shared(this) else { return };
+    let mut active = state
+        .ime_active
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if !*active {
+        *active = true;
+        push(this, Event::ImeStart);
+    }
+    if let Ok(mut length) = state.ime_text_len.lock() {
+        *length = value.encode_utf16().count();
+    }
+    push(this, Event::ImeUpdate(value));
+}
+
+unsafe extern "C" fn unmark_text(this: o::Id, _: o::Sel) {
+    let Some(state) = shared(this) else { return };
+    let mut active = state
+        .ime_active
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if *active {
+        *active = false;
+        if let Ok(mut length) = state.ime_text_len.lock() {
+            *length = 0;
+        }
+        push(this, Event::ImeCancel);
+    }
+}
+
+unsafe extern "C" fn has_marked_text(this: o::Id, _: o::Sel) -> o::Bool {
+    shared(this)
+        .and_then(|state| state.ime_active.lock().ok().map(|active| *active))
+        .is_some_and(|active| active) as o::Bool
+}
+
+unsafe extern "C" fn marked_range(this: o::Id, _: o::Sel) -> o::Range {
+    let Some(state) = shared(this) else {
+        return o::Range {
+            location: usize::MAX,
+            length: 0,
+        };
+    };
+    let active = state.ime_active.lock().map(|value| *value).unwrap_or(false);
+    let length = state.ime_text_len.lock().map(|value| *value).unwrap_or(0);
+    o::Range {
+        location: if active { 0 } else { usize::MAX },
+        length: if active { length } else { 0 },
+    }
+}
+
+unsafe extern "C" fn selected_range(_: o::Id, _: o::Sel) -> o::Range {
+    o::Range { location: 0, length: 0 }
+}
+
+unsafe extern "C" fn valid_attributes(_: o::Id, _: o::Sel) -> o::Id {
+    // SAFETY: NSArray::array returns a valid retained/autoreleased empty array for the synchronous call.
+    unsafe { o::id(o::class(c"NSArray"), o::sel(c"array")) }
+}
+
+unsafe extern "C" fn attributed_substring(_: o::Id, _: o::Sel, _: o::Range, _: *mut o::Range) -> o::Id {
+    ptr::null_mut()
+}
+
+unsafe extern "C" fn character_index_for_point(_: o::Id, _: o::Sel, _: o::Point) -> usize {
+    usize::MAX
+}
+
+unsafe extern "C" fn first_rect_for_range(this: o::Id, _: o::Sel, _: o::Range, _: *mut o::Range) -> o::Rect {
+    let window = unsafe { o::id(this, o::sel(c"window")) };
+    if window.is_null() {
+        return o::Rect {
+            origin: o::Point { x: 0.0, y: 0.0 },
+            size: o::Size {
+                width: 1.0,
+                height: 18.0,
+            },
+        };
+    }
+    // SAFETY: `window` is the live NSWindow returned by the view's `window` selector; `frame` returns NSRect.
+    let frame = unsafe { o::rect(window, o::sel(c"frame")) };
+    o::Rect {
+        origin: o::Point {
+            x: frame.origin.x + 16.0,
+            y: frame.origin.y + 56.0,
+        },
+        size: o::Size {
+            width: 1.0,
+            height: 18.0,
+        },
+    }
+}
+
+unsafe extern "C" fn do_command(_: o::Id, _: o::Sel, _: o::Sel) {}
 
 fn install_menu(app: o::Id) -> Result<()> {
     // SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.

@@ -2268,6 +2268,13 @@ impl Shell {
             self.select(tree, index)?;
             return Ok(Flow::Continue);
         }
+        if let Message::Window(WindowEvent::Ime(event)) = message {
+            if tree.dialog() == Some(self.open_file_dialog) && tree.focused() == Some(self.open_path_widget) {
+                self.open_path_input.apply_ime_event(event)?;
+                tree.set_input_text(self.open_path_widget, &self.open_path_input.display_text())?;
+                return Ok(Flow::Continue);
+            }
+        }
         if let Some(clicked) = clicked {
             tree.set_focus(Some(clicked))?;
         }

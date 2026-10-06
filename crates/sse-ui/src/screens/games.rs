@@ -3050,6 +3050,29 @@ impl Screen for Encyclopedia {
                 cx.status = Some("Поиск активен: вводите текст с клавиатуры".to_owned());
             }
         }
+        if let Message::Window(crate::event_loop::WindowEvent::Ime(event)) = message {
+            if self
+                .search
+                .as_ref()
+                .is_some_and(crate::widgets::text_input::TextInput::focused)
+            {
+                if let Some(search) = self.search.as_mut() {
+                    search.apply_ime_event(event)?;
+                }
+                if matches!(event, crate::event_loop::ImeEvent::Commit(_))
+                    || matches!(event, crate::event_loop::ImeEvent::Cancel)
+                {
+                    return self.apply_search(cx);
+                }
+                if let (Some(search), Some(label)) = (self.search.as_ref(), self.search_label) {
+                    cx.tree.set_text(
+                        label,
+                        &format!("Поиск: {} · результатов: {}", search.display_text(), self.visible.len()),
+                    )?;
+                }
+            }
+            return Ok(());
+        }
         if let Message::Window(crate::event_loop::WindowEvent::Key {
             pressed: true,
             keysym,

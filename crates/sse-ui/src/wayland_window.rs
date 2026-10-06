@@ -21,6 +21,7 @@ struct Globals {
     shm: Option<(u32, u32)>,
     wm_base: Option<(u32, u32)>,
     seat: Option<(u32, u32)>,
+    text_input_manager: Option<(u32, u32)>,
 }
 
 #[derive(Clone, Copy)]
@@ -29,6 +30,7 @@ struct ReaderObjects {
     toplevel: u32,
     wm: u32,
     seat: Option<u32>,
+    text_input: Option<u32>,
     surface: u32,
 }
 
@@ -80,6 +82,14 @@ impl WaylandWindow {
         } else {
             None
         };
+        let text_input = if let (Some(manager_global), Some(seat)) = (globals.text_input_manager, seat) {
+            let manager = bind(&mut stream, Some(manager_global), "zwp_text_input_manager_v3", 1, 17)?;
+            let text_input = 18;
+            send(&mut stream, manager, 1, &u32s(&[text_input, seat]))?;
+            Some(text_input)
+        } else {
+            None
+        };
 
         let surface = 8;
         send(&mut stream, compositor, 0, &u32s(&[surface]))?;
@@ -111,6 +121,7 @@ impl WaylandWindow {
             toplevel,
             wm,
             seat,
+            text_input,
             surface,
         };
         std::thread::Builder::new()
@@ -123,7 +134,7 @@ impl WaylandWindow {
             surface,
             buffers: [first, second],
             size: (width, height),
-            next_object_id: 17,
+            next_object_id: 19,
             sync,
             closed,
         })
@@ -268,6 +279,7 @@ fn event_reader<U: Send + 'static>(
         toplevel,
         wm,
         seat,
+        text_input,
         surface,
     } = objects;
     const POINTER_ID: u32 = 13;
@@ -280,6 +292,7 @@ fn event_reader<U: Send + 'static>(
     let mut pointer_position = (0_i32, 0_i32);
     let mut ctrl = false;
     let mut shift = false;
+    let mut pending_ime = PendingTextInput::default();
 
     loop {
         if closed.lock().map(|value| *value).unwrap_or(true) {
@@ -316,6 +329,20 @@ fn event_reader<U: Send + 'static>(
             if let Some(serial) = read_u32(&payload, 0) {
                 let _ = send_shared(&writer, wm, 3, &u32s(&[serial]));
             }
+        } else if Some(object) == text_input {
+            if opcode == 1 && read_u32(&payload, 0) == Some(surface) {
+                for event in pending_ime.cancel() {
+                    if !proxy.window(WindowEvent::Ime(event)) {
+                        return;
+                    }
+                }
+            } else if let Some(events) = pending_ime.receive(opcode, &payload) {
+                for event in events {
+                    if !proxy.window(WindowEvent::Ime(event)) {
+                        return;
+                    }
+                }
+            }
         } else if Some(object) == seat && opcode == 0 {
             if let Some(capabilities) = read_u32(&payload, 0) {
                 if capabilities & SEAT_CAP_POINTER != 0
@@ -339,17 +366,39 @@ fn event_reader<U: Send + 'static>(
             match opcode {
                 1 => {
                     if read_u32(&payload, 4) == Some(surface) {
+                        if let Some(text_input) = text_input {
+                            let content_type = u32s(&[0, 0]);
+                            let cursor = i32s(&[0, 0, 1, 18]);
+                            let _ = send_shared(&writer, text_input, 5, &content_type);
+                            let _ = send_shared(&writer, text_input, 6, &cursor);
+                            let _ = send_shared(&writer, text_input, 1, &[]);
+                            let _ = send_shared(&writer, text_input, 7, &[]);
+                        }
                         let _ = proxy.window(WindowEvent::Focus(true));
                     }
                 }
                 2 => {
                     if read_u32(&payload, 4) == Some(surface) {
+                        if let Some(text_input) = text_input {
+                            let _ = send_shared(&writer, text_input, 2, &[]);
+                            let _ = send_shared(&writer, text_input, 7, &[]);
+                            for event in pending_ime.cancel() {
+                                if !proxy.window(WindowEvent::Ime(event)) {
+                                    return;
+                                }
+                            }
+                        }
                         let _ = proxy.window(WindowEvent::Focus(false));
                     }
                 }
                 3 => {
                     if let (Some(key), Some(state)) = (read_u32(&payload, 8), read_u32(&payload, 12)) {
                         if let Some(event) = keyboard_event(key, state != 0, ctrl, shift) {
+                            let event = if text_input.is_some() {
+                                without_key_text(event)
+                            } else {
+                                event
+                            };
                             let _ = proxy.window(event);
                         }
                     }
@@ -442,6 +491,25 @@ fn keyboard_event(key: u32, pressed: bool, ctrl: bool, shift: bool) -> Option<Wi
         ctrl,
         shift,
     })
+}
+
+fn without_key_text(event: WindowEvent) -> WindowEvent {
+    match event {
+        WindowEvent::Key {
+            text: _,
+            pressed,
+            keysym,
+            ctrl,
+            shift,
+        } => WindowEvent::Key {
+            pressed,
+            keysym,
+            text: None,
+            ctrl,
+            shift,
+        },
+        other => other,
+    }
 }
 
 fn evdev_key(key: u32, shift: bool) -> Option<(u32, Option<char>)> {
@@ -542,6 +610,7 @@ fn read_registry_until_done(stream: &mut UnixStream, callback: u32, globals: &mu
                     "wl_shm" => globals.shm = Some((name, version)),
                     "xdg_wm_base" => globals.wm_base = Some((name, version)),
                     "wl_seat" => globals.seat = Some((name, version)),
+                    "zwp_text_input_manager_v3" => globals.text_input_manager = Some((name, version)),
                     _ => {}
                 }
             }
@@ -679,6 +748,76 @@ fn read_i32(bytes: &[u8], offset: usize) -> Option<i32> {
     let end = offset.checked_add(4)?;
     Some(i32::from_ne_bytes(bytes.get(offset..end)?.try_into().ok()?))
 }
+
+#[derive(Default)]
+struct PendingTextInput {
+    preedit: Option<String>,
+    commit: Option<String>,
+    active: bool,
+}
+
+impl PendingTextInput {
+    fn receive(&mut self, opcode: u16, payload: &[u8]) -> Option<Vec<crate::event_loop::ImeEvent>> {
+        use crate::event_loop::ImeEvent;
+        match opcode {
+            2 => {
+                self.preedit = Some(read_wire_string(payload, 0)?);
+                None
+            }
+            3 => {
+                self.commit = Some(read_wire_string(payload, 0)?);
+                None
+            }
+            5 => {
+                let mut events = Vec::with_capacity(3);
+                if let Some(text) = self.commit.take().filter(|text| !text.is_empty()) {
+                    self.active = false;
+                    events.push(ImeEvent::Commit(text));
+                }
+                if let Some(text) = self.preedit.take() {
+                    if text.is_empty() {
+                        if self.active {
+                            self.active = false;
+                            events.push(ImeEvent::Cancel);
+                        }
+                    } else {
+                        if !self.active {
+                            self.active = true;
+                            events.push(ImeEvent::Start);
+                        }
+                        events.push(ImeEvent::Update(text));
+                    }
+                }
+                Some(events)
+            }
+            _ => None,
+        }
+    }
+
+    fn cancel(&mut self) -> Vec<crate::event_loop::ImeEvent> {
+        self.preedit = None;
+        self.commit = None;
+        if std::mem::replace(&mut self.active, false) {
+            vec![crate::event_loop::ImeEvent::Cancel]
+        } else {
+            Vec::new()
+        }
+    }
+}
+
+fn read_wire_string(bytes: &[u8], offset: usize) -> Option<String> {
+    let length = usize::try_from(read_u32(bytes, offset)?).ok()?;
+    let start = offset.checked_add(4)?;
+    if length == 0 {
+        return Some(String::new());
+    }
+    let end = start.checked_add(length)?;
+    let raw = bytes.get(start..end)?;
+    if raw.last() != Some(&0) {
+        return None;
+    }
+    String::from_utf8(raw.get(..length.checked_sub(1)?)?.to_vec()).ok()
+}
 fn align4(value: usize) -> usize {
     value.saturating_add(3) & !3
 }
@@ -700,8 +839,11 @@ fn io(error: std::io::Error) -> Error {
 
 #[cfg(test)]
 mod tests {
-    use super::{keyboard_event, parse_global, parse_pointer_event, valid_message_size, wire_message, wire_string};
-    use crate::event_loop::WindowEvent;
+    use super::{
+        keyboard_event, parse_global, parse_pointer_event, read_wire_string, valid_message_size, wire_message,
+        wire_string, without_key_text, PendingTextInput,
+    };
+    use crate::event_loop::{ImeEvent, WindowEvent};
 
     #[test]
     fn registry_global_decodes() {
@@ -748,6 +890,71 @@ mod tests {
                 ctrl: true,
                 shift: false,
             })
+        );
+    }
+
+    #[test]
+    fn text_input_v3_decodes_utf8_and_rejects_malformed_strings() {
+        let encoded = wire_string("かな");
+        assert_eq!(read_wire_string(&encoded, 0), Some("かな".to_owned()));
+        assert_eq!(read_wire_string(&[0, 0, 0, 0], 0), Some(String::new()));
+
+        assert_eq!(read_wire_string(&[8, 0, 0, 0, 0xc3, 0x28, 0, 0], 0), None);
+        assert_eq!(read_wire_string(&[2, 0, 0, 0, b'a'], 0), None);
+        assert_eq!(read_wire_string(&[1, 0, 0, 0, b'a'], 0), None);
+    }
+
+    #[test]
+    fn text_input_v3_updates_only_after_done_and_commits_once() {
+        let mut input = PendingTextInput::default();
+        let mut preedit = wire_string("かな");
+        preedit.extend_from_slice(&0_i32.to_ne_bytes());
+        preedit.extend_from_slice(&2_i32.to_ne_bytes());
+        assert_eq!(input.receive(2, &preedit), None);
+        assert_eq!(
+            input.receive(5, &[]),
+            Some(vec![ImeEvent::Start, ImeEvent::Update("かな".to_owned())])
+        );
+
+        let commit = wire_string("仮名");
+        assert_eq!(input.receive(3, &commit), None);
+        let empty_preedit = wire_string("");
+        assert_eq!(input.receive(2, &empty_preedit), None);
+        assert_eq!(input.receive(5, &[]), Some(vec![ImeEvent::Commit("仮名".to_owned())]));
+        assert!(input.cancel().is_empty());
+    }
+
+    #[test]
+    fn text_input_v3_cancels_active_preedit_on_empty_string_or_focus_loss() {
+        let mut input = PendingTextInput::default();
+        let preedit = wire_string("にほん");
+        assert_eq!(input.receive(2, &preedit), None);
+        assert_eq!(
+            input.receive(5, &[]),
+            Some(vec![ImeEvent::Start, ImeEvent::Update("にほん".to_owned())])
+        );
+        assert_eq!(input.receive(2, &wire_string("")), None);
+        assert_eq!(input.receive(5, &[]), Some(vec![ImeEvent::Cancel]));
+
+        assert_eq!(input.receive(2, &preedit), None);
+        assert_eq!(
+            input.receive(5, &[]),
+            Some(vec![ImeEvent::Start, ImeEvent::Update("にほん".to_owned())])
+        );
+        assert_eq!(input.cancel(), vec![ImeEvent::Cancel]);
+    }
+
+    #[test]
+    fn wayland_text_input_does_not_insert_keymap_fallback_before_commit() {
+        assert_eq!(
+            without_key_text(keyboard_event(30, true, false, false).unwrap_or_else(|| panic!("letter key expected"))),
+            WindowEvent::Key {
+                pressed: true,
+                keysym: u32::from('a'),
+                text: None,
+                ctrl: false,
+                shift: false,
+            }
         );
     }
 }

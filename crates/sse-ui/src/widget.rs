@@ -4,6 +4,7 @@
 //! paint order. Every visible change (text, look, hover, geometry) adds the old and new rectangles to the damage
 //! list; [`Tree::paint`] redraws only those rectangles and returns them for the backend to present.
 
+use crate::event_loop::ImeEvent;
 use crate::glyphs::{to_px, to_u32, Fonts, TextStyle};
 use crate::layout::{self, Constraints, Layout, NodeId, NodeKind, Size, Style};
 use crate::path::Icon;
@@ -192,6 +193,14 @@ struct Node {
     tooltip: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct InputComposition {
+    widget: WidgetId,
+    start: usize,
+    end: usize,
+    text: String,
+}
+
 /// Retained widget tree, its layout and its pending damage.
 pub struct Tree {
     nodes: Vec<Node>,
@@ -206,6 +215,7 @@ pub struct Tree {
     hover: Option<WidgetId>,
     pressed: Option<WidgetId>,
     focused: Option<WidgetId>,
+    input_composition: Option<InputComposition>,
     previous_dialog_focus: Option<WidgetId>,
     modal_dialog: Option<WidgetId>,
     overlay_host: Option<WidgetId>,
@@ -232,6 +242,7 @@ impl Tree {
             hover: None,
             pressed: None,
             focused: None,
+            input_composition: None,
             previous_dialog_focus: None,
             modal_dialog: None,
             overlay_host: None,
@@ -567,11 +578,109 @@ impl Tree {
             Content::Input { .. } => false,
             _ => return Err(Error::damaged("widget is not an input")),
         };
+        if self
+            .input_composition
+            .as_ref()
+            .is_some_and(|composition| composition.widget == id)
+        {
+            self.input_composition = None;
+        }
         if changed {
             self.mark_input_changed(id);
             self.restyle(id)?;
         }
         Ok(())
+    }
+
+    /// Applies an input-method event to the focused one-line input.
+    ///
+    /// Preedit text is displayed over the input without changing its stored value. A commit replaces the range
+    /// captured when composition started; cancellation discards the overlay.
+    ///
+    /// # Errors
+    /// Returns an error when the focused widget is not a valid input during a commit.
+    pub fn apply_ime_event(&mut self, event: &ImeEvent) -> Result<bool> {
+        let Some(widget) = self
+            .focused
+            .filter(|id| self.focused_is_input() && self.is_visible(*id))
+        else {
+            self.input_composition = None;
+            return Ok(false);
+        };
+        match event {
+            ImeEvent::Start => {
+                let end = self.input_text(widget)?.chars().count();
+                self.input_composition = Some(InputComposition {
+                    widget,
+                    start: end,
+                    end,
+                    text: String::new(),
+                });
+                if let Ok(rect) = self.rect(widget) {
+                    self.add_damage(rect);
+                }
+                Ok(true)
+            }
+            ImeEvent::Update(text) => {
+                if self
+                    .input_composition
+                    .as_ref()
+                    .is_none_or(|composition| composition.widget != widget)
+                {
+                    self.apply_ime_event(&ImeEvent::Start)?;
+                }
+                if let Some(composition) = self.input_composition.as_mut() {
+                    composition.text.clone_from(text);
+                }
+                if let Ok(rect) = self.rect(widget) {
+                    self.add_damage(rect);
+                }
+                Ok(true)
+            }
+            ImeEvent::Commit(text) => {
+                let composition = if let Some(composition) = self.input_composition.take() {
+                    composition
+                } else {
+                    let end = self.input_text(widget)?.chars().count();
+                    InputComposition {
+                        widget,
+                        start: end,
+                        end,
+                        text: String::new(),
+                    }
+                };
+                let original = self.input_text(widget)?.to_owned();
+                let committed = overlay_composition(&original, composition.start, composition.end, text);
+                self.set_input_text(widget, &committed)?;
+                Ok(true)
+            }
+            ImeEvent::Cancel => {
+                let Some(composition) = self.input_composition.take() else {
+                    return Ok(false);
+                };
+                if let Ok(rect) = self.rect(composition.widget) {
+                    self.add_damage(rect);
+                }
+                Ok(true)
+            }
+        }
+    }
+
+    /// Returns the text to render for an input, including active preedit text.
+    ///
+    /// # Errors
+    /// Returns an error for an unknown widget or a widget that is not an input.
+    pub fn input_display_text(&self, id: WidgetId) -> Result<String> {
+        let text = self.input_text(id)?;
+        let Some(composition) = self.input_composition.as_ref().filter(|value| value.widget == id) else {
+            return Ok(text.to_owned());
+        };
+        Ok(overlay_composition(
+            text,
+            composition.start,
+            composition.end,
+            &composition.text,
+        ))
     }
 
     /// Applies one portable keyboard edit to the focused input.
@@ -1060,6 +1169,7 @@ impl Tree {
         if self.focused == focus {
             return;
         }
+        self.input_composition = None;
         let old = self.focused.and_then(|id| self.nodes.get(id.0)).map(|node| node.rect);
         self.focused = focus;
         let new = self.focused.and_then(|id| self.nodes.get(id.0)).map(|node| node.rect);
@@ -1131,7 +1241,12 @@ impl Tree {
                 look.border = Some((Color::rgba(214, 166, 45, 255), 2.0));
             }
             let padding = node.style.padding;
-            let content = node.content.clone();
+            let mut content = node.content.clone();
+            if let Content::Input { text, .. } = &mut content {
+                if let Some(composition) = self.input_composition.as_ref().filter(|value| value.widget == id) {
+                    *text = overlay_composition(text, composition.start, composition.end, &composition.text);
+                }
+            }
             let previous_clip = surface.replace_clip(clipped_area);
             paint_node(
                 surface,
@@ -1201,6 +1316,21 @@ impl Tree {
             .get_mut(id.0)
             .ok_or_else(|| Error::Refused("unknown widget".to_owned()))
     }
+}
+
+fn overlay_composition(text: &str, start: usize, end: usize, composition: &str) -> String {
+    let mut chars = text.chars();
+    let mut displayed = String::new();
+    for _ in 0..start {
+        let Some(character) = chars.next() else { break };
+        displayed.push(character);
+    }
+    displayed.push_str(composition);
+    for _ in start..end {
+        let _ = chars.next();
+    }
+    displayed.extend(chars);
+    displayed
 }
 
 fn paint_node(
@@ -1410,6 +1540,7 @@ fn i32_to_f32(value: i32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::{Content, ImageData, Look, Tree, WidgetId};
+    use crate::event_loop::ImeEvent;
     use crate::glyphs::{Face, Fonts, TextStyle};
     use crate::layout::{Align, NodeKind, Size, Style};
     use crate::raster::Color;
@@ -1544,6 +1675,34 @@ mod tests {
         assert_eq!(tree.input_text(input)?, "profile");
         assert_eq!(tree.take_changed_inputs(), vec![input]);
         assert!(tree.take_changed_inputs().is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn focused_input_displays_preedit_without_committing_and_cancels_it() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let input = tree.add(
+            None,
+            NodeKind::Leaf,
+            Style::default(),
+            Content::Input {
+                text: "x".to_owned(),
+                style: TextStyle::new(Face::Body, 14.0),
+            },
+            Look::default(),
+        )?;
+        tree.set_focus(Some(input))?;
+        assert!(tree.apply_ime_event(&ImeEvent::Start)?);
+        assert!(tree.apply_ime_event(&ImeEvent::Update("かな".to_owned()))?);
+        assert_eq!(tree.input_text(input)?, "x");
+        assert_eq!(tree.input_display_text(input)?, "xかな");
+        assert!(tree.apply_ime_event(&ImeEvent::Cancel)?);
+        assert_eq!(tree.input_display_text(input)?, "x");
+
+        assert!(tree.apply_ime_event(&ImeEvent::Start)?);
+        assert!(tree.apply_ime_event(&ImeEvent::Update("かな".to_owned()))?);
+        assert!(tree.apply_ime_event(&ImeEvent::Commit("仮名".to_owned()))?);
+        assert_eq!(tree.input_text(input)?, "x仮名");
         Ok(())
     }
 

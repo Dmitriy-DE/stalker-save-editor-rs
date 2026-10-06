@@ -65,12 +65,27 @@ pub enum WindowEvent {
         /// Shift held.
         shift: bool,
     },
+    /// Input-method composition. Preedit is temporary until `Commit` arrives.
+    Ime(ImeEvent),
     /// Window gained or lost keyboard focus.
     Focus(bool),
     /// The user asked to close the window.
     CloseRequested,
     /// The connection to the display is gone.
     Disconnected,
+}
+
+/// Text composition produced by a platform input method.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ImeEvent {
+    /// A new composition began.
+    Start,
+    /// The visible preedit changed; the document buffer remains untouched.
+    Update(String),
+    /// The input method committed text into the document.
+    Commit(String),
+    /// The input method cancelled the active composition.
+    Cancel,
 }
 
 /// Anything that wakes the UI thread.
@@ -259,12 +274,12 @@ pub fn dispatch<U, A: App<U>>(tree: &mut Tree, app: &mut A, message: &Message<U>
 fn handle<U, A: App<U>>(tree: &mut Tree, app: &mut A, message: &Message<U>) -> Flow {
     let mut clicked = None;
     if let Message::Window(event) = message {
-        match *event {
-            WindowEvent::DpiChanged { scale } => tree.set_scale(scale),
-            WindowEvent::Resized { width, height } => tree.resize(width, height),
-            WindowEvent::Exposed(rect) => tree.add_damage(rect),
+        match event {
+            WindowEvent::DpiChanged { scale } => tree.set_scale(*scale),
+            WindowEvent::Resized { width, height } => tree.resize(*width, *height),
+            WindowEvent::Exposed(rect) => tree.add_damage(*rect),
             WindowEvent::PointerMoved { x, y } => {
-                tree.pointer_moved(x, y);
+                tree.pointer_moved(*x, *y);
             }
             WindowEvent::PointerLeft => tree.pointer_left(),
             WindowEvent::Button {
@@ -272,7 +287,7 @@ fn handle<U, A: App<U>>(tree: &mut Tree, app: &mut A, message: &Message<U>) -> F
                 pressed,
                 x,
                 y,
-            } => clicked = tree.pointer_button(pressed, x, y),
+            } => clicked = tree.pointer_button(*pressed, *x, *y),
             WindowEvent::Key {
                 pressed: true,
                 keysym,
@@ -281,7 +296,10 @@ fn handle<U, A: App<U>>(tree: &mut Tree, app: &mut A, message: &Message<U>) -> F
                 ..
             } => {
                 let text_buffer = text.map(|ch| ch.to_string());
-                let _ = tree.edit_focused_input(keysym, text_buffer.as_deref());
+                let _ = tree.edit_focused_input(*keysym, text_buffer.as_deref());
+            }
+            WindowEvent::Ime(event) => {
+                let _ = tree.apply_ime_event(event);
             }
             WindowEvent::CloseRequested => return app.close_requested(tree, message),
             WindowEvent::Disconnected => {

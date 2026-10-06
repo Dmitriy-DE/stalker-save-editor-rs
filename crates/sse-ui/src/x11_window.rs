@@ -219,6 +219,8 @@ impl X11Window {
         let decoder = Connection::new(Silent, ORDER, &setup);
         #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
         let shm_event_base = shm.as_ref().map(|buffer| buffer.event_base);
+        #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+        let xim = sse_sys::x11_ime::X11Ime::open(&display, window.0);
         let thread = Reader {
             stream: reader,
             decoder,
@@ -231,6 +233,12 @@ impl X11Window {
             completion_tx,
             #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
             shm_event_base,
+            #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+            xim,
+            #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+            pending_ime_commit: None,
+            #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+            pending_ime_events: Vec::new(),
         };
         std::thread::Builder::new()
             .name("x11-events".to_owned())
@@ -529,6 +537,12 @@ struct Reader {
     completion_tx: mpsc::Sender<u32>,
     #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
     shm_event_base: Option<u8>,
+    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    xim: Option<sse_sys::x11_ime::X11Ime>,
+    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    pending_ime_commit: Option<String>,
+    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    pending_ime_events: Vec<sse_sys::x11_ime::PreeditEvent>,
 }
 
 impl Reader {
@@ -562,6 +576,23 @@ impl Reader {
             };
             if let Some(converted) = self.convert(event) {
                 if !proxy.window(converted) {
+                    return;
+                }
+            }
+            #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+            for event in std::mem::take(&mut self.pending_ime_events) {
+                let event = match event {
+                    sse_sys::x11_ime::PreeditEvent::Start => crate::event_loop::ImeEvent::Start,
+                    sse_sys::x11_ime::PreeditEvent::Update(text) => crate::event_loop::ImeEvent::Update(text),
+                    sse_sys::x11_ime::PreeditEvent::Cancel => crate::event_loop::ImeEvent::Cancel,
+                };
+                if !proxy.window(WindowEvent::Ime(event)) {
+                    return;
+                }
+            }
+            #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+            if let Some(text) = self.pending_ime_commit.take() {
+                if !proxy.window(WindowEvent::Ime(crate::event_loop::ImeEvent::Commit(text))) {
                     return;
                 }
             }
@@ -607,7 +638,13 @@ impl Reader {
                 }),
             },
             Event::Key {
-                pressed, detail, state, ..
+                pressed,
+                detail,
+                state,
+                time,
+                x,
+                y,
+                ..
             } => {
                 let shift = state & SHIFT_MASK != 0;
                 let row = self.keymap.get(usize::from(detail.saturating_sub(self.min_keycode)))?;
@@ -617,15 +654,44 @@ impl Reader {
                 } else {
                     lower
                 };
+                #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+                let (text, through_ime) = if pressed {
+                    if let Some(xim) = self.xim.as_mut() {
+                        let text = xim.lookup(detail, state, time, x, y);
+                        self.pending_ime_events.extend(xim.take_preedit_events());
+                        (text, true)
+                    } else {
+                        (keysym_to_char(keysym).map(|character| character.to_string()), false)
+                    }
+                } else {
+                    (None, self.xim.is_some())
+                };
+                #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+                if let Some(text) = text.as_ref().filter(|value| !value.is_empty()) {
+                    self.pending_ime_commit = Some(text.clone());
+                }
+                #[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))))]
+                let text = keysym_to_char(keysym).map(|character| character.to_string());
                 Some(WindowEvent::Key {
                     pressed,
                     keysym,
-                    text: keysym_to_char(keysym),
+                    text: if through_ime {
+                        None
+                    } else {
+                        text.and_then(|value| value.chars().next())
+                    },
                     ctrl: state & CONTROL_MASK != 0,
                     shift,
                 })
             }
-            Event::Focus { focused, .. } => Some(WindowEvent::Focus(focused)),
+            Event::Focus { focused, .. } => {
+                #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+                if let Some(xim) = self.xim.as_mut() {
+                    xim.set_focus(focused);
+                    self.pending_ime_events.extend(xim.take_preedit_events());
+                }
+                Some(WindowEvent::Focus(focused))
+            }
             Event::ClientMessage { data, .. } if data.get(0..4) == Some(&self.delete.0.to_le_bytes()[..]) => {
                 Some(WindowEvent::CloseRequested)
             }
