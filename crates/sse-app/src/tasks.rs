@@ -303,9 +303,14 @@ impl TaskManager {
                         let _ = sender.send(TaskEvent::Completed(task_id, Box::new(val)));
                     }
                     Err(err) => {
+                        crate::diagnostics::error(&format!("background task '{name}' ({task_id:?}) failed: {err}"));
                         let _ = sender.send(TaskEvent::Failed(task_id, err));
                     }
                 }
+            })
+            .map_err(|error| {
+                crate::diagnostics::error(&format!("background task '{name}' failed to start: {error}"));
+                error
             })?;
 
         let mut tasks_lock = self.tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
