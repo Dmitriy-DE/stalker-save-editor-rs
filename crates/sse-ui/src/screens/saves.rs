@@ -7607,6 +7607,7 @@ mod tests {
             &path,
             include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-source.sav"),
         )?;
+        let expected_path = fs::canonicalize(&path)?;
         let (proxy, receiver) = channel_pair::<AppMessage>();
         let mut overview = Overview::new(Workspace::with_draft_directory(temp.0.join("drafts")));
         let mut app = sse_app::AppState::new();
@@ -7640,7 +7641,7 @@ mod tests {
         assert_eq!(completion.request, overview.workspace.lock().load_request);
         assert_eq!(
             completion.selected_path.as_deref(),
-            Some(path.as_path()),
+            Some(expected_path.as_path()),
             "background loader did not return the fixture path"
         );
         let mut cx = Context {
@@ -7650,7 +7651,7 @@ mod tests {
             app: &mut app,
         };
         overview.message(&mut cx, &message, None)?;
-        assert_eq!(cx.app.current_save(), Some(path.as_path()));
+        assert_eq!(cx.app.current_save(), Some(expected_path.as_path()));
         assert_eq!(cx.app.current_save_format(), Some("stalker-cop"));
         assert!(!cx.app.current_save_is_legacy());
         let source_sha256 = sse_codecs::sha256::sha256_hex(include_bytes!(

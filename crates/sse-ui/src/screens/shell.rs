@@ -2442,6 +2442,7 @@ mod tests {
             &path,
             include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-source.sav"),
         )?;
+        let expected_path = std::fs::canonicalize(&path)?;
         let (proxy, receiver) = channel_pair::<super::super::AppMessage>();
         let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
         let mut shell = Shell::build_for_test(&mut tree, None)?;
@@ -2502,7 +2503,7 @@ mod tests {
         assert!(!tree.dialog_open());
 
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
-        while shell.app.current_save() != Some(path.as_path()) {
+        while shell.app.current_save() != Some(expected_path.as_path()) {
             let remaining = deadline.saturating_duration_since(std::time::Instant::now());
             if remaining.is_zero() {
                 let _ = std::fs::remove_file(&path);
@@ -2535,6 +2536,8 @@ mod tests {
         let fixture = include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-source.sav");
         std::fs::write(&first, fixture)?;
         std::fs::write(&second, fixture)?;
+        let expected_first_path = std::fs::canonicalize(&first)?;
+        let expected_second_path = std::fs::canonicalize(&second)?;
 
         let (proxy, receiver) = channel_pair::<super::super::AppMessage>();
         let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
@@ -2544,7 +2547,7 @@ mod tests {
 
         assert!(shell.open_save(&mut tree, &first)?);
         let seed_request = shell.library_workspace.load_request();
-        while shell.app.current_save() != Some(first.as_path()) {
+        while shell.app.current_save() != Some(expected_first_path.as_path()) {
             let message = receiver
                 .recv_timeout(std::time::Duration::from_secs(10))
                 .map_err(|error| sse_core::Error::System(error.to_string()))?;
@@ -2609,17 +2612,21 @@ mod tests {
             }
         }
 
-        assert_eq!(completed, 3, "a failed file must not stop later selections");
+        assert_eq!(
+            completed,
+            3,
+            "a failed file must not stop later selections; load results: {results:?}; states: {states:?}; overview refreshes: {overview_refreshes}"
+        );
         assert!(
             second_request.is_some(),
             "the second load starts after the first completes"
         );
         let (_, _, slots) = shell.library_workspace.library_snapshot();
-        assert!(slots.iter().any(|slot| slot.path == first));
-        assert!(slots.iter().any(|slot| slot.path == second));
+        assert!(slots.iter().any(|slot| slot.path == expected_first_path));
+        assert!(slots.iter().any(|slot| slot.path == expected_second_path));
         assert_eq!(
             shell.app.current_save(),
-            Some(second.as_path()),
+            Some(expected_second_path.as_path()),
             "load results: {results:?}; states: {states:?}; overview refreshes: {overview_refreshes}"
         );
 
@@ -3061,6 +3068,7 @@ mod tests {
         let fixture = include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-source.sav");
         let path = std::env::temp_dir().join(format!("sse-shell-ctrl-f-{}.sav", std::process::id()));
         std::fs::write(&path, fixture)?;
+        let expected_path = std::fs::canonicalize(&path)?;
         let (proxy, receiver) = channel_pair::<super::super::AppMessage>();
         let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
         let mut shell = Shell::build_for_test(&mut tree, None)?;
@@ -3068,7 +3076,7 @@ mod tests {
         shell.set_proxy(proxy);
         assert!(shell.open_save(&mut tree, &path)?);
 
-        while shell.app.current_save() != Some(path.as_path()) {
+        while shell.app.current_save() != Some(expected_path.as_path()) {
             let loaded = receiver
                 .recv_timeout(std::time::Duration::from_secs(10))
                 .map_err(|error| sse_core::Error::System(error.to_string()))?;
