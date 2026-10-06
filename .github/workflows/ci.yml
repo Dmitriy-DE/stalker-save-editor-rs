@@ -3,6 +3,8 @@ on:
   pull_request:
   push:
     branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -91,4 +93,37 @@ jobs:
           name: test-build-${{ runner.os }}
           path: test-build/
           retention-days: 14
+          if-no-files-found: error
+
+  packages:
+    # Unsigned release packages via tools/package.sh; run by hand or on a v* tag.
+    # The owner signs the manifest locally with --manifest-only; no key lives in CI.
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            targets: x86_64-unknown-linux-gnu x86_64-pc-windows-gnu
+          - os: macos-14
+            targets: aarch64-apple-darwin x86_64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Toolchains
+        shell: bash
+        run: |
+          for t in ${{ matrix.targets }}; do rustup target add "$t"; done
+          if [ "${{ runner.os }}" = "Linux" ]; then sudo apt-get update && sudo apt-get install -y mingw-w64; fi
+      - name: Package
+        shell: bash
+        run: |
+          args=""; for t in ${{ matrix.targets }}; do args="$args --target $t"; done
+          tools/package.sh $args
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages-${{ runner.os }}
+          path: dist/
+          retention-days: 30
           if-no-files-found: error
