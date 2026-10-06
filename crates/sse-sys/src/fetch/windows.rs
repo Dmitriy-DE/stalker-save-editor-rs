@@ -178,6 +178,28 @@ pub(super) fn get(
     range_from: u64,
     sink: &mut dyn FnMut(&[u8]) -> bool,
 ) -> Result<Response> {
+    request(config, url, "GET", range_from, None, &[], sink)
+}
+
+pub(super) fn post(
+    config: &SystemFetch,
+    url: &str,
+    content_type: &str,
+    body: &[u8],
+    sink: &mut dyn FnMut(&[u8]) -> bool,
+) -> Result<Response> {
+    request(config, url, "POST", 0, Some(content_type), body, sink)
+}
+
+fn request(
+    config: &SystemFetch,
+    url: &str,
+    method: &str,
+    range_from: u64,
+    content_type: Option<&str>,
+    body: &[u8],
+    sink: &mut dyn FnMut(&[u8]) -> bool,
+) -> Result<Response> {
     let (host, port, path) = parse_https(url)?;
     let agent = wide("S.T.A.L.K.E.R. Save Editor/2");
     // SAFETY: NUL-terminated agent is valid and automatic proxy asks WinHTTP to use OS proxy configuration.
@@ -196,7 +218,7 @@ pub(super) fn get(
     if connect.0.is_null() {
         return Err(Error::System("WinHttpConnect failed".to_owned()));
     }
-    let verb = wide("GET");
+    let verb = wide(method);
     let path_w = wide(&path);
     // SAFETY: connect is live; verb/path are NUL-terminated; null optional arguments select defaults.
     let request = Handle(unsafe {
@@ -213,7 +235,11 @@ pub(super) fn get(
     if request.0.is_null() {
         return Err(Error::System("WinHttpOpenRequest failed".to_owned()));
     }
-    let policy = REDIRECT_POLICY_DISALLOW_HTTPS_TO_HTTP;
+    let policy = if method == "POST" {
+        0
+    } else {
+        REDIRECT_POLICY_DISALLOW_HTTPS_TO_HTTP
+    };
     // SAFETY: request is live and option buffer points to a DWORD policy.
     if unsafe {
         WinHttpSetOption(
@@ -239,19 +265,39 @@ pub(super) fn get(
     {
         return Err(Error::System("WinHTTP redirect limit configuration failed".to_owned()));
     }
-    let range = if range_from == 0 {
-        None
-    } else {
-        Some(wide(&format!("Range: bytes={range_from}-\r\n")))
-    };
-    let (headers, headers_len) = range.as_ref().map_or((ptr::null(), 0), |value| {
+    let mut header_text = String::new();
+    if range_from != 0 {
+        header_text.push_str(&format!("Range: bytes={range_from}-\r\n"));
+    }
+    if let Some(content_type) = content_type {
+        header_text.push_str(&format!("Content-Type: {content_type}\r\n"));
+    }
+    let headers = (!header_text.is_empty()).then(|| wide(&header_text));
+    let (headers_pointer, headers_len) = headers.as_ref().map_or((ptr::null(), 0), |value| {
         (
             value.as_ptr(),
             u32::try_from(value.len().saturating_sub(1)).unwrap_or_default(),
         )
     });
-    // SAFETY: request and optional header storage remain live through SendRequest.
-    if unsafe { WinHttpSendRequest(request.0, headers, headers_len, ptr::null_mut(), 0, 0, 0) } == 0 {
+    let body_length = u32::try_from(body.len()).map_err(|_| Error::Refused("POST body is too large".to_owned()))?;
+    let body_pointer = if body.is_empty() {
+        ptr::null_mut()
+    } else {
+        body.as_ptr().cast_mut().cast::<c_void>()
+    };
+    // SAFETY: request, headers, and body remain live through the synchronous send call.
+    if unsafe {
+        WinHttpSendRequest(
+            request.0,
+            headers_pointer,
+            headers_len,
+            body_pointer,
+            body_length,
+            body_length,
+            0,
+        )
+    } == 0
+    {
         return Err(Error::System("WinHttpSendRequest failed".to_owned()));
     }
     // SAFETY: request is live and no reserved argument is supplied.

@@ -95,6 +95,11 @@ struct PreviewRequest {
     key: PreviewKey,
 }
 
+struct ReportUploadFinished {
+    result: std::result::Result<String, String>,
+    local_saved: bool,
+}
+
 #[derive(Default)]
 struct LibraryPreviewState {
     entries: VecDeque<LibraryPreviewEntry>,
@@ -314,6 +319,8 @@ pub struct Shell {
     report_send: WidgetId,
     report_cancel: WidgetId,
     pending_report: Option<String>,
+    report_upload_pending: bool,
+    reports_consented: bool,
     saving_dialog: WidgetId,
     force_close_dialog: WidgetId,
     force_close_message: WidgetId,
@@ -1173,6 +1180,8 @@ impl Shell {
             report_send,
             report_cancel,
             pending_report: sse_app::diagnostics::pending_automatic_error_report(),
+            report_upload_pending: false,
+            reports_consented: settings.send_reports && settings.reports_notice_shown,
             saving_dialog,
             force_close_dialog,
             force_close_message,
@@ -1227,6 +1236,7 @@ impl Shell {
         let stack = std::backtrace::Backtrace::force_capture().to_string();
         self.pending_report = Some(sse_app::diagnostics::automatic_error_report(error, &stack));
         let settings = sse_app::AppSettings::load(&sse_app::default_settings_path());
+        self.reports_consented = settings.send_reports && settings.reports_notice_shown;
         if settings.send_reports && settings.reports_notice_shown {
             let _ = self.open_pending_report_dialog(tree);
         }
@@ -2012,6 +2022,25 @@ impl Shell {
             }
             return Ok(Flow::Continue);
         }
+        if let Message::User(AppMessage::ToScreen(ScreenId::Overview, payload)) = message {
+            if let Some(finished) = payload.downcast_ref::<ReportUploadFinished>() {
+                self.report_upload_pending = false;
+                tree.set_text(self.report_send, &report_text("Отправить"))?;
+                let status = match &finished.result {
+                    Ok(report_id) => report_text("Отчёт отправлен, номер: {0}").replace("{0}", report_id),
+                    Err(error) => {
+                        let mut text = report_text("Отчёт не отправлен: {0}").replace("{0}", error);
+                        if finished.local_saved {
+                            text.push(' ');
+                            text.push_str(&report_text("Отчёт сохраняется локально; ничего не отправляется."));
+                        }
+                        text
+                    }
+                };
+                tree.set_text(self.status, &status)?;
+                return Ok(Flow::Continue);
+            }
+        }
         self.sync_game_sounds();
         if matches!(message, Message::User(AppMessage::Tick(_))) {
             let _ = tree.tick_tooltip();
@@ -2108,6 +2137,7 @@ impl Shell {
             tree.set_text(self.status, &text)?;
         }
         if clicked.is_some() && clicked == Some(self.reports_ok) {
+            self.reports_consented = true;
             let _ = sse_app::settings_writer::submit(sse_app::settings_writer::SettingsPatch::ReportsNotice {
                 send_reports: Some(true),
             });
@@ -2119,6 +2149,7 @@ impl Shell {
             return Ok(Flow::Continue);
         }
         if clicked.is_some() && clicked == Some(self.reports_off) {
+            self.reports_consented = false;
             let _ = sse_app::settings_writer::submit(sse_app::settings_writer::SettingsPatch::ReportsNotice {
                 send_reports: Some(false),
             });
@@ -2140,25 +2171,45 @@ impl Shell {
             return Ok(Flow::Continue);
         }
         if clicked.is_some() && clicked == Some(self.report_send) {
-            if let Some(report) = self.pending_report.take() {
-                match sse_app::diagnostics::save_automatic_error_report(&report) {
-                    Ok(_) => {
-                        let text = if sse_app::diagnostics::automatic_report_endpoint().is_some() {
-                            report_text(
-                                "Отчёт сохранён локально; HTTPS-приёмник будет использован после включения сервера.",
-                            )
-                        } else {
-                            report_text("Приёмник отчётов пока не настроен. Отчёт сохранён локально.")
-                        };
-                        tree.set_text(self.status, &text)?;
-                    }
-                    Err(error) => tree.set_text(
-                        self.status,
-                        &format!("{}: {error}", report_text("Не удалось сохранить отчёт")),
-                    )?,
-                }
+            if self.report_upload_pending {
+                tree.set_text(self.status, &report_text("Отчёт уже собирается."))?;
+                return Ok(Flow::Continue);
             }
-            sse_app::diagnostics::dismiss_crash();
+            if !self.reports_consented {
+                tree.set_text(self.status, &report_text("Отправка анонимных отчётов отключена."))?;
+                return Ok(Flow::Continue);
+            }
+            let Some(proxy) = self.proxy.clone() else {
+                tree.set_text(self.status, &report_text("Фоновая очередь недоступна."))?;
+                return Ok(Flow::Continue);
+            };
+            if let Some(report) = self.pending_report.take() {
+                self.report_upload_pending = true;
+                tree.set_text(self.report_send, &report_text("Отправляю отчёт…"))?;
+                tree.set_text(self.status, &report_text("Отправляю отчёт…"))?;
+                sse_app::tasks::spawn_named_detached("diagnostics-upload", move || {
+                    let (result, local_saved) = match sse_app::diagnostics::save_automatic_error_report(&report) {
+                        Ok(_) => {
+                            sse_app::diagnostics::dismiss_crash();
+                            (
+                                sse_app::diagnostics::upload_automatic_error_report(&report).map_err(|error| {
+                                    sse_app::diagnostics::error(&format!("diagnostics upload: {error}"));
+                                    error.to_string()
+                                }),
+                                true,
+                            )
+                        }
+                        Err(error) => {
+                            sse_app::diagnostics::error(&format!("diagnostics local save: {error}"));
+                            (Err(error.to_string()), false)
+                        }
+                    };
+                    let _ = proxy.send(AppMessage::ToScreen(
+                        ScreenId::Overview,
+                        Box::new(ReportUploadFinished { result, local_saved }),
+                    ));
+                });
+            }
             if tree.dialog() == Some(self.report_dialog) {
                 let _ = tree.close_dialog()?;
             }
