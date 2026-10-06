@@ -147,7 +147,7 @@ mod tests {
     #[test]
     fn separates_multiple_paths_and_preserves_spaces_and_unicode() {
         let paths = parse_selection_output("/tmp/первый сейв.sav\u{1f}/tmp/second save.sav\n".as_bytes())
-            .expect("valid picker output");
+            .unwrap_or_else(|error| panic!("{error:?}"));
         assert_eq!(
             paths,
             [
@@ -159,15 +159,15 @@ mod tests {
 
     #[test]
     fn ignores_empty_output_fields_and_rejects_relative_paths() {
-        let paths = parse_selection_output(b"/tmp/one.sav\x1f\x1f\n").expect("valid picker output");
+        let paths = parse_selection_output(b"/tmp/one.sav\x1f\x1f\n").unwrap_or_else(|error| panic!("{error:?}"));
         assert_eq!(paths, [PathBuf::from("/tmp/one.sav")]);
         assert!(parse_selection_output(b"relative.sav").is_err());
     }
 
     #[test]
     fn native_picker_status_distinguishes_cancel_from_failure() {
-        assert!(parse_selection_status(0).expect("success status"));
-        assert!(!parse_selection_status(1).expect("cancel status"));
+        assert!(matches!(parse_selection_status(0), Ok(true)));
+        assert!(matches!(parse_selection_status(1), Ok(false)));
         assert!(parse_selection_status(5).is_err());
     }
 
@@ -176,7 +176,7 @@ mod tests {
         let bytes = vec![b'x'; MAX_PICKER_OUTPUT_BYTES + 1];
         assert!(read_picker_output(bytes.as_slice()).is_err());
         assert_eq!(
-            read_picker_output(b"/tmp/save.sav".as_slice()).expect("small output"),
+            read_picker_output(b"/tmp/save.sav".as_slice()).unwrap_or_else(|error| panic!("{error:?}")),
             b"/tmp/save.sav"
         );
     }
