@@ -109,6 +109,20 @@ pub struct IconInfo {
     pub color: Hbitmap,
 }
 #[repr(C)]
+pub struct ProcessEntry32W {
+    pub size: Dword,
+    pub usage: Dword,
+    pub process_id: Dword,
+    pub default_heap_id: usize,
+    pub module_id: Dword,
+    pub threads: Dword,
+    pub parent_process_id: Dword,
+    pub priority_class_base: i32,
+    pub flags: Dword,
+    pub executable: [u16; 260],
+}
+
+#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Guid {
     pub a: u32,
@@ -205,6 +219,13 @@ unsafe extern "system" {
     pub fn GlobalUnlock(memory: Handle) -> Bool;
     pub fn GlobalSize(memory: Handle) -> usize;
     pub fn GlobalFree(memory: Handle) -> Handle;
+    pub fn CreateToolhelp32Snapshot(flags: Dword, process_id: Dword) -> Handle;
+    pub fn Process32FirstW(snapshot: Handle, entry: *mut ProcessEntry32W) -> Bool;
+    pub fn Process32NextW(snapshot: Handle, entry: *mut ProcessEntry32W) -> Bool;
+}
+#[link(name = "shell32")]
+unsafe extern "system" {
+    pub fn SHGetKnownFolderPath(id: *const Guid, flags: Dword, token: Handle, path: *mut *mut u16) -> i32;
 }
 #[link(name = "ole32")]
 unsafe extern "system" {
