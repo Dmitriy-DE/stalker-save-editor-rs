@@ -7,9 +7,10 @@
 use crate::glyphs::{to_px, to_u32, Fonts, TextStyle};
 use crate::layout::{self, Constraints, Layout, NodeId, NodeKind, Size, Style};
 use crate::path::Icon;
-use crate::raster::{Color, MaskRef, Radii, Rect, Surface};
+use crate::raster::{Color, ImageFilter, ImageRef, MaskRef, Radii, Rect, Surface};
 use crate::widgets::icon::IconCache;
 use sse_core::{Error, Result};
+use std::sync::Arc;
 
 /// Damage rectangles kept separately before they are merged into one bounding box.
 const MAX_DAMAGE_RECTS: usize = 16;
@@ -24,6 +25,42 @@ impl WidgetId {
     #[must_use]
     pub const fn index(self) -> usize {
         self.0
+    }
+}
+
+/// Shared premultiplied BGRA image data shown by an image widget.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ImageData {
+    /// Image width in pixels.
+    pub width: u32,
+    /// Image height in pixels.
+    pub height: u32,
+    /// Row-major premultiplied BGRA pixels.
+    pub pixels: Arc<[u32]>,
+}
+
+impl ImageData {
+    /// Creates image data after validating that the pixel plane matches its dimensions.
+    ///
+    /// # Errors
+    /// Returns damage for empty dimensions or a mismatched pixel count.
+    pub fn new(width: u32, height: u32, pixels: Vec<u32>) -> Result<Self> {
+        let expected = usize::try_from(width)
+            .ok()
+            .and_then(|width| {
+                usize::try_from(height)
+                    .ok()
+                    .and_then(|height| width.checked_mul(height))
+            })
+            .ok_or_else(|| Error::damaged("image dimensions overflow"))?;
+        if width == 0 || height == 0 || pixels.len() != expected {
+            return Err(Error::damaged("image dimensions do not match its pixel plane"));
+        }
+        Ok(Self {
+            width,
+            height,
+            pixels: pixels.into(),
+        })
     }
 }
 
@@ -83,6 +120,8 @@ impl Default for Look {
 pub enum Content {
     /// A box: background, border, children.
     Panel,
+    /// A scaled image, with pixels shared across retained-tree redraws.
+    Image(Option<ImageData>),
     /// One line of text.
     Label {
         /// Text.
@@ -125,7 +164,7 @@ pub enum Content {
 impl Content {
     fn text(&self) -> Option<(&str, TextStyle)> {
         match self {
-            Self::Panel => None,
+            Self::Panel | Self::Image(_) => None,
             Self::Label { text, style }
             | Self::Input { text, style }
             | Self::Paragraph { text, style }
@@ -400,6 +439,44 @@ impl Tree {
             _ => return Ok(()),
         }
         self.restyle(id)
+    }
+
+    /// Sets image data on an image widget and damages its current bounds.
+    ///
+    /// # Errors
+    /// Returns damage if `id` is not an image widget.
+    pub fn set_image(&mut self, id: WidgetId, image: Option<ImageData>) -> Result<()> {
+        let node = self.node_mut(id)?;
+        let Content::Image(current) = &mut node.content else {
+            return Err(Error::damaged("widget is not an image"));
+        };
+        let unchanged = match (&*current, &image) {
+            (Some(current), Some(next)) => {
+                current.width == next.width
+                    && current.height == next.height
+                    && Arc::ptr_eq(&current.pixels, &next.pixels)
+            }
+            (None, None) => true,
+            _ => false,
+        };
+        if unchanged {
+            return Ok(());
+        }
+        *current = image;
+        let rect = node.rect;
+        self.add_damage(rect);
+        Ok(())
+    }
+
+    /// Returns the image stored by an image widget.
+    ///
+    /// # Errors
+    /// Returns damage for an unknown widget or a non-image widget.
+    pub fn image(&self, id: WidgetId) -> Result<Option<&ImageData>> {
+        match &self.node(id)?.content {
+            Content::Image(image) => Ok(image.as_ref()),
+            _ => Err(Error::damaged("widget is not an image")),
+        }
     }
 
     /// Returns the current value of an input widget.
@@ -1147,8 +1224,10 @@ fn paint_node(
     if let Some(color) = fill {
         surface.fill_rect(rect, radii, color);
     }
-    if let Some((color, width)) = look.border {
-        surface.border(rect, radii, f64::from(width), color);
+    if !matches!(content, Content::Image(_)) {
+        if let Some((color, width)) = look.border {
+            surface.border(rect, radii, f64::from(width), color);
+        }
     }
     if let Some((color, width)) = look.accent_bar {
         surface.fill_rect(
@@ -1156,6 +1235,29 @@ fn paint_node(
             Radii::ZERO,
             color,
         );
+    }
+    if let Content::Image(Some(image)) = content {
+        if let Ok(source) = ImageRef::new(&image.pixels, image.width, image.height, image.width as usize) {
+            let x = rect.x.saturating_add(to_px(padding.left));
+            let y = rect.y.saturating_add(to_px(padding.top));
+            let destination = Rect::new(
+                x,
+                y,
+                rect.width.saturating_sub(to_u32(padding.left + padding.right)),
+                rect.height.saturating_sub(to_u32(padding.top + padding.bottom)),
+            );
+            surface.blit_image(source, destination, ImageFilter::Bilinear);
+        }
+        if let Some((color, width)) = look.border {
+            surface.border(rect, radii, f64::from(width), color);
+        }
+        return;
+    }
+    if matches!(content, Content::Image(None)) {
+        if let Some((color, width)) = look.border {
+            surface.border(rect, radii, f64::from(width), color);
+        }
+        return;
     }
     if let Content::IconButton { icon, .. } = content {
         let size = u16::try_from(rect.height.min(18)).unwrap_or(18);
@@ -1307,10 +1409,41 @@ fn i32_to_f32(value: i32) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{Content, Look, Tree, WidgetId};
+    use super::{Content, ImageData, Look, Tree, WidgetId};
     use crate::glyphs::{Face, Fonts, TextStyle};
     use crate::layout::{Align, NodeKind, Size, Style};
     use crate::raster::Color;
+
+    #[test]
+    fn image_widget_paints_shared_premultiplied_pixels() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let image = tree.add(
+            None,
+            NodeKind::Leaf,
+            Style {
+                preferred: Size::new(1.0, 1.0),
+                min: Size::new(1.0, 1.0),
+                ..Style::default()
+            },
+            Content::Image(None),
+            Look::default(),
+        )?;
+        tree.set_image(
+            image,
+            Some(ImageData::new(1, 1, vec![Color::rgba(255, 0, 0, 255).to_u32()])?),
+        )?;
+        tree.resize(1, 1);
+        let mut frame = vec![0_u32; 1];
+        tree.paint(&mut frame, 1)?;
+        assert_eq!(frame, vec![Color::rgba(255, 0, 0, 255).to_u32()]);
+        Ok(())
+    }
+
+    #[test]
+    fn image_data_rejects_invalid_dimensions() {
+        assert!(ImageData::new(2, 2, vec![0_u32; 3]).is_err());
+        assert!(ImageData::new(0, 2, Vec::new()).is_err());
+    }
 
     fn dialog_tree() -> sse_core::Result<(Tree, WidgetId, WidgetId, WidgetId)> {
         let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
