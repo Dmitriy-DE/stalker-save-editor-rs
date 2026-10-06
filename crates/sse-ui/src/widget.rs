@@ -450,6 +450,33 @@ impl Tree {
             .flatten()
     }
 
+    /// Visible button labels that exceed the current arranged width and would need ellipsis.
+    ///
+    /// # Errors
+    /// Returns an error when layout cannot be updated.
+    pub fn ellipsized_button_labels(&mut self) -> Result<Vec<String>> {
+        self.update_layout()?;
+        let mut labels = Vec::new();
+        for index in 0..self.nodes.len() {
+            let id = WidgetId(index);
+            if !self.shown(id) {
+                continue;
+            }
+            let Some(node) = self.nodes.get(index) else { continue };
+            let (text, style, icon_inset) = match &node.content {
+                Content::Button { text, style } => (text.as_str(), *style, 0.0),
+                Content::IconButton { text, style, .. } if !text.is_empty() => (text.as_str(), *style, 24.0),
+                _ => continue,
+            };
+            let available =
+                u32_to_f32(node.rect.width) - node.style.padding.left - node.style.padding.right - icon_inset;
+            if self.fonts.measure(text, style) > available.max(0.0) + 0.5 {
+                labels.push(text.to_owned());
+            }
+        }
+        Ok(labels)
+    }
+
     /// Replaces an input widget's value and records it as changed.
     ///
     /// # Errors
