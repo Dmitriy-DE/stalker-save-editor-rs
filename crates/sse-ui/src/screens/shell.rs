@@ -2817,7 +2817,7 @@ mod tests {
     use crate::event_loop::{channel_pair, Flow, Message, WindowEvent};
     use crate::glyphs::Fonts;
     use crate::raster::Color;
-    use crate::widget::Tree;
+    use crate::widget::{Tree, WidgetId};
     use sse_storage::drafts::{DraftPlacement, DraftPlan, JsonValue};
     use std::path::Path;
 
@@ -2826,6 +2826,110 @@ mod tests {
         LOCK.get_or_init(|| std::sync::Mutex::new(()))
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn click(shell: &mut Shell, tree: &mut Tree, id: WidgetId) -> sse_core::Result<()> {
+        tree.update_layout()?;
+        let rect = tree.rect(id)?;
+        let x = rect.x.saturating_add(i32::try_from(rect.width / 2).unwrap_or_default());
+        let y = rect
+            .y
+            .saturating_add(i32::try_from(rect.height / 2).unwrap_or_default());
+        let pressed = Message::Window(WindowEvent::Button {
+            button: 1,
+            pressed: true,
+            x,
+            y,
+        });
+        let released = Message::Window(WindowEvent::Button {
+            button: 1,
+            pressed: false,
+            x,
+            y,
+        });
+        let down = tree.pointer_button(true, x, y);
+        assert!(down.is_none());
+        assert_eq!(shell.handle(tree, &pressed, down)?, Flow::Continue);
+        let clicked = tree.pointer_button(false, x, y);
+        assert_eq!(clicked, Some(id));
+        assert_eq!(shell.handle(tree, &released, clicked)?, Flow::Continue);
+        Ok(())
+    }
+
+    #[test]
+    fn pointer_events_walk_main_screens_and_confine_to_modal_overlay() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut shell = Shell::build_for_test(&mut tree, None)?;
+        tree.resize(1280, 860);
+        shell.handle(
+            &mut tree,
+            &Message::Window(WindowEvent::Resized {
+                width: 1280,
+                height: 860,
+            }),
+            None,
+        )?;
+        let mut frame = vec![0_u32; 1280 * 860];
+        tree.paint(&mut frame, 1280)?;
+
+        for index in [1_usize, 6, 19, 0] {
+            let id = shell
+                .nav
+                .get(index)
+                .copied()
+                .ok_or_else(|| sse_core::Error::Refused("missing navigation item".to_owned()))?;
+            click(&mut shell, &mut tree, id)?;
+            assert_eq!(shell.current(), ScreenId::ALL.get(index).copied());
+            tree.paint(&mut frame, 1280)?;
+        }
+
+        let session = shell.library_workspace.session();
+        let operation = session
+            .begin_save(Path::new("fixture.sav"))
+            .ok_or_else(|| sse_core::Error::Refused("test save did not start".to_owned()))?;
+        shell.sync_saving_overlay(&mut tree)?;
+        assert_eq!(tree.dialog(), Some(shell.saving_dialog));
+        assert!(tree.hit(20, 20).is_none(), "modal overlay must confine pointer input");
+        drop(operation);
+        shell.sync_saving_overlay(&mut tree)?;
+        assert!(!tree.dialog_open());
+        Ok(())
+    }
+
+    #[test]
+    fn toolbar_pointer_events_undo_redo_and_report_unavailable_save() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut shell = Shell::build_for_test(&mut tree, None)?;
+        tree.resize(1280, 860);
+        let sha = "d".repeat(64);
+        shell
+            .app
+            .set_current_save_identity(std::path::PathBuf::from("interaction.sav"), sha.clone());
+        shell.app.set_current_save_format(Some("stalker-cop".to_owned()), false);
+        let mut changed = DraftPlan::empty(&sha)?;
+        changed.money = Some(12_345);
+        shell.app.record_draft(changed)?;
+        shell.sync_draft_controls(&mut tree)?;
+        let mut frame = vec![0_u32; 1280 * 860];
+        tree.paint(&mut frame, 1280)?;
+
+        let undo = shell.undo;
+        click(&mut shell, &mut tree, undo)?;
+        assert!(shell.app.draft(&sha).is_some_and(|plan| plan.money.is_none()));
+
+        let redo = shell.redo;
+        click(&mut shell, &mut tree, redo)?;
+        assert_eq!(shell.app.draft(&sha).and_then(|plan| plan.money), Some(12_345));
+
+        let previous_status = tree.text(shell.status)?.to_owned();
+        let save = shell.save;
+        click(&mut shell, &mut tree, save)?;
+        let status = tree.text(shell.status)?;
+        assert!(
+            !status.is_empty() && status != previous_status,
+            "save should report its unavailable state"
+        );
+        Ok(())
     }
 
     fn write_test_bytes(target: &mut [u8], offset: usize, bytes: &[u8]) -> sse_core::Result<()> {
