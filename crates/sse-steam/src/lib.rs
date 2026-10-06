@@ -6,5 +6,6 @@ pub mod api;
 pub mod autocloud;
 pub mod cloud;
 pub mod discovery;
-pub mod protocol;
+pub mod native;
+pub mod native_protocol;
 pub mod worker;

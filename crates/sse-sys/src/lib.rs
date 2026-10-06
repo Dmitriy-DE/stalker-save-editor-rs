@@ -3,7 +3,9 @@
 pub mod fetch;
 pub mod hotkeys;
 pub mod output;
+pub mod process;
 pub mod secure_fs;
+pub mod steam;
 pub mod system;
 
 #[cfg(target_os = "linux")]

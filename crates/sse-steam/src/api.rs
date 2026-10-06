@@ -70,6 +70,10 @@ pub struct CloudFile {
     pub size: u64,
     /// Steam's file timestamp.
     pub timestamp: i64,
+    /// Whether Steam has persisted the file to cloud storage.
+    pub persisted: bool,
+    /// Whether the file currently exists according to Steam.
+    pub exists: bool,
 }
 
 /// One Steam achievement.
@@ -186,6 +190,8 @@ impl SteamApi for ScriptedSteamApi {
                     name: name.clone(),
                     size: u64::try_from(bytes.len()).unwrap_or(u64::MAX),
                     timestamp: 0,
+                    persisted: true,
+                    exists: true,
                 })
                 .collect())
         } else {

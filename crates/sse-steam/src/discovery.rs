@@ -127,6 +127,16 @@ pub fn locate_steam_api_library(
                     return Ok(Some(candidate));
                 }
             }
+        } else {
+            for game_name in ["Stalker 2", "S.T.A.L.K.E.R. 2"] {
+                let candidate = root
+                    .join("steamapps/common")
+                    .join(game_name)
+                    .join("Binaries/Win64/steam_api64.dll");
+                if candidate.is_file() {
+                    return Ok(Some(candidate));
+                }
+            }
         }
         let common = root.join("steamapps").join("common");
         let Ok(entries) = fs::read_dir(&common) else {
@@ -349,6 +359,8 @@ fn collect_auto_cloud_files(
             name,
             size: metadata.len(),
             timestamp: i64::try_from(timestamp).unwrap_or(i64::MAX),
+            persisted: false,
+            exists: true,
         });
     }
     Ok(())

@@ -12,13 +12,11 @@ use sse_steam::cloud::{
     UnavailableSaveFormatVerifier, MAX_CLOUD_FILE_BYTES,
 };
 use sse_steam::discovery::{
-    auto_cloud_path, find_auto_cloud_root, list_auto_cloud_files, parse_library_paths, read_auto_cloud_file,
-    STALKER_2_APP_ID,
+    auto_cloud_path, find_auto_cloud_root, list_auto_cloud_files, locate_steam_api_library, parse_library_paths,
+    read_auto_cloud_file, STALKER_2_APP_ID,
 };
-use sse_steam::protocol::{
-    decode_request, decode_response_body, encode_frame, encode_response, handle_request, read_frame, serve_one,
-    Request, Response, MAX_FRAME_BYTES,
-};
+use sse_steam::native::serve_native_worker;
+use sse_steam::native_protocol::{self, NativeResponse};
 use sse_steam::worker::{classify_worker_args, WorkerArgs};
 
 fn temp_dir(label: &str) -> PathBuf {
@@ -51,6 +49,21 @@ fn parses_current_and_legacy_steam_library_vdf_paths() {
         .any(|path| path.to_string_lossy() == "D:\\Games\\SteamLibrary"));
     let legacy = parse_library_paths("\"libraryfolders\" { \"0\" \"C:\\\\Steam\" }");
     assert!(legacy.is_ok_and(|entries| entries.iter().any(|path| path.to_string_lossy() == "C:\\Steam")));
+}
+
+#[test]
+fn prefers_stalker_2_windows_steam_api_path_over_generic_game_dlls() {
+    let library = temp_dir("steam-api-priority");
+    let preferred = library.join("steamapps/common/Stalker 2/Binaries/Win64/steam_api64.dll");
+    let generic = library.join("steamapps/common/Another Game/Binaries/Win64/steam_api64.dll");
+    assert!(preferred.parent().is_some_and(|path| fs::create_dir_all(path).is_ok()));
+    assert!(generic.parent().is_some_and(|path| fs::create_dir_all(path).is_ok()));
+    assert!(fs::write(&preferred, b"test dll").is_ok());
+    assert!(fs::write(&generic, b"test dll").is_ok());
+
+    let found = locate_steam_api_library([library.clone()], true);
+    assert_eq!(found.ok().flatten(), Some(preferred));
+    let _ = fs::remove_dir_all(library);
 }
 
 #[test]
@@ -147,15 +160,6 @@ fn local_autocloud_api_lists_and_reads_only_from_the_selected_steam_library() {
         api.read_file("Stalker2/Saved/STEAM/SaveGames/Data/slot.sav").ok(),
         Some(b"synthetic S2 Auto-Cloud save".to_vec())
     );
-    let response = handle_request(
-        &mut api,
-        Request::Read {
-            app_id: STALKER_2_APP_ID,
-            remote_name: "Stalker2/Saved/STEAM/SaveGames/Data/slot.sav".into(),
-        },
-    );
-    assert!(response.ok);
-    assert_eq!(response.payload, b"synthetic S2 Auto-Cloud save");
     assert!(api.initialize(4500).is_err());
 
     let _ = fs::remove_dir_all(library);
@@ -225,129 +229,64 @@ fn release_autocloud_read_1_mib_throughput_measurement() {
 }
 
 #[test]
-fn binary_frames_round_trip_and_reject_hostile_lengths() {
-    let request = Request::List {
-        app_id: STALKER_2_APP_ID,
-    };
-    let encoded = encode_frame(&request);
-    assert!(encoded.is_ok());
-    let Ok(frame) = encoded else { return };
-    assert_eq!(decode_request(&frame).ok(), Some(request.clone()));
-    let write_request = Request::Write {
-        app_id: 4500,
-        remote_name: "_appdata_/savedgames/slot.sav".into(),
-        expected_source_sha256: [7_u8; 32],
-        artifact_directory: PathBuf::from("artifacts"),
-        output: b"edited bytes".to_vec(),
-    };
-    assert_eq!(
-        encode_frame(&write_request)
-            .ok()
-            .and_then(|bytes| decode_request(&bytes).ok()),
-        Some(write_request)
+fn native_worker_rejects_bad_save_before_loading_steam_and_reports_stage() {
+    let payload = b"not an X-Ray save";
+    let header = format!(
+        "{{\"operation\":\"write\",\"appId\":4500,\"fileName\":\"_appdata_/savedgames/slot.sav\",\"size\":{}}}\n",
+        payload.len()
     );
-    assert!(usize::try_from(u32::MAX).is_ok_and(|maximum| MAX_FRAME_BYTES < maximum));
-    let too_large = MAX_FRAME_BYTES
-        .checked_add(1)
-        .and_then(|length| u32::try_from(length).ok());
-    assert!(too_large.is_some_and(|length| read_frame(&mut length.to_le_bytes().as_slice()).is_err()));
-    assert!(decode_request(&[1, 2, 3]).is_err());
-    for end in 0..frame.len() {
-        assert!(decode_request(frame.get(..end).unwrap_or_default()).is_err());
-    }
-    for bit_index in 0..frame.len().saturating_mul(8) {
-        let mut changed = frame.clone();
-        if let Some(byte) = changed.get_mut(bit_index / 8) {
-            *byte ^= 1_u8.checked_shl(u32::try_from(bit_index % 8).unwrap_or(0)).unwrap_or(0);
-        }
-        assert!(std::panic::catch_unwind(|| decode_request(&changed)).is_ok());
-    }
-    let mut seed = 0x5eed_u64;
-    for _ in 0..256 {
-        seed = seed
-            .wrapping_mul(6_364_136_223_846_793_005)
-            .wrapping_add(1_442_695_040_888_963_407);
-        let mut changed = frame.clone();
-        if let Some(byte) = changed.get_mut(usize::try_from(seed).unwrap_or(0) % frame.len()) {
-            *byte ^= u8::try_from((seed >> 32) & 0xff).unwrap_or(0);
-        }
-        assert!(std::panic::catch_unwind(|| decode_request(&changed)).is_ok());
-    }
-}
-
-#[test]
-fn worker_serves_one_binary_frame_and_replies_without_json() {
-    let mut api = ScriptedSteamApi::default();
-    api.files
-        .insert("_appdata_/savedgames/slot.sav".into(), b"source bytes".to_vec());
-    let request = Request::Read {
-        app_id: 4500,
-        remote_name: "_appdata_/savedgames/slot.sav".into(),
-    };
-    let encoded = encode_frame(&request);
-    assert!(encoded.is_ok());
-    let Ok(encoded) = encoded else { return };
-    let mut input = encoded.as_slice();
+    let mut input = std::io::Cursor::new([header.as_bytes(), payload].concat());
     let mut output = Vec::new();
-    assert!(serve_one(&mut api, &mut input, &mut output).is_ok());
-    let mut response_frame = output.as_slice();
-    let response_body = read_frame(&mut response_frame);
-    assert!(response_body.is_ok());
-    let Ok(response_body) = response_body else { return };
-    let response = decode_response_body(&response_body);
-    assert!(response.is_ok_and(|reply| reply.ok && reply.payload == b"source bytes"));
+    let result = serve_native_worker(&mut input, &mut output);
+    assert!(result.is_err_and(|error| error.stage == Some(WriteStage::BeforeWrite)));
+    let response = native_protocol::read_response(&mut std::io::Cursor::new(output));
+    assert!(matches!(
+        response,
+        Ok(NativeResponse::Error {
+            stage: Some(WriteStage::BeforeWrite),
+            ..
+        })
+    ));
 }
 
 #[test]
-fn worker_write_fails_closed_without_a_release_format_reader() {
-    let mut api = ScriptedSteamApi::default();
-    let remote_name = "_appdata_/savedgames/slot.sav";
-    api.files.insert(remote_name.into(), b"source bytes".to_vec());
-    let response = handle_request(
-        &mut api,
-        Request::Write {
-            app_id: 4500,
-            remote_name: remote_name.into(),
-            expected_source_sha256: sse_codecs::sha256::sha256(b"source bytes"),
-            artifact_directory: PathBuf::from("unused-artifacts"),
-            output: b"edited bytes".to_vec(),
-        },
+fn native_worker_rejects_unsupported_write_profile_before_reading_the_payload() {
+    let input_bytes =
+        b"{\"operation\":\"write\",\"appId\":1643320,\"fileName\":\"Stalker2/save.sav\",\"size\":4}\nDATA";
+    let mut input = std::io::Cursor::new(input_bytes);
+    let mut output = Vec::new();
+    let result = serve_native_worker(&mut input, &mut output);
+    assert!(result.is_err_and(|error| error.stage == Some(WriteStage::BeforeWrite)));
+    let response = native_protocol::read_response(&mut std::io::Cursor::new(output));
+    assert!(matches!(
+        response,
+        Ok(NativeResponse::Error {
+            message,
+            stage: Some(WriteStage::BeforeWrite),
+        }) if message == "RemoteStorage writes are limited to official X-Ray trilogy releases."
+    ));
+    assert!(input.position() < u64::try_from(input_bytes.len()).unwrap_or(u64::MAX));
+}
+
+#[test]
+fn native_worker_rejects_invalid_write_size_with_before_write_stage() {
+    let mut input = std::io::Cursor::new(
+        b"{\"operation\":\"write\",\"appId\":4500,\"fileName\":\"_appdata_/savedgames/slot.sav\",\"size\":0}\n",
     );
-    assert!(!response.ok);
-    assert_eq!(response.stage, Some(WriteStage::BeforeWrite));
-    assert_eq!(api.write_count, 0);
+    let mut output = Vec::new();
+    let result = serve_native_worker(&mut input, &mut output);
+    assert!(result.is_err_and(|error| error.stage == Some(WriteStage::BeforeWrite)));
+    assert!(matches!(
+        native_protocol::read_response(&mut std::io::Cursor::new(output)),
+        Ok(NativeResponse::Error {
+            stage: Some(WriteStage::BeforeWrite),
+            ..
+        })
+    ));
 }
 
 #[test]
-fn worker_response_preserves_the_cloud_write_stage() {
-    for stage in [
-        None,
-        Some(WriteStage::BeforeWrite),
-        Some(WriteStage::WriteRejected),
-        Some(WriteStage::AfterWrite),
-    ] {
-        let response = Response {
-            ok: stage.is_none(),
-            stage,
-            payload: b"worker result".to_vec(),
-        };
-        let encoded = encode_response(&response);
-        assert!(encoded.is_ok());
-        let Ok(encoded) = encoded else { return };
-        let decoded_frame = read_frame(&mut encoded.as_slice());
-        assert!(decoded_frame.is_ok());
-        let Ok(decoded_frame) = decoded_frame else { return };
-        assert_eq!(decode_response_body(&decoded_frame), Ok(response));
-    }
-}
-
-#[test]
-fn worker_response_rejects_unknown_write_stage_values() {
-    assert!(decode_response_body(&[1, 1, 4]).is_err());
-}
-
-#[test]
-fn public_cloud_write_api_fails_closed_until_a_release_reader_is_integrated() {
+fn unavailable_cloud_format_verifier_fails_closed_before_write() {
     let artifacts = temp_dir("transaction");
     let mut api = ScriptedSteamApi::default();
     let remote_name = "_appdata_/savedgames/save.sav";
@@ -447,8 +386,37 @@ fn achievement_mutation_requires_an_explicit_confirmation_token() {
 
 #[test]
 fn worker_arguments_are_classified_before_normal_cli_routing() {
-    assert_eq!(classify_worker_args(&["--steam-worker".into()]), WorkerArgs::Worker);
-    assert_eq!(classify_worker_args(&["--steam-workre".into()]), WorkerArgs::UsageError);
+    assert_eq!(
+        classify_worker_args(&["--steam-native-worker".into()]),
+        WorkerArgs::Worker
+    );
+    assert_eq!(
+        classify_worker_args(&["--steam-native-workre".into()]),
+        WorkerArgs::UsageError
+    );
+    assert_eq!(
+        classify_worker_args(&[
+            "--steam-native-op".into(),
+            "session".into(),
+            "--app-id".into(),
+            "1643320".into()
+        ]),
+        WorkerArgs::NativeOp
+    );
+    assert_eq!(
+        classify_worker_args(&[
+            "--steam-native-op".into(),
+            "achievement".into(),
+            "--app-id".into(),
+            "41700".into(),
+            "--name".into(),
+            "API_1".into(),
+            "--achieved".into(),
+            "2".into()
+        ]),
+        WorkerArgs::UsageError
+    );
+    assert_eq!(classify_worker_args(&["--steam-worker".into()]), WorkerArgs::UsageError);
     assert_eq!(classify_worker_args(&["version".into()]), WorkerArgs::NormalCli);
 }
 
@@ -459,6 +427,8 @@ fn cloud_listing_is_provided_by_the_api_trait() {
         name: "save.sav".into(),
         size: 12,
         timestamp: 4,
+        persisted: true,
+        exists: true,
     });
     assert!(api.list_files().is_ok_and(|files| files.len() == 1));
 }
