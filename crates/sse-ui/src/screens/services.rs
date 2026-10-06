@@ -228,23 +228,21 @@ impl Companion {
                         ("noclip", Some("off")) => client.s2_noclip(false, timeout),
                         ("timespeed", Some(value)) => value
                             .parse::<f32>()
-                            .map_err(|_| sse_companion::protocol::ProtocolError::Invalid(
-                                "time speed is invalid".to_owned(),
-                            ))
+                            .map_err(|_| {
+                                sse_companion::protocol::ProtocolError::Invalid("time speed is invalid".to_owned())
+                            })
                             .and_then(|speed| client.s2_time_speed(speed, timeout)),
-                        _ => client
-                            .send(command, argument.as_slice(), timeout)
-                            .and_then(|reply| {
-                                if reply.status == sse_companion::protocol::ReplyStatus::Ok {
-                                    Ok(reply.text)
-                                } else {
-                                    Err(sse_companion::protocol::ProtocolError::Invalid(format!(
-                                        "{command} failed: {} {}",
-                                        reply.status.as_str(),
-                                        reply.text
-                                    )))
-                                }
-                            }),
+                        _ => client.send(command, argument.as_slice(), timeout).and_then(|reply| {
+                            if reply.status == sse_companion::protocol::ReplyStatus::Ok {
+                                Ok(reply.text)
+                            } else {
+                                Err(sse_companion::protocol::ProtocolError::Invalid(format!(
+                                    "{command} failed: {} {}",
+                                    reply.status.as_str(),
+                                    reply.text
+                                )))
+                            }
+                        }),
                     };
                     result.map_err(|error| error.to_string())
                 });
