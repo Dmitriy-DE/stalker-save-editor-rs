@@ -490,12 +490,19 @@ fn jacobian_x(point: Jacobian) -> Option<U256> {
 }
 
 fn parse_signature(signature: &[u8]) -> Option<(U256, U256)> {
+    parse_der_signature(signature).or_else(|| parse_p1363_signature(signature))
+}
+
+fn parse_p1363_signature(signature: &[u8]) -> Option<(U256, U256)> {
     if signature.len() == 64 {
         let r = U256::from_be_slice(signature.get(0..32)?).ok()?;
         let s = U256::from_be_slice(signature.get(32..64)?).ok()?;
         return Some((r, s));
     }
+    None
+}
 
+fn parse_der_signature(signature: &[u8]) -> Option<(U256, U256)> {
     let mut root = DerReader::new(signature);
     let sequence = root.element(0x30).ok()?;
     if !root.is_empty() {
@@ -849,6 +856,20 @@ DuEkmd6oGnQq6qsZmILc2fYC0wfqEMk/NB88BSFAC1N6fmziJf11RVtlLQ==\n\
         oversized_integer.extend_from_slice(&[1_u8; 33]);
         oversized_integer.extend_from_slice(&[0x02, 0x01, 0x01]);
         assert!(parse_signature(&oversized_integer).is_none());
+    }
+
+    #[test]
+    fn parses_a_64_byte_der_signature_before_trying_p1363() {
+        let mut signature = vec![0x30, 0x3e, 0x02, 0x1d];
+        signature.extend_from_slice(&[1_u8; 29]);
+        signature.extend_from_slice(&[0x02, 0x1d]);
+        signature.extend_from_slice(&[2_u8; 29]);
+        assert_eq!(signature.len(), 64);
+
+        let (r, s) = parse_signature(&signature).unwrap_or_else(|| panic!("64-byte DER signature did not parse"));
+        let expected_r = U256::from_be_slice(&[1_u8; 29]).unwrap_or_else(|error| panic!("r: {error}"));
+        let expected_s = U256::from_be_slice(&[2_u8; 29]).unwrap_or_else(|error| panic!("s: {error}"));
+        assert_eq!((r, s), (expected_r, expected_s));
     }
 
     #[test]

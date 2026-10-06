@@ -10,6 +10,7 @@ use crate::widget::{Content, Look, TextAlign, Tree, WidgetId};
 use crate::widgets::scroll::ScrollView;
 use sse_core::Result;
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 const KEY_ESCAPE: u32 = 0xff1b;
 const KEY_TAB: u32 = 0xff09;
@@ -17,6 +18,9 @@ const KEY_RETURN: u32 = 0xff0d;
 const KEY_UP: u32 = 0xff52;
 const KEY_DOWN: u32 = 0xff54;
 const SAVE_LIBRARY_PAGE_SIZE: usize = 8;
+const DRAFT_CLOSE_WARNING: &str = "Последняя правка не сохранена в черновик.";
+const FORCE_CLOSE_DEFAULT_MESSAGE: &str =
+    "Фоновая операция ещё записывает файлы. Принудительное закрытие может оставить операцию незавершённой.";
 
 struct SaveEligibility {
     reason: String,
@@ -173,9 +177,13 @@ pub struct Shell {
     pending_report: Option<String>,
     saving_dialog: WidgetId,
     force_close_dialog: WidgetId,
+    force_close_message: WidgetId,
     force_close_yes: WidgetId,
     force_close_no: WidgetId,
     close_waiting: bool,
+    draft_close_started: Option<Instant>,
+    draft_close_prompted: bool,
+    draft_close_idle_seen: bool,
     tooltip: WidgetId,
     status: WidgetId,
     selected: usize,
@@ -884,12 +892,7 @@ impl Shell {
 
         let force_close_dialog = style::card(tree, overlay_host)?;
         style::label(tree, force_close_dialog, "ЗАКРЫТЬ, НЕ ДОЖИДАЯСЬ?", Text::Heading)?;
-        style::label(
-            tree,
-            force_close_dialog,
-            "Фоновая операция ещё записывает файлы. Принудительное закрытие может оставить операцию незавершённой.",
-            Text::Body,
-        )?;
+        let force_close_message = style::label(tree, force_close_dialog, FORCE_CLOSE_DEFAULT_MESSAGE, Text::Body)?;
         let force_close_actions = style::row(tree, force_close_dialog)?;
         let force_close_yes = style::button(tree, force_close_actions, "ЗАКРЫТЬ", style::Button::Danger)?;
         let force_close_no = style::button(tree, force_close_actions, "ПОДОЖДАТЬ", style::Button::Secondary)?;
@@ -946,9 +949,13 @@ impl Shell {
             pending_report: sse_app::diagnostics::pending_automatic_error_report(),
             saving_dialog,
             force_close_dialog,
+            force_close_message,
             force_close_yes,
             force_close_no,
             close_waiting: false,
+            draft_close_started: None,
+            draft_close_prompted: false,
+            draft_close_idle_seen: false,
             tooltip,
             status,
             selected: 0,
@@ -1363,13 +1370,59 @@ impl Shell {
         Ok(())
     }
 
+    fn begin_draft_close_wait(&mut self) {
+        if self.draft_close_started.is_none() {
+            self.draft_close_started = Some(Instant::now());
+            self.draft_close_prompted = false;
+            self.draft_close_idle_seen = false;
+        }
+    }
+
+    fn show_draft_close_prompt(&mut self, tree: &mut Tree) -> Result<()> {
+        tree.set_text(self.force_close_message, crate::strings::t(DRAFT_CLOSE_WARNING))?;
+        tree.set_visible(self.force_close_yes, false)?;
+        if tree.dialog() != Some(self.force_close_dialog) {
+            if tree.dialog_open() {
+                let _ = tree.close_dialog()?;
+            }
+            tree.open_dialog(self.force_close_dialog)?;
+        }
+        tree.set_text(self.status, crate::strings::t(DRAFT_CLOSE_WARNING))?;
+        self.draft_close_prompted = true;
+        Ok(())
+    }
+
+    fn restore_game_close_prompt(&mut self, tree: &mut Tree) -> Result<()> {
+        tree.set_text(self.force_close_message, crate::strings::t(FORCE_CLOSE_DEFAULT_MESSAGE))?;
+        tree.set_visible(self.force_close_yes, true)?;
+        Ok(())
+    }
+
+    fn show_game_close_prompt(&mut self, tree: &mut Tree) -> Result<()> {
+        self.restore_game_close_prompt(tree)?;
+        if tree.dialog() != Some(self.force_close_dialog) {
+            if tree.dialog_open() {
+                let _ = tree.close_dialog()?;
+            }
+            tree.open_dialog(self.force_close_dialog)?;
+        }
+        Ok(())
+    }
+
     fn handle(&mut self, tree: &mut Tree, message: &Message<AppMessage>, clicked: Option<WidgetId>) -> Result<Flow> {
         let save_session = self.library_workspace.session();
         let write_active =
             sse_app::tasks::named_task_active("game-write") || sse_app::tasks::named_task_active("companion-write");
+        let draft_write_active =
+            sse_app::tasks::named_task_active("draft-save") || sse_app::tasks::named_task_active("draft-reset");
+        let is_tick = matches!(message, Message::User(AppMessage::Tick(_)));
         if self.close_waiting && !write_active && !save_session.is_saving() && !save_session.is_restoring() {
             self.close_waiting = false;
-            return Ok(Flow::Exit);
+            if draft_write_active {
+                self.begin_draft_close_wait();
+            } else {
+                return Ok(Flow::Exit);
+            }
         }
         if save_session.deferred_close_ready() {
             if write_active {
@@ -1380,10 +1433,34 @@ impl Shell {
                 self.sync_saving_overlay(tree)?;
                 return Ok(Flow::Continue);
             }
-            let _ =
-                sse_app::tasks::wait_for_named_tasks(&["draft-save", "draft-reset"], std::time::Duration::from_secs(2));
-            if save_session.take_deferred_close_ready() {
+            if draft_write_active {
+                self.begin_draft_close_wait();
+            } else if self.draft_close_started.is_none() && save_session.take_deferred_close_ready() {
                 return Ok(Flow::Exit);
+            }
+        }
+        if let Some(started) = self.draft_close_started {
+            if draft_write_active {
+                self.draft_close_idle_seen = false;
+                if !self.draft_close_prompted && started.elapsed() >= Duration::from_secs(2) {
+                    self.show_draft_close_prompt(tree)?;
+                }
+            } else if is_tick {
+                if self.draft_close_idle_seen {
+                    self.draft_close_started = None;
+                    self.draft_close_prompted = false;
+                    self.draft_close_idle_seen = false;
+                    if tree.dialog() == Some(self.force_close_dialog) {
+                        let _ = tree.close_dialog()?;
+                    }
+                    self.restore_game_close_prompt(tree)?;
+                    let _ = save_session.take_deferred_close_ready();
+                    return Ok(Flow::Exit);
+                }
+                self.draft_close_idle_seen = true;
+            }
+            if matches!(message, Message::Window(WindowEvent::CloseRequested)) {
+                return Ok(Flow::Continue);
             }
         }
         match message {
@@ -1400,12 +1477,7 @@ impl Shell {
                 }
                 if write_active {
                     if self.close_waiting {
-                        if tree.dialog() != Some(self.force_close_dialog) {
-                            if tree.dialog_open() {
-                                let _ = tree.close_dialog()?;
-                            }
-                            tree.open_dialog(self.force_close_dialog)?;
-                        }
+                        self.show_game_close_prompt(tree)?;
                     } else {
                         self.close_waiting = true;
                         tree.set_text(
@@ -1415,10 +1487,10 @@ impl Shell {
                     }
                     return Ok(Flow::Continue);
                 }
-                let _ = sse_app::tasks::wait_for_named_tasks(
-                    &["draft-save", "draft-reset"],
-                    std::time::Duration::from_secs(2),
-                );
+                if draft_write_active {
+                    self.begin_draft_close_wait();
+                    return Ok(Flow::Continue);
+                }
                 return Ok(Flow::Exit);
             }
             Message::Window(WindowEvent::Disconnected) => {
@@ -1428,13 +1500,25 @@ impl Shell {
             _ => {}
         }
         if clicked == Some(self.force_close_yes) {
+            if self.draft_close_prompted {
+                return Ok(Flow::Continue);
+            }
             return Ok(Flow::Exit);
         }
         if clicked == Some(self.force_close_no) {
             if tree.dialog() == Some(self.force_close_dialog) {
                 let _ = tree.close_dialog()?;
             }
-            tree.set_text(self.status, "Ожидаю завершения записи в игру/компаньон…")?;
+            if self.draft_close_prompted {
+                self.restore_game_close_prompt(tree)?;
+                self.draft_close_started = Some(Instant::now());
+                self.draft_close_prompted = false;
+                self.draft_close_idle_seen = false;
+                tree.set_text(self.status, "Ожидаю сохранения последней правки в черновик…")?;
+            } else {
+                self.restore_game_close_prompt(tree)?;
+                tree.set_text(self.status, "Ожидаю завершения записи в игру/компаньон…")?;
+            }
             return Ok(Flow::Continue);
         }
         if let Message::User(AppMessage::SoundLoaded(game, sounds)) = message {
@@ -2071,6 +2155,78 @@ mod tests {
         assert_eq!(shell.handle(&mut tree, &close, None)?, Flow::Continue);
         drop(operation);
         let tick = Message::User(super::AppMessage::Tick(1));
+        assert_eq!(shell.handle(&mut tree, &tick, None)?, Flow::Exit);
+        Ok(())
+    }
+
+    #[test]
+    fn close_request_does_not_block_on_a_pending_draft_write() -> sse_core::Result<()> {
+        let _guard = close_task_test_guard();
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut shell = Shell::build_for_test(&mut tree, None)?;
+        let (started_sender, started_receiver) = std::sync::mpsc::channel();
+        let (release_sender, release_receiver) = std::sync::mpsc::channel();
+        sse_app::tasks::spawn_named_detached("draft-save", move || {
+            let _ = started_sender.send(());
+            let _ = release_receiver.recv();
+        });
+        started_receiver
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .map_err(|error| sse_core::Error::System(error.to_string()))?;
+
+        let started = std::time::Instant::now();
+        let close = Message::Window(WindowEvent::CloseRequested);
+        let result = shell.handle(&mut tree, &close, None);
+        let elapsed = started.elapsed();
+        let _ = release_sender.send(());
+        assert!(sse_app::tasks::wait_for_named_tasks(
+            &["draft-save"],
+            std::time::Duration::from_secs(1)
+        ));
+        assert_eq!(result?, Flow::Continue);
+        assert!(elapsed < std::time::Duration::from_millis(100));
+        let tick = Message::User(super::AppMessage::Tick(1));
+        assert_eq!(shell.handle(&mut tree, &tick, None)?, Flow::Continue);
+        assert_eq!(shell.handle(&mut tree, &tick, None)?, Flow::Exit);
+        Ok(())
+    }
+
+    #[test]
+    fn close_prompt_offers_to_wait_when_draft_write_takes_two_seconds() -> sse_core::Result<()> {
+        let _guard = close_task_test_guard();
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut shell = Shell::build_for_test(&mut tree, None)?;
+        let (started_sender, started_receiver) = std::sync::mpsc::channel();
+        let (release_sender, release_receiver) = std::sync::mpsc::channel();
+        sse_app::tasks::spawn_named_detached("draft-save", move || {
+            let _ = started_sender.send(());
+            let _ = release_receiver.recv();
+        });
+        started_receiver
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .map_err(|error| sse_core::Error::System(error.to_string()))?;
+
+        let close = Message::Window(WindowEvent::CloseRequested);
+        let close_flow = shell.handle(&mut tree, &close, None)?;
+        if close_flow == Flow::Continue {
+            std::thread::sleep(std::time::Duration::from_millis(2_100));
+            let tick = Message::User(super::AppMessage::Tick(3));
+            assert_eq!(shell.handle(&mut tree, &tick, None)?, Flow::Continue);
+            assert_eq!(tree.dialog(), Some(shell.force_close_dialog));
+            assert_eq!(
+                shell.handle(&mut tree, &tick, Some(shell.force_close_no))?,
+                Flow::Continue
+            );
+            assert!(!tree.dialog_open());
+        }
+        let _ = release_sender.send(());
+        assert!(sse_app::tasks::wait_for_named_tasks(
+            &["draft-save"],
+            std::time::Duration::from_secs(1)
+        ));
+        assert_eq!(close_flow, Flow::Continue);
+        let tick = Message::User(super::AppMessage::Tick(4));
+        assert_eq!(shell.handle(&mut tree, &tick, None)?, Flow::Continue);
         assert_eq!(shell.handle(&mut tree, &tick, None)?, Flow::Exit);
         Ok(())
     }

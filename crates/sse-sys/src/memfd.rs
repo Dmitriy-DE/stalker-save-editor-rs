@@ -9,10 +9,14 @@ const PROT_READ: c_int = 1;
 const PROT_WRITE: c_int = 2;
 const MAP_SHARED: c_int = 1;
 const MFD_CLOEXEC: u32 = 1;
+const MFD_ALLOW_SEALING: u32 = 2;
+const F_ADD_SEALS: c_int = 1033;
+const F_SEAL_SHRINK: c_int = 0x0002;
 
 unsafe extern "C" {
     fn memfd_create(name: *const c_char, flags: u32) -> c_int;
     fn ftruncate(fd: c_int, length: i64) -> c_int;
+    fn fcntl(fd: c_int, command: c_int, ...) -> c_int;
     fn mmap(address: *mut c_void, length: usize, prot: c_int, flags: c_int, fd: c_int, offset: i64) -> *mut c_void;
     fn munmap(address: *mut c_void, length: usize) -> c_int;
 }
@@ -32,7 +36,7 @@ impl MappedFile {
         }
         let name = b"sse-wayland\0";
         // SAFETY: name is NUL terminated and flags are defined by Linux memfd_create.
-        let raw = unsafe { memfd_create(name.as_ptr().cast(), MFD_CLOEXEC) };
+        let raw = unsafe { memfd_create(name.as_ptr().cast(), MFD_CLOEXEC | MFD_ALLOW_SEALING) };
         if raw < 0 {
             return Err(io::Error::last_os_error());
         }
@@ -42,6 +46,10 @@ impl MappedFile {
             i64::try_from(len).map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "mapping too large"))?;
         // SAFETY: descriptor is live and length is validated.
         if unsafe { ftruncate(fd.as_raw_fd(), length) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: descriptor is live and was created with MFD_ALLOW_SEALING; the seal prevents later shrinking.
+        if unsafe { fcntl(fd.as_raw_fd(), F_ADD_SEALS, F_SEAL_SHRINK) } != 0 {
             return Err(io::Error::last_os_error());
         }
         // SAFETY: kernel chooses the address; result is checked against MAP_FAILED below.
@@ -77,10 +85,20 @@ impl MappedFile {
         if bytes > self.len {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "frame exceeds mapping"));
         }
-        // SAFETY: mapping is live and bounds checked above.
-        let target = unsafe { std::slice::from_raw_parts_mut(self.pointer.as_ptr(), bytes) };
-        for (chunk, pixel) in target.chunks_exact_mut(4).zip(pixels) {
-            chunk.copy_from_slice(&pixel.to_le_bytes());
+        let target = self.pointer.as_ptr();
+        let mut offset = 0_usize;
+        for pixel in pixels {
+            let pixel_bytes = pixel.to_le_bytes();
+            let end = offset
+                .checked_add(pixel_bytes.len())
+                .filter(|end| *end <= self.len)
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "frame exceeds mapping"))?;
+            // SAFETY: checked total length bounds every four-byte offset in this loop, the mapping is live,
+            // and the stack byte array does not overlap the mapped destination. No Rust mutable slice aliases it.
+            unsafe {
+                std::ptr::copy_nonoverlapping(pixel_bytes.as_ptr(), target.add(offset), pixel_bytes.len());
+            }
+            offset = end;
         }
         Ok(())
     }
@@ -92,5 +110,33 @@ impl Drop for MappedFile {
         unsafe {
             let _ = munmap(self.pointer.as_ptr().cast(), self.len);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{fcntl, MappedFile, F_SEAL_SHRINK};
+    use std::os::fd::AsRawFd;
+
+    const F_GET_SEALS: std::ffi::c_int = 1034;
+
+    #[test]
+    fn memfd_is_sealed_against_shrinking() -> std::io::Result<()> {
+        let mapping = MappedFile::new(16)?;
+        // SAFETY: the mapping owns a live memfd descriptor and F_GET_SEALS does not mutate it.
+        let seals = unsafe { fcntl(mapping.fd.as_raw_fd(), F_GET_SEALS) };
+        assert!(seals >= 0, "F_GET_SEALS failed: {}", std::io::Error::last_os_error());
+        assert_ne!(seals & F_SEAL_SHRINK, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn writes_little_endian_pixels_inside_the_mapping() -> std::io::Result<()> {
+        let mut mapping = MappedFile::new(8)?;
+        mapping.write_u32_le(&[0x1234_5678])?;
+        // SAFETY: the mapping is live, the inspected range is within its 8-byte length, and no mutable reference exists.
+        let bytes = unsafe { std::slice::from_raw_parts(mapping.pointer.as_ptr(), mapping.len) };
+        assert_eq!(bytes, &[0x78, 0x56, 0x34, 0x12, 0, 0, 0, 0]);
+        Ok(())
     }
 }

@@ -5,13 +5,14 @@ use super::{AppMessage, Context, Screen, ScreenId};
 use crate::event_loop::{Message, WindowEvent};
 use crate::widget::WidgetId;
 use sse_core::Result;
-use sse_steam::api::{Achievement, CloudFile};
-use sse_steam::protocol::{Request, Response};
+use sse_steam::api::{Achievement, CloudFile, SteamApi};
+use sse_steam::cloud::XRaySaveFormatVerifier;
+use sse_steam::worker::WorkerSteamApi;
+use sse_steam::{cloud::PreparedEdit, cloud::SteamCloudWriteTransaction, cloud::WriteStatus};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-const TIMEOUT: Duration = Duration::from_secs(15);
 const ROWS: usize = 8;
 
 /// Screens implemented by the S5 services package.
@@ -84,103 +85,32 @@ fn installed_version(root: &Path) -> Option<String> {
     None
 }
 
-fn worker(request: &Request) -> std::result::Result<Vec<u8>, String> {
-    let Response { ok, payload } =
-        sse_steam::worker::run_sibling_worker(request, TIMEOUT).map_err(|e| e.to_string())?;
-    if ok {
-        Ok(payload)
+fn steam_api(app_id: u32) -> std::result::Result<WorkerSteamApi, String> {
+    let mut api = WorkerSteamApi::new();
+    api.initialize(app_id).map_err(|error| error.message)?;
+    Ok(api)
+}
+
+fn cloud_files(app_id: u32) -> std::result::Result<Vec<CloudFile>, String> {
+    steam_api(app_id)?.list_files().map_err(|error| error.message)
+}
+
+fn cloud_read(app_id: u32, remote_name: &str) -> std::result::Result<Vec<u8>, String> {
+    steam_api(app_id)?.read_file(remote_name).map_err(|error| error.message)
+}
+
+fn achievement_list(app_id: u32) -> std::result::Result<Vec<Achievement>, String> {
+    steam_api(app_id)?.achievements().map_err(|error| error.message)
+}
+
+fn change_achievement(app_id: u32, name: &str, achieved: bool) -> std::result::Result<(), String> {
+    let mut api = steam_api(app_id)?;
+    if achieved {
+        api.set_achievement(name).map_err(|error| error.message)?;
     } else {
-        Err(String::from_utf8(payload).unwrap_or_else(|_| "Steam worker failed".to_owned()))
+        api.clear_achievement(name).map_err(|error| error.message)?;
     }
-}
-
-struct Cursor<'a> {
-    bytes: &'a [u8],
-    pos: usize,
-}
-impl<'a> Cursor<'a> {
-    fn new(bytes: &'a [u8]) -> Self {
-        Self { bytes, pos: 0 }
-    }
-    fn take(&mut self, n: usize) -> std::result::Result<&'a [u8], String> {
-        let end = self
-            .pos
-            .checked_add(n)
-            .ok_or_else(|| "Steam response overflow".to_owned())?;
-        let value = self
-            .bytes
-            .get(self.pos..end)
-            .ok_or_else(|| "Truncated Steam response".to_owned())?;
-        self.pos = end;
-        Ok(value)
-    }
-    fn u8(&mut self) -> std::result::Result<u8, String> {
-        self.take(1)?
-            .first()
-            .copied()
-            .ok_or_else(|| "Truncated Steam response".to_owned())
-    }
-    fn u16(&mut self) -> std::result::Result<u16, String> {
-        let mut b = [0; 2];
-        b.copy_from_slice(self.take(2)?);
-        Ok(u16::from_le_bytes(b))
-    }
-    fn u32(&mut self) -> std::result::Result<u32, String> {
-        let mut b = [0; 4];
-        b.copy_from_slice(self.take(4)?);
-        Ok(u32::from_le_bytes(b))
-    }
-    fn u64(&mut self) -> std::result::Result<u64, String> {
-        let mut b = [0; 8];
-        b.copy_from_slice(self.take(8)?);
-        Ok(u64::from_le_bytes(b))
-    }
-    fn i64(&mut self) -> std::result::Result<i64, String> {
-        let mut b = [0; 8];
-        b.copy_from_slice(self.take(8)?);
-        Ok(i64::from_le_bytes(b))
-    }
-    fn string(&mut self) -> std::result::Result<String, String> {
-        let n = usize::from(self.u16()?);
-        String::from_utf8(self.take(n)?.to_vec()).map_err(|_| "Steam response is not UTF-8".to_owned())
-    }
-}
-
-fn cloud_files(bytes: &[u8]) -> std::result::Result<Vec<CloudFile>, String> {
-    let mut c = Cursor::new(bytes);
-    let count = usize::try_from(c.u32()?).map_err(|_| "Cloud count overflow".to_owned())?;
-    if count > 10_000 {
-        return Err("Cloud response exceeds 10,000 files".to_owned());
-    }
-    let mut out = Vec::with_capacity(count);
-    for _ in 0..count {
-        out.push(CloudFile {
-            name: c.string()?,
-            size: c.u64()?,
-            timestamp: c.i64()?,
-        });
-    }
-    Ok(out)
-}
-
-fn achievement_list(bytes: &[u8]) -> std::result::Result<Vec<Achievement>, String> {
-    let mut c = Cursor::new(bytes);
-    let count = usize::try_from(c.u32()?).map_err(|_| "Achievement count overflow".to_owned())?;
-    if count > 10_000 {
-        return Err("Achievement response exceeds 10,000 entries".to_owned());
-    }
-    let mut out = Vec::with_capacity(count);
-    for _ in 0..count {
-        out.push(Achievement {
-            name: c.string()?,
-            display_name: c.string()?,
-            description: c.string()?,
-            hidden: c.u8()? != 0,
-            achieved: c.u8()? != 0,
-            unlock_time: c.u32()?,
-        });
-    }
-    Ok(out)
+    api.store_stats().map_err(|error| error.message)
 }
 
 fn clip(text: &str) -> String {
@@ -849,8 +779,7 @@ impl Achievements {
         sse_app::tasks::spawn_named_detached("companion-read", move || {
             let result = id
                 .ok_or_else(|| "Для выбранной игры нет Steam App ID".to_owned())
-                .and_then(|app_id| worker(&Request::ListAchievements { app_id }))
-                .and_then(|b| achievement_list(&b));
+                .and_then(achievement_list);
             proxy.send(AppMessage::ToScreen(
                 ScreenId::Achievements,
                 Box::new(AchReply::List(result)),
@@ -1011,20 +940,7 @@ impl Screen for Achievements {
             let _ = cx.tree.close_dialog()?;
             let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
             sse_app::tasks::spawn_named_detached("companion-write", move || {
-                let req = if set {
-                    Request::SetAchievement {
-                        app_id,
-                        name,
-                        confirmed: true,
-                    }
-                } else {
-                    Request::ClearAchievement {
-                        app_id,
-                        name,
-                        confirmed: true,
-                    }
-                };
-                let result = worker(&req).map(|_| ());
+                let result = change_achievement(app_id, &name, set);
                 proxy.send(AppMessage::ToScreen(
                     ScreenId::Achievements,
                     Box::new(AchReply::Changed(result)),
@@ -1120,8 +1036,7 @@ impl Cloud {
         sse_app::tasks::spawn_named_detached("companion-read", move || {
             let result = id
                 .ok_or_else(|| "Для выбранной игры нет Steam App ID".to_owned())
-                .and_then(|app_id| worker(&Request::List { app_id }))
-                .and_then(|b| cloud_files(&b));
+                .and_then(cloud_files);
             proxy.send(AppMessage::ToScreen(
                 ScreenId::Cloud,
                 Box::new(CloudReply::List(result)),
@@ -1212,41 +1127,29 @@ impl Cloud {
                 if sse_codecs::sha256::sha256(&output) != intent.local_sha256 {
                     return Ok("Локальный файл изменился после запроса записи; подтвердите запись ещё раз.".to_owned());
                 }
-                let source = worker(&Request::Read {
-                    app_id: intent.app_id,
-                    remote_name: intent.remote.clone(),
-                })?;
+                let mut api = steam_api(intent.app_id)?;
+                let source = api.read_file(&intent.remote).map_err(|error| error.message)?;
+                let prepared = PreparedEdit::from_owned(&source, output);
+                drop(source);
                 let artifacts = sse_app::paths::default_data_directory().join("backups");
-                let request = Request::Write {
-                    app_id: intent.app_id,
-                    remote_name: intent.remote.clone(),
-                    expected_source_sha256: sse_codecs::sha256::sha256(&source),
-                    artifact_directory: artifacts,
-                    output,
-                };
-                match sse_steam::worker::run_sibling_worker(&request, TIMEOUT) {
-                    Ok(Response { ok: true, payload }) => match payload.first().copied() {
-                        Some(0) => Ok(format!("Записано и проверено: {}", intent.remote)),
-                        Some(1) => Ok(format!(
-                            "Результат записи не подтверждён (повтор не выполняется): {}",
-                            intent.remote
-                        )),
-                        _ => Ok(format!(
-                            "Результат записи не подтверждён (повтор не выполняется): {}",
-                            intent.remote
-                        )),
-                    },
-                    Ok(Response { ok: false, payload }) => Ok(format!(
-                        "Запись отменена: {}",
-                        String::from_utf8(payload).unwrap_or_else(|_| "Steam отклонил запись".to_owned())
+                let mut verifier = XRaySaveFormatVerifier::default();
+                let receipt = SteamCloudWriteTransaction::upload(
+                    &mut api,
+                    &mut verifier,
+                    intent.app_id,
+                    &intent.remote,
+                    &prepared,
+                    &artifacts,
+                    true,
+                )
+                .map_err(|error| error.message)?;
+                match receipt.status {
+                    WriteStatus::Verified => Ok(format!("Записано и проверено: {}", intent.remote)),
+                    WriteStatus::Uncertain => Ok(format!(
+                        "Результат записи не подтверждён (повтор не выполняется): {}{}",
+                        intent.remote,
+                        receipt.reason.map(|reason| format!(" — {reason}")).unwrap_or_default()
                     )),
-                    Err(sse_steam::worker::WorkerProcessError::Timeout {
-                        write_outcome_uncertain: true,
-                    }) => Ok(format!(
-                        "Результат записи не подтверждён (повтор не выполняется): {}",
-                        intent.remote
-                    )),
-                    Err(error) => Err(format!("Ошибка записи: {error}")),
                 }
             })();
             proxy.send(AppMessage::ToScreen(
@@ -1414,10 +1317,7 @@ impl Screen for Cloud {
             let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
             sse_app::tasks::spawn_named_detached("companion-write", move || {
                 let result = (|| {
-                    let source = worker(&Request::Read {
-                        app_id,
-                        remote_name: remote.clone(),
-                    })?;
+                    let source = cloud_read(app_id, &remote)?;
                     let name = std::path::Path::new(&remote)
                         .file_name()
                         .ok_or_else(|| "Облачный файл без имени".to_owned())?;

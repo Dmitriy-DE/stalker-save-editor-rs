@@ -41,7 +41,7 @@ pub mod theme;
 /// Generated Unicode 17 grapheme and line-break property tables.
 pub mod unicode_tables;
 /// Native dependency-free Wayland presenter.
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
 pub mod wayland_window;
 /// Retained widget tree with damage tracking (U1).
 pub mod widget;

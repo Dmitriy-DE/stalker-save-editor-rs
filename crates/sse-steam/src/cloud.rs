@@ -1,16 +1,19 @@
 //! Fresh-hash guarded Steam and Auto-Cloud write transactions.
 
+use std::collections::HashSet;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use sse_codecs::sha256;
 
-use crate::api::{SteamApi, SteamError, WriteFailure};
+use crate::api::{SteamApi, SteamError, WriteFailure, WriteStage};
 
 /// Maximum bytes accepted in a cloud file frame.
 pub const MAX_CLOUD_FILE_BYTES: usize = 64 * 1024 * 1024;
+const PERSISTED_POLL_INTERVAL: Duration = Duration::from_secs(2);
+const PERSISTED_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Data prepared against a particular source cloud image.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,10 +30,16 @@ impl PreparedEdit {
     /// Captures source and output hashes while taking one owned output buffer.
     #[must_use]
     pub fn new(source: &[u8], output: &[u8]) -> Self {
+        Self::from_owned(source, output.to_vec())
+    }
+
+    /// Captures hashes while taking ownership of an already allocated output image.
+    #[must_use]
+    pub fn from_owned(source: &[u8], output: Vec<u8>) -> Self {
         Self {
             source_sha256: sha256::sha256(source),
-            output: output.to_vec(),
-            output_sha256: sha256::sha256(output),
+            output_sha256: sha256::sha256(&output),
+            output,
         }
     }
 }
@@ -40,6 +49,8 @@ impl PreparedEdit {
 pub struct WriteReceipt {
     /// Final status.
     pub status: WriteStatus,
+    /// Write phase for an uncertain result; verified writes have no failure stage.
+    pub stage: Option<WriteStage>,
     /// Backup containing the source bytes.
     pub backup_path: PathBuf,
     /// Recovery copy containing intended output bytes.
@@ -66,15 +77,15 @@ mod verifier_sealed {
 /// Release-aware verifier required before any cloud write.
 ///
 /// This trait is sealed so external callers cannot supply a verifier that accepts arbitrary
-/// bytes. The only implementation currently available is fail-closed until the format readers
-/// are integrated.
+/// bytes. Callers that cannot establish a supported release's format must use a fail-closed
+/// verifier.
 #[allow(private_bounds)]
 pub trait SaveFormatVerifier: verifier_sealed::Sealed {
     /// Rejects bytes that are not a save for `app_id` and `remote_name`.
     fn verify(&mut self, app_id: u32, remote_name: &str, bytes: &[u8]) -> Result<(), SteamError>;
 }
 
-/// Fail-closed verifier used until C1/C3 reader crates are integrated.
+/// Fail-closed verifier for callers that cannot establish a supported save format.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct UnavailableSaveFormatVerifier;
 
@@ -83,8 +94,47 @@ impl verifier_sealed::Sealed for UnavailableSaveFormatVerifier {}
 impl SaveFormatVerifier for UnavailableSaveFormatVerifier {
     fn verify(&mut self, _app_id: u32, _remote_name: &str, _bytes: &[u8]) -> Result<(), SteamError> {
         Err(SteamError::new(
-            "save format verification awaits sse-xray/sse-s2 integration",
+            "save format verification is unavailable for this operation",
         ))
+    }
+}
+
+/// Release-aware verifier for the six official X-Ray trilogy formats.
+#[derive(Debug, Default)]
+pub struct XRaySaveFormatVerifier {
+    verified_images: HashSet<(u32, [u8; 32])>,
+}
+
+impl verifier_sealed::Sealed for XRaySaveFormatVerifier {}
+
+impl SaveFormatVerifier for XRaySaveFormatVerifier {
+    fn verify(&mut self, app_id: u32, _remote_name: &str, bytes: &[u8]) -> Result<(), SteamError> {
+        let digest = sha256::sha256(bytes);
+        if self.verified_images.contains(&(app_id, digest)) {
+            return Ok(());
+        }
+        let expected = match app_id {
+            4_500 => sse_xray::Format::Soc,
+            20_510 => sse_xray::Format::Cs,
+            41_700 => sse_xray::Format::Cop,
+            2_427_410 => sse_xray::Format::SocEe,
+            2_427_420 => sse_xray::Format::CsEe,
+            2_427_430 => sse_xray::Format::CopEe,
+            _ => {
+                return Err(SteamError::new(
+                    "RemoteStorage writes are limited to official X-Ray trilogy releases.",
+                ));
+            }
+        };
+        let save = sse_xray::Save::read(bytes)
+            .map_err(|_| SteamError::new("RemoteStorage write payload is not a save for the selected release."))?;
+        if save.format() != expected {
+            return Err(SteamError::new(
+                "RemoteStorage write payload is not a save for the selected release.",
+            ));
+        }
+        self.verified_images.insert((app_id, digest));
+        Ok(())
     }
 }
 
@@ -105,25 +155,43 @@ impl SteamCloudWriteTransaction {
         write_enabled: bool,
     ) -> Result<WriteReceipt, SteamError> {
         if !write_enabled {
-            return Err(SteamError::new("cloud writing is disabled before I/O"));
+            return Err(SteamError::new("cloud writing is disabled before I/O").at_stage(WriteStage::BeforeWrite));
         }
-        validate_size(prepared.output.len())?;
+        validate_size(prepared.output.len()).map_err(|error| error.at_stage(WriteStage::BeforeWrite))?;
         if sha256::sha256(&prepared.output) != prepared.output_sha256 {
-            return Err(SteamError::new("prepared output hash does not match its bytes"));
+            return Err(
+                SteamError::new("prepared output hash does not match its bytes").at_stage(WriteStage::BeforeWrite)
+            );
         }
-        let remote_name = validate_remote_save_path(app_id, remote_name)?;
-        let fresh = api.read_file(&remote_name)?;
+        let remote_name =
+            validate_remote_save_path(app_id, remote_name).map_err(|error| error.at_stage(WriteStage::BeforeWrite))?;
+        let fresh = api
+            .read_file(&remote_name)
+            .map_err(|error| error.at_stage(WriteStage::BeforeWrite))?;
         if sha256::sha256(&fresh) != prepared.source_sha256 {
-            return Err(SteamError::new("cloud source changed after analysis"));
+            return Err(SteamError::new("cloud source changed after analysis").at_stage(WriteStage::BeforeWrite));
         }
-        validate_size(fresh.len())?;
-        verifier.verify(app_id, &remote_name, &fresh)?;
-        verifier.verify(app_id, &remote_name, &prepared.output)?;
-        let (backup_path, recovery_path) = write_artifacts(artifact_directory, &remote_name, &fresh, &prepared.output)?;
+        validate_size(fresh.len()).map_err(|error| error.at_stage(WriteStage::BeforeWrite))?;
+        verifier
+            .verify(app_id, &remote_name, &fresh)
+            .map_err(|error| error.at_stage(WriteStage::BeforeWrite))?;
+        verifier
+            .verify(app_id, &remote_name, &prepared.output)
+            .map_err(|error| error.at_stage(WriteStage::BeforeWrite))?;
+        let (backup_path, recovery_path) = write_artifacts(artifact_directory, &remote_name, &fresh, &prepared.output)
+            .map_err(|error| error.at_stage(WriteStage::BeforeWrite))?;
+        drop(fresh);
 
         match api.write_file(&remote_name, &prepared.output) {
             Err(WriteFailure::NotAttempted(error)) => {
-                return Err(SteamError::new(format!("cloud write was not attempted: {error}")));
+                return Err(SteamError::new(format!("cloud write was not attempted: {error}"))
+                    .at_stage(WriteStage::BeforeWrite));
+            }
+            Err(WriteFailure::Rejected(error)) => {
+                return Err(
+                    SteamError::new(format!("Steam RemoteStorage rejected the write: {error}"))
+                        .at_stage(WriteStage::WriteRejected),
+                );
             }
             Err(WriteFailure::Uncertain(error)) => {
                 return Ok(uncertain_receipt(
@@ -144,7 +212,7 @@ impl SteamCloudWriteTransaction {
                 format!("Steam callback dispatch failed after write: {error}"),
             ));
         }
-        match api.file_persisted(&remote_name) {
+        match wait_until_persisted(api, &remote_name) {
             Ok(true) => {}
             Ok(false) => {
                 return Ok(uncertain_receipt(
@@ -192,11 +260,26 @@ impl SteamCloudWriteTransaction {
         }
         Ok(WriteReceipt {
             status: WriteStatus::Verified,
+            stage: None,
             backup_path,
             recovery_path,
             output_sha256: prepared.output_sha256,
             reason: None,
         })
+    }
+}
+
+fn wait_until_persisted(api: &mut dyn SteamApi, remote_name: &str) -> Result<bool, SteamError> {
+    let started = Instant::now();
+    loop {
+        if api.file_persisted(remote_name)? {
+            return Ok(true);
+        }
+        let elapsed = started.elapsed();
+        if elapsed >= PERSISTED_TIMEOUT {
+            return Ok(false);
+        }
+        std::thread::sleep(PERSISTED_POLL_INTERVAL.min(PERSISTED_TIMEOUT.saturating_sub(elapsed)));
     }
 }
 
@@ -330,9 +413,84 @@ fn uncertain_receipt(
 ) -> WriteReceipt {
     WriteReceipt {
         status: WriteStatus::Uncertain,
+        stage: Some(WriteStage::AfterWrite),
         backup_path,
         recovery_path,
         output_sha256,
         reason: Some(reason),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        verifier_sealed, PreparedEdit, SaveFormatVerifier, SteamCloudWriteTransaction, SteamError, WriteStatus,
+    };
+    use crate::api::{ScriptedSteamApi, WriteBehavior, WriteStage};
+    use std::path::Path;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct AcceptFixtureBytes;
+
+    impl verifier_sealed::Sealed for AcceptFixtureBytes {}
+
+    impl SaveFormatVerifier for AcceptFixtureBytes {
+        fn verify(&mut self, _app_id: u32, _remote_name: &str, _bytes: &[u8]) -> Result<(), SteamError> {
+            Ok(())
+        }
+    }
+
+    fn artifacts_directory() -> std::path::PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        let directory = std::env::temp_dir().join(format!("sse-steam-stage-{}-{nanos}", std::process::id()));
+        assert!(std::fs::create_dir_all(&directory).is_ok());
+        directory
+    }
+
+    fn upload(api: &mut ScriptedSteamApi, artifacts: &Path) -> Result<super::WriteReceipt, SteamError> {
+        let source = b"source fixture";
+        let prepared = PreparedEdit::new(source, b"edited fixture");
+        let mut verifier = AcceptFixtureBytes;
+        SteamCloudWriteTransaction::upload(
+            api,
+            &mut verifier,
+            4500,
+            "_appdata_/savedgames/slot.sav",
+            &prepared,
+            artifacts,
+            true,
+        )
+    }
+
+    #[test]
+    fn explicit_filewrite_rejection_is_classified_before_uncertain_results() {
+        let artifacts = artifacts_directory();
+        let mut api = ScriptedSteamApi::default();
+        api.files
+            .insert("_appdata_/savedgames/slot.sav".into(), b"source fixture".to_vec());
+        api.write_behavior = WriteBehavior::RejectWrite("FileWrite returned false".to_owned());
+
+        let result = upload(&mut api, &artifacts);
+        assert!(result.is_err_and(|error| error.stage == Some(WriteStage::WriteRejected)));
+        assert_eq!(api.write_count, 0);
+        assert!(std::fs::remove_dir_all(artifacts).is_ok());
+    }
+
+    #[test]
+    fn lost_write_response_keeps_an_after_write_stage() {
+        let artifacts = artifacts_directory();
+        let mut api = ScriptedSteamApi::default();
+        api.files
+            .insert("_appdata_/savedgames/slot.sav".into(), b"source fixture".to_vec());
+        api.write_behavior = WriteBehavior::FailAfterWrite("response lost".to_owned());
+
+        let result = upload(&mut api, &artifacts);
+        assert!(result.is_ok_and(|receipt| {
+            receipt.status == WriteStatus::Uncertain && receipt.stage == Some(WriteStage::AfterWrite)
+        }));
+        assert_eq!(api.write_count, 1);
+        assert!(std::fs::remove_dir_all(artifacts).is_ok());
     }
 }

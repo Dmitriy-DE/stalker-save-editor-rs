@@ -8,10 +8,10 @@ use crate::discovery::{
     STALKER_2_APP_ID,
 };
 
-/// Steam API surface backed by local S.T.A.L.K.E.R. 2 Auto-Cloud files.
+/// Read-only Steam API surface backed by local S.T.A.L.K.E.R. 2 Auto-Cloud files.
 ///
-/// Listing and reading use the discovered Steam library and Proton/Windows Auto-Cloud roots. Steam Remote Storage,
-/// achievements and writes still require native `sse-sys` calls and are rejected by this adapter.
+/// Listing and reading use the discovered Steam library and Proton/Windows Auto-Cloud roots. Steam RemoteStorage
+/// and achievement operations use `WorkerSteamApi`; this local adapter does not redirect them to S2 files.
 #[derive(Debug, Clone)]
 pub struct AutoCloudSteamApi {
     steam_roots: Vec<PathBuf>,
@@ -37,7 +37,9 @@ impl AutoCloudSteamApi {
     }
 
     fn native_steam_unavailable() -> SteamError {
-        SteamError::new("native Steam Remote Storage and achievement calls await sse-sys integration")
+        SteamError::new(
+            "Steam RemoteStorage and achievement operations are unavailable in the local Auto-Cloud adapter.",
+        )
     }
 }
 
