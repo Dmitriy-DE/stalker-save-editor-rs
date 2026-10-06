@@ -3,11 +3,15 @@
 use super::saves::{RefreshOverview, Workspace};
 use super::style::{self, Button, Text};
 use super::{AppMessage, Context, Screen, ScreenId};
+use crate::edit::{Clipboard, EditConfig, FieldMode, InputFilter, Key, Modifiers};
 use crate::event_loop::Message;
+use crate::glyphs::{Face, TextStyle};
+use crate::layout::{Edges, NodeKind, Size, Style};
 use crate::process_guard::{
     format_id_for_save_file, is_windows_file_busy_error_text, running_game_for_format, SAVE_WHILE_GAME_RUNNING_WARNING,
 };
-use crate::widget::WidgetId;
+use crate::widget::{Content, Look, WidgetId};
+use crate::widgets::text_input::TextInput;
 use sse_core::{Error, Result, SaveBuffer};
 use sse_storage::discovery::{SaveDirectoryLocator, SaveSlot, SaveSlotDiscovery};
 use sse_storage::transaction::{self, BackupEntry, BackupStatus};
@@ -206,6 +210,11 @@ pub struct HistoryScreen {
     process_check_complete: bool,
     diagnosis_request_id: u64,
     diagnosed_selection: Option<(PathBuf, String)>,
+    doctor_path_input: Option<WidgetId>,
+    doctor_check: Option<WidgetId>,
+    doctor_path: Option<TextInput>,
+    doctor_clipboard: HistoryClipboard,
+    diagnosis_running: bool,
 }
 
 impl HistoryScreen {
@@ -236,7 +245,111 @@ impl HistoryScreen {
             process_check_complete: false,
             diagnosis_request_id: 0,
             diagnosed_selection: None,
+            doctor_path_input: None,
+            doctor_check: None,
+            doctor_path: None,
+            doctor_clipboard: HistoryClipboard::default(),
+            diagnosis_running: false,
         }
+    }
+
+    fn set_doctor_path(&mut self, tree: &mut crate::widget::Tree, value: &str) -> Result<()> {
+        let Some(widget) = self.doctor_path_input else {
+            return Ok(());
+        };
+        let value = value.trim();
+        let current = self.doctor_path.as_ref().map_or_else(String::new, TextInput::text);
+        if current != value {
+            self.doctor_path = Some(TextInput::new(value, doctor_path_edit_config())?);
+            self.diagnosis_request_id = self.diagnosis_request_id.saturating_add(1);
+            self.diagnosed_selection = None;
+            self.diagnosis_running = false;
+            self.clear_results(tree)?;
+            self.set_summary(tree, "Путь изменён. Нажмите «ПРОВЕРИТЬ СОХРАНЕНИЕ».")?;
+        }
+        tree.set_input_text(widget, value)?;
+        if let Some(check) = self.doctor_check {
+            tree.set_enabled(check, !value.is_empty() && !self.diagnosis_running)?;
+        }
+        Ok(())
+    }
+
+    fn sync_doctor_check(&self, tree: &mut crate::widget::Tree) -> Result<()> {
+        let has_path = self
+            .doctor_path
+            .as_ref()
+            .and_then(|input| manual_save_path(&input.text()))
+            .is_some();
+        if let Some(check) = self.doctor_check {
+            tree.set_enabled(check, has_path && !self.diagnosis_running)?;
+        }
+        Ok(())
+    }
+
+    fn edit_doctor_path(
+        &mut self,
+        cx: &mut Context<'_>,
+        keysym: u32,
+        text: Option<char>,
+        ctrl: bool,
+        shift: bool,
+    ) -> Result<()> {
+        let key = match keysym {
+            0xff08 => Key::Backspace,
+            0xffff => Key::Delete,
+            0xff51 => Key::Left,
+            0xff53 => Key::Right,
+            0xff50 => Key::Home,
+            0xff57 => Key::End,
+            value if ctrl && matches!(value, 0x61 | 0x41) => Key::A,
+            value if ctrl && matches!(value, 0x63 | 0x43) => Key::C,
+            value if ctrl && matches!(value, 0x76 | 0x56) => Key::V,
+            value if ctrl && matches!(value, 0x78 | 0x58) => Key::X,
+            _ => Key::Character(text.unwrap_or('\0')),
+        };
+        let typed = text.map(|character| character.to_string());
+        let changed = {
+            let Some(input) = self.doctor_path.as_mut() else {
+                return Ok(());
+            };
+            input.key(
+                key,
+                Modifiers { ctrl, shift },
+                typed.as_deref(),
+                &mut self.doctor_clipboard,
+            )?
+        };
+        if changed {
+            let value = self.doctor_path.as_ref().map_or_else(String::new, TextInput::text);
+            if let Some(widget) = self.doctor_path_input {
+                cx.tree.set_input_text(widget, &value)?;
+            }
+            self.diagnosis_request_id = self.diagnosis_request_id.saturating_add(1);
+            self.diagnosed_selection = None;
+            self.diagnosis_running = false;
+            self.clear_results(cx.tree)?;
+            self.set_summary(cx.tree, "Путь изменён. Нажмите «ПРОВЕРИТЬ СОХРАНЕНИЕ».")?;
+            self.sync_doctor_check(cx.tree)?;
+        }
+        Ok(())
+    }
+
+    fn check_doctor_path(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        let value = self.doctor_path.as_ref().map_or_else(String::new, TextInput::text);
+        let Some(path) = manual_save_path(&value) else {
+            self.set_summary(cx.tree, "Укажите путь к файлу сохранения.")?;
+            self.sync_doctor_check(cx.tree)?;
+            return Ok(());
+        };
+        if self.diagnosis_running {
+            return Ok(());
+        }
+        self.set_summary(cx.tree, &format!("Проверяю {}…", display_name(&path)))?;
+        if self.start_diagnosis(path, None, cx.proxy.cloned())? {
+            self.diagnosis_running = true;
+            self.sync_doctor_check(cx.tree)?;
+        }
+        Ok(())
     }
 
     fn request_refresh(&self, proxy: Option<crate::event_loop::Proxy<AppMessage>>) -> Result<()> {
@@ -303,6 +416,7 @@ impl HistoryScreen {
                 Box::new(HistoryResult::Diagnosis { request_id, result }),
             ));
         })?;
+        self.diagnosis_running = true;
         Ok(true)
     }
 
@@ -836,6 +950,18 @@ impl HistoryScreen {
         Ok(())
     }
 
+    fn render_diagnosis_error(&mut self, tree: &mut crate::widget::Tree, error: &str) -> Result<()> {
+        self.clear_results(tree)?;
+        self.set_summary(tree, "Ошибка")?;
+        if let Some(row) = self.rows.first().copied() {
+            tree.set_visible(row.row, true)?;
+            tree.set_text(row.label, &doctor_error_detail(error))?;
+            tree.set_visible(row.button, false)?;
+            tree.set_visible(row.secondary_button, false)?;
+        }
+        Ok(())
+    }
+
     fn render_quest_repair(&mut self, cx: &mut Context<'_>, completion: QuestRepairCompletion) -> Result<()> {
         let QuestRepairCompletion {
             path,
@@ -889,15 +1015,19 @@ impl Screen for HistoryScreen {
             if selected != self.diagnosed_selection {
                 if let Some((path, source_sha256)) = selected {
                     let format_id = cx.app.current_save_format().map(str::to_owned);
+                    self.set_doctor_path(cx.tree, &path.to_string_lossy())?;
                     self.set_summary(cx.tree, &format!("Проверяю {}…", display_name(&path)))?;
                     if self.start_diagnosis(path.clone(), format_id, cx.proxy.cloned())? {
                         self.diagnosed_selection = Some((path, source_sha256));
                     }
-                } else {
+                    self.sync_doctor_check(cx.tree)?;
+                } else if self.diagnosed_selection.is_some() {
                     self.diagnosis_request_id = self.diagnosis_request_id.saturating_add(1);
                     self.diagnosed_selection = None;
+                    self.diagnosis_running = false;
                     self.clear_results(cx.tree)?;
                     self.set_summary(cx.tree, "ВЫБЕРИТЕ ФАЙЛ СОХРАНЕНИЯ ДЛЯ ПРОВЕРКИ.")?;
+                    self.sync_doctor_check(cx.tree)?;
                 }
             }
         }
@@ -910,14 +1040,56 @@ impl Screen for HistoryScreen {
             ScreenId::Backups => "БЭКАПЫ И ВОССТАНОВЛЕНИЕ",
             ScreenId::Compare => "СРАВНЕНИЕ СОХРАНЕНИЙ",
             ScreenId::Timeline => "ИСТОРИЯ СОХРАНЕНИЙ",
-            ScreenId::SaveDoctor => "ДИАГНОСТИКА СОХРАНЕНИЯ",
+            ScreenId::SaveDoctor => doctor_title(),
             _ => "ИСТОРИЯ",
         };
         style::label(cx.tree, card, title, Text::Heading)?;
+        if self.id == ScreenId::SaveDoctor {
+            style::label(cx.tree, card, doctor_description(), Text::Note)?;
+            let path_row = style::row(cx.tree, card)?;
+            style::label(cx.tree, path_row, "Файл", Text::Note)?;
+            let colors = crate::theme::current().colors;
+            let path_input = cx.tree.add(
+                Some(path_row),
+                NodeKind::Leaf,
+                Style {
+                    min: Size::new(360.0, crate::theme::BUTTON_HEIGHT),
+                    padding: Edges {
+                        left: 12.0,
+                        top: 0.0,
+                        right: 12.0,
+                        bottom: 0.0,
+                    },
+                    ..Style::default()
+                },
+                Content::Input {
+                    text: String::new(),
+                    style: TextStyle::new(Face::Body, 16.0),
+                },
+                Look {
+                    fill: Some(style::rgb(colors.background[4])),
+                    border: Some((style::rgb(colors.borders[1]), 1.0)),
+                    radius: crate::theme::BUTTON_RADIUS,
+                    text: style::rgb(colors.text[0]),
+                    ..Look::default()
+                },
+            )?;
+            self.doctor_path_input = Some(path_input);
+            self.doctor_path = Some(TextInput::new("", doctor_path_edit_config())?);
+            self.doctor_check = Some(style::button(
+                cx.tree,
+                path_row,
+                "ПРОВЕРИТЬ СОХРАНЕНИЕ",
+                Button::Primary,
+            )?);
+            if let Some(check) = self.doctor_check {
+                cx.tree.set_enabled(check, false)?;
+            }
+        }
         let row = style::row(cx.tree, card)?;
         let action = match self.id {
             ScreenId::Compare => "Найти сейвы",
-            ScreenId::SaveDoctor => "Выбрать сейв",
+            ScreenId::SaveDoctor => "Список сейвов",
             ScreenId::Timeline => "Обновить историю",
             _ => "Обновить",
         };
@@ -945,7 +1117,7 @@ impl Screen for HistoryScreen {
                 ScreenId::Backups => "Журнал резервных копий сверяется с файлами и SHA-256; восстановление идёт в отдельный файл после подтверждения.",
                 ScreenId::Compare => "Показываются только различия в читаемых значениях денег и предметов.",
                 ScreenId::Timeline => "Временная последовательность строится по времени изменения файлов сейвов.",
-                ScreenId::SaveDoctor => "Проверка только читает сейв. Автоматического ремонта нет.",
+                ScreenId::SaveDoctor => "Ремонт доступен только для доказанно сломанного квеста и записывается с бэкапом и обратным чтением.",
                 _ => "",
             },
             Text::Note,
@@ -1089,6 +1261,42 @@ impl Screen for HistoryScreen {
             }
             return Ok(());
         }
+        if self.id == ScreenId::SaveDoctor {
+            if let (Some(widget), Some(input)) = (self.doctor_path_input, self.doctor_path.as_mut()) {
+                if clicked.is_some() && clicked == Some(widget) {
+                    cx.tree.set_focus(Some(widget))?;
+                    input.focus(true, 0);
+                } else {
+                    input.focus(cx.tree.focused() == Some(widget), 0);
+                }
+                if input.focused() {
+                    if let Message::Window(crate::event_loop::WindowEvent::Key {
+                        pressed: true,
+                        keysym,
+                        text,
+                        ctrl,
+                        shift,
+                    }) = message
+                    {
+                        if *keysym == 0xff0d {
+                            self.check_doctor_path(cx)?;
+                            return Ok(());
+                        }
+                        if *keysym == 0xff1b {
+                            input.focus(false, 0);
+                            cx.tree.set_focus(None)?;
+                            return Ok(());
+                        }
+                        self.edit_doctor_path(cx, *keysym, *text, *ctrl, *shift)?;
+                        return Ok(());
+                    }
+                }
+            }
+            if clicked.is_some() && clicked == self.doctor_check {
+                self.check_doctor_path(cx)?;
+                return Ok(());
+            }
+        }
         if self.pending_restore.is_some() {
             let escape = matches!(
                 message,
@@ -1218,8 +1426,10 @@ impl Screen for HistoryScreen {
                     }
                 }
                 Action::Diagnose { path, format_id } => {
+                    self.set_doctor_path(cx.tree, &path.to_string_lossy())?;
                     self.set_summary(cx.tree, &format!("Проверяю {}…", display_name(&path)))?;
                     self.start_diagnosis(path, format_id, cx.proxy.cloned())?;
+                    self.sync_doctor_check(cx.tree)?;
                 }
                 Action::RepairQuests {
                     path,
@@ -1275,11 +1485,14 @@ impl Screen for HistoryScreen {
                             self.set_summary(cx.tree, &format!("Ошибка сравнения: {}", truncate(error, 160)))?
                         }
                         HistoryResult::Diagnosis { request_id, result } if *request_id == self.diagnosis_request_id => {
+                            self.diagnosis_running = false;
+                            if let Ok((path, report)) = result {
+                                self.diagnosed_selection = Some((path.clone(), report.source_sha256.clone()));
+                            }
+                            self.sync_doctor_check(cx.tree)?;
                             match result {
                                 Ok((path, report)) => self.render_diagnosis(cx, path, report.clone())?,
-                                Err(error) => {
-                                    self.set_summary(cx.tree, &format!("Ошибка чтения: {}", truncate(error, 160)))?
-                                }
+                                Err(error) => self.render_diagnosis_error(cx.tree, error)?,
                             }
                         }
                         HistoryResult::Diagnosis { .. } => {}
@@ -1638,54 +1851,64 @@ fn diagnose_save(path: &Path, format_id: Option<&str>) -> std::result::Result<(P
 
 fn diagnose_packed(packed: &[u8], format_id: Option<&str>) -> std::result::Result<DiagnosisReport, String> {
     let source_sha256 = sse_codecs::sha256::sha256_hex(packed);
-    if format_id == Some("stalker2") {
-        let save = sse_s2::S2Save::from_bytes(packed).map_err(|error| error.to_string())?;
-        let container = save.container();
-        let items = save.items();
-        return Ok(DiagnosisReport {
-            summary: format!(
-                "S2: {} байт · CRC {:08X}/{:08X} · деньги {} · предметов {} · тайник {} · предупреждений {} · неразрешённых ссылок {}. Правила Quest Doctor для S2 недоступны.",
-                packed.len(),
-                container.stored_crc32(),
-                container.computed_crc32(),
-                save.money(),
-                items.len(),
-                if save.stash().is_ok() { "найден" } else { "не найден" },
-                save.warnings().len(),
-                save.unresolved_handles().len(),
-            ),
-            source_sha256,
-            format_id: Some("stalker2".to_owned()),
-            quest_states: Vec::new(),
-            can_repair_quests: false,
-        });
+    if format_id.is_none() || format_id == Some("stalker2") {
+        match sse_s2::S2Save::from_bytes(packed) {
+            Ok(save) => {
+                let container = save.container();
+                let items = save.items();
+                return Ok(DiagnosisReport {
+                    summary: format!(
+                        "S2: {} байт · CRC {:08X}/{:08X} · деньги {} · предметов {} · тайник {} · предупреждений {} · неразрешённых ссылок {}. Правила Quest Doctor для S2 недоступны.",
+                        packed.len(),
+                        container.stored_crc32(),
+                        container.computed_crc32(),
+                        save.money(),
+                        items.len(),
+                        if save.stash().is_ok() { "найден" } else { "не найден" },
+                        save.warnings().len(),
+                        save.unresolved_handles().len(),
+                    ),
+                    source_sha256,
+                    format_id: Some("stalker2".to_owned()),
+                    quest_states: Vec::new(),
+                    can_repair_quests: false,
+                });
+            }
+            Err(error) if format_id == Some("stalker2") => return Err(error.to_string()),
+            Err(_) => {}
+        }
     }
-    if format_id.is_some_and(|id| id.starts_with("stalker-")) {
-        let save = sse_xray::Save::read(packed).map_err(|error| error.to_string())?;
-        let inventory = save.inventory().map_err(|error| error.to_string())?;
-        let quests = sse_doctor::analyze_quests_from_save(&save);
-        let broken = quests
-            .states
-            .iter()
-            .filter(|state| state.status == sse_doctor::QuestTaskStatus::Broken)
-            .count();
-        let quest_summary = if !quests.quest_states_available {
-            "Нет проверенных правил квестов для этого формата.".to_owned()
-        } else if broken > 0 {
-            format!("Подтверждённо сломанных квестов: {broken}; доступен ремонт.")
-        } else {
-            "Подтверждённых сломанных квестов не найдено.".to_owned()
-        };
-        return Ok(DiagnosisReport {
-            summary: format!(
-                "X-Ray {}: упакованный файл {} байт · реестр {} · предметов инвентаря {} · деньги {} · игровой тик {}. Структура прочитана. {quest_summary}",
-                save.format().id(), packed.len(), save.registry_objects().len(), inventory.len(), save.money().map_err(|error| error.to_string())?, save.game_time(),
-            ),
-            source_sha256,
-            format_id: Some(save.format().id().to_owned()),
-            quest_states: quests.states,
-            can_repair_quests: broken > 0,
-        });
+    if format_id.is_none() || format_id.is_some_and(|id| id.starts_with("stalker-")) {
+        match sse_xray::Save::read(packed) {
+            Ok(save) => {
+                let inventory = save.inventory().map_err(|error| error.to_string())?;
+                let quests = sse_doctor::analyze_quests_from_save(&save);
+                let broken = quests
+                    .states
+                    .iter()
+                    .filter(|state| state.status == sse_doctor::QuestTaskStatus::Broken)
+                    .count();
+                let quest_summary = if !quests.quest_states_available {
+                    "Нет проверенных правил квестов для этого формата.".to_owned()
+                } else if broken > 0 {
+                    format!("Подтверждённо сломанных квестов: {broken}; доступен ремонт.")
+                } else {
+                    "Подтверждённых сломанных квестов не найдено.".to_owned()
+                };
+                return Ok(DiagnosisReport {
+                    summary: format!(
+                        "X-Ray {}: упакованный файл {} байт · реестр {} · предметов инвентаря {} · деньги {} · игровой тик {}. Структура прочитана. {quest_summary}",
+                        save.format().id(), packed.len(), save.registry_objects().len(), inventory.len(), save.money().map_err(|error| error.to_string())?, save.game_time(),
+                    ),
+                    source_sha256,
+                    format_id: Some(save.format().id().to_owned()),
+                    quest_states: quests.states,
+                    can_repair_quests: broken > 0,
+                });
+            }
+            Err(error) if format_id.is_some() => return Err(error.to_string()),
+            Err(_) => {}
+        }
     }
     Err("формат не распознан; структурная проверка не запускалась".to_owned())
 }
@@ -1739,7 +1962,7 @@ fn quest_title(id: &str) -> &'static str {
 }
 
 fn quest_detail(state: &sse_doctor::QuestTaskState) -> String {
-    match (state.status, state.reason) {
+    let detail = match (state.status, state.reason) {
         (sse_doctor::QuestTaskStatus::Ok, "alive") => "✓ NPC ЖИВ.".to_owned(),
         (sse_doctor::QuestTaskStatus::Ok, _) => "✓ ФЛАГ УЖЕ ВЫДАН.".to_owned(),
         (sse_doctor::QuestTaskStatus::Broken, _) => format!(
@@ -1753,7 +1976,13 @@ fn quest_detail(state: &sse_doctor::QuestTaskState) -> String {
         (sse_doctor::QuestTaskStatus::Unknown, _) => {
             "? NPC НЕ НАЙДЕН ИЛИ НЕ ЧИТАЕТСЯ; СОСТОЯНИЕ НЕИЗВЕСТНО.".to_owned()
         }
+    };
+    if state.needs_preventing_fix {
+        if let Some(fix_id) = state.preventing_fix_id {
+            return format!("{detail} ЧТОБЫ ИГРА УВИДЕЛА ФЛАГ, УСТАНОВИТЕ ИСПРАВЛЕНИЕ ИГРЫ {fix_id}.");
+        }
     }
+    detail
 }
 
 fn restore_to_new_path(journal: &Path, source: &Path) -> std::result::Result<PathBuf, String> {
@@ -1793,11 +2022,58 @@ fn truncate(value: &str, maximum: usize) -> String {
     result
 }
 
+fn doctor_title() -> &'static str {
+    "ДОКТОР СОХРАНЕНИЯ"
+}
+
+fn doctor_description() -> &'static str {
+    "ПРОВЕРКА ЧИТАЕМОСТИ ФОРМАТА. СЕМАНТИЧЕСКИЕ ПРАВИЛА И РЕМОНТ ДОСТУПНЫ ТОЛЬКО ПРИ НАЛИЧИИ ПРОВЕРЕННЫХ ДАННЫХ.\nИСПРАВИТЬ КВЕСТЫ использует общий путь записи с бэкапом и обратным чтением."
+}
+
+fn doctor_error_detail(error: &str) -> String {
+    if let Some(detail) = error.strip_prefix("формат не распознан;") {
+        format!(
+            "× СТРУКТУРНАЯ ПРОВЕРКА — ФАЙЛ НЕ РАСПОЗНАН ИЛИ ПОВРЕЖДЁН: {}",
+            truncate(detail.trim(), 120)
+        )
+    } else {
+        format!("× СТРУКТУРНАЯ ПРОВЕРКА — {}", truncate(error, 160))
+    }
+}
+
+fn manual_save_path(value: &str) -> Option<PathBuf> {
+    let value = value.trim();
+    (!value.is_empty()).then(|| PathBuf::from(value))
+}
+
+fn doctor_path_edit_config() -> EditConfig {
+    EditConfig {
+        mode: FieldMode::SingleLine,
+        max_graphemes: 4096,
+        history_limit: 32,
+        filter: InputFilter::Any,
+    }
+}
+
+#[derive(Default)]
+struct HistoryClipboard(String);
+
+impl Clipboard for HistoryClipboard {
+    fn read_text(&mut self) -> Result<String> {
+        Ok(self.0.clone())
+    }
+
+    fn write_text(&mut self, text: &str) -> Result<()> {
+        text.clone_into(&mut self.0);
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        compare_packed, diagnose_packed, format_system_time, page_count, restored_output_path_at, timeline_order,
-        truncate, Action, ActionButton, DiagnosisReport, HistoryScreen, Workspace,
+        compare_packed, diagnose_packed, format_system_time, page_count, quest_detail, restored_output_path_at,
+        timeline_order, truncate, Action, ActionButton, DiagnosisReport, HistoryScreen, Workspace,
     };
     use crate::event_loop::Message;
     use crate::glyphs::Fonts;
@@ -1853,6 +2129,132 @@ mod tests {
     fn diagnostic_text_truncation_obeys_character_boundary() {
         assert_eq!(truncate("абвг", 3), "аб…");
         assert_eq!(truncate("ok", 3), "ok");
+    }
+
+    #[test]
+    fn doctor_screen_uses_acceptance_heading_and_describes_repair() {
+        assert_eq!(super::doctor_title(), "ДОКТОР СОХРАНЕНИЯ");
+        assert!(super::doctor_description().contains("ИСПРАВИТЬ КВЕСТЫ"));
+        assert!(super::doctor_description().contains("обратным чтением"));
+    }
+
+    #[test]
+    fn doctor_error_uses_acceptance_structure_row() {
+        assert_eq!(
+            super::doctor_error_detail("file not found"),
+            "× СТРУКТУРНАЯ ПРОВЕРКА — file not found"
+        );
+        assert_eq!(
+            super::doctor_error_detail("формат не распознан; структурная проверка не запускалась"),
+            "× СТРУКТУРНАЯ ПРОВЕРКА — ФАЙЛ НЕ РАСПОЗНАН ИЛИ ПОВРЕЖДЁН: структурная проверка не запускалась"
+        );
+        assert!(super::doctor_error_detail(&"x".repeat(200)).chars().count() <= 190);
+    }
+
+    #[test]
+    fn manual_save_path_rejects_blank_input_and_trims_whitespace() {
+        assert_eq!(super::manual_save_path("  	 "), None);
+        assert_eq!(
+            super::manual_save_path("  /tmp/slot.sav  "),
+            Some(PathBuf::from("/tmp/slot.sav"))
+        );
+    }
+
+    #[test]
+    fn quest_detail_shows_the_preventing_game_fix() {
+        let state = sse_doctor::QuestTaskState {
+            id: "cs.wolf-dead",
+            title: "Wolf's tasks after his death",
+            status: sse_doctor::QuestTaskStatus::Broken,
+            reason: "dead-without-flag",
+            missing_info: Some("esc_wolf_dead"),
+            preventing_fix_id: Some("cs.quest.wolf-offline-cancellation"),
+            needs_preventing_fix: true,
+            detail: "NPC is dead, but the flag is absent.",
+            references: &[],
+        };
+        assert!(quest_detail(&state)
+            .contains("ЧТОБЫ ИГРА УВИДЕЛА ФЛАГ, УСТАНОВИТЕ ИСПРАВЛЕНИЕ ИГРЫ cs.quest.wolf-offline-cancellation."));
+    }
+
+    #[test]
+    fn manual_doctor_path_runs_and_applies_a_background_check() -> sse_core::Result<()> {
+        let temp = TempDirectory::new();
+        let path = temp.0.join("manual-fixture.sav");
+        fs::write(&path, SYNTHETIC_XRAY_SAVE)?;
+        let workspace = Workspace::default();
+        let mut screen = HistoryScreen::new(ScreenId::SaveDoctor, "test", workspace);
+        let mut app = sse_app::state::AppState::new();
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let (proxy, receiver) = crate::event_loop::channel_pair::<AppMessage>();
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: Some(&proxy),
+            status: None,
+            app: &mut app,
+        };
+        screen.build(&mut cx, host)?;
+        let path_input = screen
+            .doctor_path_input
+            .ok_or_else(|| sse_core::Error::damaged("doctor path input was not built"))?;
+        let check = screen
+            .doctor_check
+            .ok_or_else(|| sse_core::Error::damaged("doctor check button was not built"))?;
+        cx.tree.set_focus(Some(path_input))?;
+        for character in path.to_string_lossy().chars() {
+            screen.message(
+                &mut cx,
+                &Message::Window(crate::event_loop::WindowEvent::Key {
+                    pressed: true,
+                    keysym: u32::from(character),
+                    text: Some(character),
+                    ctrl: false,
+                    shift: false,
+                }),
+                None,
+            )?;
+        }
+        for keysym in [0x61, 0x63, 0x76] {
+            screen.message(
+                &mut cx,
+                &Message::Window(crate::event_loop::WindowEvent::Key {
+                    pressed: true,
+                    keysym,
+                    text: None,
+                    ctrl: true,
+                    shift: false,
+                }),
+                None,
+            )?;
+        }
+        assert_eq!(cx.tree.input_text(path_input)?, path.to_string_lossy());
+        cx.tree.set_focus(Some(check))?;
+        screen.message(&mut cx, &Message::User(AppMessage::Tick(0)), Some(check))?;
+        assert!(screen.diagnosis_running);
+
+        let message = receiver
+            .recv_timeout(Duration::from_secs(2))
+            .map_err(|error| sse_core::Error::damaged(format!("doctor worker did not reply: {error}")))?;
+        if let Message::User(AppMessage::ToScreen(_, payload)) = &message {
+            if let Some(super::HistoryResult::Diagnosis { result, .. }) = payload.downcast_ref::<super::HistoryResult>()
+            {
+                assert!(result.is_ok(), "manual path diagnosis failed: {result:?}");
+            }
+        }
+        screen.message(&mut cx, &message, None)?;
+        assert!(!screen.diagnosis_running);
+        assert_eq!(
+            screen.diagnosed_selection.as_ref().map(|(selected, _)| selected),
+            Some(&path)
+        );
+        Ok(())
     }
 
     #[test]
@@ -1935,7 +2337,7 @@ mod tests {
 
     #[test]
     fn doctor_identifies_synthetic_xray_save() {
-        let report = diagnose_packed(SYNTHETIC_XRAY_SAVE, Some("stalker-soc-ee"))
+        let report = diagnose_packed(SYNTHETIC_XRAY_SAVE, None)
             .unwrap_or_else(|error| panic!("diagnose X-Ray fixture: {error}"));
         assert!(report.summary.starts_with("X-Ray stalker-soc-ee:"));
         assert!(report.summary.contains("Структура прочитана"));
@@ -1945,13 +2347,13 @@ mod tests {
 
     #[test]
     fn doctor_refuses_to_guess_a_save_format() {
-        assert!(diagnose_packed(SYNTHETIC_XRAY_SAVE, None).is_err());
+        assert!(diagnose_packed(b"not a supported save", None).is_err());
     }
 
     #[test]
     fn doctor_identifies_synthetic_s2_save_and_reports_crc() {
-        let report = diagnose_packed(SYNTHETIC_S2_SAVE, Some("stalker2"))
-            .unwrap_or_else(|error| panic!("diagnose S2 fixture: {error}"));
+        let report =
+            diagnose_packed(SYNTHETIC_S2_SAVE, None).unwrap_or_else(|error| panic!("diagnose S2 fixture: {error}"));
         assert!(report.summary.starts_with("S2:"));
         assert!(report.summary.contains("CRC"));
         assert!(report.summary.contains("Quest Doctor для S2 недоступны"));
