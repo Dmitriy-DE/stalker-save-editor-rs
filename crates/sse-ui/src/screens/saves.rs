@@ -193,19 +193,23 @@ impl Workspace {
         self.session.is_restoring()
     }
 
+    pub(crate) fn is_loading(&self) -> bool {
+        self.lock().loading
+    }
+
+    pub(crate) fn load_request(&self) -> u64 {
+        self.lock().load_request
+    }
+
     pub(crate) fn library_snapshot(&self) -> (bool, Option<String>, Vec<SaveSlot>) {
         let state = self.lock();
         (
             state.scanning,
             state.load_error.clone(),
-            state.discovery.as_ref().map_or_else(Vec::new, |discovery| {
-                discovery
-                    .slots
-                    .iter()
-                    .filter(|slot| slot.detection_error.is_none())
-                    .cloned()
-                    .collect()
-            }),
+            library_slots(&state)
+                .into_iter()
+                .filter(|slot| slot.detection_error.is_none())
+                .collect(),
         )
     }
 
@@ -214,12 +218,9 @@ impl Workspace {
     }
 
     pub(crate) fn select_library_path(&self, path: &Path, cx: &mut Context<'_>) {
-        let slot = self
-            .lock()
-            .discovery
-            .as_ref()
-            .and_then(|discovery| discovery.slots.iter().find(|slot| slot.path == path))
-            .cloned();
+        let slot = library_slots(&self.lock())
+            .into_iter()
+            .find(|slot| same_file_path(&slot.path, path));
         if let Some(slot) = slot {
             start_load(self, slot, cx);
         }
@@ -337,6 +338,7 @@ struct WorkspaceState {
     tasks: sse_app::TaskManager,
     scanning: bool,
     discovery: Option<sse_storage::discovery::SaveDiscoveryResult>,
+    manually_opened: Vec<SaveSlot>,
     loading: bool,
     load_request: u64,
     load_error: Option<String>,
@@ -682,16 +684,23 @@ fn start_discovery(workspace: &Workspace, cx: &mut Context<'_>) {
 }
 
 fn start_load(workspace: &Workspace, slot: SaveSlot, cx: &mut Context<'_>) {
-    start_load_from(workspace, move || Ok(slot), false, cx);
+    let requested_path = slot.path.clone();
+    start_load_from(workspace, move || Ok(slot), false, requested_path, cx);
 }
 
 fn start_load_path(workspace: &Workspace, path: &Path, cx: &mut Context<'_>) {
-    let path = path.to_path_buf();
-    start_load_from(workspace, move || slot_for_path(&path), true, cx);
+    let requested_path = path.to_path_buf();
+    let path = requested_path.clone();
+    start_load_from(workspace, move || slot_for_path(&path), true, requested_path, cx);
 }
 
-fn start_load_from<F>(workspace: &Workspace, slot: F, include_discovery: bool, cx: &mut Context<'_>)
-where
+fn start_load_from<F>(
+    workspace: &Workspace,
+    slot: F,
+    include_discovery: bool,
+    requested_path: PathBuf,
+    cx: &mut Context<'_>,
+) where
     F: FnOnce() -> Result<SaveSlot> + Send + 'static,
 {
     let Some(proxy) = cx.proxy.cloned() else {
@@ -740,6 +749,7 @@ where
             let journal = load_draft_journal(draft_directory.as_path(), &save.source_sha256)?;
             Ok((save, journal))
         });
+        let io_error = matches!(&result, Err(Error::System(_)));
         let mut state = shared.lock();
         if state.load_request != request {
             return;
@@ -749,19 +759,17 @@ where
             Ok((save, journal)) => {
                 state.load_error = None;
                 if include_discovery {
-                    let searched_paths = save.slot.path.parent().map(Path::to_path_buf).into_iter().collect();
-                    state.discovery = Some(sse_storage::discovery::SaveDiscoveryResult {
-                        slots: vec![save.slot.clone()],
-                        searched_paths,
-                    });
+                    upsert_slot(&mut state.manually_opened, save.slot.clone());
                 }
                 let path = save.slot.path.clone();
                 state.selected = Some(Arc::new(save));
                 LoadFinished {
                     request,
                     selected_path: Some(path),
+                    requested_path: requested_path.clone(),
                     journal: Some(journal),
                     error: None,
+                    io_error: false,
                 }
             }
             Err(error) => {
@@ -771,8 +779,10 @@ where
                 LoadFinished {
                     request,
                     selected_path: None,
+                    requested_path: requested_path.clone(),
                     journal: None,
                     error: Some(error),
+                    io_error,
                 }
             }
         };
@@ -904,6 +914,7 @@ fn start_reload_selected(workspace: &Workspace, cx: &mut Context<'_>) -> Result<
     let session = workspace.session.clone();
     let directory = Arc::clone(&workspace.draft_directory);
     let shared = workspace.clone();
+    let requested_path = path.clone();
     if let Err(error) = workspace.spawn("save-reload", move |context| {
         if context.is_cancelled() {
             return;
@@ -919,6 +930,7 @@ fn start_reload_selected(workspace: &Workspace, cx: &mut Context<'_>) -> Result<
             let journal = load_draft_journal(directory.as_path(), &loaded.source_sha256)?;
             Ok((loaded, journal))
         })();
+        let io_error = matches!(&result, Err(Error::System(_)));
         let mut state = shared.lock();
         if state.load_request != request {
             return;
@@ -932,8 +944,10 @@ fn start_reload_selected(workspace: &Workspace, cx: &mut Context<'_>) -> Result<
                 LoadFinished {
                     request,
                     selected_path: Some(path),
+                    requested_path: requested_path.clone(),
                     journal: Some(journal),
                     error: None,
+                    io_error: false,
                 }
             }
             Err(error) => {
@@ -943,8 +957,10 @@ fn start_reload_selected(workspace: &Workspace, cx: &mut Context<'_>) -> Result<
                 LoadFinished {
                     request,
                     selected_path: None,
+                    requested_path: requested_path.clone(),
                     journal: None,
                     error: Some(error),
+                    io_error,
                 }
             }
         };
@@ -963,11 +979,13 @@ fn start_reload_selected(workspace: &Workspace, cx: &mut Context<'_>) -> Result<
     Ok(())
 }
 
-struct LoadFinished {
-    request: u64,
-    selected_path: Option<PathBuf>,
-    journal: Option<DraftJournal>,
-    error: Option<String>,
+pub(super) struct LoadFinished {
+    pub(super) request: u64,
+    pub(super) selected_path: Option<PathBuf>,
+    pub(super) requested_path: PathBuf,
+    pub(super) journal: Option<DraftJournal>,
+    pub(super) error: Option<String>,
+    pub(super) io_error: bool,
 }
 
 #[derive(Clone)]
@@ -1142,10 +1160,55 @@ fn save_game_key(slot: &SaveSlot) -> &str {
     slot.game_id.as_deref().unwrap_or(slot.candidate_game_id.as_str())
 }
 
+fn library_slots(state: &WorkspaceState) -> Vec<SaveSlot> {
+    let mut slots = state
+        .discovery
+        .as_ref()
+        .map_or_else(Vec::new, |discovery| discovery.slots.clone());
+    for slot in &state.manually_opened {
+        upsert_slot(&mut slots, slot.clone());
+    }
+    slots.sort_by(|left, right| {
+        save_game_key(left)
+            .cmp(save_game_key(right))
+            .then_with(|| right.last_write_time_utc.cmp(&left.last_write_time_utc))
+    });
+    slots
+}
+
+fn upsert_slot(slots: &mut Vec<SaveSlot>, slot: SaveSlot) {
+    if let Some(existing) = slots
+        .iter_mut()
+        .find(|existing| same_file_path(&existing.path, &slot.path))
+    {
+        *existing = slot;
+    } else {
+        slots.push(slot);
+    }
+}
+
+fn same_file_path(left: &Path, right: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        left.to_string_lossy().eq_ignore_ascii_case(&right.to_string_lossy())
+    }
+    #[cfg(not(windows))]
+    {
+        left == right
+    }
+}
+
 fn slot_for_path(path: &Path) -> Result<SaveSlot> {
-    let metadata = std::fs::metadata(path)?;
+    const MAX_SAVE_BYTES: u64 = 512 * 1024 * 1024;
+    let path = std::fs::canonicalize(path)?;
+    let metadata = std::fs::metadata(&path)?;
+    if metadata.len() == 0 || metadata.len() > MAX_SAVE_BYTES {
+        return Err(Error::Refused(
+            "save file size is outside the supported range".to_owned(),
+        ));
+    }
     Ok(SaveSlot {
-        path: path.to_path_buf(),
+        path,
         candidate_game_id: "unknown".to_owned(),
         candidate_release_id: "unknown".to_owned(),
         size: metadata.len(),
@@ -1687,7 +1750,8 @@ impl Screen for Overview {
             if let Some(refresh) = payload.downcast_ref::<RefreshOverview>() {
                 start_discovery(&self.workspace, cx);
                 if let Some(path) = refresh.path.clone() {
-                    start_load_from(&self.workspace, move || slot_for_path(&path), false, cx);
+                    let requested_path = path.clone();
+                    start_load_from(&self.workspace, move || slot_for_path(&path), false, requested_path, cx);
                 }
             }
             if let Some(FileCheckFinished {
@@ -1708,8 +1772,10 @@ impl Screen for Overview {
             if let Some(LoadFinished {
                 request,
                 selected_path,
+                requested_path,
                 journal,
                 error,
+                io_error,
             }) = payload.downcast_ref::<LoadFinished>()
             {
                 if self.workspace.lock().load_request == *request {
@@ -1741,7 +1807,15 @@ impl Screen for Overview {
                         cx.app.set_selected_game(None);
                     }
                     if let Some(error) = error {
-                        cx.status = Some(format!("Сейв не загружен: {error}"));
+                        let name = requested_path
+                            .file_name()
+                            .unwrap_or(requested_path.as_os_str())
+                            .to_string_lossy();
+                        cx.status = Some(if *io_error {
+                            format!("Не удалось открыть «{name}»: {error}")
+                        } else {
+                            format!("«{name}» — не сохранение S.T.A.L.K.E.R. или файл повреждён.")
+                        });
                     } else {
                         cx.status = Some("Сейв прочитан и проверен.".to_owned());
                     }
@@ -7533,6 +7607,7 @@ mod tests {
             &path,
             include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-source.sav"),
         )?;
+        let expected_path = fs::canonicalize(&path)?;
         let (proxy, receiver) = channel_pair::<AppMessage>();
         let mut overview = Overview::new(Workspace::with_draft_directory(temp.0.join("drafts")));
         let mut app = sse_app::AppState::new();
@@ -7566,7 +7641,7 @@ mod tests {
         assert_eq!(completion.request, overview.workspace.lock().load_request);
         assert_eq!(
             completion.selected_path.as_deref(),
-            Some(path.as_path()),
+            Some(expected_path.as_path()),
             "background loader did not return the fixture path"
         );
         let mut cx = Context {
@@ -7576,7 +7651,7 @@ mod tests {
             app: &mut app,
         };
         overview.message(&mut cx, &message, None)?;
-        assert_eq!(cx.app.current_save(), Some(path.as_path()));
+        assert_eq!(cx.app.current_save(), Some(expected_path.as_path()));
         assert_eq!(cx.app.current_save_format(), Some("stalker-cop"));
         assert!(!cx.app.current_save_is_legacy());
         let source_sha256 = sse_codecs::sha256::sha256_hex(include_bytes!(

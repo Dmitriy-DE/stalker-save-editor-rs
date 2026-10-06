@@ -949,10 +949,33 @@ struct DialogV {
     current: usize,
     set_name: usize,
     get_name: usize,
-    set_title: usize,
+    set_title: unsafe extern "system" fn(*mut c_void, *const u16) -> i32,
     set_ok: usize,
     set_label: usize,
     get_result: unsafe extern "system" fn(*mut c_void, *mut *mut c_void) -> i32,
+}
+#[repr(C)]
+struct OpenDialogV {
+    base: DialogV,
+    add_place: usize,
+    set_default_extension: usize,
+    close: usize,
+    set_client_guid: usize,
+    clear_client_data: usize,
+    set_filter: usize,
+    get_results: unsafe extern "system" fn(*mut c_void, *mut *mut c_void) -> i32,
+}
+#[repr(C)]
+struct ItemArrayV {
+    qi: usize,
+    add: usize,
+    release: unsafe extern "system" fn(*mut c_void) -> u32,
+    bind: usize,
+    property_store: usize,
+    property_description_list: usize,
+    attributes: usize,
+    get_count: unsafe extern "system" fn(*mut c_void, *mut u32) -> i32,
+    get_item_at: unsafe extern "system" fn(*mut c_void, u32, *mut *mut c_void) -> i32,
 }
 #[repr(C)]
 struct ItemV {
@@ -975,6 +998,197 @@ const IID: w::Guid = w::Guid {
     c: 0x4768,
     d: [0xbe, 0x02, 0x9d, 0x96, 0x95, 0x32, 0xd9, 0x60],
 };
+
+struct ComOwned {
+    pointer: *mut c_void,
+    release: unsafe extern "system" fn(*mut c_void) -> u32,
+}
+
+impl Drop for ComOwned {
+    fn drop(&mut self) {
+        // SAFETY: pointer is one owned COM reference and release is from that interface's live vtable.
+        unsafe { (self.release)(self.pointer) };
+    }
+}
+
+struct CoTaskMem(*mut c_void);
+
+impl Drop for CoTaskMem {
+    fn drop(&mut self) {
+        // SAFETY: this pointer was returned by IShellItem::GetDisplayName and is freed exactly once.
+        unsafe { w::CoTaskMemFree(self.0) };
+    }
+}
+
+struct ComApartment;
+
+impl Drop for ComApartment {
+    fn drop(&mut self) {
+        // SAFETY: this thread successfully initialized COM in open_files.
+        unsafe { w::CoUninitialize() };
+    }
+}
+
+/// Opens the Win32 file picker with multi-select enabled.
+///
+/// # Errors
+/// Returns an error when COM or the native file picker fails.
+pub fn open_files() -> Result<Option<Vec<std::path::PathBuf>>> {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::OsStringExt;
+
+    // SAFETY: COM is initialized for this thread with the documented STA apartment model.
+    let initialized = unsafe { w::CoInitializeEx(ptr::null_mut(), 2) };
+    if initialized < 0 {
+        return Err(Error::System(format!(
+            "CoInitializeEx for file picker failed with HRESULT 0x{:08x}",
+            initialized as u32
+        )));
+    }
+    let _apartment = ComApartment;
+
+    let mut raw: *mut c_void = ptr::null_mut();
+    // SAFETY: CLSID/IID identify IFileOpenDialog and raw is a writable COM out pointer.
+    let created = unsafe { w::CoCreateInstance(&CLSID, ptr::null_mut(), 1, &IID, &mut raw) };
+    if created < 0 || raw.is_null() {
+        return Err(Error::System(format!(
+            "IFileOpenDialog unavailable (HRESULT 0x{:08x})",
+            created as u32
+        )));
+    }
+    // SAFETY: CoCreateInstance returned IFileOpenDialog with the documented vtable prefix.
+    let dialog_v = unsafe { &**(raw.cast::<*mut OpenDialogV>()) };
+    let dialog = ComOwned {
+        pointer: raw,
+        release: dialog_v.base.release,
+    };
+
+    let mut options = 0_u32;
+    // SAFETY: dialog is a live IFileOpenDialog and options is writable.
+    let got_options = unsafe { (dialog_v.base.get_options)(raw, &mut options) };
+    if got_options < 0 {
+        return Err(Error::System(format!(
+            "IFileOpenDialog::GetOptions failed with HRESULT 0x{:08x}",
+            got_options as u32
+        )));
+    }
+    // FOS_FORCEFILESYSTEM | FOS_ALLOWMULTISELECT | FOS_PATHMUSTEXIST | FOS_FILEMUSTEXIST | FOS_NOCHANGEDIR.
+    // SAFETY: dialog is live and these bits are documented IFileDialogOptions flags.
+    let set_options = unsafe { (dialog_v.base.set_options)(raw, options | 0x40 | 0x200 | 0x800 | 0x1000 | 0x8) };
+    if set_options < 0 {
+        return Err(Error::System(format!(
+            "IFileOpenDialog::SetOptions failed with HRESULT 0x{:08x}",
+            set_options as u32
+        )));
+    }
+    let title: Vec<u16> = "Открыть сохранение".encode_utf16().chain(std::iter::once(0)).collect();
+    // SAFETY: title is NUL-terminated UTF-16 and remains alive for this COM call.
+    let set_title = unsafe { (dialog_v.base.set_title)(raw, title.as_ptr()) };
+    if set_title < 0 {
+        return Err(Error::System(format!(
+            "IFileOpenDialog::SetTitle failed with HRESULT 0x{:08x}",
+            set_title as u32
+        )));
+    }
+    // SAFETY: dialog is live; a null owner is valid for an unparented modal picker.
+    let shown = unsafe { (dialog_v.base.show)(raw, ptr::null_mut()) };
+    if shown == -2_147_023_673 {
+        return Ok(None);
+    }
+    if shown < 0 {
+        return Err(Error::System(format!(
+            "IFileOpenDialog::Show failed with HRESULT 0x{:08x}",
+            shown as u32
+        )));
+    }
+
+    let mut raw_items: *mut c_void = ptr::null_mut();
+    // SAFETY: dialog is live and raw_items is a writable IShellItemArray out pointer.
+    let got_items = unsafe { (dialog_v.get_results)(raw, &mut raw_items) };
+    if got_items < 0 || raw_items.is_null() {
+        return Err(Error::System(format!(
+            "IFileOpenDialog::GetResults failed with HRESULT 0x{:08x}",
+            got_items as u32
+        )));
+    }
+    // SAFETY: GetResults returned a live IShellItemArray with the documented vtable prefix.
+    let items_v = unsafe { &**(raw_items.cast::<*mut ItemArrayV>()) };
+    let items = ComOwned {
+        pointer: raw_items,
+        release: items_v.release,
+    };
+    let mut count = 0_u32;
+    // SAFETY: items is live and count is writable.
+    let got_count = unsafe { (items_v.get_count)(raw_items, &mut count) };
+    if got_count < 0 {
+        return Err(Error::System(format!(
+            "IShellItemArray::GetCount failed with HRESULT 0x{:08x}",
+            got_count as u32
+        )));
+    }
+    if count == 0 {
+        return Ok(None);
+    }
+    if usize::try_from(count).unwrap_or(usize::MAX) > crate::file_dialog::MAX_SELECTED_FILES {
+        return Err(Error::Refused(
+            "native file picker selected more than 512 files".to_owned(),
+        ));
+    }
+    let mut paths = Vec::with_capacity(usize::try_from(count).unwrap_or_default());
+    for index in 0..count {
+        let mut raw_item: *mut c_void = ptr::null_mut();
+        // SAFETY: items is live, index is less than the reported count, and raw_item is writable.
+        let got_item = unsafe { (items_v.get_item_at)(raw_items, index, &mut raw_item) };
+        if got_item < 0 || raw_item.is_null() {
+            return Err(Error::System(format!(
+                "IShellItemArray::GetItemAt failed with HRESULT 0x{:08x}",
+                got_item as u32
+            )));
+        }
+        // SAFETY: GetItemAt returned one owned IShellItem with the documented vtable prefix.
+        let item_v = unsafe { &**(raw_item.cast::<*mut ItemV>()) };
+        let item = ComOwned {
+            pointer: raw_item,
+            release: item_v.release,
+        };
+        let mut raw_path: *mut u16 = ptr::null_mut();
+        // SAFETY: item is live and raw_path is a writable PWSTR out pointer.
+        let got_path = unsafe { (item_v.name)(raw_item, 0x80058000, &mut raw_path) };
+        if got_path < 0 || raw_path.is_null() {
+            return Err(Error::System(format!(
+                "IShellItem::GetDisplayName failed with HRESULT 0x{:08x}",
+                got_path as u32
+            )));
+        }
+        let path_memory = CoTaskMem(raw_path.cast());
+        let mut length = 0_usize;
+        while length < 32_768 {
+            // SAFETY: GetDisplayName returned a live NUL-terminated UTF-16 string; length is bounded below 32 KiB.
+            if unsafe { *raw_path.add(length) } == 0 {
+                break;
+            }
+            length = length.saturating_add(1);
+        }
+        if length == 32_768 {
+            return Err(Error::Refused(
+                "native file path exceeds the Windows path limit".to_owned(),
+            ));
+        }
+        // SAFETY: the preceding bounded scan found the terminator in the system-owned allocation.
+        let wide = unsafe { std::slice::from_raw_parts(raw_path, length) };
+        let path = std::path::PathBuf::from(OsString::from_wide(wide));
+        if !path.is_absolute() {
+            return Err(Error::Refused("native file picker returned a relative path".to_owned()));
+        }
+        paths.push(path);
+        drop(path_memory);
+        drop(item);
+    }
+    drop(items);
+    drop(dialog);
+    Ok(Some(paths))
+}
+
 fn file_dialog(owner: w::Hwnd, folders: bool) -> Result<Option<String>> {
     let mut raw: *mut c_void = ptr::null_mut();
     // SAFETY: COM is initialized by Win32Window::new; CLSID/IID and out pointer match IFileOpenDialog.

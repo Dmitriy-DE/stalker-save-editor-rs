@@ -207,6 +207,17 @@ pub unsafe fn id_id(r: Id, s: Sel, a: Id) -> Id {
     // SAFETY: the caller upholds the receiver, selector, and object argument requirements documented above.
     unsafe { f(r, s, a) }
 }
+/// Sends an Objective-C message with one NSUInteger argument and returns an object.
+///
+/// # Safety
+/// `r` must be a live object or class, `s` must select a method with this exact ABI, and `a` must be in range for it.
+pub unsafe fn id_usize(r: Id, s: Sel, a: usize) -> Id {
+    type F = unsafe extern "C" fn(Id, Sel, usize) -> Id;
+    // SAFETY: objc_msgSend is called with the exact object/object/NSUInteger ABI for NSArray::objectAtIndex:.
+    let f: F = unsafe { mem::transmute(objc_msgSend as *const c_void) };
+    // SAFETY: the caller supplies a live NSArray receiver and an in-range index.
+    unsafe { f(r, s, a) }
+}
 /// Sends an Objective-C message with a CGRect-compatible argument and returns an object.
 ///
 /// # Safety

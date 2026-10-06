@@ -2,14 +2,17 @@
 
 use super::style::{self, rgb, Text};
 use super::{AppMessage, Context, EditorAction, Group, Screen, ScreenId};
+use crate::edit::{Clipboard, EditConfig, FieldMode, InputFilter, Key as EditKey, Modifiers};
 use crate::event_loop::{App, Flow, Message, Proxy, WindowEvent};
 use crate::glyphs::{to_px, Face, TextStyle};
 use crate::layout::{Align, Edges, NodeKind, Size, Style};
 use crate::path::Icon;
 use crate::widget::{Content, Look, TextAlign, Tree, WidgetId};
 use crate::widgets::scroll::ScrollView;
+use crate::widgets::text_input::TextInput;
 use sse_core::Result;
-use std::path::Path;
+use std::collections::VecDeque;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 const KEY_ESCAPE: u32 = 0xff1b;
@@ -21,6 +24,49 @@ const SAVE_LIBRARY_PAGE_SIZE: usize = 8;
 const DRAFT_CLOSE_WARNING: &str = "Последняя правка не сохранена в черновик.";
 const FORCE_CLOSE_DEFAULT_MESSAGE: &str =
     "Фоновая операция ещё записывает файлы. Принудительное закрытие может оставить операцию незавершённой.";
+const MAX_OPENED_SAVE_FILES: usize = 512;
+
+fn open_path_edit_config() -> EditConfig {
+    EditConfig {
+        mode: FieldMode::SingleLine,
+        max_graphemes: 32_768,
+        history_limit: 64,
+        filter: InputFilter::Any,
+    }
+}
+
+#[derive(Default)]
+struct ShellClipboard(String);
+
+impl Clipboard for ShellClipboard {
+    fn read_text(&mut self) -> Result<String> {
+        Ok(self.0.clone())
+    }
+
+    fn write_text(&mut self, text: &str) -> Result<()> {
+        text.clone_into(&mut self.0);
+        Ok(())
+    }
+}
+
+struct OpenFilesQueue {
+    remaining: VecDeque<PathBuf>,
+    active_request: Option<u64>,
+    active_path: Option<PathBuf>,
+    total: usize,
+    completed: usize,
+    opened: usize,
+    last_error: Option<String>,
+}
+
+fn format_open_error(path: &Path, error: &str, io_error: bool) -> String {
+    let name = path.file_name().unwrap_or(path.as_os_str()).to_string_lossy();
+    if io_error {
+        format!("Не удалось открыть «{name}»: {error}")
+    } else {
+        format!("«{name}» — не сохранение S.T.A.L.K.E.R. или файл повреждён.")
+    }
+}
 
 struct SaveEligibility {
     reason: String,
@@ -158,6 +204,14 @@ pub struct Shell {
     reset: WidgetId,
     refresh: WidgetId,
     save: WidgetId,
+    open_button: WidgetId,
+    open_files_queue: Option<OpenFilesQueue>,
+    open_file_dialog: WidgetId,
+    open_path_widget: WidgetId,
+    open_confirm: WidgetId,
+    open_cancel: WidgetId,
+    open_path_input: TextInput,
+    open_path_clipboard: ShellClipboard,
     library: WidgetId,
     library_refresh: WidgetId,
     library_previous: WidgetId,
@@ -309,7 +363,9 @@ impl Shell {
         let mut settings = sse_app::AppSettings::new();
         settings.reports_notice_shown = true;
         settings.send_reports = false;
-        Self::build_with_settings(tree, proxy, settings)
+        let mut shell = Self::build_with_settings(tree, None, settings)?;
+        shell.proxy = proxy;
+        Ok(shell)
     }
 
     fn build_with_settings(
@@ -320,6 +376,7 @@ impl Shell {
         let interactive = proxy.is_some();
         let language = startup_language(&settings);
         crate::strings::set_language(Some(&language));
+        let open_path_input = TextInput::new("", open_path_edit_config())?;
         let root_style = Style {
             align_items: Align::Stretch,
             ..Style::default()
@@ -557,6 +614,7 @@ impl Shell {
         let undo = top_button(tree, top, crate::strings::t("Отменить"), false)?;
         let redo = top_button(tree, top, crate::strings::t("Вернуть"), false)?;
         let reset = top_button(tree, top, crate::strings::t("Сбросить"), false)?;
+        let open_button = top_button(tree, top, crate::strings::t("Открыть…"), false)?;
         let refresh = top_button(tree, top, crate::strings::t("Обновить"), false)?;
         let save = top_button(tree, top, crate::strings::t("СОХРАНИТЬ"), true)?;
         let save_reason = style::label(
@@ -889,7 +947,6 @@ impl Shell {
             Text::Body,
         )?;
         tree.set_visible(saving_dialog, false)?;
-
         let force_close_dialog = style::card(tree, overlay_host)?;
         style::label(tree, force_close_dialog, "ЗАКРЫТЬ, НЕ ДОЖИДАЯСЬ?", Text::Heading)?;
         let force_close_message = style::label(tree, force_close_dialog, FORCE_CLOSE_DEFAULT_MESSAGE, Text::Body)?;
@@ -898,11 +955,56 @@ impl Shell {
         let force_close_no = style::button(tree, force_close_actions, "ПОДОЖДАТЬ", style::Button::Secondary)?;
         tree.set_visible(force_close_dialog, false)?;
 
+        let open_file_dialog = style::card(tree, overlay_host)?;
+        style::label(
+            tree,
+            open_file_dialog,
+            crate::strings::t("Открыть сохранение"),
+            Text::Heading,
+        )?;
+        style::label(
+            tree,
+            open_file_dialog,
+            crate::strings::t("Укажите путь к файлу сохранения. Файл будет проверен и прочитан в фоне."),
+            Text::Body,
+        )?;
+        style::label(
+            tree,
+            open_file_dialog,
+            crate::strings::t("Путь к файлу сохранения"),
+            Text::Note,
+        )?;
+        let open_path_widget = tree.add(
+            Some(open_file_dialog),
+            NodeKind::Leaf,
+            Style {
+                min: Size::new(420.0, 38.0),
+                padding: padded(10.0, 0.0, 10.0, 0.0),
+                ..Style::default()
+            },
+            Content::Input {
+                text: String::new(),
+                style: Text::Body.style(),
+            },
+            Look {
+                fill: Some(rgb(crate::theme::current().colors.background[4])),
+                border: Some((rgb(crate::theme::current().colors.borders[1]), 1.0)),
+                radius: crate::theme::BUTTON_RADIUS,
+                text: rgb(crate::theme::current().colors.text[0]),
+                ..Look::default()
+            },
+        )?;
+        let open_actions = style::row(tree, open_file_dialog)?;
+        let open_cancel = style::button(tree, open_actions, "Отмена", style::Button::Secondary)?;
+        let open_confirm = style::button(tree, open_actions, "Открыть", style::Button::Primary)?;
+        tree.set_enabled(open_confirm, false)?;
+        tree.set_visible(open_file_dialog, false)?;
         let tooltip = style::label(tree, overlay_host, "", Text::Body)?;
         tree.set_visible(tooltip, false)?;
         tree.set_tooltip(nav_toggle, crate::strings::t("Свернуть меню"))?;
         tree.set_tooltip(library_refresh, crate::strings::t("Обновить"))?;
         tree.set_tooltip(save, crate::strings::t("Выберите сохранение для редактирования."))?;
+        tree.set_tooltip(open_button, crate::strings::t("Открыть сохранение"))?;
 
         let hosts = vec![None; screens.len()];
         let mut shell = Self {
@@ -930,6 +1032,14 @@ impl Shell {
             reset,
             refresh,
             save,
+            open_button,
+            open_files_queue: None,
+            open_file_dialog,
+            open_path_widget,
+            open_confirm,
+            open_cancel,
+            open_path_input,
+            open_path_clipboard: ShellClipboard::default(),
             library,
             library_refresh,
             library_previous,
@@ -1125,7 +1235,12 @@ impl Shell {
     /// # Errors
     /// Returns an error if the screen cannot read or parse the save.
     pub fn open_save(&mut self, tree: &mut Tree, path: &Path) -> Result<bool> {
-        if self.library_workspace.is_saving() {
+        self.open_files_queue = None;
+        self.open_save_inner(tree, path)
+    }
+
+    fn open_save_inner(&mut self, tree: &mut Tree, path: &Path) -> Result<bool> {
+        if self.library_workspace.is_saving() || self.library_workspace.is_restoring() {
             return Ok(false);
         }
         self.open(tree, ScreenId::Overview)?;
@@ -1151,8 +1266,239 @@ impl Shell {
         Ok(opened)
     }
 
+    fn open_save_paths(&mut self, tree: &mut Tree, paths: Vec<PathBuf>) -> Result<bool> {
+        if paths.is_empty() {
+            return Ok(false);
+        }
+        if paths.len() > MAX_OPENED_SAVE_FILES {
+            tree.set_text(self.status, "Выберите не более 512 файлов за один раз.")?;
+            return Ok(false);
+        }
+        if self.proxy.is_none()
+            || self.open_files_queue.is_some()
+            || self.library_workspace.is_saving()
+            || self.library_workspace.is_restoring()
+            || self.library_workspace.is_loading()
+        {
+            return Ok(false);
+        }
+
+        self.open_files_queue = Some(OpenFilesQueue {
+            total: paths.len(),
+            remaining: paths.into(),
+            active_request: None,
+            active_path: None,
+            completed: 0,
+            opened: 0,
+            last_error: None,
+        });
+        tree.set_enabled(self.open_button, false)?;
+        self.start_next_open_file(tree)?;
+        Ok(true)
+    }
+
+    fn start_next_open_file(&mut self, tree: &mut Tree) -> Result<()> {
+        loop {
+            let next = self
+                .open_files_queue
+                .as_mut()
+                .and_then(|queue| queue.remaining.pop_front());
+            let Some(path) = next else {
+                self.finish_open_files_queue(tree)?;
+                return Ok(());
+            };
+            if !self.open_save_inner(tree, &path)? {
+                self.open_files_queue = None;
+                tree.set_enabled(self.open_button, true)?;
+                return Ok(());
+            }
+            let request = self.library_workspace.load_request();
+            if self.library_workspace.is_loading() {
+                if let Some(queue) = self.open_files_queue.as_mut() {
+                    queue.active_request = Some(request);
+                    queue.active_path = Some(path);
+                }
+                return Ok(());
+            }
+
+            let detail = self
+                .library_workspace
+                .library_snapshot()
+                .1
+                .unwrap_or_else(|| "Не удалось запустить фоновое чтение сейва.".to_owned());
+            let message = format_open_error(&path, &detail, true);
+            if let Some(queue) = self.open_files_queue.as_mut() {
+                queue.completed = queue.completed.saturating_add(1);
+                queue.last_error = Some(message);
+            }
+        }
+    }
+
+    fn finish_open_files_queue(&mut self, tree: &mut Tree) -> Result<()> {
+        let Some(queue) = self.open_files_queue.take() else {
+            return Ok(());
+        };
+        let status = match queue.last_error {
+            Some(error) if queue.opened > 0 => format!("Открыто {} из {} файлов. {error}", queue.opened, queue.total),
+            Some(error) => error,
+            None => format!("Открыто {} файлов.", queue.opened),
+        };
+        tree.set_text(self.status, &status)?;
+        tree.set_enabled(
+            self.open_button,
+            !self.library_workspace.is_saving()
+                && !self.library_workspace.is_restoring()
+                && !self.library_workspace.is_loading(),
+        )?;
+        Ok(())
+    }
+
+    fn advance_open_files_queue(&mut self, tree: &mut Tree, message: &Message<AppMessage>) -> Result<()> {
+        let Some(finished) = (match message {
+            Message::User(AppMessage::ToScreen(ScreenId::Overview, payload)) => {
+                payload.downcast_ref::<super::saves::LoadFinished>()
+            }
+            _ => None,
+        }) else {
+            return Ok(());
+        };
+        let Some(queue) = self.open_files_queue.as_mut() else {
+            return Ok(());
+        };
+        if queue.active_request != Some(finished.request) {
+            return Ok(());
+        }
+        if queue.active_path.as_deref() != Some(finished.requested_path.as_path()) {
+            return Ok(());
+        }
+
+        queue.active_request = None;
+        queue.active_path = None;
+        queue.completed = queue.completed.saturating_add(1);
+        if finished.selected_path.is_some() {
+            queue.opened = queue.opened.saturating_add(1);
+        } else if let Some(error) = finished.error.as_deref() {
+            queue.last_error = Some(format_open_error(&finished.requested_path, error, finished.io_error));
+        }
+        if queue.remaining.is_empty() {
+            return self.finish_open_files_queue(tree);
+        }
+
+        self.start_next_open_file(tree)?;
+        if let Some(queue) = self.open_files_queue.as_ref() {
+            let status = queue.last_error.clone().unwrap_or_else(|| {
+                format!(
+                    "Открываю файл {} из {}…",
+                    queue.completed.saturating_add(1),
+                    queue.total
+                )
+            });
+            tree.set_text(self.status, &status)?;
+        }
+        Ok(())
+    }
+
+    fn cancel_superseded_open_queue(&mut self) {
+        let active = self.open_files_queue.as_ref().and_then(|queue| queue.active_request);
+        if active.is_some_and(|request| request != self.library_workspace.load_request()) {
+            self.open_files_queue = None;
+        }
+    }
+
+    fn show_open_file_dialog(&mut self, tree: &mut Tree) -> Result<()> {
+        if self.library_workspace.is_saving()
+            || self.library_workspace.is_restoring()
+            || self.library_workspace.is_loading()
+            || self.open_files_queue.is_some()
+        {
+            return Ok(());
+        }
+        #[cfg(not(test))]
+        if self.proxy.is_some() {
+            match sse_sys::file_dialog::open_files() {
+                Ok(Some(paths)) if !paths.is_empty() => {
+                    self.open_save_paths(tree, paths)?;
+                    return Ok(());
+                }
+                Ok(Some(_) | None) => return Ok(()),
+                Err(error) => {
+                    tree.set_text(self.status, &format!("Системный диалог недоступен: {error}"))?;
+                }
+            }
+        }
+        self.open_path_input = TextInput::new("", open_path_edit_config())?;
+        self.open_path_clipboard.0.clear();
+        tree.set_input_text(self.open_path_widget, "")?;
+        tree.set_enabled(self.open_confirm, false)?;
+        tree.open_dialog(self.open_file_dialog)?;
+        tree.set_focus(Some(self.open_path_widget))?;
+        self.open_path_input.focus(true, 0);
+        Ok(())
+    }
+
+    fn close_open_file_dialog(&mut self, tree: &mut Tree) -> Result<()> {
+        if tree.dialog() == Some(self.open_file_dialog) {
+            let _ = tree.close_dialog()?;
+        }
+        self.open_path_input.focus(false, 0);
+        Ok(())
+    }
+
+    fn confirm_open_file(&mut self, tree: &mut Tree) -> Result<()> {
+        let path = self.open_path_input.text();
+        if path.is_empty() || self.proxy.is_none() {
+            return Ok(());
+        }
+        if self.library_workspace.is_saving() || self.library_workspace.is_restoring() {
+            return Ok(());
+        }
+        let path = PathBuf::from(path);
+        self.close_open_file_dialog(tree)?;
+        let _ = self.open_save_paths(tree, vec![path])?;
+        Ok(())
+    }
+
+    fn edit_open_path(
+        &mut self,
+        tree: &mut Tree,
+        keysym: u32,
+        text: Option<char>,
+        ctrl: bool,
+        shift: bool,
+    ) -> Result<()> {
+        let key = match keysym {
+            0xff08 => EditKey::Backspace,
+            0xffff => EditKey::Delete,
+            0xff51 => EditKey::Left,
+            0xff53 => EditKey::Right,
+            0xff50 => EditKey::Home,
+            0xff57 => EditKey::End,
+            value if ctrl && matches!(value, 0x61 | 0x41) => EditKey::A,
+            value if ctrl && matches!(value, 0x63 | 0x43) => EditKey::C,
+            value if ctrl && matches!(value, 0x76 | 0x56) => EditKey::V,
+            value if ctrl && matches!(value, 0x78 | 0x58) => EditKey::X,
+            value if ctrl && matches!(value, 0x7a | 0x5a) => EditKey::Z,
+            _ => EditKey::Character(text.unwrap_or('\0')),
+        };
+        let typed = text.map(|character| character.to_string());
+        self.open_path_input.focus(true, 0);
+        self.open_path_input.key(
+            key,
+            Modifiers { ctrl, shift },
+            typed.as_deref(),
+            &mut self.open_path_clipboard,
+        )?;
+        let path = self.open_path_input.text();
+        tree.set_input_text(self.open_path_widget, &path)?;
+        tree.set_enabled(
+            self.open_confirm,
+            !path.is_empty() && !self.library_workspace.is_saving() && !self.library_workspace.is_restoring(),
+        )?;
+        Ok(())
+    }
+
     fn select(&mut self, tree: &mut Tree, index: usize) -> Result<()> {
-        if self.library_workspace.is_saving() {
+        if self.library_workspace.is_saving() || self.library_workspace.is_restoring() {
             return Ok(());
         }
         if index == self.selected || index >= self.screens.len() {
@@ -1360,6 +1706,11 @@ impl Shell {
     }
 
     fn sync_saving_overlay(&self, tree: &mut Tree) -> Result<()> {
+        let busy = self.library_workspace.is_saving() || self.library_workspace.is_restoring();
+        tree.set_enabled(
+            self.open_button,
+            !busy && !self.library_workspace.is_loading() && self.open_files_queue.is_none(),
+        )?;
         if self.library_workspace.is_saving() {
             if !tree.dialog_open() {
                 tree.open_dialog(self.saving_dialog)?;
@@ -1564,7 +1915,7 @@ impl Shell {
                 },
             )?;
         }
-        if self.library_workspace.is_saving()
+        if (self.library_workspace.is_saving() || self.library_workspace.is_restoring())
             && !matches!(
                 message,
                 Message::User(AppMessage::ToScreen(_, _)) | Message::User(AppMessage::Tick(_))
@@ -1662,6 +2013,18 @@ impl Shell {
             }
             return Ok(Flow::Continue);
         }
+        if clicked.is_some() && clicked == Some(self.open_button) {
+            self.show_open_file_dialog(tree)?;
+            return Ok(Flow::Continue);
+        }
+        if clicked.is_some() && clicked == Some(self.open_cancel) {
+            self.close_open_file_dialog(tree)?;
+            return Ok(Flow::Continue);
+        }
+        if clicked.is_some() && clicked == Some(self.open_confirm) {
+            self.confirm_open_file(tree)?;
+            return Ok(Flow::Continue);
+        }
         let editor_action = if clicked.is_some() && clicked == Some(self.undo) {
             Some(EditorAction::Undo)
         } else if clicked.is_some() && clicked == Some(self.redo) {
@@ -1757,14 +2120,17 @@ impl Shell {
         if let Message::Window(WindowEvent::Key {
             pressed: true,
             keysym,
+            text,
             ctrl,
             shift,
-            ..
         }) = message
         {
             if *keysym == KEY_ESCAPE {
                 self.route(tree, message, None)?;
                 if tree.dialog_open() {
+                    if tree.dialog() == Some(self.open_file_dialog) {
+                        self.open_path_input.focus(false, 0);
+                    }
                     let _ = tree.close_dialog()?;
                 } else {
                     tree.set_focus(None)?;
@@ -1777,6 +2143,10 @@ impl Shell {
                 return Ok(Flow::Continue);
             }
             if *keysym == KEY_RETURN {
+                if tree.dialog() == Some(self.open_file_dialog) {
+                    self.confirm_open_file(tree)?;
+                    return Ok(Flow::Continue);
+                }
                 if let Some(focus) = tree.focused() {
                     let action = if focus == self.undo {
                         Some(EditorAction::Undo)
@@ -1812,6 +2182,12 @@ impl Shell {
                     tree.set_focus(Some(target))?;
                 }
                 self.route(tree, message, target)?;
+                return Ok(Flow::Continue);
+            }
+            if tree.dialog() == Some(self.open_file_dialog) {
+                if tree.focused() == Some(self.open_path_widget) {
+                    self.edit_open_path(tree, *keysym, *text, *ctrl, *shift)?;
+                }
                 return Ok(Flow::Continue);
             }
             if !tree.dialog_open() && *ctrl && matches!(*keysym, 0x46 | 0x66) {
@@ -1861,10 +2237,15 @@ impl Shell {
             }
         }
         self.route(tree, message, clicked)?;
+        self.cancel_superseded_open_queue();
+        self.advance_open_files_queue(tree, message)?;
         if let Message::User(AppMessage::ToScreen(ScreenId::Overview, payload)) = message {
             if payload.is::<()>() {
                 self.library_page = 0;
-                if self.app.current_save().is_none() {
+                if self.app.current_save().is_none()
+                    && !self.library_workspace.is_loading()
+                    && self.open_files_queue.is_none()
+                {
                     let (_, _, slots) = self.library_workspace.library_snapshot();
                     if let Some(slot) = slots.first() {
                         let status = {
@@ -2005,6 +2386,7 @@ mod tests {
     use crate::raster::Color;
     use crate::widget::Tree;
     use sse_storage::drafts::{DraftPlacement, DraftPlan, JsonValue};
+    use std::path::Path;
 
     fn close_task_test_guard() -> std::sync::MutexGuard<'static, ()> {
         static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
@@ -2047,6 +2429,222 @@ mod tests {
             "В черновике есть правки из другой версии редактора, которые эта версия не понимает. Сбросьте черновик, чтобы продолжить (он сохранится рядом)."
         );
         Ok(())
+    }
+
+    #[test]
+    fn open_toolbar_loads_a_save_from_the_path_dialog_in_the_background() -> sse_core::Result<()> {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| sse_core::Error::System(error.to_string()))?
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("sse shell open {nonce}.sav"));
+        std::fs::write(
+            &path,
+            include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-source.sav"),
+        )?;
+        let expected_path = std::fs::canonicalize(&path)?;
+        let (proxy, receiver) = channel_pair::<super::super::AppMessage>();
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut shell = Shell::build_for_test(&mut tree, None)?;
+        shell.open(&mut tree, ScreenId::Overview)?;
+        shell.set_proxy(proxy);
+
+        shell.handle(
+            &mut tree,
+            &Message::User(super::super::AppMessage::Tick(0)),
+            Some(shell.open_button),
+        )?;
+        assert_eq!(tree.dialog(), Some(shell.open_file_dialog));
+        assert_eq!(tree.focused(), Some(shell.open_path_widget));
+        shell.handle(
+            &mut tree,
+            &Message::User(super::super::AppMessage::Tick(0)),
+            Some(shell.open_confirm),
+        )?;
+        assert!(tree.dialog_open(), "an empty path must leave the dialog open");
+
+        shell.handle(
+            &mut tree,
+            &Message::Window(WindowEvent::Key {
+                pressed: true,
+                keysym: 0xff1b,
+                text: None,
+                ctrl: false,
+                shift: false,
+            }),
+            None,
+        )?;
+        assert!(!tree.dialog_open());
+
+        shell.handle(
+            &mut tree,
+            &Message::User(super::super::AppMessage::Tick(0)),
+            Some(shell.open_button),
+        )?;
+        for character in path.to_string_lossy().chars() {
+            shell.handle(
+                &mut tree,
+                &Message::Window(WindowEvent::Key {
+                    pressed: true,
+                    keysym: u32::from(character),
+                    text: Some(character),
+                    ctrl: false,
+                    shift: false,
+                }),
+                None,
+            )?;
+        }
+        assert_eq!(tree.input_text(shell.open_path_widget)?, path.to_string_lossy());
+        shell.handle(
+            &mut tree,
+            &Message::User(super::super::AppMessage::Tick(0)),
+            Some(shell.open_confirm),
+        )?;
+        assert!(!tree.dialog_open());
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        while shell.app.current_save() != Some(expected_path.as_path()) {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                let _ = std::fs::remove_file(&path);
+                return Err(sse_core::Error::System(
+                    "timed out loading a path-selected fixture".to_owned(),
+                ));
+            }
+            let message = match receiver.recv_timeout(remaining) {
+                Ok(message) => message,
+                Err(error) => {
+                    let _ = std::fs::remove_file(&path);
+                    return Err(sse_core::Error::System(error.to_string()));
+                }
+            };
+            shell.handle(&mut tree, &message, None)?;
+        }
+        std::fs::remove_file(path)?;
+        Ok(())
+    }
+
+    #[test]
+    fn opening_multiple_saves_keeps_each_success_in_the_library() -> sse_core::Result<()> {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| sse_core::Error::System(error.to_string()))?
+            .as_nanos();
+        let first = std::env::temp_dir().join(format!("sse-shell-open-first-{nonce}.sav"));
+        let second = std::env::temp_dir().join(format!("sse-shell-open-second-{nonce}.sav"));
+        let missing = std::env::temp_dir().join(format!("sse-shell-open-missing-{nonce}.sav"));
+        let fixture = include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-source.sav");
+        std::fs::write(&first, fixture)?;
+        std::fs::write(&second, fixture)?;
+        let expected_first_path = std::fs::canonicalize(&first)?;
+        let expected_second_path = std::fs::canonicalize(&second)?;
+
+        let (proxy, receiver) = channel_pair::<super::super::AppMessage>();
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut shell = Shell::build_for_test(&mut tree, None)?;
+        shell.open(&mut tree, ScreenId::Overview)?;
+        shell.set_proxy(proxy);
+
+        assert!(shell.open_save(&mut tree, &first)?);
+        let seed_request = shell.library_workspace.load_request();
+        while shell.app.current_save() != Some(expected_first_path.as_path()) {
+            let message = receiver
+                .recv_timeout(std::time::Duration::from_secs(10))
+                .map_err(|error| sse_core::Error::System(error.to_string()))?;
+            shell.handle(&mut tree, &message, None)?;
+        }
+        assert_eq!(shell.library_workspace.load_request(), seed_request);
+
+        assert!(shell.open_save_paths(&mut tree, vec![missing.clone(), first.clone(), second.clone()])?);
+        assert!(shell.library_workspace.is_loading());
+        let first_request = shell.library_workspace.load_request();
+        shell.handle(
+            &mut tree,
+            &Message::User(super::super::AppMessage::ToScreen(ScreenId::Overview, Box::new(()))),
+            None,
+        )?;
+        assert_eq!(shell.library_workspace.load_request(), first_request);
+        assert!(shell.open_files_queue.is_some());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        let mut second_request = None;
+        let mut completed = 0;
+        let mut results = Vec::new();
+        let mut states = Vec::new();
+        let mut overview_refreshes = 0;
+        while shell.open_files_queue.is_some() {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                let _ = std::fs::remove_file(&first);
+                let _ = std::fs::remove_file(&second);
+                return Err(sse_core::Error::System(
+                    "timed out loading selected fixtures".to_owned(),
+                ));
+            }
+            let message = match receiver.recv_timeout(remaining) {
+                Ok(message) => message,
+                Err(error) => {
+                    let _ = std::fs::remove_file(&first);
+                    let _ = std::fs::remove_file(&second);
+                    return Err(sse_core::Error::System(error.to_string()));
+                }
+            };
+            if let Message::User(super::super::AppMessage::ToScreen(ScreenId::Overview, payload)) = &message {
+                if let Some(finished) = payload.downcast_ref::<super::super::saves::LoadFinished>() {
+                    completed += 1;
+                    results.push((
+                        finished.request,
+                        finished.requested_path.clone(),
+                        finished.selected_path.clone(),
+                        finished.error.clone(),
+                    ));
+                } else if payload.is::<()>() {
+                    overview_refreshes += 1;
+                }
+            }
+            shell.handle(&mut tree, &message, None)?;
+            states.push((
+                shell.library_workspace.load_request(),
+                shell.app.current_save().map(Path::to_path_buf),
+                shell.open_files_queue.as_ref().and_then(|queue| queue.active_request),
+            ));
+            if second_request.is_none() && shell.library_workspace.load_request() != first_request {
+                second_request = Some(shell.library_workspace.load_request());
+            }
+        }
+
+        assert_eq!(
+            completed,
+            3,
+            "a failed file must not stop later selections; load results: {results:?}; states: {states:?}; overview refreshes: {overview_refreshes}"
+        );
+        assert!(
+            second_request.is_some(),
+            "the second load starts after the first completes"
+        );
+        let (_, _, slots) = shell.library_workspace.library_snapshot();
+        assert!(slots.iter().any(|slot| slot.path == expected_first_path));
+        assert!(slots.iter().any(|slot| slot.path == expected_second_path));
+        assert_eq!(
+            shell.app.current_save(),
+            Some(expected_second_path.as_path()),
+            "load results: {results:?}; states: {states:?}; overview refreshes: {overview_refreshes}"
+        );
+
+        std::fs::remove_file(first)?;
+        std::fs::remove_file(second)?;
+        Ok(())
+    }
+
+    #[test]
+    fn open_file_errors_use_the_acceptance_text() {
+        assert_eq!(
+            super::format_open_error(Path::new("/tmp/broken save.sav"), "ignored parse detail", false),
+            "«broken save.sav» — не сохранение S.T.A.L.K.E.R. или файл повреждён."
+        );
+        assert_eq!(
+            super::format_open_error(Path::new("/tmp/missing save.sav"), "permission denied", true),
+            "Не удалось открыть «missing save.sav»: permission denied"
+        );
     }
 
     #[test]
@@ -2470,12 +3068,15 @@ mod tests {
         let fixture = include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-source.sav");
         let path = std::env::temp_dir().join(format!("sse-shell-ctrl-f-{}.sav", std::process::id()));
         std::fs::write(&path, fixture)?;
+        let expected_path = std::fs::canonicalize(&path)?;
         let (proxy, receiver) = channel_pair::<super::super::AppMessage>();
         let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
-        let mut shell = Shell::build_for_test(&mut tree, Some(proxy))?;
+        let mut shell = Shell::build_for_test(&mut tree, None)?;
+        shell.open(&mut tree, ScreenId::Overview)?;
+        shell.set_proxy(proxy);
         assert!(shell.open_save(&mut tree, &path)?);
 
-        while shell.app.current_save() != Some(path.as_path()) {
+        while shell.app.current_save() != Some(expected_path.as_path()) {
             let loaded = receiver
                 .recv_timeout(std::time::Duration::from_secs(10))
                 .map_err(|error| sse_core::Error::System(error.to_string()))?;

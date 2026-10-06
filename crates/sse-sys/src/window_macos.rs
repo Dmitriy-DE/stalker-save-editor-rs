@@ -10,7 +10,9 @@ use sse_core::{Error, Result};
 use std::{
     collections::{HashMap, VecDeque},
     ffi::c_void,
-    mem, ptr,
+    mem,
+    path::PathBuf,
+    ptr,
     sync::{Arc, Mutex, OnceLock, Weak},
     time::Duration,
 };
@@ -527,6 +529,53 @@ impl Window for MacWindow {
         let workspace = unsafe { o::id(o::class(c"NSWorkspace"), o::sel(c"sharedWorkspace")) };
         (unsafe { o::bool_(workspace, o::sel(c"accessibilityDisplayShouldReduceMotion")) }) != 0
     }
+}
+
+/// Opens the Cocoa file picker with multi-select enabled.
+///
+/// # Errors
+/// Returns an error when the native picker returns an invalid selection.
+pub fn open_files() -> Result<Option<Vec<PathBuf>>> {
+    // SAFETY: NSOpenPanel::openPanel returns a live autoreleased panel on the caller's UI thread.
+    let panel = unsafe { o::id(o::class(c"NSOpenPanel"), o::sel(c"openPanel")) };
+    // SAFETY: panel is a live NSOpenPanel and these selectors take one Objective-C BOOL.
+    unsafe {
+        o::void_bool(panel, o::sel(c"setCanChooseFiles:"), YES);
+        o::void_bool(panel, o::sel(c"setCanChooseDirectories:"), NO);
+        o::void_bool(panel, o::sel(c"setAllowsMultipleSelection:"), YES);
+    }
+    if let Some(title) = o::string("Открыть сохранение") {
+        // SAFETY: panel is live and title is a live NSString retained by the panel during this call.
+        unsafe { o::void_id(panel, o::sel(c"setTitle:"), title) };
+    }
+    // SAFETY: NSOpenPanel::runModal takes no arguments and returns NSModalResponse.
+    if unsafe { o::isize_(panel, o::sel(c"runModal")) } != 1 {
+        return Ok(None);
+    }
+    // SAFETY: panel is live and URLs returns its selected NSArray of NSURL objects.
+    let urls = unsafe { o::id(panel, o::sel(c"URLs")) };
+    // SAFETY: URLs is a live NSArray and count returns NSUInteger.
+    let count = unsafe { o::usize_(urls, o::sel(c"count")) };
+    if count > crate::file_dialog::MAX_SELECTED_FILES {
+        return Err(Error::Refused(
+            "native file picker selected more than 512 files".to_owned(),
+        ));
+    }
+    let mut paths = Vec::with_capacity(count);
+    for index in 0..count {
+        // SAFETY: urls is live and index is less than its reported count.
+        let url = unsafe { o::id_usize(urls, o::sel(c"objectAtIndex:"), index) };
+        // SAFETY: URL is live and NSURL::path returns its filesystem path string.
+        let path = unsafe { o::id(url, o::sel(c"path")) };
+        let path = o::rust_string(path)
+            .ok_or_else(|| Error::Refused("native file picker returned an invalid path".to_owned()))?;
+        let path = PathBuf::from(path);
+        if !path.is_absolute() {
+            return Err(Error::Refused("native file picker returned a relative path".to_owned()));
+        }
+        paths.push(path);
+    }
+    Ok(Some(paths))
 }
 
 fn register_classes() -> Result<()> {
