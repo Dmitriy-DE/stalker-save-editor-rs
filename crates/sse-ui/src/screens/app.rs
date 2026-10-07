@@ -1001,14 +1001,23 @@ impl Screen for Settings {
                 let worker_path = path.clone();
                 let include_game_logs = self.include_game_logs;
                 sse_app::tasks::spawn_named_detached("diagnostics-background", move || {
-                    let games = crate::screens::games::discover_game_installations()
-                        .into_iter()
-                        .map(|installation| sse_app::diagnostics::DiagnosticGame {
-                            title: installation.title,
-                            install_directory: installation.directory,
-                            is_stalker2: installation.target == crate::screens::games::GameTarget::Stalker2,
-                        })
-                        .collect::<Vec<_>>();
+                    let games = {
+                        #[cfg(feature = "native-ui")]
+                        {
+                            crate::screens::games::discover_game_installations()
+                                .into_iter()
+                                .map(|installation| sse_app::diagnostics::DiagnosticGame {
+                                    title: installation.title,
+                                    install_directory: installation.directory,
+                                    is_stalker2: installation.target == crate::screens::games::GameTarget::Stalker2,
+                                })
+                                .collect::<Vec<_>>()
+                        }
+                        #[cfg(not(feature = "native-ui"))]
+                        {
+                            Vec::<sse_app::diagnostics::DiagnosticGame>::new()
+                        }
+                    };
                     let result = sse_app::diagnostics::save_diagnostics_zip(&worker_path, &games, include_game_logs)
                         .map(|()| worker_path.clone())
                         .map_err(|error| {

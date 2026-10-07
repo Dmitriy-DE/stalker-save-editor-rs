@@ -70,6 +70,7 @@ fn open_files_linux() -> Result<Option<Vec<PathBuf>>> {
 
 #[cfg(target_os = "linux")]
 const MAX_PICKER_OUTPUT_BYTES: usize = 1024 * 1024;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) const MAX_SELECTED_FILES: usize = 512;
 
 #[cfg(target_os = "linux")]

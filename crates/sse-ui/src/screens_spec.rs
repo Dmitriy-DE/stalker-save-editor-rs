@@ -154,10 +154,14 @@ pub const SCREENS: &[ScreenSpec] = &[
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "native-ui")]
     use super::SCREENS;
+    #[cfg(feature = "native-ui")]
     use crate::screens::ScreenId;
+    #[cfg(feature = "native-ui")]
     use std::collections::BTreeSet;
 
+    #[cfg(feature = "native-ui")]
     #[test]
     fn covers_screen_id_once() {
         assert_eq!(SCREENS.len(), ScreenId::ALL.len());

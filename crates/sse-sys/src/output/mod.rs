@@ -43,6 +43,7 @@ impl Output for SystemOutput {
 }
 
 #[allow(clippy::cast_possible_truncation)]
+#[cfg(any(not(target_arch = "wasm32"), test))]
 fn scaled_sample(sample: i16, volume: f32) -> i16 {
     let value = f32::from(sample) * volume;
     value.round().clamp(f32::from(i16::MIN), f32::from(i16::MAX)) as i16

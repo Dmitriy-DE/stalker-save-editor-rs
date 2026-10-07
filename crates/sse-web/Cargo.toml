@@ -15,7 +15,7 @@ path = "src/bin/sse-web.rs"
 [dependencies]
 sse-core = { path = "../sse-core" }
 sse-sys = { path = "../sse-sys" }
-sse-ui = { path = "../sse-ui" }
+sse-ui = { path = "../sse-ui", default-features = false }
 
 [lints]
 workspace = true

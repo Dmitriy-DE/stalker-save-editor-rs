@@ -10,9 +10,11 @@ use sse_core::Result;
 use std::any::Any;
 
 pub mod app;
+#[cfg(feature = "native-ui")]
 pub mod games;
 pub mod history;
 pub mod saves;
+#[cfg(feature = "native-ui")]
 pub mod services;
 pub mod shell;
 pub mod style;
@@ -87,7 +89,8 @@ impl Group {
 }
 
 impl ScreenId {
-    /// All screens in sidebar order.
+    /// All screens in sidebar order for a native build.
+    #[cfg(feature = "native-ui")]
     pub const ALL: [Self; 20] = [
         Self::Overview,
         Self::Inventory,
@@ -108,6 +111,22 @@ impl ScreenId {
         Self::Encyclopedia,
         Self::Capabilities,
         Self::Updates,
+        Self::Settings,
+    ];
+
+    /// Screens available in the browser build, which has no native game services.
+    #[cfg(not(feature = "native-ui"))]
+    pub const ALL: [Self; 11] = [
+        Self::Overview,
+        Self::Inventory,
+        Self::Factions,
+        Self::Stashes,
+        Self::Transitions,
+        Self::Backups,
+        Self::Compare,
+        Self::Timeline,
+        Self::SaveDoctor,
+        Self::Capabilities,
         Self::Settings,
     ];
 
@@ -290,11 +309,39 @@ pub(crate) fn registry_with_save_workspace(save_workspace: saves::Workspace) -> 
     let mut screens: Vec<Box<dyn Screen>> = Vec::new();
     screens.extend(saves::screens_with_workspace(save_workspace.clone()));
     screens.extend(history::screens_with_workspace(save_workspace.clone()));
+    #[cfg(feature = "native-ui")]
     screens.extend(games::screens());
+    #[cfg(feature = "native-ui")]
     screens.extend(services::screens());
     screens.extend(app::screens_with_workspace(save_workspace));
     screens.sort_by_key(|screen| screen.id());
     screens
+}
+
+#[cfg(all(test, not(feature = "native-ui")))]
+mod browser_registry_tests {
+    use super::{registry, ScreenId};
+
+    #[test]
+    fn browser_registry_excludes_native_only_screens() {
+        let ids = registry().into_iter().map(|screen| screen.id()).collect::<Vec<_>>();
+        assert_eq!(ids.len(), ScreenId::ALL.len());
+        assert!(ScreenId::ALL.iter().all(|id| ids.contains(id)));
+        assert!(ids.iter().all(|id| {
+            !matches!(
+                *id,
+                ScreenId::Games
+                    | ScreenId::GameFixes
+                    | ScreenId::GameDoctor
+                    | ScreenId::Environment
+                    | ScreenId::Companion
+                    | ScreenId::Achievements
+                    | ScreenId::Cloud
+                    | ScreenId::Encyclopedia
+                    | ScreenId::Updates
+            )
+        }));
+    }
 }
 
 /// A screen that only says which package will fill it.

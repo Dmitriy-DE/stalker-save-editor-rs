@@ -49,6 +49,7 @@ pub mod widget;
 #[cfg(any(windows, test))]
 pub mod win32_window;
 /// Shared application icon pixels for native window backends.
+#[cfg(not(target_arch = "wasm32"))]
 mod window_icon;
 /// X11 core protocol, MIT-SHM, XKB and clipboard encoding over a transport trait (X11).
 pub mod x11;
