@@ -4,13 +4,16 @@ use sse_core::{Error, Result};
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
+use crate::embedded_json::{self, JsonAssetCache};
 use crate::value::{parse_json, JsonValue};
 
-const EMBEDDED_S2_ITEMS_RAW: &[u8] = include_bytes!("../data/s2_items.json");
-const EMBEDDED_S2_UPGRADES_RAW: &[u8] = include_bytes!("../data/s2_upgrades.json");
+const EMBEDDED_S2_ITEMS_RAW: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/data_s2_items.json.deflate"));
+const EMBEDDED_S2_UPGRADES_RAW: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/data_s2_upgrades.json.deflate"));
 
 static EMBEDDED_S2_ITEMS: OnceLock<Stalker2ItemCatalog> = OnceLock::new();
 static EMBEDDED_S2_ARMOR_MAP: OnceLock<HashMap<String, Stalker2ArmorUpgrade>> = OnceLock::new();
+static EMBEDDED_S2_ITEMS_JSON: JsonAssetCache = OnceLock::new();
+static EMBEDDED_S2_UPGRADES_JSON: JsonAssetCache = OnceLock::new();
 
 /// Item entry in the S.T.A.L.K.E.R. 2 catalog.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,7 +60,11 @@ impl Stalker2ItemCatalog {
     /// Loads the embedded S2 item catalog.
     #[must_use]
     pub fn load_embedded() -> &'static Self {
-        EMBEDDED_S2_ITEMS.get_or_init(|| Self::load(EMBEDDED_S2_ITEMS_RAW).unwrap_or(Self { data: JsonValue::Null }))
+        EMBEDDED_S2_ITEMS.get_or_init(|| {
+            embedded_json::get_json(EMBEDDED_S2_ITEMS_RAW, &EMBEDDED_S2_ITEMS_JSON)
+                .and_then(Self::load)
+                .unwrap_or(Self { data: JsonValue::Null })
+        })
     }
 
     /// Number of items in catalog.
@@ -211,7 +218,14 @@ pub struct Stalker2ArmorUpgrades;
 
 impl Stalker2ArmorUpgrades {
     fn load_armors() -> HashMap<String, Stalker2ArmorUpgrade> {
-        let json_str = std::str::from_utf8(EMBEDDED_S2_UPGRADES_RAW).unwrap_or("");
+        let json_bytes = match embedded_json::get_json(EMBEDDED_S2_UPGRADES_RAW, &EMBEDDED_S2_UPGRADES_JSON) {
+            Ok(bytes) => bytes,
+            Err(_) => return HashMap::new(),
+        };
+        let json_str = match std::str::from_utf8(json_bytes) {
+            Ok(text) => text,
+            Err(_) => return HashMap::new(),
+        };
         let value = parse_json(json_str).unwrap_or(JsonValue::Null);
 
         let mut armors = HashMap::new();

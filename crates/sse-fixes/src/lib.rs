@@ -2,6 +2,8 @@
 //!
 //! Owner: Gemini (G3).
 
+mod embedded_json;
+
 pub mod all_spawn;
 pub mod catalog;
 pub mod engine;
@@ -25,3 +27,5 @@ pub use models::{
     GameTarget, ManagedGameFile, SpawnEditKind, SpawnEditOperation, TextPatchOperation,
 };
 pub use store::GameFixContentStore;
+#[cfg(test)]
+mod embedded_json_tests;

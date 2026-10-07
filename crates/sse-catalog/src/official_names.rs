@@ -3,11 +3,13 @@
 use sse_core::{Error, Result};
 use std::sync::OnceLock;
 
+use crate::embedded_json::{self, JsonAssetCache};
 use crate::value::{parse_json, JsonValue};
 
-const EMBEDDED_NAMES_RAW: &[u8] = include_bytes!("../data/catalog_names.json");
+const EMBEDDED_NAMES_RAW: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/data_catalog_names.json.deflate"));
 
 static EMBEDDED_OFFICIAL_NAMES: OnceLock<OfficialNamesCatalog> = OnceLock::new();
+static EMBEDDED_NAMES_JSON: JsonAssetCache = OnceLock::new();
 
 /// Shipped names for trilogy items, stashes, levels, factions, and upgrades.
 pub struct OfficialNamesCatalog {
@@ -58,7 +60,11 @@ impl OfficialNamesCatalog {
     /// Loads the embedded official names catalog.
     #[must_use]
     pub fn load_embedded() -> &'static Self {
-        EMBEDDED_OFFICIAL_NAMES.get_or_init(|| Self::load(EMBEDDED_NAMES_RAW).unwrap_or(Self { data: JsonValue::Null }))
+        EMBEDDED_OFFICIAL_NAMES.get_or_init(|| {
+            embedded_json::get_json(EMBEDDED_NAMES_RAW, &EMBEDDED_NAMES_JSON)
+                .and_then(Self::load)
+                .unwrap_or(Self { data: JsonValue::Null })
+        })
     }
 
     /// Resolves an official name with language fallback (requested -> "en" -> "ru").
