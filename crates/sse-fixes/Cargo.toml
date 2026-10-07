@@ -11,5 +11,8 @@ sse-content = { path = "../sse-content" }
 sse-catalog = { path = "../sse-catalog" }
 sse-codecs = { path = "../sse-codecs" }
 
+[build-dependencies]
+sse-codecs = { path = "../sse-codecs" }
+
 [lints]
 workspace = true

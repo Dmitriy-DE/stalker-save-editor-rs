@@ -10,5 +10,8 @@ sse-core = { path = "../sse-core" }
 sse-content = { path = "../sse-content" }
 sse-codecs = { path = "../sse-codecs" }
 
+[build-dependencies]
+sse-codecs = { path = "../sse-codecs" }
+
 [lints]
 workspace = true

@@ -7,15 +7,17 @@ use sse_core::{Error, Result};
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
+use crate::embedded_json::{self, JsonAssetCache};
 use crate::models::{
     CatalogBundle, FactionCatalog, FactionDefinition, FactionRelation, ItemCatalog, ItemDefinition, UpgradeCatalog,
     UpgradeDefinition,
 };
 use crate::value::{parse_json, JsonValue};
 
-const EMBEDDED_CATALOGS_RAW: &[u8] = include_bytes!("../data/catalogs.json");
+const EMBEDDED_CATALOGS_RAW: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/data_catalogs.json.deflate"));
 
 static EMBEDDED_BUNDLES: OnceLock<HashMap<String, CatalogBundle>> = OnceLock::new();
+static EMBEDDED_CATALOGS_JSON: JsonAssetCache = OnceLock::new();
 
 /// Reader for bundled JSON catalogs and dynamic bundles.
 pub struct CatalogBundleReader;
@@ -24,7 +26,11 @@ impl CatalogBundleReader {
     /// Loads all embedded catalogs.
     #[must_use]
     pub fn load_embedded() -> &'static HashMap<String, CatalogBundle> {
-        EMBEDDED_BUNDLES.get_or_init(|| Self::load(EMBEDDED_CATALOGS_RAW).unwrap_or_default())
+        EMBEDDED_BUNDLES.get_or_init(|| {
+            embedded_json::get_json(EMBEDDED_CATALOGS_RAW, &EMBEDDED_CATALOGS_JSON)
+                .and_then(Self::load)
+                .unwrap_or_default()
+        })
     }
 
     /// Loads all catalog bundles from a JSON payload.

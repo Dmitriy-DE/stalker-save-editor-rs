@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
+use crate::embedded_json::{self, JsonAssetCache};
 use sse_catalog::{parse_json, JsonValue};
 use sse_core::{Error, Result};
 
@@ -15,8 +16,9 @@ use crate::models::{
     TextPatchOperation,
 };
 
-static CATALOG_DATA: &str = include_str!("../data/game-fixes.json");
+const CATALOG_DATA: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/data_game-fixes.json.deflate"));
 static ALL_FIXES: OnceLock<Vec<GameFixDefinition>> = OnceLock::new();
+static CATALOG_DATA_JSON: JsonAssetCache = OnceLock::new();
 
 /// Shipped game fixes catalogue.
 pub struct GameFixCatalog;
@@ -129,7 +131,9 @@ fn enhanced_edition_build(game: GameTarget) -> &'static str {
 }
 
 fn load_catalog() -> Result<Vec<GameFixDefinition>> {
-    let parsed = parse_json(CATALOG_DATA).map_err(|_| Error::damaged("Invalid catalog JSON"))?;
+    let json_bytes = embedded_json::get_json(CATALOG_DATA, &CATALOG_DATA_JSON)?;
+    let json_text = std::str::from_utf8(json_bytes).map_err(|_| Error::damaged("Invalid catalog JSON"))?;
+    let parsed = parse_json(json_text).map_err(|_| Error::damaged("Invalid catalog JSON"))?;
     let root = parsed
         .as_object()
         .ok_or_else(|| Error::damaged("Catalog JSON root is not an object"))?;

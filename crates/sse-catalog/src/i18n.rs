@@ -1,5 +1,6 @@
 //! Interface translations, pluralization, reverse lookup, and completeness validation.
 
+use crate::embedded_json::{self, JsonAssetCache};
 use crate::value::JsonValue;
 use sse_core::{Error, Result};
 use std::collections::HashMap;
@@ -25,6 +26,30 @@ pub const SUPPORTED_LANGUAGES: &[(&str, &str)] = &[
 ];
 
 static INSTANCE: OnceLock<I18nService> = OnceLock::new();
+
+macro_rules! declare_embedded_i18n {
+    ($cache:ident, $asset:ident, $file:literal) => {
+        static $cache: JsonAssetCache = OnceLock::new();
+        const $asset: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/", $file));
+    };
+}
+
+declare_embedded_i18n!(I18N_MESSAGES_CACHE, I18N_MESSAGES_ASSET, "i18n__messages.json.deflate");
+declare_embedded_i18n!(I18N_CS_CACHE, I18N_CS_ASSET, "i18n_cs.json.deflate");
+declare_embedded_i18n!(I18N_DE_CACHE, I18N_DE_ASSET, "i18n_de.json.deflate");
+declare_embedded_i18n!(I18N_EN_CACHE, I18N_EN_ASSET, "i18n_en.json.deflate");
+declare_embedded_i18n!(I18N_ES_CACHE, I18N_ES_ASSET, "i18n_es.json.deflate");
+declare_embedded_i18n!(I18N_FR_CACHE, I18N_FR_ASSET, "i18n_fr.json.deflate");
+declare_embedded_i18n!(I18N_IT_CACHE, I18N_IT_ASSET, "i18n_it.json.deflate");
+declare_embedded_i18n!(I18N_JA_CACHE, I18N_JA_ASSET, "i18n_ja.json.deflate");
+declare_embedded_i18n!(I18N_KO_CACHE, I18N_KO_ASSET, "i18n_ko.json.deflate");
+declare_embedded_i18n!(I18N_PL_CACHE, I18N_PL_ASSET, "i18n_pl.json.deflate");
+declare_embedded_i18n!(I18N_PT_BR_CACHE, I18N_PT_BR_ASSET, "i18n_pt-BR.json.deflate");
+declare_embedded_i18n!(I18N_RU_CACHE, I18N_RU_ASSET, "i18n_ru.json.deflate");
+declare_embedded_i18n!(I18N_TR_CACHE, I18N_TR_ASSET, "i18n_tr.json.deflate");
+declare_embedded_i18n!(I18N_UK_CACHE, I18N_UK_ASSET, "i18n_uk.json.deflate");
+declare_embedded_i18n!(I18N_ZH_CN_CACHE, I18N_ZH_CN_ASSET, "i18n_zh-CN.json.deflate");
+declare_embedded_i18n!(I18N_ZH_TW_CACHE, I18N_ZH_TW_ASSET, "i18n_zh-TW.json.deflate");
 
 /// Translation service for UI strings keyed by Russian source strings.
 pub struct I18nService {
@@ -385,25 +410,26 @@ fn match_pattern_and_replace(text: &str, pattern: &str, source: &str) -> Option<
 }
 
 fn get_embedded_i18n(lang: &str) -> Option<&'static str> {
-    match lang {
-        "_messages" => Some(include_str!("../i18n/_messages.json")),
-        "cs" => Some(include_str!("../i18n/cs.json")),
-        "de" => Some(include_str!("../i18n/de.json")),
-        "en" => Some(include_str!("../i18n/en.json")),
-        "es" => Some(include_str!("../i18n/es.json")),
-        "fr" => Some(include_str!("../i18n/fr.json")),
-        "it" => Some(include_str!("../i18n/it.json")),
-        "ja" => Some(include_str!("../i18n/ja.json")),
-        "ko" => Some(include_str!("../i18n/ko.json")),
-        "pl" => Some(include_str!("../i18n/pl.json")),
-        "pt-BR" => Some(include_str!("../i18n/pt-BR.json")),
-        "ru" => Some(include_str!("../i18n/ru.json")),
-        "tr" => Some(include_str!("../i18n/tr.json")),
-        "uk" => Some(include_str!("../i18n/uk.json")),
-        "zh-CN" => Some(include_str!("../i18n/zh-CN.json")),
-        "zh-TW" => Some(include_str!("../i18n/zh-TW.json")),
-        _ => None,
-    }
+    let bytes = match lang {
+        "_messages" => embedded_json::get_json(I18N_MESSAGES_ASSET, &I18N_MESSAGES_CACHE).ok()?,
+        "cs" => embedded_json::get_json(I18N_CS_ASSET, &I18N_CS_CACHE).ok()?,
+        "de" => embedded_json::get_json(I18N_DE_ASSET, &I18N_DE_CACHE).ok()?,
+        "en" => embedded_json::get_json(I18N_EN_ASSET, &I18N_EN_CACHE).ok()?,
+        "es" => embedded_json::get_json(I18N_ES_ASSET, &I18N_ES_CACHE).ok()?,
+        "fr" => embedded_json::get_json(I18N_FR_ASSET, &I18N_FR_CACHE).ok()?,
+        "it" => embedded_json::get_json(I18N_IT_ASSET, &I18N_IT_CACHE).ok()?,
+        "ja" => embedded_json::get_json(I18N_JA_ASSET, &I18N_JA_CACHE).ok()?,
+        "ko" => embedded_json::get_json(I18N_KO_ASSET, &I18N_KO_CACHE).ok()?,
+        "pl" => embedded_json::get_json(I18N_PL_ASSET, &I18N_PL_CACHE).ok()?,
+        "pt-BR" => embedded_json::get_json(I18N_PT_BR_ASSET, &I18N_PT_BR_CACHE).ok()?,
+        "ru" => embedded_json::get_json(I18N_RU_ASSET, &I18N_RU_CACHE).ok()?,
+        "tr" => embedded_json::get_json(I18N_TR_ASSET, &I18N_TR_CACHE).ok()?,
+        "uk" => embedded_json::get_json(I18N_UK_ASSET, &I18N_UK_CACHE).ok()?,
+        "zh-CN" => embedded_json::get_json(I18N_ZH_CN_ASSET, &I18N_ZH_CN_CACHE).ok()?,
+        "zh-TW" => embedded_json::get_json(I18N_ZH_TW_ASSET, &I18N_ZH_TW_CACHE).ok()?,
+        _ => return None,
+    };
+    std::str::from_utf8(bytes).ok()
 }
 
 /// Helper struct for terse UI localization calls.
