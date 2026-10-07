@@ -444,7 +444,9 @@ mod tests {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |duration| duration.as_nanos());
-        let directory = std::env::temp_dir().join(format!("sse-steam-stage-{}-{nanos}", std::process::id()));
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let sequence = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let directory = std::env::temp_dir().join(format!("sse-steam-stage-{}-{nanos}-{sequence}", std::process::id()));
         assert!(std::fs::create_dir_all(&directory).is_ok());
         directory
     }
