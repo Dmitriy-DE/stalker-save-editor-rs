@@ -119,6 +119,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "native-ui")]
     fn all_shell_screens_match_golden_fingerprints() -> sse_core::Result<()> {
         use crate::glyphs::Fonts;
         use crate::screens::shell::Shell;

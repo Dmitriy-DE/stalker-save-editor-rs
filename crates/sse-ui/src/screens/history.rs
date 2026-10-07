@@ -56,6 +56,7 @@ enum Action {
         path: PathBuf,
         format_id: Option<String>,
     },
+    #[cfg(feature = "native-ui")]
     OpenGameFix {
         game_id: String,
         fix_id: String,
@@ -952,6 +953,7 @@ impl HistoryScreen {
                 });
                 repair_button_added = true;
             }
+            #[cfg(feature = "native-ui")]
             if state.status == sse_doctor::QuestTaskStatus::Broken && state.needs_preventing_fix {
                 if let Some(fix_id) = state.preventing_fix_id {
                     if let Some(definition) = sse_fixes::GameFixCatalog::try_get(fix_id) {
@@ -1469,6 +1471,7 @@ impl Screen for HistoryScreen {
                     self.start_diagnosis(path, format_id, cx.proxy.cloned())?;
                     self.sync_doctor_check(cx.tree)?;
                 }
+                #[cfg(feature = "native-ui")]
                 Action::OpenGameFix { game_id, fix_id } => {
                     if let Some(proxy) = cx.proxy.cloned() {
                         let _ = proxy.send(AppMessage::OpenGameFix {
@@ -2473,7 +2476,7 @@ mod tests {
             Content::Panel,
             Look::default(),
         )?;
-        let (proxy, receiver) = crate::event_loop::channel_pair::<AppMessage>();
+        let (proxy, _receiver) = crate::event_loop::channel_pair::<AppMessage>();
         let mut cx = Context {
             tree: &mut tree,
             proxy: Some(&proxy),
@@ -2513,19 +2516,23 @@ mod tests {
             screen.actions.first().map(|action| &action.action),
             Some(Action::RepairQuests { .. })
         ));
-        assert!(cx.tree.is_visible(row.secondary_button));
-        assert!(matches!(
-            screen.actions.get(1).map(|action| &action.action),
-            Some(Action::OpenGameFix { game_id, fix_id })
-                if game_id == "cs" && fix_id == "cs.quest.wolf-offline-cancellation"
-        ));
-
-        screen.message(&mut cx, &Message::User(AppMessage::Tick(0)), Some(row.secondary_button))?;
-        assert!(matches!(
-            receiver.recv_timeout(Duration::from_secs(1)),
-            Ok(Message::User(AppMessage::OpenGameFix { game_id, fix_id }))
-                if game_id == "cs" && fix_id == "cs.quest.wolf-offline-cancellation"
-        ));
+        #[cfg(feature = "native-ui")]
+        {
+            assert!(cx.tree.is_visible(row.secondary_button));
+            assert!(matches!(
+                screen.actions.get(1).map(|action| &action.action),
+                Some(Action::OpenGameFix { game_id, fix_id })
+                    if game_id == "cs" && fix_id == "cs.quest.wolf-offline-cancellation"
+            ));
+            screen.message(&mut cx, &Message::User(AppMessage::Tick(0)), Some(row.secondary_button))?;
+            assert!(matches!(
+                _receiver.recv_timeout(Duration::from_secs(1)),
+                Ok(Message::User(AppMessage::OpenGameFix { game_id, fix_id }))
+                    if game_id == "cs" && fix_id == "cs.quest.wolf-offline-cancellation"
+            ));
+        }
+        #[cfg(not(feature = "native-ui"))]
+        assert!(!cx.tree.is_visible(row.secondary_button));
         Ok(())
     }
 

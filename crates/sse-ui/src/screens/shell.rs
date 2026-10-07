@@ -2857,6 +2857,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "native-ui")]
     fn pointer_events_walk_main_screens_and_confine_to_modal_overlay() -> sse_core::Result<()> {
         let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
         let mut shell = Shell::build_for_test(&mut tree, None)?;

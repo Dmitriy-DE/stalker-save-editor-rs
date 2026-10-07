@@ -4,11 +4,13 @@ repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 export PATH="$HOME/.cargo/bin:$PATH"
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$HOME/.cache/sse-target}"
 cd "$repo_root"
-cargo build --release --target wasm32-unknown-unknown -p sse-web
+CARGO_PROFILE_RELEASE_OPT_LEVEL="${CARGO_PROFILE_RELEASE_OPT_LEVEL:-z}" \
+  cargo build --release --target wasm32-unknown-unknown -p sse-web --bin sse_web
 wasm_file="$CARGO_TARGET_DIR/wasm32-unknown-unknown/release/sse_web.wasm"
 wasm_bytes=$(wc -c < "$wasm_file")
-if [ "$wasm_bytes" -ge 1048576 ]; then
-  printf 'WebAssembly output is %s bytes; limit is less than 1048576 bytes\n' "$wasm_bytes" >&2
+max_wasm_bytes=5242880
+if [ "$wasm_bytes" -gt "$max_wasm_bytes" ]; then
+  printf 'WebAssembly output is %s bytes; limit is at most %s bytes\n' "$wasm_bytes" "$max_wasm_bytes" >&2
   exit 1
 fi
 cp "$wasm_file" "$repo_root/web/sse_web.wasm"

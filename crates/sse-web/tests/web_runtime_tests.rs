@@ -59,3 +59,10 @@ fn browser_event_decoder_rejects_bad_codes_and_preserves_keyboard_modifiers() {
         })
     );
 }
+
+#[test]
+fn browser_startup_registers_callbacks_with_the_system_abi() {
+    sse_web::register_browser_callbacks();
+
+    assert_eq!(sse_sys::web_abi::event(99, 0, 0, 0, 0, 0), 2);
+}

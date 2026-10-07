@@ -6,11 +6,16 @@ license.workspace = true
 rust-version.workspace = true
 
 [lib]
-crate-type = ["rlib", "cdylib"]
+crate-type = ["rlib"]
+
+[[bin]]
+name = "sse_web"
+path = "src/bin/sse-web.rs"
 
 [dependencies]
 sse-core = { path = "../sse-core" }
-sse-ui = { path = "../sse-ui" }
+sse-sys = { path = "../sse-sys" }
+sse-ui = { path = "../sse-ui", default-features = false }
 
 [lints]
 workspace = true

@@ -8,6 +8,7 @@ pub mod process;
 pub mod secure_fs;
 pub mod steam;
 pub mod system;
+pub mod web_abi;
 
 #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
 pub mod x11_ime;
