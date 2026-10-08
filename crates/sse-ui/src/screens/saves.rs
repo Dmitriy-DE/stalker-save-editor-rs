@@ -8100,6 +8100,10 @@ mod tests {
             cx.app.draft(&source_sha256).and_then(|draft| draft.money),
             Some(original_money.saturating_add(77))
         );
+        assert!(sse_app::tasks::wait_for_named_tasks(
+            &["draft-save"],
+            std::time::Duration::from_secs(1)
+        ));
         Ok(())
     }
 
