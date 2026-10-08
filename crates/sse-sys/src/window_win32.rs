@@ -257,9 +257,12 @@ impl Win32Window {
     pub fn new(options: WindowOptions) -> Result<Self> {
         // SAFETY: -4 is DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2; fallback is PROCESS_PER_MONITOR_DPI_AWARE.
         if unsafe { w::SetProcessDpiAwarenessContext(-4) } == 0 {
+            // SAFETY: this process-wide API takes only the documented awareness enum and no pointers.
             let _ = unsafe { w::SetProcessDpiAwareness(2) };
         }
-        let com = unsafe { w::CoInitializeEx(ptr::null_mut(), 2) } >= 0; // SAFETY: unnamed auto-reset event.
+        // SAFETY: null reserved pointer and COINIT_APARTMENTTHREADED initialize COM for this thread.
+        let com = unsafe { w::CoInitializeEx(ptr::null_mut(), 2) } >= 0;
+        // SAFETY: null security/name pointers request an unnamed auto-reset event with an initially nonsignaled state.
         let event = unsafe { w::CreateEventW(ptr::null(), 0, 0, ptr::null()) };
         if event.is_null() {
             return Err(Error::System("CreateEventW failed".to_owned()));
@@ -401,8 +404,10 @@ impl Win32Window {
             y: 0,
             mask: mono,
             color,
-        }; // SAFETY: bitmaps are live for icon creation.
+        };
+        // SAFETY: both bitmap handles are live and their metadata is valid for CreateIconIndirect.
         let icon = unsafe { w::CreateIconIndirect(&info) };
+        // SAFETY: CreateIconIndirect copies the bitmap data; these handles remain owned by this function.
         unsafe {
             w::DeleteObject(color);
             w::DeleteObject(mono);
@@ -548,6 +553,7 @@ impl Window for Win32Window {
         }
         // SAFETY: this Win32 FFI boundary uses the live handles/pointers established by the surrounding checks.
         unsafe { w::EmptyClipboard() };
+        // SAFETY: the clipboard is open and `bytes` was checked against overflow for the UTF-16 payload.
         let mem = unsafe { w::GlobalAlloc(GMEM_MOVEABLE, bytes) };
         if mem.is_null() {
             // SAFETY: this Win32 FFI boundary uses the live handles/pointers established by the surrounding checks.
@@ -592,11 +598,13 @@ impl Window for Win32Window {
         // SAFETY: clipboard is open and CF_UNICODETEXT availability was checked above.
         let mem = unsafe { w::GetClipboardData(CF_UNICODETEXT) };
         if mem.is_null() {
+            // SAFETY: this call balances the successful OpenClipboard above.
             unsafe { w::CloseClipboard() };
             return Ok(None);
         }
         // SAFETY: this Win32 FFI boundary uses the live handles/pointers established by the surrounding checks.
         let units = unsafe { w::GlobalSize(mem) }.checked_div(2).unwrap_or(0);
+        // SAFETY: mem is the live global-memory handle returned by GetClipboardData while the clipboard is open.
         let raw = unsafe { w::GlobalLock(mem) };
         if raw.is_null() {
             // SAFETY: this Win32 FFI boundary uses the live handles/pointers established by the surrounding checks.
@@ -1303,6 +1311,7 @@ fn file_dialog(owner: w::Hwnd, folders: bool) -> Result<Option<String>> {
     let mut item: *mut c_void = ptr::null_mut();
     // SAFETY: raw is live and item is a writable COM out pointer.
     if unsafe { (v.get_result)(raw, &mut item) } < 0 || item.is_null() {
+        // SAFETY: raw still owns the reference returned by CoCreateInstance and is released once on this path.
         unsafe { (v.release)(raw) };
         return Ok(None);
     }
@@ -1326,6 +1335,7 @@ fn file_dialog(owner: w::Hwnd, folders: bool) -> Result<Option<String>> {
         // SAFETY: path was allocated by the shell for SIGDN_FILESYSPATH and is freed exactly once.
         unsafe { w::CoTaskMemFree(path.cast()) }
     }
+    // SAFETY: item and raw each own one live COM reference and are released exactly once.
     unsafe {
         (iv.release)(item);
         (v.release)(raw);

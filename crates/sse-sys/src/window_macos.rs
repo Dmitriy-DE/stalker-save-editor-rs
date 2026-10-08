@@ -270,6 +270,7 @@ impl MacWindow {
         };
         // SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
         let allocated = unsafe { o::id(o::class(c"NSWindow"), o::sel(c"alloc")) };
+        // SAFETY: `allocated` is the live NSWindow returned by `alloc`; the selector and arguments use the typed initializer ABI.
         let window = unsafe {
             o::window_init(
                 allocated,
@@ -322,6 +323,7 @@ impl MacWindow {
         if let Some(name) = o::string("NSAppearanceNameDarkAqua") {
             // SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
             let appearance = unsafe { o::id_id(o::class(c"NSAppearance"), o::sel(c"appearanceNamed:"), name) };
+            // SAFETY: `window` and `appearance` are Objective-C objects and `setAppearance:` takes one object argument.
             unsafe { o::void_id(window, o::sel(c"setAppearance:"), appearance) }
         }
         // SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
@@ -384,6 +386,7 @@ impl MacWindow {
     fn panel(&mut self, folder: bool) -> Result<Option<String>> {
         // SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
         let panel = unsafe { o::id(o::class(c"NSOpenPanel"), o::sel(c"openPanel")) };
+        // SAFETY: `openPanel` returns an Objective-C object; the typed setters accept BOOL, and messaging nil is safe.
         unsafe {
             o::void_bool(panel, o::sel(c"setCanChooseFiles:"), if folder { NO } else { YES });
             o::void_bool(
@@ -399,6 +402,7 @@ impl MacWindow {
         }
         // SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
         let url = unsafe { o::id(panel, o::sel(c"URL")) };
+        // SAFETY: `URL` and `path` return object pointers; if URL is nil, Objective-C returns nil and `rust_string` handles it.
         let path = unsafe { o::id(url, o::sel(c"path")) };
         Ok(o::rust_string(path))
     }
@@ -477,6 +481,7 @@ impl Window for MacWindow {
         }
         // SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
         let layer = unsafe { o::id(self.view, o::sel(c"layer")) };
+        // SAFETY: `image` is a live CGImage checked above; `layer` is an Objective-C object, and the image is released once below.
         unsafe {
             o::void_id(layer, o::sel(c"setContents:"), image);
             let scale = o::f64_(self.window, o::sel(c"backingScaleFactor"));
@@ -550,10 +555,12 @@ impl Window for MacWindow {
     fn set_clipboard_text(&mut self, text: &str) -> Result<()> {
         // SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
         let board = unsafe { o::id(o::class(c"NSPasteboard"), o::sel(c"generalPasteboard")) };
+        // SAFETY: `board` is an Objective-C object and `clearContents` is a zero-argument void selector.
         unsafe { o::void(board, o::sel(c"clearContents")) };
         let value = o::string(text).ok_or_else(|| Error::Refused("clipboard contains NUL".to_owned()))?;
         // SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
         let array = unsafe { o::id_id(o::class(c"NSArray"), o::sel(c"arrayWithObject:"), value) };
+        // SAFETY: `board` and `array` are live Objective-C objects; `writeObjects:` takes one object argument.
         unsafe { o::void_id(board, o::sel(c"writeObjects:"), array) };
         Ok(())
     }
@@ -575,6 +582,7 @@ impl Window for MacWindow {
     fn reduced_motion(&self) -> bool {
         // SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
         let workspace = unsafe { o::id(o::class(c"NSWorkspace"), o::sel(c"sharedWorkspace")) };
+        // SAFETY: `workspace` is an Objective-C object and the selector returns BOOL; messaging nil is safe.
         (unsafe { o::bool_(workspace, o::sel(c"accessibilityDisplayShouldReduceMotion")) }) != 0
     }
 }
@@ -882,6 +890,7 @@ unsafe extern "C" fn character_index_for_point(_: o::Id, _: o::Sel, _: o::Point)
 }
 
 unsafe extern "C" fn first_rect_for_range(this: o::Id, _: o::Sel, _: o::Range, _: *mut o::Range) -> o::Rect {
+    // SAFETY: `this` is the live view instance supplied by Objective-C dispatch; `window` returns an object pointer.
     let window = unsafe { o::id(this, o::sel(c"window")) };
     if window.is_null() {
         return o::Rect {
@@ -911,9 +920,11 @@ unsafe extern "C" fn do_command(_: o::Id, _: o::Sel, _: o::Sel) {}
 fn install_menu(app: o::Id) -> Result<()> {
     // SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
     let menu = unsafe { o::id(o::id(o::class(c"NSMenu"), o::sel(c"alloc")), o::sel(c"init")) };
+    // SAFETY: NSMenuItem is an Objective-C class and `alloc`/`init` return a live object with the declared ABI.
     let root = unsafe { o::id(o::id(o::class(c"NSMenuItem"), o::sel(c"alloc")), o::sel(c"init")) };
     // SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
     unsafe { o::void_id(menu, o::sel(c"addItem:"), root) };
+    // SAFETY: NSMenu is an Objective-C class and `alloc`/`init` return a live object with the declared ABI.
     let sub = unsafe { o::id(o::id(o::class(c"NSMenu"), o::sel(c"alloc")), o::sel(c"init")) };
     for (title, action, key) in [
         ("Copy", c"copy:", "c"),
@@ -958,6 +969,7 @@ fn decode_event(event: o::Id, view: o::Id, shared: &Arc<Shared>) {
         10 | 11 => {
             // SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
             let code = unsafe { o::usize_(event, o::sel(c"keyCode")) };
+            // SAFETY: `event` is a live NSEvent and `isARepeat` returns BOOL.
             let repeat = unsafe { o::bool_(event, o::sel(c"isARepeat")) } != 0;
             emit(Event::Key {
                 code: u16::try_from(code).unwrap_or_default(),
@@ -967,6 +979,7 @@ fn decode_event(event: o::Id, view: o::Id, shared: &Arc<Shared>) {
             if ty == 10 {
                 // SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
                 let array = unsafe { o::id_id(o::class(c"NSArray"), o::sel(c"arrayWithObject:"), event) };
+                // SAFETY: `view` and `array` are live Objective-C objects; `interpretKeyEvents:` takes one object argument.
                 unsafe { o::void_id(view, o::sel(c"interpretKeyEvents:"), array) }
             }
         }
@@ -992,6 +1005,7 @@ fn decode_event(event: o::Id, view: o::Id, shared: &Arc<Shared>) {
             emit(Event::Wheel {
                 // SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
                 x: unsafe { o::f64_(event, o::sel(c"scrollingDeltaX")) },
+                // SAFETY: `event` is a live NSEvent and `scrollingDeltaY` returns a floating-point delta.
                 y: unsafe { o::f64_(event, o::sel(c"scrollingDeltaY")) },
             });
         }

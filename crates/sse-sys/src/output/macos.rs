@@ -113,6 +113,7 @@ fn run(mut pcm: Vec<i16>, channels: u8, rate: u32, volume: f32) {
     }
     // SAFETY: queue and buffer are live; linear PCM is CBR so packet descriptions are null.
     if unsafe { AudioQueueEnqueueBuffer(queue, buffer, 0, ptr::null()) } == 0
+        // SAFETY: queue is live and null requests that AudioQueueStart begin immediately.
         && unsafe { AudioQueueStart(queue, ptr::null()) } == 0
     {
         let frames = pcm.len().checked_div(usize::from(channels)).unwrap_or(0);
