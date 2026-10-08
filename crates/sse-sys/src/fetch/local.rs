@@ -24,17 +24,48 @@ impl Default for FileFetch {
 
 impl Fetch for FileFetch {
     fn get(&mut self, url: &str, range_from: u64, sink: &mut dyn FnMut(&[u8]) -> bool) -> Result<Response> {
+        self.get_with_response(url, range_from, &mut |_| true, sink)
+    }
+
+    fn get_with_response(
+        &mut self,
+        url: &str,
+        range_from: u64,
+        on_response: &mut dyn FnMut(&Response) -> bool,
+        sink: &mut dyn FnMut(&[u8]) -> bool,
+    ) -> Result<Response> {
         let path = file_path(url)?;
         let mut file = File::open(&path)?;
         let size = file.metadata()?.len();
-        if range_from > size {
-            return Ok(Response {
-                status: 416,
-                content_length: Some(0),
-                final_url: url.to_owned(),
-            });
+        let status = if range_from == 0 {
+            200
+        } else if range_from < size {
+            206
+        } else {
+            416
+        };
+        let remaining = if status == 416 {
+            0
+        } else {
+            size.saturating_sub(range_from)
+        };
+        let content_range = (status == 206).then_some(super::ContentRange {
+            start: range_from,
+            end: size.saturating_sub(1),
+            total: size,
+        });
+        let response = Response {
+            status,
+            content_length: Some(remaining),
+            content_range,
+            final_url: url.to_owned(),
+        };
+        if !on_response(&response) {
+            return Err(Error::Refused("response rejected by caller".to_owned()));
         }
-        let remaining = size.saturating_sub(range_from);
+        if status == 416 {
+            return Ok(response);
+        }
         if remaining > self.max_bytes {
             return Err(Error::Refused("file response exceeds size limit".to_owned()));
         }
@@ -56,11 +87,7 @@ impl Fetch for FileFetch {
                 return Err(Error::Refused("fetch cancelled by sink".to_owned()));
             }
         }
-        Ok(Response {
-            status: if range_from == 0 { 200 } else { 206 },
-            content_length: Some(remaining),
-            final_url: url.to_owned(),
-        })
+        Ok(response)
     }
 }
 
@@ -90,20 +117,52 @@ impl MemoryFetch {
 
 impl Fetch for MemoryFetch {
     fn get(&mut self, url: &str, range_from: u64, sink: &mut dyn FnMut(&[u8]) -> bool) -> Result<Response> {
+        self.get_with_response(url, range_from, &mut |_| true, sink)
+    }
+
+    fn get_with_response(
+        &mut self,
+        url: &str,
+        range_from: u64,
+        on_response: &mut dyn FnMut(&Response) -> bool,
+        sink: &mut dyn FnMut(&[u8]) -> bool,
+    ) -> Result<Response> {
         let body = self
             .entries
             .get(url)
             .ok_or_else(|| Error::System("memory URL not found".to_owned()))?;
         let start = usize::try_from(range_from).map_err(|_| Error::Refused("range is too large".to_owned()))?;
-        if start > body.len() {
-            return Ok(Response {
-                status: 416,
-                content_length: Some(0),
-                final_url: url.to_owned(),
-            });
-        }
-        let data = body.get(start..).unwrap_or_default();
+        let body_len = u64::try_from(body.len()).map_err(|_| Error::Refused("memory response too large".to_owned()))?;
+        let status = if range_from == 0 {
+            200
+        } else if start < body.len() {
+            206
+        } else {
+            416
+        };
+        let content_range = (status == 206).then_some(super::ContentRange {
+            start: range_from,
+            end: body_len.saturating_sub(1),
+            total: body_len,
+        });
+        let data = if status == 416 {
+            &[][..]
+        } else {
+            body.get(start..).unwrap_or_default()
+        };
         let length = u64::try_from(data.len()).map_err(|_| Error::Refused("memory response too large".to_owned()))?;
+        let response = Response {
+            status,
+            content_length: Some(length),
+            content_range,
+            final_url: url.to_owned(),
+        };
+        if !on_response(&response) {
+            return Err(Error::Refused("response rejected by caller".to_owned()));
+        }
+        if status == 416 {
+            return Ok(response);
+        }
         if length > self.max_bytes {
             return Err(Error::Refused("memory response exceeds size limit".to_owned()));
         }
@@ -112,11 +171,7 @@ impl Fetch for MemoryFetch {
                 return Err(Error::Refused("fetch cancelled by sink".to_owned()));
             }
         }
-        Ok(Response {
-            status: if range_from == 0 { 200 } else { 206 },
-            content_length: Some(length),
-            final_url: url.to_owned(),
-        })
+        Ok(response)
     }
 }
 
@@ -194,6 +249,40 @@ mod tests {
             fetch.get("mem://x", 0, &mut |_| false),
             Err(Error::Refused(_))
         ));
+    }
+
+    #[test]
+    fn memory_fetch_exposes_partial_response_before_streaming_body() {
+        let mut fetch = MemoryFetch::default();
+        fetch.insert("mem://x", b"abcdef".to_vec());
+        let headers_seen = std::cell::Cell::new(false);
+        let mut output = Vec::new();
+        let response = fetch
+            .get_with_response(
+                "mem://x",
+                2,
+                &mut |response| {
+                    assert_eq!(response.status, 206);
+                    assert_eq!(
+                        response.content_range,
+                        Some(super::super::ContentRange {
+                            start: 2,
+                            end: 5,
+                            total: 6,
+                        })
+                    );
+                    headers_seen.set(true);
+                    true
+                },
+                &mut |chunk| {
+                    assert!(headers_seen.get());
+                    output.extend_from_slice(chunk);
+                    true
+                },
+            )
+            .unwrap_or_else(|error| panic!("memory range fetch: {error}"));
+        assert_eq!(response.status, 206);
+        assert_eq!(output, b"cdef");
     }
 
     #[test]

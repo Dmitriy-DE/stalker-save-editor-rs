@@ -4,8 +4,10 @@ use crate::manifest::UpdateArtifact;
 use sse_core::{Error, Result};
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+
+pub use sse_sys::fetch::ContentRange;
 
 /// HTTP response status and headers.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -14,6 +16,8 @@ pub struct Response {
     pub status_code: u16,
     /// Content length in bytes, if reported.
     pub content_length: Option<u64>,
+    /// Byte interval returned by a partial response.
+    pub content_range: Option<ContentRange>,
     /// Location header for HTTP redirects.
     pub location: Option<String>,
 }
@@ -27,6 +31,90 @@ pub trait Fetch {
     /// # Errors
     /// Returns an error on transport failure or invalid URL.
     fn get(&mut self, url: &str, range_from: u64, sink: &mut dyn FnMut(&[u8]) -> bool) -> Result<Response>;
+
+    /// Performs a GET while exposing final response headers before the first body byte.
+    ///
+    /// Implementations that cannot guarantee this order fail closed. The updater uses this
+    /// callback to validate range metadata before appending bytes to a retained partial file.
+    fn get_with_response(
+        &mut self,
+        _url: &str,
+        _range_from: u64,
+        _on_response: &mut dyn FnMut(&Response) -> bool,
+        _sink: &mut dyn FnMut(&[u8]) -> bool,
+    ) -> Result<Response> {
+        Err(Error::Refused(
+            "fetcher does not support pre-body response inspection".to_owned(),
+        ))
+    }
+}
+
+struct DownloadStream {
+    file: File,
+    hasher: Sha256Hasher,
+    total_downloaded: u64,
+    response_body_start: u64,
+    expected_response_length: Option<u64>,
+    response_headers: Option<Response>,
+    response_problem: Option<String>,
+    size_exceeded: bool,
+    write_error: Option<std::io::Error>,
+}
+
+fn open_existing_regular_file(path: &Path, writable: bool) -> std::io::Result<File> {
+    let mut options = OpenOptions::new();
+    options.read(true).write(writable);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // FILE_FLAG_OPEN_REPARSE_POINT opens the reparse point itself for validation.
+        options.custom_flags(0x0020_0000);
+    }
+    let file = options.open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "path is not a regular file",
+        ));
+    }
+    Ok(file)
+}
+
+fn create_new_part(path: &Path) -> std::io::Result<File> {
+    OpenOptions::new().read(true).write(true).create_new(true).open(path)
+}
+
+fn verify_open_file(file: &mut File, artifact: &UpdateArtifact) -> Result<()> {
+    let metadata = file.metadata().map_err(Error::from)?;
+    if metadata.len() != artifact.size {
+        return Err(Error::damaged("File size mismatch"));
+    }
+
+    file.seek(SeekFrom::Start(0)).map_err(Error::from)?;
+    let mut hasher = Sha256Hasher::new();
+    let mut buf = [0_u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buf).map_err(Error::from)?;
+        if read == 0 {
+            break;
+        }
+        if let Some(chunk) = buf.get(..read) {
+            hasher.update(chunk);
+        }
+    }
+
+    let actual_hex = hex_encode(&hasher.finish());
+    if actual_hex.eq_ignore_ascii_case(&artifact.sha256) {
+        Ok(())
+    } else {
+        Err(Error::damaged("File SHA-256 mismatch"))
+    }
 }
 
 /// In-memory mock fetcher for tests and unit verification.
@@ -51,12 +139,27 @@ impl MemoryFetch {
 
 impl Fetch for MemoryFetch {
     fn get(&mut self, url: &str, range_from: u64, sink: &mut dyn FnMut(&[u8]) -> bool) -> Result<Response> {
+        self.get_with_response(url, range_from, &mut |_| true, sink)
+    }
+
+    fn get_with_response(
+        &mut self,
+        url: &str,
+        range_from: u64,
+        on_response: &mut dyn FnMut(&Response) -> bool,
+        sink: &mut dyn FnMut(&[u8]) -> bool,
+    ) -> Result<Response> {
         if let Some(target) = self.redirects.get(url) {
-            return Ok(Response {
+            let response = Response {
                 status_code: 302,
                 content_length: None,
+                content_range: None,
                 location: Some(target.clone()),
-            });
+            };
+            if !on_response(&response) {
+                return Err(Error::Refused("response rejected by caller".to_owned()));
+            }
+            return Ok(response);
         }
 
         let body = self
@@ -64,8 +167,39 @@ impl Fetch for MemoryFetch {
             .get(url)
             .ok_or_else(|| Error::Refused(format!("404 Not Found: {url}")))?;
 
+        let body_len = u64::try_from(body.len()).map_err(|_| Error::Refused("response too large".to_owned()))?;
         let start = usize::try_from(range_from).unwrap_or(body.len());
-        let slice = body.get(start..).unwrap_or(&[]);
+        let status_code = if range_from == 0 {
+            200
+        } else if start < body.len() {
+            206
+        } else {
+            416
+        };
+        let slice = if status_code == 416 {
+            &[][..]
+        } else {
+            body.get(start..).unwrap_or(&[])
+        };
+        let content_range = (status_code == 206).then_some(ContentRange {
+            start: range_from,
+            end: body_len.saturating_sub(1),
+            total: body_len,
+        });
+        let response = Response {
+            status_code,
+            content_length: Some(
+                u64::try_from(slice.len()).map_err(|_| Error::Refused("response too large".to_owned()))?,
+            ),
+            content_range,
+            location: None,
+        };
+        if !on_response(&response) {
+            return Err(Error::Refused("response rejected by caller".to_owned()));
+        }
+        if status_code == 416 {
+            return Ok(response);
+        }
 
         // Stream in 64 KiB chunks
         let chunk_size = 64 * 1024;
@@ -80,11 +214,7 @@ impl Fetch for MemoryFetch {
             offset = end;
         }
 
-        Ok(Response {
-            status_code: 200,
-            content_length: Some(slice.len() as u64),
-            location: None,
-        })
+        Ok(response)
     }
 }
 
@@ -94,6 +224,16 @@ pub struct FileFetch;
 
 impl Fetch for FileFetch {
     fn get(&mut self, url: &str, range_from: u64, sink: &mut dyn FnMut(&[u8]) -> bool) -> Result<Response> {
+        self.get_with_response(url, range_from, &mut |_| true, sink)
+    }
+
+    fn get_with_response(
+        &mut self,
+        url: &str,
+        range_from: u64,
+        on_response: &mut dyn FnMut(&Response) -> bool,
+        sink: &mut dyn FnMut(&[u8]) -> bool,
+    ) -> Result<Response> {
         let path_str = url.strip_prefix("file://").unwrap_or(url);
         let path = Path::new(path_str);
         let mut file = File::open(path).map_err(Error::from)?;
@@ -105,7 +245,34 @@ impl Fetch for FileFetch {
 
         let metadata = file.metadata().map_err(Error::from)?;
         let file_len = metadata.len();
-        let remaining = file_len.saturating_sub(range_from);
+        let status_code = if range_from == 0 {
+            200
+        } else if range_from < file_len {
+            206
+        } else {
+            416
+        };
+        let remaining = if status_code == 416 {
+            0
+        } else {
+            file_len.saturating_sub(range_from)
+        };
+        let response = Response {
+            status_code,
+            content_length: Some(remaining),
+            content_range: (status_code == 206).then_some(ContentRange {
+                start: range_from,
+                end: file_len.saturating_sub(1),
+                total: file_len,
+            }),
+            location: None,
+        };
+        if !on_response(&response) {
+            return Err(Error::Refused("response rejected by caller".to_owned()));
+        }
+        if status_code == 416 {
+            return Ok(response);
+        }
 
         let mut buffer = [0_u8; 64 * 1024];
         loop {
@@ -120,11 +287,7 @@ impl Fetch for FileFetch {
             }
         }
 
-        Ok(Response {
-            status_code: 200,
-            content_length: Some(remaining),
-            location: None,
-        })
+        Ok(response)
     }
 }
 
@@ -150,6 +313,16 @@ fn official_https_url(url: &str) -> bool {
 
 impl Fetch for DefaultFetch {
     fn get(&mut self, url: &str, range_from: u64, sink: &mut dyn FnMut(&[u8]) -> bool) -> Result<Response> {
+        self.get_with_response(url, range_from, &mut |_| true, sink)
+    }
+
+    fn get_with_response(
+        &mut self,
+        url: &str,
+        range_from: u64,
+        on_response: &mut dyn FnMut(&Response) -> bool,
+        sink: &mut dyn FnMut(&[u8]) -> bool,
+    ) -> Result<Response> {
         if !official_https_url(url) {
             return Err(Error::Refused(
                 "Update fetch is restricted to the official HTTPS host".to_owned(),
@@ -159,17 +332,28 @@ impl Fetch for DefaultFetch {
             max_bytes: crate::manifest::MAXIMUM_ARTIFACT_BYTES,
             ..sse_sys::fetch::SystemFetch::default()
         };
-        let response = sse_sys::fetch::Fetch::get(&mut fetch, url, range_from, sink)?;
+        let mut final_response = None;
+        let mut checked_response = |response: &sse_sys::fetch::Response| {
+            if !official_https_url(&response.final_url) {
+                return false;
+            }
+            let mapped = Response {
+                status_code: response.status,
+                content_length: response.content_length,
+                content_range: response.content_range,
+                location: None,
+            };
+            final_response = Some(mapped.clone());
+            on_response(&mapped)
+        };
+        let response =
+            sse_sys::fetch::Fetch::get_with_response(&mut fetch, url, range_from, &mut checked_response, sink)?;
         if !official_https_url(&response.final_url) {
             return Err(Error::Refused(
                 "Update redirect left the official HTTPS host".to_owned(),
             ));
         }
-        Ok(Response {
-            status_code: response.status,
-            content_length: response.content_length,
-            location: None,
-        })
+        final_response.ok_or_else(|| Error::damaged("update response headers were not inspected"))
     }
 }
 
@@ -378,15 +562,12 @@ pub fn download_artifact(
 ) -> Result<PathBuf> {
     artifact.validate()?;
 
-    // 1. Check if destination already has a fully valid file (re-use verified download)
-    if destination.is_file() {
-        if verify_existing_file(destination, artifact).is_ok() {
-            if let Some(ref mut report) = progress {
-                report(artifact.size, artifact.size);
-            }
-            return Ok(destination.to_path_buf());
+    // Reuse only a fully verified destination. A failed replacement must leave it intact.
+    if destination.is_file() && verify_existing_file(destination, artifact).is_ok() {
+        if let Some(ref mut report) = progress {
+            report(artifact.size, artifact.size);
         }
-        let _ = std::fs::remove_file(destination);
+        return Ok(destination.to_path_buf());
     }
 
     let parent = destination
@@ -400,86 +581,255 @@ pub fn download_artifact(
         .ok_or_else(|| Error::damaged("Invalid destination filename"))?;
 
     let part_path = parent.join(format!(".{file_name}.part"));
-    if part_path.exists() {
-        let _ = std::fs::remove_file(&part_path);
-    }
-
-    let mut out_file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&part_path)
-        .map_err(Error::from)?;
-
     let mut hasher = Sha256Hasher::new();
     let mut total_downloaded: u64 = 0;
-    let mut size_exceeded = false;
-    let mut write_err: Option<std::io::Error> = None;
-
-    let response = fetch.get(&artifact.url, 0, &mut |chunk| {
-        total_downloaded = total_downloaded.saturating_add(chunk.len() as u64);
-        if total_downloaded > artifact.size {
-            size_exceeded = true;
-            return false;
+    let mut existing_part = None;
+    match std::fs::symlink_metadata(&part_path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            return Err(Error::Refused("partial download path is a symbolic link".to_owned()));
         }
-
-        hasher.update(chunk);
-
-        if let Err(e) = out_file.write_all(chunk) {
-            write_err = Some(e);
-            return false;
+        Ok(metadata) if metadata.file_type().is_file() && metadata.len() <= artifact.size => {
+            let mut partial = open_existing_regular_file(&part_path, true).map_err(Error::from)?;
+            if partial.metadata().map_err(Error::from)?.len() > artifact.size {
+                return Err(Error::Refused("partial download changed while opening".to_owned()));
+            }
+            let mut buffer = [0u8; 64 * 1024];
+            loop {
+                let read = partial.read(&mut buffer).map_err(Error::from)?;
+                if read == 0 {
+                    break;
+                }
+                let bytes = buffer.get(..read).unwrap_or_default();
+                total_downloaded = total_downloaded
+                    .checked_add(
+                        u64::try_from(read).map_err(|_| Error::Refused("partial file is too large".to_owned()))?,
+                    )
+                    .ok_or_else(|| Error::Refused("partial file size overflow".to_owned()))?;
+                if total_downloaded > artifact.size {
+                    total_downloaded = 0;
+                    hasher = Sha256Hasher::new();
+                    break;
+                }
+                hasher.update(bytes);
+            }
+            if total_downloaded > artifact.size || partial.metadata().map_err(Error::from)?.len() != total_downloaded {
+                return Err(Error::Refused("partial download changed while reading".to_owned()));
+            }
+            if total_downloaded == artifact.size {
+                if hex_encode(&hasher.finish()).eq_ignore_ascii_case(&artifact.sha256) {
+                    verify_open_file(&mut partial, artifact)?;
+                    partial.sync_all().map_err(Error::from)?;
+                    drop(partial);
+                    verify_existing_file(&part_path, artifact)?;
+                    std::fs::rename(&part_path, destination).map_err(Error::from)?;
+                    if let Some(ref mut report) = progress {
+                        report(artifact.size, artifact.size);
+                    }
+                    return Ok(destination.to_path_buf());
+                }
+                total_downloaded = 0;
+                hasher = Sha256Hasher::new();
+            }
+            existing_part = Some(partial);
         }
+        Ok(_) => return Err(Error::Refused("partial download path is not a regular file".to_owned())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(Error::from(error)),
+    }
 
-        if let Some(ref mut report) = progress {
-            report(total_downloaded, artifact.size);
-        }
+    let mut out_file = match existing_part {
+        Some(file) => file,
+        None => create_new_part(&part_path).map_err(Error::from)?,
+    };
+    if out_file.metadata().map_err(Error::from)?.len() != total_downloaded {
+        out_file.set_len(total_downloaded).map_err(Error::from)?;
+    }
+    out_file.seek(SeekFrom::Start(total_downloaded)).map_err(Error::from)?;
 
-        true
+    if let Some(ref mut report) = progress {
+        report(total_downloaded, artifact.size);
+    }
+
+    let requested_from = total_downloaded;
+    let stream = std::cell::RefCell::new(DownloadStream {
+        file: out_file,
+        hasher,
+        total_downloaded,
+        response_body_start: requested_from,
+        expected_response_length: None,
+        response_headers: None,
+        response_problem: None,
+        size_exceeded: false,
+        write_error: None,
     });
 
-    // Ensure part file is cleaned up on any failure
-    let cleanup = |path: &Path| {
-        let _ = std::fs::remove_file(path);
-    };
+    let response = fetch.get_with_response(
+        &artifact.url,
+        requested_from,
+        &mut |headers| {
+            let mut stream = stream.borrow_mut();
+            let body_length = match headers.status_code {
+                200 => {
+                    if headers.content_length.is_some_and(|length| length != artifact.size) {
+                        stream.response_problem = Some("HTTP 200 Content-Length mismatch with the artifact".to_owned());
+                        return false;
+                    }
+                    if headers.content_range.is_some() {
+                        stream.response_problem = Some("HTTP 200 unexpectedly included Content-Range".to_owned());
+                        return false;
+                    }
+                    artifact.size
+                }
+                206 => {
+                    let Some(range) = headers.content_range else {
+                        stream.response_problem = Some("HTTP 206 omitted a valid Content-Range".to_owned());
+                        return false;
+                    };
+                    if range.start != requested_from || range.total != artifact.size {
+                        stream.response_problem =
+                            Some("HTTP 206 Content-Range does not match the requested artifact".to_owned());
+                        return false;
+                    }
+                    let Some(length) = range.end.checked_sub(range.start).and_then(|n| n.checked_add(1)) else {
+                        stream.response_problem = Some("HTTP 206 Content-Range length overflow".to_owned());
+                        return false;
+                    };
+                    if headers.content_length.is_some_and(|reported| reported != length) {
+                        stream.response_problem =
+                            Some("HTTP 206 Content-Length does not match Content-Range".to_owned());
+                        return false;
+                    }
+                    length
+                }
+                status => {
+                    stream.response_problem = Some(format!("Server returned HTTP {status}"));
+                    return false;
+                }
+            };
 
-    if let Some(err) = write_err {
-        cleanup(&part_path);
+            if headers.status_code == 200 && requested_from != 0 {
+                if let Err(error) = stream
+                    .file
+                    .set_len(0)
+                    .and_then(|()| stream.file.seek(SeekFrom::Start(0)).map(|_| ()))
+                {
+                    stream.write_error = Some(error);
+                    return false;
+                }
+                stream.total_downloaded = 0;
+                stream.hasher = Sha256Hasher::new();
+            }
+            stream.response_body_start = stream.total_downloaded;
+            stream.expected_response_length = Some(body_length);
+            stream.response_headers = Some(headers.clone());
+            true
+        },
+        &mut |chunk| {
+            let mut stream = stream.borrow_mut();
+            let chunk_len = match u64::try_from(chunk.len()) {
+                Ok(length) => length,
+                Err(_) => {
+                    stream.size_exceeded = true;
+                    return false;
+                }
+            };
+            let Some(next_total) = stream.total_downloaded.checked_add(chunk_len) else {
+                stream.size_exceeded = true;
+                return false;
+            };
+            if next_total > artifact.size {
+                stream.size_exceeded = true;
+                return false;
+            }
+            if let Err(error) = stream.file.write_all(chunk) {
+                let _ = stream.file.set_len(stream.total_downloaded);
+                stream.write_error = Some(error);
+                return false;
+            }
+            stream.hasher.update(chunk);
+            stream.total_downloaded = next_total;
+
+            if let Some(ref mut report) = progress {
+                report(stream.total_downloaded, artifact.size);
+            }
+
+            true
+        },
+    );
+
+    let mut stream = stream.into_inner();
+    if let Some(err) = stream.write_error.take() {
+        let _ = stream.file.sync_all();
         return Err(Error::from(err));
     }
 
+    if let Some(problem) = stream.response_problem.take() {
+        return Err(Error::Refused(problem));
+    }
+
     let resp = match response {
-        Ok(r) => r,
-        Err(e) => {
-            cleanup(&part_path);
-            return Err(e);
+        Ok(response) => response,
+        Err(error) => {
+            if stream.size_exceeded {
+                stream.file.set_len(stream.response_body_start).map_err(Error::from)?;
+            }
+            stream.file.sync_all().map_err(Error::from)?;
+            return Err(error);
         }
     };
 
-    if resp.status_code != 200 && resp.status_code != 206 {
-        cleanup(&part_path);
-        return Err(Error::Refused(format!("Server returned HTTP {}", resp.status_code)));
+    let Some(headers) = stream.response_headers.take() else {
+        return Err(Error::damaged("fetcher returned without exposing response headers"));
+    };
+    if resp.status_code != headers.status_code || resp.content_range != headers.content_range {
+        return Err(Error::damaged("fetcher response metadata changed after body delivery"));
+    }
+    if stream.size_exceeded {
+        stream.file.set_len(stream.response_body_start).map_err(Error::from)?;
+        stream.file.sync_all().map_err(Error::from)?;
+        return Err(Error::damaged("Download exceeded the manifest size"));
     }
 
-    if size_exceeded || total_downloaded != artifact.size {
-        cleanup(&part_path);
+    let received_this_response = stream.total_downloaded.saturating_sub(stream.response_body_start);
+    if stream
+        .expected_response_length
+        .is_some_and(|expected| expected != received_this_response)
+    {
+        stream.file.sync_all().map_err(Error::from)?;
         return Err(Error::damaged(format!(
-            "Download size mismatch: expected {} bytes, got {} bytes",
-            artifact.size, total_downloaded
+            "Response size mismatch: expected {} bytes, got {} bytes",
+            stream.expected_response_length.unwrap_or_default(),
+            received_this_response
         )));
     }
 
+    if stream.total_downloaded != artifact.size {
+        stream.file.sync_all().map_err(Error::from)?;
+        return Err(Error::damaged(format!(
+            "Download size mismatch: expected {} bytes, got {} bytes",
+            artifact.size, stream.total_downloaded
+        )));
+    }
+
+    let DownloadStream {
+        file: mut out_file,
+        hasher,
+        ..
+    } = stream;
     let digest_bytes = hasher.finish();
     let actual_sha256 = hex_encode(&digest_bytes);
     if !actual_sha256.eq_ignore_ascii_case(&artifact.sha256) {
-        cleanup(&part_path);
+        out_file.sync_all().map_err(Error::from)?;
         return Err(Error::damaged(format!(
             "Download SHA-256 mismatch: expected {}, got {}",
             artifact.sha256, actual_sha256
         )));
     }
 
-    out_file.flush().map_err(Error::from)?;
+    out_file.sync_all().map_err(Error::from)?;
+    verify_open_file(&mut out_file, artifact)?;
     drop(out_file);
-
+    verify_existing_file(&part_path, artifact)?;
     std::fs::rename(&part_path, destination).map_err(Error::from)?;
 
     Ok(destination.to_path_buf())
@@ -487,31 +837,8 @@ pub fn download_artifact(
 
 /// Verifies an existing file on disk against an artifact size and SHA-256 digest.
 pub fn verify_existing_file(path: &Path, artifact: &UpdateArtifact) -> Result<()> {
-    let mut file = File::open(path).map_err(Error::from)?;
-    let metadata = file.metadata().map_err(Error::from)?;
-    if metadata.len() != artifact.size {
-        return Err(Error::damaged("File size mismatch"));
-    }
-
-    let mut hasher = Sha256Hasher::new();
-    let mut buf = [0_u8; 64 * 1024];
-    loop {
-        let read = file.read(&mut buf).map_err(Error::from)?;
-        if read == 0 {
-            break;
-        }
-        if let Some(chunk) = buf.get(..read) {
-            hasher.update(chunk);
-        }
-    }
-
-    let digest = hasher.finish();
-    let actual_hex = hex_encode(&digest);
-    if actual_hex.eq_ignore_ascii_case(&artifact.sha256) {
-        Ok(())
-    } else {
-        Err(Error::damaged("File SHA-256 mismatch"))
-    }
+    let mut file = open_existing_regular_file(path, false).map_err(Error::from)?;
+    verify_open_file(&mut file, artifact)
 }
 
 pub(crate) fn hex_encode(bytes: &[u8]) -> String {
