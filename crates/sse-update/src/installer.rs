@@ -18,6 +18,8 @@ const STALE_INSTALL_STAGE_AGE: Duration = Duration::from_secs(30 * 24 * 60 * 60)
 pub enum UpdateInstallState {
     /// Installation process completed successfully.
     Succeeded,
+    /// A verified portable archive needs to be extracted by the user.
+    ManualInstructions,
     /// An external GUI installer or disk image was opened.
     OpenedExternally,
     /// Authorization or execution was cancelled by the user.
@@ -280,10 +282,11 @@ pub fn install_artifact(
     if artifact.kind == platform::kind::PORTABLE {
         artifact.validate()?;
         crate::fetch::verify_existing_file(verified_archive, artifact)?;
-        return Err(Error::Refused(format!(
-            "Portable update verified at {}. Close the editor, extract the archive into its install folder, then launch sse-shell from that folder.",
-            verified_archive.display()
-        )));
+        return Ok(UpdateInstallResult {
+            state: UpdateInstallState::ManualInstructions,
+            exit_code: None,
+            message: verified_archive.display().to_string(),
+        });
     }
 
     let parent = verified_archive

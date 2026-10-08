@@ -4,8 +4,8 @@ use crate::platform;
 use sse_core::{Error, Result};
 use std::path::{Path, PathBuf};
 
-/// Default installation root for system deb packages on Linux.
-pub const LINUX_PACKAGE_INSTALL_ROOT: &str = "/usr/lib/stalker-save-editor";
+/// Default location of the build manifest installed by the system deb package on Linux.
+pub const LINUX_PACKAGE_INSTALL_ROOT: &str = "/usr/share/stalker-save-editor";
 
 /// Detected running or target installation metadata.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -75,8 +75,13 @@ impl UpdateInstallationDetector {
             None
         };
 
+        let is_deb_entrypoint = target == platform::target::LINUX
+            && is_linux_deb_entrypoint(&exe, &exe_dir, Path::new(default_pkg_root))
+            && Path::new(default_pkg_root).join("BUILD_MANIFEST.json").is_file();
         let root = if let Some(ref bundle) = app_bundle {
             bundle.clone()
+        } else if is_deb_entrypoint {
+            std::fs::canonicalize(default_pkg_root).unwrap_or_else(|_| PathBuf::from(default_pkg_root))
         } else {
             exe_dir.clone()
         };
@@ -174,6 +179,20 @@ fn paths_equal(left: &Path, right: &Path) -> bool {
     {
         left == right
     }
+}
+
+fn is_linux_deb_entrypoint(executable: &Path, executable_directory: &Path, package_root: &Path) -> bool {
+    let Some(prefix) = package_root.parent().and_then(Path::parent) else {
+        return false;
+    };
+    let executable_name = executable.file_name();
+    if !matches!(
+        executable_name.and_then(|name| name.to_str()),
+        Some("sse-shell" | "stalker-save")
+    ) {
+        return false;
+    }
+    paths_equal(executable_directory, &prefix.join("bin"))
 }
 
 fn find_app_bundle_ancestor(start: &Path) -> Option<PathBuf> {

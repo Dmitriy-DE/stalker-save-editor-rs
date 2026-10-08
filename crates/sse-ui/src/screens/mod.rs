@@ -233,6 +233,8 @@ pub enum AppMessage {
     },
     /// Open the backup history screen after startup detects an interrupted save write.
     OpenBackups,
+    /// Open a registered application screen from an in-screen action.
+    OpenScreen(ScreenId),
     /// Open the linked game fix in the Game Fixes screen without installing it.
     OpenGameFix {
         /// Canonical game identifier from the fix catalog.
@@ -269,6 +271,7 @@ impl std::fmt::Debug for AppMessage {
             Self::Tick(seconds) => write!(f, "Tick({seconds})"),
             Self::OpenSavePicker { return_to } => write!(f, "OpenSavePicker({return_to:?})"),
             Self::OpenBackups => f.write_str("OpenBackups"),
+            Self::OpenScreen(id) => write!(f, "OpenScreen({id:?})"),
             Self::OpenGameFix { game_id, fix_id } => write!(f, "OpenGameFix({game_id}, {fix_id})"),
             Self::ToScreen(id, _) => write!(f, "ToScreen({id:?})"),
             Self::EditorAction(action) => write!(f, "EditorAction({action:?})"),

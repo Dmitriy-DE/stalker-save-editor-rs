@@ -1788,6 +1788,7 @@ impl Shell {
             let wanted = match message {
                 Message::User(AppMessage::Tick(_)) => true,
                 Message::User(AppMessage::OpenBackups) => false,
+                Message::User(AppMessage::OpenScreen(_)) => false,
                 Message::User(AppMessage::OpenGameFix { .. }) => screen.id() == ScreenId::GameFixes,
                 Message::User(AppMessage::OpenSavePicker { .. }) => false,
                 Message::User(AppMessage::ToScreen(id, _)) => *id == screen.id(),
@@ -2134,6 +2135,10 @@ impl Shell {
             if self.open_files_queue.is_none() && tree.dialog() != Some(self.open_file_dialog) {
                 self.open_return_screen = None;
             }
+            return Ok(Flow::Continue);
+        }
+        if let Message::User(AppMessage::OpenScreen(screen)) = message {
+            self.open(tree, *screen)?;
             return Ok(Flow::Continue);
         }
         if matches!(message, Message::User(AppMessage::OpenBackups)) {
@@ -2900,6 +2905,20 @@ mod tests {
         let clicked = tree.pointer_button(false, x, y);
         assert_eq!(clicked, Some(id));
         assert_eq!(shell.handle(tree, &released, clicked)?, Flow::Continue);
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "native-ui")]
+    fn in_screen_open_command_selects_cloud_and_updates() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut shell = Shell::build_for_test(&mut tree, None)?;
+
+        for target in [ScreenId::Cloud, ScreenId::Updates] {
+            let message = Message::User(AppMessage::OpenScreen(target));
+            assert_eq!(shell.handle(&mut tree, &message, None)?, Flow::Continue);
+            assert_eq!(shell.current(), Some(target));
+        }
         Ok(())
     }
 
