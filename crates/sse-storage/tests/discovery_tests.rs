@@ -49,7 +49,8 @@ fn temporary_test_roots_canonicalize_symlink_aliases() {
     assert_eq!(canonicalize_temp_root(&alias), temp.path);
 }
 
-#[cfg(unix)]
+// Arbitrary byte filenames are supported on Linux filesystems; macOS rejects them as invalid UTF-8.
+#[cfg(target_os = "linux")]
 #[test]
 fn discovery_keeps_distinct_non_utf8_save_paths_distinct() {
     use std::ffi::OsString;
