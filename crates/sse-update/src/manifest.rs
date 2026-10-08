@@ -49,14 +49,29 @@ pub struct SemVer {
 }
 
 impl SemVer {
-    /// Parses a semver string like `1.2.3` or `2.0.0-dev.1`.
+    /// Parses a semver string with optional prerelease and build metadata.
     ///
     /// # Errors
     /// Returns an error if the version does not conform to strict semver.
     pub fn parse(text: &str) -> Result<Self> {
-        let (core, pre) = match text.split_once('-') {
-            Some((c, p)) => (c, Some(p)),
+        let (version_and_pre, build) = match text.split_once('+') {
+            Some((version, build)) => (version, Some(build)),
             None => (text, None),
+        };
+        if let Some(build) = build {
+            if build.is_empty()
+                || build.split('.').any(|part| {
+                    part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+                })
+            {
+                return Err(Error::damaged("invalid build metadata"));
+            }
+        }
+        // Build metadata is validated but deliberately omitted because SemVer ignores it in precedence.
+
+        let (core, pre) = match version_and_pre.split_once('-') {
+            Some((c, p)) => (c, Some(p)),
+            None => (version_and_pre, None),
         };
 
         let mut parts = core.split('.');
