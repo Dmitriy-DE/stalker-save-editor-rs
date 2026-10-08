@@ -918,7 +918,7 @@ fn poll_child(
     child: &mut std::process::Child,
     process_tree: &sse_sys::process::ProcessTree,
 ) -> Result<Option<std::process::ExitStatus>, NativeProcessError> {
-    match child.try_wait() {
+    match process_tree.try_wait(child) {
         Ok(status) => Ok(status),
         Err(error) => {
             process_tree.terminate(child);

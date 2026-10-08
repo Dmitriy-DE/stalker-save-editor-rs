@@ -432,6 +432,17 @@ struct SaveProcessCheckFinished {
     result: std::result::Result<bool, String>,
 }
 
+fn process_check_prompt(result: &std::result::Result<bool, String>) -> Option<(String, &'static str)> {
+    match result {
+        Ok(false) => None,
+        Ok(true) => Some((SAVE_WHILE_GAME_RUNNING_WARNING.to_owned(), "Всё равно сохранить")),
+        Err(error) => Some((
+            format!("Не удалось проверить запущенную игру: {error}. Сохранение не проверено."),
+            "Сохранить всё равно",
+        )),
+    }
+}
+
 enum SaveData {
     Xray {
         save: Save,
@@ -4811,25 +4822,18 @@ impl Screen for Inventory {
                             let _ = cx.tree.close_dialog()?;
                             self.start_save_write(cx, request)?;
                         }
-                        Ok(true) => {
+                        Ok(true) | Err(_) => {
+                            let Some((text, continue_label)) = process_check_prompt(result) else {
+                                return Ok(());
+                            };
                             self.process_check_complete = true;
                             if let Some(description) = self.process_description {
-                                cx.tree.set_text(description, SAVE_WHILE_GAME_RUNNING_WARNING)?;
+                                cx.tree.set_text(description, &text)?;
                             }
                             if let Some(continue_button) = self.process_continue {
-                                cx.tree.set_text(continue_button, "Всё равно сохранить")?;
+                                cx.tree.set_text(continue_button, continue_label)?;
                                 cx.tree.set_enabled(continue_button, true)?;
                             }
-                            if let Some(status) = self.status {
-                                cx.tree.set_text(status, SAVE_WHILE_GAME_RUNNING_WARNING)?;
-                            }
-                            cx.status = Some(SAVE_WHILE_GAME_RUNNING_WARNING.to_owned());
-                        }
-                        Err(error) => {
-                            self.pending_save_request = None;
-                            self.process_check_complete = false;
-                            let _ = cx.tree.close_dialog()?;
-                            let text = format!("Не удалось проверить запущенную игру; сохранение отменено: {error}");
                             if let Some(status) = self.status {
                                 cx.tree.set_text(status, &text)?;
                             }
@@ -7902,5 +7906,17 @@ mod tests {
         assert_eq!(super::xray_inventory_category("Артефакт", "af_medusa"), "АРТЕФАКТЫ");
         assert_eq!(super::s2_inventory_category(5, Some("ammo")), "БОЕПРИПАСЫ");
         assert_eq!(super::s2_inventory_category(3, None), "ПРОЧЕЕ");
+    }
+
+    #[test]
+    fn process_enumeration_error_requires_explicit_save_confirmation() {
+        assert_eq!(
+            super::process_check_prompt(&Err("permission denied".to_owned())),
+            Some((
+                "Не удалось проверить запущенную игру: permission denied. Сохранение не проверено.".to_owned(),
+                "Сохранить всё равно"
+            ))
+        );
+        assert_eq!(super::process_check_prompt(&Ok(false)), None);
     }
 }

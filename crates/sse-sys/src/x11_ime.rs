@@ -262,6 +262,7 @@ impl X11Ime {
         };
         // SAFETY: preedit_attributes came from XVaCreateNestedList and is no longer needed after XCreateIC.
         if !preedit_attributes.is_null() {
+            // SAFETY: XVaCreateNestedList returns Xlib-owned storage that must be released with XFree.
             let _ = unsafe { (api.free)(preedit_attributes) };
         }
         let input_context = if input_context.is_null() {

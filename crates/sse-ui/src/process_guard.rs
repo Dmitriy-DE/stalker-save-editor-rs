@@ -28,10 +28,11 @@ pub fn game_process_matches(game: GameProcessFamily, process_name: &str) -> bool
         GameProcessFamily::ShadowOfChernobyl => executable.eq_ignore_ascii_case("XR_3DA.exe"),
         GameProcessFamily::ClearSkyOrPripyat => executable.eq_ignore_ascii_case("xrEngine.exe"),
         GameProcessFamily::HeartOfChornobyl => {
-            executable
-                .get(..8)
-                .is_some_and(|prefix| prefix.eq_ignore_ascii_case("Stalker2"))
-                && executable.to_ascii_lowercase().ends_with(".exe")
+            executable.eq_ignore_ascii_case("Stalker2-Win64-")
+                || (executable
+                    .get(..8)
+                    .is_some_and(|prefix| prefix.eq_ignore_ascii_case("Stalker2"))
+                    && executable.to_ascii_lowercase().ends_with(".exe"))
         }
     }
 }
@@ -166,6 +167,14 @@ mod tests {
         assert!(!game_process_matches(
             GameProcessFamily::ClearSkyOrPripyat,
             "Stalker2-Win64-Shipping.exe"
+        ));
+    }
+
+    #[test]
+    fn matches_stalker2_comm_truncated_by_linux_to_fifteen_bytes() {
+        assert!(game_process_matches(
+            GameProcessFamily::HeartOfChornobyl,
+            "Stalker2-Win64-"
         ));
     }
 
