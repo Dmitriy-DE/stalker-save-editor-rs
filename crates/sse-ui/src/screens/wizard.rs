@@ -22,6 +22,8 @@ impl Clipboard for EmptyClipboard {
 /// Session-scoped first-run wizard. Skip is intentionally not persisted.
 pub struct Wizard {
     host: WidgetId,
+    #[cfg(test)]
+    intro: WidgetId,
     path_input: WidgetId,
     auto: WidgetId,
     browse: WidgetId,
@@ -34,20 +36,44 @@ pub struct Wizard {
 impl Wizard {
     /// Builds the hidden wizard once.
     pub fn build(tree: &mut Tree, parent: WidgetId) -> Result<Self> {
+        Self::build_for_language(tree, parent, crate::strings::current_language())
+    }
+
+    fn build_for_language(tree: &mut Tree, parent: WidgetId, language: &str) -> Result<Self> {
         let host = style::card(tree, parent)?;
-        style::label(tree, host, "МАСТЕР ПЕРВОГО ЗАПУСКА", Text::Heading)?;
-        tree.add(
+        style::label(
+            tree,
+            host,
+            crate::strings::t_in(language, "МАСТЕР ПЕРВОГО ЗАПУСКА"),
+            Text::Heading,
+        )?;
+        let _intro = tree.add(
             Some(host),
             NodeKind::Leaf,
-            Style { max: Size::new(720.0, f32::INFINITY), ..Style::default() },
+            Style {
+                preferred: Size::new(720.0, 0.0),
+                min: Size::new(320.0, 0.0),
+                max: Size::new(720.0, f32::INFINITY),
+                ..Style::default()
+            },
             Content::Paragraph {
-                text: "Сохранения S.T.A.L.K.E.R. не были найдены в стандартных каталогах.\nУкажите папку с файлами сохранений (savedgames или SaveGames) или запустите автоматический поиск на диске.".to_owned(),
+                text: crate::strings::t_in(language, "Сохранения S.T.A.L.K.E.R. не были найдены в стандартных каталогах.\nУкажите папку с файлами сохранений (savedgames или SaveGames) или запустите автоматический поиск на диске.").to_owned(),
                 style: Text::Body.style(),
             },
             Look { text: Text::Body.color(), ..Look::default() },
         )?;
-        let auto = style::button(tree, host, "АВТОПОИСК ПАПОК НА ДИСКЕ", Button::Primary)?;
-        style::label(tree, host, "— ИЛИ УКАЖИТЕ ПУТЬ ВРУЧНУЮ —", Text::Note)?;
+        let auto = style::button(
+            tree,
+            host,
+            crate::strings::t_in(language, "АВТОПОИСК ПАПОК НА ДИСКЕ"),
+            Button::Primary,
+        )?;
+        style::label(
+            tree,
+            host,
+            crate::strings::t_in(language, "— ИЛИ УКАЗАТЬ ПУТЬ ВРУЧНУЮ —"),
+            Text::Note,
+        )?;
         let colors = crate::theme::current().colors;
         let path_input = tree.add(
             Some(host),
@@ -63,7 +89,7 @@ impl Wizard {
                 ..Style::default()
             },
             Content::Input {
-                text: "Путь к папке с сейвами…".to_owned(),
+                text: crate::strings::t_in(language, "Путь к папке с сейвами…").to_owned(),
                 style: TextStyle::new(Face::Body, 16.0),
             },
             Look {
@@ -75,13 +101,35 @@ impl Wizard {
             },
         )?;
         let actions = style::row(tree, host)?;
-        let browse = style::button(tree, actions, "Обзор…", Button::Secondary)?;
-        let add = style::button(tree, actions, "Добавить", Button::Primary)?;
-        let settings = style::button(tree, host, "Перейти в настройки", Button::Secondary)?;
-        let skip = style::button(tree, host, "Пропустить", Button::Secondary)?;
+        let browse = style::button(
+            tree,
+            actions,
+            crate::strings::t_in(language, "Обзор…"),
+            Button::Secondary,
+        )?;
+        let add = style::button(
+            tree,
+            actions,
+            crate::strings::t_in(language, "Добавить"),
+            Button::Primary,
+        )?;
+        let settings = style::button(
+            tree,
+            host,
+            crate::strings::t_in(language, "Перейти в настройки"),
+            Button::Secondary,
+        )?;
+        let skip = style::button(
+            tree,
+            host,
+            crate::strings::t_in(language, "Пропустить"),
+            Button::Secondary,
+        )?;
         tree.set_visible(host, false)?;
         Ok(Self {
             host,
+            #[cfg(test)]
+            intro: _intro,
             path_input,
             auto,
             browse,
@@ -202,9 +250,9 @@ impl Wizard {
         if clicked.is_some() && clicked == Some(self.auto) {
             let added = Self::auto_search()?;
             *status = Some(if added == 0 {
-                "Автопоиск завершён. Новых папок не найдено.".to_owned()
+                crate::strings::t("Автопоиск завершён. Новых папок не найдено.").to_owned()
             } else {
-                format!("Автопоиск завершён. Добавлено папок: {added}.")
+                crate::strings::t("Автопоиск завершён. Добавлено папок: {0}.").replace("{0}", &added.to_string())
             });
         }
         if clicked.is_some() && clicked == Some(self.add) {
@@ -220,11 +268,11 @@ impl Wizard {
                         filter: InputFilter::Any,
                     },
                 )?;
-                tree.set_text(self.path_input, "Путь к папке с сейвами…")?;
+                tree.set_text(self.path_input, crate::strings::t("Путь к папке с сейвами…"))?;
             }
         }
         if clicked.is_some() && clicked == Some(self.browse) {
-            *status = Some("Выберите папку с сохранениями".to_owned());
+            *status = Some(crate::strings::t("Выберите папку с сохранениями").to_owned());
         }
         if clicked.is_some() && clicked == Some(self.settings) {
             return Ok(Some(ScreenId::Settings));
@@ -232,7 +280,7 @@ impl Wizard {
         if clicked.is_some() && clicked == Some(self.skip) {
             self.skipped = true;
             tree.set_visible(self.host, false)?;
-            *status = Some("ВЫБЕРИТЕ СОХРАНЕНИЕ".to_owned());
+            *status = Some(crate::strings::t("ВЫБЕРИТЕ СОХРАНЕНИЕ").to_owned());
         }
         if let Message::Window(WindowEvent::Key {
             pressed: true,
@@ -277,7 +325,7 @@ impl Wizard {
                     tree.set_text(
                         self.path_input,
                         if shown.is_empty() {
-                            "Путь к папке с сейвами…"
+                            crate::strings::t("Путь к папке с сейвами…")
                         } else {
                             &shown
                         },
@@ -286,5 +334,58 @@ impl Wizard {
             }
         }
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Text, Wizard};
+    use crate::glyphs::Fonts;
+    use crate::layout::{NodeKind, Style};
+    use crate::raster::Color;
+    use crate::widget::{Content, Look, Tree};
+
+    #[test]
+    fn wizard_intro_reserves_height_for_its_narrowest_layout() -> sse_core::Result<()> {
+        let result = (|| {
+            let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+            let root = tree.add(
+                None,
+                NodeKind::Column,
+                Style::default(),
+                Content::Panel,
+                Look::default(),
+            )?;
+            let wizard = Wizard::build_for_language(&mut tree, root, "ru")?;
+            tree.set_visible(wizard.host, true)?;
+            tree.resize(940, 600);
+            let mut frame = vec![0_u32; 940 * 600];
+            tree.paint(&mut frame, 940)?;
+
+            let intro = tree.rect(wizard.intro)?;
+            let fonts = Fonts::bundled()?;
+            let text = crate::strings::t_in(
+                "ru",
+                "Сохранения S.T.A.L.K.E.R. не были найдены в стандартных каталогах.\nУкажите папку с файлами сохранений (savedgames или SaveGames) или запустите автоматический поиск на диске.",
+            );
+            let lines = crate::text::break_lines(text, 320.0, &fonts.metrics(Text::Body.style()));
+            let mut required_height = 0.0_f64;
+            for _ in &lines {
+                required_height += f64::from(fonts.line_height(Text::Body.style()));
+            }
+            required_height = required_height.ceil();
+            assert!(
+                f64::from(intro.height) >= required_height,
+                "intro has {} px for text requiring {required_height:.0} px at the minimum width",
+                intro.height
+            );
+            let auto = tree.rect(wizard.auto)?;
+            assert!(
+                i64::from(auto.y) >= i64::from(intro.y) + i64::from(intro.height),
+                "auto-search button must follow the intro"
+            );
+            Ok(())
+        })();
+        result
     }
 }

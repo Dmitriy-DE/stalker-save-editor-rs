@@ -726,10 +726,10 @@ impl Shell {
         tree.set_visible(edition, false)?;
         let draft_badge = style::label(tree, top, crate::strings::t("Черновик: 0 действ."), Text::Note)?;
         let undo = top_button(tree, top, crate::strings::t("Отменить"), false)?;
-        let redo = top_button(tree, top, crate::strings::t("Вернуть"), false)?;
-        let reset = top_button(tree, top, crate::strings::t("Сбросить"), false)?;
+        let redo = top_button(tree, top, crate::strings::t("ПОВТОР"), false)?;
+        let reset = top_button(tree, top, crate::strings::t("СБРОС"), false)?;
         let open_button = top_button(tree, top, crate::strings::t("Открыть…"), false)?;
-        let refresh = top_button(tree, top, crate::strings::t("Обновить"), false)?;
+        let refresh = top_button(tree, top, crate::strings::t("ОБНОВИТЬ"), false)?;
         let save = top_button(tree, top, crate::strings::t("СОХРАНИТЬ"), true)?;
         let save_reason = style::label(
             tree,
@@ -1146,6 +1146,10 @@ impl Shell {
         tree.set_visible(tooltip, false)?;
         tree.set_tooltip(nav_toggle, crate::strings::t("Свернуть меню"))?;
         tree.set_tooltip(library_refresh, crate::strings::t("Обновить"))?;
+        tree.set_tooltip(undo, crate::strings::t("Отменить"))?;
+        tree.set_tooltip(redo, crate::strings::t("Вернуть"))?;
+        tree.set_tooltip(reset, crate::strings::t("Сбросить"))?;
+        tree.set_tooltip(refresh, crate::strings::t("Обновить"))?;
         tree.set_tooltip(save, crate::strings::t("Выберите сохранение для редактирования."))?;
         tree.set_tooltip(open_button, crate::strings::t("Открыть сохранение"))?;
 

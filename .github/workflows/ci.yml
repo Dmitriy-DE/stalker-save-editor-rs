@@ -52,6 +52,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p target/i18n-qa
+          set -o pipefail
           cargo run --release -p sse-ui --bin sse-shell -- --ci-i18n-buttons | tee target/i18n-qa/buttons.txt
 
       - name: Upload translation layout report
