@@ -3,9 +3,9 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, missing_docs)]
 
 use sse_update::{
-    compare_versions, download_artifact, install_artifact, verify_existing_file, verify_signature, MemoryFetch,
-    MockProcessRunner, PrereleasePart, SemVer, UpdateArtifact, UpdateInstallState, UpdateInstallation,
-    UpdateInstallationDetector, UpdateManifest, UpdateService, UpdateState,
+    compare_versions, download_artifact, install_artifact, verify_existing_file, verify_signature, ContentRange, Fetch,
+    MemoryFetch, MockProcessRunner, PrereleasePart, Response, SemVer, UpdateArtifact, UpdateInstallState,
+    UpdateInstallation, UpdateInstallationDetector, UpdateManifest, UpdateService, UpdateState,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -276,6 +276,344 @@ fn streaming_download_reuses_verified_file_and_rejects_corrupted() {
     // 4. Overwrite corrupted file
     let redownloaded = download_artifact(&mut fetch, &artifact, &dest, None).unwrap();
     assert_eq!(fs::read(&redownloaded).unwrap(), payload);
+}
+
+#[test]
+fn failed_download_keeps_an_existing_destination_unchanged() {
+    let expected = b"verified update artifact";
+    let wrong = b"corrupt update artifact!";
+    assert_eq!(expected.len(), wrong.len());
+    let artifact = UpdateArtifact {
+        target: "linux-x86_64".to_string(),
+        architecture: "x86_64".to_string(),
+        kind: "portable".to_string(),
+        file: "SaveEditor-linux-x86_64.tar.gz".to_string(),
+        size: u64::try_from(expected.len()).unwrap(),
+        sha256: sse_codecs::sha256::sha256_hex(expected),
+        url: "https://updates.test/SaveEditor-linux-x86_64.tar.gz".to_string(),
+    };
+    let temp = TempDir::new("preserve-destination-test");
+    let destination = temp.path.join(&artifact.file);
+    let original = b"pre-existing download";
+    fs::write(&destination, original).unwrap();
+
+    let mut fetch = MemoryFetch::new();
+    fetch.register(artifact.url.clone(), wrong.to_vec());
+
+    assert!(download_artifact(&mut fetch, &artifact, &destination, None).is_err());
+    assert_eq!(fs::read(&destination).unwrap(), original);
+}
+
+struct InterruptOnceFetch {
+    body: Vec<u8>,
+    requested_ranges: Vec<u64>,
+    fail_first_response: bool,
+}
+
+impl Fetch for InterruptOnceFetch {
+    fn get(&mut self, _url: &str, range_from: u64, sink: &mut dyn FnMut(&[u8]) -> bool) -> sse_core::Result<Response> {
+        self.get_with_response(_url, range_from, &mut |_| true, sink)
+    }
+
+    fn get_with_response(
+        &mut self,
+        _url: &str,
+        range_from: u64,
+        on_response: &mut dyn FnMut(&Response) -> bool,
+        sink: &mut dyn FnMut(&[u8]) -> bool,
+    ) -> sse_core::Result<Response> {
+        self.requested_ranges.push(range_from);
+        let start = usize::try_from(range_from).unwrap();
+        let remaining = self.body.get(start..).unwrap();
+        let response = Response {
+            status_code: if range_from == 0 { 200 } else { 206 },
+            content_length: Some(u64::try_from(remaining.len()).unwrap()),
+            content_range: (range_from != 0).then_some(ContentRange {
+                start: range_from,
+                end: u64::try_from(self.body.len().saturating_sub(1)).unwrap(),
+                total: u64::try_from(self.body.len()).unwrap(),
+            }),
+            location: None,
+        };
+        if !on_response(&response) {
+            return Err(sse_core::Error::Refused("test response rejected".to_string()));
+        }
+
+        if self.fail_first_response {
+            let split = remaining.len() / 2;
+            assert!(sink(remaining.get(..split).unwrap()));
+            self.fail_first_response = false;
+            return Err(sse_core::Error::System("simulated interrupted transfer".to_string()));
+        }
+
+        assert!(sink(remaining));
+        Ok(response)
+    }
+}
+
+#[test]
+fn interrupted_download_resumes_from_the_retained_partial_length() {
+    let payload = b"0123456789abcdef0123456789abcdef".to_vec();
+    let artifact = UpdateArtifact {
+        target: "linux-x86_64".to_string(),
+        architecture: "x86_64".to_string(),
+        kind: "portable".to_string(),
+        file: "SaveEditor-linux-x86_64.tar.gz".to_string(),
+        size: u64::try_from(payload.len()).unwrap(),
+        sha256: sse_codecs::sha256::sha256_hex(&payload),
+        url: "https://updates.test/SaveEditor-linux-x86_64.tar.gz".to_string(),
+    };
+    let temp = TempDir::new("resume-download-test");
+    let destination = temp.path.join(&artifact.file);
+    let split = u64::try_from(payload.len() / 2).unwrap();
+    let mut fetch = InterruptOnceFetch {
+        body: payload.clone(),
+        requested_ranges: Vec::new(),
+        fail_first_response: true,
+    };
+
+    assert!(download_artifact(&mut fetch, &artifact, &destination, None).is_err());
+    assert_eq!(
+        download_artifact(&mut fetch, &artifact, &destination, None).unwrap(),
+        destination
+    );
+
+    assert_eq!(fetch.requested_ranges, vec![0, split]);
+    assert_eq!(fs::read(&destination).unwrap(), payload);
+}
+
+#[cfg(unix)]
+#[test]
+fn download_refuses_a_symlink_at_the_partial_path() {
+    use std::os::unix::fs::symlink;
+
+    let payload = b"verified artifact bytes".to_vec();
+    let artifact = UpdateArtifact {
+        target: "linux-x86_64".to_string(),
+        architecture: "x86_64".to_string(),
+        kind: "portable".to_string(),
+        file: "SaveEditor-linux-x86_64.tar.gz".to_string(),
+        size: u64::try_from(payload.len()).unwrap(),
+        sha256: sse_codecs::sha256::sha256_hex(&payload),
+        url: "https://updates.test/SaveEditor-linux-x86_64.tar.gz".to_string(),
+    };
+    let temp = TempDir::new("symlink-part-test");
+    let destination = temp.path.join(&artifact.file);
+    let part = temp.path.join(format!(".{}.part", artifact.file));
+    let target = temp.path.join("outside-part-target");
+    fs::write(&target, &payload[..8]).unwrap();
+    symlink(&target, &part).unwrap();
+
+    let mut fetch = MemoryFetch::new();
+    fetch.register(artifact.url.clone(), payload.clone());
+
+    assert!(download_artifact(&mut fetch, &artifact, &destination, None).is_err());
+    assert_eq!(fs::read(&target).unwrap(), &payload[..8]);
+    assert!(fs::symlink_metadata(&part).unwrap().file_type().is_symlink());
+}
+
+#[cfg(unix)]
+struct ReplacePartWithSymlinkFetch {
+    body: Vec<u8>,
+    part_path: PathBuf,
+    target_path: PathBuf,
+}
+
+#[cfg(unix)]
+impl Fetch for ReplacePartWithSymlinkFetch {
+    fn get(
+        &mut self,
+        _url: &str,
+        _range_from: u64,
+        _sink: &mut dyn FnMut(&[u8]) -> bool,
+    ) -> sse_core::Result<Response> {
+        Err(sse_core::Error::Refused("response callback required".to_string()))
+    }
+
+    fn get_with_response(
+        &mut self,
+        _url: &str,
+        _range_from: u64,
+        on_response: &mut dyn FnMut(&Response) -> bool,
+        sink: &mut dyn FnMut(&[u8]) -> bool,
+    ) -> sse_core::Result<Response> {
+        use std::os::unix::fs::symlink;
+
+        let response = Response {
+            status_code: 200,
+            content_length: Some(u64::try_from(self.body.len()).unwrap()),
+            content_range: None,
+            location: None,
+        };
+        if !on_response(&response) || !sink(&self.body) {
+            return Err(sse_core::Error::Refused("fetch cancelled".to_string()));
+        }
+        fs::remove_file(&self.part_path).map_err(sse_core::Error::from)?;
+        symlink(&self.target_path, &self.part_path).map_err(sse_core::Error::from)?;
+        Ok(response)
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn download_rejects_a_partial_path_swapped_to_a_symlink_before_promotion() {
+    let payload = b"verified artifact bytes".to_vec();
+    let artifact = UpdateArtifact {
+        target: "linux-x86_64".to_string(),
+        architecture: "x86_64".to_string(),
+        kind: "portable".to_string(),
+        file: "SaveEditor-linux-x86_64.tar.gz".to_string(),
+        size: u64::try_from(payload.len()).unwrap(),
+        sha256: sse_codecs::sha256::sha256_hex(&payload),
+        url: "https://updates.test/SaveEditor-linux-x86_64.tar.gz".to_string(),
+    };
+    let temp = TempDir::new("promotion-symlink-test");
+    let destination = temp.path.join(&artifact.file);
+    let part = temp.path.join(format!(".{}.part", artifact.file));
+    let target = temp.path.join("outside-part-target");
+    let old_destination = b"previous download";
+    fs::write(&destination, old_destination).unwrap();
+    fs::write(&target, &payload).unwrap();
+    let mut fetch = ReplacePartWithSymlinkFetch {
+        body: payload,
+        part_path: part.clone(),
+        target_path: target.clone(),
+    };
+
+    assert!(download_artifact(&mut fetch, &artifact, &destination, None).is_err());
+    assert_eq!(fs::read(&destination).unwrap(), old_destination);
+    assert_eq!(fs::read(&target).unwrap(), b"verified artifact bytes");
+    assert!(fs::symlink_metadata(&part).unwrap().file_type().is_symlink());
+}
+
+struct IgnoreRangeFetch {
+    body: Vec<u8>,
+    requested_ranges: Vec<u64>,
+}
+
+impl Fetch for IgnoreRangeFetch {
+    fn get(&mut self, url: &str, range_from: u64, sink: &mut dyn FnMut(&[u8]) -> bool) -> sse_core::Result<Response> {
+        self.get_with_response(url, range_from, &mut |_| true, sink)
+    }
+
+    fn get_with_response(
+        &mut self,
+        _url: &str,
+        range_from: u64,
+        on_response: &mut dyn FnMut(&Response) -> bool,
+        sink: &mut dyn FnMut(&[u8]) -> bool,
+    ) -> sse_core::Result<Response> {
+        self.requested_ranges.push(range_from);
+        let response = Response {
+            status_code: 200,
+            content_length: Some(u64::try_from(self.body.len()).unwrap()),
+            content_range: None,
+            location: None,
+        };
+        if !on_response(&response) {
+            return Err(sse_core::Error::Refused("response rejected before body".to_owned()));
+        }
+        assert!(sink(&self.body));
+        Ok(response)
+    }
+}
+
+#[test]
+fn ignored_range_restarts_from_a_full_response_without_appending_to_the_partial() {
+    let payload = b"complete artifact after server ignored Range".to_vec();
+    let artifact = UpdateArtifact {
+        target: "linux-x86_64".to_string(),
+        architecture: "x86_64".to_string(),
+        kind: "portable".to_string(),
+        file: "SaveEditor-linux-x86_64.tar.gz".to_string(),
+        size: u64::try_from(payload.len()).unwrap(),
+        sha256: sse_codecs::sha256::sha256_hex(&payload),
+        url: "https://updates.test/SaveEditor-linux-x86_64.tar.gz".to_string(),
+    };
+    let temp = TempDir::new("ignored-range-test");
+    let destination = temp.path.join(&artifact.file);
+    let part = temp.path.join(format!(".{}.part", artifact.file));
+    let prefix = payload.len() / 3;
+    fs::write(&part, &payload[..prefix]).unwrap();
+    let mut fetch = IgnoreRangeFetch {
+        body: payload.clone(),
+        requested_ranges: Vec::new(),
+    };
+
+    assert_eq!(
+        download_artifact(&mut fetch, &artifact, &destination, None).unwrap(),
+        destination
+    );
+    assert_eq!(fetch.requested_ranges, vec![u64::try_from(prefix).unwrap()]);
+    assert_eq!(fs::read(&destination).unwrap(), payload);
+}
+
+struct InvalidRangeFetch {
+    body: Vec<u8>,
+    body_calls: usize,
+}
+
+impl Fetch for InvalidRangeFetch {
+    fn get(&mut self, url: &str, range_from: u64, sink: &mut dyn FnMut(&[u8]) -> bool) -> sse_core::Result<Response> {
+        self.get_with_response(url, range_from, &mut |_| true, sink)
+    }
+
+    fn get_with_response(
+        &mut self,
+        _url: &str,
+        range_from: u64,
+        on_response: &mut dyn FnMut(&Response) -> bool,
+        sink: &mut dyn FnMut(&[u8]) -> bool,
+    ) -> sse_core::Result<Response> {
+        let response = Response {
+            status_code: 206,
+            content_length: Some(u64::try_from(self.body.len()).unwrap()),
+            content_range: Some(ContentRange {
+                start: range_from.saturating_add(1),
+                end: u64::try_from(self.body.len().saturating_sub(1)).unwrap(),
+                total: u64::try_from(self.body.len()).unwrap(),
+            }),
+            location: None,
+        };
+        if !on_response(&response) {
+            return Err(sse_core::Error::Refused(
+                "invalid range rejected before body".to_owned(),
+            ));
+        }
+        self.body_calls = self.body_calls.saturating_add(1);
+        assert!(sink(&self.body));
+        Ok(response)
+    }
+}
+
+#[test]
+fn invalid_content_range_is_rejected_before_appending_and_keeps_both_files() {
+    let payload = b"valid artifact payload for range check".to_vec();
+    let artifact = UpdateArtifact {
+        target: "linux-x86_64".to_string(),
+        architecture: "x86_64".to_string(),
+        kind: "portable".to_string(),
+        file: "SaveEditor-linux-x86_64.tar.gz".to_string(),
+        size: u64::try_from(payload.len()).unwrap(),
+        sha256: sse_codecs::sha256::sha256_hex(&payload),
+        url: "https://updates.test/SaveEditor-linux-x86_64.tar.gz".to_string(),
+    };
+    let temp = TempDir::new("invalid-range-test");
+    let destination = temp.path.join(&artifact.file);
+    let part = temp.path.join(format!(".{}.part", artifact.file));
+    let destination_before = b"previous destination";
+    let partial_before = &payload[..8];
+    fs::write(&destination, destination_before).unwrap();
+    fs::write(&part, partial_before).unwrap();
+    let mut fetch = InvalidRangeFetch {
+        body: payload.clone(),
+        body_calls: 0,
+    };
+
+    assert!(download_artifact(&mut fetch, &artifact, &destination, None).is_err());
+    assert_eq!(fetch.body_calls, 0);
+    assert_eq!(fs::read(&destination).unwrap(), destination_before);
+    assert_eq!(fs::read(&part).unwrap(), partial_before);
 }
 
 #[test]

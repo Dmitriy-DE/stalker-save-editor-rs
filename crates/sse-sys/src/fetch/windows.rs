@@ -1,4 +1,4 @@
-use super::{Response, SystemFetch};
+use super::{parse_content_range, ContentRange, Response, SystemFetch};
 use sse_core::{Error, Result};
 use std::{ffi::c_void, ptr, time::Instant};
 
@@ -6,6 +6,7 @@ type Hinternet = *mut c_void;
 const ACCESS_TYPE_AUTOMATIC_PROXY: u32 = 4;
 const FLAG_SECURE: u32 = 0x0080_0000;
 const QUERY_CONTENT_LENGTH: u32 = 5;
+const QUERY_CUSTOM: u32 = 65_535;
 const QUERY_STATUS_CODE: u32 = 19;
 const QUERY_FLAG_NUMBER: u32 = 0x2000_0000;
 const QUERY_FLAG_NUMBER64: u32 = 0x0800_0000;
@@ -69,6 +70,10 @@ fn wide(value: &str) -> Vec<u16> {
 
 fn milliseconds(value: std::time::Duration) -> Result<i32> {
     i32::try_from(value.as_millis()).map_err(|_| Error::Refused("timeout is too large".to_owned()))
+}
+
+fn positive_milliseconds(value: std::time::Duration) -> Result<i32> {
+    i32::try_from(value.as_millis().max(1)).map_err(|_| Error::Refused("timeout is too large".to_owned()))
 }
 
 fn parse_https(url: &str) -> Result<(String, u16, String)> {
@@ -155,6 +160,43 @@ fn content_length(request: Hinternet) -> Option<u64> {
     }
 }
 
+fn content_range(request: Hinternet) -> Option<ContentRange> {
+    let name = wide("Content-Range");
+    let mut length = 0u32;
+    // SAFETY: null buffer asks WinHTTP for the required byte count for the named response header.
+    let _ = unsafe {
+        WinHttpQueryHeaders(
+            request,
+            QUERY_CUSTOM,
+            name.as_ptr(),
+            ptr::null_mut(),
+            &mut length,
+            ptr::null_mut(),
+        )
+    };
+    if length < 2 {
+        return None;
+    }
+    let units = usize::try_from(length.saturating_add(1) / 2).ok()?;
+    let mut buffer = vec![0u16; units];
+    // SAFETY: buffer has the byte capacity reported by WinHTTP for this custom response header.
+    if unsafe {
+        WinHttpQueryHeaders(
+            request,
+            QUERY_CUSTOM,
+            name.as_ptr(),
+            buffer.as_mut_ptr().cast(),
+            &mut length,
+            ptr::null_mut(),
+        )
+    } == 0
+    {
+        return None;
+    }
+    let end = buffer.iter().position(|unit| *unit == 0).unwrap_or(buffer.len());
+    parse_content_range(&String::from_utf16_lossy(buffer.get(..end)?))
+}
+
 fn effective_url(request: Hinternet, fallback: &str) -> String {
     let mut length = 0u32;
     // SAFETY: null buffer asks WinHTTP for required byte count.
@@ -172,13 +214,14 @@ fn effective_url(request: Hinternet, fallback: &str) -> String {
     String::from_utf16_lossy(buffer.get(..end).unwrap_or_default())
 }
 
-pub(super) fn get(
+pub(super) fn get_with_response(
     config: &SystemFetch,
     url: &str,
     range_from: u64,
+    on_response: &mut dyn FnMut(&Response) -> bool,
     sink: &mut dyn FnMut(&[u8]) -> bool,
 ) -> Result<Response> {
-    request(config, url, "GET", range_from, None, &[], sink)
+    request(config, url, "GET", range_from, (None, &[]), Some(on_response), sink)
 }
 
 pub(super) fn post(
@@ -188,7 +231,7 @@ pub(super) fn post(
     body: &[u8],
     sink: &mut dyn FnMut(&[u8]) -> bool,
 ) -> Result<Response> {
-    request(config, url, "POST", 0, Some(content_type), body, sink)
+    request(config, url, "POST", 0, (Some(content_type), body), None, sink)
 }
 
 fn request(
@@ -196,10 +239,12 @@ fn request(
     url: &str,
     method: &str,
     range_from: u64,
-    content_type: Option<&str>,
-    body: &[u8],
+    request_body: (Option<&str>, &[u8]),
+    on_response: Option<&mut dyn FnMut(&Response) -> bool>,
     sink: &mut dyn FnMut(&[u8]) -> bool,
 ) -> Result<Response> {
+    let (content_type, body) = request_body;
+    let started = Instant::now();
     let (host, port, path) = parse_https(url)?;
     let agent = wide("S.T.A.L.K.E.R. Save Editor/2");
     // SAFETY: NUL-terminated agent is valid and automatic proxy asks WinHTTP to use OS proxy configuration.
@@ -210,8 +255,11 @@ fn request(
     }
     let connect_ms = milliseconds(config.connect_timeout)?;
     let total_ms = milliseconds(config.total_timeout)?;
+    let idle_ms = milliseconds(config.idle_timeout)?;
     // SAFETY: session is live; timeout integers are milliseconds.
-    let _ = unsafe { WinHttpSetTimeouts(session.0, connect_ms, connect_ms, total_ms, total_ms) };
+    if unsafe { WinHttpSetTimeouts(session.0, connect_ms, connect_ms, total_ms, idle_ms) } == 0 {
+        return Err(Error::System("WinHTTP timeout configuration failed".to_owned()));
+    }
     let host_w = wide(&host);
     // SAFETY: session and NUL-terminated host are live for the call.
     let connect = Handle(unsafe { WinHttpConnect(session.0, host_w.as_ptr(), port, 0) });
@@ -285,27 +333,57 @@ fn request(
     } else {
         body.as_ptr().cast_mut().cast::<c_void>()
     };
-    // SAFETY: request, headers, and body remain live through the synchronous send call.
-    if unsafe {
-        WinHttpSendRequest(
-            request.0,
-            headers_pointer,
-            headers_len,
-            body_pointer,
-            body_length,
-            body_length,
-            0,
-        )
-    } == 0
-    {
-        return Err(Error::System("WinHttpSendRequest failed".to_owned()));
-    }
-    // SAFETY: request is live and no reserved argument is supplied.
-    if unsafe { WinHttpReceiveResponse(request.0, ptr::null_mut()) } == 0 {
-        return Err(Error::System("WinHttpReceiveResponse failed".to_owned()));
-    }
+    super::read_with_total_timeout(started, config.total_timeout, config.total_timeout, |remaining| {
+        let remaining_ms = positive_milliseconds(remaining)?;
+        let request_connect_ms = connect_ms.min(remaining_ms);
+        let request_receive_ms = idle_ms.min(remaining_ms);
+        // SAFETY: request is live; WinHTTP allows timeout configuration on request handles.
+        if unsafe {
+            WinHttpSetTimeouts(
+                request.0,
+                request_connect_ms,
+                request_connect_ms,
+                remaining_ms,
+                request_receive_ms,
+            )
+        } == 0
+        {
+            return Err(Error::System("WinHTTP request timeout configuration failed".to_owned()));
+        }
+        // SAFETY: request, headers, and body remain live through the synchronous send call.
+        if unsafe {
+            WinHttpSendRequest(
+                request.0,
+                headers_pointer,
+                headers_len,
+                body_pointer,
+                body_length,
+                body_length,
+                0,
+            )
+        } == 0
+        {
+            return Err(Error::System("WinHttpSendRequest failed".to_owned()));
+        }
+        Ok(())
+    })?;
+    super::read_with_total_timeout(started, config.total_timeout, config.idle_timeout, |receive_timeout| {
+        let receive_ms = positive_milliseconds(receive_timeout)?;
+        // SAFETY: request is live; WinHTTP allows timeout configuration on request handles.
+        if unsafe { WinHttpSetTimeouts(request.0, connect_ms, connect_ms, total_ms, receive_ms) } == 0 {
+            return Err(Error::System(
+                "WinHTTP response timeout configuration failed".to_owned(),
+            ));
+        }
+        // SAFETY: request is live and no reserved argument is supplied.
+        if unsafe { WinHttpReceiveResponse(request.0, ptr::null_mut()) } == 0 {
+            return Err(Error::System("WinHttpReceiveResponse failed".to_owned()));
+        }
+        Ok(())
+    })?;
     let status = status(request.0)?;
     let content_length = content_length(request.0);
+    let content_range = content_range(request.0);
     if content_length.is_some_and(|length| length > config.max_bytes) {
         return Err(Error::Refused("HTTPS response exceeds size limit".to_owned()));
     }
@@ -313,26 +391,40 @@ fn request(
     if !final_url.starts_with("https://") {
         return Err(Error::Refused("redirect left HTTPS".to_owned()));
     }
-    let started = Instant::now();
+    let response = Response {
+        status,
+        content_length,
+        content_range,
+        final_url,
+    };
+    if on_response.is_some_and(|callback| !callback(&response)) {
+        return Err(Error::Refused("HTTPS response rejected by caller".to_owned()));
+    }
     let mut delivered = 0u64;
     let mut buffer = [0u8; 64 * 1024];
     loop {
-        if started.elapsed() > config.total_timeout {
-            return Err(Error::System("HTTPS transfer timed out".to_owned()));
-        }
-        let mut read = 0u32;
-        // SAFETY: request is live and buffer is writable for its full declared length.
-        if unsafe {
-            WinHttpReadData(
-                request.0,
-                buffer.as_mut_ptr().cast(),
-                u32::try_from(buffer.len()).unwrap_or_default(),
-                &mut read,
-            )
-        } == 0
-        {
-            return Err(Error::System("WinHttpReadData failed".to_owned()));
-        }
+        let read =
+            super::read_with_total_timeout(started, config.total_timeout, config.idle_timeout, |read_timeout| {
+                let read_timeout_ms = positive_milliseconds(read_timeout)?;
+                // SAFETY: request is live and WinHTTP permits timeout configuration on request handles.
+                if unsafe { WinHttpSetTimeouts(request.0, connect_ms, connect_ms, total_ms, read_timeout_ms) } == 0 {
+                    return Err(Error::System("WinHTTP read timeout configuration failed".to_owned()));
+                }
+                let mut read = 0u32;
+                // SAFETY: request is live and buffer is writable for its full declared length.
+                if unsafe {
+                    WinHttpReadData(
+                        request.0,
+                        buffer.as_mut_ptr().cast(),
+                        u32::try_from(buffer.len()).unwrap_or_default(),
+                        &mut read,
+                    )
+                } == 0
+                {
+                    return Err(Error::System("WinHttpReadData failed".to_owned()));
+                }
+                Ok(read)
+            })?;
         if read == 0 {
             break;
         }
@@ -347,11 +439,7 @@ fn request(
             return Err(Error::Refused("fetch cancelled by sink".to_owned()));
         }
     }
-    Ok(Response {
-        status,
-        content_length,
-        final_url,
-    })
+    Ok(response)
 }
 
 #[cfg(test)]

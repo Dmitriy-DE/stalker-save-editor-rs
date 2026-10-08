@@ -1,9 +1,10 @@
-use super::{Response, SystemFetch};
+use super::{parse_content_range, ContentRange, Response, SystemFetch};
 use sse_core::{Error, Result};
 use std::{
     ffi::{c_char, c_int, c_long, c_void, CStr, CString},
     ptr,
     sync::OnceLock,
+    time::Instant,
 };
 
 const RTLD_NOW: c_int = 2;
@@ -20,6 +21,11 @@ const CURLOPT_MAXREDIRS: c_int = 68;
 const CURLOPT_NOSIGNAL: c_int = 99;
 const CURLOPT_CONNECTTIMEOUT_MS: c_int = 156;
 const CURLOPT_TIMEOUT_MS: c_int = 155;
+const CURLOPT_NOPROGRESS: c_int = 43;
+const CURLOPT_HEADERDATA: c_int = 10_029;
+const CURLOPT_HEADERFUNCTION: c_int = 20_079;
+const CURLOPT_XFERINFODATA: c_int = 10_057;
+const CURLOPT_XFERINFOFUNCTION: c_int = 20_219;
 const CURLOPT_PROTOCOLS: c_int = 181;
 const CURLOPT_REDIR_PROTOCOLS: c_int = 182;
 const CURLOPT_HTTPHEADER: c_int = 10_023;
@@ -36,6 +42,8 @@ type EasyGetinfo = unsafe extern "C" fn(*mut c_void, c_int, ...) -> c_int;
 type EasyStrerror = unsafe extern "C" fn(c_int) -> *const c_char;
 type GlobalInit = unsafe extern "C" fn(c_long) -> c_int;
 type WriteCallback = unsafe extern "C" fn(*mut c_char, usize, usize, *mut c_void) -> usize;
+type HeaderCallback = unsafe extern "C" fn(*mut c_char, usize, usize, *mut c_void) -> usize;
+type ProgressCallback = unsafe extern "C" fn(*mut c_void, i64, i64, i64, i64) -> c_int;
 type SlistAppend = unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void;
 type SlistFreeAll = unsafe extern "C" fn(*mut c_void);
 
@@ -128,11 +136,60 @@ fn load() -> std::result::Result<Api, String> {
 }
 
 struct CallbackState<'a> {
+    api: Option<&'static Api>,
+    handle: *mut c_void,
     sink: &'a mut dyn FnMut(&[u8]) -> bool,
+    on_response: Option<&'a mut dyn FnMut(&Response) -> bool>,
+    status: u16,
+    content_length: Option<u64>,
+    content_range: Option<ContentRange>,
+    has_location: bool,
+    proxy_connect: bool,
+    skip_body: bool,
+    response_seen: bool,
+    response_rejected: bool,
     received: u64,
     limit: u64,
     cancelled: bool,
     too_large: bool,
+    idle_timeout: std::time::Duration,
+    last_activity: Instant,
+    last_downloaded: i64,
+    idle_timed_out: bool,
+}
+
+impl<'a> CallbackState<'a> {
+    fn new(
+        api: &'static Api,
+        handle: *mut c_void,
+        sink: &'a mut dyn FnMut(&[u8]) -> bool,
+        on_response: Option<&'a mut dyn FnMut(&Response) -> bool>,
+        limit: u64,
+        idle_timeout: std::time::Duration,
+    ) -> Self {
+        Self {
+            api: Some(api),
+            handle,
+            sink,
+            on_response,
+            status: 0,
+            content_length: None,
+            content_range: None,
+            has_location: false,
+            proxy_connect: false,
+            skip_body: false,
+            response_seen: false,
+            response_rejected: false,
+            received: 0,
+            limit,
+            cancelled: false,
+            too_large: false,
+            idle_timeout,
+            last_activity: Instant::now(),
+            last_downloaded: 0,
+            idle_timed_out: false,
+        }
+    }
 }
 
 unsafe extern "C" fn write_callback(data: *mut c_char, size: usize, count: usize, user: *mut c_void) -> usize {
@@ -160,6 +217,10 @@ unsafe extern "C" fn write_callback(data: *mut c_char, size: usize, count: usize
         state.too_large = true;
         return 0;
     }
+    state.received = next;
+    if state.skip_body {
+        return length;
+    }
     let bytes = if length == 0 {
         &[]
     } else {
@@ -170,8 +231,106 @@ unsafe extern "C" fn write_callback(data: *mut c_char, size: usize, count: usize
         state.cancelled = true;
         return 0;
     }
-    state.received = next;
     length
+}
+
+unsafe extern "C" fn header_callback(data: *mut c_char, size: usize, count: usize, user: *mut c_void) -> usize {
+    let Some(length) = size.checked_mul(count) else {
+        return 0;
+    };
+    if user.is_null() || (data.is_null() && length != 0) || isize::try_from(length).is_err() {
+        return 0;
+    }
+    // SAFETY: HEADERDATA points to CallbackState for the synchronous duration of curl_easy_perform.
+    let state = unsafe { &mut *user.cast::<CallbackState<'static>>() };
+    let bytes = if length == 0 {
+        &[]
+    } else {
+        // SAFETY: non-null data and the callback length are provided by libcurl's header callback contract.
+        unsafe { std::slice::from_raw_parts(data.cast::<u8>(), length) }
+    };
+    let line = String::from_utf8_lossy(bytes);
+    let line = line.trim_end_matches(['\r', '\n']);
+
+    if line.starts_with("HTTP/") {
+        let mut parts = line.split_ascii_whitespace();
+        let _version = parts.next();
+        state.status = parts.next().and_then(|value| value.parse().ok()).unwrap_or_default();
+        state.content_length = None;
+        state.content_range = None;
+        state.has_location = false;
+        state.proxy_connect = state.status == 200 && line.to_ascii_lowercase().contains("connection established");
+        state.skip_body = true;
+    } else if line.is_empty() {
+        let redirect_with_location = (300..400).contains(&state.status) && state.has_location;
+        let interim = (100..200).contains(&state.status);
+        state.skip_body = state.proxy_connect || redirect_with_location || interim;
+        if !state.skip_body {
+            let mut effective: *mut c_char = ptr::null_mut();
+            let Some(api) = state.api else {
+                state.response_rejected = true;
+                return 0;
+            };
+            // SAFETY: the easy handle is live during perform and the output type matches CURLINFO_EFFECTIVE_URL.
+            let info_code = unsafe { (api.easy_getinfo)(state.handle, CURLINFO_EFFECTIVE_URL, &mut effective) };
+            if info_code != CURLE_OK || effective.is_null() {
+                state.response_rejected = true;
+                return 0;
+            }
+            // SAFETY: a non-null effective URL is NUL-terminated and owned by the easy handle.
+            let final_url = unsafe { CStr::from_ptr(effective) }.to_string_lossy().into_owned();
+            let response = Response {
+                status: state.status,
+                content_length: state.content_length,
+                content_range: state.content_range,
+                final_url,
+            };
+            if state
+                .on_response
+                .as_deref_mut()
+                .is_some_and(|on_response| !on_response(&response))
+            {
+                state.response_rejected = true;
+                return 0;
+            }
+            state.response_seen = true;
+        }
+    } else if let Some((name, value)) = line.split_once(':') {
+        let value = value.trim();
+        if name.eq_ignore_ascii_case("content-length") {
+            state.content_length = value.parse().ok();
+        } else if name.eq_ignore_ascii_case("content-range") {
+            state.content_range = parse_content_range(value);
+        } else if name.eq_ignore_ascii_case("location") {
+            state.has_location = !value.is_empty();
+        }
+    }
+
+    length
+}
+
+unsafe extern "C" fn progress_callback(
+    user: *mut c_void,
+    _download_total: i64,
+    downloaded: i64,
+    _upload_total: i64,
+    _uploaded: i64,
+) -> c_int {
+    if user.is_null() {
+        return 1;
+    }
+    // SAFETY: XFERINFODATA points to CallbackState for the synchronous duration of curl_easy_perform.
+    let state = unsafe { &mut *user.cast::<CallbackState<'static>>() };
+    if downloaded != state.last_downloaded {
+        state.last_downloaded = downloaded;
+        state.last_activity = Instant::now();
+    }
+    if state.last_activity.elapsed() >= state.idle_timeout {
+        state.idle_timed_out = true;
+        1
+    } else {
+        0
+    }
 }
 
 fn milliseconds(value: std::time::Duration) -> Result<c_long> {
@@ -189,10 +348,11 @@ fn curl_error(api: &Api, code: c_int) -> Error {
     Error::System(format!("libcurl: {text}"))
 }
 
-pub(super) fn get(
+pub(super) fn get_with_response(
     config: &SystemFetch,
     url: &str,
     range_from: u64,
+    on_response: &mut dyn FnMut(&Response) -> bool,
     sink: &mut dyn FnMut(&[u8]) -> bool,
 ) -> Result<Response> {
     let api = api()?;
@@ -207,13 +367,14 @@ pub(super) fn get(
     if handle.is_null() {
         return Err(Error::System("curl_easy_init returned null".to_owned()));
     }
-    let mut state = CallbackState {
+    let mut state = CallbackState::new(
+        api,
+        handle,
         sink,
-        received: 0,
-        limit: config.max_bytes,
-        cancelled: false,
-        too_large: false,
-    };
+        Some(on_response),
+        config.max_bytes,
+        config.idle_timeout,
+    );
     let result = (|| -> Result<Response> {
         let set_long = |option: c_int, value: c_long| -> Result<()> {
             // SAFETY: option is a CURLOPT_LONG option and value has C long ABI.
@@ -236,6 +397,7 @@ pub(super) fn get(
         set_long(CURLOPT_NOSIGNAL, 1)?;
         set_long(CURLOPT_CONNECTTIMEOUT_MS, milliseconds(config.connect_timeout)?)?;
         set_long(CURLOPT_TIMEOUT_MS, milliseconds(config.total_timeout)?)?;
+        set_long(CURLOPT_NOPROGRESS, 0)?;
         if let Some(range) = &range {
             // SAFETY: range CString lives through perform and CURLOPT_RANGE expects a char pointer.
             let code = unsafe { (api.easy_setopt)(handle, CURLOPT_RANGE, range.as_ptr()) };
@@ -259,16 +421,60 @@ pub(super) fn get(
         if code != CURLE_OK {
             return Err(curl_error(api, code));
         }
+        // SAFETY: function pointer matches curl's header callback ABI; state remains live through perform.
+        let code = unsafe { (api.easy_setopt)(handle, CURLOPT_HEADERFUNCTION, header_callback as HeaderCallback) };
+        if code != CURLE_OK {
+            return Err(curl_error(api, code));
+        }
+        // SAFETY: state address is stable until perform returns.
+        let code = unsafe {
+            (api.easy_setopt)(
+                handle,
+                CURLOPT_HEADERDATA,
+                (&mut state as *mut CallbackState<'_>).cast::<c_void>(),
+            )
+        };
+        if code != CURLE_OK {
+            return Err(curl_error(api, code));
+        }
+        // SAFETY: progress callback uses the same live callback state until perform returns.
+        let code =
+            unsafe { (api.easy_setopt)(handle, CURLOPT_XFERINFOFUNCTION, progress_callback as ProgressCallback) };
+        if code != CURLE_OK {
+            return Err(curl_error(api, code));
+        }
+        // SAFETY: state address is stable until perform returns.
+        let code = unsafe {
+            (api.easy_setopt)(
+                handle,
+                CURLOPT_XFERINFODATA,
+                (&mut state as *mut CallbackState<'_>).cast::<c_void>(),
+            )
+        };
+        if code != CURLE_OK {
+            return Err(curl_error(api, code));
+        }
         // SAFETY: all configured pointers remain live for this synchronous call.
         let code = unsafe { (api.easy_perform)(handle) };
         if code != CURLE_OK {
+            if state.response_rejected {
+                return Err(Error::Refused("HTTPS response rejected by caller".to_owned()));
+            }
             if state.cancelled {
                 return Err(Error::Refused("fetch cancelled by sink".to_owned()));
             }
             if state.too_large {
                 return Err(Error::Refused("HTTPS response exceeds size limit".to_owned()));
             }
+            if state.idle_timed_out {
+                return Err(Error::System("HTTPS response idle timeout".to_owned()));
+            }
             return Err(curl_error(api, code));
+        }
+        if !state.response_seen {
+            return Err(Error::System(
+                "libcurl did not expose final response headers".to_owned(),
+            ));
         }
         let mut status: c_long = 0;
         let mut content_length: i64 = -1;
@@ -282,7 +488,7 @@ pub(super) fn get(
         // SAFETY: EFFECTIVE_URL returns a libcurl-owned char pointer.
         let _ = unsafe { (api.easy_getinfo)(handle, CURLINFO_EFFECTIVE_URL, &mut effective) };
         let status = u16::try_from(status).map_err(|_| Error::damaged("HTTP status out of range"))?;
-        let content_length = u64::try_from(content_length).ok();
+        let content_length = state.content_length.or_else(|| u64::try_from(content_length).ok());
         if content_length.is_some_and(|length| length > config.max_bytes) {
             return Err(Error::Refused("HTTPS response exceeds size limit".to_owned()));
         }
@@ -298,6 +504,7 @@ pub(super) fn get(
         Ok(Response {
             status,
             content_length,
+            content_range: state.content_range,
             final_url,
         })
     })();
@@ -329,13 +536,7 @@ pub(super) fn post(
         unsafe { (api.easy_cleanup)(handle) };
         return Err(Error::System("curl_slist_append returned null".to_owned()));
     }
-    let mut state = CallbackState {
-        sink,
-        received: 0,
-        limit: config.max_bytes,
-        cancelled: false,
-        too_large: false,
-    };
+    let mut state = CallbackState::new(api, handle, sink, None, config.max_bytes, config.idle_timeout);
     let result = (|| -> Result<Response> {
         let set_long = |option: c_int, value: c_long| -> Result<()> {
             // SAFETY: option is a CURLOPT_LONG option and value has C long ABI.
@@ -388,9 +589,30 @@ pub(super) fn post(
         if code != CURLE_OK {
             return Err(curl_error(api, code));
         }
+        set_long(CURLOPT_NOPROGRESS, 0)?;
+        // SAFETY: function pointer matches curl's progress callback ABI; state remains live through perform.
+        let code =
+            unsafe { (api.easy_setopt)(handle, CURLOPT_XFERINFOFUNCTION, progress_callback as ProgressCallback) };
+        if code != CURLE_OK {
+            return Err(curl_error(api, code));
+        }
+        // SAFETY: state address is stable until perform returns.
+        let code = unsafe {
+            (api.easy_setopt)(
+                handle,
+                CURLOPT_XFERINFODATA,
+                (&mut state as *mut CallbackState<'_>).cast::<c_void>(),
+            )
+        };
+        if code != CURLE_OK {
+            return Err(curl_error(api, code));
+        }
         // SAFETY: all configured pointers remain live for this synchronous call.
         let code = unsafe { (api.easy_perform)(handle) };
         if code != CURLE_OK {
+            if state.idle_timed_out {
+                return Err(Error::System("HTTPS response idle timeout".to_owned()));
+            }
             if state.cancelled {
                 return Err(Error::Refused("fetch cancelled by sink".to_owned()));
             }
@@ -427,6 +649,7 @@ pub(super) fn post(
         Ok(Response {
             status,
             content_length,
+            content_range: None,
             final_url,
         })
     })();
@@ -439,16 +662,42 @@ pub(super) fn post(
 
 #[cfg(test)]
 mod tests {
-    use super::{write_callback, CallbackState};
+    use super::{progress_callback, write_callback, CallbackState};
     use std::{
         ffi::c_void,
         io,
         process::Command,
         ptr,
         sync::atomic::{AtomicBool, Ordering},
+        time::{Duration, Instant},
     };
 
     const CHILD_ENV: &str = "SSE_CURL_EMPTY_CALLBACK_CHILD";
+
+    fn test_state<'a>(sink: &'a mut dyn FnMut(&[u8]) -> bool, limit: u64) -> CallbackState<'a> {
+        CallbackState {
+            api: None,
+            handle: ptr::null_mut(),
+            sink,
+            on_response: None,
+            status: 0,
+            content_length: None,
+            content_range: None,
+            has_location: false,
+            proxy_connect: false,
+            skip_body: false,
+            response_seen: false,
+            response_rejected: false,
+            received: 0,
+            limit,
+            cancelled: false,
+            too_large: false,
+            idle_timeout: Duration::from_secs(15),
+            last_activity: Instant::now(),
+            last_downloaded: 0,
+            idle_timed_out: false,
+        }
+    }
 
     fn run_child(test_name: &str, case: &str) -> io::Result<()> {
         let output = Command::new(std::env::current_exe()?)
@@ -481,13 +730,7 @@ mod tests {
             saw_valid_empty.store(bytes.is_empty(), Ordering::Relaxed);
             true
         };
-        let mut state = CallbackState {
-            sink: &mut sink,
-            received: 0,
-            limit: 1,
-            cancelled: false,
-            too_large: false,
-        };
+        let mut state = test_state(&mut sink, 1);
         let user = (&mut state as *mut CallbackState<'_>).cast::<c_void>();
         // SAFETY: the state is live for this direct callback invocation; (null, 0) is the case under test.
         let accepted = unsafe { write_callback(ptr::null_mut(), 0, 1, user) };
@@ -512,13 +755,7 @@ mod tests {
             .and_then(|maximum| maximum.checked_add(1))
             .ok_or_else(|| io::Error::other("could not construct an oversized slice length"))?;
         let mut sink = |_: &[u8]| true;
-        let mut state = CallbackState {
-            sink: &mut sink,
-            received: 0,
-            limit: u64::MAX,
-            cancelled: false,
-            too_large: false,
-        };
+        let mut state = test_state(&mut sink, u64::MAX);
         let user = (&mut state as *mut CallbackState<'_>).cast::<c_void>();
         // SAFETY: callback state is live; this verifies rejection before the callback reads its synthetic buffer.
         let accepted =
@@ -527,5 +764,17 @@ mod tests {
         assert!(state.too_large);
         assert_eq!(state.received, 0);
         Ok(())
+    }
+
+    #[test]
+    fn curl_progress_callback_aborts_when_idle_timeout_has_elapsed() {
+        let mut sink = |_: &[u8]| -> bool { true };
+        let mut state = test_state(&mut sink, 1);
+        state.idle_timeout = Duration::ZERO;
+        let user = (&mut state as *mut CallbackState<'_>).cast::<c_void>();
+        // SAFETY: callback state is live and direct invocation exercises timeout handling only.
+        let abort = unsafe { progress_callback(user, 0, 0, 0, 0) };
+        assert_eq!(abort, 1);
+        assert!(state.idle_timed_out);
     }
 }

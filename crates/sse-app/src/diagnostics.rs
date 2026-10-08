@@ -857,6 +857,7 @@ mod tests {
             Ok(Response {
                 status: self.status,
                 content_length: Some(u64::try_from(self.response.len()).unwrap_or(u64::MAX)),
+                content_range: None,
                 final_url: url.to_owned(),
             })
         }

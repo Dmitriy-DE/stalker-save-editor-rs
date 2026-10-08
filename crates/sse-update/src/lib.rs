@@ -11,7 +11,9 @@ pub mod service;
 pub mod signature;
 
 pub use detector::{UpdateInstallation, UpdateInstallationDetector, LINUX_PACKAGE_INSTALL_ROOT};
-pub use fetch::{download_artifact, verify_existing_file, DefaultFetch, Fetch, FileFetch, MemoryFetch, Response};
+pub use fetch::{
+    download_artifact, verify_existing_file, ContentRange, DefaultFetch, Fetch, FileFetch, MemoryFetch, Response,
+};
 pub use installer::{
     install_artifact, prepare_private_directory, MockProcessRunner, ProcessRunner, SystemProcessRunner,
     UpdateInstallResult, UpdateInstallState,
