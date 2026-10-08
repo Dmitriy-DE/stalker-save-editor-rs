@@ -7,7 +7,7 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use sse_content::{CompanionGame, EntryDecoder, GameFileTree, HeaderDecoder};
+use sse_content::{CompanionArchiveLocator, CompanionGame, EntryDecoder, GameFileTree, HeaderDecoder};
 
 use sse_codecs::{
     json::{Event, Reader, Text},
@@ -329,7 +329,7 @@ pub fn install_files(root: &Path, game: &str, version: &str, payloads: &[Payload
         }
     }
     new_files.sort_by(|left, right| left.path.cmp(&right.path));
-    fs::create_dir_all(&state)?;
+    create_directories_checked(&root, &state)?;
     let manifest = Manifest {
         game: game.to_owned(),
         version: version.to_owned(),
@@ -354,19 +354,19 @@ pub fn install_files(root: &Path, game: &str, version: &str, payloads: &[Payload
         for (relative, bytes) in &backup_writes {
             let destination = safe_state_path(&root, relative)?;
             if !destination.exists() {
-                write_atomic(&destination, bytes)?;
+                write_atomic(&root, &destination, bytes)?;
             }
         }
         for change in &changes {
             let target = safe_game_path(&root, &change.path)?;
             if let Some(bytes) = &change.after {
                 ensure_parent(&root, &target)?;
-                write_atomic(&target, bytes)?;
+                write_atomic(&root, &target, bytes)?;
             } else if target.exists() {
-                fs::remove_file(target)?;
+                remove_file_checked(&root, &target)?;
             }
         }
-        write_atomic(&manifest_path, &manifest_bytes)?;
+        write_atomic(&root, &manifest_path, &manifest_bytes)?;
         cleanup_obsolete_backups(&root, &obsolete_backups)?;
         Ok::<(), InstallError>(())
     })();
@@ -401,6 +401,25 @@ pub fn install_bundled(root: &Path, game: crate::bundled::Game) -> Result<(), In
         ),
     };
     let mut payloads = crate::bundled::payloads(game)?;
+    let config_prefix = game_config_prefix(&root, content_game, fsgame_names)?;
+    for payload in &mut payloads {
+        if let Some(relative) = payload.relative_path.strip_prefix("gamedata/configs/") {
+            payload.relative_path = format!("gamedata/{config_prefix}{relative}");
+        }
+    }
+
+    let quest_items_relative = format!("{config_prefix}misc/quest_items.ltx");
+    let quest_items_path = format!("gamedata/{quest_items_relative}");
+    let quest_items_bytes = read_xray_hook_source(
+        &root,
+        content_game,
+        fsgame_names,
+        &quest_items_relative,
+        &quest_items_path,
+    )?;
+    let quest_items_with_companion = crate::hook::patch_quest_include(&quest_items_bytes, true)
+        .map_err(|error| InstallError::new(error.to_string()))?;
+    payloads.push(PayloadFile::new(quest_items_path, quest_items_with_companion));
 
     let bind_path = "gamedata/scripts/bind_stalker.script";
     let bind_bytes = read_xray_hook_source(
@@ -426,6 +445,50 @@ pub fn install_bundled(root: &Path, game: crate::bundled::Game) -> Result<(), In
         crate::hook::patch_main_menu(&menu_bytes).map_err(|error| InstallError::new(error.to_string()))?;
     payloads.push(PayloadFile::new(menu_path, hooked_menu));
     install_files(&root, game_id, "v1", &payloads)
+}
+
+fn game_config_prefix(root: &Path, game: CompanionGame, fsgame_names: &[&str]) -> Result<String, InstallError> {
+    let search = CompanionArchiveLocator::discover(root, fsgame_names, game);
+    let Some(data_directory) = search.game_data_directory else {
+        if search.fsgame_path.is_none() {
+            return Ok(if game == CompanionGame::ShadowOfChernobyl {
+                "config/".to_owned()
+            } else {
+                "configs/".to_owned()
+            });
+        }
+        return Err(InstallError::new("could not resolve fsgame $game_data$ directory"));
+    };
+    let data_directory = data_directory
+        .canonicalize()
+        .map_err(|error| InstallError::new(format!("could not resolve fsgame $game_data$ directory: {error}")))?;
+    let expected_data_directory = root
+        .join("gamedata")
+        .canonicalize()
+        .map_err(|error| InstallError::new(format!("could not resolve the game gamedata directory: {error}")))?;
+    if data_directory != expected_data_directory {
+        return Err(InstallError::new("fsgame $game_data$ directory escapes the game root"));
+    }
+    let config_directory = search
+        .game_config_directory
+        .ok_or_else(|| InstallError::new("could not resolve fsgame $game_config$ directory"))?;
+    let relative = config_directory
+        .strip_prefix(&data_directory)
+        .map_err(|_| InstallError::new("fsgame $game_config$ directory escapes $game_data$"))?;
+    let mut prefix = String::new();
+    for component in relative.components() {
+        let Component::Normal(part) = component else {
+            return Err(InstallError::new("fsgame $game_config$ path is unsafe"));
+        };
+        if !prefix.is_empty() {
+            prefix.push('/');
+        }
+        prefix.push_str(&part.to_string_lossy());
+    }
+    if !prefix.is_empty() {
+        prefix.push('/');
+    }
+    Ok(prefix)
 }
 
 /// Installs the S.T.A.L.K.E.R. 2 mod into a UE4SS `Mods` directory.
@@ -479,19 +542,19 @@ pub fn uninstall(root: &Path, game: &str) -> Result<bool, InstallError> {
     let apply = (|| {
         for (_, target, original) in &restores {
             if let Some(bytes) = original {
-                write_atomic(target, bytes)?;
+                write_atomic(&root, target, bytes)?;
             } else if target.exists() {
-                fs::remove_file(target)?;
+                remove_file_checked(&root, target)?;
             }
         }
         if manifest.game_data_created {
-            remove_empty_tree(&root.join("gamedata"))?;
+            remove_empty_tree(&root, &root.join("gamedata"))?;
         }
         if manifest.game == "s2" {
-            remove_empty_tree(&root.join("SaveEditorCompanion"))?;
+            remove_empty_tree(&root, &root.join("SaveEditorCompanion"))?;
         }
-        fs::remove_file(&manifest_path)?;
-        fs::remove_dir_all(&state)?;
+        remove_file_checked(&root, &manifest_path)?;
+        remove_dir_all_checked(&root, &state)?;
         Ok::<(), InstallError>(())
     })();
     if let Err(error) = apply {
@@ -513,13 +576,13 @@ fn begin_uninstall_transaction(
     remove_game_data_on_commit: bool,
 ) -> Result<(), InstallError> {
     let transaction_dir = safe_state_path(root, TRANSACTION_DIRECTORY)?;
-    fs::create_dir_all(transaction_dir.join("preimages"))?;
+    create_directories_checked(root, &transaction_dir.join("preimages"))?;
     let mut next_index = 0_u32;
     let manifest_preimage = next_index;
     next_index = next_index
         .checked_add(1)
         .ok_or_else(|| InstallError::new("uninstall transaction has too many files"))?;
-    write_atomic(&preimage_path(root, manifest_preimage)?, manifest_bytes)?;
+    write_atomic(root, &preimage_path(root, manifest_preimage)?, manifest_bytes)?;
     let manifest = TransactionTarget {
         path: format!("{STATE_DIRECTORY}/{MANIFEST_FILE}"),
         before_sha256: Some(sha256::sha256_hex(manifest_bytes)),
@@ -533,7 +596,7 @@ fn begin_uninstall_transaction(
         next_index = next_index
             .checked_add(1)
             .ok_or_else(|| InstallError::new("uninstall transaction has too many files"))?;
-        write_atomic(&preimage_path(root, index)?, &current)?;
+        write_atomic(root, &preimage_path(root, index)?, &current)?;
         files.push(TransactionTarget {
             path: normalize_relative(relative)?,
             before_sha256: Some(sha256::sha256_hex(&current)),
@@ -552,7 +615,7 @@ fn begin_uninstall_transaction(
         obsolete_backups: Vec::new(),
     };
     let journal_path = safe_state_path(root, JOURNAL_FILE)?;
-    write_atomic(&journal_path, serialize_transaction(&journal).as_bytes())
+    write_atomic(root, &journal_path, serialize_transaction(&journal).as_bytes())
 }
 
 #[allow(clippy::too_many_arguments)] // The journal records each independent rollback input explicitly.
@@ -567,15 +630,15 @@ fn begin_install_transaction(
     obsolete_backups: &[(String, String)],
 ) -> Result<(), InstallError> {
     let transaction_dir = safe_state_path(root, TRANSACTION_DIRECTORY)?;
-    fs::create_dir_all(&transaction_dir)?;
+    create_directories_checked(root, &transaction_dir)?;
     let preimage_dir = transaction_dir.join("preimages");
-    fs::create_dir_all(&preimage_dir)?;
+    create_directories_checked(root, &preimage_dir)?;
     let mut next_index = 0_u32;
     let manifest_before_sha256 = old_manifest.map(sha256::sha256_hex);
     let manifest_preimage = if let Some(bytes) = old_manifest {
         let index = next_index;
         next_index = next_index.saturating_add(1);
-        write_atomic(&preimage_path(root, index)?, bytes)?;
+        write_atomic(root, &preimage_path(root, index)?, bytes)?;
         Some(index)
     } else {
         None
@@ -607,7 +670,7 @@ fn begin_install_transaction(
             next_index = next_index
                 .checked_add(1)
                 .ok_or_else(|| InstallError::new("install transaction has too many files"))?;
-            write_atomic(&preimage_path(root, index)?, &bytes)?;
+            write_atomic(root, &preimage_path(root, index)?, &bytes)?;
             Some(index)
         } else {
             None
@@ -634,7 +697,7 @@ fn begin_install_transaction(
     };
     let bytes = serialize_transaction(&journal);
     let journal_path = safe_state_path(root, JOURNAL_FILE)?;
-    write_atomic(&journal_path, bytes.as_bytes())
+    write_atomic(root, &journal_path, bytes.as_bytes())
 }
 
 fn preimage_path(root: &Path, index: u32) -> Result<PathBuf, InstallError> {
@@ -801,11 +864,11 @@ fn recover_install_transaction(root: &Path) -> Result<(), InstallError> {
     let transaction_dir = safe_state_path(root, TRANSACTION_DIRECTORY)?;
     if !journal_path.exists() {
         if transaction_dir.exists() {
-            fs::remove_dir_all(transaction_dir)?;
+            remove_dir_all_checked(root, &transaction_dir)?;
         }
         let manifest = safe_state_path(root, MANIFEST_FILE)?;
         if !manifest.exists() && fs::read_dir(&state)?.next().is_none() {
-            fs::remove_dir(state)?;
+            remove_empty_dir_checked(root, &state)?;
         }
         return Ok(());
     }
@@ -822,10 +885,10 @@ fn recover_install_transaction(root: &Path) -> Result<(), InstallError> {
     if current_manifest_hash == journal.manifest.after_sha256 {
         if journal.remove_state_on_commit {
             if state.exists() {
-                fs::remove_dir_all(&state)?;
+                remove_dir_all_checked(root, &state)?;
             }
             if journal.remove_game_data_on_commit {
-                remove_empty_tree(&root.join("gamedata"))?;
+                remove_empty_tree(root, &root.join("gamedata"))?;
             }
         } else {
             cleanup_obsolete_backups(root, &journal.obsolete_backups)?;
@@ -845,15 +908,15 @@ fn recover_install_transaction(root: &Path) -> Result<(), InstallError> {
                     "new companion backup changed during interrupted install",
                 ));
             }
-            fs::remove_file(path)?;
+            remove_file_checked(root, &path)?;
         }
     }
     finish_install_transaction(root)?;
     if !journal.state_existed && state.is_dir() && fs::read_dir(&state)?.next().is_none() {
-        fs::remove_dir(state)?;
+        remove_empty_dir_checked(root, &state)?;
     }
     if !journal.game_data_existed {
-        remove_empty_tree(&root.join("gamedata"))?;
+        remove_empty_tree(root, &root.join("gamedata"))?;
     }
     Ok(())
 }
@@ -897,9 +960,9 @@ fn restore_transaction_target(root: &Path, entry: &TransactionTarget) -> Result<
         if Some(sha256::sha256_hex(&saved)) != entry.before_sha256 {
             return Err(InstallError::new("install transaction preimage hash does not match"));
         }
-        write_atomic(&target, &saved)?;
+        write_atomic(root, &target, &saved)?;
     } else {
-        fs::remove_file(target)?;
+        remove_file_checked(root, &target)?;
     }
     Ok(())
 }
@@ -939,10 +1002,10 @@ fn finish_install_transaction(root: &Path) -> Result<(), InstallError> {
     let journal = safe_state_path(root, JOURNAL_FILE)?;
     let transaction_dir = safe_state_path(root, TRANSACTION_DIRECTORY)?;
     if journal.exists() {
-        fs::remove_file(journal)?;
+        remove_file_checked(root, &journal)?;
     }
     if transaction_dir.exists() {
-        fs::remove_dir_all(transaction_dir)?;
+        remove_dir_all_checked(root, &transaction_dir)?;
     }
     Ok(())
 }
@@ -954,7 +1017,7 @@ fn cleanup_obsolete_backups(root: &Path, backups: &[(String, String)]) -> Result
         };
         if path.is_file() && read_companion_file(&path).is_ok_and(|bytes| sha256::sha256_hex(&bytes) == *expected_hash)
         {
-            fs::remove_file(path)?;
+            remove_file_checked(root, &path)?;
         }
     }
     Ok(())
@@ -1068,44 +1131,184 @@ fn ensure_parent(root: &Path, target: &Path) -> Result<(), InstallError> {
     let parent = target
         .parent()
         .ok_or_else(|| InstallError::new("companion target has no parent"))?;
-    fs::create_dir_all(parent)?;
-    if !parent.starts_with(root) {
-        return Err(InstallError::new("companion parent escapes the game root"));
+    create_directories_checked(root, parent)?;
+    validate_atomic_target(root, target)
+}
+
+fn validate_directory_path(root: &Path, path: &Path, allow_missing: bool) -> Result<(), InstallError> {
+    let relative = path
+        .strip_prefix(root)
+        .map_err(|_| InstallError::new("companion directory escapes the game root"))?;
+    let root_metadata = fs::symlink_metadata(root)?;
+    if root_metadata.file_type().is_symlink() || !root_metadata.is_dir() {
+        return Err(InstallError::new("companion game root is not a regular directory"));
+    }
+    let mut current = root.to_path_buf();
+    for component in relative.components() {
+        let Component::Normal(part) = component else {
+            return Err(InstallError::new("unsafe relative game path"));
+        };
+        current.push(part);
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(InstallError::new("symlink in a companion game path is not allowed"));
+            }
+            Ok(metadata) if !metadata.is_dir() => {
+                return Err(InstallError::new("companion parent is not a directory"));
+            }
+            Ok(_) => {}
+            Err(error) if allow_missing && error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(InstallError::from(error)),
+        }
     }
     Ok(())
 }
 
-fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), InstallError> {
+fn create_directories_checked(root: &Path, path: &Path) -> Result<(), InstallError> {
+    validate_directory_path(root, path, true)?;
+    let relative = path
+        .strip_prefix(root)
+        .map_err(|_| InstallError::new("companion directory escapes the game root"))?;
+    let mut current = root.to_path_buf();
+    for component in relative.components() {
+        let Component::Normal(part) = component else {
+            return Err(InstallError::new("unsafe relative game path"));
+        };
+        current.push(part);
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+                return Err(InstallError::new("companion parent is not a regular directory"));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                fs::create_dir(&current)?;
+                validate_directory_path(root, &current, false)?;
+            }
+            Err(error) => return Err(InstallError::from(error)),
+        }
+    }
+    Ok(())
+}
+
+fn validate_atomic_target(root: &Path, target: &Path) -> Result<(), InstallError> {
+    let relative = target
+        .strip_prefix(root)
+        .map_err(|_| InstallError::new("companion target escapes the game root"))?;
+    let components = relative.components().collect::<Vec<_>>();
+    if components.is_empty() {
+        return Err(InstallError::new("companion target has no relative path"));
+    }
+    let mut current = root.to_path_buf();
+    for (index, component) in components.iter().enumerate() {
+        let Component::Normal(part) = component else {
+            return Err(InstallError::new("unsafe relative game path"));
+        };
+        current.push(part);
+        let is_target = index == components.len().saturating_sub(1);
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(InstallError::new("symlink in a companion game path is not allowed"));
+            }
+            Ok(metadata) if is_target && !metadata.is_file() => {
+                return Err(InstallError::new("companion target is not a regular file"));
+            }
+            Ok(metadata) if !is_target && !metadata.is_dir() => {
+                return Err(InstallError::new("companion parent is not a directory"));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound && is_target => {}
+            Err(error) => return Err(InstallError::from(error)),
+        }
+    }
+    Ok(())
+}
+
+fn sync_parent_directory(parent: &Path) -> Result<(), InstallError> {
+    #[cfg(unix)]
+    {
+        File::open(parent)?.sync_all()?;
+    }
+    #[cfg(not(unix))]
+    let _ = parent;
+    Ok(())
+}
+
+fn remove_file_checked(root: &Path, path: &Path) -> Result<(), InstallError> {
+    validate_atomic_target(root, path)?;
+    fs::remove_file(path)?;
+    if let Some(parent) = path.parent() {
+        sync_parent_directory(parent)?;
+    }
+    Ok(())
+}
+
+fn remove_dir_all_checked(root: &Path, path: &Path) -> Result<(), InstallError> {
+    validate_directory_path(root, path, false)?;
+    fs::remove_dir_all(path)?;
+    if let Some(parent) = path.parent() {
+        sync_parent_directory(parent)?;
+    }
+    Ok(())
+}
+
+fn remove_empty_dir_checked(root: &Path, path: &Path) -> Result<(), InstallError> {
+    match fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(InstallError::from(error)),
+        Ok(_) => {}
+    }
+    validate_directory_path(root, path, false)?;
+    let mut entries = fs::read_dir(path)?;
+    if entries.next().transpose()?.is_some() {
+        return Ok(());
+    }
+    validate_directory_path(root, path, false)?;
+    fs::remove_dir(path)?;
+    if let Some(parent) = path.parent() {
+        sync_parent_directory(parent)?;
+    }
+    Ok(())
+}
+
+fn write_atomic(root: &Path, path: &Path, bytes: &[u8]) -> Result<(), InstallError> {
     let parent = path
         .parent()
         .ok_or_else(|| InstallError::new("atomic write path has no parent"))?;
-    fs::create_dir_all(parent)?;
+    create_directories_checked(root, parent)?;
+    validate_atomic_target(root, path)?;
     let sequence = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
     let name = path
         .file_name()
         .ok_or_else(|| InstallError::new("atomic write path has no file name"))?
         .to_string_lossy();
     let temporary = parent.join(format!(".{name}.pending-{}-{sequence}", std::process::id()));
+    validate_atomic_target(root, &temporary)?;
     let mut file = OpenOptions::new().write(true).create_new(true).open(&temporary)?;
-    file.write_all(bytes)?;
-    file.sync_all()?;
-    drop(file);
-    let previous = parent.join(format!(".{name}.previous-{}-{sequence}", std::process::id()));
-    let had_target = path.exists();
-    if had_target {
-        fs::rename(path, &previous)?;
-    }
-    if let Err(error) = fs::rename(&temporary, path) {
-        if had_target {
-            let _ = fs::rename(&previous, path);
-        }
-        let _ = fs::remove_file(&temporary);
+    if let Err(error) = file.write_all(bytes).and_then(|()| file.sync_all()) {
+        drop(file);
+        let _ = remove_file_checked(root, &temporary);
         return Err(InstallError::from(error));
     }
-    if had_target {
-        fs::remove_file(previous)?;
+    drop(file);
+    validate_atomic_target(root, path)?;
+    validate_atomic_target(root, &temporary)?;
+    let replacement = match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_file() => sse_sys::secure_fs::replace_existing(&temporary, path),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => sse_sys::secure_fs::publish_new(&temporary, path),
+        Ok(_) => {
+            let _ = remove_file_checked(root, &temporary);
+            return Err(InstallError::new("companion target is not a regular file"));
+        }
+        Err(error) => {
+            let _ = remove_file_checked(root, &temporary);
+            return Err(InstallError::from(error));
+        }
+    };
+    if let Err(error) = replacement {
+        let _ = remove_file_checked(root, &temporary);
+        return Err(InstallError::from(error));
     }
-    Ok(())
+    sync_parent_directory(parent)
 }
 
 fn read_limited(path: &Path) -> Result<Vec<u8>, InstallError> {
@@ -1135,20 +1338,20 @@ fn read_bounded_file(path: &Path, limit: usize, description: &str) -> Result<Vec
     Ok(bytes)
 }
 
-fn remove_empty_tree(path: &Path) -> Result<(), InstallError> {
-    if !path.is_dir() {
-        return Ok(());
+fn remove_empty_tree(root: &Path, path: &Path) -> Result<(), InstallError> {
+    match fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(InstallError::from(error)),
+        Ok(_) => {}
     }
-    let children = fs::read_dir(path)?.collect::<Result<Vec<_>, _>>()?;
-    for child in children {
+    validate_directory_path(root, path, false)?;
+    for child in fs::read_dir(path)? {
+        let child = child?;
         if child.file_type()?.is_dir() {
-            remove_empty_tree(&child.path())?;
+            remove_empty_tree(root, &child.path())?;
         }
     }
-    if fs::read_dir(path)?.next().is_none() {
-        fs::remove_dir(path)?;
-    }
-    Ok(())
+    remove_empty_dir_checked(root, path)
 }
 
 fn serialize_manifest(manifest: &Manifest) -> String {
@@ -1356,7 +1559,7 @@ fn is_hash(value: &str) -> bool {
 mod transaction_tests {
     use super::{
         begin_install_transaction, begin_uninstall_transaction, install_bundled, read_limited,
-        recover_install_transaction, PayloadFile, PlannedFileChange, JOURNAL_FILE, STATE_DIRECTORY,
+        recover_install_transaction, write_atomic, PayloadFile, PlannedFileChange, JOURNAL_FILE, STATE_DIRECTORY,
     };
     use std::fs;
     use std::path::PathBuf;
@@ -1407,6 +1610,40 @@ mod transaction_tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn atomic_writer_rejects_a_symlinked_parent_before_touching_its_target() {
+        use std::os::unix::fs::symlink;
+
+        let root = root();
+        let outside = root.join("outside");
+        fs::create_dir_all(&outside).expect("create outside directory");
+        fs::create_dir_all(root.join("gamedata")).expect("create game data directory");
+        symlink(&outside, root.join("gamedata/scripts")).expect("create symlinked game path");
+        let target = root.join("gamedata/scripts/user.script");
+
+        assert!(write_atomic(&root, &target, b"must not escape").is_err());
+        assert!(!outside.join("user.script").exists());
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(outside);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_writer_does_not_create_missing_directories_through_a_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let root = root();
+        let outside = root.join("outside");
+        fs::create_dir_all(&outside).expect("create outside directory");
+        symlink(&outside, root.join("gamedata")).expect("create symlinked game path");
+        let target = root.join("gamedata/scripts/user.script");
+
+        assert!(write_atomic(&root, &target, b"must not escape").is_err());
+        assert!(!outside.join("scripts").exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[test]
     fn interrupted_atomic_replace_restores_matching_previous_sibling() {
         let root = root();
@@ -1448,6 +1685,10 @@ mod transaction_tests {
             b"function main_menu:OnKeyboard(dik, keyboard_action)\n\tif keyboard_action == ui_events.WINDOW_KEY_PRESSED then\n\t\treturn true\n\tend\n\treturn false\nend\n",
         )
         .expect("write menu source");
+        let quest_items_path = root.join("gamedata/configs/misc/quest_items.ltx");
+        fs::create_dir_all(quest_items_path.parent().expect("quest items parent"))
+            .expect("create quest items directory");
+        fs::write(&quest_items_path, b"[quest_items]\n").expect("write quest items source");
         let game = crate::bundled::Game::ClearSky;
         install_bundled(&root, game).expect("initial bundled install");
         let manifest_path = root.join(STATE_DIRECTORY).join("manifest.json");

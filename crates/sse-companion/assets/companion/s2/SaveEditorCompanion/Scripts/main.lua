@@ -11,8 +11,10 @@
 
 local PROTOCOL = "v1"
 local POLL_INTERVAL_MS = 2000
-local MOD_BUILD = "2026.09.28.2-s2-experimental"
+local MOD_BUILD = "2026.10.08.1-s2-experimental"
 local LOG_LIMIT = 512 * 1024
+local MAX_COMMAND_BYTES = 1024 * 1024
+local COMMAND_MAX_AGE_SECONDS = 30
 
 local cmd_file_path = nil
 local tmp_file_path = nil
@@ -66,6 +68,29 @@ end
 
 local function clean_text(text)
 	return (string.gsub(tostring(text or ""), "[\r\n]+", " "))
+end
+
+local function command_timestamp(id)
+	local timestamp = string.match(tostring(id or ""), "^(%d+)%-")
+	return tonumber(timestamp)
+end
+
+local function stale_command_error(id)
+	local timestamp = command_timestamp(id)
+	if timestamp == nil then
+		return "request timestamp is missing"
+	end
+	local now = os.time()
+	if now == nil then
+		return "system clock is unavailable"
+	end
+	if timestamp > now + 5 then
+		return "request timestamp is in the future"
+	end
+	if now - timestamp > COMMAND_MAX_AGE_SECONDS then
+		return "request is stale"
+	end
+	return nil
 end
 
 local function write_reply(id, status, text)
@@ -140,7 +165,9 @@ function handlers.money(args)
 	if delta == nil then
 		return "error", "usage: money <amount>"
 	end
-	execute_console_command("XAddMoneyToPlayer " .. tostring(delta))
+	if not execute_console_command("XAddMoneyToPlayer " .. tostring(delta)) then
+		return "error", "console command unavailable"
+	end
 	return "ok", "money modified by " .. tostring(delta)
 end
 
@@ -151,7 +178,9 @@ function handlers.give(args)
 		return "error", "usage: give <prototype_id> [count]"
 	end
 	-- Native S2 command: XCreateItemInInventoryByID <PrototypeID> <ObjUID> <Count> <Durability>
-	execute_console_command(string.format("XCreateItemInInventoryByID %s 0 %d 1.0", proto_id, count))
+	if not execute_console_command(string.format("XCreateItemInInventoryByID %s 0 %d 1.0", proto_id, count)) then
+		return "error", "console command unavailable"
+	end
 	return "ok", string.format("spawned %d of %s", count, proto_id)
 end
 
@@ -168,7 +197,9 @@ function handlers.teleport(args)
 		pc.Pawn:K2_SetActorLocation({ X = x, Y = y, Z = z }, false, {}, true)
 		return "ok", string.format("teleported to %.2f, %.2f, %.2f", x, y, z)
 	end
-	execute_console_command(string.format("XTeleportTo %.2f %.2f %.2f", x, y, z))
+	if not execute_console_command(string.format("XTeleportTo %.2f %.2f %.2f", x, y, z)) then
+		return "error", "console command unavailable"
+	end
 	return "ok", string.format("teleported via command to %.2f, %.2f, %.2f", x, y, z)
 end
 
@@ -184,7 +215,9 @@ function handlers.god(args)
 	if on == nil then
 		return "error", "usage: god on|off"
 	end
-	execute_console_command("XSetGodMode " .. (on and "true" or "false"))
+	if not execute_console_command("XSetGodMode " .. (on and "true" or "false")) then
+		return "error", "console command unavailable"
+	end
 	return "ok", "god mode " .. args[1]
 end
 
@@ -193,7 +226,9 @@ function handlers.noclip(args)
 	if on == nil then
 		return "error", "usage: noclip on|off"
 	end
-	execute_console_command(on and "XSetNoClipGSC 1" or "XSetNoClipGSC 0")
+	if not execute_console_command(on and "XSetNoClipGSC 1" or "XSetNoClipGSC 0") then
+		return "error", "console command unavailable"
+	end
 	return "ok", "free flight " .. args[1]
 end
 
@@ -202,7 +237,9 @@ function handlers.timespeed(args)
 	if speed == nil or speed < 0 or speed > 100 then
 		return "error", "usage: timespeed <0..100> (0 = normal)"
 	end
-	execute_console_command("XSetTimeSpeed " .. tostring(speed))
+	if not execute_console_command("XSetTimeSpeed " .. tostring(speed)) then
+		return "error", "console command unavailable"
+	end
 	return "ok", "time speed " .. tostring(speed)
 end
 
@@ -210,7 +247,9 @@ function handlers.weather(args)
 	if args[1] == nil then
 		return "error", "usage: weather <preset>"
 	end
-	execute_console_command("XForceWeather " .. args[1])
+	if not execute_console_command("XForceWeather " .. args[1]) then
+		return "error", "console command unavailable"
+	end
 	return "ok", "weather " .. args[1]
 end
 
@@ -230,6 +269,11 @@ local function process_command_line(line)
 
 	if proto ~= PROTOCOL then
 		write_reply(id or "0", "error", "unsupported protocol version: " .. tostring(proto))
+		return
+	end
+	local stale_error = stale_command_error(id)
+	if stale_error ~= nil then
+		write_reply(id, "error", stale_error)
 		return
 	end
 
@@ -266,15 +310,23 @@ local function poll_commands()
 		return
 	end
 
-	local content = f:read("*all")
+	local content = f:read(MAX_COMMAND_BYTES + 1)
 	f:close()
 	os.remove(cmd_path)
 
-	if content ~= nil and content ~= "" then
-		for line in string.gmatch(content, "[^\r\n]+") do
-			process_command_line(line)
-		end
+	if content == nil or content == "" then
+		return
 	end
+	if #content > MAX_COMMAND_BYTES then
+		write_reply("0", "error", "command exceeds the size limit")
+		return
+	end
+	local line = string.match(content, "^([^\r\n]*)\r?\n?$")
+	if line == nil or line == "" then
+		write_reply("0", "error", "expected exactly one command line")
+		return
+	end
+	process_command_line(line)
 end
 
 -- Initialize periodic polling in UE4SS
