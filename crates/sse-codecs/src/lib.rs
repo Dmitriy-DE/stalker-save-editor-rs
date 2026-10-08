@@ -13,6 +13,8 @@ mod kraken_c3a_lz;
 /// X-Ray archive LZHUF decoding and header descrambling.
 pub mod lzhuf;
 
+/// Strict RFC 4648 standard Base64 decoding.
+pub mod base64;
 /// IEEE CRC-32 used by archive and container formats.
 pub mod crc32;
 /// Raw DEFLATE compressor.

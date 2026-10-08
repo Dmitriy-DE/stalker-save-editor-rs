@@ -178,6 +178,18 @@ fn semver_parsing_and_downgrade_protection() {
         compare_versions("1.3.1", "1.3.0").unwrap(),
         UpdateState::DowngradeRefused
     );
+
+    assert_eq!(
+        compare_versions("2.0.1+local.004", "2.0.1+release.9").unwrap(),
+        UpdateState::Current
+    );
+    assert_eq!(
+        compare_versions("2.0.1-rc.1+build.7", "2.0.1+build.7").unwrap(),
+        UpdateState::Available
+    );
+    assert!(SemVer::parse("2.0.1+").is_err());
+    assert!(SemVer::parse("2.0.1+build..7").is_err());
+    assert!(SemVer::parse("2.0.1+build+other").is_err());
 }
 
 #[test]
