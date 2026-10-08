@@ -11,84 +11,118 @@ const K: [u32; 64] = [
     0xc67178f2,
 ];
 
+/// Incremental SHA-256 state for hashing data without retaining the full input.
+pub struct Sha256 {
+    state: [u32; 8],
+    buffer: [u8; 64],
+    buffered_len: usize,
+    total_len: u64,
+}
+
+impl Sha256 {
+    /// Creates a new SHA-256 state.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            state: [
+                0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+            ],
+            buffer: [0; 64],
+            buffered_len: 0,
+            total_len: 0,
+        }
+    }
+
+    /// Adds another input chunk to the hash.
+    pub fn update(&mut self, data: &[u8]) {
+        self.total_len = self.total_len.wrapping_add(data.len() as u64);
+        for &byte in data {
+            if let Some(slot) = self.buffer.get_mut(self.buffered_len) {
+                *slot = byte;
+            }
+            self.buffered_len = self.buffered_len.wrapping_add(1);
+            if self.buffered_len == 64 {
+                process_block(&self.buffer, &mut self.state);
+                self.buffered_len = 0;
+            }
+        }
+    }
+
+    /// Finishes the hash and returns its 32-byte digest.
+    #[must_use]
+    pub fn finalize(mut self) -> [u8; 32] {
+        let bit_len = self.total_len.wrapping_mul(8);
+        if let Some(slot) = self.buffer.get_mut(self.buffered_len) {
+            *slot = 0x80;
+        }
+        self.buffered_len = self.buffered_len.wrapping_add(1);
+
+        if self.buffered_len > 56 {
+            while self.buffered_len < 64 {
+                if let Some(slot) = self.buffer.get_mut(self.buffered_len) {
+                    *slot = 0;
+                }
+                self.buffered_len = self.buffered_len.wrapping_add(1);
+            }
+            process_block(&self.buffer, &mut self.state);
+            self.buffered_len = 0;
+        }
+
+        while self.buffered_len < 56 {
+            if let Some(slot) = self.buffer.get_mut(self.buffered_len) {
+                *slot = 0;
+            }
+            self.buffered_len = self.buffered_len.wrapping_add(1);
+        }
+
+        for (index, byte) in bit_len.to_be_bytes().iter().enumerate() {
+            if let Some(slot) = self.buffer.get_mut(56usize.wrapping_add(index)) {
+                *slot = *byte;
+            }
+        }
+        process_block(&self.buffer, &mut self.state);
+
+        let mut digest = [0u8; 32];
+        for (index, word) in self.state.iter().enumerate() {
+            let bytes = word.to_be_bytes();
+            let base = index.wrapping_mul(4);
+            for (offset, byte) in bytes.iter().enumerate() {
+                if let Some(slot) = digest.get_mut(base.wrapping_add(offset)) {
+                    *slot = *byte;
+                }
+            }
+        }
+        digest
+    }
+
+    /// Finishes the hash and returns its lowercase hexadecimal digest.
+    #[must_use]
+    pub fn finalize_hex(self) -> String {
+        digest_hex(&self.finalize())
+    }
+}
+
+impl Default for Sha256 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Computes the SHA-256 hash of a byte slice.
 #[must_use]
 pub fn sha256(data: &[u8]) -> [u8; 32] {
-    let mut state = [
-        0x6a09e667u32,
-        0xbb67ae85,
-        0x3c6ef372,
-        0xa54ff53a,
-        0x510e527f,
-        0x9b05688c,
-        0x1f83d9ab,
-        0x5be0cd19,
-    ];
-
-    let bit_len = (data.len() as u64).wrapping_mul(8);
-    let mut buffer = [0u8; 64];
-    let mut pos = 0usize;
-
-    for &byte in data {
-        if let Some(slot) = buffer.get_mut(pos) {
-            *slot = byte;
-        }
-        pos = pos.wrapping_add(1);
-        if pos == 64 {
-            process_block(&buffer, &mut state);
-            pos = 0;
-        }
-    }
-
-    // Padding
-    if let Some(slot) = buffer.get_mut(pos) {
-        *slot = 0x80;
-    }
-    pos = pos.wrapping_add(1);
-
-    if pos > 56 {
-        while pos < 64 {
-            if let Some(slot) = buffer.get_mut(pos) {
-                *slot = 0;
-            }
-            pos = pos.wrapping_add(1);
-        }
-        process_block(&buffer, &mut state);
-        pos = 0;
-    }
-
-    while pos < 56 {
-        if let Some(slot) = buffer.get_mut(pos) {
-            *slot = 0;
-        }
-        pos = pos.wrapping_add(1);
-    }
-
-    let len_bytes = bit_len.to_be_bytes();
-    for (i, &b) in len_bytes.iter().enumerate() {
-        if let Some(slot) = buffer.get_mut(56usize.wrapping_add(i)) {
-            *slot = b;
-        }
-    }
-    process_block(&buffer, &mut state);
-
-    let mut out = [0u8; 32];
-    for (i, &word) in state.iter().enumerate() {
-        let bytes = word.to_be_bytes();
-        let base = i.wrapping_mul(4);
-        for (j, &b) in bytes.iter().enumerate() {
-            if let Some(slot) = out.get_mut(base.wrapping_add(j)) {
-                *slot = b;
-            }
-        }
-    }
-    out
+    let mut hash = Sha256::new();
+    hash.update(data);
+    hash.finalize()
 }
 
 /// Computes the lowercase hex-encoded SHA-256 hash.
 #[must_use]
 pub fn sha256_hex(data: &[u8]) -> String {
-    let hash = sha256(data);
+    digest_hex(&sha256(data))
+}
+
+fn digest_hex(hash: &[u8; 32]) -> String {
     let mut s = String::with_capacity(64);
     for byte in hash {
         use std::fmt::Write;
@@ -177,7 +211,7 @@ fn process_block(block: &[u8; 64], state: &mut [u32; 8]) {
 
 #[cfg(test)]
 mod tests {
-    use super::sha256_hex;
+    use super::{sha256_hex, Sha256};
 
     #[test]
     fn test_empty() {
@@ -193,5 +227,31 @@ mod tests {
             sha256_hex(b"abc"),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
+    }
+
+    #[test]
+    fn incremental_hash_matches_one_shot_across_chunk_boundaries() {
+        let data = (0..=255).cycle().take(4097).collect::<Vec<_>>();
+        let expected = sha256_hex(&data);
+        for chunk_size in [1, 55, 56, 63, 64, 65, 127, 1024] {
+            let mut hasher = Sha256::new();
+            for chunk in data.chunks(chunk_size) {
+                hasher.update(chunk);
+            }
+            assert_eq!(hasher.finalize_hex(), expected, "chunk size {chunk_size}");
+        }
+    }
+
+    #[test]
+    fn incremental_hash_matches_multiblock_reference_vector() {
+        let data = b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq";
+        let expected = "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1";
+        assert_eq!(sha256_hex(data), expected);
+
+        let mut hasher = Sha256::new();
+        for chunk in data.chunks(7) {
+            hasher.update(chunk);
+        }
+        assert_eq!(hasher.finalize_hex(), expected);
     }
 }

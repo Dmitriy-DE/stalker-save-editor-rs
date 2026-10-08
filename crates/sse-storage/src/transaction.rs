@@ -7,7 +7,7 @@ use std::ffi::{OsStr, OsString};
 #[cfg(unix)]
 use std::fs::File;
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -31,9 +31,35 @@ pub trait FileSystem {
     fn copy_permissions(&self, source: &Path, destination: &Path) -> Result<()>;
     /// Atomically moves one file over another and flushes the destination directory where supported.
     fn replace(&self, source: &Path, destination: &Path) -> Result<()>;
+    /// Rechecks the destination hash immediately before replacing it.
+    fn replace_if_sha256_matches(&self, source: &Path, destination: &Path, expected_sha256: &str) -> Result<()> {
+        let current = self.read_all(destination)?;
+        if sha256::sha256_hex(&current) != expected_sha256 {
+            return Err(Error::Refused(
+                "source changed immediately before replacement".to_owned(),
+            ));
+        }
+        self.replace(source, destination)
+    }
     /// Publishes a new path atomically without overwriting an existing destination.
     fn publish_new(&self, source: &Path, destination: &Path) -> Result<()> {
         self.replace(source, destination)
+    }
+    /// Rechecks a source hash immediately before publishing a new output path.
+    fn publish_new_if_source_sha256_matches(
+        &self,
+        staged_output: &Path,
+        output_path: &Path,
+        source_path: &Path,
+        expected_source_sha256: &str,
+    ) -> Result<()> {
+        let current = self.read_all(source_path)?;
+        if sha256::sha256_hex(&current) != expected_source_sha256 {
+            return Err(Error::Refused(
+                "source changed immediately before export publication".to_owned(),
+            ));
+        }
+        self.publish_new(staged_output, output_path)
     }
     /// Removes a file if it exists.
     fn delete_if_exists(&self, path: &Path) -> Result<()>;
@@ -105,9 +131,34 @@ impl FileSystem for StdFileSystem {
         Ok(())
     }
 
+    fn replace_if_sha256_matches(&self, source: &Path, destination: &Path, expected_sha256: &str) -> Result<()> {
+        let current_sha256 = fresh_file_sha256(destination)?;
+        if current_sha256 != expected_sha256 {
+            return Err(Error::Refused(
+                "source changed immediately before replacement".to_owned(),
+            ));
+        }
+        self.replace(source, destination)
+    }
+
     fn publish_new(&self, source: &Path, destination: &Path) -> Result<()> {
         sse_sys::secure_fs::publish_new(source, destination)?;
         Ok(())
+    }
+
+    fn publish_new_if_source_sha256_matches(
+        &self,
+        staged_output: &Path,
+        output_path: &Path,
+        source_path: &Path,
+        expected_source_sha256: &str,
+    ) -> Result<()> {
+        if fresh_file_sha256(source_path)? != expected_source_sha256 {
+            return Err(Error::Refused(
+                "source changed immediately before export publication".to_owned(),
+            ));
+        }
+        self.publish_new(staged_output, output_path)
     }
 
     fn delete_if_exists(&self, path: &Path) -> Result<()> {
@@ -322,13 +373,12 @@ pub fn export_transaction(
         });
         StdFileSystem.write_new(&journal_path, &prepared_journal)?;
         journal_created = true;
-        let fresh_source = fs::read(&source_path)?;
-        if sha256::sha256_hex(&fresh_source) != expected_source_sha256 {
-            return Err(Error::Refused(
-                "source changed immediately before export publication".to_owned(),
-            ));
-        }
-        StdFileSystem.publish_new(&temporary_output, &output_path)?;
+        StdFileSystem.publish_new_if_source_sha256_matches(
+            &temporary_output,
+            &output_path,
+            &source_path,
+            expected_source_sha256,
+        )?;
         published = true;
         temporary_output_created = false;
         sync_directory(Some(output_directory))?;
@@ -547,6 +597,14 @@ fn rotate_verified_backups(directory: &Path) -> Result<()> {
 
 /// Restores a verified journaled backup to a new path without replacing the source save.
 pub fn restore_backup(journal_path: &Path, output_path: &Path) -> Result<PathBuf> {
+    restore_backup_with_file_system(&StdFileSystem, journal_path, output_path)
+}
+
+fn restore_backup_with_file_system(
+    files: &impl FileSystem,
+    journal_path: &Path,
+    output_path: &Path,
+) -> Result<PathBuf> {
     let journal_path = absolute_path(journal_path)?;
     let output_path = absolute_path(output_path)?;
     let directory = journal_path
@@ -581,19 +639,27 @@ pub fn restore_backup(journal_path: &Path, output_path: &Path) -> Result<PathBuf
     let token = transaction_token();
     let output_name = output_path.file_name().unwrap_or_else(|| OsStr::new("save.sav"));
     let temporary = temporary_sibling(output_directory, output_name, &token, ".tmp");
-    StdFileSystem.write_new(&temporary, &bytes)?;
-    let publish = StdFileSystem.publish_new(&temporary, &output_path);
-    cleanup(&StdFileSystem, &temporary);
+    files.write_new(&temporary, &bytes)?;
+    let publish = files.publish_new(&temporary, &output_path);
+    cleanup(files, &temporary);
     publish?;
-    StdFileSystem.sync_directory(output_directory)?;
-    let read_back = fs::read(&output_path)?;
+    if let Err(error) = files.sync_directory(output_directory) {
+        return Err(Error::System(format!(
+            "Restored output was published at {} but directory sync failed: {error}",
+            output_path.display()
+        )));
+    }
+    let read_back = files.read_all(&output_path).map_err(|error| {
+        Error::System(format!(
+            "Restored output was published at {} but read-back failed: {error}",
+            output_path.display()
+        ))
+    })?;
     if read_back != bytes || sha256::sha256_hex(&read_back) != entry.source_sha256 {
-        if fs::read(&output_path).is_ok_and(|published| published == bytes) {
-            let _ = StdFileSystem.delete_if_exists(&output_path);
-        }
-        return Err(Error::System(
-            "Restored output read-back did not match its expected bytes.".to_owned(),
-        ));
+        return Err(Error::System(format!(
+            "Restored output at {} did not match its expected bytes.",
+            output_path.display()
+        )));
     }
     Ok(output_path)
 }
@@ -1148,7 +1214,7 @@ fn replace_with_file_system_and_operation_and_checks<P, V>(
                 "Source changed before replacement: expected {expected_source_sha256}, found {current_hash}."
             )));
         }
-        files.replace(&temporary_output, &source_path)?;
+        files.replace_if_sha256_matches(&temporary_output, &source_path, expected_source_sha256)?;
         source_replaced = true;
         files.sync_directory(source_directory)?;
 
@@ -1199,7 +1265,7 @@ fn replace_with_file_system_and_operation_and_checks<P, V>(
                             "rollback refused because the source changed before restoration".to_owned(),
                         ));
                     }
-                    files.replace(&temporary_rollback, &source_path)?;
+                    files.replace_if_sha256_matches(&temporary_rollback, &source_path, &output_sha256)?;
                     files.sync_directory(source_directory)
                 })();
                 if let Err(rollback_error) = rollback {
@@ -1630,12 +1696,42 @@ fn file_fingerprint(metadata: &fs::Metadata) -> FileFingerprint {
     }
 }
 
-fn cached_file_sha256(path: &Path) -> std::io::Result<String> {
+fn regular_file_fingerprint(path: &Path) -> std::io::Result<FileFingerprint> {
     let before = fs::symlink_metadata(path)?;
     if before.file_type().is_symlink() || !before.is_file() {
-        return Err(std::io::Error::other("backup is not a regular file"));
+        return Err(std::io::Error::other("path is not a regular file"));
     }
-    let fingerprint = file_fingerprint(&before);
+    Ok(file_fingerprint(&before))
+}
+
+fn hash_file_with_fingerprint(path: &Path, fingerprint: &FileFingerprint) -> std::io::Result<String> {
+    let mut file = fs::File::open(path)?;
+    let mut hasher = sha256::Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let length = file.read(&mut buffer)?;
+        if length == 0 {
+            break;
+        }
+        let Some(chunk) = buffer.get(..length) else {
+            return Err(std::io::Error::other("file read exceeded its buffer"));
+        };
+        hasher.update(chunk);
+    }
+    let after = fs::symlink_metadata(path)?;
+    if after.file_type().is_symlink() || !after.is_file() || file_fingerprint(&after) != *fingerprint {
+        return Err(std::io::Error::other("file changed while it was being verified"));
+    }
+    Ok(hasher.finalize_hex())
+}
+
+fn fresh_file_sha256(path: &Path) -> std::io::Result<String> {
+    let fingerprint = regular_file_fingerprint(path)?;
+    hash_file_with_fingerprint(path, &fingerprint)
+}
+
+fn cached_file_sha256(path: &Path) -> std::io::Result<String> {
+    let fingerprint = regular_file_fingerprint(path)?;
     let cache = BACKUP_HASH_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     if let Some(cached) = cache
         .lock()
@@ -1646,12 +1742,7 @@ fn cached_file_sha256(path: &Path) -> std::io::Result<String> {
         return Ok(cached.sha256.clone());
     }
 
-    let bytes = fs::read(path)?;
-    let after = fs::symlink_metadata(path)?;
-    if after.file_type().is_symlink() || !after.is_file() || file_fingerprint(&after) != fingerprint {
-        return Err(std::io::Error::other("backup changed while it was being verified"));
-    }
-    let digest = sha256::sha256_hex(&bytes);
+    let digest = hash_file_with_fingerprint(path, &fingerprint)?;
     let mut cache = cache.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     if cache.len() >= MAXIMUM_CACHED_BACKUP_HASHES {
         cache.clear();
@@ -1826,8 +1917,14 @@ fn inspect_backup(directory: &Path, journal_path: &Path) -> BackupEntry {
         );
     }
     let status = if journal_status == "prepared"
-        && !prepared_write_is_resolved(&bytes, &source_path, &output_path, &source_sha256, &output_sha256)
-    {
+        && !prepared_write_is_resolved(
+            &bytes,
+            journal_path,
+            &source_path,
+            &output_path,
+            &source_sha256,
+            &output_sha256,
+        ) {
         BackupStatus::Interrupted
     } else {
         BackupStatus::Verified
@@ -1845,6 +1942,7 @@ fn inspect_backup(directory: &Path, journal_path: &Path) -> BackupEntry {
 
 fn prepared_write_is_resolved(
     journal: &[u8],
+    journal_path: &Path,
     source_path: &Path,
     output_path: &Path,
     source_sha256: &str,
@@ -1865,10 +1963,53 @@ fn prepared_write_is_resolved(
     if source_path != output_path {
         return false;
     }
-    let Ok(current_sha256) = cached_file_sha256(&source_path) else {
+    let Ok(current_sha256) = fresh_file_sha256(&source_path) else {
         return false;
     };
-    current_sha256 == source_sha256 || (operation_mode == "restore" && current_sha256 == output_sha256)
+    let resolved_hash =
+        current_sha256 == source_sha256 || (operation_mode == "restore" && current_sha256 == output_sha256);
+    resolved_hash && !prepared_transaction_has_temporary_artifacts(journal_path, &source_path, &output_path)
+}
+
+fn prepared_transaction_has_temporary_artifacts(journal_path: &Path, source_path: &Path, output_path: &Path) -> bool {
+    let Some(journal_name) = journal_path.file_name().and_then(OsStr::to_str) else {
+        return true;
+    };
+    let Some(artifact_stem) = journal_name.strip_suffix("_ORIGINAL.json") else {
+        return true;
+    };
+    let Some((_, token)) = artifact_stem.rsplit_once('_') else {
+        return true;
+    };
+    if token.len() != 32 || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return true;
+    }
+
+    let Some(source_directory) = source_path.parent() else {
+        return true;
+    };
+    let Some(source_name) = source_path.file_name() else {
+        return true;
+    };
+    let Some(output_directory) = output_path.parent() else {
+        return true;
+    };
+    let Some(output_name) = output_path.file_name() else {
+        return true;
+    };
+    let Some(journal_directory) = journal_path.parent() else {
+        return true;
+    };
+
+    let temporaries = [
+        temporary_sibling(output_directory, output_name, token, ".tmp"),
+        temporary_sibling(source_directory, source_name, token, ".rollback.tmp"),
+        journal_directory.join(format!(".{artifact_stem}.json.tmp")),
+    ];
+    temporaries.iter().any(|path| match fs::symlink_metadata(path) {
+        Ok(_) => true,
+        Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2217,7 +2358,7 @@ fn sync_directory(directory: Option<&Path>) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{replace_with_file_system, FileSystem, StdFileSystem};
+    use super::{replace_with_file_system, restore_backup_with_file_system, FileSystem, StdFileSystem};
     use sse_core::{Error, Result};
     use std::cell::{Cell, RefCell};
     use std::collections::HashMap;
@@ -2486,6 +2627,161 @@ mod tests {
         Ok(())
     }
 
+    struct FailDirectorySync;
+
+    impl FileSystem for FailDirectorySync {
+        fn read_all(&self, path: &Path) -> Result<Vec<u8>> {
+            StdFileSystem.read_all(path)
+        }
+
+        fn is_symlink(&self, path: &Path) -> Result<bool> {
+            StdFileSystem.is_symlink(path)
+        }
+
+        fn create_dir_all(&self, path: &Path) -> Result<()> {
+            StdFileSystem.create_dir_all(path)
+        }
+
+        fn write_new(&self, path: &Path, bytes: &[u8]) -> Result<()> {
+            StdFileSystem.write_new(path, bytes)
+        }
+
+        fn copy_permissions(&self, source: &Path, destination: &Path) -> Result<()> {
+            StdFileSystem.copy_permissions(source, destination)
+        }
+
+        fn replace(&self, source: &Path, destination: &Path) -> Result<()> {
+            StdFileSystem.replace(source, destination)
+        }
+
+        fn publish_new(&self, source: &Path, destination: &Path) -> Result<()> {
+            StdFileSystem.publish_new(source, destination)
+        }
+
+        fn delete_if_exists(&self, path: &Path) -> Result<()> {
+            StdFileSystem.delete_if_exists(path)
+        }
+
+        fn sync_directory(&self, _directory: &Path) -> Result<()> {
+            Err(Error::System("injected directory sync failure".to_owned()))
+        }
+    }
+
+    #[test]
+    fn restore_output_sync_failure_reports_the_published_path() -> TestResult {
+        let unique = format!(
+            "sse-storage-restore-output-sync-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        );
+        let root = std::env::temp_dir().join(unique);
+        let saves = root.join("saves");
+        let backups = root.join("backups");
+        let exports = root.join("exports");
+        std::fs::create_dir_all(&saves)?;
+        std::fs::create_dir_all(&exports)?;
+        let source = saves.join("save.sav");
+        let output = exports.join("restored.sav");
+        let original = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-source.sav");
+        let edited = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-expected.sav");
+        std::fs::write(&source, original)?;
+        let receipt = super::replace_transaction(&source, &sse_codecs::sha256::sha256_hex(original), edited, &backups)?;
+
+        let result = super::restore_backup_with_file_system(&FailDirectorySync, &receipt.journal_path, &output);
+
+        let error = result
+            .err()
+            .ok_or_else(|| std::io::Error::other("injected post-publication sync failure should be returned"))?;
+        assert!(error.to_string().contains(&output.display().to_string()));
+        assert_eq!(std::fs::read(&output)?, original);
+        std::fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    struct RestoreOutputChangesAfterReadback {
+        output: PathBuf,
+        readback_seen: Cell<bool>,
+    }
+
+    impl FileSystem for RestoreOutputChangesAfterReadback {
+        fn read_all(&self, path: &Path) -> Result<Vec<u8>> {
+            if path == self.output && !self.readback_seen.replace(true) {
+                std::fs::write(path, b"external replacement observed during restore")?;
+                let observed = StdFileSystem.read_all(path)?;
+                std::fs::write(
+                    path,
+                    include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-source.sav"),
+                )?;
+                return Ok(observed);
+            }
+            StdFileSystem.read_all(path)
+        }
+
+        fn is_symlink(&self, path: &Path) -> Result<bool> {
+            StdFileSystem.is_symlink(path)
+        }
+
+        fn create_dir_all(&self, path: &Path) -> Result<()> {
+            StdFileSystem.create_dir_all(path)
+        }
+
+        fn write_new(&self, path: &Path, bytes: &[u8]) -> Result<()> {
+            StdFileSystem.write_new(path, bytes)
+        }
+
+        fn copy_permissions(&self, source: &Path, destination: &Path) -> Result<()> {
+            StdFileSystem.copy_permissions(source, destination)
+        }
+
+        fn replace(&self, source: &Path, destination: &Path) -> Result<()> {
+            StdFileSystem.replace(source, destination)
+        }
+
+        fn publish_new(&self, source: &Path, destination: &Path) -> Result<()> {
+            StdFileSystem.publish_new(source, destination)
+        }
+
+        fn delete_if_exists(&self, path: &Path) -> Result<()> {
+            StdFileSystem.delete_if_exists(path)
+        }
+    }
+
+    #[test]
+    fn restore_readback_mismatch_must_not_delete_a_replaced_output() -> TestResult {
+        let unique = format!(
+            "sse-storage-restore-mismatch-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        );
+        let root = std::env::temp_dir().join(unique);
+        let saves = root.join("saves");
+        let backups = root.join("backups");
+        let exports = root.join("exports");
+        std::fs::create_dir_all(&saves)?;
+        std::fs::create_dir_all(&exports)?;
+        let source = saves.join("save.sav");
+        let output = exports.join("restored.sav");
+        let original = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-source.sav");
+        let edited = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-expected.sav");
+        std::fs::write(&source, original)?;
+        let receipt = super::replace_transaction(&source, &sse_codecs::sha256::sha256_hex(original), edited, &backups)?;
+        let files = RestoreOutputChangesAfterReadback {
+            output: output.clone(),
+            readback_seen: Cell::new(false),
+        };
+
+        let result = restore_backup_with_file_system(&files, &receipt.journal_path, &output);
+
+        assert!(result.is_err(), "the mismatching read-back must still be reported");
+        assert_eq!(std::fs::read(&output)?, original);
+        std::fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
     #[test]
     fn in_place_restore_checks_current_hash_and_creates_a_reversible_safety_backup() -> TestResult {
         let unique = format!(
@@ -2746,6 +3042,24 @@ mod tests {
         fn replace(&self, source: &Path, destination: &Path) -> Result<()> {
             self.tick()?;
             let mut files = self.files.borrow_mut();
+            let bytes = files
+                .remove(source)
+                .ok_or_else(|| Error::System(format!("missing synthetic temp {}", source.display())))?;
+            files.insert(destination.to_path_buf(), bytes);
+            Ok(())
+        }
+
+        fn replace_if_sha256_matches(&self, source: &Path, destination: &Path, expected_sha256: &str) -> Result<()> {
+            self.tick()?;
+            let mut files = self.files.borrow_mut();
+            let current = files
+                .get(destination)
+                .ok_or_else(|| Error::System(format!("missing synthetic source {}", destination.display())))?;
+            if sse_codecs::sha256::sha256_hex(current) != expected_sha256 {
+                return Err(Error::Refused(
+                    "source changed immediately before replacement".to_owned(),
+                ));
+            }
             let bytes = files
                 .remove(source)
                 .ok_or_else(|| Error::System(format!("missing synthetic temp {}", source.display())))?;
