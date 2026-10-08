@@ -96,6 +96,30 @@ fn detects_linux_package_install_root() {
     assert_eq!(inst.root, canonical_path(&temp.path));
 }
 
+#[cfg(unix)]
+#[test]
+fn detects_debian_install_through_usr_bin_symlink_to_usr_lib() {
+    let temp = TempDir::new("linux-deb-layout");
+    let package_root = temp.path.join("usr/lib/stalker-save-editor");
+    let bin_dir = temp.path.join("usr/bin");
+    fs::create_dir_all(&package_root).unwrap();
+    fs::create_dir_all(&bin_dir).unwrap();
+    let package_executable = package_root.join("sse-shell");
+    fs::write(&package_executable, b"synthetic executable").unwrap();
+    std::os::unix::fs::symlink("../lib/stalker-save-editor/sse-shell", bin_dir.join("sse-shell")).unwrap();
+
+    let installation = UpdateInstallationDetector::detect(
+        Some(&bin_dir.join("sse-shell")),
+        Some("linux"),
+        Some(package_root.to_str().unwrap()),
+    )
+    .unwrap();
+
+    assert_eq!(installation.kind, "package");
+    assert_eq!(installation.root, canonical_path(&package_root));
+    assert_eq!(installation.executable, canonical_path(&package_executable));
+}
+
 #[test]
 fn detects_macos_app_bundle() {
     let temp = TempDir::new("macos-app");
@@ -118,6 +142,19 @@ fn detects_macos_app_bundle() {
     assert_eq!(inst.architecture, "arm64");
     assert_eq!(inst.kind, "app-bundle");
     assert_eq!(inst.root, canonical_path(&bundle));
+}
+
+#[test]
+fn artifact_selection_rejects_unsupported_architectures_on_every_target() {
+    assert_eq!(sse_update::platform::artifact_key("linux", "aarch64", "portable"), None);
+    assert_eq!(
+        sse_update::platform::artifact_key("windows", "aarch64", "portable"),
+        None
+    );
+    assert_eq!(
+        sse_update::platform::artifact_key("macos", "arm64", "disk-image"),
+        Some("macos-arm64")
+    );
 }
 
 #[test]
@@ -686,6 +723,134 @@ fn installer_handoff_pkexec_cancelled_code_no_silent_quit() {
     assert_eq!(result.exit_code, Some(126));
     assert!(result.message.contains("cancelled"));
     assert_eq!(runner.call_count, 1);
+    assert!(!temp.path.join("verified-install").exists());
+}
+
+#[test]
+fn installer_handoff_reports_xdg_open_failure() {
+    let archive_bytes = b"fake deb package bytes".to_vec();
+    let artifact = UpdateArtifact {
+        target: "linux-deb-amd64".to_string(),
+        architecture: "x86_64".to_string(),
+        kind: "package".to_string(),
+        file: "stalker-save-editor_amd64.deb".to_string(),
+        size: u64::try_from(archive_bytes.len()).unwrap(),
+        sha256: sse_codecs::sha256::sha256_hex(&archive_bytes),
+        url: "https://updates.test/stalker-save-editor_amd64.deb".to_string(),
+    };
+    let temp = TempDir::new("xdg-open-failure");
+    let archive_path = temp.path.join(&artifact.file);
+    fs::write(&archive_path, &archive_bytes).unwrap();
+    let installation = UpdateInstallation {
+        target: "linux".to_string(),
+        architecture: "x86_64".to_string(),
+        kind: "package".to_string(),
+        root: temp.path.clone(),
+        executable: temp.path.join("stalker-save"),
+    };
+    let mut runner = MockProcessRunner::new(1);
+    runner.available_commands = Some(vec!["xdg-open".to_owned()]);
+
+    let result = install_artifact(&artifact, &archive_path, &installation, &mut runner).unwrap();
+
+    assert_eq!(result.state, UpdateInstallState::Failed);
+    assert_eq!(result.exit_code, Some(1));
+    assert!(result.message.contains("code 1"));
+    assert_eq!(runner.last_program.as_deref(), Some("xdg-open"));
+    assert!(!temp.path.join("verified-install").exists());
+}
+
+#[test]
+fn installer_handoff_keeps_verified_stage_after_external_open() {
+    let archive_bytes = b"verified deb package bytes".to_vec();
+    let artifact = UpdateArtifact {
+        target: "linux-deb-amd64".to_string(),
+        architecture: "x86_64".to_string(),
+        kind: "package".to_string(),
+        file: "stalker-save-editor_amd64.deb".to_string(),
+        size: u64::try_from(archive_bytes.len()).unwrap(),
+        sha256: sse_codecs::sha256::sha256_hex(&archive_bytes),
+        url: "https://updates.test/stalker-save-editor_amd64.deb".to_string(),
+    };
+    let temp = TempDir::new("xdg-open-success");
+    let archive_path = temp.path.join(&artifact.file);
+    fs::write(&archive_path, &archive_bytes).unwrap();
+    let installation = UpdateInstallation {
+        target: "linux".to_string(),
+        architecture: "x86_64".to_string(),
+        kind: "package".to_string(),
+        root: temp.path.clone(),
+        executable: temp.path.join("stalker-save"),
+    };
+    #[cfg(unix)]
+    {
+        let stale_dir = temp.path.join("verified-install/install-obsolete");
+        fs::create_dir_all(&stale_dir).unwrap();
+        let old_time = std::time::SystemTime::now()
+            .checked_sub(std::time::Duration::from_secs(31 * 24 * 60 * 60))
+            .unwrap();
+        fs::File::open(&stale_dir)
+            .unwrap()
+            .set_times(std::fs::FileTimes::new().set_modified(old_time))
+            .unwrap();
+    }
+    let mut runner = MockProcessRunner::new(0);
+    runner.available_commands = Some(vec!["xdg-open".to_owned()]);
+
+    let result = install_artifact(&artifact, &archive_path, &installation, &mut runner).unwrap();
+
+    assert_eq!(result.state, UpdateInstallState::OpenedExternally);
+    assert_eq!(runner.last_program.as_deref(), Some("xdg-open"));
+    #[cfg(unix)]
+    assert!(!temp.path.join("verified-install/install-obsolete").exists());
+    let first_staged_path = PathBuf::from(runner.last_args.first().unwrap());
+    assert_eq!(fs::read(&first_staged_path).unwrap(), archive_bytes);
+
+    let mut repeated_runner = MockProcessRunner::new(0);
+    repeated_runner.available_commands = Some(vec!["xdg-open".to_owned()]);
+    let repeated = install_artifact(&artifact, &archive_path, &installation, &mut repeated_runner).unwrap();
+
+    assert_eq!(repeated.state, UpdateInstallState::OpenedExternally);
+    assert_eq!(
+        repeated_runner.last_args.first().map(PathBuf::from),
+        Some(first_staged_path)
+    );
+    assert_eq!(fs::read_dir(temp.path.join("verified-install")).unwrap().count(), 1);
+}
+
+#[test]
+fn portable_update_reports_verified_archive_and_manual_steps_without_staging() {
+    let archive_bytes = b"portable update bytes".to_vec();
+    let artifact = UpdateArtifact {
+        target: "windows-x86_64".to_string(),
+        architecture: "x86_64".to_string(),
+        kind: "portable".to_string(),
+        file: "SaveEditor-windows-x86_64.zip".to_string(),
+        size: u64::try_from(archive_bytes.len()).unwrap(),
+        sha256: sse_codecs::sha256::sha256_hex(&archive_bytes),
+        url: "https://updates.test/SaveEditor-windows-x86_64.zip".to_string(),
+    };
+    let temp = TempDir::new("portable-update-manual-steps");
+    let archive_path = temp.path.join(&artifact.file);
+    fs::write(&archive_path, &archive_bytes).unwrap();
+    let installation = UpdateInstallation {
+        target: "windows".to_string(),
+        architecture: "x86_64".to_string(),
+        kind: "portable".to_string(),
+        root: temp.path.clone(),
+        executable: temp.path.join("sse-shell.exe"),
+    };
+    let mut runner = MockProcessRunner::new(0);
+
+    let error = install_artifact(&artifact, &archive_path, &installation, &mut runner).unwrap_err();
+    let message = error.to_string();
+
+    assert!(message.contains(&archive_path.display().to_string()));
+    assert!(message.contains("extract"));
+    assert!(message.contains("sse-shell"));
+    assert_eq!(runner.call_count, 0);
+    assert!(!temp.path.join("verified-install").exists());
+    assert_eq!(fs::read(&archive_path).unwrap(), archive_bytes);
 }
 
 #[test]
@@ -718,6 +883,7 @@ fn installer_handoff_refuses_tampered_local_file() {
     let err = install_artifact(&artifact, &archive_path, &installation, &mut runner).unwrap_err();
     assert!(err.to_string().contains("mismatch"));
     assert_eq!(runner.call_count, 0); // Must NOT execute process if file is invalid!
+    assert!(!temp.path.join("verified-install").exists());
 }
 
 #[test]

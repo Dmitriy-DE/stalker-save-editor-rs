@@ -9,7 +9,9 @@ use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
+
+const STALE_INSTALL_STAGE_AGE: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 
 /// The outcome state of an update installation handoff.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -77,6 +79,52 @@ pub struct MockProcessRunner {
     pub available_commands: Option<Vec<String>>,
 }
 
+struct StagedArtifact {
+    path: PathBuf,
+    directory: PathBuf,
+    preserve: bool,
+}
+
+impl Drop for StagedArtifact {
+    fn drop(&mut self) {
+        if self.preserve {
+            return;
+        }
+        let _ = std::fs::remove_dir_all(&self.directory);
+        if let Some(root) = self.directory.parent() {
+            let _ = std::fs::remove_dir(root);
+        }
+    }
+}
+
+fn clean_stale_install_stages(root: &Path, current_stage: &Path) -> Result<()> {
+    let now = SystemTime::now();
+    for entry in std::fs::read_dir(root).map_err(Error::from)? {
+        let entry = entry.map_err(Error::from)?;
+        let path = entry.path();
+        if path == current_stage
+            || !entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| name.starts_with("install-"))
+        {
+            continue;
+        }
+        let metadata = std::fs::symlink_metadata(&path).map_err(Error::from)?;
+        if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
+            continue;
+        }
+        if now
+            .duration_since(metadata.modified().map_err(Error::from)?)
+            .unwrap_or_default()
+            > STALE_INSTALL_STAGE_AGE
+        {
+            std::fs::remove_dir_all(&path).map_err(Error::from)?;
+        }
+    }
+    Ok(())
+}
+
 impl MockProcessRunner {
     /// Creates a mock runner with the given exit code.
     #[must_use]
@@ -121,7 +169,7 @@ pub fn prepare_private_directory(path: &Path) -> Result<()> {
     sse_sys::secure_fs::verify_directory_owner(path)
 }
 
-fn stage_verified_copy(artifact: &UpdateArtifact, source: &Path, root: &Path) -> Result<PathBuf> {
+fn stage_verified_copy(artifact: &UpdateArtifact, source: &Path, root: &Path) -> Result<StagedArtifact> {
     artifact.validate()?;
     prepare_private_directory(root)?;
 
@@ -131,12 +179,42 @@ fn stage_verified_copy(artifact: &UpdateArtifact, source: &Path, root: &Path) ->
         return Err(Error::damaged("File size mismatch"));
     }
 
-    let stamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|_| Error::System("System clock is before UNIX epoch".to_owned()))?
-        .as_nanos();
-    let stage_dir = root.join(format!("install-{}-{stamp}", std::process::id()));
-    std::fs::create_dir(&stage_dir).map_err(Error::from)?;
+    let stage_dir = root.join(format!("install-{}-{}", std::process::id(), artifact.sha256));
+    clean_stale_install_stages(root, &stage_dir)?;
+    let target = stage_dir.join(&artifact.file);
+    let stage_already_exists = match std::fs::create_dir(&stage_dir) {
+        Ok(()) => false,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => true,
+        Err(error) => return Err(Error::from(error)),
+    };
+    if stage_already_exists {
+        let metadata = std::fs::symlink_metadata(&stage_dir).map_err(Error::from)?;
+        if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
+            return Err(Error::Refused("Update staging path is not a real directory".to_owned()));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if metadata.permissions().mode() & 0o7777 != 0o700 {
+                return Err(Error::Refused(
+                    "Update staging directory permissions are not private".to_owned(),
+                ));
+            }
+        }
+        sse_sys::secure_fs::verify_directory_owner(&stage_dir)?;
+        let staged_artifact = StagedArtifact {
+            path: target,
+            directory: stage_dir,
+            preserve: true,
+        };
+        crate::fetch::verify_existing_file(&staged_artifact.path, artifact)?;
+        return Ok(staged_artifact);
+    }
+    let staged_artifact = StagedArtifact {
+        path: target.clone(),
+        directory: stage_dir.clone(),
+        preserve: false,
+    };
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -144,7 +222,6 @@ fn stage_verified_copy(artifact: &UpdateArtifact, source: &Path, root: &Path) ->
     }
     sse_sys::secure_fs::verify_directory_owner(&stage_dir)?;
 
-    let target = stage_dir.join(&artifact.file);
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -183,7 +260,7 @@ fn stage_verified_copy(artifact: &UpdateArtifact, source: &Path, root: &Path) ->
     }
     target_file.flush().map_err(Error::from)?;
     target_file.sync_all().map_err(Error::from)?;
-    Ok(target)
+    Ok(staged_artifact)
 }
 
 /// Hands off an update to the platform installer after validating the file on disk.
@@ -200,15 +277,26 @@ pub fn install_artifact(
         return Err(Error::Refused("Update installation type is unsupported".to_string()));
     }
 
+    if artifact.kind == platform::kind::PORTABLE {
+        artifact.validate()?;
+        crate::fetch::verify_existing_file(verified_archive, artifact)?;
+        return Err(Error::Refused(format!(
+            "Portable update verified at {}. Close the editor, extract the archive into its install folder, then launch sse-shell from that folder.",
+            verified_archive.display()
+        )));
+    }
+
     let parent = verified_archive
         .parent()
         .ok_or_else(|| Error::Refused("Update package has no parent directory".to_owned()))?;
     let staging_root = parent.join("verified-install");
-    let staged_archive = stage_verified_copy(artifact, verified_archive, &staging_root)?;
+    let mut staged_archive = stage_verified_copy(artifact, verified_archive, &staging_root)?;
 
     let archive_str = staged_archive
+        .path
         .to_str()
         .ok_or_else(|| Error::damaged("Invalid archive path encoding"))?;
+    let archive_str = archive_str.to_owned();
 
     // 1. Linux package (.deb) handoff
     if installation.target == platform::target::LINUX && installation.kind == platform::kind::PACKAGE {
@@ -222,7 +310,7 @@ pub fn install_artifact(
         let has_apt = runner.has_command("apt-get");
 
         if has_pkexec && has_apt {
-            let exit_code = runner.run("pkexec", &["apt-get", "install", "-y", "--", archive_str])?;
+            let exit_code = runner.run("pkexec", &["apt-get", "install", "-y", "--", &archive_str])?;
             return match exit_code {
                 0 => Ok(UpdateInstallResult {
                     state: UpdateInstallState::Succeeded,
@@ -243,11 +331,23 @@ pub fn install_artifact(
         }
 
         if runner.has_command("xdg-open") {
-            let exit_code = runner.run("xdg-open", &[archive_str])?;
+            let exit_code = runner.run("xdg-open", &[&archive_str])?;
+            // The external package handler may still be reading this copy after xdg-open exits.
+            staged_archive.preserve = exit_code == 0;
+            let state = if exit_code == 0 {
+                UpdateInstallState::OpenedExternally
+            } else {
+                UpdateInstallState::Failed
+            };
+            let message = if exit_code == 0 {
+                "The verified installer was opened.".to_string()
+            } else {
+                format!("Installer opener exited with code {exit_code}.")
+            };
             return Ok(UpdateInstallResult {
-                state: UpdateInstallState::OpenedExternally,
+                state,
                 exit_code: Some(exit_code),
-                message: "The verified installer was opened.".to_string(),
+                message,
             });
         }
 
@@ -261,7 +361,7 @@ pub fn install_artifact(
         && installation.kind == platform::kind::INSTALLER
         && artifact.file.ends_with(".exe")
     {
-        let exit_code = runner.run(archive_str, &[])?;
+        let exit_code = runner.run(&archive_str, &[])?;
         return match exit_code {
             0 => Ok(UpdateInstallResult {
                 state: UpdateInstallState::Succeeded,
@@ -281,17 +381,28 @@ pub fn install_artifact(
         && artifact.kind == platform::kind::DISK_IMAGE
         && artifact.file.ends_with(".dmg")
     {
-        let exit_code = runner.run("open", &[archive_str])?;
+        let exit_code = runner.run("open", &[&archive_str])?;
+        // Finder may still be reading the disk image after `open` returns.
+        staged_archive.preserve = exit_code == 0;
+        let state = if exit_code == 0 {
+            UpdateInstallState::OpenedExternally
+        } else {
+            UpdateInstallState::Failed
+        };
+        let message = if exit_code == 0 {
+            "The verified installer was opened.".to_string()
+        } else {
+            format!("Installer opener exited with code {exit_code}.")
+        };
         return Ok(UpdateInstallResult {
-            state: UpdateInstallState::OpenedExternally,
+            state,
             exit_code: Some(exit_code),
-            message: "The verified installer was opened.".to_string(),
+            message,
         });
     }
 
     Err(Error::Refused(
-        "Automatic replacement of portable .zip or .tar.gz installations is not supported by this installer handoff."
-            .to_string(),
+        "Automatic replacement is not supported for this installation type.".to_string(),
     ))
 }
 
