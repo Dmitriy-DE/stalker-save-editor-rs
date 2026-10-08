@@ -5,11 +5,11 @@ use std::path::PathBuf;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use sse_steam::achievements::{AchievementConfirmation, AchievementService};
-use sse_steam::api::{CloudFile, ScriptedSteamApi, SteamApi, WriteStage};
+use sse_steam::api::{CloudFile, ScriptedSteamApi, SteamApi, WriteFailure, WriteStage};
 use sse_steam::autocloud::AutoCloudSteamApi;
 use sse_steam::cloud::{
-    validate_remote_save_path, write_auto_cloud, PreparedEdit, SteamCloudWriteTransaction,
-    UnavailableSaveFormatVerifier, MAX_CLOUD_FILE_BYTES,
+    validate_remote_save_path, PreparedEdit, SteamCloudWriteTransaction, UnavailableSaveFormatVerifier,
+    MAX_CLOUD_FILE_BYTES,
 };
 use sse_steam::discovery::{
     auto_cloud_path, default_steam_roots, find_auto_cloud_root, list_auto_cloud_files, locate_steam_api_library,
@@ -414,26 +414,20 @@ fn public_cloud_write_api_cannot_be_enabled_by_a_boolean() {
 }
 
 #[test]
-fn auto_cloud_writer_is_disabled_until_path_operations_are_race_safe() {
-    let root = temp_dir("auto-cloud-write");
-    let game_root = root.join("Stalker2/Saved/STEAM/SaveGames/Data");
-    assert!(fs::create_dir_all(&game_root).is_ok());
-    let target = game_root.join("slot.sav");
+fn auto_cloud_api_rejects_writes_without_modifying_the_save() {
+    let library = temp_dir("auto-cloud-read-only");
+    let auto_cloud_root = library.join("steamapps/compatdata/1643320/pfx/drive_c/users/tester/AppData/Local");
+    let target = auto_cloud_root.join("Stalker2/Saved/STEAM/SaveGames/Data/slot.sav");
+    assert!(target.parent().is_some_and(|parent| fs::create_dir_all(parent).is_ok()));
     assert!(fs::write(&target, b"cloud original").is_ok());
-    let artifacts = root.join("artifacts");
-    let prepared = PreparedEdit::new(b"cloud original", b"cloud edited");
-    let mut verifier = UnavailableSaveFormatVerifier;
-    let result = write_auto_cloud(
-        &root,
-        "Stalker2/Saved/STEAM/SaveGames/Data/slot.sav",
-        &prepared,
-        &artifacts,
-        true,
-        &mut verifier,
-    );
-    assert!(result.is_err());
+
+    let mut api = AutoCloudSteamApi::with_roots([library.clone()], None);
+    assert!(api.initialize(STALKER_2_APP_ID).is_ok());
+    let result = api.write_file("Stalker2/Saved/STEAM/SaveGames/Data/slot.sav", b"cloud edited");
+
+    assert!(matches!(result, Err(WriteFailure::NotAttempted(_))));
     assert!(fs::read(&target).is_ok_and(|bytes| bytes == b"cloud original"));
-    let _ = fs::remove_dir_all(root);
+    let _ = fs::remove_dir_all(library);
 }
 
 #[test]

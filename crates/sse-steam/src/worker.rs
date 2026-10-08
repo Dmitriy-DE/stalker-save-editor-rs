@@ -962,7 +962,7 @@ mod tests {
     #[test]
     fn timed_out_worker_returns_uncertain_for_a_write() {
         let directory = temp_dir("timeout");
-        let worker = worker_script(&directory, "#!/bin/sh\nexec sleep 2\n");
+        let worker = worker_script(&directory, "#!/bin/sh\ncat >/dev/null\nexec sleep 3\n");
         let request = NativeRequest::Write {
             app_id: 4500,
             file_name: "_appdata_/savedgames/slot.sav".into(),
@@ -983,17 +983,20 @@ mod tests {
             4500,
             header,
             bytes,
-            Duration::from_millis(40),
+            Duration::from_millis(250),
             true,
         );
-        assert!(matches!(
-            result,
-            Err(NativeProcessError {
-                write_outcome_uncertain: true,
-                ..
-            })
-        ));
-        assert!(started.elapsed() < Duration::from_secs(1));
+        assert!(
+            matches!(
+                &result,
+                Err(NativeProcessError {
+                    write_outcome_uncertain: true,
+                    ..
+                })
+            ),
+            "unexpected timeout result: {result:?}"
+        );
+        assert!(started.elapsed() < Duration::from_secs(2));
         let _ = std::fs::remove_dir_all(directory);
     }
 

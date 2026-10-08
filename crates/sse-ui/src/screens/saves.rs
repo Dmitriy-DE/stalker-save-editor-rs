@@ -8032,6 +8032,7 @@ mod tests {
 
     #[test]
     fn inventory_draft_persists_and_global_undo_redo_updates_the_selected_save() -> sse_core::Result<()> {
+        let _task_guard = crate::screens::task_registry_test_guard();
         let temp = TempDirectory::new();
         let draft_directory = temp.0.join("drafts");
         let source = include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-source.sav");
@@ -8099,6 +8100,10 @@ mod tests {
             cx.app.draft(&source_sha256).and_then(|draft| draft.money),
             Some(original_money.saturating_add(77))
         );
+        assert!(sse_app::tasks::wait_for_named_tasks(
+            &["draft-save"],
+            std::time::Duration::from_secs(1)
+        ));
         Ok(())
     }
 

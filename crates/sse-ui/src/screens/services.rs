@@ -1,5 +1,6 @@
 //! S5: companion, achievements, Steam Cloud, and editor updates.
 
+use super::saves::Workspace;
 use super::style::{self, Button, Text};
 use super::{AppMessage, Context, Screen, ScreenId};
 use crate::event_loop::{Message, WindowEvent};
@@ -11,17 +12,17 @@ use sse_steam::worker::WorkerSteamApi;
 use sse_steam::{cloud::PreparedEdit, cloud::SteamCloudWriteTransaction, cloud::WriteStatus};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const ROWS: usize = 8;
 
 /// Screens implemented by the S5 services package.
 #[must_use]
-pub fn screens() -> Vec<Box<dyn Screen>> {
+pub(crate) fn screens(backup_workspace: Workspace) -> Vec<Box<dyn Screen>> {
     vec![
         Box::new(Companion::default()),
         Box::new(Achievements::default()),
-        Box::new(Cloud::default()),
+        Box::new(Cloud::with_backup_workspace(backup_workspace)),
         Box::new(Updates::default()),
     ]
 }
@@ -119,6 +120,24 @@ fn clip(text: &str) -> String {
     } else {
         text.chars().take(79).chain(std::iter::once('…')).collect()
     }
+}
+
+fn format_epoch_timestamp(timestamp: Option<i64>) -> String {
+    let Some(seconds) = timestamp
+        .filter(|timestamp| *timestamp > 0)
+        .and_then(|timestamp| u64::try_from(timestamp).ok())
+    else {
+        return "дата неизвестна".to_owned();
+    };
+    let Some(value) = UNIX_EPOCH.checked_add(Duration::from_secs(seconds)) else {
+        return "дата вне диапазона".to_owned();
+    };
+    super::history::format_system_time(value)
+}
+
+fn system_time_timestamp(value: Option<SystemTime>) -> Option<i64> {
+    let seconds = value?.duration_since(UNIX_EPOCH).ok()?.as_secs();
+    i64::try_from(seconds).ok()
 }
 
 #[derive(Debug)]
@@ -1015,6 +1034,12 @@ struct CloudIntent {
     remote: String,
     local: PathBuf,
     local_sha256: [u8; 32],
+    cloud_sha256: [u8; 32],
+    cloud_size: u64,
+    cloud_timestamp: Option<i64>,
+    local_size: u64,
+    local_timestamp: Option<i64>,
+    backup_directory: PathBuf,
 }
 
 #[derive(Debug)]
@@ -1033,14 +1058,25 @@ struct Cloud {
     download: Option<WidgetId>,
     upload: Option<WidgetId>,
     confirm_card: Option<WidgetId>,
+    confirm_cloud_version: Option<WidgetId>,
+    confirm_local_version: Option<WidgetId>,
+    confirm_backup_directory: Option<WidgetId>,
     confirm_check: Option<WidgetId>,
     confirm_write: Option<WidgetId>,
     confirm_cancel: Option<WidgetId>,
     intent: Option<CloudIntent>,
     overwrite_confirmed: bool,
+    backup_workspace: Workspace,
 }
 
 impl Cloud {
+    fn with_backup_workspace(backup_workspace: Workspace) -> Self {
+        Self {
+            backup_workspace,
+            ..Self::default()
+        }
+    }
+
     fn clear_intent(&mut self, cx: &mut Context<'_>) -> Result<()> {
         self.intent = None;
         self.overwrite_confirmed = false;
@@ -1100,6 +1136,7 @@ impl Cloud {
             return;
         }
         let remote = item.name.clone();
+        let selected_file = item.clone();
         let remote_name = Path::new(&remote)
             .file_name()
             .and_then(|name| name.to_str())
@@ -1127,15 +1164,70 @@ impl Cloud {
         };
 
         let Some(proxy) = cx.proxy.cloned() else { return };
+        let backup_directory = self.backup_workspace.backup_directory();
+        cx.status = Some("Сверяю облачную и локальную версии перед подтверждением…".to_owned());
         sse_app::tasks::spawn_named_detached("companion-read", move || {
-            let result = std::fs::read(&local)
-                .map_err(|error| format!("Ошибка записи: {error}"))
-                .map(|bytes| CloudIntent {
+            let result = (|| {
+                let metadata_before =
+                    std::fs::metadata(&local).map_err(|error| format!("Ошибка локального сейва: {error}"))?;
+                if metadata_before.len() == 0
+                    || metadata_before.len() > u64::try_from(sse_steam::cloud::MAX_CLOUD_FILE_BYTES).unwrap_or(u64::MAX)
+                {
+                    return Err("Размер локального сейва вне поддерживаемого диапазона для Steam Cloud".to_owned());
+                }
+                let local_bytes = std::fs::read(&local).map_err(|error| format!("Ошибка локального сейва: {error}"))?;
+                let metadata_after =
+                    std::fs::metadata(&local).map_err(|error| format!("Ошибка локального сейва: {error}"))?;
+                let local_size = u64::try_from(local_bytes.len())
+                    .map_err(|_| "Размер локального сейва превышает диапазон метаданных".to_owned())?;
+                if metadata_before.len() != local_size
+                    || metadata_after.len() != local_size
+                    || metadata_before.modified().ok() != metadata_after.modified().ok()
+                {
+                    return Err("Локальный сейв изменился во время подготовки; повторите попытку".to_owned());
+                }
+
+                let mut api = steam_api(app_id)?;
+                let listed_before = api.list_files().map_err(|error| error.message)?;
+                let current = listed_before
+                    .iter()
+                    .find(|file| file.name == remote)
+                    .ok_or_else(|| "Облачный файл исчез; обновите список".to_owned())?;
+                if current != &selected_file {
+                    return Err("Облачная версия изменилась после загрузки списка; обновите список".to_owned());
+                }
+                if !current.exists || !current.persisted {
+                    return Err("Steam не подтвердил сохранённую облачную версию; запись отменена".to_owned());
+                }
+                if current.size == 0
+                    || current.size > u64::try_from(sse_steam::cloud::MAX_CLOUD_FILE_BYTES).unwrap_or(u64::MAX)
+                {
+                    return Err("Размер облачного сейва вне поддерживаемого диапазона".to_owned());
+                }
+                let cloud_bytes = api.read_file(&remote).map_err(|error| error.message)?;
+                let cloud_size = u64::try_from(cloud_bytes.len())
+                    .map_err(|_| "Размер облачного сейва превышает диапазон метаданных".to_owned())?;
+                if cloud_size != current.size {
+                    return Err("Размер облачного файла изменился во время чтения; обновите список".to_owned());
+                }
+                let listed_after = api.list_files().map_err(|error| error.message)?;
+                if listed_after.iter().find(|file| file.name == remote) != Some(current) {
+                    return Err("Облачная версия изменилась во время чтения; обновите список".to_owned());
+                }
+
+                Ok(CloudIntent {
                     app_id,
                     remote,
                     local,
-                    local_sha256: sse_codecs::sha256::sha256(&bytes),
-                });
+                    local_sha256: sse_codecs::sha256::sha256(&local_bytes),
+                    cloud_sha256: sse_codecs::sha256::sha256(&cloud_bytes),
+                    cloud_size,
+                    cloud_timestamp: Some(current.timestamp),
+                    local_size,
+                    local_timestamp: system_time_timestamp(metadata_after.modified().ok()),
+                    backup_directory,
+                })
+            })();
             proxy.send(AppMessage::ToScreen(
                 ScreenId::Cloud,
                 Box::new(CloudReply::Prepared(result)),
@@ -1152,10 +1244,7 @@ impl Cloud {
                     return Ok("Локальный файл изменился после запроса записи; подтвердите запись ещё раз.".to_owned());
                 }
                 let mut api = steam_api(intent.app_id)?;
-                let source = api.read_file(&intent.remote).map_err(|error| error.message)?;
-                let prepared = PreparedEdit::from_owned(&source, output);
-                drop(source);
-                let artifacts = sse_app::paths::default_data_directory().join("backups");
+                let prepared = PreparedEdit::from_source_sha256(intent.cloud_sha256, output);
                 let mut verifier = XRaySaveFormatVerifier::default();
                 let receipt = SteamCloudWriteTransaction::upload(
                     &mut api,
@@ -1163,14 +1252,20 @@ impl Cloud {
                     intent.app_id,
                     &intent.remote,
                     &prepared,
-                    &artifacts,
+                    &intent.backup_directory,
                     true,
                 )
                 .map_err(|error| error.message)?;
+                let artifact_paths = format!(
+                    "Копия облачной версии: {}; копия отправки: {}; журнал: {}",
+                    receipt.backup_path.display(),
+                    receipt.recovery_path.display(),
+                    receipt.journal_path.display()
+                );
                 match receipt.status {
-                    WriteStatus::Verified => Ok(format!("Записано и проверено: {}", intent.remote)),
+                    WriteStatus::Verified => Ok(format!("Записано и проверено: {}. {artifact_paths}", intent.remote)),
                     WriteStatus::Uncertain => Ok(format!(
-                        "Результат записи не подтверждён (повтор не выполняется): {}{}",
+                        "Результат записи не подтверждён (повтор не выполняется): {}{}. {artifact_paths}",
                         intent.remote,
                         receipt.reason.map(|reason| format!(" — {reason}")).unwrap_or_default()
                     )),
@@ -1222,6 +1317,9 @@ impl Screen for Cloud {
             "Внимание: локальный файл будет отправлен в Steam Cloud и перезапишет облачное сохранение. Резервная копия будет сохранена в бэкапы.",
             Text::Body,
         )?;
+        self.confirm_cloud_version = Some(style::label(cx.tree, confirm, "Облако Steam: —", Text::Note)?);
+        self.confirm_local_version = Some(style::label(cx.tree, confirm, "Локальный сейв: —", Text::Note)?);
+        self.confirm_backup_directory = Some(style::label(cx.tree, confirm, "Папка резервных копий: —", Text::Note)?);
         self.confirm_check = Some(style::button(
             cx.tree,
             confirm,
@@ -1331,12 +1429,10 @@ impl Screen for Cloud {
             let Some(app_id) = cx.app.selected_game().and_then(app_id) else {
                 return Ok(());
             };
-            // Never touch the open save: a cloud file goes into <data>/backups/cloud_downloads as a new file.
+            // Never touch the open save: a cloud file goes into the configured backup folder as a new file.
             // Replacing a local save from the cloud needs the checks of ACCEPTANCE §18.3 (same name, same game,
             // valid save, journaled backup) and is done by the save writer, not here.
-            let downloads = sse_app::paths::default_data_directory()
-                .join("backups")
-                .join("cloud_downloads");
+            let downloads = self.backup_workspace.backup_directory().join("cloud_downloads");
             let remote = item.name.clone();
             let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
             sse_app::tasks::spawn_named_detached("companion-write", move || {
@@ -1398,6 +1494,32 @@ impl Screen for Cloud {
                         }
                     }
                     CloudReply::Prepared(Ok(intent)) => {
+                        if let Some(label) = self.confirm_cloud_version {
+                            cx.tree.set_text(
+                                label,
+                                &format!(
+                                    "Облако Steam: {} Б · {}",
+                                    intent.cloud_size,
+                                    format_epoch_timestamp(intent.cloud_timestamp)
+                                ),
+                            )?;
+                        }
+                        if let Some(label) = self.confirm_local_version {
+                            cx.tree.set_text(
+                                label,
+                                &format!(
+                                    "Локальный сейв: {} Б · {}",
+                                    intent.local_size,
+                                    format_epoch_timestamp(intent.local_timestamp)
+                                ),
+                            )?;
+                        }
+                        if let Some(label) = self.confirm_backup_directory {
+                            cx.tree.set_text(
+                                label,
+                                &format!("Папка резервных копий: {}", intent.backup_directory.display()),
+                            )?;
+                        }
                         self.intent = Some(intent.clone());
                         self.overwrite_confirmed = false;
                         if let Some(check) = self.confirm_check {

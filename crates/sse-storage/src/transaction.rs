@@ -237,6 +237,17 @@ pub struct ExportReceipt {
     pub maintenance_warning: Option<String>,
 }
 
+/// Durable local recovery artifacts created before a Steam Cloud write.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CloudRecoveryReceipt {
+    /// Copy of the cloud bytes that were about to be replaced.
+    pub backup_path: PathBuf,
+    /// Copy of the bytes prepared for upload.
+    pub recovery_path: PathBuf,
+    /// Journal shown in the application's backup list.
+    pub journal_path: PathBuf,
+}
+
 /// Result of an in-place backup restore.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RestoreReceipt {
@@ -276,6 +287,8 @@ pub struct BackupEntry {
     pub source_sha256: String,
     /// Verification result.
     pub status: BackupStatus,
+    /// Operation recorded by the journal, when it could be read.
+    pub operation_mode: Option<String>,
     /// Failure detail for missing or corrupt entries.
     pub error: Option<String>,
 }
@@ -466,6 +479,104 @@ pub fn export_transaction(
     })
 }
 
+/// Writes durable cloud preimage and upload-recovery copies under the configured backup folder.
+///
+/// The journal's source path points to a new-copy destination, so backup restoration cannot
+/// replace a local save or write back to Steam Cloud.
+pub fn write_cloud_recovery_artifacts(
+    directory: &Path,
+    app_id: u32,
+    remote_name: &str,
+    cloud_bytes: &[u8],
+    upload_bytes: &[u8],
+) -> Result<CloudRecoveryReceipt> {
+    if app_id == 0 || remote_name.trim().is_empty() {
+        return Err(Error::Refused("Steam Cloud recovery identity is incomplete".to_owned()));
+    }
+    if cloud_bytes.is_empty() || upload_bytes.is_empty() {
+        return Err(Error::Refused(
+            "Steam Cloud recovery artifacts must not be empty".to_owned(),
+        ));
+    }
+    let directory = absolute_path(directory)?;
+    let remote_leaf = remote_name
+        .rsplit(['/', '\\'])
+        .next()
+        .filter(|leaf| !leaf.is_empty())
+        .ok_or_else(|| Error::Refused("Steam Cloud filename is empty".to_owned()))?;
+    let safe_name = safe_cloud_artifact_stem(remote_leaf);
+    let artifact_stem = format!("steam-cloud-{app_id}-{safe_name}_{}", transaction_token());
+    let backup_path = directory.join(format!("{artifact_stem}_ORIGINAL.sav"));
+    let recovery_path = directory.join(format!("{artifact_stem}_EDITED.sav"));
+    let journal_path = directory.join(format!("{artifact_stem}_ORIGINAL.json"));
+    let source_path = directory
+        .join("cloud_recoveries")
+        .join(app_id.to_string())
+        .join(format!("{safe_name}.sav"));
+    let created_at = timestamp_utc()?;
+    let source_sha256 = sha256::sha256_hex(cloud_bytes);
+    let output_sha256 = sha256::sha256_hex(upload_bytes);
+    let journal = serialize_journal(&Journal {
+        status: "verified",
+        created_at: &created_at,
+        source_path: &source_path,
+        source_sha256: &source_sha256,
+        output_path: &recovery_path,
+        output_sha256: &output_sha256,
+        backup_path: &backup_path,
+        recovery_path: &recovery_path,
+        operation: JournalOperation::SteamCloud,
+    });
+
+    StdFileSystem.create_dir_all(&directory)?;
+    let source_directory = source_path
+        .parent()
+        .ok_or_else(|| Error::Refused("Steam Cloud recovery path has no parent directory".to_owned()))?;
+    StdFileSystem.create_dir_all(source_directory)?;
+
+    let mut backup_created = false;
+    let mut recovery_created = false;
+    let mut journal_created = false;
+    let write_result = (|| {
+        StdFileSystem.write_new(&backup_path, cloud_bytes)?;
+        backup_created = true;
+        StdFileSystem.write_new(&recovery_path, upload_bytes)?;
+        recovery_created = true;
+        StdFileSystem.write_new(&journal_path, &journal)?;
+        journal_created = true;
+        Ok(())
+    })();
+    if let Err(error) = write_result {
+        let mut cleanup_error = None;
+        for (path, created) in [
+            (&journal_path, journal_created),
+            (&recovery_path, recovery_created),
+            (&backup_path, backup_created),
+        ] {
+            if created {
+                if let Err(remove_error) = StdFileSystem.delete_if_exists(path) {
+                    cleanup_error.get_or_insert(remove_error);
+                }
+            }
+        }
+        if let Err(sync_error) = StdFileSystem.sync_directory(&directory) {
+            cleanup_error.get_or_insert(sync_error);
+        }
+        if let Some(cleanup_error) = cleanup_error {
+            return Err(Error::System(format!(
+                "Steam Cloud recovery write failed ({error}); cleanup was incomplete ({cleanup_error})"
+            )));
+        }
+        return Err(error);
+    }
+
+    Ok(CloudRecoveryReceipt {
+        backup_path,
+        recovery_path,
+        journal_path,
+    })
+}
+
 /// Lists and verifies one directory of C#-compatible backup journals.
 pub fn list_backups(directory: &Path) -> Result<Vec<BackupEntry>> {
     let directory = absolute_path(directory)?;
@@ -503,6 +614,7 @@ pub fn list_backups(directory: &Path) -> Result<Vec<BackupEntry>> {
                 source_path: PathBuf::new(),
                 source_sha256: String::new(),
                 status: BackupStatus::Corrupt,
+                operation_mode: None,
                 error: Some("journal for this backup is missing".to_owned()),
             });
         }
@@ -1356,6 +1468,27 @@ fn artifact_stem_prefix(path: &Path) -> String {
     }
 }
 
+fn safe_cloud_artifact_stem(remote_leaf: &str) -> String {
+    let safe = remote_leaf
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .take(64)
+        .collect::<String>()
+        .trim_matches(['.', '_'])
+        .to_owned();
+    if safe.is_empty() {
+        "cloud-save".to_owned()
+    } else {
+        safe
+    }
+}
+
 fn temporary_sibling(directory: &Path, file_name: &OsStr, token: &str, suffix: &str) -> PathBuf {
     let mut temporary_name = OsString::from(".");
     temporary_name.push(file_name);
@@ -1502,6 +1635,7 @@ struct Journal<'a> {
 enum JournalOperation<'a> {
     Replace(EditSummary),
     Restore(&'a Path),
+    SteamCloud,
 }
 
 struct ReplacementRequest<'a> {
@@ -1807,6 +1941,16 @@ fn serialize_export_journal(journal: &ExportJournal<'_>) -> Vec<u8> {
     encoded.into_bytes()
 }
 
+struct ParsedBackupJournal {
+    source_path: PathBuf,
+    output_path: PathBuf,
+    output_sha256: String,
+    backup_path: PathBuf,
+    source_sha256: String,
+    journal_status: String,
+    operation_mode: Option<String>,
+}
+
 fn inspect_backup(directory: &Path, journal_path: &Path) -> BackupEntry {
     let corrupt = |message: String,
                    backup_path: Option<PathBuf>,
@@ -1817,6 +1961,7 @@ fn inspect_backup(directory: &Path, journal_path: &Path) -> BackupEntry {
         source_path: source_path.unwrap_or_default(),
         source_sha256: sha256.unwrap_or_default(),
         status: BackupStatus::Corrupt,
+        operation_mode: None,
         error: Some(message),
     };
     if fs::symlink_metadata(journal_path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
@@ -1836,7 +1981,7 @@ fn inspect_backup(directory: &Path, journal_path: &Path) -> BackupEntry {
         Ok(fields) => fields,
         Err(error) => return corrupt(error.to_string(), None, None, None),
     };
-    let parsed = (|| -> Result<(PathBuf, PathBuf, String, PathBuf, String, String)> {
+    let parsed = (|| -> Result<ParsedBackupJournal> {
         if field_u64(&fields, "version")? != 1 {
             return Err(Error::Refused("unsupported journal version".to_owned()));
         }
@@ -1851,6 +1996,7 @@ fn inspect_backup(directory: &Path, journal_path: &Path) -> BackupEntry {
         if !matches!(fields.get("operation"), Some(TopValue::Object)) {
             return Err(Error::Refused("journal operation is not an object".to_owned()));
         }
+        let operation_mode = parse_operation_mode(&bytes).ok();
         let journal_status = field_string(&fields, "status")?;
         if !matches!(journal_status.as_str(), "verified" | "prepared") {
             return Err(Error::Refused("journal status is not recognized".to_owned()));
@@ -1871,16 +2017,25 @@ fn inspect_backup(directory: &Path, journal_path: &Path) -> BackupEntry {
                 "journal backup path is outside its backup directory".to_owned(),
             ));
         }
-        Ok((
+        Ok(ParsedBackupJournal {
             source_path,
             output_path,
             output_sha256,
             backup_path,
             source_sha256,
             journal_status,
-        ))
+            operation_mode,
+        })
     })();
-    let (source_path, output_path, output_sha256, backup_path, source_sha256, journal_status) = match parsed {
+    let ParsedBackupJournal {
+        source_path,
+        output_path,
+        output_sha256,
+        backup_path,
+        source_sha256,
+        journal_status,
+        operation_mode,
+    } = match parsed {
         Ok(values) => values,
         Err(error) => return corrupt(error.to_string(), None, None, None),
     };
@@ -1901,6 +2056,7 @@ fn inspect_backup(directory: &Path, journal_path: &Path) -> BackupEntry {
                 source_path,
                 source_sha256,
                 status: BackupStatus::Missing,
+                operation_mode,
                 error: Some("backup file is missing".to_owned()),
             }
         }
@@ -1940,6 +2096,7 @@ fn inspect_backup(directory: &Path, journal_path: &Path) -> BackupEntry {
         source_path,
         source_sha256,
         status,
+        operation_mode,
         error: (status == BackupStatus::Interrupted)
             .then(|| "prepared transaction needs recovery; the original backup passed SHA-256 verification".to_owned()),
     }
@@ -2252,6 +2409,7 @@ fn serialize_journal(journal: &Journal<'_>) -> Vec<u8> {
                 "{{\"mode\":\"restore\",\"restore_from\":\"{restore_from_display}\",\"restore_from_native\":\"{restore_from_native}\",\"money\":null,\"stack_count\":0,\"move_count\":0,\"detach_count\":0,\"attach_count\":0,\"raw_count\":0,\"add_count\":0,\"durability_count\":0,\"upgrade_count\":0,\"relation_count\":0,\"player_faction\":false}}"
             )
         }
+        JournalOperation::SteamCloud => "{\"mode\":\"steam-cloud\"}".to_owned(),
     };
     format!(
         "{{\"version\":1,\"status\":\"{}\",\"created_at\":\"{created_at}\",\"source_path\":\"{source_path}\",\"source_path_native\":\"{source_path_native}\",\"source_sha256\":\"{}\",\"output_path\":\"{output_path}\",\"output_path_native\":\"{output_path_native}\",\"output_sha256\":\"{}\",\"backup_path\":\"{backup_path}\",\"backup_path_native\":\"{backup_path_native}\",\"recovery_path\":\"{recovery_path}\",\"recovery_path_native\":\"{recovery_path_native}\",\"operation\":{operation}}}",
@@ -2878,6 +3036,42 @@ mod tests {
 
         super::restore_in_place(safety_journal)?;
         assert_eq!(std::fs::read(&source)?, edited);
+        std::fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn cloud_recovery_artifacts_are_visible_and_restore_only_to_a_new_copy() -> TestResult {
+        let unique = format!(
+            "sse-storage-cloud-backup-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        );
+        let root = std::env::temp_dir().join(unique);
+        let original = b"cloud original save bytes";
+        let edited = b"edited local save bytes";
+        let receipt =
+            super::write_cloud_recovery_artifacts(&root, 4500, "_appdata_/savedgames/quicksave.sav", original, edited)?;
+
+        let entries = super::list_backups(&root)?;
+        let entry = entries
+            .iter()
+            .find(|entry| entry.journal_path == receipt.journal_path)
+            .ok_or_else(|| std::io::Error::other("Steam Cloud backup should be visible"))?;
+        assert_eq!(entry.status, super::BackupStatus::Verified);
+        assert_eq!(entry.operation_mode.as_deref(), Some("steam-cloud"));
+        assert_eq!(std::fs::read(&receipt.backup_path)?, original);
+        assert_eq!(std::fs::read(&receipt.recovery_path)?, edited);
+
+        let restored_directory = root.join("restored");
+        std::fs::create_dir_all(&restored_directory)?;
+        let restored = restored_directory.join("quicksave.sav");
+        super::restore_backup(&receipt.journal_path, &restored)?;
+        assert_eq!(std::fs::read(restored)?, original);
+        assert!(super::restore_in_place(&receipt.journal_path).is_err());
+
         std::fs::remove_dir_all(root)?;
         Ok(())
     }
