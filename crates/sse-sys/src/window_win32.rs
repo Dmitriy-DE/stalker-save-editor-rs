@@ -1342,3 +1342,31 @@ fn file_dialog(owner: w::Hwnd, folders: bool) -> Result<Option<String>> {
     }
     Ok(result)
 }
+
+/// Opens a native picker for one existing folder.
+///
+/// The caller initializes a single-threaded COM apartment for this invocation.
+///
+/// # Errors
+/// Returns an error when COM or the native folder picker fails.
+pub fn choose_directory() -> Result<Option<std::path::PathBuf>> {
+    // SAFETY: COM is initialized for this thread with the documented STA apartment model.
+    let initialized = unsafe { w::CoInitializeEx(ptr::null_mut(), 2) };
+    if initialized < 0 {
+        return Err(Error::System(format!(
+            "CoInitializeEx for folder picker failed with HRESULT 0x{:08x}",
+            initialized as u32
+        )));
+    }
+    let _apartment = ComApartment;
+    let Some(selected) = file_dialog(ptr::null_mut(), true)? else {
+        return Ok(None);
+    };
+    let path = std::path::PathBuf::from(selected);
+    if !path.is_absolute() {
+        return Err(Error::Refused(
+            "native folder picker returned a relative path".to_owned(),
+        ));
+    }
+    Ok(Some(path))
+}

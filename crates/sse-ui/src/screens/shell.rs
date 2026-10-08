@@ -362,6 +362,8 @@ pub struct Shell {
     proxy: Option<Proxy<AppMessage>>,
     app: sse_app::state::AppState,
     wizard: super::wizard::Wizard,
+    wizard_task_request: Option<u64>,
+    next_wizard_task_request: u64,
     sounds: crate::sound::GameUiSounds,
     sound_game: Option<String>,
     sound_enabled: bool,
@@ -1252,6 +1254,8 @@ impl Shell {
             proxy,
             app: sse_app::state::AppState::new(),
             wizard,
+            wizard_task_request: None,
+            next_wizard_task_request: 0,
             sounds: crate::sound::GameUiSounds::default(),
             sound_game: None,
             sound_enabled: settings.sound_enabled,
@@ -1608,6 +1612,146 @@ impl Shell {
         if active.is_some_and(|request| request != self.library_workspace.load_request()) {
             self.open_files_queue = None;
         }
+    }
+
+    fn refresh_library_after_wizard(&mut self, tree: &mut Tree) -> Result<()> {
+        let status = {
+            let mut cx = Context {
+                tree: &mut *tree,
+                proxy: self.proxy.as_ref(),
+                status: None,
+                app: &mut self.app,
+            };
+            self.library_workspace.refresh_library(&mut cx);
+            cx.status
+        };
+        if let Some(status) = status {
+            tree.set_text(self.status, &status)?;
+        }
+        self.render_library(tree)
+    }
+
+    fn begin_wizard_task<F>(
+        &mut self,
+        tree: &mut Tree,
+        status: &str,
+        kind: super::wizard::WizardTaskKind,
+        work: F,
+        on_ui_thread: bool,
+    ) -> Result<()>
+    where
+        F: FnOnce() -> std::result::Result<super::wizard::WizardWorkResult, String> + Send + 'static,
+    {
+        if self.wizard_task_request.is_some() {
+            return Ok(());
+        }
+        if !on_ui_thread && self.proxy.is_none() {
+            tree.set_text(self.status, crate::strings::t("Фоновая очередь недоступна."))?;
+            return Ok(());
+        }
+        self.next_wizard_task_request = self.next_wizard_task_request.saturating_add(1);
+        let request = self.next_wizard_task_request;
+        self.wizard_task_request = Some(request);
+        self.wizard.set_busy(tree, true)?;
+        tree.set_text(self.status, status)?;
+
+        if on_ui_thread {
+            let finished = super::wizard::WizardTaskFinished {
+                request,
+                kind,
+                result: work(),
+            };
+            let _ = self.handle_wizard_task_finished(tree, &finished)?;
+            return Ok(());
+        }
+
+        let Some(proxy) = self.proxy.clone() else {
+            self.wizard_task_request = None;
+            self.wizard.set_busy(tree, false)?;
+            tree.set_text(self.status, crate::strings::t("Фоновая очередь недоступна."))?;
+            return Ok(());
+        };
+        if let Err(error) = super::wizard::spawn_wizard_task(proxy, request, kind, work) {
+            self.wizard_task_request = None;
+            self.wizard.set_busy(tree, false)?;
+            tree.set_text(
+                self.status,
+                &format!("{}: {error}", crate::strings::t(kind.failure_prefix())),
+            )?;
+        }
+        Ok(())
+    }
+
+    fn handle_wizard_action(&mut self, tree: &mut Tree, action: super::wizard::WizardAction) -> Result<()> {
+        match action {
+            super::wizard::WizardAction::Navigate(target) => self.open(tree, target),
+            super::wizard::WizardAction::DirectoryAdded => {
+                tree.set_text(self.status, crate::strings::t("Папка добавлена в список поиска."))?;
+                self.refresh_library_after_wizard(tree)
+            }
+            super::wizard::WizardAction::AutoSearch => self.begin_wizard_task(
+                tree,
+                crate::strings::t("Ищу папки с сохранениями…"),
+                super::wizard::WizardTaskKind::AutoSearch,
+                || {
+                    super::wizard::Wizard::auto_search()
+                        .map(super::wizard::WizardWorkResult::AutoSearch)
+                        .map_err(|error| error.to_string())
+                },
+                false,
+            ),
+            super::wizard::WizardAction::Browse => self.begin_wizard_task(
+                tree,
+                crate::strings::t("Выберите папку с сохранениями…"),
+                super::wizard::WizardTaskKind::Browse,
+                || {
+                    sse_sys::directory_dialog::choose_directory()
+                        .map(super::wizard::WizardWorkResult::Directory)
+                        .map_err(|error| error.to_string())
+                },
+                cfg!(target_os = "macos"),
+            ),
+        }
+    }
+
+    fn handle_wizard_task_finished(
+        &mut self,
+        tree: &mut Tree,
+        finished: &super::wizard::WizardTaskFinished,
+    ) -> Result<Flow> {
+        if self.wizard_task_request != Some(finished.request) {
+            return Ok(Flow::Continue);
+        }
+        self.wizard_task_request = None;
+        self.wizard.set_busy(tree, false)?;
+        if self.close_waiting {
+            return Ok(Flow::Continue);
+        }
+        match &finished.result {
+            Ok(super::wizard::WizardWorkResult::AutoSearch(added)) => {
+                let status = if *added == 0 {
+                    crate::strings::t("Автопоиск завершён. Новых папок не найдено.").to_owned()
+                } else {
+                    crate::strings::t("Автопоиск завершён. Добавлено папок: {0}.").replace("{0}", &added.to_string())
+                };
+                tree.set_text(self.status, &status)?;
+                self.refresh_library_after_wizard(tree)?;
+            }
+            Ok(super::wizard::WizardWorkResult::Directory(Some(path))) => {
+                self.wizard.set_directory_input(tree, path.clone())?;
+                tree.set_text(self.status, crate::strings::t("Папка выбрана. Нажмите «Добавить»."))?;
+            }
+            Ok(super::wizard::WizardWorkResult::Directory(None)) => {
+                tree.set_text(self.status, crate::strings::t("Выбор папки отменён."))?;
+            }
+            Err(error) => {
+                tree.set_text(
+                    self.status,
+                    &format!("{}: {error}", crate::strings::t(finished.kind.failure_prefix())),
+                )?;
+            }
+        }
+        Ok(Flow::Continue)
     }
 
     fn show_open_file_dialog(&mut self, tree: &mut Tree) -> Result<()> {
@@ -2008,6 +2152,7 @@ impl Shell {
         let is_tick = matches!(message, Message::User(AppMessage::Tick(_)));
         if self.close_waiting
             && self.native_file_picker_request.is_none()
+            && self.wizard_task_request.is_none()
             && !write_active
             && !save_session.is_saving()
             && !save_session.is_restoring()
@@ -2090,6 +2235,14 @@ impl Shell {
                     )?;
                     return Ok(Flow::Continue);
                 }
+                if self.wizard_task_request.is_some() {
+                    self.close_waiting = true;
+                    tree.set_text(
+                        self.status,
+                        crate::strings::t("Дождитесь завершения операции мастера, чтобы закрыть окно."),
+                    )?;
+                    return Ok(Flow::Continue);
+                }
                 if draft_write_active {
                     self.begin_draft_close_wait();
                     return Ok(Flow::Continue);
@@ -2135,8 +2288,7 @@ impl Shell {
                 if self.native_file_picker_request == Some(finished.request) {
                     self.native_file_picker_request = None;
                     if self.close_waiting {
-                        self.close_waiting = false;
-                        return Ok(Flow::Exit);
+                        return Ok(Flow::Continue);
                     }
                     match &finished.result {
                         Ok(Some(paths)) if !paths.is_empty() => {
@@ -2157,6 +2309,9 @@ impl Shell {
                     }
                     return Ok(Flow::Continue);
                 }
+            }
+            if let Some(finished) = payload.downcast_ref::<super::wizard::WizardTaskFinished>() {
+                return self.handle_wizard_task_finished(tree, finished);
             }
             if let Some(finished) = payload.downcast_ref::<ReportUploadFinished>() {
                 self.report_upload_pending = false;
@@ -2272,8 +2427,8 @@ impl Shell {
             return Ok(Flow::Continue);
         }
         let mut wizard_status = None;
-        if let Some(target) = self.wizard.message(tree, message, clicked, &mut wizard_status)? {
-            self.open(tree, target)?;
+        if let Some(action) = self.wizard.message(tree, message, clicked, &mut wizard_status)? {
+            self.handle_wizard_action(tree, action)?;
             return Ok(Flow::Continue);
         }
         if let Some(text) = wizard_status {
@@ -3693,6 +3848,51 @@ mod tests {
         drop(operation);
         shell.sync_saving_overlay(&mut tree)?;
         assert!(!tree.dialog_open());
+        Ok(())
+    }
+
+    #[test]
+    fn close_waits_for_the_matching_wizard_task_and_ignores_stale_results() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut shell = Shell::build_for_test(&mut tree, None)?;
+        shell.wizard_task_request = Some(9);
+        shell.native_file_picker_request = Some(11);
+
+        let close = Message::Window(WindowEvent::CloseRequested);
+        assert_eq!(shell.handle(&mut tree, &close, None)?, Flow::Continue);
+        assert!(shell.close_waiting);
+
+        let stale = super::super::wizard::WizardTaskFinished {
+            request: 8,
+            kind: super::super::wizard::WizardTaskKind::Browse,
+            result: Ok(super::super::wizard::WizardWorkResult::Directory(None)),
+        };
+        assert_eq!(shell.handle_wizard_task_finished(&mut tree, &stale)?, Flow::Continue);
+        assert_eq!(shell.wizard_task_request, Some(9));
+
+        let finished = super::super::wizard::WizardTaskFinished {
+            request: 9,
+            kind: super::super::wizard::WizardTaskKind::Browse,
+            result: Ok(super::super::wizard::WizardWorkResult::Directory(None)),
+        };
+        assert_eq!(shell.handle_wizard_task_finished(&mut tree, &finished)?, Flow::Continue);
+        assert_eq!(shell.wizard_task_request, None);
+
+        let native_finished = Message::User(AppMessage::ToScreen(
+            ScreenId::Overview,
+            Box::new(super::NativeFilePickerFinished {
+                request: 11,
+                result: Ok(None),
+            }),
+        ));
+        assert_eq!(shell.handle(&mut tree, &native_finished, None)?, Flow::Continue);
+        assert_eq!(shell.native_file_picker_request, None);
+        assert!(shell.close_waiting);
+        assert_eq!(
+            shell.handle(&mut tree, &Message::User(AppMessage::Tick(1)), None)?,
+            Flow::Exit
+        );
+        assert!(!shell.close_waiting);
         Ok(())
     }
 

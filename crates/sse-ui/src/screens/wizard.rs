@@ -2,7 +2,7 @@
 use super::style::{self, Button, Text};
 use super::ScreenId;
 use crate::edit::{Clipboard, EditConfig, FieldMode, InputFilter, Key, Modifiers};
-use crate::event_loop::{Message, WindowEvent};
+use crate::event_loop::{Message, Proxy, WindowEvent};
 use crate::glyphs::{Face, TextStyle};
 use crate::layout::{Edges, NodeKind, Size, Style};
 use crate::widget::{Content, Look, Tree, WidgetId};
@@ -19,6 +19,65 @@ impl Clipboard for EmptyClipboard {
         Ok(())
     }
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum WizardAction {
+    AutoSearch,
+    Browse,
+    DirectoryAdded,
+    Navigate(ScreenId),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum WizardTaskKind {
+    AutoSearch,
+    Browse,
+}
+
+impl WizardTaskKind {
+    pub(super) const fn failure_prefix(self) -> &'static str {
+        match self {
+            Self::AutoSearch => "Не удалось найти папки с сохранениями",
+            Self::Browse => "Не удалось открыть выбор папки",
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum WizardWorkResult {
+    AutoSearch(usize),
+    Directory(Option<PathBuf>),
+}
+
+pub(super) struct WizardTaskFinished {
+    pub(super) request: u64,
+    pub(super) kind: WizardTaskKind,
+    pub(super) result: std::result::Result<WizardWorkResult, String>,
+}
+
+pub(super) fn spawn_wizard_task<F>(
+    proxy: Proxy<super::AppMessage>,
+    request: u64,
+    kind: WizardTaskKind,
+    work: F,
+) -> std::io::Result<()>
+where
+    F: FnOnce() -> std::result::Result<WizardWorkResult, String> + Send + 'static,
+{
+    std::thread::Builder::new()
+        .name("sse-wizard-discovery".to_owned())
+        .spawn(move || {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(work))
+                .map_err(|_| "задача мастера завершилась аварийно".to_owned())
+                .and_then(|result| result);
+            let _ = proxy.send(super::AppMessage::ToScreen(
+                ScreenId::Overview,
+                Box::new(WizardTaskFinished { request, kind, result }),
+            ));
+        })
+        .map(|_| ())
+}
+
 /// Session-scoped first-run wizard. Skip is intentionally not persisted.
 pub struct Wizard {
     host: WidgetId,
@@ -200,7 +259,7 @@ impl Wizard {
         )?;
         Ok(true)
     }
-    fn auto_search() -> Result<usize> {
+    pub(super) fn auto_search() -> Result<usize> {
         let settings_path = sse_app::default_settings_path();
         let mut settings = sse_app::AppSettings::load(&settings_path)?;
         let options = SaveDirectoryDiscoveryOptions {
@@ -228,14 +287,35 @@ impl Wizard {
         }
         Ok(added)
     }
-    /// Handles wizard controls and returns a requested navigation target.
+
+    pub(super) fn set_busy(&self, tree: &mut Tree, busy: bool) -> Result<()> {
+        tree.set_enabled(self.auto, !busy)?;
+        tree.set_enabled(self.browse, !busy)?;
+        tree.set_enabled(self.add, !busy)
+    }
+
+    pub(super) fn set_directory_input(&mut self, tree: &mut Tree, path: PathBuf) -> Result<()> {
+        let text = path.to_string_lossy().into_owned();
+        self.input = TextInput::new(
+            &text,
+            EditConfig {
+                mode: FieldMode::SingleLine,
+                max_graphemes: 4096,
+                history_limit: 16,
+                filter: InputFilter::Any,
+            },
+        )?;
+        tree.set_input_text(self.path_input, &text)
+    }
+
+    /// Handles wizard controls and returns deferred shell actions when needed.
     pub fn message(
         &mut self,
         tree: &mut Tree,
         message: &Message<super::AppMessage>,
         clicked: Option<WidgetId>,
         status: &mut Option<String>,
-    ) -> Result<Option<ScreenId>> {
+    ) -> Result<Option<WizardAction>> {
         self.input.focus(tree.focused() == Some(self.path_input), 0);
         if clicked.is_some() && clicked == Some(self.path_input) {
             self.input.focus(true, 0);
@@ -248,12 +328,7 @@ impl Wizard {
             return Ok(None);
         }
         if clicked.is_some() && clicked == Some(self.auto) {
-            let added = Self::auto_search()?;
-            *status = Some(if added == 0 {
-                crate::strings::t("Автопоиск завершён. Новых папок не найдено.").to_owned()
-            } else {
-                crate::strings::t("Автопоиск завершён. Добавлено папок: {0}.").replace("{0}", &added.to_string())
-            });
+            return Ok(Some(WizardAction::AutoSearch));
         }
         if clicked.is_some() && clicked == Some(self.add) {
             let path = self.input.text();
@@ -269,13 +344,14 @@ impl Wizard {
                     },
                 )?;
                 tree.set_text(self.path_input, crate::strings::t("Путь к папке с сейвами…"))?;
+                return Ok(Some(WizardAction::DirectoryAdded));
             }
         }
         if clicked.is_some() && clicked == Some(self.browse) {
-            *status = Some(crate::strings::t("Выберите папку с сохранениями").to_owned());
+            return Ok(Some(WizardAction::Browse));
         }
         if clicked.is_some() && clicked == Some(self.settings) {
-            return Ok(Some(ScreenId::Settings));
+            return Ok(Some(WizardAction::Navigate(ScreenId::Settings)));
         }
         if clicked.is_some() && clicked == Some(self.skip) {
             self.skipped = true;
@@ -339,10 +415,12 @@ impl Wizard {
 
 #[cfg(test)]
 mod tests {
-    use super::{Text, Wizard};
+    use super::{spawn_wizard_task, Text, Wizard, WizardAction, WizardTaskFinished, WizardTaskKind, WizardWorkResult};
+    use crate::event_loop::Message;
     use crate::glyphs::Fonts;
     use crate::layout::{NodeKind, Style};
     use crate::raster::Color;
+    use crate::screens::AppMessage;
     use crate::widget::{Content, Look, Tree};
 
     #[test]
@@ -387,5 +465,122 @@ mod tests {
             Ok(())
         })();
         result
+    }
+
+    #[test]
+    fn browse_button_requests_a_folder_picker() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let root = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let mut wizard = Wizard::build(&mut tree, root)?;
+        let browse = wizard.browse;
+        let mut status = None;
+
+        let action = wizard.message(
+            &mut tree,
+            &Message::User(AppMessage::Tick(0)),
+            Some(browse),
+            &mut status,
+        )?;
+
+        assert_eq!(
+            action,
+            Some(WizardAction::Browse),
+            "Browse must request a directory picker instead of only changing the status line"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn selected_directory_is_written_to_the_visible_and_editable_input() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let root = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let mut wizard = Wizard::build(&mut tree, root)?;
+        let path = std::env::temp_dir().join("selected-save-directory");
+        let expected = path.to_string_lossy().into_owned();
+
+        wizard.set_directory_input(&mut tree, path)?;
+
+        assert_eq!(tree.input_text(wizard.path_input)?, expected);
+        assert_eq!(wizard.input.text(), expected);
+        Ok(())
+    }
+
+    #[test]
+    fn wizard_discovery_runs_off_ui_thread_and_returns_its_result() -> sse_core::Result<()> {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let (proxy, receiver) = crate::event_loop::channel_pair::<AppMessage>();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let ui_thread = std::thread::current().id();
+        spawn_wizard_task(proxy, 41, WizardTaskKind::AutoSearch, move || {
+            started_tx
+                .send(std::thread::current().id())
+                .map_err(|error| error.to_string())?;
+            release_rx
+                .recv_timeout(Duration::from_secs(2))
+                .map_err(|error| error.to_string())?;
+            Ok(WizardWorkResult::AutoSearch(3))
+        })?;
+
+        let worker_thread = started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .map_err(|error| sse_core::Error::System(error.to_string()))?;
+        assert_ne!(worker_thread, ui_thread);
+        release_tx
+            .send(())
+            .map_err(|error| sse_core::Error::System(error.to_string()))?;
+        let message = receiver
+            .recv_timeout(Duration::from_secs(1))
+            .map_err(|error| sse_core::Error::System(error.to_string()))?;
+        let Message::User(AppMessage::ToScreen(super::super::ScreenId::Overview, payload)) = message else {
+            return Err(sse_core::Error::Refused(
+                "wizard worker result was not routed to the shell".to_owned(),
+            ));
+        };
+        let finished = payload
+            .downcast_ref::<WizardTaskFinished>()
+            .ok_or_else(|| sse_core::Error::Refused("wizard worker returned the wrong payload type".to_owned()))?;
+        assert_eq!(finished.request, 41);
+        assert_eq!(finished.kind, WizardTaskKind::AutoSearch);
+        assert_eq!(finished.result, Ok(WizardWorkResult::AutoSearch(3)));
+        Ok(())
+    }
+
+    #[test]
+    fn auto_search_button_returns_a_deferred_work_request() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let root = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let mut wizard = Wizard::build(&mut tree, root)?;
+        let auto = wizard.auto;
+        let mut status = None;
+
+        let action = wizard.message(&mut tree, &Message::User(AppMessage::Tick(0)), Some(auto), &mut status)?;
+
+        assert_eq!(
+            action,
+            Some(WizardAction::AutoSearch),
+            "auto search must return work to the shell instead of scanning in the click handler"
+        );
+        Ok(())
     }
 }
