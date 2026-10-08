@@ -139,23 +139,34 @@ mod tests {
 #[cfg(all(test, target_os = "windows"))]
 mod windows_tests {
     use super::ProcessTree;
-    use std::process::Command;
+    use std::os::windows::process::CommandExt;
+    use std::process::{Command, Stdio};
     use std::thread;
     use std::time::Duration;
+
+    const STARTED_ENV: &str = "SSE_PROCESS_TREE_STARTED";
+    const FINISHED_ENV: &str = "SSE_PROCESS_TREE_FINISHED";
 
     #[test]
     fn suspended_child_is_assigned_and_descendants_are_terminated() {
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |duration| duration.as_nanos());
-        let started = std::env::temp_dir().join(format!("sse-process-tree-started-{unique}.txt"));
-        let finished = std::env::temp_dir().join(format!("sse-process-tree-finished-{unique}.txt"));
-        let mut command = Command::new("cmd.exe");
+        let started =
+            std::env::temp_dir().join(format!("sse-process-tree-started-{}-{unique}.txt", std::process::id()));
+        let finished =
+            std::env::temp_dir().join(format!("sse-process-tree-finished-{}-{unique}.txt", std::process::id()));
+        let Ok(executable) = std::env::current_exe() else {
+            panic!("test executable path should be available");
+        };
+        let mut command = Command::new(executable);
         command
-            .arg("/C")
-            .arg("start \"\" /b powershell.exe -NoProfile -Command \"Set-Content -NoNewline -LiteralPath $env:SSE_PROCESS_TREE_STARTED -Value started; Start-Sleep -Milliseconds 1000; Set-Content -NoNewline -LiteralPath $env:SSE_PROCESS_TREE_FINISHED -Value finished\" & exit 17")
-            .env("SSE_PROCESS_TREE_STARTED", &started)
-            .env("SSE_PROCESS_TREE_FINISHED", &finished);
+            .arg("--exact")
+            .arg("process::windows_tests::process_tree_parent_helper")
+            .env(STARTED_ENV, &started)
+            .env(FINISHED_ENV, &finished)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
         ProcessTree::configure(&mut command);
         let Ok(mut child) = command.spawn() else {
             panic!("failed to spawn process-tree test child");
@@ -170,7 +181,7 @@ mod windows_tests {
         };
 
         let mut status = None;
-        for _ in 0..5000 {
+        for _ in 0..10_000 {
             match tree.try_wait(&mut child) {
                 Ok(Some(exited)) => {
                     status = Some(exited);
@@ -185,17 +196,19 @@ mod windows_tests {
         }
         let Some(status) = status else {
             tree.terminate(&mut child);
+            let _ = std::fs::remove_file(&started);
+            let _ = std::fs::remove_file(&finished);
             panic!("test child did not exit after it was resumed");
         };
-        assert_eq!(status.code(), Some(17));
+        assert_eq!(status.code(), Some(0), "test child helper failed");
 
         let mut descendant_started = false;
-        for _ in 0..1500 {
+        for _ in 0..10_000 {
             if started.exists() {
                 descendant_started = true;
                 break;
             }
-            thread::sleep(Duration::from_millis(10));
+            thread::sleep(Duration::from_millis(1));
         }
         if !descendant_started {
             tree.terminate(&mut child);
@@ -210,6 +223,48 @@ mod windows_tests {
         let _ = std::fs::remove_file(&started);
         let _ = std::fs::remove_file(&finished);
         assert!(!descendant_finished, "a Windows job descendant escaped termination");
+    }
+
+    #[test]
+    #[allow(clippy::zombie_processes)] // The parent must exit while its Windows job descendant remains alive.
+    fn process_tree_parent_helper() -> std::io::Result<()> {
+        let Some(started) = std::env::var_os(STARTED_ENV) else {
+            return Ok(());
+        };
+        let Some(finished) = std::env::var_os(FINISHED_ENV) else {
+            return Err(std::io::Error::other(
+                "process-tree parent helper is missing its finish marker path",
+            ));
+        };
+        let executable = std::env::current_exe()?;
+        let mut command = Command::new(executable);
+        command
+            .arg("--exact")
+            .arg("process::windows_tests::process_tree_writer_helper")
+            .env(STARTED_ENV, started)
+            .env(FINISHED_ENV, finished)
+            .creation_flags(0x0800_0000)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let descendant = command.spawn()?;
+        drop(descendant);
+        Ok(())
+    }
+
+    #[test]
+    fn process_tree_writer_helper() -> std::io::Result<()> {
+        let Some(started) = std::env::var_os(STARTED_ENV) else {
+            return Ok(());
+        };
+        let Some(finished) = std::env::var_os(FINISHED_ENV) else {
+            return Err(std::io::Error::other(
+                "process-tree writer helper is missing its finish marker path",
+            ));
+        };
+        std::fs::write(started, b"started")?;
+        thread::sleep(Duration::from_secs(1));
+        std::fs::write(finished, b"finished")?;
+        Ok(())
     }
 }
 
