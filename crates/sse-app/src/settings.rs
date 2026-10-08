@@ -39,7 +39,7 @@ pub struct AppSettings {
     pub ui_scale_percent: u32,
     /// Navigation sidebar collapsed state; `None` until user folds or unfolds it.
     pub navigation_collapsed: Option<bool>,
-    /// Whether telemetry/crash reports are allowed. Default is `true`.
+    /// Whether telemetry/crash reports are allowed. Default is `false` until the user opts in.
     pub send_reports: bool,
     /// Whether the user has seen the first-run notice about reports. Default is `false`.
     pub reports_notice_shown: bool,
@@ -60,7 +60,7 @@ impl Default for AppSettings {
             accent_id: "amber".to_owned(),
             ui_scale_percent: 0,
             navigation_collapsed: None,
-            send_reports: true,
+            send_reports: false,
             reports_notice_shown: false,
             last_report_utc: None,
         }
