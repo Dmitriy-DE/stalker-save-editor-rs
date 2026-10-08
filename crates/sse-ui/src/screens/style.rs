@@ -39,8 +39,8 @@ impl Text {
     #[must_use]
     pub const fn style(self) -> TextStyle {
         match self {
-            Self::Title => TextStyle::new(Face::Heading, 30.0),
-            Self::Heading => TextStyle::new(Face::Heading, 18.0),
+            Self::Title => TextStyle::new(Face::Heading, 36.0),
+            Self::Heading => TextStyle::new(Face::Heading, 16.0),
             Self::Body | Self::Value => TextStyle::new(Face::Body, 16.0),
             Self::Note => TextStyle::new(Face::Body, 13.0),
         }
@@ -51,7 +51,8 @@ impl Text {
     pub fn color(self) -> Color {
         let colors = theme::current().colors;
         rgb(match self {
-            Self::Title | Self::Heading | Self::Body => colors.text[0],
+            Self::Title | Self::Body => colors.text[0],
+            Self::Heading => colors.accent[0],
             Self::Value => colors.text[3],
             Self::Note => colors.text[2],
         })
@@ -81,8 +82,8 @@ pub fn card(tree: &mut Tree, parent: WidgetId) -> Result<WidgetId> {
         ..Style::default()
     };
     let look = Look {
-        fill: Some(rgb(theme::current().colors.background[2])),
-        border: Some((rgb(theme::current().colors.borders[0]), 1.0)),
+        fill: Some(rgb(theme::current().colors.background[1])),
+        border: Some((rgb(theme::current().colors.borders[1]), 1.0)),
         radius: theme::CARD_RADIUS,
         ..Look::default()
     };
@@ -107,8 +108,13 @@ pub fn row(tree: &mut Tree, parent: WidgetId) -> Result<WidgetId> {
 /// # Errors
 /// Returns an error from the widget tree.
 pub fn label(tree: &mut Tree, parent: WidgetId, text: &str, role: Text) -> Result<WidgetId> {
+    let text = if role == Text::Heading {
+        text_upper(text)
+    } else {
+        text.to_owned()
+    };
     let content = Content::Label {
-        text: text.to_owned(),
+        text,
         style: role.style(),
     };
     let look = Look {
@@ -143,7 +149,7 @@ pub fn input(tree: &mut Tree, parent: WidgetId, value: &str) -> Result<WidgetId>
             style: TextStyle::new(Face::Body, 14.0),
         },
         Look {
-            fill: Some(rgb(colors.background[3])),
+            fill: Some(rgb(colors.background[4])),
             border: Some((rgb(colors.borders[1]), 1.0)),
             radius: theme::BUTTON_RADIUS,
             text: rgb(colors.text[0]),
@@ -169,12 +175,22 @@ pub fn button(tree: &mut Tree, parent: WidgetId, text: &str, role: Button) -> Re
     };
     let colors = theme::current().colors;
     let (fill, hover, foreground, border) = match role {
-        Button::Primary => (Some(colors.accent[0]), colors.accent[2], colors.accent[3], None),
-        Button::Secondary => (None, colors.background[3], colors.text[0], Some(colors.borders[1])),
-        Button::Danger => (None, colors.background[3], colors.state[2], Some(colors.state[2])),
+        Button::Primary => (colors.accent[0], colors.accent[2], colors.accent[3], None),
+        Button::Secondary => (
+            colors.background[2],
+            colors.background[3],
+            colors.text[0],
+            Some(colors.borders[1]),
+        ),
+        Button::Danger => (
+            colors.background[2],
+            theme::ERROR_SURFACE,
+            colors.state[2],
+            Some(colors.state[2]),
+        ),
     };
     let look = Look {
-        fill: fill.map(rgb),
+        fill: Some(rgb(fill)),
         hover_fill: Some(rgb(hover)),
         border: border.map(|color| (rgb(color), 1.0)),
         radius: theme::BUTTON_RADIUS,
@@ -194,12 +210,12 @@ pub fn button(tree: &mut Tree, parent: WidgetId, text: &str, role: Button) -> Re
 pub fn nav(selected: bool) -> Look {
     let colors = theme::current().colors;
     Look {
-        fill: selected.then(|| rgb(colors.background[2])),
+        fill: selected.then(|| rgb(colors.accent[0])),
         hover_fill: Some(rgb(colors.background[3])),
-        pressed_fill: Some(rgb(colors.background[2])),
-        accent_bar: selected.then(|| (rgb(colors.accent[0]), 3.0)),
-        text: rgb(if selected { colors.text[0] } else { colors.text[1] }),
-        hover_text: Some(rgb(colors.text[0])),
+        pressed_fill: Some(rgb(colors.accent[1])),
+        radius: theme::BUTTON_RADIUS,
+        text: rgb(if selected { colors.accent[3] } else { colors.text[1] }),
+        hover_text: Some(rgb(if selected { colors.accent[3] } else { colors.text[0] })),
         ..Look::default()
     }
 }
