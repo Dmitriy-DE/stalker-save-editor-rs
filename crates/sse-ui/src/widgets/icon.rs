@@ -1,6 +1,6 @@
 //! Cached vector icons and C#-style icon button variants.
 
-use crate::path::{Icon, Point, StrokeStyle, Transform};
+use crate::path::{FillRule, FlattenedPath, Icon, Path, Point, StrokeStyle, Transform};
 use sse_core::{Error, Result};
 
 const MAX_CACHE: usize = 128;
@@ -102,15 +102,24 @@ impl Default for IconCache {
 
 fn rasterize(icon: Icon, size: u16, color: u32) -> Result<IconBitmap> {
     let scale = f64::from(size) / 24.0;
-    let path = icon.path()?;
-    let flat = path.stroke_to_fill(
-        Transform::scale(scale, scale),
-        0.25,
-        StrokeStyle {
-            width: 2.0 * scale,
-            ..StrokeStyle::icon()
-        },
-    )?;
+    let transform = Transform::scale(scale, scale);
+    let outline: Option<FlattenedPath> = if icon.stroke_width() > 0.0 && !icon.path_data().is_empty() {
+        Some(icon.path()?.stroke_to_fill(
+            transform,
+            0.25,
+            StrokeStyle {
+                width: icon.stroke_width() * scale,
+                ..StrokeStyle::icon()
+            },
+        )?)
+    } else {
+        None
+    };
+    let filled: Option<FlattenedPath> = if icon.fill_data().is_empty() {
+        None
+    } else {
+        Some(Path::parse(icon.fill_data())?.flatten(transform, 0.25, FillRule::NonZero)?)
+    };
     let side = usize::from(size);
     let count = side
         .checked_mul(side)
@@ -121,10 +130,13 @@ fn rasterize(icon: Icon, size: u16, color: u32) -> Result<IconBitmap> {
             let mut covered = 0u8;
             for sy in [0.25, 0.75] {
                 for sx in [0.25, 0.75] {
-                    if flat.contains(Point::new(
+                    let point = Point::new(
                         f64::from(u16::try_from(x).unwrap_or_default()) + sx,
                         f64::from(u16::try_from(y).unwrap_or_default()) + sy,
-                    )) {
+                    );
+                    if outline.as_ref().is_some_and(|flat| flat.contains(point))
+                        || filled.as_ref().is_some_and(|flat| flat.contains(point))
+                    {
                         covered = covered.saturating_add(1);
                     }
                 }
@@ -218,5 +230,23 @@ mod tests {
             button_look(IconButtonKind::Primary),
             button_look(IconButtonKind::Danger)
         );
+    }
+
+    #[test]
+    fn d2_icons_rasterise_with_pixels_at_22_and_16() {
+        use crate::path::D2_ICONS;
+        let mut cache = IconCache::new();
+        for icon in D2_ICONS {
+            for size in [22_u16, 16] {
+                let bitmap = cache
+                    .get(icon, size, 0xD8D2BE)
+                    .unwrap_or_else(|error| panic!("{icon:?}: {error:?}"));
+                assert_eq!(bitmap.alpha.len(), usize::from(size) * usize::from(size));
+                assert!(
+                    bitmap.alpha.iter().any(|value| *value > 0),
+                    "{icon:?} at {size} is empty"
+                );
+            }
+        }
     }
 }
