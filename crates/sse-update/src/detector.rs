@@ -81,7 +81,7 @@ impl UpdateInstallationDetector {
         let root = if let Some(ref bundle) = app_bundle {
             bundle.clone()
         } else if is_deb_entrypoint {
-            PathBuf::from(default_pkg_root)
+            std::fs::canonicalize(default_pkg_root).unwrap_or_else(|_| PathBuf::from(default_pkg_root))
         } else {
             exe_dir.clone()
         };

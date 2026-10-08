@@ -123,7 +123,7 @@ fn detects_debian_install_through_usr_bin_symlink_to_usr_lib() {
 #[test]
 fn detects_debian_package_layout_with_bin_executable_and_share_manifest() {
     let temp = TempDir::new("linux-deb-share-manifest");
-    let package_root = temp.path.join("usr/share/stalker-save-editor");
+    let package_root = temp.path.join("usr/share/../share/stalker-save-editor");
     let bin_dir = temp.path.join("usr/bin");
     fs::create_dir_all(&package_root).unwrap();
     fs::create_dir_all(&bin_dir).unwrap();
