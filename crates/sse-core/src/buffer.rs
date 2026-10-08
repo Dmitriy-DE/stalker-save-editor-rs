@@ -10,7 +10,7 @@ use crate::{Error, Result};
 /// produces one new buffer, and cloning a `SaveBuffer` only bumps a reference count.
 #[derive(Debug, Clone)]
 pub struct SaveBuffer {
-    bytes: Arc<[u8]>,
+    bytes: Arc<Vec<u8>>,
 }
 
 impl SaveBuffer {
@@ -20,9 +20,7 @@ impl SaveBuffer {
     /// Takes ownership of bytes the caller has just produced; nothing is copied.
     #[must_use]
     pub fn from_vec(bytes: Vec<u8>) -> Self {
-        Self {
-            bytes: Arc::from(bytes),
-        }
+        Self { bytes: Arc::new(bytes) }
     }
 
     /// Reads a file in one piece, refusing anything larger than [`Self::MAXIMUM_FILE_BYTES`].
@@ -43,7 +41,7 @@ impl SaveBuffer {
     /// The bytes.
     #[must_use]
     pub fn as_slice(&self) -> &[u8] {
-        &self.bytes
+        self.bytes.as_slice()
     }
 
     /// Length in bytes.
@@ -70,5 +68,13 @@ mod tests {
         assert!(std::ptr::eq(first.as_slice().as_ptr(), second.as_slice().as_ptr()));
         assert_eq!(second.len(), 3);
         assert!(!second.is_empty());
+    }
+
+    #[test]
+    fn from_vec_preserves_the_owned_allocation() {
+        let bytes = Vec::with_capacity(64);
+        let original_ptr = bytes.as_ptr();
+        let buffer = SaveBuffer::from_vec(bytes);
+        assert_eq!(buffer.as_slice().as_ptr(), original_ptr);
     }
 }

@@ -277,13 +277,13 @@
       "container": "xray-clear-sky-ee.sav",
       "raw": "xray-clear-sky-ee.raw",
       "streamOffset": 12,
-      "streamLength": 406,
-      "unpackedSize": 400,
+      "streamLength": 521,
+      "unpackedSize": 515,
       "containerSummary": {
         "magic": 4294967295,
         "version": 6,
-        "unpackedSize": 400,
-        "rawSha256": "73dacda8fa3b55d6e009248b0c8d4b3d2ce1186a2a0398a283e21dc0acaa19ec",
+        "unpackedSize": 515,
+        "rawSha256": "a33b5e96beffe998400d8ba31e535f8ed0be94e1fa6ed5c5ee382dad1abee015",
         "chunkTypes": [
           0,
           5,
@@ -313,12 +313,12 @@
           {
             "type": 2,
             "offset": 52,
-            "size": 311,
-            "dataSha256": "7a858e1343858713edffed40e5cbd675e982d74e7dc6e0a30223a229d139de9b"
+            "size": 426,
+            "dataSha256": "599824dac5c7f79cd7c6dc220edfc3e385062cbc9fc1e521e6b050c7d2af8d2e"
           },
           {
             "type": 9,
-            "offset": 371,
+            "offset": 486,
             "size": 21,
             "dataSha256": "fe3d2d2b937c3e7ab11a87201d7ba6fca19e6bf08f08cfa3982b861b89ef7914"
           }
@@ -331,13 +331,13 @@
       "container": "xray-call-of-pripyat-ee.sav",
       "raw": "xray-call-of-pripyat-ee.raw",
       "streamOffset": 12,
-      "streamLength": 412,
-      "unpackedSize": 406,
+      "streamLength": 527,
+      "unpackedSize": 521,
       "containerSummary": {
         "magic": 4294967295,
         "version": 6,
-        "unpackedSize": 406,
-        "rawSha256": "4ad6d59d6c2d4369080f2bd6deff1d521d725a36a35328e91a040dd9ab462c46",
+        "unpackedSize": 521,
+        "rawSha256": "79a02b7c58e71077646eace2012a852d66cc492ef89296ae469530c91988d457",
         "chunkTypes": [
           0,
           5,
@@ -367,12 +367,12 @@
           {
             "type": 2,
             "offset": 52,
-            "size": 311,
-            "dataSha256": "4145fe3a28d00a9d14fe1b63df88f5823d56945a7cd9dee749c67d4c6be5044f"
+            "size": 426,
+            "dataSha256": "0d976385631ec2cc45ec3fe61d08d6b40c855598a804dd7f87013145b4438d34"
           },
           {
             "type": 9,
-            "offset": 371,
+            "offset": 486,
             "size": 27,
             "dataSha256": "47852870cf158a14ede608aedefc63ce6931848e001e56e44ce707ba4f5e9151"
           }

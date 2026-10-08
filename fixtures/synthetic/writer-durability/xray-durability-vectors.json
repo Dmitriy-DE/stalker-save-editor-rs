@@ -131,13 +131,13 @@
       ],
       "expected": "xray-durability-cs-ee-expected.sav",
       "expectedRaw": "xray-durability-cs-ee-expected.raw",
-      "expectedRawSha256": "6570bc818ad052c8e0be3d41d40324842ac809ddab18d54f250da416377ef221",
-      "expectedSha256": "c64ad59fdc6757e8a112115e953f8b04738a148955a3a946f476119bc6e8ddec",
+      "expectedRawSha256": "d5cd4407bb7f283c638d04b80cbf795aa1cf16693cf60f22112ab1ccbbd555c0",
+      "expectedSha256": "364241f16fd0f9f2d4efe5539e6011ffd45dc3bd51a42e44dd837b0bab74b6e6",
       "handle": 13398,
       "releaseId": "stalker-cs-ee",
       "source": "xray-durability-cs-ee-source.sav",
       "sourceCondition": 0.25,
-      "sourceSha256": "3bfd0b60ec6a746a84b51fdf161d3cd557719080fb4ae2b532d116ca7c75e477",
+      "sourceSha256": "d11addf28e67f473769b53426b3e10ecf205796a2ff5969d231b66797e1ae3ff",
       "targetCondition": 0.75
     },
     {
@@ -155,13 +155,13 @@
       ],
       "expected": "xray-durability-cop-ee-expected.sav",
       "expectedRaw": "xray-durability-cop-ee-expected.raw",
-      "expectedRawSha256": "1d7a1b45c2338333d23ea39d0b8973c41eafe24ca5bfe6347f745776a25cf4a1",
-      "expectedSha256": "22a7b273dc5ecf5f8c1b822c9912b0ce52fc6bb3cf5dabfdb3e0979705a38879",
+      "expectedRawSha256": "fd44a43534219796cccc11c56a89b0edc3388c0821496f8c55cc3018ef7603fa",
+      "expectedSha256": "6f799dd08356f31a645b33c1c93266c70a0033e2ee68c9a1b4b15ae29a7cf603",
       "handle": 13398,
       "releaseId": "stalker-cop-ee",
       "source": "xray-durability-cop-ee-source.sav",
       "sourceCondition": 0.25,
-      "sourceSha256": "209e4102272da9d73bf91bd695d2b2b08df7fe1c7388dcb14592b5b0cfe40ae5",
+      "sourceSha256": "e3084fd533a6a9ef7b263d383e68acd318f8fe67331cb8e0345eb9c683acfd02",
       "targetCondition": 0.75
     },
     {

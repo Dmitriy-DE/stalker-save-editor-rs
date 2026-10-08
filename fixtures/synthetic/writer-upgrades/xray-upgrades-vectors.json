@@ -160,12 +160,12 @@
       ],
       "expected": "xray-upgrades-cs-ee-expected.sav",
       "expectedRaw": "xray-upgrades-cs-ee-expected.raw",
-      "expectedRawSha256": "6514ee3e76b0f86537877e5a936a950be9de384d00e40d96ab6ac16ddf9d245a",
-      "expectedSha256": "6b39ebd24ed0314dae9ad8c70a2cf380d309dac8196ff3fec91c1fde7c2e2d2d",
+      "expectedRawSha256": "40d25e258d585e2a0190b65f988a17963140b914c1ec0fc83be2ec7696ea96da",
+      "expectedSha256": "3a9b4e28995f2b62e90766faad3b747a9b3488a4b74804fac61b951bc87b2b07",
       "handle": 13398,
       "releaseId": "stalker-cs-ee",
       "source": "xray-upgrades-cs-ee-source.sav",
-      "sourceSha256": "7446598e89f2c25a8bb5128527d596ab6943329250e1f0cda5c11e16ee46524c",
+      "sourceSha256": "0985be455394f6a73baeaccb5b59c972f22c6e7bdcddd19a16728e926ad43bda",
       "sourceUpgrades": [
         "up_a_wpn_test",
         "legacy_unknown"
@@ -212,12 +212,12 @@
       ],
       "expected": "xray-upgrades-cop-ee-expected.sav",
       "expectedRaw": "xray-upgrades-cop-ee-expected.raw",
-      "expectedRawSha256": "42d4738c8b6528cb473b1a20762d3af3e4f7c2058c70a7bc997e8d6353dc75b2",
-      "expectedSha256": "24086142c3204283bd7c2bf7bbfee8c13803e3d6eb4a7274fb482f84300f1ad7",
+      "expectedRawSha256": "b12c6ced2896b776b265fadbcf60a3bacd00db827ac8b73257409a8777080342",
+      "expectedSha256": "9a0fb67f3dda5ea5760e1fdb8adb1e4b5948d11851b7baaa5cf7c03dbad599c0",
       "handle": 13398,
       "releaseId": "stalker-cop-ee",
       "source": "xray-upgrades-cop-ee-source.sav",
-      "sourceSha256": "5a774e0a1c0ed9181955bcf6e27ba19ce1bf993cc2b8fef300afdceb00369d5c",
+      "sourceSha256": "f2c156acc51a8405e2359568b408955e605c933349c8de0215751a4cd1f9c8e6",
       "sourceUpgrades": [
         "up_a_wpn_test",
         "legacy_unknown"
