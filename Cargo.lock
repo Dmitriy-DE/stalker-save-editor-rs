@@ -54,6 +54,7 @@ dependencies = [
  "sse-content",
  "sse-core",
  "sse-fixes",
+ "sse-sys",
 ]
 
 [[package]]

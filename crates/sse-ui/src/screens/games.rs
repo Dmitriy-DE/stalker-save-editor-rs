@@ -1121,7 +1121,8 @@ fn extract_quoted_strings(line: &str) -> Vec<&str> {
 }
 
 fn count_saves_for_installations(installations: &mut [DiscoveredInstallation]) {
-    let candidates = SaveDirectoryLocator::find_candidate_directories(None);
+    let discovery_options = super::save_directory_discovery_options();
+    let candidates = SaveDirectoryLocator::find_candidate_directories(Some(&discovery_options));
     let mut family_counts = std::collections::HashMap::new();
 
     for family in ["soc", "clear_sky", "cop", "stalker2"] {

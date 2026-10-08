@@ -714,7 +714,8 @@ fn start_discovery(workspace: &Workspace, cx: &mut Context<'_>) {
         if context.is_cancelled() {
             return;
         }
-        let candidates = SaveDirectoryLocator::find_candidate_directories(None);
+        let discovery_options = super::save_directory_discovery_options();
+        let candidates = SaveDirectoryLocator::find_candidate_directories(Some(&discovery_options));
         let mut result = SaveSlotDiscovery::discover(&candidates);
         result.slots.sort_by(|left, right| {
             save_game_key(left)
@@ -3772,6 +3773,7 @@ impl Inventory {
             return Ok(());
         };
         let source_path = selected.slot.path.clone();
+        let log_path = source_path.clone();
         let backup_directory = self.workspace.backup_directory();
         if let Some(status) = self.status {
             cx.tree.set_text(status, "Сохранение…")?;
@@ -3779,9 +3781,16 @@ impl Inventory {
         if let Err(error) = self.workspace.spawn("save-write", move |context| {
             let save_guard = operation_guard;
             let result = if context.is_cancelled() {
+                sse_app::diagnostics::save_write_cancelled(&source_path);
                 Err("Сохранение отменено.".to_owned())
             } else {
-                commit_save_edits(&selected, &edits, &stash_moves, &backup_directory).map_err(|error| error.to_string())
+                let result = commit_save_edits(&selected, &edits, &stash_moves, &backup_directory)
+                    .map_err(|error| error.to_string());
+                match &result {
+                    Ok(_) => sse_app::diagnostics::save_write_succeeded(&source_path),
+                    Err(error) => sse_app::diagnostics::save_write_failed(&source_path, error),
+                }
+                result
             };
             drop(save_guard);
             let _ = proxy.send(AppMessage::ToScreen(
@@ -3796,6 +3805,7 @@ impl Inventory {
                 }),
             ));
         }) {
+            sse_app::diagnostics::save_write_failed(&log_path, &error.to_string());
             let text = format!("Не удалось начать сохранение: {error}");
             if let Some(status) = self.status {
                 cx.tree.set_text(status, &text)?;

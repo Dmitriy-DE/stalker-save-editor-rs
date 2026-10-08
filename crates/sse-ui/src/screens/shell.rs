@@ -446,8 +446,24 @@ impl Shell {
     /// # Errors
     /// Returns an error from the widget tree.
     pub fn build(tree: &mut Tree, proxy: Option<Proxy<AppMessage>>) -> Result<Self> {
-        let settings = sse_app::AppSettings::load(&sse_app::default_settings_path());
-        Self::build_with_settings(tree, proxy, settings)
+        let (settings, warning) = match sse_app::AppSettings::load(&sse_app::default_settings_path()) {
+            Ok(settings) => (settings, None),
+            Err(error) => {
+                sse_app::diagnostics::warn(&format!("settings file could not be loaded: {error}"));
+                (sse_app::AppSettings::default(), Some(error.to_string()))
+            }
+        };
+        let shell = Self::build_with_settings(tree, proxy, settings)?;
+        if let Some(error) = warning {
+            let detail = format!("settings.json is unchanged: {error}");
+            let warning = sse_catalog::I18nService::instance().tr_in(
+                Some(crate::strings::current_language()),
+                "Настройки не сохранены: {0}",
+                &[&detail],
+            );
+            tree.set_text(shell.status, &warning)?;
+        }
+        Ok(shell)
     }
 
     #[cfg(test)]
@@ -710,10 +726,10 @@ impl Shell {
         tree.set_visible(edition, false)?;
         let draft_badge = style::label(tree, top, crate::strings::t("Черновик: 0 действ."), Text::Note)?;
         let undo = top_button(tree, top, crate::strings::t("Отменить"), false)?;
-        let redo = top_button(tree, top, crate::strings::t("Вернуть"), false)?;
-        let reset = top_button(tree, top, crate::strings::t("Сбросить"), false)?;
+        let redo = top_button(tree, top, crate::strings::t("ПОВТОР"), false)?;
+        let reset = top_button(tree, top, crate::strings::t("СБРОС"), false)?;
         let open_button = top_button(tree, top, crate::strings::t("Открыть…"), false)?;
-        let refresh = top_button(tree, top, crate::strings::t("Обновить"), false)?;
+        let refresh = top_button(tree, top, crate::strings::t("ОБНОВИТЬ"), false)?;
         let save = top_button(tree, top, crate::strings::t("СОХРАНИТЬ"), true)?;
         let save_reason = style::label(
             tree,
@@ -1130,6 +1146,10 @@ impl Shell {
         tree.set_visible(tooltip, false)?;
         tree.set_tooltip(nav_toggle, crate::strings::t("Свернуть меню"))?;
         tree.set_tooltip(library_refresh, crate::strings::t("Обновить"))?;
+        tree.set_tooltip(undo, crate::strings::t("Отменить"))?;
+        tree.set_tooltip(redo, crate::strings::t("Вернуть"))?;
+        tree.set_tooltip(reset, crate::strings::t("Сбросить"))?;
+        tree.set_tooltip(refresh, crate::strings::t("Обновить"))?;
         tree.set_tooltip(save, crate::strings::t("Выберите сохранение для редактирования."))?;
         tree.set_tooltip(open_button, crate::strings::t("Открыть сохранение"))?;
 
@@ -1241,7 +1261,15 @@ impl Shell {
         sse_app::diagnostics::record_crash("Caught UI error", error);
         let stack = std::backtrace::Backtrace::force_capture().to_string();
         self.pending_report = Some(sse_app::diagnostics::automatic_error_report(error, &stack));
-        let settings = sse_app::AppSettings::load(&sse_app::default_settings_path());
+        let settings = match sse_app::AppSettings::load(&sse_app::default_settings_path()) {
+            Ok(settings) => settings,
+            Err(error) => {
+                sse_app::diagnostics::warn(&format!(
+                    "settings file could not be loaded before crash report: {error}"
+                ));
+                sse_app::AppSettings::default()
+            }
+        };
         self.reports_consented = settings.send_reports && settings.reports_notice_shown;
         if settings.send_reports && settings.reports_notice_shown {
             let _ = self.open_pending_report_dialog(tree);
@@ -1764,11 +1792,13 @@ impl Shell {
             let wanted = match message {
                 Message::User(AppMessage::Tick(_)) => true,
                 Message::User(AppMessage::OpenBackups) => false,
+                Message::User(AppMessage::OpenScreen(_)) => false,
                 Message::User(AppMessage::OpenGameFix { .. }) => screen.id() == ScreenId::GameFixes,
                 Message::User(AppMessage::OpenSavePicker { .. }) => false,
                 Message::User(AppMessage::ToScreen(id, _)) => *id == screen.id(),
                 Message::User(AppMessage::EditorAction(_)) => screen.id() == ScreenId::Inventory,
                 Message::User(AppMessage::SoundLoaded(_, _)) => false,
+                Message::User(AppMessage::SettingsWriteFinished(_)) => false,
                 Message::Window(_) => index == self.selected,
             };
             if wanted {
@@ -1912,6 +1942,15 @@ impl Shell {
     }
 
     fn handle(&mut self, tree: &mut Tree, message: &Message<AppMessage>, clicked: Option<WidgetId>) -> Result<Flow> {
+        if let Message::User(AppMessage::SettingsWriteFinished(result)) = message {
+            let status = match result {
+                Ok(()) => crate::strings::t("Настройки сохранены.").to_owned(),
+                Err(error) => format!("{}{}", crate::strings::t("Не удалось сохранить настройки: "), error),
+            };
+            tree.set_text(self.status, &crate::status::localize_writer_status(&status))?;
+            return Ok(Flow::Continue);
+        }
+
         let save_session = self.library_workspace.session();
         let write_active =
             sse_app::tasks::named_task_active("game-write") || sse_app::tasks::named_task_active("companion-write");
@@ -2102,6 +2141,10 @@ impl Shell {
             }
             return Ok(Flow::Continue);
         }
+        if let Message::User(AppMessage::OpenScreen(screen)) = message {
+            self.open(tree, *screen)?;
+            return Ok(Flow::Continue);
+        }
         if matches!(message, Message::User(AppMessage::OpenBackups)) {
             self.open(tree, ScreenId::Backups)?;
             return Ok(Flow::Continue);
@@ -2119,13 +2162,11 @@ impl Shell {
             let wanted = !self.nav_collapsed;
             self.apply_navigation(tree, wanted)?;
             self.nav_user_choice = Some(wanted);
-            std::thread::spawn(move || {
-                let path = sse_app::default_settings_path();
-                let mut settings = sse_app::AppSettings::load(&path);
-                settings.navigation_collapsed = Some(wanted);
-                let _ = settings.save(&path);
-            });
-            tree.set_text(self.status, "Состояние меню сохранено.")?;
+            super::submit_settings_write(
+                sse_app::settings_writer::SettingsPatch::NavigationCollapsed(wanted),
+                self.proxy.clone(),
+            )?;
+            tree.set_text(self.status, crate::strings::t("Сохраняю…"))?;
             return Ok(Flow::Continue);
         }
         if let Message::Window(WindowEvent::Wheel { delta }) = message {
@@ -2149,27 +2190,33 @@ impl Shell {
         }
         if clicked.is_some() && clicked == Some(self.reports_ok) {
             self.reports_consented = true;
-            let _ = sse_app::settings_writer::submit(sse_app::settings_writer::SettingsPatch::ReportsNotice {
-                send_reports: Some(true),
-            });
+            super::submit_settings_write(
+                sse_app::settings_writer::SettingsPatch::ReportsNotice {
+                    send_reports: Some(true),
+                },
+                self.proxy.clone(),
+            )?;
             if tree.dialog() == Some(self.reports_banner) {
                 let _ = tree.close_dialog()?;
             }
-            tree.set_text(self.status, &report_text("Отправка анонимных отчётов включена."))?;
+            tree.set_text(self.status, crate::strings::t("Сохраняю…"))?;
             self.open_pending_report_dialog(tree)?;
             return Ok(Flow::Continue);
         }
         if clicked.is_some() && clicked == Some(self.reports_off) {
             self.reports_consented = false;
-            let _ = sse_app::settings_writer::submit(sse_app::settings_writer::SettingsPatch::ReportsNotice {
-                send_reports: Some(false),
-            });
+            super::submit_settings_write(
+                sse_app::settings_writer::SettingsPatch::ReportsNotice {
+                    send_reports: Some(false),
+                },
+                self.proxy.clone(),
+            )?;
             if tree.dialog() == Some(self.reports_banner) {
                 let _ = tree.close_dialog()?;
             }
             self.pending_report = None;
             sse_app::diagnostics::dismiss_crash();
-            tree.set_text(self.status, &report_text("Отправка анонимных отчётов отключена."))?;
+            tree.set_text(self.status, crate::strings::t("Сохраняю…"))?;
             return Ok(Flow::Continue);
         }
         if clicked.is_some() && clicked == Some(self.report_cancel) {
@@ -2862,6 +2909,20 @@ mod tests {
         let clicked = tree.pointer_button(false, x, y);
         assert_eq!(clicked, Some(id));
         assert_eq!(shell.handle(tree, &released, clicked)?, Flow::Continue);
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "native-ui")]
+    fn in_screen_open_command_selects_cloud_and_updates() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut shell = Shell::build_for_test(&mut tree, None)?;
+
+        for target in [ScreenId::Cloud, ScreenId::Updates] {
+            let message = Message::User(AppMessage::OpenScreen(target));
+            assert_eq!(shell.handle(&mut tree, &message, None)?, Flow::Continue);
+            assert_eq!(shell.current(), Some(target));
+        }
         Ok(())
     }
 

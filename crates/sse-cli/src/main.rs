@@ -95,7 +95,14 @@ fn run(arguments: &[String]) -> u8 {
 }
 
 fn configured_backup_directory() -> PathBuf {
-    let settings = sse_app::AppSettings::load(&sse_app::default_settings_path());
+    let settings = match sse_app::AppSettings::load(&sse_app::default_settings_path()) {
+        Ok(settings) => settings,
+        Err(error) => {
+            eprintln!("Warning: settings could not be loaded; using the default backup directory: {error}");
+            sse_app::diagnostics::warn(&format!("settings file could not be loaded by the CLI: {error}"));
+            sse_app::AppSettings::default()
+        }
+    };
     sse_app::paths::backup_directory(&settings)
 }
 

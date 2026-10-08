@@ -1299,7 +1299,12 @@ impl Tree {
                 } else {
                     self.fonts.measure(text, text_style) + style.padding.left + style.padding.right
                 };
-                let inner = (constrained - style.padding.left - style.padding.right).max(1.0);
+                let measurement_width = if style.min.width.is_finite() && style.min.width > 0.0 {
+                    style.min.width
+                } else {
+                    constrained
+                };
+                let inner = (measurement_width - style.padding.left - style.padding.right).max(1.0);
                 let lines = crate::text::break_lines(text, inner, &self.fonts.metrics(text_style));
                 let count = u16::try_from(lines.len().max(1)).map_or(f32::from(u16::MAX), f32::from);
                 let height = line_height * count + style.padding.top + style.padding.bottom;

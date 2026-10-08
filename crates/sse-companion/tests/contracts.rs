@@ -122,20 +122,37 @@ fn bundled_install_applies_hooks_and_uninstall_restores_source_bytes() -> Result
             sse_companion::bundled::Game::ShadowOfChernobyl,
             "soc",
             bind_soc_cs.as_slice(),
+            "gamedata/config/misc/save_editor_companion.ltx",
         ),
-        (sse_companion::bundled::Game::ClearSky, "cs", bind_soc_cs.as_slice()),
-        (sse_companion::bundled::Game::CallOfPripyat, "cop", bind_cop.as_slice()),
+        (
+            sse_companion::bundled::Game::ClearSky,
+            "cs",
+            bind_soc_cs.as_slice(),
+            "gamedata/configs/misc/save_editor_companion.ltx",
+        ),
+        (
+            sse_companion::bundled::Game::CallOfPripyat,
+            "cop",
+            bind_cop.as_slice(),
+            "gamedata/configs/misc/save_editor_companion.ltx",
+        ),
     ];
-    for (game, game_id, bind_source) in games {
+    for (game, game_id, bind_source, expected_config) in games {
         let root = temp_dir("sse-companion-bundled-hooks");
         let bind_path = root.join("gamedata/scripts/bind_stalker.script");
         let menu_path = root.join("gamedata/scripts/ui_main_menu.script");
+        let quest_items_path = root.join(expected_config).with_file_name("quest_items.ltx");
+        let original_quest_items = b"[section]\r\nvalue = true\r\n";
         fs::create_dir_all(bind_path.parent().ok_or("bind parent is missing")?)?;
+        fs::create_dir_all(quest_items_path.parent().ok_or("quest items parent is missing")?)?;
         fs::write(&bind_path, bind_source)?;
         fs::write(&menu_path, menu)?;
+        fs::write(&quest_items_path, original_quest_items)?;
 
         install_bundled(&root, game)?;
 
+        assert!(root.join(expected_config).is_file(), "wrong config path for {game_id}");
+        assert!(fs::read(&quest_items_path)?.ends_with(b"#include \"save_editor_companion.ltx\"\r\n"));
         let installed_bind = fs::read(&bind_path)?;
         let installed_menu = fs::read(&menu_path)?;
         assert!(installed_bind
@@ -147,8 +164,45 @@ fn bundled_install_applies_hooks_and_uninstall_restores_source_bytes() -> Result
         assert!(uninstall(&root, game_id)?);
         assert_eq!(fs::read(&bind_path)?, bind_source);
         assert_eq!(fs::read(&menu_path)?, menu);
+        assert_eq!(fs::read(&quest_items_path)?, original_quest_items);
         fs::remove_dir_all(root)?;
     }
+    Ok(())
+}
+
+#[test]
+fn bundled_installer_follows_the_game_config_fsgame_alias() -> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("sse-companion-config-alias");
+    let bind_path = root.join("gamedata/scripts/bind_stalker.script");
+    let menu_path = root.join("gamedata/scripts/ui_main_menu.script");
+    let quest_items_path = root.join("gamedata/custom_config/misc/quest_items.ltx");
+    let original_quest_items = b"[section]\nvalue = true\n";
+    fs::create_dir_all(bind_path.parent().ok_or("bind parent is missing")?)?;
+    fs::create_dir_all(quest_items_path.parent().ok_or("quest items parent is missing")?)?;
+    fs::write(
+        root.join("fsgame.ltx"),
+        "$game_data$ = false | true | $fs_root$ | gamedata\\\n\
+         $game_config$ = true | false | $game_data$ | custom_config\\\n",
+    )?;
+    let original_bind = b"function bind:update()\n\tobject_binder.update(self, delta)\nend\nself.object:set_callback(callback.on_item_drop, self.on_item_drop, self)\n";
+    fs::write(&bind_path, original_bind)?;
+    fs::write(
+        &menu_path,
+        b"function main_menu:OnKeyboard(dik, keyboard_action)\n\tif keyboard_action == ui_events.WINDOW_KEY_PRESSED then\n\t\treturn true\n\tend\nend\n",
+    )?;
+    fs::write(&quest_items_path, original_quest_items)?;
+
+    install_bundled(&root, sse_companion::bundled::Game::ClearSky)?;
+
+    assert!(root
+        .join("gamedata/custom_config/misc/save_editor_companion.ltx")
+        .is_file());
+    assert!(fs::read(&quest_items_path)?.ends_with(b"#include \"save_editor_companion.ltx\"\n"));
+    assert!(!root.join("gamedata/configs/misc/save_editor_companion.ltx").exists());
+    assert!(uninstall(&root, "cs")?);
+    assert_eq!(fs::read(&bind_path)?, original_bind);
+    assert_eq!(fs::read(&quest_items_path)?, original_quest_items);
+    let _ = fs::remove_dir_all(root);
     Ok(())
 }
 
@@ -381,6 +435,117 @@ fn protocol_client_waits_for_the_matching_reply_id() -> Result<(), Box<dyn std::
     assert_eq!(reply, "ready");
     let _ = fs::remove_dir_all(root);
     Ok(())
+}
+
+#[test]
+fn protocol_client_clears_a_stale_command_before_sending_the_next_request() -> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("sse-companion-stale-protocol");
+    let command_path = root.join("save_editor_cmd.txt");
+    let reply_path = root.join("save_editor_out.txt");
+    fs::write(&command_path, "v1 1-1-1 give medkit 1\n")?;
+    let worker_path = command_path.clone();
+    let worker_reply = reply_path.clone();
+    let worker = thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if let Ok(request) = fs::read_to_string(&worker_path) {
+                if !request.contains("1-1-1") {
+                    let id = request.split_whitespace().nth(1).unwrap_or("missing-id");
+                    let _ = fs::remove_file(&worker_path);
+                    let _ = fs::write(worker_reply, format!("v1 {id} ok fresh\n"));
+                    return Some(id.to_owned());
+                }
+            }
+            thread::sleep(Duration::from_millis(2));
+        }
+        None
+    });
+
+    let reply = CompanionClient::new(root.clone()).ping(Duration::from_secs(2));
+    let received_id = worker.join().map_err(|_| "protocol worker panicked")?;
+    assert!(received_id.is_some(), "client did not replace the stale command");
+    assert_eq!(reply?.1, "fresh");
+    let _ = fs::remove_dir_all(root);
+    Ok(())
+}
+
+#[test]
+fn protocol_client_clears_a_command_with_a_future_timestamp() -> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("sse-companion-future-protocol");
+    let command_path = root.join("save_editor_cmd.txt");
+    let future = SystemTime::now()
+        .duration_since(UNIX_EPOCH)?
+        .as_secs()
+        .saturating_add(31);
+    let stale_id = format!("{future}-{:x}-1", std::process::id());
+    fs::write(&command_path, format!("v1 {stale_id} ping\n"))?;
+
+    let error = CompanionClient::new(root.clone())
+        .ping(Duration::from_millis(2))
+        .err()
+        .ok_or("future-dated command must not block new requests")?;
+
+    assert!(error.to_string().contains("outcome is unknown"));
+    assert!(!command_path.exists(), "the client should remove its timed-out request");
+    let _ = fs::remove_dir_all(root);
+    Ok(())
+}
+
+#[test]
+fn protocol_allow_list_includes_the_implemented_s2_position_command() -> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("sse-companion-pos-protocol");
+    let command_path = root.join("save_editor_cmd.txt");
+    let reply_path = root.join("save_editor_out.txt");
+    let worker_path = command_path.clone();
+    let worker_reply = reply_path.clone();
+    let worker = thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !worker_path.exists() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(2));
+        }
+        let request = fs::read_to_string(&worker_path).ok()?;
+        if !request.split_whitespace().any(|field| field == "pos") {
+            return None;
+        }
+        let id = request.split_whitespace().nth(1)?;
+        let _ = fs::remove_file(worker_path);
+        let _ = fs::write(worker_reply, format!("v1 {id} ok 1,2,3\n"));
+        Some(())
+    });
+
+    let reply = CompanionClient::new(root.clone()).send("pos", &[], Duration::from_secs(2));
+    assert!(worker.join().map_err(|_| "protocol worker panicked")?.is_some());
+    assert_eq!(reply?.text, "1,2,3");
+    let _ = fs::remove_dir_all(root);
+    Ok(())
+}
+
+#[test]
+fn protocol_timeout_warns_that_command_outcome_is_unknown() -> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("sse-companion-timeout-protocol");
+    let error = CompanionClient::new(root.clone())
+        .ping(Duration::from_millis(1))
+        .err()
+        .ok_or("no running game should time out")?;
+    assert!(error.to_string().contains("outcome is unknown"));
+    let _ = fs::remove_dir_all(root);
+    Ok(())
+}
+
+#[test]
+fn companion_lua_command_reads_are_bounded_and_s2_console_failures_are_reported() {
+    let s2 = include_str!("../assets/companion/s2/SaveEditorCompanion/Scripts/main.lua");
+    let xray = include_str!("../assets/companion/gamedata/scripts/save_editor_companion.script");
+    for source in [s2, xray] {
+        assert!(source.contains("MAX_COMMAND_BYTES = 1024 * 1024"));
+        assert!(source.contains("f:read(MAX_COMMAND_BYTES + 1)"));
+        assert!(!source.contains("f:read(\"*all\")"));
+        assert!(!source.contains("f:read(\"*l\")"));
+        assert!(source.contains("command_timestamp(id)"));
+    }
+    assert!(s2.matches("if not execute_console_command").count() >= 6);
+    assert!(xray.contains("save_editor_level_changer_pending.txt"));
+    assert!(xray.contains("recover_persisted_level_changer"));
 }
 
 #[test]

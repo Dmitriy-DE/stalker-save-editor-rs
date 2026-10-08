@@ -95,7 +95,7 @@ fn atomic_save_and_load_file() {
         assert!(!name.starts_with(".settings.json.") || !name.ends_with(".tmp"));
     }
 
-    let reloaded = AppSettings::load(&settings_path);
+    let reloaded = AppSettings::load(&settings_path).expect("saved settings should load");
     assert_eq!(reloaded.language, Some("ru".to_owned()));
     assert_eq!(reloaded.sound_volume, 90);
 
@@ -107,20 +107,21 @@ fn load_missing_file_returns_defaults() {
     let dir = temp_test_dir("missing");
     let non_existent = dir.join("does_not_exist.json");
 
-    let settings = AppSettings::load(&non_existent);
+    let settings = AppSettings::load(&non_existent).expect("missing settings use defaults");
     assert_eq!(settings, AppSettings::default());
 
     let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]
-fn load_corrupt_file_returns_defaults_without_panic() {
+fn load_corrupt_file_returns_error_without_changing_the_file() {
     let dir = temp_test_dir("corrupt");
     let corrupt_path = dir.join("settings.json");
 
-    fs::write(&corrupt_path, b"{ not valid json at all ::: ").expect("write");
-    let settings = AppSettings::load(&corrupt_path);
-    assert_eq!(settings, AppSettings::default());
+    let original = b"{ not valid json at all ::: ";
+    fs::write(&corrupt_path, original).expect("write");
+    assert!(AppSettings::load(&corrupt_path).is_err());
+    assert_eq!(fs::read(&corrupt_path).expect("read original"), original);
 
     let _ = fs::remove_dir_all(&dir);
 }

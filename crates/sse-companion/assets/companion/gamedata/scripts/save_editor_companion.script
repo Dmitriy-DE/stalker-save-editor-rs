@@ -25,15 +25,19 @@
 
 local PROTOCOL = "v1"
 -- Bump on every change of the mod files: the editor compares it with the build it installs.
-local MOD_BUILD = "2026.09.28.2"
+local MOD_BUILD = "2026.10.08.1"
 local POLL_MS_DEFAULT = 2000
 local POLL_MS_HOTKEYS = 250
 local MAX_GIVE = 100
 local SLOT_LIMIT = 13 -- highest slot index is below this in all three games
+local MAX_COMMAND_BYTES = 1024 * 1024
+local COMMAND_MAX_AGE_SECONDS = 30
+local PERSISTED_RELEASE_MAX_AGE_SECONDS = 5
 
 local next_poll = 0
-local pending_release = nil -- {id, at}: temporary level changer to remove
-local cmd_path, tmp_out_path, out_path
+local next_release_check = 0
+local pending_release = nil -- {id, origin, at}: temporary level changer to remove
+local cmd_path, tmp_out_path, out_path, release_path, release_tmp_path
 
 local function paths()
 	if cmd_path == nil then
@@ -41,12 +45,133 @@ local function paths()
 		cmd_path = fs:update_path("$app_data_root$", "save_editor_cmd.txt")
 		tmp_out_path = fs:update_path("$app_data_root$", "save_editor_out.tmp")
 		out_path = fs:update_path("$app_data_root$", "save_editor_out.txt")
+		release_path = fs:update_path("$app_data_root$", "save_editor_level_changer_pending.txt")
+		release_tmp_path = fs:update_path("$app_data_root$", "save_editor_level_changer_pending.tmp")
 	end
-	return cmd_path, tmp_out_path, out_path
+	return cmd_path, tmp_out_path, out_path, release_path, release_tmp_path
 end
 
 local function one_line(text)
 	return (string.gsub(tostring(text or ""), "[\r\n]+", " "))
+end
+
+local function command_timestamp(id)
+	local timestamp = string.match(tostring(id or ""), "^(%d+)%-")
+	return tonumber(timestamp)
+end
+
+local function stale_command_error(id)
+	local timestamp = command_timestamp(id)
+	if timestamp == nil then
+		return "request timestamp is missing"
+	end
+	local now = os.time()
+	if now == nil then
+		return "system clock is unavailable"
+	end
+	if timestamp > now + 5 then
+		return "request timestamp is in the future"
+	end
+	if now - timestamp > COMMAND_MAX_AGE_SECONDS then
+		return "request is stale"
+	end
+	return nil
+end
+
+local function read_pending_release()
+	local _, _, _, path = paths()
+	local f = io.open(path, "r")
+	if f == nil then
+		return nil, false
+	end
+	local content = f:read(256)
+	local overflow = f:read(1)
+	f:close()
+	if content == nil or overflow ~= nil then
+		return nil, true
+	end
+	local id, origin, created, x, y, z = string.match(content, "^(%d+)|([^|]+)|(%d+)|([^|]+)|([^|]+)|([^|]+)$")
+	if id == nil then
+		return nil, true
+	end
+	local position = { x = tonumber(x), y = tonumber(y), z = tonumber(z) }
+	if position.x == nil or position.y == nil or position.z == nil then
+		return nil, true
+	end
+	return { id = tonumber(id), origin = origin, created = tonumber(created), position = position }, true
+end
+
+local function clear_pending_release()
+	local _, _, _, path = paths()
+	os.remove(path)
+end
+
+local function write_pending_release(id, origin, position)
+	local _, _, _, path, temp = paths()
+	if position == nil or type(position.x) ~= "number" or type(position.y) ~= "number" or type(position.z) ~= "number"
+		or position.x ~= position.x or position.y ~= position.y or position.z ~= position.z
+		or math.abs(position.x) == math.huge or math.abs(position.y) == math.huge or math.abs(position.z) == math.huge then
+		return false
+	end
+	local existing = io.open(path, "r")
+	if existing ~= nil then
+		existing:close()
+		return false
+	end
+	local f = io.open(temp, "w")
+	if f == nil then
+		return false
+	end
+	local wrote = f:write(
+		tostring(id), "|", tostring(origin), "|", tostring(os.time()), "|",
+		string.format("%.6f", position.x), "|", string.format("%.6f", position.y), "|", string.format("%.6f", position.z)
+	)
+	local closed = f:close()
+	if wrote == nil or closed == nil then
+		os.remove(temp)
+		return false
+	end
+	local renamed = os.rename(temp, path)
+	if renamed == nil then
+		os.remove(temp)
+		return false
+	end
+	return true
+end
+
+local function release_level_changer(id, expected_position)
+	local sim = alife()
+	local lc = sim:object(id)
+	if lc == nil then
+		return true
+	end
+	if lc:section_name() ~= "level_changer" or lc.position == nil or expected_position == nil then
+		return false
+	end
+	if math.abs(lc.position.x - expected_position.x) > 0.01
+		or math.abs(lc.position.y - expected_position.y) > 0.01
+		or math.abs(lc.position.z - expected_position.z) > 0.01 then
+		return false
+	end
+	sim:release(lc, true)
+	return true
+end
+
+local function recover_persisted_level_changer()
+	local pending, exists = read_pending_release()
+	if not exists or pending == nil or pending.id == nil or pending.created == nil then
+		return
+	end
+	local now = os.time()
+	if level.name() == pending.origin and now - pending.created <= PERSISTED_RELEASE_MAX_AGE_SECONDS then
+		return
+	end
+	local ok, released_or_err = pcall(release_level_changer, pending.id, pending.position)
+	if ok and released_or_err then
+		clear_pending_release()
+	else
+		print("[SaveEditorCompanion] Could not release pending level changer " .. tostring(pending.id) .. ": " .. tostring(released_or_err))
+	end
 end
 
 local function reply(id, status, text)
@@ -299,6 +424,10 @@ function jump_to(target_level, pos, gv, label)
 		db.actor:set_actor_position(pos)
 		return "ok", "at " .. label
 	end
+	local _, release_exists = read_pending_release()
+	if release_exists or pending_release ~= nil then
+		return "error", "a previous cross-level transition still needs cleanup"
+	end
 	local lc
 	if save_editor_level_changer ~= nil and save_editor_level_changer.spawn_level_changer ~= nil then
 		lc = save_editor_level_changer.spawn_level_changer(target_level, pos, gv)
@@ -310,7 +439,13 @@ function jump_to(target_level, pos, gv, label)
 	else
 		return "unsupported", "no level changer module found"
 	end
-	pending_release = { id = lc.id, at = time_global() + 300 }
+	local origin = level.name()
+	local origin_position = db.actor:position()
+	if not write_pending_release(lc.id, origin, origin_position) then
+		pcall(release_level_changer, lc.id, origin_position)
+		return "error", "could not record temporary level changer for recovery"
+	end
+	pending_release = { id = lc.id, origin = origin, position = origin_position, at = time_global() + 300 }
 	return "ok", "jumping to " .. label .. "@" .. target_level
 end
 
@@ -1143,6 +1278,11 @@ local function execute(line)
 		reply(id or "0", "error", "expected: " .. PROTOCOL .. " <id> <command> [args]")
 		return
 	end
+	local stale_error = stale_command_error(id)
+	if stale_error ~= nil then
+		reply(id, "error", stale_error)
+		return
+	end
 	local handler = handlers[command]
 	if handler == nil then
 		reply(id, "unsupported", command)
@@ -1162,11 +1302,18 @@ end
 
 function update()
 	if pending_release ~= nil and db.actor ~= nil and time_global() >= pending_release.at then
-		local lc = alife():object(pending_release.id)
+		local release = pending_release
 		pending_release = nil
-		if lc ~= nil then
-			alife():release(lc, true)
+		local ok, released_or_err = pcall(release_level_changer, release.id, release.position)
+		if ok and released_or_err then
+			clear_pending_release()
+		else
+			print("[SaveEditorCompanion] Could not release pending level changer " .. tostring(release.id) .. ": " .. tostring(released_or_err))
 		end
+	end
+	if db.actor ~= nil and time_global() >= next_release_check then
+		next_release_check = time_global() + 1000
+		recover_persisted_level_changer()
 	end
 	if db.actor ~= nil and pending_action ~= nil then
 		local action = pending_action
@@ -1205,10 +1352,20 @@ function update()
 	if f == nil then
 		return
 	end
-	local line = f:read("*l")
+	local line = f:read(MAX_COMMAND_BYTES + 1)
 	f:close()
 	os.remove(cmd)
-	if line ~= nil then
-		execute(line)
+	if line == nil or line == "" then
+		return
 	end
+	if #line > MAX_COMMAND_BYTES then
+		reply("0", "error", "command exceeds the size limit")
+		return
+	end
+	line = string.match(line, "^([^\r\n]*)\r?\n?$")
+	if line == nil or line == "" then
+		reply("0", "error", "expected exactly one command line")
+		return
+	end
+	execute(line)
 end

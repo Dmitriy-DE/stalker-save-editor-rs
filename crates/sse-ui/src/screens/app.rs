@@ -7,7 +7,7 @@ use super::style::{self, Button, Text};
 use super::{AppMessage, Context, Screen, ScreenId};
 use crate::event_loop::Message;
 use crate::glyphs::{Face, TextStyle};
-use crate::layout::{GridPlacement, NodeKind, Size, Style, Track};
+use crate::layout::{Align, Edges, GridPlacement, NodeKind, Size, Style, Track};
 use crate::widget::{Content, Look, TextAlign, WidgetId};
 use sse_core::Result;
 use std::path::PathBuf;
@@ -450,13 +450,29 @@ fn repaint_theme(tree: &mut crate::widget::Tree, old: crate::theme::Theme, new: 
     tree.damage_all();
 }
 
-fn load_settings() -> sse_app::AppSettings {
-    sse_app::AppSettings::load(&sse_app::default_settings_path())
+fn load_settings() -> (sse_app::AppSettings, Option<String>) {
+    match sse_app::AppSettings::load(&sse_app::default_settings_path()) {
+        Ok(settings) => (settings, None),
+        Err(error) => {
+            sse_app::diagnostics::warn(&format!("settings file could not be loaded: {error}"));
+            let detail = format!("settings.json is unchanged: {error}");
+            (
+                sse_app::AppSettings::default(),
+                Some(sse_catalog::I18nService::instance().tr_in(
+                    Some(crate::strings::current_language()),
+                    "Настройки не сохранены: {0}",
+                    &[&detail],
+                )),
+            )
+        }
+    }
 }
 
-fn save_settings(settings: &sse_app::AppSettings) -> Result<()> {
-    let _ = sse_app::settings_writer::submit(sse_app::settings_writer::SettingsPatch::Replace(settings.clone()));
-    Ok(())
+fn save_settings(settings: &sse_app::AppSettings, proxy: Option<crate::event_loop::Proxy<AppMessage>>) -> Result<()> {
+    super::submit_settings_write(
+        sse_app::settings_writer::SettingsPatch::Replace(settings.clone()),
+        proxy,
+    )
 }
 
 const LANGUAGE_NAMES: [&str; 15] = [
@@ -476,9 +492,6 @@ const LANGUAGE_NAMES: [&str; 15] = [
     "简体中文",
     "繁體中文",
 ];
-
-/// Result of the background check started by the settings screen.
-struct Checked(String);
 
 struct DiagnosticReportFinished {
     result: std::result::Result<PathBuf, String>,
@@ -516,8 +529,10 @@ pub struct Settings {
     language_button: Option<WidgetId>,
     save_button: Option<WidgetId>,
     language: usize,
-    check_button: Option<WidgetId>,
-    check_result: Option<WidgetId>,
+    #[cfg(feature = "native-ui")]
+    open_cloud_button: Option<WidgetId>,
+    #[cfg(feature = "native-ui")]
+    open_updates_button: Option<WidgetId>,
     scale: usize,
     theme: usize,
     accent: usize,
@@ -569,43 +584,71 @@ impl Screen for Settings {
     }
 
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
-        self.settings = load_settings();
+        let (settings, warning) = load_settings();
+        self.settings = settings;
+        if warning.is_some() {
+            cx.status = warning;
+        }
         if let Some(workspace) = &self.backup_workspace {
             workspace.set_backup_directory(sse_app::paths::backup_directory(&self.settings));
         }
         self.language = crate::strings::language_index(self.settings.language.as_deref().unwrap_or("ru"));
         let settings_root = style::row(cx.tree, host)?;
         let sections = style::card(cx.tree, settings_root)?;
+        cx.tree.set_style(
+            sections,
+            Style {
+                preferred: Size::new(200.0, 0.0),
+                min: Size::new(200.0, 0.0),
+                max: Size::new(200.0, f32::INFINITY),
+                shrink: 0.0,
+                padding: Edges::all(crate::theme::CARD_PADDING),
+                gap: Size::new(0.0, crate::theme::CONTROL_GAP),
+                align_items: Align::Stretch,
+                ..Style::default()
+            },
+        )?;
         style::label(cx.tree, sections, "Разделы", Text::Heading)?;
-        for name in [
+        for key in [
             "ОБЩИЕ",
             "ИНТЕРФЕЙС",
-            "Звук",
-            "ПУТИ И АВТОПОИСК",
+            "ЗВУК",
+            "ПУТИ",
             "ОБНОВЛЕНИЯ",
-            "РЕЗЕРВНЫЕ КОПИИ",
-            "ИНСТРУМЕНТЫ ДЛЯ ПОДДЕРЖКИ",
-            "ОТЧЁТЫ И ПРИВАТНОСТЬ",
+            "БЭКАПЫ",
+            "ПОДДЕРЖКА",
+            "ОТЧЁТЫ",
             "ВЕРСИЯ",
         ] {
-            self.section_buttons
-                .push(style::button(cx.tree, sections, name, Button::Secondary)?);
+            self.section_buttons.push(style::button(
+                cx.tree,
+                sections,
+                crate::strings::t(key),
+                Button::Secondary,
+            )?);
         }
         let content = style::card(cx.tree, settings_root)?;
 
         let general = style::card(cx.tree, content)?;
         style::label(cx.tree, general, "ОБЩИЕ", Text::Heading)?;
         style::label(cx.tree, general, "УПРАВЛЕНИЕ ОСНОВНЫМ ПОВЕДЕНИЕМ РЕДАКТОРА", Text::Note)?;
-        style::label(cx.tree, general, "[ STEAM CLOUD ]", Text::Value)?;
-        style::label(cx.tree, general, "Откройте экран Steam Cloud, чтобы просматривать состояние синхронизации и выполнять действия с явным подтверждением.", Text::Body)?;
-        style::button(cx.tree, general, "Открыть Steam Cloud", Button::Secondary)?;
+        #[cfg(feature = "native-ui")]
+        {
+            style::label(cx.tree, general, "[ STEAM CLOUD ]", Text::Value)?;
+            style::label(cx.tree, general, "Откройте экран Steam Cloud, чтобы просматривать состояние синхронизации и выполнять действия с явным подтверждением.", Text::Body)?;
+            self.open_cloud_button = Some(style::button(
+                cx.tree,
+                general,
+                "Открыть Steam Cloud",
+                Button::Secondary,
+            )?);
+        }
         self.section_panels.push(general);
 
         let view = style::card(cx.tree, content)?;
         style::label(cx.tree, view, "ИНТЕРФЕЙС", Text::Heading)?;
         style::label(cx.tree, view, "ЯЗЫК, ТЕМА, АКЦЕНТ И МАСШТАБ", Text::Note)?;
         self.section_panels.push(view);
-        self.settings = load_settings();
         self.theme = crate::theme::THEMES
             .iter()
             .position(|(id, _)| *id == self.settings.theme_id)
@@ -722,8 +765,16 @@ impl Screen for Settings {
         let updates = style::card(cx.tree, content)?;
         style::label(cx.tree, updates, "ОБНОВЛЕНИЯ", Text::Heading)?;
         let line = style::row(cx.tree, updates)?;
-        self.check_button = Some(style::button(cx.tree, line, "Проверить", Button::Primary)?);
-        self.check_result = Some(style::label(cx.tree, line, "Ещё не проверяли", Text::Note)?);
+        #[cfg(feature = "native-ui")]
+        {
+            self.open_updates_button = Some(style::button(cx.tree, line, "Открыть обновления", Button::Primary)?);
+            style::label(
+                cx.tree,
+                line,
+                "Проверка и установка доступны на экране обновлений.",
+                Text::Note,
+            )?;
+        }
         style::label(
             cx.tree,
             updates,
@@ -1060,8 +1111,8 @@ impl Screen for Settings {
             if let Some(value) = self.theme_value {
                 cx.tree.set_text(value, theme_name)?;
             }
-            match save_settings(&self.settings) {
-                Ok(()) => cx.status = Some("Настройки сохранены.".to_owned()),
+            match save_settings(&self.settings, cx.proxy.cloned()) {
+                Ok(()) => cx.status = Some(crate::strings::t("Сохраняю…").to_owned()),
                 Err(error) => cx.status = Some(format!("Не удалось сохранить настройки: {error}")),
             }
         }
@@ -1086,8 +1137,8 @@ impl Screen for Settings {
                         .unwrap_or("Янтарный"),
                 )?;
             }
-            match save_settings(&self.settings) {
-                Ok(()) => cx.status = Some("Настройки сохранены.".to_owned()),
+            match save_settings(&self.settings, cx.proxy.cloned()) {
+                Ok(()) => cx.status = Some(crate::strings::t("Сохраняю…").to_owned()),
                 Err(error) => cx.status = Some(format!("Не удалось сохранить настройки: {error}")),
             }
         }
@@ -1105,8 +1156,8 @@ impl Screen for Settings {
                 };
                 cx.tree.set_text(value, &label)?;
             }
-            match save_settings(&self.settings) {
-                Ok(()) => cx.status = Some("Настройки сохранены.".to_owned()),
+            match save_settings(&self.settings, cx.proxy.cloned()) {
+                Ok(()) => cx.status = Some(crate::strings::t("Сохраняю…").to_owned()),
                 Err(error) => cx.status = Some(format!("Не удалось сохранить настройки: {error}")),
             }
         }
@@ -1131,8 +1182,8 @@ impl Screen for Settings {
             self.settings.language = crate::strings::LANGUAGES
                 .get(self.language)
                 .map(|code| (*code).to_owned());
-            match save_settings(&self.settings) {
-                Ok(()) => cx.status = Some(crate::strings::t("Настройки сохранены.").to_owned()),
+            match save_settings(&self.settings, cx.proxy.cloned()) {
+                Ok(()) => cx.status = Some(crate::strings::t("Сохраняю…").to_owned()),
                 Err(error) => {
                     cx.status = Some(format!(
                         "{}{}",
@@ -1143,17 +1194,16 @@ impl Screen for Settings {
             }
         }
 
-        if clicked.is_some() && clicked == self.check_button {
-            if let Some(result) = self.check_result {
-                cx.tree.set_text(result, "Проверяю…")?;
-            }
-            // Slow work never runs on the UI thread: a worker answers through the proxy.
+        #[cfg(feature = "native-ui")]
+        if clicked.is_some() && clicked == self.open_cloud_button {
             if let Some(proxy) = cx.proxy.cloned() {
-                std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_millis(300));
-                    let answer = Checked(format!("Установлена {}", env!("CARGO_PKG_VERSION")));
-                    proxy.send(AppMessage::ToScreen(ScreenId::Settings, Box::new(answer)));
-                });
+                proxy.send(AppMessage::OpenScreen(ScreenId::Cloud));
+            }
+        }
+        #[cfg(feature = "native-ui")]
+        if clicked.is_some() && clicked == self.open_updates_button {
+            if let Some(proxy) = cx.proxy.cloned() {
+                proxy.send(AppMessage::OpenScreen(ScreenId::Updates));
             }
         }
         if let Message::User(AppMessage::ToScreen(_, payload)) = message {
@@ -1167,9 +1217,6 @@ impl Screen for Settings {
                     Err(error) => format!("{}{error}", crate::strings::t("Не удалось сохранить отчёт: ")),
                 });
             }
-            if let (Some(Checked(text)), Some(result)) = (payload.downcast_ref::<Checked>(), self.check_result) {
-                cx.tree.set_text(result, text)?;
-            }
         }
         Ok(())
     }
@@ -1177,13 +1224,59 @@ impl Screen for Settings {
 
 #[cfg(test)]
 mod tests {
-    use super::Settings;
+    use super::{style, Settings};
     use crate::glyphs::{Face, Fonts, TextStyle};
     use crate::layout::{NodeKind, Style};
     use crate::raster::Color;
     use crate::screens::saves::Workspace;
     use crate::widget::{Content, Look, Tree};
     use std::path::PathBuf;
+
+    #[test]
+    #[cfg(feature = "native-ui")]
+    fn settings_actions_dispatch_to_cloud_and_update_screens() -> sse_core::Result<()> {
+        use crate::event_loop::{channel_pair, Message};
+        use crate::screens::{AppMessage, Context, Screen, ScreenId};
+        use crate::widget::{Content, Look, Tree};
+
+        let mut tree = Tree::new(Fonts::bundled()?, crate::raster::Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let cloud_button = style::button(&mut tree, host, "Открыть Steam Cloud", style::Button::Secondary)?;
+        let updates_button = style::button(&mut tree, host, "Открыть обновления", style::Button::Primary)?;
+        let (proxy, receiver) = channel_pair();
+        let mut app = sse_app::AppState::new();
+        let mut screen = Settings {
+            open_cloud_button: Some(cloud_button),
+            open_updates_button: Some(updates_button),
+            ..Settings::default()
+        };
+        let tick = Message::User(AppMessage::Tick(0));
+        let mut context = Context {
+            tree: &mut tree,
+            proxy: Some(&proxy),
+            status: None,
+            app: &mut app,
+        };
+
+        screen.message(&mut context, &tick, Some(cloud_button))?;
+        screen.message(&mut context, &tick, Some(updates_button))?;
+
+        assert!(matches!(
+            receiver.try_recv().ok(),
+            Some(Message::User(AppMessage::OpenScreen(ScreenId::Cloud)))
+        ));
+        assert!(matches!(
+            receiver.try_recv().ok(),
+            Some(Message::User(AppMessage::OpenScreen(ScreenId::Updates)))
+        ));
+        Ok(())
+    }
 
     #[test]
     fn backup_input_updates_shared_path_before_settings_are_saved() -> sse_core::Result<()> {

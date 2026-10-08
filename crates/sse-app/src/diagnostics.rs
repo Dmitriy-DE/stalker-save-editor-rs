@@ -66,6 +66,21 @@ pub fn error(message: &str) {
     write_log("ERROR", message);
 }
 
+/// Records a save write that completed and passed its durable read-back verification.
+pub fn save_write_succeeded(path: &Path) {
+    info(&format!("save write succeeded: {}", path.display()));
+}
+
+/// Records a save write that failed, including the operation path and error.
+pub fn save_write_failed(path: &Path, reason: &str) {
+    error(&format!("save write failed: {}: {reason}", path.display()));
+}
+
+/// Records a save write cancelled before the operation completed.
+pub fn save_write_cancelled(path: &Path) {
+    warn(&format!("save write cancelled: {}", path.display()));
+}
+
 fn write_log(level: &str, message: &str) {
     let Ok(_guard) = LOG_GATE.lock() else { return };
     let directory = log_directory();
@@ -102,7 +117,67 @@ fn rotate(path: &Path) {
 
 fn timestamp() -> String {
     let duration = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
-    format!("{}.{:03}Z", duration.as_secs(), duration.subsec_millis())
+    format_timestamp_utc(duration)
+}
+
+fn format_timestamp_utc(duration: std::time::Duration) -> String {
+    let seconds = duration.as_secs();
+    let mut remaining_days = seconds / 86_400;
+    let seconds_in_day = seconds % 86_400;
+    let mut year = 1970_u64;
+    loop {
+        if year > 9999 {
+            // Keep ordinary log dates in the four-digit ISO form; preserve out-of-range epoch values.
+            return format!("unix+{seconds}s.{:03}Z", duration.subsec_millis());
+        }
+        let leap = year % 400 == 0 || (year % 4 == 0 && year % 100 != 0);
+        let year_days = if leap { 366 } else { 365 };
+        if remaining_days < year_days {
+            break;
+        }
+        let Some(days_after_year) = remaining_days.checked_sub(year_days) else {
+            return "invalid-time".to_owned();
+        };
+        let Some(next_year) = year.checked_add(1) else {
+            return "invalid-time".to_owned();
+        };
+        remaining_days = days_after_year;
+        year = next_year;
+    }
+
+    let leap = year % 400 == 0 || (year % 4 == 0 && year % 100 != 0);
+    let mut month = 1_u64;
+    loop {
+        let month_days = match month {
+            1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+            4 | 6 | 9 | 11 => 30,
+            2 if leap => 29,
+            2 => 28,
+            _ => return "invalid-time".to_owned(),
+        };
+        if remaining_days < month_days {
+            break;
+        }
+        let Some(days_after_month) = remaining_days.checked_sub(month_days) else {
+            return "invalid-time".to_owned();
+        };
+        let Some(next_month) = month.checked_add(1) else {
+            return "invalid-time".to_owned();
+        };
+        remaining_days = days_after_month;
+        month = next_month;
+    }
+    let Some(day) = remaining_days.checked_add(1) else {
+        return "invalid-time".to_owned();
+    };
+
+    let hour = seconds_in_day / 3_600;
+    let minute = seconds_in_day % 3_600 / 60;
+    let second = seconds_in_day % 60;
+    format!(
+        "{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}.{:03}Z",
+        duration.subsec_millis()
+    )
 }
 
 /// Redacts home-directory user names, Wine user names, SteamID64 values and Steam userdata IDs.
@@ -1047,6 +1122,66 @@ mod tests {
     use sse_sys::fetch::Response;
 
     static TEST_GATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn diagnostic_timestamps_use_readable_utc_calendar_time() {
+        assert_eq!(
+            format_timestamp_utc(std::time::Duration::from_millis(0)),
+            "1970-01-01T00:00:00.000Z"
+        );
+        assert_eq!(
+            format_timestamp_utc(std::time::Duration::from_millis(951_827_696_789)),
+            "2000-02-29T12:34:56.789Z"
+        );
+    }
+
+    #[test]
+    fn save_write_outcomes_are_logged_with_readable_time_and_redacted_paths() -> Result<()> {
+        let _guard = TEST_GATE
+            .lock()
+            .map_err(|_| Error::System("diagnostics test gate poisoned".to_owned()))?;
+        let directory = std::env::temp_dir().join(format!("sse-save-write-log-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory)?;
+        configure_log_directory(Some(directory.clone()));
+
+        save_write_succeeded(Path::new("/home/alice/saves/working.sav"));
+        save_write_failed(Path::new("/home/alice/saves/broken.sav"), "permission denied");
+
+        let log = fs::read_to_string(directory.join(LOG_FILE));
+        configure_log_directory(None);
+        let _ = fs::remove_dir_all(&directory);
+        let log = log?;
+        let lines: Vec<_> = log.lines().collect();
+        assert_eq!(lines.len(), 2, "{log:?}");
+        let success = lines.first().copied().unwrap_or_default();
+        let failure = lines.get(1).copied().unwrap_or_default();
+        assert!(
+            success.contains(" INFO save write succeeded: <home>/saves/working.sav"),
+            "{log:?}"
+        );
+        assert!(
+            failure.contains(" ERROR save write failed: <home>/saves/broken.sav: permission denied"),
+            "{log:?}"
+        );
+        for line in lines {
+            let Some((timestamp, _)) = line.split_once(' ') else {
+                return Err(Error::System(format!("log line has no timestamp: {line:?}")));
+            };
+            let valid_timestamp = timestamp.len() == 24
+                && timestamp.bytes().enumerate().all(|(index, byte)| match index {
+                    4 | 7 => byte == b'-',
+                    10 => byte == b'T',
+                    13 | 16 => byte == b':',
+                    19 => byte == b'.',
+                    23 => byte == b'Z',
+                    _ => byte.is_ascii_digit(),
+                });
+            assert!(valid_timestamp, "{timestamp:?}");
+            assert!(!line.contains("alice"), "{line:?}");
+        }
+        Ok(())
+    }
 
     struct FakeResponder {
         status: u16,
