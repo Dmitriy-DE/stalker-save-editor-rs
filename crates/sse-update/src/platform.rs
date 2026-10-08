@@ -102,10 +102,7 @@ const ARTIFACT_TABLE: &[(&str, ArtifactDescriptor)] = &[
 #[must_use]
 pub fn artifact_key(target_name: &str, arch: &str, kind_name: &str) -> Option<&'static str> {
     for (key, desc) in ARTIFACT_TABLE {
-        if desc.target == target_name
-            && desc.kind == kind_name
-            && (desc.architecture == arch || target_name != target::MACOS)
-        {
+        if desc.target == target_name && desc.kind == kind_name && desc.architecture == arch {
             return Some(key);
         }
     }

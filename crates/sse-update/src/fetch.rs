@@ -61,23 +61,54 @@ struct DownloadStream {
     write_error: Option<std::io::Error>,
 }
 
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const LINUX_O_NOFOLLOW: Option<i32> = Some(0o400_000);
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+const LINUX_O_NOFOLLOW: Option<i32> = Some(0o100_000);
+#[cfg(all(target_os = "linux", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
+const LINUX_O_NOFOLLOW: Option<i32> = None;
+
 fn open_existing_regular_file(path: &Path, writable: bool) -> std::io::Result<File> {
     let mut options = OpenOptions::new();
     options.read(true).write(writable);
-    #[cfg(unix)]
+
+    #[cfg(target_os = "linux")]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NOFOLLOW);
+
+        let Some(no_follow_flag) = LINUX_O_NOFOLLOW else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "Secure file opening is unavailable on this Linux architecture",
+            ));
+        };
+        options.custom_flags(no_follow_flag);
     }
+
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(0x0000_0100);
+    }
+
     #[cfg(windows)]
     {
         use std::os::windows::fs::OpenOptionsExt;
-        // FILE_FLAG_OPEN_REPARSE_POINT opens the reparse point itself for validation.
         options.custom_flags(0x0020_0000);
     }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+    {
+        let _ = options;
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "Secure file opening is unavailable on this platform",
+        ));
+    }
+
     let file = options.open(path)?;
     let metadata = file.metadata()?;
-    if !metadata.is_file() || metadata.file_type().is_symlink() {
+    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             "path is not a regular file",

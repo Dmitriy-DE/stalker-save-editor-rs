@@ -10,8 +10,5 @@ sse-core = { path = "../sse-core" }
 sse-codecs = { path = "../sse-codecs" }
 sse-sys = { path = "../sse-sys" }
 
-[target.'cfg(unix)'.dependencies]
-libc = "0.2"
-
 [lints]
 workspace = true
