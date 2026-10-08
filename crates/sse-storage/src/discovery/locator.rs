@@ -81,6 +81,8 @@ pub struct SaveDirectoryDiscoveryOptions {
     pub environment: Option<HashMap<String, String>>,
     /// Steam root installation folders override.
     pub steam_roots: Option<Vec<PathBuf>>,
+    /// Additional save directories explicitly configured by the user.
+    pub custom_save_directories: Option<Vec<PathBuf>>,
 }
 
 #[derive(Clone, Copy)]
@@ -366,6 +368,26 @@ impl SaveDirectoryLocator {
                 if let Some(s2_release) = RELEASES.first() {
                     add_stalker2_proton_candidates(&mut candidates, &mut seen, s2_release, library);
                 }
+            }
+        }
+
+        for directory in options
+            .and_then(|opts| opts.custom_save_directories.as_ref())
+            .into_iter()
+            .flatten()
+        {
+            if directory.as_os_str().is_empty() {
+                continue;
+            }
+
+            let normalized = normalize_full_path(directory);
+            let resolved = resolve_links(&normalized);
+            let key = format!(
+                "custom\0{}",
+                known_root_key(&resolved, windows_paths_are_case_insensitive)
+            );
+            if seen.insert(key) {
+                candidates.push(SaveDirectoryCandidate::new("unknown", "custom", resolved));
             }
         }
 

@@ -450,13 +450,29 @@ fn repaint_theme(tree: &mut crate::widget::Tree, old: crate::theme::Theme, new: 
     tree.damage_all();
 }
 
-fn load_settings() -> sse_app::AppSettings {
-    sse_app::AppSettings::load(&sse_app::default_settings_path())
+fn load_settings() -> (sse_app::AppSettings, Option<String>) {
+    match sse_app::AppSettings::load(&sse_app::default_settings_path()) {
+        Ok(settings) => (settings, None),
+        Err(error) => {
+            sse_app::diagnostics::warn(&format!("settings file could not be loaded: {error}"));
+            let detail = format!("settings.json is unchanged: {error}");
+            (
+                sse_app::AppSettings::default(),
+                Some(sse_catalog::I18nService::instance().tr_in(
+                    Some(crate::strings::current_language()),
+                    "Настройки не сохранены: {0}",
+                    &[&detail],
+                )),
+            )
+        }
+    }
 }
 
-fn save_settings(settings: &sse_app::AppSettings) -> Result<()> {
-    let _ = sse_app::settings_writer::submit(sse_app::settings_writer::SettingsPatch::Replace(settings.clone()));
-    Ok(())
+fn save_settings(settings: &sse_app::AppSettings, proxy: Option<crate::event_loop::Proxy<AppMessage>>) -> Result<()> {
+    super::submit_settings_write(
+        sse_app::settings_writer::SettingsPatch::Replace(settings.clone()),
+        proxy,
+    )
 }
 
 const LANGUAGE_NAMES: [&str; 15] = [
@@ -569,7 +585,11 @@ impl Screen for Settings {
     }
 
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
-        self.settings = load_settings();
+        let (settings, warning) = load_settings();
+        self.settings = settings;
+        if warning.is_some() {
+            cx.status = warning;
+        }
         if let Some(workspace) = &self.backup_workspace {
             workspace.set_backup_directory(sse_app::paths::backup_directory(&self.settings));
         }
@@ -605,7 +625,6 @@ impl Screen for Settings {
         style::label(cx.tree, view, "ИНТЕРФЕЙС", Text::Heading)?;
         style::label(cx.tree, view, "ЯЗЫК, ТЕМА, АКЦЕНТ И МАСШТАБ", Text::Note)?;
         self.section_panels.push(view);
-        self.settings = load_settings();
         self.theme = crate::theme::THEMES
             .iter()
             .position(|(id, _)| *id == self.settings.theme_id)
@@ -1060,8 +1079,8 @@ impl Screen for Settings {
             if let Some(value) = self.theme_value {
                 cx.tree.set_text(value, theme_name)?;
             }
-            match save_settings(&self.settings) {
-                Ok(()) => cx.status = Some("Настройки сохранены.".to_owned()),
+            match save_settings(&self.settings, cx.proxy.cloned()) {
+                Ok(()) => cx.status = Some(crate::strings::t("Сохраняю…").to_owned()),
                 Err(error) => cx.status = Some(format!("Не удалось сохранить настройки: {error}")),
             }
         }
@@ -1086,8 +1105,8 @@ impl Screen for Settings {
                         .unwrap_or("Янтарный"),
                 )?;
             }
-            match save_settings(&self.settings) {
-                Ok(()) => cx.status = Some("Настройки сохранены.".to_owned()),
+            match save_settings(&self.settings, cx.proxy.cloned()) {
+                Ok(()) => cx.status = Some(crate::strings::t("Сохраняю…").to_owned()),
                 Err(error) => cx.status = Some(format!("Не удалось сохранить настройки: {error}")),
             }
         }
@@ -1105,8 +1124,8 @@ impl Screen for Settings {
                 };
                 cx.tree.set_text(value, &label)?;
             }
-            match save_settings(&self.settings) {
-                Ok(()) => cx.status = Some("Настройки сохранены.".to_owned()),
+            match save_settings(&self.settings, cx.proxy.cloned()) {
+                Ok(()) => cx.status = Some(crate::strings::t("Сохраняю…").to_owned()),
                 Err(error) => cx.status = Some(format!("Не удалось сохранить настройки: {error}")),
             }
         }
@@ -1131,8 +1150,8 @@ impl Screen for Settings {
             self.settings.language = crate::strings::LANGUAGES
                 .get(self.language)
                 .map(|code| (*code).to_owned());
-            match save_settings(&self.settings) {
-                Ok(()) => cx.status = Some(crate::strings::t("Настройки сохранены.").to_owned()),
+            match save_settings(&self.settings, cx.proxy.cloned()) {
+                Ok(()) => cx.status = Some(crate::strings::t("Сохраняю…").to_owned()),
                 Err(error) => {
                     cx.status = Some(format!(
                         "{}{}",

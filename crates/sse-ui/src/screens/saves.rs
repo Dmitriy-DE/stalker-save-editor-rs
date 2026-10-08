@@ -714,7 +714,8 @@ fn start_discovery(workspace: &Workspace, cx: &mut Context<'_>) {
         if context.is_cancelled() {
             return;
         }
-        let candidates = SaveDirectoryLocator::find_candidate_directories(None);
+        let discovery_options = super::save_directory_discovery_options();
+        let candidates = SaveDirectoryLocator::find_candidate_directories(Some(&discovery_options));
         let mut result = SaveSlotDiscovery::discover(&candidates);
         result.slots.sort_by(|left, right| {
             save_game_key(left)

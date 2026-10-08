@@ -73,6 +73,35 @@ fn discovery_keeps_distinct_non_utf8_save_paths_distinct() {
 }
 
 #[test]
+fn configured_save_directories_are_included_in_candidates() {
+    let temp = TempDir::new("configured-saves");
+    let configured = temp.path.join("custom save folder");
+    fs::create_dir_all(&configured).expect("create configured save directory");
+    let save_path = configured.join("custom.sav");
+    fs::write(&save_path, b"synthetic save candidate").expect("write synthetic save");
+    let options = SaveDirectoryDiscoveryOptions {
+        platform: Some(SaveDiscoveryPlatform::Linux),
+        home_directory: Some(temp.path.join("home")),
+        environment: Some(std::collections::HashMap::new()),
+        steam_roots: Some(Vec::new()),
+        custom_save_directories: Some(vec![configured.clone()]),
+        ..SaveDirectoryDiscoveryOptions::default()
+    };
+
+    let candidates = SaveDirectoryLocator::find_candidate_directories(Some(&options));
+
+    assert!(
+        candidates
+            .iter()
+            .any(|candidate| candidate.directory_path == canonicalize_temp_root(&configured)),
+        "a configured directory must be searched even if it is outside standard save roots"
+    );
+    let discovered = SaveSlotDiscovery::discover(&candidates);
+    assert!(discovered.searched_paths.contains(&canonicalize_temp_root(&configured)));
+    assert!(discovered.slots.iter().any(|slot| slot.path == save_path));
+}
+
+#[test]
 fn finds_windows_game_save_paths_from_steam_manifests_and_fsgame_override() {
     let temp = TempDir::new("locator-win");
     let home = temp.path.join("User");
@@ -118,6 +147,7 @@ fn finds_windows_game_save_paths_from_steam_manifests_and_fsgame_override() {
         known_saved_games_directory: None,
         environment: None,
         steam_roots: Some(vec![steam_root]),
+        custom_save_directories: None,
     };
 
     let candidates = SaveDirectoryLocator::find_candidate_directories(Some(&options));
@@ -190,6 +220,7 @@ fn finds_windows_save_paths_from_redirected_known_folders_and_onedrive_roots() {
         steam_roots: Some(Vec::new()),
         known_documents_directory: Some(documents.clone()),
         known_saved_games_directory: Some(saved_games.clone()),
+        custom_save_directories: None,
     };
 
     let candidates = SaveDirectoryLocator::find_candidate_directories(Some(&options));
@@ -270,6 +301,7 @@ fn finds_proton_save_paths_in_a_secondary_library_even_without_a_game_manifest()
         known_saved_games_directory: None,
         environment: None,
         steam_roots: Some(vec![steam_root]),
+        custom_save_directories: None,
     };
 
     let candidates = SaveDirectoryLocator::find_candidate_directories(Some(&options));

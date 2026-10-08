@@ -1,7 +1,7 @@
 //! Application settings compatible with C# `AppSettings.cs`.
 //!
 //! Stored in `settings.json` formatted as indented UTF-8 JSON with snake_case keys.
-//! Reading missing or damaged files falls back to defaults without panicking.
+//! Missing files use defaults; unreadable or damaged files return an error.
 //! Saving is atomic and durable: writes to a unique temporary file, flushes/syncs,
 //! renames over the destination, and syncs the parent directory.
 
@@ -74,18 +74,16 @@ impl AppSettings {
         Self::default()
     }
 
-    /// Loads settings from `path`. If the file does not exist, cannot be read,
-    /// or contains damaged JSON, returns default settings without failing.
-    #[must_use]
-    pub fn load(path: &Path) -> Self {
-        if !path.exists() {
-            return Self::default();
+    /// Loads settings from `path`. A missing file uses defaults; read or parse errors are preserved.
+    ///
+    /// # Errors
+    /// Returns an error when an existing settings file cannot be read or parsed.
+    pub fn load(path: &Path) -> Result<Self> {
+        match fs::read(path) {
+            Ok(bytes) => Self::from_json_slice(&bytes),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
+            Err(error) => Err(error.into()),
         }
-        let bytes = match fs::read(path) {
-            Ok(b) => b,
-            Err(_) => return Self::default(),
-        };
-        Self::from_json_slice(&bytes).unwrap_or_default()
     }
 
     /// Parses settings from a JSON byte slice.

@@ -8,7 +8,7 @@ use crate::layout::{Edges, NodeKind, Size, Style};
 use crate::widget::{Content, Look, Tree, WidgetId};
 use crate::widgets::text_input::TextInput;
 use sse_core::Result;
-use sse_storage::discovery::SaveDirectoryLocator;
+use sse_storage::discovery::{SaveDirectoryDiscoveryOptions, SaveDirectoryLocator};
 use std::path::PathBuf;
 struct EmptyClipboard;
 impl Clipboard for EmptyClipboard {
@@ -136,7 +136,7 @@ impl Wizard {
     }
     fn save_directory(path: PathBuf) -> Result<bool> {
         let settings_path = sse_app::default_settings_path();
-        let mut settings = sse_app::AppSettings::load(&settings_path);
+        let mut settings = sse_app::AppSettings::load(&settings_path)?;
         let directories = settings.save_directories.get_or_insert_with(Vec::new);
         let key = path.to_string_lossy().trim().to_lowercase();
         if directories
@@ -146,15 +146,37 @@ impl Wizard {
             return Ok(false);
         }
         directories.push(path);
-        settings.save(&settings_path)?;
+        super::submit_settings_write(
+            sse_app::settings_writer::SettingsPatch::SaveDirectories(directories.clone()),
+            None,
+        )?;
         Ok(true)
     }
     fn auto_search() -> Result<usize> {
+        let settings_path = sse_app::default_settings_path();
+        let mut settings = sse_app::AppSettings::load(&settings_path)?;
+        let options = SaveDirectoryDiscoveryOptions {
+            custom_save_directories: settings.save_directories.clone(),
+            ..SaveDirectoryDiscoveryOptions::default()
+        };
+        let directories = settings.save_directories.get_or_insert_with(Vec::new);
+        let mut known: std::collections::HashSet<String> = directories
+            .iter()
+            .map(|path| path.to_string_lossy().trim().to_lowercase())
+            .collect();
         let mut added = 0_usize;
-        for candidate in SaveDirectoryLocator::find_candidate_directories(None) {
-            if Self::save_directory(candidate.directory_path)? {
+        for candidate in SaveDirectoryLocator::find_candidate_directories(Some(&options)) {
+            let key = candidate.directory_path.to_string_lossy().trim().to_lowercase();
+            if known.insert(key) {
+                directories.push(candidate.directory_path);
                 added = added.saturating_add(1);
             }
+        }
+        if added > 0 {
+            super::submit_settings_write(
+                sse_app::settings_writer::SettingsPatch::SaveDirectories(directories.clone()),
+                None,
+            )?;
         }
         Ok(added)
     }
