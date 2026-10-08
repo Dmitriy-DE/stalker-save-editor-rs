@@ -189,15 +189,7 @@ impl SaveDirectoryLocator {
     /// Returns default candidate Steam root paths for the platform.
     #[must_use]
     pub fn default_steam_roots() -> Vec<PathBuf> {
-        let env_map = read_environment();
-        let platform = SaveDiscoveryPlatform::Current.resolve();
-        let home = get_env(&env_map, "HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| get_fallback_home(&env_map));
-        let local_app_data = get_env(&env_map, "LOCALAPPDATA")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| home.join("AppData").join("Local"));
-        get_default_steam_roots(platform, &home, &local_app_data, &env_map)
+        sse_sys::steam::default_steam_roots()
     }
 
     /// Finds candidate save directories according to discovery options.
@@ -240,9 +232,11 @@ impl SaveDirectoryLocator {
                 }
             });
 
-        let steam_roots = options
-            .and_then(|opts| opts.steam_roots.clone())
-            .unwrap_or_else(|| get_default_steam_roots(platform, &home, &local_app_data, &env_map));
+        let steam_roots = match options.and_then(|opts| opts.steam_roots.clone()) {
+            Some(roots) => roots,
+            None if options.is_none() => Self::default_steam_roots(),
+            None => get_default_steam_roots(platform, &home, &local_app_data, &env_map),
+        };
 
         let libraries = get_steam_libraries(&steam_roots);
         let mut candidates = Vec::new();
@@ -885,34 +879,16 @@ fn get_default_steam_roots(
     local_app_data: &Path,
     env_map: &HashMap<String, String>,
 ) -> Vec<PathBuf> {
-    match platform {
-        SaveDiscoveryPlatform::Windows => {
-            let mut roots = Vec::new();
-            for var in &["ProgramFiles(x86)", "ProgramFiles"] {
-                if let Some(base) = get_env(env_map, var) {
-                    if !base.trim().is_empty() {
-                        roots.push(PathBuf::from(base).join("Steam"));
-                    }
-                }
-            }
-            roots.push(local_app_data.join("Programs").join("Steam"));
-            roots
-        }
-        SaveDiscoveryPlatform::MacOS => {
-            vec![home.join("Library").join("Application Support").join("Steam")]
-        }
-        SaveDiscoveryPlatform::Linux | SaveDiscoveryPlatform::Current => {
-            vec![
-                home.join(".local").join("share").join("Steam"),
-                home.join(".steam").join("steam"),
-                home.join(".var")
-                    .join("app")
-                    .join("com.valvesoftware.Steam")
-                    .join("data")
-                    .join("Steam"),
-            ]
-        }
-    }
+    let platform = match platform {
+        SaveDiscoveryPlatform::Windows => sse_sys::steam::SteamRootPlatform::Windows,
+        SaveDiscoveryPlatform::MacOS => sse_sys::steam::SteamRootPlatform::MacOS,
+        SaveDiscoveryPlatform::Linux | SaveDiscoveryPlatform::Current => sse_sys::steam::SteamRootPlatform::Linux,
+    };
+    let environment = env_map
+        .iter()
+        .map(|(key, value)| (std::ffi::OsString::from(key), std::ffi::OsString::from(value)))
+        .collect();
+    sse_sys::steam::steam_root_candidates(platform, home, local_app_data, &environment, None)
 }
 
 fn read_environment() -> HashMap<String, String> {
@@ -1045,5 +1021,29 @@ mod known_folder_tests {
 
         assert_eq!(actual_documents, Some(documents));
         assert_eq!(actual_saved_games, Some(saved_games));
+    }
+}
+
+#[cfg(test)]
+mod steam_roots_tests {
+    use super::{get_default_steam_roots, SaveDiscoveryPlatform};
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+
+    #[test]
+    fn linux_steam_roots_include_environment_root_and_standard_install_locations() {
+        let home = PathBuf::from("/home/tester");
+        let local_app_data = home.join("AppData/Local");
+        let environment = HashMap::from([(String::from("STEAM_DIR"), String::from("/opt/Steam"))]);
+        let roots = get_default_steam_roots(SaveDiscoveryPlatform::Linux, &home, &local_app_data, &environment);
+
+        for expected in [
+            PathBuf::from("/opt/Steam"),
+            home.join(".steam/root"),
+            PathBuf::from("/usr/lib/steam"),
+            PathBuf::from("/usr/lib/steam/steam"),
+        ] {
+            assert!(roots.contains(&expected), "missing Steam root {expected:?}: {roots:?}");
+        }
     }
 }

@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use sse_codecs::vdf::{self, Value};
+pub use sse_sys::steam::default_steam_roots;
 
 use crate::api::{CloudFile, SteamError};
 use crate::cloud::MAX_CLOUD_FILE_BYTES;
@@ -15,6 +16,17 @@ pub const STALKER_2_APP_ID: u32 = 1_643_320;
 const MAXIMUM_VDF_BYTES: u64 = 16 * 1024 * 1024;
 const MAXIMUM_AUTO_CLOUD_FILES: usize = 10_000;
 const MAXIMUM_AUTO_CLOUD_DEPTH: usize = 32;
+const WINDOWS_STEAM_API_PATHS: &[&[&str]] = &[
+    &["Binaries", "Win64", "steam_api64.dll"],
+    &["steam_api64.dll"],
+    &["bin", "steam_api64.dll"],
+    &["bin_x64", "steam_api64.dll"],
+];
+const UNIX_STEAM_API_PATHS: &[&[&str]] = &[
+    &["Binaries", "Linux", "libsteam_api.so"],
+    &["libsteam_api.so"],
+    &["bin", "libsteam_api.so"],
+];
 
 /// Reads library paths from both old and current `libraryfolders.vdf` layouts.
 pub fn parse_library_paths(text: &str) -> Result<Vec<PathBuf>, SteamError> {
@@ -36,38 +48,6 @@ pub fn parse_library_paths(text: &str) -> Result<Vec<PathBuf>, SteamError> {
         }
     }
     Ok(paths)
-}
-
-/// Returns platform-default Steam roots without inspecting any save or game files.
-#[must_use]
-pub fn default_steam_roots() -> Vec<PathBuf> {
-    let mut roots = Vec::new();
-    if let Some(path) = std::env::var_os("STEAM_DIR").filter(|value| !value.is_empty()) {
-        roots.push(PathBuf::from(path));
-    }
-    #[cfg(windows)]
-    {
-        for variable in ["ProgramFiles(x86)", "ProgramFiles"] {
-            if let Some(value) = std::env::var_os(variable).filter(|value| !value.is_empty()) {
-                roots.push(PathBuf::from(value).join("Steam"));
-            }
-        }
-        if let Some(value) = std::env::var_os("LOCALAPPDATA").filter(|value| !value.is_empty()) {
-            roots.push(PathBuf::from(value).join("Programs").join("Steam"));
-        }
-    }
-    #[cfg(not(windows))]
-    {
-        if let Some(home) = std::env::var_os("HOME").filter(|value| !value.is_empty()) {
-            let home = PathBuf::from(home);
-            roots.push(home.join(".steam").join("steam"));
-            roots.push(home.join(".steam").join("root"));
-            roots.push(home.join(".local").join("share").join("Steam"));
-        }
-        roots.push(PathBuf::from("/usr/lib/steam"));
-        roots.push(PathBuf::from("/usr/lib/steam/steam"));
-    }
-    roots
 }
 
 /// Expands supplied Steam roots through their VDF library lists, preserving first-seen order.
@@ -114,48 +94,119 @@ pub fn steam_library_roots(roots: impl IntoIterator<Item = PathBuf>) -> Result<V
     Ok(expanded)
 }
 
-/// Finds a platform Steam API library under the supplied roots.
-pub fn locate_steam_api_library(
+/// Returns compatible candidate Steam API libraries for one selected app.
+///
+/// Windows candidates are confined to the install directory in that app's Steam manifest. Linux
+/// prefers Steam's shared runtime library, then checks only the selected app's native install.
+pub fn steam_api_library_candidates(
     roots: impl IntoIterator<Item = PathBuf>,
+    app_id: u32,
     windows: bool,
-) -> Result<Option<PathBuf>, SteamError> {
+) -> Result<Vec<PathBuf>, SteamError> {
     let libraries = steam_library_roots(roots)?;
-    for root in libraries {
-        if !windows {
-            for candidate in [root.join("steamrt64/libsteam_api.so"), root.join("libsteam_api.so")] {
-                if candidate.is_file() {
-                    return Ok(Some(candidate));
+    let mut candidates = Vec::new();
+    if !windows {
+        for root in &libraries {
+            for candidate in [
+                root.join("steamrt64").join("libsteam_api.so"),
+                root.join("libsteam_api.so"),
+            ] {
+                if let Some(candidate) = canonical_file_under(&candidate, root) {
+                    if !candidates.contains(&candidate) {
+                        candidates.push(candidate);
+                    }
                 }
-            }
-        } else {
-            for game_name in ["Stalker 2", "S.T.A.L.K.E.R. 2"] {
-                let candidate = root
-                    .join("steamapps/common")
-                    .join(game_name)
-                    .join("Binaries/Win64/steam_api64.dll");
-                if candidate.is_file() {
-                    return Ok(Some(candidate));
-                }
-            }
-        }
-        let common = root.join("steamapps").join("common");
-        let Ok(entries) = fs::read_dir(&common) else {
-            continue;
-        };
-        for entry in entries {
-            let Ok(entry) = entry else { continue };
-            let game_dir = entry.path();
-            let candidate = if windows {
-                game_dir.join("Binaries/Win64/steam_api64.dll")
-            } else {
-                game_dir.join("Binaries/Linux/libsteam_api.so")
-            };
-            if candidate.is_file() {
-                return Ok(Some(candidate));
             }
         }
     }
-    Ok(None)
+    for library in libraries {
+        let Some(install_directory) = steam_app_install_directory(&library, app_id) else {
+            continue;
+        };
+        let app_paths = if windows {
+            WINDOWS_STEAM_API_PATHS
+        } else {
+            UNIX_STEAM_API_PATHS
+        };
+        for app_path in app_paths {
+            let candidate = join_path_components(&install_directory, app_path);
+            if let Some(candidate) = canonical_file_under(&candidate, &install_directory) {
+                if !candidates.contains(&candidate) {
+                    candidates.push(candidate);
+                }
+            }
+        }
+    }
+    Ok(candidates)
+}
+
+/// Finds the first compatible Steam API library for one selected app.
+pub fn locate_steam_api_library(
+    roots: impl IntoIterator<Item = PathBuf>,
+    app_id: u32,
+    windows: bool,
+) -> Result<Option<PathBuf>, SteamError> {
+    Ok(steam_api_library_candidates(roots, app_id, windows)?.into_iter().next())
+}
+
+fn canonical_file_under(path: &Path, root: &Path) -> Option<PathBuf> {
+    let canonical_root = root.canonicalize().ok()?;
+    let canonical_file = path.canonicalize().ok()?;
+    if canonical_file.starts_with(&canonical_root) && canonical_file.is_file() {
+        Some(canonical_file)
+    } else {
+        None
+    }
+}
+
+fn join_path_components(root: &Path, components: &[&str]) -> PathBuf {
+    components.iter().fold(root.to_path_buf(), |mut path, component| {
+        path.push(component);
+        path
+    })
+}
+
+fn steam_app_install_directory(library: &Path, app_id: u32) -> Option<PathBuf> {
+    let manifest = library.join("steamapps").join(format!("appmanifest_{app_id}.acf"));
+    let text = read_bounded_vdf(&manifest)?;
+    let document = vdf::parse(&text).ok()?;
+    let app_state = document.get_object("AppState")?;
+    let manifest_app_id = app_state.get_string("appid")?.parse::<u32>().ok()?;
+    if manifest_app_id != app_id {
+        return None;
+    }
+    let install_directory = app_state.get_string("installdir")?;
+    let mut components = Path::new(install_directory).components();
+    if !matches!(components.next(), Some(std::path::Component::Normal(_))) || components.next().is_some() {
+        return None;
+    }
+    let common_directory = library.join("steamapps").join("common").canonicalize().ok()?;
+    let install_directory = common_directory.join(install_directory).canonicalize().ok()?;
+    install_directory
+        .starts_with(&common_directory)
+        .then_some(install_directory)
+}
+
+fn read_bounded_vdf(path: &Path) -> Option<String> {
+    let file = File::open(path).ok()?;
+    let metadata = file.metadata().ok()?;
+    if metadata.len() > MAXIMUM_VDF_BYTES {
+        return None;
+    }
+    let capacity = usize::try_from(metadata.len()).ok()?;
+    let mut bytes = Vec::new();
+    if bytes.try_reserve_exact(capacity).is_err()
+        || file
+            .take(MAXIMUM_VDF_BYTES.saturating_add(1))
+            .read_to_end(&mut bytes)
+            .is_err()
+    {
+        return None;
+    }
+    if u64::try_from(bytes.len()).ok()? > MAXIMUM_VDF_BYTES {
+        return None;
+    }
+    String::from_utf8(bytes).ok()
 }
 
 /// Finds the S.T.A.L.K.E.R. 2 Auto-Cloud root from injected platform roots.
