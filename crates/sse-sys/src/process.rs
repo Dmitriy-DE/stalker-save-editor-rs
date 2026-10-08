@@ -343,7 +343,7 @@ mod platform {
 
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     const CREATE_SUSPENDED: u32 = 0x0000_0004;
-    const JOB_OBJECT_BASIC_LIMIT_INFORMATION: i32 = 2;
+    const JOB_OBJECT_EXTENDED_LIMIT_INFORMATION: i32 = 9;
     const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: u32 = 0x0000_2000;
 
     pub struct ProcessTree {
@@ -361,6 +361,26 @@ mod platform {
         affinity: usize,
         priority_class: u32,
         scheduling_class: u32,
+    }
+
+    #[repr(C)]
+    struct IoCounters {
+        read_operation_count: u64,
+        write_operation_count: u64,
+        other_operation_count: u64,
+        read_transfer_count: u64,
+        write_transfer_count: u64,
+        other_transfer_count: u64,
+    }
+
+    #[repr(C)]
+    struct JobObjectExtendedLimitInformation {
+        basic_limit_information: JobObjectBasicLimitInformation,
+        io_info: IoCounters,
+        process_memory_limit: usize,
+        job_memory_limit: usize,
+        peak_process_memory_used: usize,
+        peak_job_memory_used: usize,
     }
 
     #[link(name = "kernel32")]
@@ -392,28 +412,42 @@ mod platform {
         // SAFETY: null attributes and name are the documented way to request a new unnamed job object.
         let job = NonNull::new(unsafe { CreateJobObjectW(std::ptr::null_mut(), std::ptr::null()) })
             .ok_or_else(io::Error::last_os_error)?;
-        let mut limits = JobObjectBasicLimitInformation {
-            per_process_user_time_limit: 0,
-            per_job_user_time_limit: 0,
-            limit_flags: JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-            minimum_working_set_size: 0,
-            maximum_working_set_size: 0,
-            active_process_limit: 0,
-            affinity: 0,
-            priority_class: 0,
-            scheduling_class: 0,
+        let mut limits = JobObjectExtendedLimitInformation {
+            basic_limit_information: JobObjectBasicLimitInformation {
+                per_process_user_time_limit: 0,
+                per_job_user_time_limit: 0,
+                limit_flags: JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+                minimum_working_set_size: 0,
+                maximum_working_set_size: 0,
+                active_process_limit: 0,
+                affinity: 0,
+                priority_class: 0,
+                scheduling_class: 0,
+            },
+            io_info: IoCounters {
+                read_operation_count: 0,
+                write_operation_count: 0,
+                other_operation_count: 0,
+                read_transfer_count: 0,
+                write_transfer_count: 0,
+                other_transfer_count: 0,
+            },
+            process_memory_limit: 0,
+            job_memory_limit: 0,
+            peak_process_memory_used: 0,
+            peak_job_memory_used: 0,
         };
-        let Ok(information_length) = u32::try_from(std::mem::size_of::<JobObjectBasicLimitInformation>()) else {
+        let Ok(information_length) = u32::try_from(std::mem::size_of::<JobObjectExtendedLimitInformation>()) else {
             // SAFETY: this handle was returned by CreateJobObjectW and is closed exactly once on setup failure.
             let _ = unsafe { CloseHandle(job.as_ptr()) };
             return Err(io::Error::other("job limit structure size overflow"));
         };
-        // SAFETY: the job handle is live and `limits` has the documented layout for JobObjectBasicLimitInformation.
+        // SAFETY: the job handle is live and `limits` has the documented extended-limit layout required for KILL_ON_JOB_CLOSE.
         let configured = unsafe {
             SetInformationJobObject(
                 job.as_ptr(),
-                JOB_OBJECT_BASIC_LIMIT_INFORMATION,
-                (&mut limits as *mut JobObjectBasicLimitInformation).cast(),
+                JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
+                (&mut limits as *mut JobObjectExtendedLimitInformation).cast(),
                 information_length,
             )
         };
