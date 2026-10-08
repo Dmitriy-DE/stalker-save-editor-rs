@@ -7,7 +7,7 @@ use super::style::{self, Button, Text};
 use super::{AppMessage, Context, Screen, ScreenId};
 use crate::event_loop::Message;
 use crate::glyphs::{Face, TextStyle};
-use crate::layout::{GridPlacement, NodeKind, Size, Style, Track};
+use crate::layout::{Align, Edges, GridPlacement, NodeKind, Size, Style, Track};
 use crate::widget::{Content, Look, TextAlign, WidgetId};
 use sse_core::Result;
 use std::path::PathBuf;
@@ -576,20 +576,37 @@ impl Screen for Settings {
         self.language = crate::strings::language_index(self.settings.language.as_deref().unwrap_or("ru"));
         let settings_root = style::row(cx.tree, host)?;
         let sections = style::card(cx.tree, settings_root)?;
+        cx.tree.set_style(
+            sections,
+            Style {
+                preferred: Size::new(200.0, 0.0),
+                min: Size::new(200.0, 0.0),
+                max: Size::new(200.0, f32::INFINITY),
+                shrink: 0.0,
+                padding: Edges::all(crate::theme::CARD_PADDING),
+                gap: Size::new(0.0, crate::theme::CONTROL_GAP),
+                align_items: Align::Stretch,
+                ..Style::default()
+            },
+        )?;
         style::label(cx.tree, sections, "Разделы", Text::Heading)?;
-        for name in [
+        for key in [
             "ОБЩИЕ",
             "ИНТЕРФЕЙС",
-            "Звук",
-            "ПУТИ И АВТОПОИСК",
+            "ЗВУК",
+            "ПУТИ",
             "ОБНОВЛЕНИЯ",
-            "РЕЗЕРВНЫЕ КОПИИ",
-            "ИНСТРУМЕНТЫ ДЛЯ ПОДДЕРЖКИ",
-            "ОТЧЁТЫ И ПРИВАТНОСТЬ",
+            "БЭКАПЫ",
+            "ПОДДЕРЖКА",
+            "ОТЧЁТЫ",
             "ВЕРСИЯ",
         ] {
-            self.section_buttons
-                .push(style::button(cx.tree, sections, name, Button::Secondary)?);
+            self.section_buttons.push(style::button(
+                cx.tree,
+                sections,
+                crate::strings::t(key),
+                Button::Secondary,
+            )?);
         }
         let content = style::card(cx.tree, settings_root)?;
 

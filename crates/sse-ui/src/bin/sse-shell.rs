@@ -315,40 +315,70 @@ fn bench(args: &[String]) -> Result<()> {
     Ok(())
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ClippedButton {
+    language: String,
+    screen: ScreenId,
+    label: String,
+}
+
+fn ensure_buttons_fit(buttons: &[ClippedButton]) -> Result<()> {
+    if buttons.is_empty() {
+        return Ok(());
+    }
+    let details = buttons
+        .iter()
+        .map(|button| format!("{} / {:?}: {}", button.language, button.screen, button.label))
+        .collect::<Vec<_>>()
+        .join("\n");
+    Err(Error::Refused(format!(
+        "{} button labels exceed their available width:\n{details}",
+        buttons.len()
+    )))
+}
+
 fn ci_i18n_buttons() -> Result<()> {
     let previous = std::env::var_os("STALKER_EDITOR_LANG");
-    let mut total = 0_usize;
-    for language in sse_ui::strings::LANGUAGES {
-        std::env::set_var("STALKER_EDITOR_LANG", language);
-        let mut tree = Tree::new(Fonts::bundled()?, rgb(BG_BASE));
-        let mut shell = Shell::build(&mut tree, None)?;
-        let (width, height) = (940_u32, 600_u32);
-        tree.resize(width, height);
-        let _ = shell.message(
-            &mut tree,
-            &Message::Window(sse_ui::event_loop::WindowEvent::Resized { width, height }),
-            None,
-        );
-        let mut frame = vec![0_u32; 940 * 600];
-        let mut labels = std::collections::BTreeSet::new();
-        for id in ScreenId::ALL {
-            shell.open(&mut tree, id)?;
-            tree.paint(&mut frame, 940)?;
-            labels.extend(tree.ellipsized_button_labels()?);
+    let scan = (|| -> Result<Vec<ClippedButton>> {
+        let mut clipped = Vec::new();
+        for language in sse_ui::strings::LANGUAGES {
+            std::env::set_var("STALKER_EDITOR_LANG", language);
+            let mut tree = Tree::new(Fonts::bundled()?, rgb(BG_BASE));
+            let mut shell = Shell::build(&mut tree, None)?;
+            let (width, height) = (940_u32, 600_u32);
+            tree.resize(width, height);
+            let _ = shell.message(
+                &mut tree,
+                &Message::Window(sse_ui::event_loop::WindowEvent::Resized { width, height }),
+                None,
+            );
+            let mut frame = vec![0_u32; 940 * 600];
+            for id in ScreenId::ALL {
+                shell.open(&mut tree, id)?;
+                tree.paint(&mut frame, 940)?;
+                clipped.extend(tree.ellipsized_button_labels()?.into_iter().map(|label| ClippedButton {
+                    language: language.to_owned(),
+                    screen: id,
+                    label,
+                }));
+            }
         }
-        total = total.saturating_add(labels.len());
-        println!("language={language} ellipsized_buttons={}", labels.len());
-        for label in labels {
-            println!("  {label}");
-        }
-    }
-    if let Some(value) = previous {
+        Ok(clipped)
+    })();
+    if let Some(value) = previous.as_ref() {
         std::env::set_var("STALKER_EDITOR_LANG", value);
     } else {
         std::env::remove_var("STALKER_EDITOR_LANG");
     }
-    println!("ellipsized_buttons_total={total}");
-    Ok(())
+    let clipped = scan?;
+    for button in &clipped {
+        println!(
+            "clipped_button language={} screen={:?} label={:?}",
+            button.language, button.screen, button.label
+        );
+    }
+    println!("ellipsized_buttons_total={}", clipped.len());
+    ensure_buttons_fit(&clipped)
 }
 
 fn ci_budget() -> Result<()> {
@@ -559,11 +589,28 @@ fn encode_png(frame: &[u32], width: u32, height: u32) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::bench_size;
+    use super::{bench_size, ensure_buttons_fit, ClippedButton};
+    use sse_ui::screens::ScreenId;
 
     #[test]
     fn benchmark_reads_requested_pixel_dimensions() {
         let args = vec!["--bench".to_owned(), "1920x1080".to_owned()];
         assert_eq!(bench_size(&args), (1920, 1080));
+    }
+
+    #[test]
+    fn button_clipping_gate_rejects_any_clipped_label() {
+        let button = ClippedButton {
+            language: "en".to_owned(),
+            screen: ScreenId::Settings,
+            label: "A label that does not fit".to_owned(),
+        };
+        let message = ensure_buttons_fit(&[button])
+            .err()
+            .map_or_else(String::new, |error| error.to_string());
+
+        assert!(message.contains("Settings"));
+        assert!(message.contains("A label that does not fit"));
+        assert!(ensure_buttons_fit(&[]).is_ok());
     }
 }

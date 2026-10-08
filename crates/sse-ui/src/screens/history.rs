@@ -1115,16 +1115,17 @@ impl Screen for HistoryScreen {
             )?;
             self.doctor_path_input = Some(path_input);
             self.doctor_path = Some(TextInput::new("", doctor_path_edit_config())?);
+            let doctor_actions = style::row(cx.tree, card)?;
             self.doctor_check = Some(style::button(
                 cx.tree,
-                path_row,
-                "ПРОВЕРИТЬ СОХРАНЕНИЕ",
+                doctor_actions,
+                crate::strings::t("ПРОВЕРИТЬ"),
                 Button::Primary,
             )?);
             self.doctor_open_save = Some(style::button(
                 cx.tree,
-                path_row,
-                "Открыть сохранение",
+                doctor_actions,
+                crate::strings::t("Открыть"),
                 Button::Secondary,
             )?);
             if let Some(check) = self.doctor_check {
