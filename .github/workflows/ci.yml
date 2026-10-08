@@ -17,7 +17,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.99.0
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
@@ -25,6 +25,23 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
       - run: cargo build --release -p sse-cli
+
+      - name: Install shipped Windows GNU target
+        if: matrix.os == 'ubuntu-24.04'
+        run: |
+          rustup target add x86_64-pc-windows-gnu
+          sudo apt-get update
+          sudo apt-get install -y gcc-mingw-w64-x86-64
+
+      - name: Compile tests for shipped Windows GNU target
+        if: matrix.os == 'ubuntu-24.04'
+        run: cargo test --locked --workspace --target x86_64-pc-windows-gnu --no-run
+
+      - name: Check declared Rust 1.85 MSRV
+        if: matrix.os == 'ubuntu-24.04'
+        run: |
+          rustup toolchain install 1.85.0 --profile minimal
+          cargo +1.85.0 check --locked --workspace --all-targets
 
       - name: UI performance budgets
         if: matrix.os == 'ubuntu-24.04'
@@ -77,7 +94,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.99.0
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --locked --release -p sse-cli -p sse-ui
       - name: Collect binaries
@@ -99,6 +116,7 @@ jobs:
     # Unsigned release packages via tools/package.sh; run by hand or on a v* tag.
     # The owner signs the manifest locally with --manifest-only; no key lives in CI.
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    needs: check
     strategy:
       fail-fast: false
       matrix:
@@ -110,7 +128,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.99.0
       - name: Toolchains
         shell: bash
         run: |
@@ -127,3 +145,57 @@ jobs:
           path: dist/
           retention-days: 30
           if-no-files-found: error
+          include-hidden-files: true
+
+  windows-installer:
+    # Compile and smoke-check the upgrade installer on PRs and release runs.
+    needs: check
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.99.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Inno Setup
+        run: choco install innosetup --yes --no-progress
+      - name: Build Windows installer
+        shell: pwsh
+        run: ./tools/package-windows-installer.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: |
+            dist/SaveEditor-windows-x86_64-setup.exe
+            dist/SaveEditor-windows-x86_64-setup.exe.sha256
+            dist/.package-metadata/windows-installer-x86_64.tsv
+          retention-days: 30
+          if-no-files-found: error
+          include-hidden-files: true
+
+  release-manifest:
+    # Assemble release metadata only after all package builders passed check.
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    needs: [packages, windows-installer]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.99.0
+      - name: Download portable and native packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: packages-*
+          path: dist/
+          merge-multiple: true
+      - name: Download Windows installer
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-installer
+          path: dist/
+      - name: Build release manifest
+        run: tools/package.sh --manifest-only
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-manifest
+          path: dist/
+          retention-days: 30
+          if-no-files-found: error
+          include-hidden-files: true

@@ -1553,7 +1553,22 @@ enum UpdateReply {
     Checked(std::result::Result<(sse_update::UpdateState, String, Option<sse_update::UpdateArtifact>), String>),
     Progress(u64, u64),
     Downloaded(std::result::Result<(sse_update::UpdateArtifact, PathBuf), String>),
-    Installed(std::result::Result<String, String>),
+    Installed(std::result::Result<sse_update::UpdateInstallResult, String>),
+}
+
+fn update_install_status(result: &sse_update::UpdateInstallResult) -> String {
+    match result.state {
+        sse_update::UpdateInstallState::ManualInstructions => format!(
+            "Портативное обновление проверено: {}. Закройте редактор, распакуйте архив в папку установки и запустите sse-shell из этой папки.",
+            result.message
+        ),
+        sse_update::UpdateInstallState::Succeeded => "Обновление установлено.".to_owned(),
+        sse_update::UpdateInstallState::OpenedExternally => {
+            "Открыт проверенный установщик. Завершите установку в его окне.".to_owned()
+        }
+        sse_update::UpdateInstallState::Cancelled => "Установка обновления отменена.".to_owned(),
+        sse_update::UpdateInstallState::Failed => format!("Не удалось установить обновление: {}", result.message),
+    }
 }
 
 #[derive(Default)]
@@ -1674,7 +1689,7 @@ impl Updates {
                 let done = service
                     .install(&artifact, &path, &mut runner)
                     .map_err(|e| e.to_string())?;
-                Ok(format!("Обновление запущено: {}", done.message))
+                Ok(done)
             })();
             proxy.send(AppMessage::ToScreen(
                 ScreenId::Updates,
@@ -1804,11 +1819,12 @@ impl Screen for Updates {
                         }
                         cx.status = Some("Не удалось завершить скачивание.".to_owned());
                     }
-                    UpdateReply::Installed(Ok(text)) => {
+                    UpdateReply::Installed(Ok(result)) => {
+                        let text = update_install_status(result);
                         if let Some(id) = self.status {
-                            cx.tree.set_text(id, text)?;
+                            cx.tree.set_text(id, &text)?;
                         }
-                        cx.status = Some(text.clone());
+                        cx.status = Some(text);
                     }
                     UpdateReply::Installed(Err(error)) => {
                         if let Some(id) = self.status {
@@ -1819,6 +1835,64 @@ impl Screen for Updates {
                 }
             }
         }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod update_tests {
+    use super::{UpdateReply, Updates};
+    use crate::glyphs::Fonts;
+    use crate::layout::{NodeKind, Style};
+    use crate::raster::Color;
+    use crate::screens::{AppMessage, Context, Screen, ScreenId};
+    use crate::widget::{Content, Look, Tree};
+    use crate::{event_loop::Message, screens::style};
+
+    #[test]
+    fn portable_install_status_shows_path_and_manual_steps() -> sse_core::Result<()> {
+        let path = r"C:\Users\Player\Downloads\SaveEditor.zip";
+        let instructions = format!(
+            "Portable update verified at {path}. Close the editor, extract the archive into its install folder, then launch sse-shell from that folder."
+        );
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let status = style::label(&mut tree, host, "", style::Text::Note)?;
+        let mut screen = Updates {
+            status: Some(status),
+            ..Updates::default()
+        };
+        let mut app = sse_app::AppState::new();
+        let message = Message::User(AppMessage::ToScreen(
+            ScreenId::Updates,
+            Box::new(UpdateReply::Installed(Ok(sse_update::UpdateInstallResult {
+                state: sse_update::UpdateInstallState::ManualInstructions,
+                exit_code: None,
+                message: path.to_owned(),
+            }))),
+        ));
+        let mut context = Context {
+            tree: &mut tree,
+            proxy: None,
+            status: None,
+            app: &mut app,
+        };
+
+        screen.message(&mut context, &message, None)?;
+
+        let displayed = context.tree.text(status)?;
+        assert!(displayed.contains(path));
+        assert!(displayed.contains("распакуйте архив"));
+        assert!(displayed.contains("sse-shell"));
+        assert!(!displayed.contains("Ошибка запуска установки"));
+        assert!(!displayed.contains(&instructions));
+        assert_eq!(context.status.as_deref(), Some(displayed));
         Ok(())
     }
 }

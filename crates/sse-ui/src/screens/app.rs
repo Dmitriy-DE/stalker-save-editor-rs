@@ -477,9 +477,6 @@ const LANGUAGE_NAMES: [&str; 15] = [
     "繁體中文",
 ];
 
-/// Result of the background check started by the settings screen.
-struct Checked(String);
-
 struct DiagnosticReportFinished {
     result: std::result::Result<PathBuf, String>,
 }
@@ -516,8 +513,10 @@ pub struct Settings {
     language_button: Option<WidgetId>,
     save_button: Option<WidgetId>,
     language: usize,
-    check_button: Option<WidgetId>,
-    check_result: Option<WidgetId>,
+    #[cfg(feature = "native-ui")]
+    open_cloud_button: Option<WidgetId>,
+    #[cfg(feature = "native-ui")]
+    open_updates_button: Option<WidgetId>,
     scale: usize,
     theme: usize,
     accent: usize,
@@ -596,9 +595,17 @@ impl Screen for Settings {
         let general = style::card(cx.tree, content)?;
         style::label(cx.tree, general, "ОБЩИЕ", Text::Heading)?;
         style::label(cx.tree, general, "УПРАВЛЕНИЕ ОСНОВНЫМ ПОВЕДЕНИЕМ РЕДАКТОРА", Text::Note)?;
-        style::label(cx.tree, general, "[ STEAM CLOUD ]", Text::Value)?;
-        style::label(cx.tree, general, "Откройте экран Steam Cloud, чтобы просматривать состояние синхронизации и выполнять действия с явным подтверждением.", Text::Body)?;
-        style::button(cx.tree, general, "Открыть Steam Cloud", Button::Secondary)?;
+        #[cfg(feature = "native-ui")]
+        {
+            style::label(cx.tree, general, "[ STEAM CLOUD ]", Text::Value)?;
+            style::label(cx.tree, general, "Откройте экран Steam Cloud, чтобы просматривать состояние синхронизации и выполнять действия с явным подтверждением.", Text::Body)?;
+            self.open_cloud_button = Some(style::button(
+                cx.tree,
+                general,
+                "Открыть Steam Cloud",
+                Button::Secondary,
+            )?);
+        }
         self.section_panels.push(general);
 
         let view = style::card(cx.tree, content)?;
@@ -722,8 +729,16 @@ impl Screen for Settings {
         let updates = style::card(cx.tree, content)?;
         style::label(cx.tree, updates, "ОБНОВЛЕНИЯ", Text::Heading)?;
         let line = style::row(cx.tree, updates)?;
-        self.check_button = Some(style::button(cx.tree, line, "Проверить", Button::Primary)?);
-        self.check_result = Some(style::label(cx.tree, line, "Ещё не проверяли", Text::Note)?);
+        #[cfg(feature = "native-ui")]
+        {
+            self.open_updates_button = Some(style::button(cx.tree, line, "Открыть обновления", Button::Primary)?);
+            style::label(
+                cx.tree,
+                line,
+                "Проверка и установка доступны на экране обновлений.",
+                Text::Note,
+            )?;
+        }
         style::label(
             cx.tree,
             updates,
@@ -1143,17 +1158,16 @@ impl Screen for Settings {
             }
         }
 
-        if clicked.is_some() && clicked == self.check_button {
-            if let Some(result) = self.check_result {
-                cx.tree.set_text(result, "Проверяю…")?;
-            }
-            // Slow work never runs on the UI thread: a worker answers through the proxy.
+        #[cfg(feature = "native-ui")]
+        if clicked.is_some() && clicked == self.open_cloud_button {
             if let Some(proxy) = cx.proxy.cloned() {
-                std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_millis(300));
-                    let answer = Checked(format!("Установлена {}", env!("CARGO_PKG_VERSION")));
-                    proxy.send(AppMessage::ToScreen(ScreenId::Settings, Box::new(answer)));
-                });
+                proxy.send(AppMessage::OpenScreen(ScreenId::Cloud));
+            }
+        }
+        #[cfg(feature = "native-ui")]
+        if clicked.is_some() && clicked == self.open_updates_button {
+            if let Some(proxy) = cx.proxy.cloned() {
+                proxy.send(AppMessage::OpenScreen(ScreenId::Updates));
             }
         }
         if let Message::User(AppMessage::ToScreen(_, payload)) = message {
@@ -1167,9 +1181,6 @@ impl Screen for Settings {
                     Err(error) => format!("{}{error}", crate::strings::t("Не удалось сохранить отчёт: ")),
                 });
             }
-            if let (Some(Checked(text)), Some(result)) = (payload.downcast_ref::<Checked>(), self.check_result) {
-                cx.tree.set_text(result, text)?;
-            }
         }
         Ok(())
     }
@@ -1177,13 +1188,59 @@ impl Screen for Settings {
 
 #[cfg(test)]
 mod tests {
-    use super::Settings;
+    use super::{style, Settings};
     use crate::glyphs::{Face, Fonts, TextStyle};
     use crate::layout::{NodeKind, Style};
     use crate::raster::Color;
     use crate::screens::saves::Workspace;
     use crate::widget::{Content, Look, Tree};
     use std::path::PathBuf;
+
+    #[test]
+    #[cfg(feature = "native-ui")]
+    fn settings_actions_dispatch_to_cloud_and_update_screens() -> sse_core::Result<()> {
+        use crate::event_loop::{channel_pair, Message};
+        use crate::screens::{AppMessage, Context, Screen, ScreenId};
+        use crate::widget::{Content, Look, Tree};
+
+        let mut tree = Tree::new(Fonts::bundled()?, crate::raster::Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let cloud_button = style::button(&mut tree, host, "Открыть Steam Cloud", style::Button::Secondary)?;
+        let updates_button = style::button(&mut tree, host, "Открыть обновления", style::Button::Primary)?;
+        let (proxy, receiver) = channel_pair();
+        let mut app = sse_app::AppState::new();
+        let mut screen = Settings {
+            open_cloud_button: Some(cloud_button),
+            open_updates_button: Some(updates_button),
+            ..Settings::default()
+        };
+        let tick = Message::User(AppMessage::Tick(0));
+        let mut context = Context {
+            tree: &mut tree,
+            proxy: Some(&proxy),
+            status: None,
+            app: &mut app,
+        };
+
+        screen.message(&mut context, &tick, Some(cloud_button))?;
+        screen.message(&mut context, &tick, Some(updates_button))?;
+
+        assert!(matches!(
+            receiver.try_recv().ok(),
+            Some(Message::User(AppMessage::OpenScreen(ScreenId::Cloud)))
+        ));
+        assert!(matches!(
+            receiver.try_recv().ok(),
+            Some(Message::User(AppMessage::OpenScreen(ScreenId::Updates)))
+        ));
+        Ok(())
+    }
 
     #[test]
     fn backup_input_updates_shared_path_before_settings_are_saved() -> sse_core::Result<()> {

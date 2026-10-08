@@ -30,6 +30,9 @@ Targets:
   aarch64-apple-darwin
   x86_64-apple-darwin
 
+The optional Windows installer is built on Windows with
+  tools/package-windows-installer.ps1
+
 Set DOWNLOAD_BASE_URL to the HTTPS artifact host before manifest generation.
 The generated latest.json.sig is empty; the release owner must sign latest.json.
 EOF
@@ -70,7 +73,7 @@ check_clean_source() {
 
 read_release_identity() {
     VERSION="$(awk -F '"' '/^version = "/ { print $2; exit }' "${PROJECT_ROOT}/Cargo.toml")"
-    [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*)?$ ]] || die "workspace version is not supported by the G5 parser: ${VERSION}"
+    [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*)?(\+[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*)?$ ]] || die "workspace version is not supported by the G5 parser: ${VERSION}"
     SOURCE_COMMIT="$(git -C "${PROJECT_ROOT}" rev-parse --verify HEAD)"
     [[ "${SOURCE_COMMIT}" =~ ^[0-9a-f]{40,64}$ ]] || die "could not read a lowercase source commit SHA"
     SOURCE_DATE_EPOCH="$(git -C "${PROJECT_ROOT}" show -s --format=%ct HEAD)"
@@ -115,7 +118,7 @@ record_artifact() {
     digest="$(sha256_file "${artifact}")"
     [[ "${size}" =~ ^[0-9]+$ ]] && (( size > 0 && size <= 2147483648 )) || die "artifact size is outside G5 limits: ${artifact}"
     case "${key}" in
-        linux-x86_64|windows-x86_64|linux-deb-amd64) maximum_size=31457280 ;;
+        linux-x86_64|windows-x86_64|windows-installer-x86_64|linux-deb-amd64) maximum_size=31457280 ;;
         macos-arm64|macos-x86_64) maximum_size=36700160 ;;
         *) die "no packaging size budget is defined for ${key}" ;;
     esac
@@ -187,13 +190,18 @@ build_linux() {
     cp "${PROJECT_ROOT}/packaging/linux/org.stalker_save_editor.SaveEditor.metainfo.xml" "${deb_stage}/usr/share/metainfo/"
     cp "${PROJECT_ROOT}/packaging/icons/stalker-save-editor.svg" "${deb_stage}/usr/share/icons/hicolor/scalable/apps/"
     write_build_manifest "${deb_stage}/usr/share/stalker-save-editor/BUILD_MANIFEST.json" linux x86_64 package
+    local installed_size_kib
+    installed_size_kib="$(du -sk "${deb_stage}/usr" | awk '{ print $1 }')"
     cat >"${deb_stage}/DEBIAN/control" <<EOF
 Package: stalker-save-editor
 Version: ${VERSION}
 Section: games
 Priority: optional
 Architecture: amd64
+Installed-Size: ${installed_size_kib}
 Maintainer: S.T.A.L.K.E.R. Save Editor Team <dev@stalker-save-editor.org>
+Depends: libcurl4 | libcurl4t64, libx11-6
+Recommends: zenity
 Description: S.T.A.L.K.E.R. save editor and shell
 EOF
     chmod 0755 "${deb_stage}/usr/bin/stalker-save" "${deb_stage}/usr/bin/sse-shell"
@@ -317,7 +325,7 @@ write_manifest() {
         printf '  "artifacts": {\n'
         write_artifact_group required windows-x86_64 linux-x86_64 linux-deb-amd64
         printf '  },\n  "optional_artifacts": {\n'
-        write_artifact_group optional macos-arm64 macos-x86_64
+        write_artifact_group optional windows-installer-x86_64 macos-arm64 macos-x86_64
         printf '  }\n}\n'
     } >"${temporary}"
     mv "${temporary}" "${DIST_DIR}/latest.json"

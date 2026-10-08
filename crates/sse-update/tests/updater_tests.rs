@@ -121,6 +121,30 @@ fn detects_debian_install_through_usr_bin_symlink_to_usr_lib() {
 }
 
 #[test]
+fn detects_debian_package_layout_with_bin_executable_and_share_manifest() {
+    let temp = TempDir::new("linux-deb-share-manifest");
+    let package_root = temp.path.join("usr/share/stalker-save-editor");
+    let bin_dir = temp.path.join("usr/bin");
+    fs::create_dir_all(&package_root).unwrap();
+    fs::create_dir_all(&bin_dir).unwrap();
+    let executable = bin_dir.join("sse-shell");
+    fs::write(&executable, b"synthetic executable").unwrap();
+    fs::write(
+        package_root.join("BUILD_MANIFEST.json"),
+        br#"{"target":"linux","architecture":"x86_64","kind":"package"}"#,
+    )
+    .unwrap();
+
+    let installation =
+        UpdateInstallationDetector::detect(Some(&executable), Some("linux"), Some(package_root.to_str().unwrap()))
+            .unwrap();
+
+    assert_eq!(installation.kind, "package");
+    assert_eq!(installation.root, canonical_path(&package_root));
+    assert_eq!(installation.executable, canonical_path(&executable));
+}
+
+#[test]
 fn detects_macos_app_bundle() {
     let temp = TempDir::new("macos-app");
     let bundle = temp.path.join("SaveEditor.app");
@@ -842,12 +866,16 @@ fn portable_update_reports_verified_archive_and_manual_steps_without_staging() {
     };
     let mut runner = MockProcessRunner::new(0);
 
-    let error = install_artifact(&artifact, &archive_path, &installation, &mut runner).unwrap_err();
-    let message = error.to_string();
+    let result = install_artifact(&artifact, &archive_path, &installation, &mut runner);
+    assert!(
+        result.is_ok(),
+        "verified portable updates should return actionable manual-install instructions, not an installer failure: {result:?}"
+    );
+    let result = result.unwrap();
 
-    assert!(message.contains(&archive_path.display().to_string()));
-    assert!(message.contains("extract"));
-    assert!(message.contains("sse-shell"));
+    assert!(result.message.contains(&archive_path.display().to_string()));
+    assert_eq!(result.state, UpdateInstallState::ManualInstructions);
+    assert_eq!(result.exit_code, None);
     assert_eq!(runner.call_count, 0);
     assert!(!temp.path.join("verified-install").exists());
     assert_eq!(fs::read(&archive_path).unwrap(), archive_bytes);
