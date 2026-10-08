@@ -148,7 +148,8 @@ fn task_failure_reporting() -> std::io::Result<()> {
         panic!("background task panicked at /home/alice/private.sav");
     })?;
     let mut panic_marker = String::new();
-    for _ in 0..50 {
+    // The marker is written from the panicking worker thread; slow CI runners need more than 0.5 s.
+    for _ in 0..500 {
         if let Ok(marker) = std::fs::read_to_string(log_directory.join("last-crash.txt")) {
             panic_marker = marker;
             break;
