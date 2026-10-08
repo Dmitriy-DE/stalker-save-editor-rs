@@ -91,12 +91,12 @@
       "count": 44,
       "expected": "xray-stack-cs-ee-expected.sav",
       "expectedRaw": "xray-stack-cs-ee-expected.raw",
-      "expectedRawSha256": "02717614bb77dbe62c5efedd24328eabcc7e73b16830284e423fd3cc01ff68e9",
-      "expectedSha256": "68b44f92fc73b42164a9fa03ddab7a9102a83b4407d8595bc22c7fd9aa59c5dd",
+      "expectedRawSha256": "e09f109dbb13b136535096fbced1dec402e41e094011d5378d40e590f0b32144",
+      "expectedSha256": "aa3db9aceb883a7ca068947c705c10c5ab4397af248ce611ed7920f32aa663df",
       "handle": 4660,
       "releaseId": "stalker-cs-ee",
       "source": "xray-stack-cs-ee-source.sav",
-      "sourceSha256": "a28ffb0e75675001c47b0233500dc2db665a645d5a91f6eb9f78f6a043ea02d0"
+      "sourceSha256": "3b3f68645dd6406e500423823c5f211f36184d9c2f63f8b10ed0bd4f08bdea1f"
     },
     {
       "capabilities": {
@@ -108,12 +108,12 @@
       "count": 44,
       "expected": "xray-stack-cop-ee-expected.sav",
       "expectedRaw": "xray-stack-cop-ee-expected.raw",
-      "expectedRawSha256": "579a6b60a2b22389c22dd26da418f31c8a95f4ac3a8655a8f36e070c1e962cee",
-      "expectedSha256": "cd9b9b17ee94099b48d872a0de1f5b1db1b8739c0c650cb5bddf5678173ceb61",
+      "expectedRawSha256": "f7777da24e28ec73033f19f31d73ca53c076e9dc0f5c2dc15a30ecaaa6fe685e",
+      "expectedSha256": "36ed19eff87d200014a4ec519fef310be287b39218c0f2a48fc174a8e8fe9af7",
       "handle": 4660,
       "releaseId": "stalker-cop-ee",
       "source": "xray-stack-cop-ee-source.sav",
-      "sourceSha256": "696ef409ad44a36e2d80ebd1c3cb5a6da3b03e0f62657436daf26a2329b0e32c"
+      "sourceSha256": "c82b2200aa9df49f915c3be4b12e17c54bb89b60e0a9d59854209f4449b43f4e"
     }
   ]
 }

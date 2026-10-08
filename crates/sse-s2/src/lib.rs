@@ -6,8 +6,12 @@ use std::ops::Range;
 
 /// Maximum decoded S2 image admitted by the bounded Rust reader.
 pub const MAXIMUM_UNPACKED_SIZE: usize = 256 * 1024 * 1024;
+const MAXIMUM_MONEY: u32 = 2_000_000_000;
+const MAXIMUM_EDITABLE_STACK_COUNT: u32 = 1_000_000;
 const MAXIMUM_OWNED_HANDLES: usize = 4096;
 const MAXIMUM_GRID_CELLS: usize = 8192;
+// Consumers only need to distinguish one unambiguous record from an ambiguous handle.
+const MAXIMUM_OBJECT_CANDIDATES_PER_HANDLE: usize = 2;
 const KRAKEN_BLOCK_SIZE: usize = 0x4_0000;
 const GRID_WIDTH: u16 = 8;
 const WALLET_ANCHOR: [u8; 32] = [
@@ -148,7 +152,19 @@ impl S2Save {
 
     fn from_container(container: S2Container) -> Result<Self> {
         let index = S2InventoryIndex::locate(container.image())?;
-        let objects = S2ObjectIndex::build(container.image(), index.is_legacy)?;
+        let mut referenced_handles = index
+            .owned_handles
+            .iter()
+            .copied()
+            .chain(index.grid_cells.iter().map(|cell| cell.handle))
+            .collect::<HashSet<_>>();
+        referenced_handles.remove(&u32::MAX);
+        if !index.is_legacy {
+            if let Ok(stash) = S2StashLayout::locate(container.image(), &index) {
+                referenced_handles.extend(stash.live_handles().iter().copied());
+            }
+        }
+        let objects = S2ObjectIndex::build(container.image(), index.is_legacy, &referenced_handles)?;
         let names = S2NameTables::locate(container.image(), &objects, index.is_legacy)?;
         let (unresolved_handles, warnings) = collect_inventory_warnings(container.image(), &index, &objects)?;
         Ok(Self {
@@ -570,10 +586,11 @@ impl S2StashLayout {
 struct S2ObjectIndex {
     records: Vec<S2ObjectRecordIndex>,
     by_handle: HashMap<u32, Vec<usize>>,
+    record_ends: Vec<usize>,
 }
 
 impl S2ObjectIndex {
-    fn build(raw: &[u8], legacy: bool) -> Result<Self> {
+    fn build(raw: &[u8], legacy: bool, referenced_handles: &HashSet<u32>) -> Result<Self> {
         let record_shift = if legacy { 3_usize } else { 0 };
         let marker_offset = 18_usize
             .checked_sub(record_shift)
@@ -588,7 +605,9 @@ impl S2ObjectIndex {
             .checked_sub(record_shift)
             .ok_or_else(|| Error::damaged("S2 kind offset is invalid"))?;
         let mut result = Self::default();
+        let mut previous_candidate: Option<usize> = None;
 
+        // Scan every plausible record for boundaries, but retain records only for referenced handles.
         for (marker_position, marker) in raw.iter().enumerate().skip(marker_offset) {
             if *marker != 0x38 {
                 continue;
@@ -610,6 +629,19 @@ impl S2ObjectIndex {
                 continue;
             }
             let handle = read_u32(raw, record_offset)?;
+            if let Some(previous_index) = previous_candidate.take() {
+                if let Some(end) = result.record_ends.get_mut(previous_index) {
+                    *end = record_offset;
+                }
+            }
+            if !referenced_handles.contains(&handle)
+                || result
+                    .by_handle
+                    .get(&handle)
+                    .is_some_and(|candidates| candidates.len() >= MAXIMUM_OBJECT_CANDIDATES_PER_HANDLE)
+            {
+                continue;
+            }
             let type_key_offset = checked_add(record_offset, 8, "S2 type key offset overflow")?;
             let type_key_slice = raw
                 .get(type_key_offset..checked_add(type_key_offset, 3, "S2 type key end overflow")?)
@@ -632,6 +664,16 @@ impl S2ObjectIndex {
                 type_key,
             });
             result.by_handle.entry(handle).or_default().push(index);
+            result.record_ends.push(usize::MAX);
+            previous_candidate = Some(index);
+        }
+        if let Some(previous_index) = previous_candidate {
+            if let (Some(previous), Some(end)) = (
+                result.records.get(previous_index),
+                result.record_ends.get_mut(previous_index),
+            ) {
+                *end = raw.len().min(previous.record_offset.saturating_add(4096));
+            }
         }
         Ok(result)
     }
@@ -1009,24 +1051,22 @@ fn build_inventory_items(
 }
 
 fn record_end_guesses(raw_length: usize, index: &S2InventoryIndex, objects: &S2ObjectIndex) -> HashMap<u32, usize> {
-    let mut starts = objects
-        .records
-        .iter()
-        .map(|record| record.record_offset)
-        .collect::<Vec<_>>();
-    starts.sort_unstable();
-    starts.dedup();
-    let mut end_by_offset = HashMap::with_capacity(starts.len());
-    for (position, offset) in starts.iter().enumerate() {
-        let fallback = raw_length.min(offset.saturating_add(4096));
-        let next = starts.get(position.saturating_add(1)).copied().unwrap_or(fallback);
-        end_by_offset.insert(*offset, next.min(raw_length));
-    }
     let mut ends = HashMap::with_capacity(index.owned_handles.len());
     for handle in &index.owned_handles {
-        if let Some(record) = objects.unique(*handle) {
-            if let Some(end) = end_by_offset.get(&record.record_offset) {
-                ends.insert(*handle, *end);
+        let candidates = objects.candidates(*handle);
+        if candidates.len() != 1 {
+            continue;
+        }
+        if let Some(record_index) = candidates.first().copied() {
+            if let Some(record) = objects.records.get(record_index) {
+                let fallback = raw_length.min(record.record_offset.saturating_add(4096));
+                let end = objects
+                    .record_ends
+                    .get(record_index)
+                    .copied()
+                    .unwrap_or(fallback)
+                    .min(raw_length);
+                ends.insert(*handle, end);
             }
         }
     }
@@ -1604,6 +1644,9 @@ fn apply_changes_to_image(save: &S2Save, changes: &[S2Change]) -> Result<(Vec<u8
     for change in changes {
         match *change {
             S2Change::SetMoney(amount) => {
+                if amount > MAXIMUM_MONEY {
+                    return Err(Error::Refused("S2 money is outside the supported range".to_owned()));
+                }
                 write_u32_at(&mut image, save.index.money_offset, amount)?;
                 changed_ranges.push(ChangedRange {
                     before: save.index.money_offset..save.index.money_offset.saturating_add(4),
@@ -1611,7 +1654,7 @@ fn apply_changes_to_image(save: &S2Save, changes: &[S2Change]) -> Result<(Vec<u8
                 });
             }
             S2Change::SetStackCount { handle, count } => {
-                if !(1..=10_000_000).contains(&count) {
+                if !(1..=MAXIMUM_EDITABLE_STACK_COUNT).contains(&count) {
                     return Err(Error::Refused(
                         "S2 stack count is outside the supported range".to_owned(),
                     ));
@@ -2259,8 +2302,7 @@ fn validate_owned_handles(handles: &[u32], legacy: bool) -> Result<()> {
         handles.len()
     };
     let game_handles = handles.iter().filter(|handle| **handle >> 24 == 0x30).count();
-    let minimum = judged.saturating_div(2).max(4);
-    if !handles.is_empty() && game_handles < minimum {
+    if game_handles.saturating_mul(2) < judged {
         return Err(Error::damaged("S2 owned-handle array does not resemble player handles"));
     }
     Ok(())
@@ -2269,8 +2311,8 @@ fn validate_owned_handles(handles: &[u32], legacy: bool) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_changes_to_image, pack_and_verify_s2_image, S2Change, S2Container, S2InventoryIndex, S2Save,
-        S2StashLayout,
+        apply_changes_to_image, pack_and_verify_s2_image, validate_owned_handles, S2Change, S2Container,
+        S2InventoryIndex, S2Save, S2StashLayout,
     };
     use sse_codecs::crc32;
     use sse_core::Error;
@@ -2300,6 +2342,19 @@ mod tests {
         include_bytes!("../../../fixtures/synthetic/writer-s2-stash/s2-stash-expected.raw");
     const WRITER_S2_STASH_PACKED_SOURCE: &[u8] =
         include_bytes!("../../../fixtures/synthetic/writer-s2-stash/s2-stash-source.sav");
+
+    #[test]
+    fn owned_handle_validation_accepts_one_to_three_game_handles() {
+        for count in 1..=3_u32 {
+            let handles = (0..count)
+                .map(|handle| 0x3000_0001_u32.saturating_add(handle))
+                .collect::<Vec<_>>();
+            assert!(
+                validate_owned_handles(&handles, false).is_ok(),
+                "{count} correctly shaped player handles should not be rejected"
+            );
+        }
+    }
 
     #[test]
     fn public_s2_writer_round_trips_money_stack_and_crc() {
@@ -2384,6 +2439,37 @@ mod tests {
         let Ok(verified) = verified else { return };
         assert_eq!(verified.money(), 876_543);
         assert_eq!(parsed.money(), 100);
+    }
+
+    #[test]
+    fn s2_money_writer_enforces_the_reference_upper_bound() {
+        let parsed = S2Save::from_bytes(WRITER_S2_MONEY_SOURCE);
+        assert!(parsed.is_ok());
+        let Ok(parsed) = parsed else { return };
+
+        assert!(apply_changes_to_image(&parsed, &[S2Change::SetMoney(2_000_000_000)]).is_ok());
+        assert!(matches!(
+            apply_changes_to_image(&parsed, &[S2Change::SetMoney(2_000_000_001)]),
+            Err(Error::Refused(_))
+        ));
+    }
+
+    #[test]
+    fn s2_stack_writer_enforces_the_reference_count_ceiling() {
+        let parsed = S2Save::from_bytes(WRITER_S2_STACK_SOURCE);
+        assert!(parsed.is_ok());
+        let Ok(parsed) = parsed else { return };
+
+        assert!(matches!(
+            apply_changes_to_image(
+                &parsed,
+                &[S2Change::SetStackCount {
+                    handle: 0x3000_0001,
+                    count: 1_000_001,
+                }]
+            ),
+            Err(Error::Refused(_))
+        ));
     }
 
     #[test]
@@ -2593,6 +2679,7 @@ mod tests {
         objects.records.extend([record, next]);
         objects.by_handle.insert(handle, vec![0]);
         objects.by_handle.insert(next_handle, vec![1]);
+        objects.record_ends.extend([next_offset, next_offset.saturating_add(1)]);
 
         let ends = super::record_end_guesses(next_offset.saturating_add(1), &parsed.index, &objects);
 
@@ -3312,6 +3399,101 @@ mod tests {
                 false,
             ))
         );
+    }
+
+    #[test]
+    fn object_index_does_not_retain_candidates_for_unowned_handles() {
+        let baseline = S2Save::from_bytes(SYNTHETIC_SAVE);
+        assert!(baseline.is_ok());
+        let Ok(baseline) = baseline else { return };
+        let expected_record_count = baseline.objects.records.len();
+        let expected_items = baseline.items();
+        let expected_orphans = baseline.orphans();
+        let mut raw = SYNTHETIC_RAW.to_vec();
+
+        for candidate in 0..4096_u32 {
+            append_object_candidate(&mut raw, 0x7000_0000_u32.saturating_add(candidate));
+        }
+
+        let parsed = S2Save::from_bytes(&pack_raw(&raw));
+        assert!(parsed.is_ok());
+        let Ok(parsed) = parsed else { return };
+        assert_eq!(
+            parsed.objects.records.len(),
+            expected_record_count,
+            "object index should retain only records referenced by backpack or stash handles"
+        );
+        assert_eq!(parsed.items(), expected_items);
+        assert_eq!(parsed.orphans(), expected_orphans);
+    }
+
+    #[test]
+    fn object_index_stores_only_two_candidates_per_referenced_handle() {
+        let baseline = S2Save::from_bytes(SYNTHETIC_SAVE);
+        assert!(baseline.is_ok());
+        let Ok(baseline) = baseline else { return };
+        let handle = 0x3000_0002;
+        assert_eq!(baseline.objects.candidates(handle).len(), 1);
+        let mut raw = SYNTHETIC_RAW.to_vec();
+
+        for _ in 0..128 {
+            append_object_candidate(&mut raw, handle);
+        }
+
+        let parsed = S2Save::from_bytes(&pack_raw(&raw));
+        assert!(parsed.is_ok());
+        let Ok(parsed) = parsed else { return };
+        assert_eq!(
+            parsed.objects.candidates(handle).len(),
+            2,
+            "two candidates are sufficient to preserve ambiguity without storing every duplicate"
+        );
+    }
+
+    #[test]
+    fn unretained_object_candidates_still_bound_the_previous_record() {
+        let baseline = S2Save::from_bytes(SYNTHETIC_SAVE);
+        assert!(baseline.is_ok());
+        let Ok(baseline) = baseline else { return };
+        let last_record = baseline
+            .objects
+            .records
+            .iter()
+            .max_by_key(|record| record.record_offset);
+        assert!(last_record.is_some());
+        let Some(last_record) = last_record else { return };
+        let handle = last_record.handle;
+        let mut raw = SYNTHETIC_RAW.to_vec();
+        let next_record_offset = raw.len();
+        append_object_candidate(&mut raw, 0x7000_0000);
+
+        let parsed = S2Save::from_bytes(&pack_raw(&raw));
+        assert!(parsed.is_ok());
+        let Ok(parsed) = parsed else { return };
+        let candidate = parsed.objects.candidates(handle).first().copied();
+        assert!(candidate.is_some());
+        let Some(candidate) = candidate else { return };
+        assert_eq!(parsed.objects.record_ends.get(candidate), Some(&next_record_offset));
+    }
+
+    fn append_object_candidate(raw: &mut Vec<u8>, handle: u32) {
+        let offset = raw.len();
+        raw.resize(offset.saturating_add(48), 0);
+        raw.get_mut(offset..offset.saturating_add(4))
+            .unwrap_or_default()
+            .copy_from_slice(&handle.to_le_bytes());
+        if let Some(marker) = raw.get_mut(offset.saturating_add(18)) {
+            *marker = 0x38;
+        }
+        raw.get_mut(offset.saturating_add(19)..offset.saturating_add(23))
+            .unwrap_or_default()
+            .copy_from_slice(&1_u32.to_le_bytes());
+        raw.get_mut(offset.saturating_add(24)..offset.saturating_add(28))
+            .unwrap_or_default()
+            .copy_from_slice(&1.0_f32.to_bits().to_le_bytes());
+        if let Some(kind) = raw.get_mut(offset.saturating_add(31)) {
+            *kind = 4;
+        }
     }
 
     #[test]

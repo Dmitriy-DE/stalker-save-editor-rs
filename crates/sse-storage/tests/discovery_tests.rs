@@ -49,6 +49,29 @@ fn temporary_test_roots_canonicalize_symlink_aliases() {
     assert_eq!(canonicalize_temp_root(&alias), temp.path);
 }
 
+// Arbitrary byte filenames are supported on Linux filesystems; macOS rejects them as invalid UTF-8.
+#[cfg(target_os = "linux")]
+#[test]
+fn discovery_keeps_distinct_non_utf8_save_paths_distinct() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    let temp = TempDir::new("non-utf8-discovery");
+    let left_dir = temp.path.join(OsString::from_vec(b"saves-\xFF".to_vec()));
+    let right_dir = temp.path.join(OsString::from_vec(b"saves-\xFE".to_vec()));
+    fs::create_dir_all(&left_dir).expect("create left non-UTF-8 directory");
+    fs::create_dir_all(&right_dir).expect("create right non-UTF-8 directory");
+    fs::write(left_dir.join("slot.sav"), [1, 2, 3, 4, 0]).expect("write left save");
+    fs::write(right_dir.join("slot.sav"), [5, 6, 7, 8, 0]).expect("write right save");
+    let candidates = vec![
+        SaveDirectoryCandidate::new("cop", "stalker-cop", &left_dir),
+        SaveDirectoryCandidate::new("cop", "stalker-cop", &right_dir),
+    ];
+
+    let result = SaveSlotDiscovery::discover(&candidates);
+    assert_eq!(result.slots.len(), 2);
+}
+
 #[test]
 fn finds_windows_game_save_paths_from_steam_manifests_and_fsgame_override() {
     let temp = TempDir::new("locator-win");
@@ -383,17 +406,197 @@ fn library_index_encode_decode_round_trip_and_corrupt_recovery() {
     };
     index.insert(entry.clone());
 
-    let encoded = index.encode();
+    let encoded = index.encode().expect("encode index");
     let decoded = LibraryIndex::decode(&encoded).expect("decode index");
     assert_eq!(decoded.len(), 1);
 
     let looked_up = decoded
-        .lookup(&entry.path, 1024, UNIX_EPOCH + Duration::new(1_700_000_000, 500))
+        .lookup(
+            &entry.path,
+            1024,
+            UNIX_EPOCH + Duration::new(1_700_000_000, 500),
+            entry.header_hash,
+        )
         .expect("lookup");
     assert_eq!(looked_up, &entry);
 
     // Corrupted bytes return None safely
     assert!(LibraryIndex::decode(b"corrupt header data").is_none());
+}
+
+#[test]
+fn library_index_rejects_trailing_bytes_after_declared_entries() {
+    let mut index = LibraryIndex::new();
+    index.insert(LibraryIndexEntry {
+        path: PathBuf::from("/path/to/save.sav"),
+        candidate_game_id: "cop".to_string(),
+        candidate_release_id: "stalker-cop".to_string(),
+        size: 1,
+        mtime_secs: 0,
+        mtime_nanos: 0,
+        header_hash: 0,
+        format_id: None,
+        game_id: None,
+        detection_error: None,
+    });
+    let mut encoded = index.encode().expect("encode index");
+    encoded.extend_from_slice(b"unclaimed tail");
+    assert!(LibraryIndex::decode(&encoded).is_none());
+}
+
+#[test]
+fn library_index_rejects_hostile_entry_count_before_allocating() {
+    let mut encoded = Vec::from(*b"SSLI");
+    encoded.extend_from_slice(&1_u32.to_le_bytes());
+    encoded.extend_from_slice(&u32::MAX.to_le_bytes());
+
+    assert!(LibraryIndex::decode(&encoded).is_none());
+}
+
+#[test]
+fn library_index_save_refuses_strings_longer_than_its_wire_length() {
+    let temp = TempDir::new("index-long-string");
+    let mut index = LibraryIndex::new();
+    index.insert(LibraryIndexEntry {
+        path: PathBuf::from("/path/to/save.sav"),
+        candidate_game_id: "cop".to_string(),
+        candidate_release_id: "r".repeat(usize::from(u16::MAX) + 1),
+        size: 1,
+        mtime_secs: 0,
+        mtime_nanos: 0,
+        header_hash: 0,
+        format_id: None,
+        game_id: None,
+        detection_error: None,
+    });
+
+    let result = index.save(&temp.path.join("oversized.index"));
+    assert!(matches!(result, Err(error) if error.kind() == std::io::ErrorKind::InvalidInput));
+
+    let mut sentinel_collision = LibraryIndex::new();
+    sentinel_collision.insert(LibraryIndexEntry {
+        path: PathBuf::from("/path/to/save.sav"),
+        candidate_game_id: "cop".to_string(),
+        candidate_release_id: "stalker-cop".to_string(),
+        size: 1,
+        mtime_secs: 0,
+        mtime_nanos: 0,
+        header_hash: 0,
+        format_id: None,
+        game_id: None,
+        detection_error: Some("e".repeat(usize::from(u16::MAX))),
+    });
+    let result = sentinel_collision.save(&temp.path.join("sentinel-collision.index"));
+    assert!(matches!(result, Err(error) if error.kind() == std::io::ErrorKind::InvalidInput));
+}
+
+#[cfg(unix)]
+#[test]
+fn library_index_save_refuses_non_utf8_paths_instead_of_lossy_encoding() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    let temp = TempDir::new("index-non-utf8-path");
+    let mut index = LibraryIndex::new();
+    index.insert(LibraryIndexEntry {
+        path: PathBuf::from(OsString::from_vec(vec![b'/', b's', b'a', b'v', b'e', 0xFF])),
+        candidate_game_id: "cop".to_string(),
+        candidate_release_id: "stalker-cop".to_string(),
+        size: 1,
+        mtime_secs: 0,
+        mtime_nanos: 0,
+        header_hash: 0,
+        format_id: None,
+        game_id: None,
+        detection_error: None,
+    });
+
+    let result = index.save(&temp.path.join("non-utf8.index"));
+    assert!(matches!(result, Err(error) if error.kind() == std::io::ErrorKind::InvalidInput));
+}
+
+#[test]
+fn library_index_parallel_saves_do_not_collide_on_temporary_files() {
+    use std::sync::{Arc, Barrier};
+
+    let temp = TempDir::new("index-parallel-save");
+    let large_message = "x".repeat(60_000);
+    let make_index = |path: &str| {
+        let mut index = LibraryIndex::new();
+        for number in 0..16 {
+            index.insert(LibraryIndexEntry {
+                path: PathBuf::from(format!("/{path}/{number}.sav")),
+                candidate_game_id: "cop".to_string(),
+                candidate_release_id: "stalker-cop".to_string(),
+                size: 1,
+                mtime_secs: 0,
+                mtime_nanos: 0,
+                header_hash: 0,
+                format_id: None,
+                game_id: None,
+                detection_error: Some(large_message.clone()),
+            });
+        }
+        index
+    };
+
+    for attempt in 0..8 {
+        let left_index = make_index("left");
+        let right_index = make_index("right");
+        let left_path = temp.path.join(format!("library-{attempt}.left"));
+        let right_path = temp.path.join(format!("library-{attempt}.right"));
+        let barrier = Arc::new(Barrier::new(2));
+        let left_barrier = Arc::clone(&barrier);
+        let right_barrier = Arc::clone(&barrier);
+        let left = std::thread::spawn(move || {
+            left_barrier.wait();
+            left_index.save(&left_path)
+        });
+        let right = std::thread::spawn(move || {
+            right_barrier.wait();
+            right_index.save(&right_path)
+        });
+
+        assert!(left.join().expect("left save thread").is_ok());
+        assert!(right.join().expect("right save thread").is_ok());
+        assert!(LibraryIndex::load(&temp.path.join(format!("library-{attempt}.left"))).is_some());
+        assert!(LibraryIndex::load(&temp.path.join(format!("library-{attempt}.right"))).is_some());
+    }
+}
+
+#[test]
+fn library_index_rechecks_header_when_size_and_mtime_match() {
+    let temp = TempDir::new("index-header-hash");
+    let saves_dir = temp.path.join("saves");
+    fs::create_dir_all(&saves_dir).expect("mkdir saves");
+    let save_path = saves_dir.join("slot.sav");
+    let mut changed = include_bytes!("../../../fixtures/synthetic/xray-soc.sav").to_vec();
+    fs::write(&save_path, &changed).expect("write valid synthetic save");
+    let candidate = SaveDirectoryCandidate::new("soc", "stalker-soc", &saves_dir);
+    let candidates = vec![candidate];
+    let mut index = LibraryIndex::new();
+
+    let first = index.scan_with_index(&candidates);
+    assert_eq!(
+        first.first().and_then(|slot| slot.format_id.as_deref()),
+        Some("stalker-soc")
+    );
+    let original_mtime = fs::metadata(&save_path)
+        .expect("metadata before edit")
+        .modified()
+        .expect("mtime before edit");
+
+    changed[4] = 5;
+    fs::write(&save_path, &changed).expect("write same-size changed header");
+    File::options()
+        .write(true)
+        .open(&save_path)
+        .expect("open changed save")
+        .set_times(std::fs::FileTimes::new().set_modified(original_mtime))
+        .expect("restore original mtime");
+
+    let second = index.scan_with_index(&candidates);
+    assert_eq!(second.first().and_then(|slot| slot.format_id.as_deref()), None);
 }
 
 #[test]
@@ -512,7 +715,7 @@ fn cold_scan_performance_333_saves_under_200ms() {
 }
 
 #[test]
-fn cop_ee_scop_detected_as_cop_ee_from_header() {
+fn incomplete_enhanced_header_is_not_classified_from_path_or_candidate() {
     let temp = TempDir::new("cop-ee-test");
     let save_path = temp.path.join("test_save.scop");
 
@@ -535,9 +738,128 @@ fn cop_ee_scop_detected_as_cop_ee_from_header() {
 
     assert_eq!(result.slots.len(), 1);
     let slot = &result.slots[0];
+    assert_eq!(slot.format_id, None);
+    assert_eq!(slot.game_id, None);
+    assert!(slot.detection_error.is_some());
+}
+
+#[test]
+fn enhanced_format_detection_follows_content_over_path_and_candidate() {
+    let temp = TempDir::new("ee-content-detection");
+    let save_path = temp.path.join("cop_save.scop");
+    fs::write(
+        &save_path,
+        include_bytes!("../../../fixtures/synthetic/xray-clear-sky-ee.sav"),
+    )
+    .expect("write synthetic Clear Sky EE save");
+
+    let candidates = vec![SaveDirectoryCandidate::new("cop", "stalker-cop-ee", &temp.path)];
+    let result = SaveSlotDiscovery::discover(&candidates);
+
+    assert_eq!(result.slots.len(), 1);
+    let slot = &result.slots[0];
+    assert_eq!(slot.format_id.as_deref(), Some("stalker-cs-ee"));
+    assert_eq!(slot.game_id.as_deref(), Some("clear_sky"));
+    assert!(slot.detection_error.is_none());
+}
+
+#[test]
+fn enhanced_format_detection_reads_past_the_header_sample() {
+    let temp = TempDir::new("ee-large-content-detection");
+    let save_path = temp.path.join("large_save.scop");
+    let bytes = with_large_unknown_xray_chunk(include_bytes!(
+        "../../../fixtures/synthetic/xray-call-of-pripyat-ee.sav"
+    ));
+    assert!(bytes.len() > 4096, "fixture must exceed the discovery header sample");
+    fs::write(&save_path, bytes).expect("write expanded synthetic save");
+
+    let candidates = vec![SaveDirectoryCandidate::new("cop", "stalker-cop-ee", &temp.path)];
+    let result = SaveSlotDiscovery::discover(&candidates);
+
+    assert_eq!(result.slots.len(), 1);
+    let slot = &result.slots[0];
     assert_eq!(slot.format_id.as_deref(), Some("stalker-cop-ee"));
     assert_eq!(slot.game_id.as_deref(), Some("cop"));
     assert!(slot.detection_error.is_none());
+}
+
+#[test]
+fn library_index_cold_scan_reads_past_the_header_sample_for_ee_detection() {
+    let temp = TempDir::new("ee-large-index-detection");
+    let save_path = temp.path.join("large_save.scop");
+    let bytes = with_large_unknown_xray_chunk(include_bytes!(
+        "../../../fixtures/synthetic/xray-call-of-pripyat-ee.sav"
+    ));
+    fs::write(&save_path, bytes).expect("write expanded synthetic save");
+
+    let candidates = vec![SaveDirectoryCandidate::new("cop", "stalker-cop-ee", &temp.path)];
+    let mut index = LibraryIndex::new();
+    let slots = index.scan_with_index(&candidates);
+
+    assert_eq!(slots.len(), 1);
+    assert_eq!(slots[0].format_id.as_deref(), Some("stalker-cop-ee"));
+    assert_eq!(slots[0].game_id.as_deref(), Some("cop"));
+    assert!(slots[0].detection_error.is_none());
+}
+
+#[test]
+fn enhanced_mod_without_a_level_marker_is_not_classified_from_path() {
+    let temp = TempDir::new("ee-mod-detection");
+    let save_path = temp.path.join("modded_save.scop");
+    let bytes = without_xray_level_marker(include_bytes!(
+        "../../../fixtures/synthetic/xray-call-of-pripyat-ee.sav"
+    ));
+    fs::write(&save_path, bytes).expect("write synthetic mod save");
+
+    let candidates = vec![SaveDirectoryCandidate::new("cop", "stalker-cop-ee", &temp.path)];
+    let result = SaveSlotDiscovery::discover(&candidates);
+
+    assert_eq!(result.slots.len(), 1);
+    let slot = &result.slots[0];
+    assert_eq!(slot.format_id, None);
+    assert_eq!(slot.game_id, None);
+    assert!(slot.detection_error.is_some());
+}
+
+fn with_large_unknown_xray_chunk(packed: &[u8]) -> Vec<u8> {
+    let declared_size = u32::from_le_bytes(packed[8..12].try_into().expect("X-Ray header size"));
+    let unpacked_size = usize::try_from(declared_size).expect("fixture size should fit usize");
+    let mut raw =
+        sse_codecs::lzo1x::decompress(&packed[12..], unpacked_size).expect("synthetic X-Ray fixture should decompress");
+    raw.extend_from_slice(&0xCAFE_BABEu32.to_le_bytes());
+    raw.extend_from_slice(&8192_u32.to_le_bytes());
+    let mut seed = 0xA341_316C_u32;
+    for _ in 0..8192 {
+        seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        raw.push((seed >> 24) as u8);
+    }
+
+    let compressed = sse_codecs::lzo1x::compress(&raw);
+    let mut output = packed[..12].to_vec();
+    output[8..12].copy_from_slice(
+        &u32::try_from(raw.len())
+            .expect("expanded synthetic fixture should fit the header")
+            .to_le_bytes(),
+    );
+    output.extend_from_slice(&compressed);
+    output
+}
+
+fn without_xray_level_marker(packed: &[u8]) -> Vec<u8> {
+    let declared_size = u32::from_le_bytes(packed[8..12].try_into().expect("X-Ray header size"));
+    let unpacked_size = usize::try_from(declared_size).expect("fixture size should fit usize");
+    let raw =
+        sse_codecs::lzo1x::decompress(&packed[12..], unpacked_size).expect("synthetic X-Ray fixture should decompress");
+    let mut raw = raw;
+    let marker = raw
+        .windows(5)
+        .position(|window| window == b"zaton")
+        .expect("synthetic CoP EE fixture should have a level marker");
+    raw[marker..marker.saturating_add(5)].copy_from_slice(b"other");
+    let compressed = sse_codecs::lzo1x::compress(&raw);
+    let mut output = packed[..12].to_vec();
+    output.extend_from_slice(&compressed);
+    output
 }
 
 #[test]

@@ -2,17 +2,20 @@
 
 use sse_codecs::sha256;
 use sse_core::{Error, Result};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::ffi::{OsStr, OsString};
 #[cfg(unix)]
 use std::fs::File;
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 static NEXT_TRANSACTION_ID: AtomicU64 = AtomicU64::new(1);
 const MAXIMUM_JOURNAL_BYTES: u64 = 2 * 1024 * 1024;
+const MAXIMUM_VERIFIED_BACKUP_SETS: usize = 100;
 
 /// File operations used by the transaction; injectable implementations support failure testing.
 pub trait FileSystem {
@@ -28,12 +31,46 @@ pub trait FileSystem {
     fn copy_permissions(&self, source: &Path, destination: &Path) -> Result<()>;
     /// Atomically moves one file over another and flushes the destination directory where supported.
     fn replace(&self, source: &Path, destination: &Path) -> Result<()>;
+    /// Rechecks the destination hash immediately before replacing it.
+    fn replace_if_sha256_matches(&self, source: &Path, destination: &Path, expected_sha256: &str) -> Result<()> {
+        let current = self.read_all(destination)?;
+        if sha256::sha256_hex(&current) != expected_sha256 {
+            return Err(Error::Refused(
+                "source changed immediately before replacement".to_owned(),
+            ));
+        }
+        self.replace(source, destination)
+    }
     /// Publishes a new path atomically without overwriting an existing destination.
     fn publish_new(&self, source: &Path, destination: &Path) -> Result<()> {
         self.replace(source, destination)
     }
+    /// Rechecks a source hash immediately before publishing a new output path.
+    fn publish_new_if_source_sha256_matches(
+        &self,
+        staged_output: &Path,
+        output_path: &Path,
+        source_path: &Path,
+        expected_source_sha256: &str,
+    ) -> Result<()> {
+        let current = self.read_all(source_path)?;
+        if sha256::sha256_hex(&current) != expected_source_sha256 {
+            return Err(Error::Refused(
+                "source changed immediately before export publication".to_owned(),
+            ));
+        }
+        self.publish_new(staged_output, output_path)
+    }
     /// Removes a file if it exists.
     fn delete_if_exists(&self, path: &Path) -> Result<()>;
+    /// Reports the platform read-only attribute or permission state used to reject unsafe replacement.
+    fn is_readonly(&self, _path: &Path) -> Result<bool> {
+        Ok(false)
+    }
+    /// Flushes a directory entry update where the platform supports directory synchronization.
+    fn sync_directory(&self, _directory: &Path) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// Standard-library filesystem operations for save transactions.
@@ -51,7 +88,9 @@ impl FileSystem for StdFileSystem {
 
     fn create_dir_all(&self, path: &Path) -> Result<()> {
         fs::create_dir_all(path)?;
-        sync_directory(path.parent());
+        if let Some(parent) = path.parent() {
+            sync_directory(Some(parent))?;
+        }
         Ok(())
     }
 
@@ -60,16 +99,18 @@ impl FileSystem for StdFileSystem {
         let result = (|| {
             let mut options = OpenOptions::new();
             options.write(true).create_new(true);
-            let mut file = options.open(path)?;
-            created = true;
             #[cfg(unix)]
             {
-                use std::os::unix::fs::PermissionsExt;
-                fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
             }
+            let mut file = options.open(path)?;
+            created = true;
             file.write_all(bytes)?;
             file.sync_all()?;
-            sync_directory(path.parent());
+            if let Some(parent) = path.parent() {
+                sync_directory(Some(parent))?;
+            }
             Ok(())
         })();
         if result.is_err() && created {
@@ -79,22 +120,45 @@ impl FileSystem for StdFileSystem {
     }
 
     fn copy_permissions(&self, source: &Path, destination: &Path) -> Result<()> {
-        sse_sys::secure_fs::copy_owner_and_group(source, destination)?;
+        sse_sys::secure_fs::copy_dacl(source, destination)?;
+        let _ = sse_sys::secure_fs::copy_owner_and_group(source, destination);
         fs::set_permissions(destination, fs::metadata(source)?.permissions())?;
         Ok(())
     }
 
     fn replace(&self, source: &Path, destination: &Path) -> Result<()> {
-        fs::rename(source, destination)?;
-        sync_directory(destination.parent());
+        sse_sys::secure_fs::replace_existing(source, destination)?;
         Ok(())
     }
 
+    fn replace_if_sha256_matches(&self, source: &Path, destination: &Path, expected_sha256: &str) -> Result<()> {
+        let current_sha256 = fresh_file_sha256(destination)?;
+        if current_sha256 != expected_sha256 {
+            return Err(Error::Refused(
+                "source changed immediately before replacement".to_owned(),
+            ));
+        }
+        self.replace(source, destination)
+    }
+
     fn publish_new(&self, source: &Path, destination: &Path) -> Result<()> {
-        fs::hard_link(source, destination)?;
-        let _ = fs::remove_file(source);
-        sync_directory(destination.parent());
+        sse_sys::secure_fs::publish_new(source, destination)?;
         Ok(())
+    }
+
+    fn publish_new_if_source_sha256_matches(
+        &self,
+        staged_output: &Path,
+        output_path: &Path,
+        source_path: &Path,
+        expected_source_sha256: &str,
+    ) -> Result<()> {
+        if fresh_file_sha256(source_path)? != expected_source_sha256 {
+            return Err(Error::Refused(
+                "source changed immediately before export publication".to_owned(),
+            ));
+        }
+        self.publish_new(staged_output, output_path)
     }
 
     fn delete_if_exists(&self, path: &Path) -> Result<()> {
@@ -103,6 +167,14 @@ impl FileSystem for StdFileSystem {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(error) => Err(error.into()),
         }
+    }
+
+    fn is_readonly(&self, path: &Path) -> Result<bool> {
+        Ok(fs::metadata(path)?.permissions().readonly())
+    }
+
+    fn sync_directory(&self, directory: &Path) -> Result<()> {
+        sync_directory(Some(directory))
     }
 }
 
@@ -119,6 +191,8 @@ pub struct ReplacementReceipt {
     pub journal_path: PathBuf,
     /// SHA-256 of the replacement bytes, in lowercase hexadecimal.
     pub output_sha256: String,
+    /// Warning when optional old-backup rotation could not complete.
+    pub maintenance_warning: Option<String>,
 }
 
 /// Edit summary stored in the C#-compatible export journal.
@@ -159,6 +233,8 @@ pub struct ExportReceipt {
     pub journal_path: PathBuf,
     /// SHA-256 of the exported bytes.
     pub output_sha256: String,
+    /// Warning when optional old-backup rotation could not complete.
+    pub maintenance_warning: Option<String>,
 }
 
 /// Result of an in-place backup restore.
@@ -170,15 +246,19 @@ pub struct RestoreReceipt {
     pub safety_backup_path: Option<PathBuf>,
     /// Journal for the safety backup, when the file existed.
     pub safety_journal_path: Option<PathBuf>,
+    /// Warning when optional old-backup rotation could not complete.
+    pub maintenance_warning: Option<String>,
 }
 
 /// Backup listing status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackupStatus {
-    /// Journal and backup exist and the source hash matches.
+    /// Journal and backup are valid, with no interrupted in-place write pending.
     Verified,
     /// Journal refers to a backup that is absent.
     Missing,
+    /// The prepared journal and original backup are intact, but publication was interrupted.
+    Interrupted,
     /// Journal or backup contents do not pass validation.
     Corrupt,
 }
@@ -228,11 +308,15 @@ pub fn export_transaction(
             "writing through a symbolic-link save is refused".to_owned(),
         ));
     }
-    if fs::symlink_metadata(&output_path).is_ok() {
-        return Err(Error::System(format!(
-            "export output already exists: {}",
-            output_path.display()
-        )));
+    match fs::symlink_metadata(&output_path) {
+        Ok(_) => {
+            return Err(Error::System(format!(
+                "export output already exists: {}",
+                output_path.display()
+            )));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
     }
     let source_directory = source_path
         .parent()
@@ -257,25 +341,25 @@ pub fn export_transaction(
     }
     let output_sha256 = sha256::sha256_hex(replacement);
     let token = transaction_token();
-    let stem = source_path
-        .file_stem()
-        .map(|value| value.to_string_lossy())
-        .unwrap_or_else(|| "save".into());
+    let stem = artifact_stem_prefix(&source_path);
     let artifact_stem = format!("{stem}_{token}");
     let backup_path = backup_directory.join(format!("{artifact_stem}_ORIGINAL.sav"));
     let journal_path = backup_directory.join(format!("{artifact_stem}_ORIGINAL.json"));
-    let output_name = output_path
-        .file_name()
-        .map(|value| value.to_string_lossy())
-        .unwrap_or_else(|| "save.sav".into());
-    let temporary_output = output_directory.join(format!(".{output_name}.{token}.tmp"));
+    let output_name = output_path.file_name().unwrap_or_else(|| OsStr::new("save.sav"));
+    let temporary_output = temporary_sibling(output_directory, output_name, &token, ".tmp");
     let temporary_journal = backup_directory.join(format!(".{artifact_stem}.json.tmp"));
-    fs::create_dir_all(&backup_directory)?;
+    StdFileSystem.create_dir_all(&backup_directory)?;
     ensure_backup_directory_outside(source_directory, &backup_directory)?;
     let mut published = false;
+    let mut backup_created = false;
+    let mut journal_created = false;
+    let mut temporary_output_created = false;
+    let mut temporary_journal_created = false;
     let transaction = (|| {
         StdFileSystem.write_new(&backup_path, &source_bytes)?;
+        backup_created = true;
         StdFileSystem.write_new(&temporary_output, replacement)?;
+        temporary_output_created = true;
         let created_at = timestamp_utc()?;
         let prepared_journal = serialize_export_journal(&ExportJournal {
             status: "prepared",
@@ -288,14 +372,16 @@ pub fn export_transaction(
             summary,
         });
         StdFileSystem.write_new(&journal_path, &prepared_journal)?;
-        let fresh_source = fs::read(&source_path)?;
-        if sha256::sha256_hex(&fresh_source) != expected_source_sha256 {
-            return Err(Error::Refused(
-                "source changed immediately before export publication".to_owned(),
-            ));
-        }
-        StdFileSystem.publish_new(&temporary_output, &output_path)?;
+        journal_created = true;
+        StdFileSystem.publish_new_if_source_sha256_matches(
+            &temporary_output,
+            &output_path,
+            &source_path,
+            expected_source_sha256,
+        )?;
         published = true;
+        temporary_output_created = false;
+        sync_directory(Some(output_directory))?;
         let read_back = fs::read(&output_path)?;
         if read_back != replacement || sha256::sha256_hex(&read_back) != output_sha256 {
             return Err(Error::System(
@@ -313,42 +399,94 @@ pub fn export_transaction(
             summary,
         });
         StdFileSystem.write_new(&temporary_journal, &verified_journal)?;
+        temporary_journal_created = true;
         StdFileSystem.replace(&temporary_journal, &journal_path)?;
+        temporary_journal_created = false;
+        sync_directory(Some(&backup_directory))?;
         Ok(())
     })();
-    cleanup(&StdFileSystem, &temporary_output);
-    cleanup(&StdFileSystem, &temporary_journal);
     if let Err(error) = transaction {
-        if published && fs::read(&output_path).is_ok_and(|bytes| bytes == replacement) {
-            let _ = fs::remove_file(&output_path);
+        let mut remove_attempt_artifacts = !published;
+        let mut cleanup_error = None;
+        if published {
+            match fs::read(&output_path) {
+                Ok(bytes) if bytes == replacement => match remove_file_if_exists(&output_path) {
+                    Ok(()) => {
+                        remove_attempt_artifacts = true;
+                        if let Err(sync_error) = sync_directory(Some(output_directory)) {
+                            cleanup_error = Some(sync_error);
+                        }
+                    }
+                    Err(remove_error) => cleanup_error = Some(remove_error),
+                },
+                _ => {}
+            }
+        }
+        if temporary_output_created {
+            if let Err(remove_error) = remove_file_if_exists(&temporary_output) {
+                cleanup_error.get_or_insert(remove_error);
+            }
+        }
+        if temporary_journal_created {
+            if let Err(remove_error) = remove_file_if_exists(&temporary_journal) {
+                cleanup_error.get_or_insert(remove_error);
+            }
+        }
+        if remove_attempt_artifacts {
+            if journal_created {
+                if let Err(remove_error) = remove_file_if_exists(&journal_path) {
+                    cleanup_error.get_or_insert(remove_error);
+                }
+            }
+            if backup_created {
+                if let Err(remove_error) = remove_file_if_exists(&backup_path) {
+                    cleanup_error.get_or_insert(remove_error);
+                }
+            }
+            if let Err(sync_error) = sync_directory(Some(&backup_directory)) {
+                cleanup_error.get_or_insert(sync_error);
+            }
+        }
+        if let Some(cleanup_error) = cleanup_error {
+            return Err(Error::System(format!(
+                "export failed ({error}); cleanup was incomplete ({cleanup_error})"
+            )));
         }
         return Err(error);
     }
+    let maintenance_warning = rotate_verified_backups(&backup_directory)
+        .err()
+        .map(|error| error.to_string());
     Ok(ExportReceipt {
         output_path,
         backup_path,
         journal_path,
         output_sha256,
+        maintenance_warning,
     })
 }
 
 /// Lists and verifies one directory of C#-compatible backup journals.
 pub fn list_backups(directory: &Path) -> Result<Vec<BackupEntry>> {
     let directory = absolute_path(directory)?;
-    if !directory.exists() {
-        return Ok(Vec::new());
+    match fs::symlink_metadata(&directory) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error.into()),
     }
-    let mut paths = fs::read_dir(&directory)?
-        .filter_map(std::result::Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().is_some_and(|extension| extension == "json"))
-        .collect::<Vec<_>>();
+    let mut paths = Vec::new();
+    for entry in fs::read_dir(&directory)? {
+        let path = entry?.path();
+        if path.extension().is_some_and(|extension| extension == "json") {
+            paths.push(path);
+        }
+    }
     paths.sort();
     let mut entries = Vec::with_capacity(paths.len());
-    let mut referenced = Vec::with_capacity(paths.len());
+    let mut referenced = HashSet::with_capacity(paths.len());
     for journal_path in paths {
         let entry = inspect_backup(&directory, &journal_path);
-        referenced.push(entry.backup_path.clone());
+        referenced.insert(entry.backup_path.clone());
         entries.push(entry);
     }
     for item in fs::read_dir(&directory)? {
@@ -356,7 +494,7 @@ pub fn list_backups(directory: &Path) -> Result<Vec<BackupEntry>> {
         let backup_path = item.path();
         if backup_path
             .file_name()
-            .is_some_and(|name| name.to_string_lossy().ends_with("_ORIGINAL.sav"))
+            .is_some_and(|name| has_native_ascii_suffix(name, "_ORIGINAL.sav"))
             && !referenced.contains(&backup_path)
         {
             entries.push(BackupEntry {
@@ -373,15 +511,107 @@ pub fn list_backups(directory: &Path) -> Result<Vec<BackupEntry>> {
     Ok(entries)
 }
 
+fn rotate_verified_backups(directory: &Path) -> Result<()> {
+    let directory = absolute_path(directory)?;
+    let entries = list_backups(&directory)?;
+    let mut verified = entries
+        .into_iter()
+        .filter(|entry| entry.status == BackupStatus::Verified)
+        .map(|entry| {
+            let bytes = fs::read(&entry.journal_path)?;
+            let fields = parse_top_fields(&bytes)?;
+            let created_at = field_string(&fields, "created_at")?;
+            Ok((created_at, entry, fields))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    verified.sort_by(|left, right| right.0.cmp(&left.0));
+    if verified.len() <= MAXIMUM_VERIFIED_BACKUP_SETS {
+        return Ok(());
+    }
+
+    let mut removed_any = false;
+    for (_, entry, fields) in verified.into_iter().skip(MAXIMUM_VERIFIED_BACKUP_SETS) {
+        if entry.journal_path.parent() != Some(directory.as_path())
+            || entry.backup_path.parent() != Some(directory.as_path())
+        {
+            return Err(Error::Refused(
+                "refusing to rotate backup files outside the selected directory".to_owned(),
+            ));
+        }
+        let recovery_path = if fields.contains_key("recovery_path") || fields.contains_key("recovery_path_native") {
+            Some(path_field(&fields, "recovery_path", "recovery_path_native")?)
+        } else {
+            None
+        };
+        if let Some(recovery_path) = recovery_path.as_ref() {
+            if recovery_path.parent() != Some(directory.as_path()) {
+                return Err(Error::Refused(
+                    "refusing to rotate a backup with an external recovery path".to_owned(),
+                ));
+            }
+            let output_sha256 = field_string(&fields, "output_sha256")?;
+            if !valid_sha256(&output_sha256) || cached_file_sha256(recovery_path)? != output_sha256 {
+                return Err(Error::Refused(
+                    "refusing to rotate a backup with an unverified recovery copy".to_owned(),
+                ));
+            }
+        }
+
+        let mut cleanup_error = None;
+        if let Some(recovery_path) = recovery_path.as_ref() {
+            match remove_file_if_exists(recovery_path) {
+                Ok(()) => {
+                    invalidate_backup_hash_cache(recovery_path);
+                    removed_any = true;
+                }
+                Err(error) => cleanup_error = Some(error),
+            }
+        }
+        if cleanup_error.is_none() {
+            match remove_file_if_exists(&entry.backup_path) {
+                Ok(()) => {
+                    invalidate_backup_hash_cache(&entry.backup_path);
+                    removed_any = true;
+                }
+                Err(error) => cleanup_error = Some(error),
+            }
+        }
+        if cleanup_error.is_none() {
+            match remove_file_if_exists(&entry.journal_path) {
+                Ok(()) => removed_any = true,
+                Err(error) => cleanup_error = Some(error),
+            }
+        }
+        if let Some(error) = cleanup_error {
+            if removed_any {
+                sync_directory(Some(&directory))?;
+            }
+            return Err(error);
+        }
+    }
+    if removed_any {
+        sync_directory(Some(&directory))?;
+    }
+    Ok(())
+}
+
 /// Restores a verified journaled backup to a new path without replacing the source save.
 pub fn restore_backup(journal_path: &Path, output_path: &Path) -> Result<PathBuf> {
+    restore_backup_with_file_system(&StdFileSystem, journal_path, output_path)
+}
+
+fn restore_backup_with_file_system(
+    files: &impl FileSystem,
+    journal_path: &Path,
+    output_path: &Path,
+) -> Result<PathBuf> {
     let journal_path = absolute_path(journal_path)?;
     let output_path = absolute_path(output_path)?;
     let directory = journal_path
         .parent()
         .ok_or_else(|| Error::Refused("backup journal has no parent directory".to_owned()))?;
     let entry = inspect_backup(directory, &journal_path);
-    if entry.status != BackupStatus::Verified {
+    if !matches!(entry.status, BackupStatus::Verified | BackupStatus::Interrupted) {
         return Err(restore_not_restorable(&entry));
     }
     if output_path == entry.backup_path {
@@ -407,23 +637,29 @@ pub fn restore_backup(journal_path: &Path, output_path: &Path) -> Result<PathBuf
         return Err(Error::Refused("Backup changed after its last verification.".to_owned()));
     }
     let token = transaction_token();
-    let output_name = output_path
-        .file_name()
-        .map(|value| value.to_string_lossy())
-        .unwrap_or_else(|| "save.sav".into());
-    let temporary = output_directory.join(format!(".{output_name}.{token}.tmp"));
-    StdFileSystem.write_new(&temporary, &bytes)?;
-    let publish = StdFileSystem.publish_new(&temporary, &output_path);
-    cleanup(&StdFileSystem, &temporary);
+    let output_name = output_path.file_name().unwrap_or_else(|| OsStr::new("save.sav"));
+    let temporary = temporary_sibling(output_directory, output_name, &token, ".tmp");
+    files.write_new(&temporary, &bytes)?;
+    let publish = files.publish_new(&temporary, &output_path);
+    cleanup(files, &temporary);
     publish?;
-    let read_back = fs::read(&output_path)?;
+    if let Err(error) = files.sync_directory(output_directory) {
+        return Err(Error::System(format!(
+            "Restored output was published at {} but directory sync failed: {error}",
+            output_path.display()
+        )));
+    }
+    let read_back = files.read_all(&output_path).map_err(|error| {
+        Error::System(format!(
+            "Restored output was published at {} but read-back failed: {error}",
+            output_path.display()
+        ))
+    })?;
     if read_back != bytes || sha256::sha256_hex(&read_back) != entry.source_sha256 {
-        if fs::read(&output_path).is_ok_and(|published| published == bytes) {
-            let _ = StdFileSystem.delete_if_exists(&output_path);
-        }
-        return Err(Error::System(
-            "Restored output read-back did not match its expected bytes.".to_owned(),
-        ));
+        return Err(Error::System(format!(
+            "Restored output at {} did not match its expected bytes.",
+            output_path.display()
+        )));
     }
     Ok(output_path)
 }
@@ -432,6 +668,7 @@ fn restore_not_restorable(entry: &BackupEntry) -> Error {
     let status = match entry.status {
         BackupStatus::Verified => "Verified",
         BackupStatus::Missing => "Missing",
+        BackupStatus::Interrupted => "Interrupted",
         BackupStatus::Corrupt => "Corrupt",
     };
     let detail = match entry.error.as_deref().unwrap_or("unknown backup error") {
@@ -465,7 +702,7 @@ pub fn restore_in_place(journal_path: &Path) -> Result<RestoreReceipt> {
         .parent()
         .ok_or_else(|| Error::Refused("backup journal has no parent directory".to_owned()))?;
     let entry = inspect_backup(directory, &journal_path);
-    if entry.status != BackupStatus::Verified {
+    if !matches!(entry.status, BackupStatus::Verified | BackupStatus::Interrupted) {
         return Err(restore_not_restorable(&entry));
     }
     let metadata = read_restore_metadata(&journal_path)?;
@@ -488,6 +725,14 @@ pub fn restore_in_place(journal_path: &Path) -> Result<RestoreReceipt> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(error) => return Err(error.into()),
     };
+    if source_metadata
+        .as_ref()
+        .is_some_and(|metadata| metadata.permissions().readonly())
+    {
+        return Err(Error::Refused(
+            "The save is read-only; clear its read-only attribute before restoring.".to_owned(),
+        ));
+    }
     let source_directory = source_path
         .parent()
         .ok_or_else(|| Error::Refused("Source save has no parent directory.".to_owned()))?;
@@ -503,16 +748,32 @@ pub fn restore_in_place(journal_path: &Path) -> Result<RestoreReceipt> {
     }
     if source_metadata.is_none() {
         let restored_path = restore_backup(&journal_path, &source_path)?;
+        let maintenance_warning = cleanup_interrupted_temps(&entry, &metadata)
+            .err()
+            .map(|error| error.to_string());
         return Ok(RestoreReceipt {
             save_path: restored_path,
             safety_backup_path: None,
             safety_journal_path: None,
+            maintenance_warning,
         });
     }
     let current = fs::read(&source_path)?;
-    if sha256::sha256_hex(&current) != metadata.output_sha256 {
+    let current_sha256 = sha256::sha256_hex(&current);
+    if current_sha256 == entry.source_sha256 {
+        let maintenance_warning = cleanup_interrupted_temps(&entry, &metadata)
+            .err()
+            .map(|error| error.to_string());
+        return Ok(RestoreReceipt {
+            save_path: source_path,
+            safety_backup_path: None,
+            safety_journal_path: None,
+            maintenance_warning,
+        });
+    }
+    if current_sha256 != metadata.output_sha256 {
         return Err(Error::Refused(
-            "Current save changed after the journaled replacement; refusing to overwrite it.".to_owned(),
+            "Current save matches neither the original nor journaled output; refusing to overwrite it.".to_owned(),
         ));
     }
     if directory.starts_with(source_directory) {
@@ -538,11 +799,156 @@ pub fn restore_in_place(journal_path: &Path) -> Result<RestoreReceipt> {
             }
         },
     )?;
+    let mut maintenance_warning = receipt.maintenance_warning;
+    if let Err(error) = cleanup_interrupted_temps(&entry, &metadata) {
+        append_warning(&mut maintenance_warning, error.to_string());
+    }
+    if let Err(error) = rotate_verified_backups(directory) {
+        append_warning(&mut maintenance_warning, error.to_string());
+    }
     Ok(RestoreReceipt {
         save_path: receipt.source_path,
         safety_backup_path: Some(receipt.backup_path),
         safety_journal_path: Some(receipt.journal_path),
+        maintenance_warning,
     })
+}
+
+fn append_warning(warning: &mut Option<String>, addition: String) {
+    match warning {
+        Some(warning) => {
+            warning.push_str("; ");
+            warning.push_str(&addition);
+        }
+        None => *warning = Some(addition),
+    }
+}
+
+fn cleanup_interrupted_temps(entry: &BackupEntry, metadata: &RestoreMetadata) -> Result<()> {
+    if entry.status != BackupStatus::Interrupted {
+        return Ok(());
+    }
+    let Some(journal_name) = entry.journal_path.file_name().and_then(OsStr::to_str) else {
+        return Ok(());
+    };
+    let Some(artifact_stem) = journal_name.strip_suffix("_ORIGINAL.json") else {
+        return Ok(());
+    };
+    let Some((_, token)) = artifact_stem.rsplit_once('_') else {
+        return Ok(());
+    };
+    if token.len() != 32 || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Ok(());
+    }
+
+    let source_path = absolute_path(&entry.source_path)?;
+    let output_path = absolute_path(&metadata.output_path)?;
+    let mut changed_directories = HashSet::new();
+    let mut errors = Vec::new();
+
+    if let (Some(directory), Some(file_name)) = (output_path.parent(), output_path.file_name()) {
+        let temporary = temporary_sibling(directory, file_name, token, ".tmp");
+        match remove_matching_temp(&temporary, &metadata.output_sha256) {
+            Ok(true) => {
+                changed_directories.insert(directory.to_path_buf());
+            }
+            Ok(false) => {}
+            Err(error) => errors.push(error.to_string()),
+        }
+    }
+
+    if matches!(metadata.operation_mode.as_str(), "replace" | "restore") {
+        if let (Some(directory), Some(file_name)) = (source_path.parent(), source_path.file_name()) {
+            let temporary = temporary_sibling(directory, file_name, token, ".rollback.tmp");
+            match remove_matching_temp(&temporary, &entry.source_sha256) {
+                Ok(true) => {
+                    changed_directories.insert(directory.to_path_buf());
+                }
+                Ok(false) => {}
+                Err(error) => errors.push(error.to_string()),
+            }
+        }
+    }
+
+    if let Some(directory) = entry.journal_path.parent() {
+        let temporary_journal = directory.join(format!(".{artifact_stem}.json.tmp"));
+        match fs::symlink_metadata(&temporary_journal) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => errors.push(format!("cannot inspect {}: {error}", temporary_journal.display())),
+            Ok(_) => {
+                let candidate = inspect_backup(directory, &temporary_journal);
+                let candidate_metadata = read_restore_metadata(&temporary_journal);
+                match candidate_metadata {
+                    Ok(candidate_metadata)
+                        if candidate.status == BackupStatus::Verified
+                            && candidate.source_path == entry.source_path
+                            && candidate.source_sha256 == entry.source_sha256
+                            && candidate.backup_path == entry.backup_path
+                            && candidate_metadata.output_path == metadata.output_path
+                            && candidate_metadata.output_sha256 == metadata.output_sha256
+                            && candidate_metadata.operation_mode == metadata.operation_mode =>
+                    {
+                        match remove_file_if_exists(&temporary_journal) {
+                            Ok(()) => {
+                                invalidate_backup_hash_cache(&temporary_journal);
+                                changed_directories.insert(directory.to_path_buf());
+                            }
+                            Err(error) => errors.push(format!(
+                                "cannot remove verified temporary journal {}: {error}",
+                                temporary_journal.display()
+                            )),
+                        }
+                    }
+                    Ok(_) => errors.push(format!(
+                        "left temporary journal {} because it does not match the verified interrupted transaction",
+                        temporary_journal.display()
+                    )),
+                    Err(error) => errors.push(format!(
+                        "left temporary journal {} because it could not be verified: {error}",
+                        temporary_journal.display()
+                    )),
+                }
+            }
+        }
+    }
+
+    for directory in changed_directories {
+        if let Err(error) = sync_directory(Some(&directory)) {
+            errors.push(format!(
+                "cannot sync {} after temporary cleanup: {error}",
+                directory.display()
+            ));
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(Error::System(errors.join("; ")))
+    }
+}
+
+fn remove_matching_temp(path: &Path, expected_sha256: &str) -> Result<bool> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error.into()),
+    };
+    if !metadata.file_type().is_file() {
+        return Err(Error::Refused(format!(
+            "left temporary path {} because it is not a regular file",
+            path.display()
+        )));
+    }
+    let bytes = fs::read(path)?;
+    if sha256::sha256_hex(&bytes) != expected_sha256 {
+        return Err(Error::Refused(format!(
+            "left temporary file {} because its SHA-256 does not match the interrupted transaction",
+            path.display()
+        )));
+    }
+    remove_file_if_exists(path)?;
+    invalidate_backup_hash_cache(path);
+    Ok(true)
 }
 
 /// Replaces a save only when its fresh SHA-256 still matches the prepared source hash.
@@ -612,7 +1018,7 @@ pub fn replace_transaction_with_summary_preflight_and_verifier<P, V>(
     preflight: impl FnOnce(&[u8], &[u8]) -> Result<P>,
     verify_readback: impl FnOnce(&[u8]) -> Result<V>,
 ) -> Result<(ReplacementReceipt, P, V)> {
-    replace_with_file_system_and_operation_and_checks(
+    let (mut receipt, preflight, verified) = replace_with_file_system_and_operation_and_checks(
         &StdFileSystem,
         ReplacementRequest {
             source_path,
@@ -623,7 +1029,11 @@ pub fn replace_transaction_with_summary_preflight_and_verifier<P, V>(
         },
         preflight,
         verify_readback,
-    )
+    )?;
+    receipt.maintenance_warning = rotate_verified_backups(backup_directory)
+        .err()
+        .map(|error| error.to_string());
+    Ok((receipt, preflight, verified))
 }
 
 /// Testable version of [`replace_transaction`].
@@ -738,6 +1148,11 @@ fn replace_with_file_system_and_operation_and_checks<P, V>(
             "The save is a symbolic link; open the file it points to instead.".to_owned(),
         ));
     }
+    if files.is_readonly(&source_path)? {
+        return Err(Error::Refused(
+            "The save is read-only; clear its read-only attribute before editing.".to_owned(),
+        ));
+    }
     ensure_backup_directory_outside(source_directory, &backup_directory)?;
 
     let source_bytes = files.read_all(&source_path)?;
@@ -751,22 +1166,15 @@ fn replace_with_file_system_and_operation_and_checks<P, V>(
     let output_sha256 = sha256::sha256_hex(replacement);
     let created_at = timestamp_utc()?;
     let token = transaction_token();
-    let stem = source_path
-        .file_stem()
-        .map(|value| value.to_string_lossy())
-        .unwrap_or_else(|| "save".into());
-    let stem = stem.chars().take(64).collect::<String>();
+    let stem = artifact_stem_prefix(&source_path);
     let artifact_stem = format!("{stem}_{}_{}", file_timestamp(&created_at)?, token);
     let backup_path = backup_directory.join(format!("{artifact_stem}_ORIGINAL.sav"));
     let recovery_path = backup_directory.join(format!("{artifact_stem}_EDITED.sav"));
     let journal_path = backup_directory.join(format!("{artifact_stem}_ORIGINAL.json"));
-    let file_name = source_path
-        .file_name()
-        .map(|value| value.to_string_lossy())
-        .unwrap_or_else(|| "save.sav".into());
-    let temporary_output = source_directory.join(format!(".{file_name}.{token}.tmp"));
+    let file_name = source_path.file_name().unwrap_or_else(|| OsStr::new("save.sav"));
+    let temporary_output = temporary_sibling(source_directory, file_name, &token, ".tmp");
     let temporary_journal = backup_directory.join(format!(".{artifact_stem}.json.tmp"));
-    let temporary_rollback = source_directory.join(format!(".{file_name}.{token}.rollback.tmp"));
+    let temporary_rollback = temporary_sibling(source_directory, file_name, &token, ".rollback.tmp");
     files.create_dir_all(&backup_directory)?;
     ensure_backup_directory_outside(source_directory, &backup_directory)?;
 
@@ -796,6 +1204,9 @@ fn replace_with_file_system_and_operation_and_checks<P, V>(
         journal_created = true;
         files.write_new(&temporary_output, replacement)?;
 
+        files.copy_permissions(&source_path, &temporary_output)?;
+
+        // Check after metadata copying, which can give another writer time to change the save.
         let current_source = files.read_all(&source_path)?;
         let current_hash = sha256::sha256_hex(&current_source);
         if current_hash != expected_source_sha256 {
@@ -803,10 +1214,9 @@ fn replace_with_file_system_and_operation_and_checks<P, V>(
                 "Source changed before replacement: expected {expected_source_sha256}, found {current_hash}."
             )));
         }
-
-        files.copy_permissions(&source_path, &temporary_output)?;
+        files.replace_if_sha256_matches(&temporary_output, &source_path, expected_source_sha256)?;
         source_replaced = true;
-        files.replace(&temporary_output, &source_path)?;
+        files.sync_directory(source_directory)?;
 
         let read_back = files.read_all(&source_path)?;
         let read_back_hash = sha256::sha256_hex(&read_back);
@@ -832,6 +1242,7 @@ fn replace_with_file_system_and_operation_and_checks<P, V>(
             }),
         )?;
         files.replace(&temporary_journal, &journal_path)?;
+        files.sync_directory(&backup_directory)?;
         Ok(verified_value)
     })();
 
@@ -839,10 +1250,24 @@ fn replace_with_file_system_and_operation_and_checks<P, V>(
         Ok(value) => value,
         Err(error) => {
             if source_replaced {
-                let rollback = files
-                    .write_new(&temporary_rollback, &source_bytes)
-                    .and_then(|()| files.copy_permissions(&source_path, &temporary_rollback))
-                    .and_then(|()| files.replace(&temporary_rollback, &source_path));
+                let rollback = (|| {
+                    let current = files.read_all(&source_path)?;
+                    if sha256::sha256_hex(&current) != output_sha256 {
+                        return Err(Error::Refused(
+                            "rollback refused because the source changed after replacement".to_owned(),
+                        ));
+                    }
+                    files.write_new(&temporary_rollback, &source_bytes)?;
+                    files.copy_permissions(&source_path, &temporary_rollback)?;
+                    let current = files.read_all(&source_path)?;
+                    if sha256::sha256_hex(&current) != output_sha256 {
+                        return Err(Error::Refused(
+                            "rollback refused because the source changed before restoration".to_owned(),
+                        ));
+                    }
+                    files.replace_if_sha256_matches(&temporary_rollback, &source_path, &output_sha256)?;
+                    files.sync_directory(source_directory)
+                })();
                 if let Err(rollback_error) = rollback {
                     cleanup(files, &temporary_output);
                     cleanup(files, &temporary_journal);
@@ -897,6 +1322,7 @@ fn replace_with_file_system_and_operation_and_checks<P, V>(
             recovery_path,
             journal_path,
             output_sha256,
+            maintenance_warning: None,
         },
         preflight_value,
         verified_value,
@@ -908,6 +1334,53 @@ fn absolute_path(path: &Path) -> Result<PathBuf> {
         Ok(path.to_path_buf())
     } else {
         Ok(std::env::current_dir()?.join(path))
+    }
+}
+
+fn artifact_stem_prefix(path: &Path) -> String {
+    let stem = path
+        .file_stem()
+        .map(|value| value.to_string_lossy())
+        .unwrap_or_else(|| "save".into());
+    let mut prefix = String::new();
+    for character in stem.chars() {
+        if prefix.len().saturating_add(character.len_utf8()) > 80 {
+            break;
+        }
+        prefix.push(character);
+    }
+    if prefix.is_empty() {
+        "save".to_owned()
+    } else {
+        prefix
+    }
+}
+
+fn temporary_sibling(directory: &Path, file_name: &OsStr, token: &str, suffix: &str) -> PathBuf {
+    let mut temporary_name = OsString::from(".");
+    temporary_name.push(file_name);
+    temporary_name.push(".");
+    temporary_name.push(token);
+    temporary_name.push(suffix);
+    directory.join(temporary_name)
+}
+
+fn has_native_ascii_suffix(value: &OsStr, suffix: &str) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        value.as_bytes().ends_with(suffix.as_bytes())
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        let value = value.encode_wide().collect::<Vec<_>>();
+        let suffix = suffix.encode_utf16().collect::<Vec<_>>();
+        value.ends_with(&suffix)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        value.to_str().is_some_and(|value| value.ends_with(suffix))
     }
 }
 
@@ -1050,6 +1523,254 @@ struct ExportJournal<'a> {
     summary: EditSummary,
 }
 
+fn native_path_bytes(path: &Path) -> Vec<u8> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        path.as_os_str().as_bytes().to_vec()
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        path.as_os_str().encode_wide().flat_map(u16::to_le_bytes).collect()
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        path.to_string_lossy().as_bytes().to_vec()
+    }
+}
+
+fn native_path_encoding() -> &'static str {
+    if cfg!(windows) {
+        "w"
+    } else {
+        "u"
+    }
+}
+
+fn encode_native_path(path: &Path) -> String {
+    let bytes = native_path_bytes(path);
+    let mut encoded = String::with_capacity(bytes.len().saturating_mul(2).saturating_add(2));
+    encoded.push_str(native_path_encoding());
+    encoded.push(':');
+    for byte in bytes {
+        use std::fmt::Write as _;
+        let _ = write!(encoded, "{byte:02x}");
+    }
+    encoded
+}
+
+fn quote_native_path(path: &Path) -> String {
+    json_escape(&encode_native_path(path))
+}
+
+fn decode_native_path(encoded: &str) -> Result<PathBuf> {
+    let (encoding, hex) = encoded
+        .split_once(':')
+        .ok_or_else(|| Error::Refused("journal native path encoding is malformed".to_owned()))?;
+    let bytes = decode_hex(hex)?;
+    #[cfg(unix)]
+    if encoding == "u" {
+        use std::os::unix::ffi::OsStringExt;
+        return Ok(PathBuf::from(OsString::from_vec(bytes)));
+    }
+    #[cfg(windows)]
+    if encoding == "w" {
+        use std::os::windows::ffi::OsStringExt;
+        if bytes.len() % 2 != 0 {
+            return Err(Error::Refused("journal Windows path has an odd byte count".to_owned()));
+        }
+        let wide = bytes
+            .chunks_exact(2)
+            .map(|pair| {
+                let pair: [u8; 2] = pair
+                    .try_into()
+                    .map_err(|_| Error::Refused("journal Windows path has an odd byte count".to_owned()))?;
+                Ok(u16::from_le_bytes(pair))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        return Ok(PathBuf::from(OsString::from_wide(&wide)));
+    }
+    #[cfg(not(any(unix, windows)))]
+    if encoding == "u" {
+        return String::from_utf8(bytes)
+            .map(PathBuf::from)
+            .map_err(|_| Error::Refused("journal path is not valid UTF-8".to_owned()));
+    }
+    Err(Error::Refused(format!(
+        "journal path encoding {encoding} is unsupported on this platform"
+    )))
+}
+
+fn decode_hex(hex: &str) -> Result<Vec<u8>> {
+    if hex.len() % 2 != 0 {
+        return Err(Error::Refused("journal native path hex has an odd length".to_owned()));
+    }
+    let mut bytes = Vec::with_capacity(hex.len() / 2);
+    for pair in hex.as_bytes().chunks_exact(2) {
+        let [high, low] = pair else {
+            return Err(Error::Refused("journal native path hex pair is malformed".to_owned()));
+        };
+        let high = hex_value(*high)?;
+        let low = hex_value(*low)?;
+        bytes.push((high << 4) | low);
+    }
+    Ok(bytes)
+}
+
+fn hex_value(byte: u8) -> Result<u8> {
+    match byte {
+        b'0'..=b'9' => byte
+            .checked_sub(b'0')
+            .ok_or_else(|| Error::Refused("journal native path digit is malformed".to_owned())),
+        b'a'..=b'f' => byte
+            .checked_sub(b'a')
+            .and_then(|value| value.checked_add(10))
+            .ok_or_else(|| Error::Refused("journal native path digit is malformed".to_owned())),
+        b'A'..=b'F' => byte
+            .checked_sub(b'A')
+            .and_then(|value| value.checked_add(10))
+            .ok_or_else(|| Error::Refused("journal native path digit is malformed".to_owned())),
+        _ => Err(Error::Refused("journal native path contains invalid hex".to_owned())),
+    }
+}
+
+fn path_field(fields: &HashMap<String, TopValue>, display_name: &str, native_name: &str) -> Result<PathBuf> {
+    match fields.get(native_name) {
+        Some(TopValue::String(value)) => decode_native_path(value),
+        Some(_) => Err(Error::Refused(format!("journal field {native_name} is not text"))),
+        None => Ok(PathBuf::from(field_string(fields, display_name)?)),
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct FileFingerprint {
+    length: u64,
+    modified: Option<SystemTime>,
+    #[cfg(unix)]
+    device: u64,
+    #[cfg(unix)]
+    inode: u64,
+    #[cfg(unix)]
+    changed_seconds: i64,
+    #[cfg(unix)]
+    changed_nanoseconds: i64,
+    #[cfg(windows)]
+    creation_time: u64,
+    #[cfg(windows)]
+    last_write_time: u64,
+}
+
+struct CachedBackupHash {
+    fingerprint: FileFingerprint,
+    sha256: String,
+}
+
+static BACKUP_HASH_CACHE: OnceLock<Mutex<HashMap<PathBuf, CachedBackupHash>>> = OnceLock::new();
+const MAXIMUM_CACHED_BACKUP_HASHES: usize = 512;
+
+fn file_fingerprint(metadata: &fs::Metadata) -> FileFingerprint {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        FileFingerprint {
+            length: metadata.len(),
+            modified: metadata.modified().ok(),
+            device: metadata.dev(),
+            inode: metadata.ino(),
+            changed_seconds: metadata.ctime(),
+            changed_nanoseconds: metadata.ctime_nsec(),
+        }
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        FileFingerprint {
+            length: metadata.len(),
+            modified: metadata.modified().ok(),
+            creation_time: metadata.creation_time(),
+            last_write_time: metadata.last_write_time(),
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        FileFingerprint {
+            length: metadata.len(),
+            modified: metadata.modified().ok(),
+        }
+    }
+}
+
+fn regular_file_fingerprint(path: &Path) -> std::io::Result<FileFingerprint> {
+    let before = fs::symlink_metadata(path)?;
+    if before.file_type().is_symlink() || !before.is_file() {
+        return Err(std::io::Error::other("path is not a regular file"));
+    }
+    Ok(file_fingerprint(&before))
+}
+
+fn hash_file_with_fingerprint(path: &Path, fingerprint: &FileFingerprint) -> std::io::Result<String> {
+    let mut file = fs::File::open(path)?;
+    let mut hasher = sha256::Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let length = file.read(&mut buffer)?;
+        if length == 0 {
+            break;
+        }
+        let Some(chunk) = buffer.get(..length) else {
+            return Err(std::io::Error::other("file read exceeded its buffer"));
+        };
+        hasher.update(chunk);
+    }
+    let after = fs::symlink_metadata(path)?;
+    if after.file_type().is_symlink() || !after.is_file() || file_fingerprint(&after) != *fingerprint {
+        return Err(std::io::Error::other("file changed while it was being verified"));
+    }
+    Ok(hasher.finalize_hex())
+}
+
+fn fresh_file_sha256(path: &Path) -> std::io::Result<String> {
+    let fingerprint = regular_file_fingerprint(path)?;
+    hash_file_with_fingerprint(path, &fingerprint)
+}
+
+fn cached_file_sha256(path: &Path) -> std::io::Result<String> {
+    let fingerprint = regular_file_fingerprint(path)?;
+    let cache = BACKUP_HASH_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(cached) = cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(path)
+        .filter(|cached| cached.fingerprint == fingerprint)
+    {
+        return Ok(cached.sha256.clone());
+    }
+
+    let digest = hash_file_with_fingerprint(path, &fingerprint)?;
+    let mut cache = cache.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if cache.len() >= MAXIMUM_CACHED_BACKUP_HASHES {
+        cache.clear();
+    }
+    cache.insert(
+        path.to_path_buf(),
+        CachedBackupHash {
+            fingerprint,
+            sha256: digest.clone(),
+        },
+    );
+    Ok(digest)
+}
+
+fn invalidate_backup_hash_cache(path: &Path) {
+    if let Some(cache) = BACKUP_HASH_CACHE.get() {
+        cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(path);
+    }
+}
+
 fn serialize_export_journal(journal: &ExportJournal<'_>) -> Vec<u8> {
     use std::fmt::Write as _;
 
@@ -1057,6 +1778,9 @@ fn serialize_export_journal(journal: &ExportJournal<'_>) -> Vec<u8> {
     let source_path = json_escape(&journal.source_path.to_string_lossy());
     let output_path = json_escape(&journal.output_path.to_string_lossy());
     let backup_path = json_escape(&journal.backup_path.to_string_lossy());
+    let source_path_native = quote_native_path(journal.source_path);
+    let output_path_native = quote_native_path(journal.output_path);
+    let backup_path_native = quote_native_path(journal.backup_path);
     let money = journal
         .summary
         .money
@@ -1064,7 +1788,7 @@ fn serialize_export_journal(journal: &ExportJournal<'_>) -> Vec<u8> {
     let mut encoded = String::new();
     let _ = write!(
         encoded,
-        "{{\"version\":1,\"status\":\"{}\",\"created_at\":\"{created_at}\",\"source_path\":\"{source_path}\",\"source_sha256\":\"{}\",\"output_path\":\"{output_path}\",\"output_sha256\":\"{}\",\"backup_path\":\"{backup_path}\",\"operation\":{{\"mode\":\"export\",\"money\":{money},\"stack_count\":{},\"move_count\":{},\"detach_count\":{},\"attach_count\":{},\"raw_count\":{},\"add_count\":{},\"durability_count\":{},\"upgrade_count\":{},\"relation_count\":{},\"player_faction\":{}",
+        "{{\"version\":1,\"status\":\"{}\",\"created_at\":\"{created_at}\",\"source_path\":\"{source_path}\",\"source_path_native\":\"{source_path_native}\",\"source_sha256\":\"{}\",\"output_path\":\"{output_path}\",\"output_path_native\":\"{output_path_native}\",\"output_sha256\":\"{}\",\"backup_path\":\"{backup_path}\",\"backup_path_native\":\"{backup_path_native}\",\"operation\":{{\"mode\":\"export\",\"money\":{money},\"stack_count\":{},\"move_count\":{},\"detach_count\":{},\"attach_count\":{},\"raw_count\":{},\"add_count\":{},\"durability_count\":{},\"upgrade_count\":{},\"relation_count\":{},\"player_faction\":{}",
         journal.status,
         journal.source_sha256,
         journal.output_sha256,
@@ -1112,14 +1836,14 @@ fn inspect_backup(directory: &Path, journal_path: &Path) -> BackupEntry {
         Ok(fields) => fields,
         Err(error) => return corrupt(error.to_string(), None, None, None),
     };
-    let parsed = (|| -> Result<(PathBuf, PathBuf, String)> {
+    let parsed = (|| -> Result<(PathBuf, PathBuf, String, PathBuf, String, String)> {
         if field_u64(&fields, "version")? != 1 {
             return Err(Error::Refused("unsupported journal version".to_owned()));
         }
         let created_at = field_string(&fields, "created_at")?;
-        let output_path = field_string(&fields, "output_path")?;
+        let output_path = path_field(&fields, "output_path", "output_path_native")?;
         let output_sha256 = field_string(&fields, "output_sha256")?;
-        if created_at.is_empty() || output_path.is_empty() || !valid_sha256(&output_sha256) {
+        if created_at.is_empty() || output_path.as_os_str().is_empty() || !valid_sha256(&output_sha256) {
             return Err(Error::Refused(
                 "journal creation or output fields are malformed".to_owned(),
             ));
@@ -1127,15 +1851,16 @@ fn inspect_backup(directory: &Path, journal_path: &Path) -> BackupEntry {
         if !matches!(fields.get("operation"), Some(TopValue::Object)) {
             return Err(Error::Refused("journal operation is not an object".to_owned()));
         }
-        if field_string(&fields, "status")? != "verified" {
-            return Err(Error::Refused("journal status is not verified".to_owned()));
+        let journal_status = field_string(&fields, "status")?;
+        if !matches!(journal_status.as_str(), "verified" | "prepared") {
+            return Err(Error::Refused("journal status is not recognized".to_owned()));
         }
-        let source_path = PathBuf::from(field_string(&fields, "source_path")?);
+        let source_path = path_field(&fields, "source_path", "source_path_native")?;
         let source_sha256 = field_string(&fields, "source_sha256")?;
         if !valid_sha256(&source_sha256) {
             return Err(Error::Refused("journal source SHA-256 is malformed".to_owned()));
         }
-        let backup_value = PathBuf::from(field_string(&fields, "backup_path")?);
+        let backup_value = path_field(&fields, "backup_path", "backup_path_native")?;
         let backup_path = if backup_value.is_absolute() {
             backup_value
         } else {
@@ -1146,9 +1871,16 @@ fn inspect_backup(directory: &Path, journal_path: &Path) -> BackupEntry {
                 "journal backup path is outside its backup directory".to_owned(),
             ));
         }
-        Ok((source_path, backup_path, source_sha256))
+        Ok((
+            source_path,
+            output_path,
+            output_sha256,
+            backup_path,
+            source_sha256,
+            journal_status,
+        ))
     })();
-    let (source_path, backup_path, source_sha256) = match parsed {
+    let (source_path, output_path, output_sha256, backup_path, source_sha256, journal_status) = match parsed {
         Ok(values) => values,
         Err(error) => return corrupt(error.to_string(), None, None, None),
     };
@@ -1160,8 +1892,8 @@ fn inspect_backup(directory: &Path, journal_path: &Path) -> BackupEntry {
             Some(source_sha256),
         );
     }
-    let backup_bytes = match fs::read(&backup_path) {
-        Ok(bytes) => bytes,
+    let actual = match cached_file_sha256(&backup_path) {
+        Ok(actual) => actual,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return BackupEntry {
                 journal_path: journal_path.to_path_buf(),
@@ -1181,7 +1913,6 @@ fn inspect_backup(directory: &Path, journal_path: &Path) -> BackupEntry {
             )
         }
     };
-    let actual = sha256::sha256_hex(&backup_bytes);
     if actual != source_sha256 {
         return corrupt(
             "backup SHA-256 does not match the journal".to_owned(),
@@ -1190,14 +1921,100 @@ fn inspect_backup(directory: &Path, journal_path: &Path) -> BackupEntry {
             Some(source_sha256),
         );
     }
+    let status = if journal_status == "prepared"
+        && !prepared_write_is_resolved(
+            &bytes,
+            journal_path,
+            &source_path,
+            &output_path,
+            &source_sha256,
+            &output_sha256,
+        ) {
+        BackupStatus::Interrupted
+    } else {
+        BackupStatus::Verified
+    };
     BackupEntry {
         journal_path: journal_path.to_path_buf(),
         backup_path,
         source_path,
         source_sha256,
-        status: BackupStatus::Verified,
-        error: None,
+        status,
+        error: (status == BackupStatus::Interrupted)
+            .then(|| "prepared transaction needs recovery; the original backup passed SHA-256 verification".to_owned()),
     }
+}
+
+fn prepared_write_is_resolved(
+    journal: &[u8],
+    journal_path: &Path,
+    source_path: &Path,
+    output_path: &Path,
+    source_sha256: &str,
+    output_sha256: &str,
+) -> bool {
+    let Ok(operation_mode) = parse_operation_mode(journal) else {
+        return false;
+    };
+    if !matches!(operation_mode.as_str(), "replace" | "restore") {
+        return false;
+    }
+    let Ok(source_path) = absolute_path(source_path) else {
+        return false;
+    };
+    let Ok(output_path) = absolute_path(output_path) else {
+        return false;
+    };
+    if source_path != output_path {
+        return false;
+    }
+    let Ok(current_sha256) = fresh_file_sha256(&source_path) else {
+        return false;
+    };
+    let resolved_hash =
+        current_sha256 == source_sha256 || (operation_mode == "restore" && current_sha256 == output_sha256);
+    resolved_hash && !prepared_transaction_has_temporary_artifacts(journal_path, &source_path, &output_path)
+}
+
+fn prepared_transaction_has_temporary_artifacts(journal_path: &Path, source_path: &Path, output_path: &Path) -> bool {
+    let Some(journal_name) = journal_path.file_name().and_then(OsStr::to_str) else {
+        return true;
+    };
+    let Some(artifact_stem) = journal_name.strip_suffix("_ORIGINAL.json") else {
+        return true;
+    };
+    let Some((_, token)) = artifact_stem.rsplit_once('_') else {
+        return true;
+    };
+    if token.len() != 32 || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return true;
+    }
+
+    let Some(source_directory) = source_path.parent() else {
+        return true;
+    };
+    let Some(source_name) = source_path.file_name() else {
+        return true;
+    };
+    let Some(output_directory) = output_path.parent() else {
+        return true;
+    };
+    let Some(output_name) = output_path.file_name() else {
+        return true;
+    };
+    let Some(journal_directory) = journal_path.parent() else {
+        return true;
+    };
+
+    let temporaries = [
+        temporary_sibling(output_directory, output_name, token, ".tmp"),
+        temporary_sibling(source_directory, source_name, token, ".rollback.tmp"),
+        journal_directory.join(format!(".{artifact_stem}.json.tmp")),
+    ];
+    temporaries.iter().any(|path| match fs::symlink_metadata(path) {
+        Ok(_) => true,
+        Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1312,7 +2129,7 @@ fn field_u64(fields: &HashMap<String, TopValue>, name: &str) -> Result<u64> {
 fn read_restore_metadata(journal_path: &Path) -> Result<RestoreMetadata> {
     let bytes = fs::read(journal_path)?;
     let fields = parse_top_fields(&bytes)?;
-    let output_path = PathBuf::from(field_string(&fields, "output_path")?);
+    let output_path = path_field(&fields, "output_path", "output_path_native")?;
     let output_sha256 = field_string(&fields, "output_sha256")?;
     if !valid_sha256(&output_sha256) {
         return Err(Error::Refused("journal output SHA-256 is malformed".to_owned()));
@@ -1404,6 +2221,10 @@ fn serialize_journal(journal: &Journal<'_>) -> Vec<u8> {
     let output_path = json_escape(&journal.output_path.to_string_lossy());
     let backup_path = json_escape(&journal.backup_path.to_string_lossy());
     let recovery_path = json_escape(&journal.recovery_path.to_string_lossy());
+    let source_path_native = quote_native_path(journal.source_path);
+    let output_path_native = quote_native_path(journal.output_path);
+    let backup_path_native = quote_native_path(journal.backup_path);
+    let recovery_path_native = quote_native_path(journal.recovery_path);
     let created_at = json_escape(journal.created_at);
     let operation = match journal.operation {
         JournalOperation::Replace(summary) => {
@@ -1411,17 +2232,29 @@ fn serialize_journal(journal: &Journal<'_>) -> Vec<u8> {
                 .money
                 .map_or_else(|| "null".to_owned(), |value| value.to_string());
             format!(
-                "{{\"mode\":\"replace\",\"money\":{money},\"stack_count\":{}}}",
-                summary.stack_count
+                "{{\"mode\":\"replace\",\"money\":{money},\"stack_count\":{},\"move_count\":{},\"detach_count\":{},\"attach_count\":{},\"raw_count\":{},\"add_count\":{},\"durability_count\":{},\"upgrade_count\":{},\"relation_count\":{},\"player_faction\":{}}}",
+                summary.stack_count,
+                summary.move_count,
+                summary.detach_count,
+                summary.attach_count,
+                summary.raw_count,
+                summary.add_count,
+                summary.durability_count,
+                summary.upgrade_count,
+                summary.relation_count,
+                summary.player_faction,
             )
         }
-        JournalOperation::Restore(restore_from) => format!(
-            "{{\"mode\":\"restore\",\"restore_from\":\"{}\",\"money\":null,\"stack_count\":0}}",
-            json_escape(&restore_from.to_string_lossy())
-        ),
+        JournalOperation::Restore(restore_from) => {
+            let restore_from_display = json_escape(&restore_from.to_string_lossy());
+            let restore_from_native = quote_native_path(restore_from);
+            format!(
+                "{{\"mode\":\"restore\",\"restore_from\":\"{restore_from_display}\",\"restore_from_native\":\"{restore_from_native}\",\"money\":null,\"stack_count\":0,\"move_count\":0,\"detach_count\":0,\"attach_count\":0,\"raw_count\":0,\"add_count\":0,\"durability_count\":0,\"upgrade_count\":0,\"relation_count\":0,\"player_faction\":false}}"
+            )
+        }
     };
     format!(
-        "{{\"version\":1,\"status\":\"{}\",\"created_at\":\"{created_at}\",\"source_path\":\"{source_path}\",\"source_sha256\":\"{}\",\"output_path\":\"{output_path}\",\"output_sha256\":\"{}\",\"backup_path\":\"{backup_path}\",\"recovery_path\":\"{recovery_path}\",\"operation\":{operation}}}",
+        "{{\"version\":1,\"status\":\"{}\",\"created_at\":\"{created_at}\",\"source_path\":\"{source_path}\",\"source_path_native\":\"{source_path_native}\",\"source_sha256\":\"{}\",\"output_path\":\"{output_path}\",\"output_path_native\":\"{output_path_native}\",\"output_sha256\":\"{}\",\"backup_path\":\"{backup_path}\",\"backup_path_native\":\"{backup_path_native}\",\"recovery_path\":\"{recovery_path}\",\"recovery_path_native\":\"{recovery_path_native}\",\"operation\":{operation}}}",
         journal.status, journal.source_sha256, journal.output_sha256
     )
     .into_bytes()
@@ -1510,26 +2343,86 @@ fn cleanup(files: &impl FileSystem, path: &Path) {
     let _ = files.delete_if_exists(path);
 }
 
-fn sync_directory(directory: Option<&Path>) {
+fn remove_file_if_exists(path: &Path) -> Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn sync_directory(directory: Option<&Path>) -> Result<()> {
     #[cfg(unix)]
     if let Some(directory) = directory {
-        if let Ok(handle) = File::open(directory) {
-            let _ = handle.sync_all();
-        }
+        File::open(directory)?.sync_all()?;
     }
     #[cfg(not(unix))]
     let _ = directory;
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{replace_with_file_system, FileSystem};
+    use super::{replace_with_file_system, restore_backup_with_file_system, FileSystem, StdFileSystem};
     use sse_core::{Error, Result};
     use std::cell::{Cell, RefCell};
     use std::collections::HashMap;
     use std::path::{Path, PathBuf};
 
     type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_native_path_encoding_roundtrips_non_utf8_bytes_without_filesystem_access() -> TestResult {
+        use std::os::unix::ffi::OsStringExt;
+
+        let path = PathBuf::from(std::ffi::OsString::from_vec(b"slot-\xff.sav".to_vec()));
+        let encoded = super::encode_native_path(&path);
+
+        assert_eq!(encoded, "u:736c6f742dff2e736176");
+        assert_eq!(super::decode_native_path(&encoded)?, path);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn export_journal_paths_roundtrip_non_utf8_without_filesystem_access() -> TestResult {
+        use std::os::unix::ffi::OsStringExt;
+
+        let source = PathBuf::from(std::ffi::OsString::from_vec(b"source-\xff.sav".to_vec()));
+        let output = PathBuf::from(std::ffi::OsString::from_vec(b"edited-\xfe.sav".to_vec()));
+        let backup = PathBuf::from(std::ffi::OsString::from_vec(b"backup-\x80.sav".to_vec()));
+        let sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let encoded = super::serialize_export_journal(&super::ExportJournal {
+            status: "verified",
+            created_at: "2026-10-08T00:00:00.0000000+00:00",
+            source_path: &source,
+            source_sha256: sha256,
+            output_path: &output,
+            output_sha256: sha256,
+            backup_path: &backup,
+            summary: super::EditSummary::default(),
+        });
+        let fields = super::parse_top_fields(&encoded)?;
+
+        assert_eq!(super::path_field(&fields, "source_path", "source_path_native")?, source);
+        assert_eq!(super::path_field(&fields, "output_path", "output_path_native")?, output);
+        assert_eq!(super::path_field(&fields, "backup_path", "backup_path_native")?, backup);
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_native_path_decoder_preserves_utf16_code_units() -> TestResult {
+        use std::os::windows::ffi::OsStrExt;
+
+        let decoded = super::decode_native_path("w:41003dd800de")?;
+        let code_units = decoded.as_os_str().encode_wide().collect::<Vec<_>>();
+
+        assert_eq!(code_units, [0x0041_u16, 0xd83d, 0xde00]);
+        assert!(super::decode_native_path("w:41").is_err());
+        Ok(())
+    }
 
     #[test]
     fn replaces_and_records_a_synthetic_save() -> TestResult {
@@ -1564,6 +2457,28 @@ mod tests {
         assert!(replace_with_file_system(&fs, &source, &wrong_hash, output_bytes, &backup_directory).is_err());
         assert_eq!(fs.bytes(&source).as_deref(), Some(source_bytes.as_slice()));
         assert_eq!(fs.operation_count(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn read_only_sources_are_refused_before_transaction_artifacts_are_created() -> TestResult {
+        let source_bytes = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-source.sav");
+        let output_bytes = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-expected.sav");
+        let (source, backup_directory) = fake_paths();
+        let fs = MemoryFs::new(&source, source_bytes, None);
+        fs.readonly.set(true);
+
+        let result = replace_with_file_system(
+            &fs,
+            &source,
+            &sse_codecs::sha256::sha256_hex(source_bytes),
+            output_bytes,
+            &backup_directory,
+        );
+
+        assert!(matches!(result, Err(Error::Refused(_))));
+        assert_eq!(fs.files.borrow().len(), 1);
+        assert_eq!(fs.bytes(&source).as_deref(), Some(source_bytes.as_slice()));
         Ok(())
     }
 
@@ -1624,6 +2539,62 @@ mod tests {
         assert_eq!(fs.bytes(&source).as_deref(), Some(source_bytes.as_slice()));
         assert_eq!(fs.files.borrow().len(), 1);
         assert_eq!(fs.operation_count(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn replacement_journal_records_the_full_edit_summary() -> TestResult {
+        let source_bytes = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-source.sav");
+        let replacement = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-expected.sav");
+        let source_hash = sse_codecs::sha256::sha256_hex(source_bytes);
+        let (source, backup_directory) = fake_paths();
+        let fs = MemoryFs::new(&source, source_bytes, None);
+        let summary = super::EditSummary {
+            money: Some(12_345),
+            stack_count: 2,
+            move_count: 3,
+            detach_count: 4,
+            attach_count: 5,
+            raw_count: 6,
+            add_count: 7,
+            durability_count: 8,
+            upgrade_count: 9,
+            relation_count: 10,
+            player_faction: true,
+        };
+
+        let (receipt, (), ()) = super::replace_with_file_system_and_operation_and_checks(
+            &fs,
+            super::ReplacementRequest {
+                source_path: &source,
+                expected_source_sha256: &source_hash,
+                replacement,
+                backup_directory: &backup_directory,
+                operation: super::JournalOperation::Replace(summary),
+            },
+            |_, _| Ok(()),
+            |_| Ok(()),
+        )?;
+
+        let journal = fs
+            .bytes(&receipt.journal_path)
+            .ok_or_else(|| std::io::Error::other("journal should exist"))?;
+        let journal = std::str::from_utf8(&journal)?;
+        for field in [
+            "\"money\":12345",
+            "\"stack_count\":2",
+            "\"move_count\":3",
+            "\"detach_count\":4",
+            "\"attach_count\":5",
+            "\"raw_count\":6",
+            "\"add_count\":7",
+            "\"durability_count\":8",
+            "\"upgrade_count\":9",
+            "\"relation_count\":10",
+            "\"player_faction\":true",
+        ] {
+            assert!(journal.contains(field), "journal must contain {field}");
+        }
         Ok(())
     }
 
@@ -1695,10 +2666,176 @@ mod tests {
         assert_eq!(replaced_metadata.uid(), source_uid);
         assert_eq!(replaced_metadata.gid(), source_gid);
         assert_eq!(std::fs::read(&source)?, replacement);
+        for artifact in [&receipt.backup_path, &receipt.recovery_path, &receipt.journal_path] {
+            assert_eq!(std::fs::metadata(artifact)?.permissions().mode() & 0o777, 0o600);
+        }
         assert!(receipt
             .backup_path
             .file_name()
             .is_some_and(|name| name.to_string_lossy().contains("_ORIGINAL.sav")));
+        std::fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn directory_sync_errors_are_returned() -> TestResult {
+        let path = std::env::temp_dir().join(format!("sse-missing-sync-{}", std::process::id()));
+        assert!(StdFileSystem.sync_directory(&path).is_err());
+        Ok(())
+    }
+
+    struct FailDirectorySync;
+
+    impl FileSystem for FailDirectorySync {
+        fn read_all(&self, path: &Path) -> Result<Vec<u8>> {
+            StdFileSystem.read_all(path)
+        }
+
+        fn is_symlink(&self, path: &Path) -> Result<bool> {
+            StdFileSystem.is_symlink(path)
+        }
+
+        fn create_dir_all(&self, path: &Path) -> Result<()> {
+            StdFileSystem.create_dir_all(path)
+        }
+
+        fn write_new(&self, path: &Path, bytes: &[u8]) -> Result<()> {
+            StdFileSystem.write_new(path, bytes)
+        }
+
+        fn copy_permissions(&self, source: &Path, destination: &Path) -> Result<()> {
+            StdFileSystem.copy_permissions(source, destination)
+        }
+
+        fn replace(&self, source: &Path, destination: &Path) -> Result<()> {
+            StdFileSystem.replace(source, destination)
+        }
+
+        fn publish_new(&self, source: &Path, destination: &Path) -> Result<()> {
+            StdFileSystem.publish_new(source, destination)
+        }
+
+        fn delete_if_exists(&self, path: &Path) -> Result<()> {
+            StdFileSystem.delete_if_exists(path)
+        }
+
+        fn sync_directory(&self, _directory: &Path) -> Result<()> {
+            Err(Error::System("injected directory sync failure".to_owned()))
+        }
+    }
+
+    #[test]
+    fn restore_output_sync_failure_reports_the_published_path() -> TestResult {
+        let unique = format!(
+            "sse-storage-restore-output-sync-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        );
+        let root = std::env::temp_dir().join(unique);
+        let saves = root.join("saves");
+        let backups = root.join("backups");
+        let exports = root.join("exports");
+        std::fs::create_dir_all(&saves)?;
+        std::fs::create_dir_all(&exports)?;
+        let source = saves.join("save.sav");
+        let output = exports.join("restored.sav");
+        let original = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-source.sav");
+        let edited = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-expected.sav");
+        std::fs::write(&source, original)?;
+        let receipt = super::replace_transaction(&source, &sse_codecs::sha256::sha256_hex(original), edited, &backups)?;
+
+        let result = super::restore_backup_with_file_system(&FailDirectorySync, &receipt.journal_path, &output);
+
+        let error = result
+            .err()
+            .ok_or_else(|| std::io::Error::other("injected post-publication sync failure should be returned"))?;
+        assert!(error.to_string().contains(&output.display().to_string()));
+        assert_eq!(std::fs::read(&output)?, original);
+        std::fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    struct RestoreOutputChangesAfterReadback {
+        output: PathBuf,
+        readback_seen: Cell<bool>,
+    }
+
+    impl FileSystem for RestoreOutputChangesAfterReadback {
+        fn read_all(&self, path: &Path) -> Result<Vec<u8>> {
+            if path == self.output && !self.readback_seen.replace(true) {
+                std::fs::write(path, b"external replacement observed during restore")?;
+                let observed = StdFileSystem.read_all(path)?;
+                std::fs::write(
+                    path,
+                    include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-source.sav"),
+                )?;
+                return Ok(observed);
+            }
+            StdFileSystem.read_all(path)
+        }
+
+        fn is_symlink(&self, path: &Path) -> Result<bool> {
+            StdFileSystem.is_symlink(path)
+        }
+
+        fn create_dir_all(&self, path: &Path) -> Result<()> {
+            StdFileSystem.create_dir_all(path)
+        }
+
+        fn write_new(&self, path: &Path, bytes: &[u8]) -> Result<()> {
+            StdFileSystem.write_new(path, bytes)
+        }
+
+        fn copy_permissions(&self, source: &Path, destination: &Path) -> Result<()> {
+            StdFileSystem.copy_permissions(source, destination)
+        }
+
+        fn replace(&self, source: &Path, destination: &Path) -> Result<()> {
+            StdFileSystem.replace(source, destination)
+        }
+
+        fn publish_new(&self, source: &Path, destination: &Path) -> Result<()> {
+            StdFileSystem.publish_new(source, destination)
+        }
+
+        fn delete_if_exists(&self, path: &Path) -> Result<()> {
+            StdFileSystem.delete_if_exists(path)
+        }
+    }
+
+    #[test]
+    fn restore_readback_mismatch_must_not_delete_a_replaced_output() -> TestResult {
+        let unique = format!(
+            "sse-storage-restore-mismatch-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        );
+        let root = std::env::temp_dir().join(unique);
+        let saves = root.join("saves");
+        let backups = root.join("backups");
+        let exports = root.join("exports");
+        std::fs::create_dir_all(&saves)?;
+        std::fs::create_dir_all(&exports)?;
+        let source = saves.join("save.sav");
+        let output = exports.join("restored.sav");
+        let original = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-source.sav");
+        let edited = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-expected.sav");
+        std::fs::write(&source, original)?;
+        let receipt = super::replace_transaction(&source, &sse_codecs::sha256::sha256_hex(original), edited, &backups)?;
+        let files = RestoreOutputChangesAfterReadback {
+            output: output.clone(),
+            readback_seen: Cell::new(false),
+        };
+
+        let result = restore_backup_with_file_system(&files, &receipt.journal_path, &output);
+
+        assert!(result.is_err(), "the mismatching read-back must still be reported");
+        assert_eq!(std::fs::read(&output)?, original);
         std::fs::remove_dir_all(root)?;
         Ok(())
     }
@@ -1770,7 +2907,7 @@ mod tests {
         };
         assert_eq!(
             error.to_string(),
-            "Current save changed after the journaled replacement; refusing to overwrite it."
+            "Current save matches neither the original nor journaled output; refusing to overwrite it."
         );
         assert_eq!(std::fs::read(&source)?, b"changed after save");
 
@@ -1892,6 +3029,7 @@ mod tests {
         operations: Cell<usize>,
         fail_at: Option<usize>,
         failed: Cell<bool>,
+        readonly: Cell<bool>,
     }
 
     impl MemoryFs {
@@ -1901,6 +3039,7 @@ mod tests {
                 operations: Cell::new(0),
                 fail_at,
                 failed: Cell::new(false),
+                readonly: Cell::new(false),
             }
         }
 
@@ -1968,9 +3107,31 @@ mod tests {
             Ok(())
         }
 
+        fn replace_if_sha256_matches(&self, source: &Path, destination: &Path, expected_sha256: &str) -> Result<()> {
+            self.tick()?;
+            let mut files = self.files.borrow_mut();
+            let current = files
+                .get(destination)
+                .ok_or_else(|| Error::System(format!("missing synthetic source {}", destination.display())))?;
+            if sse_codecs::sha256::sha256_hex(current) != expected_sha256 {
+                return Err(Error::Refused(
+                    "source changed immediately before replacement".to_owned(),
+                ));
+            }
+            let bytes = files
+                .remove(source)
+                .ok_or_else(|| Error::System(format!("missing synthetic temp {}", source.display())))?;
+            files.insert(destination.to_path_buf(), bytes);
+            Ok(())
+        }
+
         fn delete_if_exists(&self, path: &Path) -> Result<()> {
             self.files.borrow_mut().remove(path);
             Ok(())
+        }
+
+        fn is_readonly(&self, _path: &Path) -> Result<bool> {
+            Ok(self.readonly.get())
         }
     }
 }

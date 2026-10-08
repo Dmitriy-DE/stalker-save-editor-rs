@@ -1,4 +1,4 @@
-//! Binary library index format for fast, zero-open save list loading.
+//! Binary library index format for fast, header-revalidated save list loading.
 //!
 //! Layout:
 //! - Magic: `b"SSLI"` (4 bytes)
@@ -19,16 +19,20 @@
 use crate::discovery::locator::{normalize_full_path, resolve_entry_path, resolve_links, SaveDirectoryCandidate};
 use crate::discovery::slot::SaveSlot;
 use std::collections::HashMap;
-use std::fs::{self, File};
+use std::ffi::OsString;
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const INDEX_MAGIC: &[u8; 4] = b"SSLI";
 const INDEX_VERSION: u32 = 1;
 const HEADER_SAMPLE_BYTES: usize = 4096;
+const MINIMUM_INDEX_ENTRY_BYTES: usize = 40;
 const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0100_0000_01b3;
+static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 /// Single entry cached inside the library index.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,7 +83,7 @@ impl LibraryIndexEntry {
     }
 }
 
-/// Binary index of save slot metadata, avoiding file opens on warm starts.
+/// Binary index of save slot metadata, validating a small header sample on warm starts.
 #[derive(Debug, Clone, Default)]
 pub struct LibraryIndex {
     entries: HashMap<PathBuf, LibraryIndexEntry>,
@@ -130,6 +134,9 @@ impl LibraryIndex {
 
         let count_u32 = read_u32_le(bytes, 8)?;
         let count = usize::try_from(count_u32).ok()?;
+        if count > bytes.len().saturating_sub(12) / MINIMUM_INDEX_ENTRY_BYTES {
+            return None;
+        }
 
         let mut offset = 12_usize;
         let mut entries = HashMap::with_capacity(count);
@@ -164,32 +171,43 @@ impl LibraryIndex {
             );
         }
 
+        if offset != bytes.len() {
+            return None;
+        }
+
         Some(Self { entries })
     }
 
     /// Serializes the library index to raw bytes.
-    #[must_use]
-    pub fn encode(&self) -> Vec<u8> {
+    ///
+    /// # Errors
+    /// Returns [`io::ErrorKind::InvalidInput`] if the entry count or any string does not fit the wire format.
+    pub fn encode(&self) -> io::Result<Vec<u8>> {
         let mut output = Vec::new();
         output.extend_from_slice(INDEX_MAGIC);
         output.extend_from_slice(&INDEX_VERSION.to_le_bytes());
-        let count_u32 = u32::try_from(self.entries.len()).unwrap_or(u32::MAX);
+        let count_u32 = u32::try_from(self.entries.len())
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "too many library index entries"))?;
         output.extend_from_slice(&count_u32.to_le_bytes());
 
         for entry in self.entries.values() {
-            write_string(&mut output, &entry.path.to_string_lossy());
-            write_string(&mut output, &entry.candidate_game_id);
-            write_string(&mut output, &entry.candidate_release_id);
+            let path = entry
+                .path
+                .to_str()
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "library index path is not valid UTF-8"))?;
+            write_string(&mut output, path)?;
+            write_string(&mut output, &entry.candidate_game_id)?;
+            write_string(&mut output, &entry.candidate_release_id)?;
             output.extend_from_slice(&entry.size.to_le_bytes());
             output.extend_from_slice(&entry.mtime_secs.to_le_bytes());
             output.extend_from_slice(&entry.mtime_nanos.to_le_bytes());
             output.extend_from_slice(&entry.header_hash.to_le_bytes());
-            write_optional_string(&mut output, entry.format_id.as_deref());
-            write_optional_string(&mut output, entry.game_id.as_deref());
-            write_optional_string(&mut output, entry.detection_error.as_deref());
+            write_optional_string(&mut output, entry.format_id.as_deref())?;
+            write_optional_string(&mut output, entry.game_id.as_deref())?;
+            write_optional_string(&mut output, entry.detection_error.as_deref())?;
         }
 
-        output
+        Ok(output)
     }
 
     /// Saves the library index atomically to a destination path.
@@ -197,22 +215,31 @@ impl LibraryIndex {
     /// # Errors
     /// Returns [`io::Error`] if creating or replacing the file fails.
     pub fn save(&self, destination: &Path) -> io::Result<()> {
-        let encoded = self.encode();
-        let temp_path = destination.with_extension("tmp");
-        {
-            let mut file = File::create(&temp_path)?;
-            file.write_all(&encoded)?;
-            file.sync_all()?;
+        let encoded = self.encode()?;
+        let (temp_path, mut file) = create_unique_temp_file(destination)?;
+        let write_result = file.write_all(&encoded).and_then(|()| file.sync_all());
+        drop(file);
+        if let Err(error) = write_result {
+            let _ = fs::remove_file(&temp_path);
+            return Err(error);
         }
-        fs::rename(&temp_path, destination)
+        if let Err(error) = fs::rename(&temp_path, destination) {
+            let _ = fs::remove_file(&temp_path);
+            return Err(error);
+        }
+        Ok(())
     }
 
-    /// Looks up a cached entry by matching path, file size, and modification time.
+    /// Looks up a cached entry by matching path, file size, modification time, and header hash.
     #[must_use]
-    pub fn lookup(&self, path: &Path, size: u64, mtime: SystemTime) -> Option<&LibraryIndexEntry> {
+    pub fn lookup(&self, path: &Path, size: u64, mtime: SystemTime, header_hash: u64) -> Option<&LibraryIndexEntry> {
         let (mtime_secs, mtime_nanos) = split_system_time(mtime);
         let entry = self.entries.get(path)?;
-        if entry.size == size && entry.mtime_secs == mtime_secs && entry.mtime_nanos == mtime_nanos {
+        if entry.size == size
+            && entry.mtime_secs == mtime_secs
+            && entry.mtime_nanos == mtime_nanos
+            && entry.header_hash == header_hash
+        {
             Some(entry)
         } else {
             None
@@ -250,8 +277,7 @@ impl LibraryIndex {
             }
             let directory = normalize_full_path(&candidate.directory_path);
             let identity = resolve_links(&directory);
-            let identity_key = identity.to_string_lossy().to_string();
-            if !searched_identities.insert(identity_key) {
+            if !searched_identities.insert(identity.clone()) {
                 continue;
             }
 
@@ -294,7 +320,10 @@ impl LibraryIndex {
             let size = metadata.len();
             let mtime = metadata.modified().unwrap_or(UNIX_EPOCH);
 
-            if let Some(cached) = self.lookup(path, size, mtime) {
+            let current_header_hash = crate::discovery::slot::read_file_header(path, HEADER_SAMPLE_BYTES)
+                .ok()
+                .map(|header| Self::compute_header_hash(&header));
+            if let Some(cached) = current_header_hash.and_then(|hash| self.lookup(path, size, mtime, hash)) {
                 slots.push(cached.to_save_slot());
             } else {
                 cold_targets.push(ColdTarget {
@@ -397,7 +426,8 @@ fn scan_single_index_entry(
         match crate::discovery::slot::read_file_header(path, HEADER_SAMPLE_BYTES) {
             Ok(header) => {
                 let (fid, gid, err) =
-                    crate::discovery::slot::detect_format_with_context(&header, Some(path), Some(candidate_release_id));
+                    crate::discovery::slot::detect_format_for_file(path, &header, size, candidate_release_id)
+                        .unwrap_or_else(|error| (None, None, Some(format!("IOException: {error}"))));
                 let hash = LibraryIndex::compute_header_hash(&header);
                 (fid, gid, err, hash)
             }
@@ -419,6 +449,37 @@ fn scan_single_index_entry(
     }
 }
 
+fn create_unique_temp_file(destination: &Path) -> io::Result<(PathBuf, File)> {
+    let file_name = destination.file_name().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "library index destination has no file name",
+        )
+    })?;
+    let parent = destination
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+
+    for _ in 0..128 {
+        let counter = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let mut temp_name = OsString::from(".");
+        temp_name.push(file_name);
+        temp_name.push(format!(".{}.{}.tmp", std::process::id(), counter));
+        let temp_path = parent.join(temp_name);
+        match OpenOptions::new().write(true).create_new(true).open(&temp_path) {
+            Ok(file) => return Ok((temp_path, file)),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "could not allocate a unique library index temporary file",
+    ))
+}
+
 fn split_system_time(time: SystemTime) -> (i64, u32) {
     match time.duration_since(UNIX_EPOCH) {
         Ok(dur) => (dur.as_secs().try_into().unwrap_or(i64::MAX), dur.subsec_nanos()),
@@ -430,20 +491,26 @@ fn split_system_time(time: SystemTime) -> (i64, u32) {
     }
 }
 
-fn write_string(output: &mut Vec<u8>, s: &str) {
+fn write_string(output: &mut Vec<u8>, s: &str) -> io::Result<()> {
     let bytes = s.as_bytes();
-    let len = u16::try_from(bytes.len()).unwrap_or(u16::MAX);
+    let len = u16::try_from(bytes.len())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "library index string exceeds 65535 bytes"))?;
     output.extend_from_slice(&len.to_le_bytes());
-    let write_len = usize::from(len);
-    if let Some(sub) = bytes.get(..write_len) {
-        output.extend_from_slice(sub);
-    }
+    output.extend_from_slice(bytes);
+    Ok(())
 }
 
-fn write_optional_string(output: &mut Vec<u8>, s: Option<&str>) {
+fn write_optional_string(output: &mut Vec<u8>, s: Option<&str>) -> io::Result<()> {
     match s {
+        Some(val) if val.len() == usize::from(u16::MAX) => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "library index optional string collides with the absent-value marker",
+        )),
         Some(val) => write_string(output, val),
-        None => output.extend_from_slice(&0xFFFF_u16.to_le_bytes()),
+        None => {
+            output.extend_from_slice(&0xFFFF_u16.to_le_bytes());
+            Ok(())
+        }
     }
 }
 

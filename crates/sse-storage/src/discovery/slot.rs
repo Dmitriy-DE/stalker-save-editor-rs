@@ -5,10 +5,12 @@ use std::collections::HashSet;
 use std::fs;
 use std::io;
 use std::path::PathBuf;
+use std::sync::Mutex;
 use std::time::SystemTime;
 
 const MAXIMUM_UNPACKED_SIZE: u64 = 536_870_912; // 512 MiB
 const XRAY_MAGIC: u32 = 0xFFFF_FFFF;
+static FULL_XRAY_EE_DETECTION_LOCK: Mutex<()> = Mutex::new(());
 
 /// Represents a single discovered save slot file.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,6 +62,13 @@ pub(crate) fn read_file_header(path: &std::path::Path, max_bytes: usize) -> io::
     Ok(buffer)
 }
 
+fn with_full_xray_ee_detection<T>(operation: impl FnOnce() -> T) -> T {
+    let _guard = FULL_XRAY_EE_DETECTION_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    operation()
+}
+
 struct SlotTarget {
     path: PathBuf,
     candidate_game_id: String,
@@ -85,9 +94,7 @@ impl SaveSlotDiscovery {
 
             let directory = normalize_full_path(&candidate.directory_path);
             let identity = resolve_links(&directory);
-            let identity_key = identity.to_string_lossy().to_string();
-
-            if !searched_identities.insert(identity_key) {
+            if !searched_identities.insert(identity.clone()) {
                 continue;
             }
 
@@ -107,8 +114,7 @@ impl SaveSlotDiscovery {
                     continue;
                 }
 
-                let path_key = file_path.to_string_lossy().to_string();
-                if !seen_slots.insert(path_key) {
+                if !seen_slots.insert(file_path.clone()) {
                     continue;
                 }
 
@@ -217,21 +223,20 @@ fn scan_single_slot(path: &std::path::Path, candidate_game_id: &str, candidate_r
         };
     }
 
-    match read_file_header(path, HEADER_SAMPLE_BYTES) {
-        Ok(header_bytes) => {
-            let (format_id, game_id, detection_error) =
-                detect_format_with_context(&header_bytes, Some(path), Some(candidate_release_id));
-            SaveSlot {
-                path: path.to_path_buf(),
-                candidate_game_id: candidate_game_id.to_string(),
-                candidate_release_id: candidate_release_id.to_string(),
-                size,
-                last_write_time_utc: mtime,
-                format_id,
-                game_id,
-                detection_error,
-            }
-        }
+    let detection = read_file_header(path, HEADER_SAMPLE_BYTES)
+        .and_then(|header_bytes| detect_format_for_file(path, &header_bytes, size, candidate_release_id));
+
+    match detection {
+        Ok((format_id, game_id, detection_error)) => SaveSlot {
+            path: path.to_path_buf(),
+            candidate_game_id: candidate_game_id.to_string(),
+            candidate_release_id: candidate_release_id.to_string(),
+            size,
+            last_write_time_utc: mtime,
+            format_id,
+            game_id,
+            detection_error,
+        },
         Err(err) => SaveSlot {
             path: path.to_path_buf(),
             candidate_game_id: candidate_game_id.to_string(),
@@ -243,6 +248,46 @@ fn scan_single_slot(path: &std::path::Path, candidate_game_id: &str, candidate_r
             detection_error: Some(format_io_error(&err)),
         },
     }
+}
+
+fn requires_full_xray_ee_bytes(bytes: &[u8]) -> bool {
+    if bytes.len() < 12 || read_u32_le(bytes, 0) != Some(XRAY_MAGIC) || read_u32_le(bytes, 4) != Some(6) {
+        return false;
+    }
+    bytes
+        .get(12..)
+        .and_then(extract_alife_version)
+        .is_some_and(|version| version == 54)
+}
+
+pub(crate) fn detect_format_for_file(
+    path: &std::path::Path,
+    header_bytes: &[u8],
+    size: u64,
+    candidate_release_id: &str,
+) -> io::Result<(Option<String>, Option<String>, Option<String>)> {
+    if size > MAXIMUM_UNPACKED_SIZE {
+        return Ok((
+            None,
+            None,
+            Some("The file is larger than any save this version can read.".to_owned()),
+        ));
+    }
+    if requires_full_xray_ee_bytes(header_bytes) {
+        let full_size = usize::try_from(size)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "save size does not fit this platform"))?;
+        if full_size > header_bytes.len() {
+            return with_full_xray_ee_detection(|| {
+                read_file_header(path, full_size)
+                    .map(|full_bytes| detect_format_with_context(&full_bytes, Some(path), Some(candidate_release_id)))
+            });
+        }
+    }
+    Ok(detect_format_with_context(
+        header_bytes,
+        Some(path),
+        Some(candidate_release_id),
+    ))
 }
 
 fn has_save_extension(file_name: &str) -> bool {
@@ -270,7 +315,7 @@ pub(crate) fn detect_format_with_context(
     path: Option<&std::path::Path>,
     candidate_release_id: Option<&str>,
 ) -> (Option<String>, Option<String>, Option<String>) {
-    if let Some(format_id) = detect_xray(bytes, path, candidate_release_id) {
+    if let Some(format_id) = detect_xray(bytes) {
         let game_id = family_for_format(&format_id);
         return (Some(format_id), game_id, None);
     }
@@ -286,7 +331,7 @@ pub(crate) fn detect_format_with_context(
     )
 }
 
-fn detect_xray(bytes: &[u8], path: Option<&std::path::Path>, candidate_release_id: Option<&str>) -> Option<String> {
+fn detect_xray(bytes: &[u8]) -> Option<String> {
     if bytes.len() < 12 {
         return None;
     }
@@ -308,15 +353,15 @@ fn detect_xray(bytes: &[u8], path: Option<&std::path::Path>, candidate_release_i
     }
 
     let payload = bytes.get(12..)?;
-    let fast_alife = extract_alife_version(payload);
-
-    let alife_version = if let Some(av) = fast_alife {
-        av
+    let mut unpacked = None;
+    let alife_version = if let Some(version) = extract_alife_version(payload) {
+        version
     } else {
         let unpacked_size = usize::try_from(unpacked_size_u32).ok()?;
         let raw = sse_codecs::lzo1x::decompress(payload, unpacked_size).ok()?;
-        let (av, _) = parse_xray_chunks(&raw)?;
-        av
+        let (version, _) = parse_xray_chunks(&raw)?;
+        unpacked = Some(raw);
+        version
     };
 
     // Check Original formats
@@ -335,34 +380,27 @@ fn detect_xray(bytes: &[u8], path: Option<&std::path::Path>, candidate_release_i
         return Some("stalker-soc-ee".to_string());
     }
     if container_version == 6 && alife_version == 54 {
-        let file_name = path.and_then(|p| p.file_name()).and_then(|n| n.to_str()).unwrap_or("");
-        let lower = file_name.to_ascii_lowercase();
-
-        if lower.ends_with(".scop") || candidate_release_id == Some("stalker-cop-ee") {
-            return Some("stalker-cop-ee".to_string());
+        let raw = if let Some(raw) = unpacked {
+            raw
+        } else {
+            let unpacked_size = usize::try_from(unpacked_size_u32).ok()?;
+            sse_codecs::lzo1x::decompress(payload, unpacked_size).ok()?
+        };
+        let (confirmed_version, object_data) = parse_xray_chunks(&raw)?;
+        if confirmed_version != alife_version {
+            return None;
         }
-        if lower.ends_with(".scs") || candidate_release_id == Some("stalker-cs-ee") {
-            return Some("stalker-cs-ee".to_string());
+        let mut has_marsh = false;
+        let mut has_zaton = false;
+        for string in object_data.split(|byte| *byte == 0) {
+            has_marsh |= string == b"marsh";
+            has_zaton |= string == b"zaton";
         }
-
-        // If whole file is available and decompresses, check object chunk
-        if let Ok(unpacked_size) = usize::try_from(unpacked_size_u32) {
-            if let Ok(raw) = sse_codecs::lzo1x::decompress(payload, unpacked_size) {
-                if let Some((_, object_data)) = parse_xray_chunks(&raw) {
-                    let has_marsh = contains_subslice(object_data, b"marsh");
-                    let has_zaton = contains_subslice(object_data, b"zaton");
-                    if has_marsh && !has_zaton {
-                        return Some("stalker-cs-ee".to_string());
-                    }
-                    if has_zaton && !has_marsh {
-                        return Some("stalker-cop-ee".to_string());
-                    }
-                }
-            }
-        }
-
-        // Default to stalker-cop-ee for Enhanced Edition version 6/54
-        return Some("stalker-cop-ee".to_string());
+        return match (has_marsh, has_zaton) {
+            (true, false) => Some("stalker-cs-ee".to_string()),
+            (false, true) => Some("stalker-cop-ee".to_string()),
+            _ => None,
+        };
     }
 
     None
@@ -496,12 +534,36 @@ fn read_u32_le(data: &[u8], offset: usize) -> Option<u32> {
     Some(u32::from_le_bytes(arr))
 }
 
-fn contains_subslice(haystack: &[u8], needle: &[u8]) -> bool {
-    if needle.is_empty() {
-        return true;
+#[cfg(test)]
+mod tests {
+    use super::with_full_xray_ee_detection;
+    use std::sync::{atomic::AtomicUsize, atomic::Ordering, Arc, Barrier};
+    use std::time::Duration;
+
+    #[test]
+    fn full_xray_ee_detection_is_serialized() {
+        const WORKERS: usize = 8;
+        let start = Arc::new(Barrier::new(WORKERS));
+        let active = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+
+        std::thread::scope(|scope| {
+            for _ in 0..WORKERS {
+                let start = Arc::clone(&start);
+                let active = Arc::clone(&active);
+                let peak = Arc::clone(&peak);
+                scope.spawn(move || {
+                    start.wait();
+                    with_full_xray_ee_detection(|| {
+                        let current = active.fetch_add(1, Ordering::SeqCst).saturating_add(1);
+                        peak.fetch_max(current, Ordering::SeqCst);
+                        std::thread::sleep(Duration::from_millis(2));
+                        active.fetch_sub(1, Ordering::SeqCst);
+                    });
+                });
+            }
+        });
+
+        assert_eq!(peak.load(Ordering::SeqCst), 1);
     }
-    if haystack.len() < needle.len() {
-        return false;
-    }
-    haystack.windows(needle.len()).any(|window| window == needle)
 }

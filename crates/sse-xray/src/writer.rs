@@ -533,6 +533,9 @@ fn apply_with_catalog_internal(
                 let offset = item.placement_offset.ok_or_else(|| {
                     Error::Refused(format!("object 0x{target_object:04X} has no proven placement offset"))
                 })?;
+                let width = item.placement_width.ok_or_else(|| {
+                    Error::Refused(format!("object 0x{target_object:04X} has no proven placement width"))
+                })?;
                 let replacement = match destination {
                     Placement::Ruck => (current & 0xFFF0) | 3,
                     Placement::Belt if item.section.to_ascii_lowercase().starts_with("af_") && current & 0x0F == 2 => {
@@ -556,7 +559,18 @@ fn apply_with_catalog_internal(
                         (current & 0xFC00) | (u16::from(*slot) << 4) | 1
                     }
                 };
-                writes.push(PendingWrite::u16(offset, replacement));
+                match width {
+                    1 => writes.push(PendingWrite::u8(
+                        offset,
+                        u8::try_from(replacement).map_err(|_| {
+                            Error::Refused("one-byte X-Ray placement exceeds its supported range".to_owned())
+                        })?,
+                    )),
+                    2 => writes.push(PendingWrite::u16(offset, replacement)),
+                    _ => {
+                        return Err(Error::Refused("X-Ray placement field width is unsupported".to_owned()));
+                    }
+                }
             }
             Change::MoveItem {
                 target_object,
@@ -613,40 +627,37 @@ fn apply_with_catalog_internal(
                     if *new_parent != save.actor_id() {
                         return Err(Error::Refused("stash take destination must be the actor".to_owned()));
                     }
-                    let box_start = record.client_data_offset;
                     if save.format() == crate::Format::Cs {
-                        if let Some(start) = box_start.filter(|_| record.client_data_length >= 2) {
-                            let kind_offset = start
-                                .checked_add(1)
-                                .ok_or_else(|| Error::damaged("X-Ray client-data offset overflow"))?;
-                            if save.raw_image().get(start) == Some(&2)
-                                && save
-                                    .raw_image()
-                                    .get(kind_offset)
-                                    .is_some_and(|kind| (1..=3).contains(kind))
-                            {
-                                writes.push(PendingWrite::u8(kind_offset, 3));
-                            } else if let Some(value_end) = kind_offset.checked_add(2) {
-                                if save.raw_image().get(kind_offset..value_end).is_some() {
-                                    if let Ok(current) = read_u16(save.raw_image(), kind_offset) {
-                                        if (1..=3).contains(&(current & 0x0F)) {
-                                            writes.push(PendingWrite::u16(kind_offset, (current & 0xFFF0) | 3));
-                                        }
-                                    }
-                                }
+                        let placement = crate::save::read_placement_fields(save.raw_image(), record, save.format())?
+                            .ok_or_else(|| {
+                                Error::Refused("Clear Sky stash item has no proven placement field".to_owned())
+                            })?;
+                        let placement_write = match placement.width {
+                            1 => PendingWrite::u8(placement.offset, 3),
+                            2 => PendingWrite::u16(placement.offset, (placement.packed & 0xFFF0) | 3),
+                            _ => {
+                                return Err(Error::Refused(
+                                    "Clear Sky stash placement width is unsupported".to_owned(),
+                                ));
                             }
-                        }
-                    } else if let Some(start) = box_start {
-                        let offset = start
+                        };
+                        writes.push(placement_write);
+                    } else if let Some(client_start) =
+                        record.client_data_offset.filter(|_| record.client_data_length >= 3)
+                    {
+                        let placement_offset = client_start
                             .checked_add(1)
                             .ok_or_else(|| Error::damaged("X-Ray client-data offset overflow"))?;
-                        let end = offset
+                        let client_end = client_start
+                            .checked_add(record.client_data_length)
+                            .ok_or_else(|| Error::damaged("X-Ray client-data range overflow"))?;
+                        let placement_end = placement_offset
                             .checked_add(2)
                             .ok_or_else(|| Error::damaged("X-Ray placement range overflow"))?;
-                        if save.raw_image().get(offset..end).is_some() {
-                            if let Ok(current) = read_u16(save.raw_image(), offset) {
-                                if (1..=3).contains(&(current & 0x0F)) {
-                                    writes.push(PendingWrite::u16(offset, (current & 0xFFF0) | 3));
+                        if placement_end <= client_end {
+                            if let Ok(current) = read_u16(save.raw_image(), placement_offset) {
+                                if valid_packed_placement(current) {
+                                    writes.push(PendingWrite::u16(placement_offset, (current & 0xFFF0) | 3));
                                 }
                             }
                         }
@@ -1130,7 +1141,7 @@ fn apply_with_catalog_internal(
         ));
     }
     let replaced_chunks = replacements.iter().map(|(kind, _)| *kind).collect::<Vec<_>>();
-    verify_changed_image_ranges(save, &verified, after, &writes, &replaced_chunks)?;
+    verify_changed_image_ranges(save, &verified, after, &writes, &replaced_chunks, changes)?;
     if seen_money {
         let expected_money = changes.changes().iter().find_map(|change| match change {
             Change::SetMoney { new_value, .. } => Some(*new_value),
@@ -1229,6 +1240,21 @@ fn apply_with_catalog_internal(
                         )));
                     }
                 }
+                Change::MoveItem {
+                    target_object,
+                    new_parent,
+                    ..
+                } if *new_parent == verified.actor_id() && save.format() == crate::Format::Cs => {
+                    let item = verified_items
+                        .iter()
+                        .find(|item| item.handle == *target_object)
+                        .ok_or_else(|| Error::Refused(format!("stash item 0x{target_object:04X} disappeared")))?;
+                    if !item.placement_value.is_some_and(|value| value & 0x0F == 3) {
+                        return Err(Error::Refused(format!(
+                            "stash item 0x{target_object:04X} placement read-back failed"
+                        )));
+                    }
+                }
                 Change::SetMoney { .. }
                 | Change::SetStack { .. }
                 | Change::MoveItem { .. }
@@ -1291,6 +1317,24 @@ fn apply_with_catalog_internal(
                 "added object 0x{:04X} has the wrong parent after read-back",
                 added.object_id
             )));
+        }
+        if added.expected_count.is_none() {
+            let added_item = verified
+                .inventory()?
+                .into_iter()
+                .find(|item| item.handle == added.object_id)
+                .ok_or_else(|| {
+                    Error::Refused(format!(
+                        "added object 0x{:04X} is absent from inventory",
+                        added.object_id
+                    ))
+                })?;
+            if !added_item.placement_value.is_some_and(|value| value & 0x0F == 3) {
+                return Err(Error::Refused(format!(
+                    "added object 0x{:04X} has no verified backpack placement",
+                    added.object_id
+                )));
+            }
         }
         if registry_record_bytes(&verified, record)? != added.serialized_record.as_slice() {
             return Err(Error::Refused(format!(
@@ -1737,6 +1781,7 @@ fn verify_changed_image_ranges(
     replacement_image: &[u8],
     writes: &[PendingWrite],
     replaced_chunks: &[u32],
+    changes: &ChangeSet,
 ) -> Result<()> {
     let source_chunks = source.chunks();
     let replacement_chunks = replacement_layout.chunks();
@@ -1749,9 +1794,18 @@ fn verify_changed_image_ranges(
         return Err(Error::damaged("X-Ray edit changed chunk order or count"));
     }
 
+    let declared = DeclaredChunkChanges::from_changes(source, changes);
+    if replaced_chunks.contains(&2) {
+        verify_object_chunk_records(source, replacement_layout, replacement_image, &declared)?;
+    }
+    if replaced_chunks.contains(&9) {
+        verify_relation_chunk_records(source, replacement_layout, replacement_image, &declared)?;
+    }
+
     let mut ranges = Vec::with_capacity(writes.len().saturating_add(replaced_chunks.len()));
     for (before, after) in source_chunks.iter().zip(replacement_chunks) {
         if replaced_chunks.contains(&before.kind) {
+            verify_replaced_chunk_header(replacement_image, *after)?;
             ranges.push(ChangedRange {
                 before: chunk_record_range(*before)?,
                 after: chunk_record_range(*after)?,
@@ -1807,6 +1861,336 @@ fn verify_changed_image_ranges(
     }
     ranges.sort_unstable_by_key(|range| (range.before.start, range.after.start));
     verify_unchanged_outside_ranges(source.raw_image(), replacement_image, &ranges)
+}
+
+#[derive(Default)]
+struct DeclaredChunkChanges {
+    object_records: HashSet<u16>,
+    added_objects: HashSet<u16>,
+    removed_objects: HashSet<u16>,
+    info_rows: HashSet<u16>,
+    relation_rows: HashSet<u16>,
+}
+
+impl DeclaredChunkChanges {
+    fn from_changes(source: &Save, changes: &ChangeSet) -> Self {
+        let mut declared = Self::default();
+        for change in changes.changes() {
+            match change {
+                Change::SetMoney { target_object, .. }
+                | Change::SetStack { target_object, .. }
+                | Change::SetDurability { target_object, .. }
+                | Change::SetPlacement { target_object, .. }
+                | Change::MoveItem { target_object, .. }
+                | Change::SetPlayerFaction { target_object, .. }
+                | Change::SetUpgrades { target_object, .. } => {
+                    declared.object_records.insert(*target_object);
+                }
+                Change::RemoveItem { target_object } => {
+                    declared.removed_objects.insert(*target_object);
+                }
+                Change::AddItem { object_id, .. } => {
+                    declared.added_objects.insert(*object_id);
+                }
+                Change::SetFactionRelation { target_object, .. } => {
+                    declared.relation_rows.insert(*target_object);
+                }
+                Change::AddInfoPortions { target_object, .. } => {
+                    declared.info_rows.insert(*target_object);
+                }
+                Change::RelocateActor { .. } => {
+                    declared.object_records.insert(source.actor_id());
+                }
+            }
+        }
+        declared
+    }
+}
+
+fn verify_object_chunk_records(
+    source: &Save,
+    replacement_layout: &Save,
+    replacement_image: &[u8],
+    declared: &DeclaredChunkChanges,
+) -> Result<()> {
+    let source_payload = source.object_chunk_bytes(source.raw_image())?;
+    let replacement_payload = replacement_layout.object_chunk_bytes(replacement_image)?;
+    let source_records = source.registry_objects();
+    let replacement_records = replacement_layout.registry_objects();
+    verify_object_record_ranges(source, source_payload, source_records)?;
+    verify_object_record_ranges(replacement_layout, replacement_payload, replacement_records)?;
+    let replacement_count = read_u32(replacement_payload, 0)?;
+    if usize::try_from(replacement_count).ok() != Some(replacement_records.len()) {
+        return Err(Error::damaged(
+            "X-Ray OBJECT chunk count does not match its indexed records",
+        ));
+    }
+    let removed_count = declared
+        .removed_objects
+        .iter()
+        .filter(|id| source_records.iter().any(|record| record.object_id == **id))
+        .count();
+    if removed_count != declared.removed_objects.len() {
+        return Err(Error::damaged("X-Ray OBJECT chunk removed an undeclared record"));
+    }
+    let expected_count = source_records
+        .len()
+        .checked_sub(removed_count)
+        .and_then(|count| count.checked_add(declared.added_objects.len()))
+        .ok_or_else(|| Error::damaged("X-Ray OBJECT record count overflow"))?;
+    if expected_count != replacement_records.len() {
+        return Err(Error::damaged(
+            "X-Ray OBJECT record count changed outside declared additions or removals",
+        ));
+    }
+
+    let mut source_by_id = HashMap::with_capacity(source_records.len());
+    for record in source_records {
+        if source_by_id.insert(record.object_id, record).is_some() {
+            return Err(Error::damaged("X-Ray source OBJECT chunk repeats an object id"));
+        }
+    }
+    let mut replacement_by_id = HashMap::with_capacity(replacement_records.len());
+    for record in replacement_records {
+        if replacement_by_id.insert(record.object_id, record).is_some() {
+            return Err(Error::damaged("X-Ray replacement OBJECT chunk repeats an object id"));
+        }
+        if read_u16(replacement_image, record.object_id_offset)? != record.object_id {
+            return Err(Error::damaged(format!(
+                "X-Ray OBJECT record 0x{:04X} changed its object id",
+                record.object_id
+            )));
+        }
+    }
+    for object_id in &declared.added_objects {
+        if source_by_id.contains_key(object_id) || !replacement_by_id.contains_key(object_id) {
+            return Err(Error::damaged(format!(
+                "X-Ray OBJECT chunk did not preserve declared addition 0x{object_id:04X}"
+            )));
+        }
+    }
+
+    for (object_id, before_record) in &source_by_id {
+        match replacement_by_id.get(object_id) {
+            Some(after_record) => {
+                let before_bytes = registry_record_bytes(source, before_record)?;
+                let after_bytes = registry_record_bytes_from_image(replacement_image, after_record)?;
+                if read_u16(replacement_image, after_record.object_id_offset)? != *object_id {
+                    return Err(Error::damaged(format!(
+                        "X-Ray OBJECT record 0x{object_id:04X} changed its object id"
+                    )));
+                }
+                if before_bytes != after_bytes && !declared.object_records.contains(object_id) {
+                    return Err(Error::damaged(format!(
+                        "X-Ray OBJECT record 0x{object_id:04X} changed without a declared edit"
+                    )));
+                }
+            }
+            None if !declared.removed_objects.contains(object_id) => {
+                return Err(Error::damaged(format!(
+                    "X-Ray OBJECT record 0x{object_id:04X} disappeared without a declared removal"
+                )));
+            }
+            None => {}
+        }
+    }
+
+    for object_id in replacement_by_id.keys() {
+        if !source_by_id.contains_key(object_id) && !declared.added_objects.contains(object_id) {
+            return Err(Error::damaged(format!(
+                "X-Ray OBJECT chunk added undeclared record 0x{object_id:04X}"
+            )));
+        }
+    }
+    let source_count = read_u32(source_payload, 0)?;
+    if usize::try_from(source_count).ok() != Some(source_records.len()) {
+        return Err(Error::damaged(
+            "X-Ray source OBJECT count does not match its indexed records",
+        ));
+    }
+    Ok(())
+}
+
+fn verify_object_record_ranges(save: &Save, payload: &[u8], records: &[crate::RegistryObject]) -> Result<()> {
+    let chunk = save
+        .chunks()
+        .iter()
+        .find(|chunk| chunk.kind == 2)
+        .ok_or_else(|| Error::damaged("missing X-Ray OBJECT chunk"))?;
+    let mut cursor = 4_usize;
+    for record in records {
+        let record_start = record
+            .record_offset
+            .checked_sub(chunk.offset)
+            .ok_or_else(|| Error::damaged("X-Ray OBJECT record offset underflows its chunk"))?;
+        let record_end = cursor
+            .checked_add(record.record_length)
+            .ok_or_else(|| Error::damaged("X-Ray OBJECT record range overflows"))?;
+        if record_start != cursor || record_end > payload.len() {
+            return Err(Error::damaged("X-Ray OBJECT records do not cover their chunk"));
+        }
+        cursor = record_end;
+    }
+    if cursor != payload.len() {
+        return Err(Error::damaged("X-Ray OBJECT chunk has unindexed trailing bytes"));
+    }
+    Ok(())
+}
+
+fn verify_relation_chunk_records(
+    source: &Save,
+    replacement_layout: &Save,
+    replacement_image: &[u8],
+    declared: &DeclaredChunkChanges,
+) -> Result<()> {
+    let source_payload = source.relation_chunk_bytes(source.raw_image())?;
+    let replacement_payload = replacement_layout.relation_chunk_bytes(replacement_image)?;
+    let source_registry = crate::save::parse_relation_registry(source_payload, source.relation_has_timestamps())?;
+    let replacement_registry =
+        crate::save::parse_relation_registry(replacement_payload, replacement_layout.relation_has_timestamps())?;
+    let source_info = source_registry
+        .info_rows
+        .iter()
+        .map(|row| {
+            let start = row
+                .count_offset
+                .checked_sub(2)
+                .ok_or_else(|| Error::damaged("X-Ray info-portion row offset underflows"))?;
+            Ok((row.object_id, start..row.end_offset))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let replacement_info = replacement_registry
+        .info_rows
+        .iter()
+        .map(|row| {
+            let start = row
+                .count_offset
+                .checked_sub(2)
+                .ok_or_else(|| Error::damaged("X-Ray info-portion row offset underflows"))?;
+            Ok((row.object_id, start..row.end_offset))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    verify_indexed_rows(
+        source_payload,
+        replacement_payload,
+        &source_info,
+        &replacement_info,
+        &declared.info_rows,
+        "info-portion",
+    )?;
+
+    let source_relations = source_registry
+        .relation_rows
+        .iter()
+        .map(|row| (row.object_id, row.start..row.end))
+        .collect::<Vec<_>>();
+    let replacement_relations = replacement_registry
+        .relation_rows
+        .iter()
+        .map(|row| (row.object_id, row.start..row.end))
+        .collect::<Vec<_>>();
+    verify_indexed_rows(
+        source_payload,
+        replacement_payload,
+        &source_relations,
+        &replacement_relations,
+        &declared.relation_rows,
+        "relation",
+    )?;
+
+    let source_tail_start = source_registry
+        .relation_rows
+        .last()
+        .map_or_else(|| source_registry.info_section_end.checked_add(4), |row| Some(row.end))
+        .ok_or_else(|| Error::damaged("X-Ray relation tail offset overflows"))?;
+    let replacement_tail_start = replacement_registry
+        .relation_rows
+        .last()
+        .map_or_else(
+            || replacement_registry.info_section_end.checked_add(4),
+            |row| Some(row.end),
+        )
+        .ok_or_else(|| Error::damaged("X-Ray relation tail offset overflows"))?;
+    let source_tail = source_payload
+        .get(source_tail_start..)
+        .ok_or_else(|| Error::damaged("X-Ray source relation tail is outside its chunk"))?;
+    let replacement_tail = replacement_payload
+        .get(replacement_tail_start..)
+        .ok_or_else(|| Error::damaged("X-Ray replacement relation tail is outside its chunk"))?;
+    if source_tail != replacement_tail {
+        return Err(Error::damaged("X-Ray relation chunk trailing bytes changed"));
+    }
+    Ok(())
+}
+
+fn verify_indexed_rows(
+    before_image: &[u8],
+    after_image: &[u8],
+    before_rows: &[(u16, Range<usize>)],
+    after_rows: &[(u16, Range<usize>)],
+    allowed_changes: &HashSet<u16>,
+    label: &str,
+) -> Result<()> {
+    let before_by_id = before_rows.iter().cloned().collect::<HashMap<_, _>>();
+    let after_by_id = after_rows.iter().cloned().collect::<HashMap<_, _>>();
+    if before_by_id.len() != before_rows.len() || after_by_id.len() != after_rows.len() {
+        return Err(Error::damaged(format!("X-Ray {label} chunk repeats a row id")));
+    }
+    if before_by_id.keys().any(|id| !after_by_id.contains_key(id)) {
+        return Err(Error::damaged(format!("X-Ray {label} chunk removed a row")));
+    }
+    if after_by_id
+        .keys()
+        .any(|id| !before_by_id.contains_key(id) && !allowed_changes.contains(id))
+    {
+        return Err(Error::damaged(format!("X-Ray {label} chunk added an undeclared row")));
+    }
+    for (object_id, before_range) in before_by_id {
+        let after_range = after_by_id
+            .get(&object_id)
+            .ok_or_else(|| Error::damaged(format!("X-Ray {label} row disappeared")))?;
+        let before = before_image
+            .get(before_range)
+            .ok_or_else(|| Error::damaged(format!("X-Ray source {label} row is outside its chunk")))?;
+        let after = after_image
+            .get(after_range.clone())
+            .ok_or_else(|| Error::damaged(format!("X-Ray replacement {label} row is outside its chunk")))?;
+        if before != after && !allowed_changes.contains(&object_id) {
+            return Err(Error::damaged(format!(
+                "X-Ray {label} row for object 0x{object_id:04X} changed without a declared edit"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn registry_record_bytes_from_image<'a>(image: &'a [u8], record: &crate::RegistryObject) -> Result<&'a [u8]> {
+    let end = record
+        .record_offset
+        .checked_add(record.record_length)
+        .ok_or_else(|| Error::damaged("X-Ray registry record range overflow"))?;
+    image
+        .get(record.record_offset..end)
+        .ok_or_else(|| Error::damaged("X-Ray registry record is outside the replacement image"))
+}
+
+fn verify_replaced_chunk_header(image: &[u8], chunk: crate::container::Chunk) -> Result<()> {
+    let header = chunk
+        .offset
+        .checked_sub(8)
+        .ok_or_else(|| Error::damaged("X-Ray replacement chunk header offset underflows"))?;
+    let length_offset = header
+        .checked_add(4)
+        .ok_or_else(|| Error::damaged("X-Ray replacement chunk length offset overflows"))?;
+    let expected_length = u32::try_from(chunk.length)
+        .map_err(|_| Error::damaged("X-Ray replacement chunk length does not fit its header"))?;
+    if read_u32(image, header)? != chunk.kind || read_u32(image, length_offset)? != expected_length {
+        return Err(Error::damaged(format!(
+            "X-Ray replacement chunk {} header changed unexpectedly",
+            chunk.kind
+        )));
+    }
+    Ok(())
 }
 
 fn chunk_record_range(chunk: crate::container::Chunk) -> Result<std::ops::Range<usize>> {
@@ -2536,33 +2920,26 @@ fn clone_template_record(
         u32::MAX,
     )?;
 
-    if let Some(client_offset) = parsed_spawn.client_data_offset {
-        if parsed_spawn.client_data_length >= 2 {
-            let place_offset = client_offset
-                .checked_add(1)
-                .ok_or_else(|| Error::damaged("X-Ray client placement offset overflow"))?;
-            let place_end = place_offset
-                .checked_add(2)
-                .ok_or_else(|| Error::damaged("X-Ray client placement range overflow"))?;
-            if let Some(bytes) = spawn.get(place_offset..place_end) {
-                let Ok(bytes) = <[u8; 2]>::try_from(bytes) else {
-                    return Err(Error::damaged("X-Ray client placement has the wrong width"));
-                };
-                let place = u16::from_le_bytes(bytes);
-                if valid_packed_placement(place) {
-                    write_u16(&mut spawn, place_offset, (place & 0xFFF0) | 3)?;
-                } else if spawn.get(client_offset) == Some(&2)
-                    && spawn.get(place_offset).is_some_and(|kind| (1..=3).contains(kind))
-                {
-                    if let Some(kind) = spawn.get_mut(place_offset) {
-                        *kind = 3;
-                    }
-                }
+    let ammunition = item_key.to_ascii_lowercase().starts_with("ammo_");
+    if !ammunition {
+        let placement = crate::save::read_placement_fields(&spawn, &parsed_spawn, save.format())?
+            .ok_or_else(|| Error::Refused("item template has no proven placement field".to_owned()))?;
+        match placement.width {
+            1 => {
+                *spawn
+                    .get_mut(placement.offset)
+                    .ok_or_else(|| Error::damaged("one-byte template placement is outside its SPAWN"))? = 3;
+            }
+            2 => write_u16(&mut spawn, placement.offset, (placement.packed & 0xFFF0) | 3)?,
+            _ => {
+                return Err(Error::Refused(
+                    "item template placement width is unsupported".to_owned(),
+                ))
             }
         }
     }
 
-    if item_key.to_ascii_lowercase().starts_with("ammo_") {
+    if ammunition {
         state_offset = parsed_spawn.state_offset;
         state_length = parsed_spawn.state_length;
         let state_end = state_offset
@@ -2776,13 +3153,100 @@ mod tests {
         let expected = Save::read(expected_bytes)?;
         let writes = [PendingWrite::u32(source.money_offset(), expected.money()?)];
 
-        verify_changed_image_ranges(&source, &expected, expected.raw_image(), &writes, &[])?;
+        verify_changed_image_ranges(
+            &source,
+            &expected,
+            expected.raw_image(),
+            &writes,
+            &[],
+            &ChangeSet::default(),
+        )?;
 
         let mut corrupted = expected.raw_image().to_vec();
         corrupted[0] ^= 1;
-        let error = verify_changed_image_ranges(&source, &expected, &corrupted, &writes, &[])
+        let error = verify_changed_image_ranges(&source, &expected, &corrupted, &writes, &[], &ChangeSet::default())
             .expect_err("a collateral byte outside the money field must be rejected");
         assert!(error.to_string().contains("outside declared changed ranges"));
+        Ok(())
+    }
+
+    #[test]
+    fn item_writer_rejects_collateral_changes_inside_another_registry_record() -> TestResult {
+        let packed = include_bytes!("../../../fixtures/synthetic/writer-placement/xray-placement-soc-source.sav");
+        let source = Save::read(packed)?;
+        let template = source
+            .registry_objects()
+            .iter()
+            .find(|record| record.object_id == 13398)
+            .ok_or("placement fixture template should exist")?;
+        let object_id = (1..u16::MAX)
+            .rev()
+            .find(|candidate| {
+                !source
+                    .registry_objects()
+                    .iter()
+                    .any(|record| record.object_id == *candidate)
+            })
+            .ok_or("placement fixture should have a free object id")?;
+        let output = apply(
+            &source,
+            &ChangeSet::new(vec![Change::AddItem {
+                template_object: template.object_id,
+                item_key: template.name.clone(),
+                object_id,
+                quantity: 1,
+            }]),
+        )?;
+        let replacement = Save::read(output.as_slice())?;
+        let actor = replacement
+            .registry_objects()
+            .iter()
+            .find(|record| record.object_id == replacement.actor_id())
+            .ok_or("replacement actor should exist")?;
+        let mut corrupted = replacement.raw_image().to_vec();
+        *corrupted
+            .get_mut(actor.object_id_offset)
+            .ok_or("actor object id should be inside the OBJECT chunk")? ^= 1;
+        let error =
+            match verify_changed_image_ranges(&source, &replacement, &corrupted, &[], &[2], &ChangeSet::default()) {
+                Err(error) => error,
+                Ok(()) => return Err("an unrelated actor record change must be rejected".into()),
+            };
+        assert!(error.to_string().contains("record"), "{error}");
+        Ok(())
+    }
+
+    #[test]
+    fn relation_writer_rejects_collateral_changes_inside_another_character_row() -> TestResult {
+        let packed = include_bytes!("../../../fixtures/synthetic/writer-factions/soc-source.sav");
+        let source = Save::read(packed)?;
+        let registry = source
+            .relation_registry
+            .as_ref()
+            .ok_or("relation fixture should have a readable registry")?;
+        let row = registry
+            .relation_rows
+            .iter()
+            .find(|row| row.object_id != source.actor_id() && !row.communities.is_empty())
+            .ok_or("relation fixture should have another character row")?;
+        let community = row.communities.first().ok_or("character row should have a community")?;
+        let relation_chunk = source
+            .chunks()
+            .iter()
+            .find(|chunk| chunk.kind == 9)
+            .ok_or("relation chunk should exist")?;
+        let offset = relation_chunk
+            .offset
+            .checked_add(community.goodwill_offset)
+            .ok_or("relation offset should fit")?;
+        let mut corrupted = source.raw_image().to_vec();
+        *corrupted
+            .get_mut(offset)
+            .ok_or("goodwill field should be inside the chunk")? ^= 1;
+
+        let error = verify_changed_image_ranges(&source, &source, &corrupted, &[], &[9], &ChangeSet::default())
+            .expect_err("a change to an unrelated character row must be rejected");
+        assert!(error.to_string().contains("row"), "{error}");
         Ok(())
     }
 
@@ -4013,21 +4477,27 @@ mod tests {
             .update_offset
             .checked_add(record.update_length)
             .ok_or("UPDATE record range should fit usize")?;
-        let update_payload = record
+        let first_candidate = record
             .update_offset
-            .checked_add(2)
-            .ok_or("UPDATE message header should fit usize")?;
-        let duplicate_offset = (update_payload..update_end)
-            .find(|offset| {
-                *offset != confirmed_offset
-                    && initial.raw_image().get(*offset).copied() != Some(encode_condition_q8(condition))
-            })
-            .ok_or("UPDATE fixture needs a spare byte for an ambiguity regression")?;
+            .checked_add(3)
+            .ok_or("first supported UPDATE offset should fit usize")?;
+        let second_candidate = record
+            .update_offset
+            .checked_add(4)
+            .ok_or("second supported UPDATE offset should fit usize")?;
+        if first_candidate >= update_end || second_candidate >= update_end {
+            return Err("UPDATE fixture should contain both supported condition offsets".into());
+        }
+        if confirmed_offset != first_candidate && confirmed_offset != second_candidate {
+            return Err("UPDATE condition should be at a supported packet offset".into());
+        }
         let mut raw = initial.raw_image().to_vec();
-        let duplicate = raw
-            .get_mut(duplicate_offset)
-            .ok_or("duplicate UPDATE candidate should be in the image")?;
-        *duplicate = encode_condition_q8(condition);
+        for offset in [first_candidate, second_candidate] {
+            let candidate = raw
+                .get_mut(offset)
+                .ok_or("supported UPDATE candidate should be in the image")?;
+            *candidate = encode_condition_q8(condition);
+        }
         let ambiguous_packed = initial.repack(&raw)?;
         let ambiguous = Save::read(ambiguous_packed.as_slice())?;
         let ambiguous_item = ambiguous
@@ -4159,16 +4629,11 @@ mod tests {
 
     #[test]
     fn taking_a_stash_item_matches_the_reference_fixture() -> TestResult {
-        let pairs: [(&[u8], &[u8], &[u8]); 3] = [
+        let pairs: [(&[u8], &[u8], &[u8]); 2] = [
             (
                 include_bytes!("../../../fixtures/synthetic/xray-stashes/xray-stash-soc-source.sav"),
                 include_bytes!("../../../fixtures/synthetic/xray-stashes/xray-stash-soc-take.sav"),
                 include_bytes!("../../../fixtures/synthetic/xray-stashes/xray-stash-soc-take.raw"),
-            ),
-            (
-                include_bytes!("../../../fixtures/synthetic/xray-stashes/xray-stash-cs-source.sav"),
-                include_bytes!("../../../fixtures/synthetic/xray-stashes/xray-stash-cs-take.sav"),
-                include_bytes!("../../../fixtures/synthetic/xray-stashes/xray-stash-cs-take.raw"),
             ),
             (
                 include_bytes!("../../../fixtures/synthetic/xray-stashes/xray-stash-cop-source.sav"),
@@ -4189,6 +4654,25 @@ mod tests {
             assert_eq!(verified.raw_image(), expected_raw);
             assert_eq!(apply_inverse(&verified, &undo)?.as_slice(), source_bytes);
         }
+        Ok(())
+    }
+
+    #[test]
+    fn taking_a_clear_sky_stash_item_refuses_without_proven_placement() -> TestResult {
+        let packed = include_bytes!("../../../fixtures/synthetic/xray-stashes/xray-stash-cs-source.sav");
+        let source = Save::read(packed)?;
+        let error = match apply(
+            &source,
+            &ChangeSet::new(vec![Change::MoveItem {
+                target_object: 9029,
+                old_parent: 16,
+                new_parent: source.actor_id(),
+            }]),
+        ) {
+            Err(error) => error,
+            Ok(_) => return Err("a stash item without a proven placement field must be refused".into()),
+        };
+        assert!(error.to_string().contains("placement"), "{error}");
         Ok(())
     }
 
@@ -4526,7 +5010,7 @@ mod tests {
     }
 
     #[test]
-    fn item_addition_preserves_non_ammo_durability_in_clear_sky_and_call_of_pripyat() -> TestResult {
+    fn item_addition_requires_proven_placement_and_preserves_durability() -> TestResult {
         let cases: [(&[u8], &str); 2] = [
             (
                 include_bytes!("../../../fixtures/synthetic/writer-durability/xray-durability-cs-source.sav"),
@@ -4560,7 +5044,7 @@ mod tests {
                         .any(|record| record.object_id == *candidate)
                 })
                 .ok_or_else(|| std::io::Error::other(format!("{game} fixture has no free object id")))?;
-            let output = apply(
+            let result = apply(
                 &source,
                 &ChangeSet::new(vec![Change::AddItem {
                     template_object: template.object_id,
@@ -4568,7 +5052,16 @@ mod tests {
                     object_id,
                     quantity: 1,
                 }]),
-            )?;
+            );
+            if game == "Clear Sky" {
+                let error = match result {
+                    Err(error) => error,
+                    Ok(_) => return Err("Clear Sky's unplaced template must be refused".into()),
+                };
+                assert!(error.to_string().contains("placement"), "{game}: {error}");
+                continue;
+            }
+            let output = result?;
             let verified = Save::read(output.as_slice())?;
             let added_condition = verified
                 .inventory()?
@@ -4614,6 +5107,116 @@ mod tests {
             Err(error) => error,
         };
         assert!(error.to_string().contains("template section does not match"), "{error}");
+        Ok(())
+    }
+
+    #[test]
+    fn item_addition_refuses_quantity_greater_than_one_for_non_ammunition() -> TestResult {
+        let packed = include_bytes!("../../../fixtures/synthetic/writer-add/xray-add-soc-source.sav");
+        let source = Save::read(packed)?;
+        let template = source
+            .registry_objects()
+            .iter()
+            .find(|record| record.object_id == 9029)
+            .ok_or("non-ammunition template should exist")?;
+        let item_key = template.name.clone();
+        let changes = ChangeSet::new(vec![Change::AddItem {
+            template_object: 9029,
+            item_key,
+            object_id: 9030,
+            quantity: 2,
+        }]);
+        let error = match apply(&source, &changes) {
+            Ok(_) => return Err("non-ammunition clones must have quantity one".into()),
+            Err(error) => error,
+        };
+        assert!(
+            error.to_string().contains("non-ammo clones require quantity 1"),
+            "{error}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn item_addition_refuses_a_template_without_proven_placement() -> TestResult {
+        let packed = include_bytes!("../../../fixtures/synthetic/writer-add/xray-add-soc-source.sav");
+        let initial = Save::read(packed)?;
+        let template = initial
+            .registry_objects()
+            .iter()
+            .find(|record| record.object_id == 9029)
+            .ok_or("template object should exist")?;
+        let item_key = template.name.clone();
+        let client_start = template
+            .client_data_offset
+            .ok_or("template should expose client data")?;
+        let placement_offset = client_start.checked_add(1).ok_or("placement offset overflow")?;
+        let placement_end = placement_offset.checked_add(2).ok_or("placement range overflow")?;
+        if template.client_data_length < 3 {
+            return Err("fixture template needs the packed two-byte placement layout".into());
+        }
+        let mut raw = initial.raw_image().to_vec();
+        raw.get_mut(placement_offset..placement_end)
+            .ok_or("template placement should fit")?
+            .fill(0);
+        let packed_unknown = initial.repack(&raw)?;
+        let source = Save::read(packed_unknown.as_slice())?;
+        let error = match apply(
+            &source,
+            &ChangeSet::new(vec![Change::AddItem {
+                template_object: 9029,
+                item_key,
+                object_id: 9030,
+                quantity: 1,
+            }]),
+        ) {
+            Err(error) => error,
+            Ok(_) => return Err("an unproven template placement must be refused".into()),
+        };
+        assert!(error.to_string().contains("placement"), "{error}");
+        Ok(())
+    }
+
+    #[test]
+    fn item_addition_sets_and_reads_back_backpack_placement() -> TestResult {
+        let packed = include_bytes!("../../../fixtures/synthetic/writer-placement/xray-placement-soc-source.sav");
+        let source = Save::read(packed)?;
+        let template = source
+            .registry_objects()
+            .iter()
+            .find(|record| record.object_id == 13398)
+            .ok_or("placement fixture template should exist")?;
+        let original_condition = source
+            .inventory()?
+            .into_iter()
+            .find(|item| item.handle == template.object_id)
+            .ok_or("placement fixture template should be actor-owned")?
+            .condition;
+        let object_id = (1..u16::MAX)
+            .find(|candidate| {
+                !source
+                    .registry_objects()
+                    .iter()
+                    .any(|record| record.object_id == *candidate)
+            })
+            .ok_or("placement fixture should have a free object id")?;
+        let output = apply(
+            &source,
+            &ChangeSet::new(vec![Change::AddItem {
+                template_object: template.object_id,
+                item_key: template.name.clone(),
+                object_id,
+                quantity: 1,
+            }]),
+        )?;
+        let verified = Save::read(output.as_slice())?;
+        let item = verified
+            .inventory()?
+            .into_iter()
+            .find(|item| item.handle == object_id)
+            .ok_or("added item should be in the verified inventory")?;
+        assert!(item.placement_value.is_some_and(|value| value & 0x0F == 3));
+        assert_eq!(item.condition, original_condition);
         Ok(())
     }
 

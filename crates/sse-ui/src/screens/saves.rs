@@ -122,6 +122,8 @@ pub(super) struct RefreshOverview {
     pub path: Option<PathBuf>,
 }
 
+struct StartupBackupCheck(std::result::Result<usize, String>);
+
 #[derive(Clone)]
 pub(crate) struct Workspace {
     state: Arc<Mutex<WorkspaceState>>,
@@ -263,7 +265,25 @@ impl Workspace {
         let Some(source_sha256) = journal.current().map(|plan| plan.source_sha256.clone()) else {
             return;
         };
-        let Some(generation) = self.session.next_draft_generation(&source_sha256) else {
+        let Some(selected) = self
+            .lock()
+            .selected
+            .as_ref()
+            .filter(|selected| selected.source_sha256 == source_sha256)
+            .cloned()
+        else {
+            cx.status = Some("Не удалось определить путь сейва для черновика.".to_owned());
+            return;
+        };
+        let store = DraftStore::for_source(self.draft_directory.as_path(), &selected.slot.path);
+        let identity = match store.identity_key(&source_sha256) {
+            Ok(identity) => identity,
+            Err(error) => {
+                cx.status = Some(format!("Не удалось определить черновик: {error}"));
+                return;
+            }
+        };
+        let Some(generation) = self.session.next_draft_generation(&identity) else {
             cx.status = Some("Не удалось назначить поколение черновика.".to_owned());
             return;
         };
@@ -275,10 +295,10 @@ impl Workspace {
                 return;
             }
             let _guard = write_lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            if !session.is_current_draft_generation(&source_sha256, generation) {
+            if !session.is_current_draft_generation(&identity, generation) {
                 return;
             }
-            let store = DraftStore::new(draft_directory.as_path());
+            let store = DraftStore::for_source(draft_directory.as_path(), &selected.slot.path);
             let result = (|| {
                 if preserve_unmapped {
                     store.set_aside(&source_sha256)?;
@@ -300,10 +320,23 @@ impl Workspace {
             cx.status = Some("Черновик изменён только в памяти: фоновой канал недоступен.".to_owned());
             return;
         };
-        let hashes: Vec<String> = journals
+        let Some(selected) = self.lock().selected.clone() else {
+            cx.status = Some("Не удалось определить путь сейва для черновика.".to_owned());
+            return;
+        };
+        let store = DraftStore::for_source(self.draft_directory.as_path(), &selected.slot.path);
+        let hashes: Result<Vec<String>> = journals
             .iter()
-            .filter_map(|journal| journal.current().map(|plan| plan.source_sha256.clone()))
+            .filter_map(|journal| journal.current().map(|plan| plan.source_sha256.as_str()))
+            .map(|source_sha256| store.identity_key(source_sha256))
             .collect();
+        let hashes = match hashes {
+            Ok(hashes) => hashes,
+            Err(error) => {
+                cx.status = Some(format!("Не удалось определить черновик: {error}"));
+                return;
+            }
+        };
         let Some(generation) = self
             .session
             .next_draft_generation_for(hashes.iter().map(String::as_str))
@@ -325,7 +358,7 @@ impl Workspace {
             {
                 return;
             }
-            let store = DraftStore::new(draft_directory.as_path());
+            let store = DraftStore::for_source(draft_directory.as_path(), &selected.slot.path);
             let result = journals
                 .into_iter()
                 .try_for_each(|journal| store.save(journal).map(|_| ()))
@@ -432,13 +465,24 @@ struct SaveProcessCheckFinished {
     result: std::result::Result<bool, String>,
 }
 
+fn process_check_prompt(result: &std::result::Result<bool, String>) -> Option<(String, &'static str)> {
+    match result {
+        Ok(false) => None,
+        Ok(true) => Some((SAVE_WHILE_GAME_RUNNING_WARNING.to_owned(), "Всё равно сохранить")),
+        Err(error) => Some((
+            format!("Не удалось проверить запущенную игру: {error}. Сохранение не проверено."),
+            "Сохранить всё равно",
+        )),
+    }
+}
+
 enum SaveData {
     Xray {
         save: Save,
         inventory: Vec<InventoryItem>,
     },
     Stalker2 {
-        save: S2Save,
+        save: Box<S2Save>,
         inventory: Vec<S2InventoryItem>,
         stash_items: Option<std::result::Result<Vec<S2StashItem>, String>>,
     },
@@ -558,7 +602,7 @@ impl LoadedSave {
             parameters,
             integrity,
             data: SaveData::Stalker2 {
-                save,
+                save: Box::new(save),
                 inventory,
                 stash_items,
             },
@@ -753,7 +797,7 @@ fn start_load_from<F>(
             return;
         }
         let result = slot().and_then(LoadedSave::read).and_then(|save| {
-            let journal = load_draft_journal(draft_directory.as_path(), &save.source_sha256)?;
+            let journal = load_draft_journal(draft_directory.as_path(), &save.slot.path, &save.source_sha256)?;
             Ok((save, journal))
         });
         let io_error = matches!(&result, Err(Error::System(_)));
@@ -882,7 +926,9 @@ fn start_reload_selected(workspace: &Workspace, cx: &mut Context<'_>) -> Result<
     };
     let path = selected.slot.path.clone();
     let old_sha256 = selected.source_sha256.clone();
-    let Some(generation) = workspace.session.next_draft_generation(&old_sha256) else {
+    let draft_store = DraftStore::for_source(workspace.draft_directory.as_path(), &path);
+    let draft_identity = draft_store.identity_key(&old_sha256)?;
+    let Some(generation) = workspace.session.next_draft_generation(&draft_identity) else {
         cx.status = Some("Не удалось назначить поколение черновика.".to_owned());
         return Ok(());
     };
@@ -930,12 +976,12 @@ fn start_reload_selected(workspace: &Workspace, cx: &mut Context<'_>) -> Result<
         let result: Result<(LoadedSave, DraftJournal)> = (|| {
             {
                 let _guard = write_lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                if session.is_current_draft_generation(&old_sha256, generation) {
-                    DraftStore::new(directory.as_path()).save(empty_journal)?;
+                if session.is_current_draft_generation(&draft_identity, generation) {
+                    DraftStore::for_source(directory.as_path(), &path).save(empty_journal)?;
                 }
             }
             let loaded = LoadedSave::read(slot_for_path(&path)?)?;
-            let journal = load_draft_journal(directory.as_path(), &loaded.source_sha256)?;
+            let journal = load_draft_journal(directory.as_path(), &loaded.slot.path, &loaded.source_sha256)?;
             Ok((loaded, journal))
         })();
         let io_error = matches!(&result, Err(Error::System(_)));
@@ -1014,8 +1060,8 @@ fn default_draft_directory() -> PathBuf {
         .unwrap_or_else(|| std::env::temp_dir().join("StalkerSaveEditorData/drafts"))
 }
 
-fn load_draft_journal(directory: &Path, source_sha256: &str) -> Result<DraftJournal> {
-    if let Some(journal) = DraftStore::new(directory).load(source_sha256)? {
+fn load_draft_journal(directory: &Path, source_path: &Path, source_sha256: &str) -> Result<DraftJournal> {
+    if let Some(journal) = DraftStore::for_source(directory, source_path).load(source_sha256)? {
         return Ok(journal);
     }
     DraftJournal::new(vec![DraftPlan::empty(source_sha256)?], 0)
@@ -1197,11 +1243,33 @@ fn upsert_slot(slots: &mut Vec<SaveSlot>, slot: SaveSlot) {
 fn same_file_path(left: &Path, right: &Path) -> bool {
     #[cfg(windows)]
     {
-        left.to_string_lossy().eq_ignore_ascii_case(&right.to_string_lossy())
+        use std::os::windows::ffi::OsStrExt;
+
+        windows_path_units_equal(left.as_os_str().encode_wide(), right.as_os_str().encode_wide())
     }
     #[cfg(not(windows))]
     {
         left == right
+    }
+}
+
+#[cfg(any(windows, test))]
+fn windows_path_units_equal(left: impl Iterator<Item = u16>, right: impl Iterator<Item = u16>) -> bool {
+    fn fold_ascii(unit: u16) -> u16 {
+        if (b'A' as u16..=b'Z' as u16).contains(&unit) {
+            unit.saturating_add(32)
+        } else {
+            unit
+        }
+    }
+
+    let (mut left, mut right) = (left, right);
+    loop {
+        match (left.next(), right.next()) {
+            (None, None) => return true,
+            (Some(left), Some(right)) if fold_ascii(left) == fold_ascii(right) => {}
+            _ => return false,
+        }
     }
 }
 
@@ -1261,6 +1329,24 @@ fn add_external_file_banner(
     Ok((row, label, reload))
 }
 
+fn add_backup_recovery_banner(
+    tree: &mut crate::widget::Tree,
+    parent: WidgetId,
+) -> Result<(WidgetId, WidgetId, WidgetId)> {
+    let row = style::row(tree, parent)?;
+    let label = style::label(
+        tree,
+        row,
+        "Обнаружена прерванная запись сейва. Проверьте резервную копию перед продолжением.",
+        Text::Note,
+    )?;
+    let open = style::button(tree, row, "Открыть восстановление", Button::Secondary)?;
+    tree.set_visible(row, false)?;
+    tree.set_visible(label, false)?;
+    tree.set_visible(open, false)?;
+    Ok((row, label, open))
+}
+
 /// Save list and selected-save overview.
 struct Overview {
     workspace: Workspace,
@@ -1281,6 +1367,10 @@ struct Overview {
     external_banner_row: Option<WidgetId>,
     external_banner: Option<WidgetId>,
     external_reload: Option<WidgetId>,
+    backup_recovery_row: Option<WidgetId>,
+    backup_recovery_label: Option<WidgetId>,
+    backup_recovery_button: Option<WidgetId>,
+    startup_backup_check_started: bool,
 }
 
 impl Overview {
@@ -1304,7 +1394,42 @@ impl Overview {
             external_banner_row: None,
             external_banner: None,
             external_reload: None,
+            backup_recovery_row: None,
+            backup_recovery_label: None,
+            backup_recovery_button: None,
+            startup_backup_check_started: false,
         }
+    }
+
+    fn startup_backup_check(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        if self.startup_backup_check_started {
+            return Ok(());
+        }
+        let Some(proxy) = cx.proxy.cloned() else {
+            return Ok(());
+        };
+        self.startup_backup_check_started = true;
+        let backup_directory = self.workspace.backup_directory();
+        if let Err(error) = self.workspace.spawn("startup-backup-check", move |context| {
+            if context.is_cancelled() {
+                return;
+            }
+            let result = sse_storage::transaction::list_backups(&backup_directory)
+                .map(|entries| {
+                    entries
+                        .iter()
+                        .filter(|entry| entry.status == sse_storage::transaction::BackupStatus::Interrupted)
+                        .count()
+                })
+                .map_err(|error| error.to_string());
+            let _ = proxy.send(AppMessage::ToScreen(
+                ScreenId::Overview,
+                Box::new(StartupBackupCheck(result)),
+            ));
+        }) {
+            cx.status = Some(format!("Не удалось проверить резервные копии после запуска: {error}"));
+        }
+        Ok(())
     }
 
     fn render(&mut self, cx: &mut Context<'_>) -> Result<()> {
@@ -1479,6 +1604,10 @@ impl Screen for Overview {
         self.external_banner_row = Some(row);
         self.external_banner = Some(banner);
         self.external_reload = Some(reload);
+        let (recovery_row, recovery_label, recovery_button) = add_backup_recovery_banner(cx.tree, host)?;
+        self.backup_recovery_row = Some(recovery_row);
+        self.backup_recovery_label = Some(recovery_label);
+        self.backup_recovery_button = Some(recovery_button);
         let list = style::card(cx.tree, host)?;
         cx.tree.set_style(
             list,
@@ -1608,6 +1737,7 @@ impl Screen for Overview {
 
     fn shown(&mut self, cx: &mut Context<'_>) -> Result<()> {
         self.workspace.poll_tasks();
+        self.startup_backup_check(cx)?;
         if self.workspace.lock().discovery.is_none() {
             start_discovery(&self.workspace, cx);
         }
@@ -1734,6 +1864,12 @@ impl Screen for Overview {
             start_discovery(&self.workspace, cx);
             return Ok(());
         }
+        if clicked.is_some() && clicked == self.backup_recovery_button {
+            if let Some(proxy) = cx.proxy {
+                let _ = proxy.send(AppMessage::OpenBackups);
+            }
+            return Ok(());
+        }
         if clicked.is_some() && clicked == self.external_reload {
             return start_reload_selected(&self.workspace, cx);
         }
@@ -1769,6 +1905,26 @@ impl Screen for Overview {
             }
         }
         if let Message::User(AppMessage::ToScreen(ScreenId::Overview, payload)) = message {
+            if let Some(StartupBackupCheck(Ok(interrupted_count))) = payload.downcast_ref::<StartupBackupCheck>() {
+                let found = *interrupted_count > 0;
+                if let Some(row) = self.backup_recovery_row {
+                    cx.tree.set_visible(row, found)?;
+                }
+                if let Some(label) = self.backup_recovery_label {
+                    cx.tree.set_visible(label, found)?;
+                }
+                if let Some(button) = self.backup_recovery_button {
+                    cx.tree.set_visible(button, found)?;
+                }
+                if found {
+                    cx.status = Some(format!(
+                        "Обнаружена прерванная запись сейва ({}). Откройте восстановление, чтобы проверить копию и продолжить.",
+                        interrupted_count
+                    ));
+                }
+            } else if let Some(StartupBackupCheck(Err(error))) = payload.downcast_ref::<StartupBackupCheck>() {
+                cx.status = Some(format!("Не удалось проверить резервные копии после запуска: {error}"));
+            }
             if let Some(refresh) = payload.downcast_ref::<RefreshOverview>() {
                 start_discovery(&self.workspace, cx);
                 if let Some(path) = refresh.path.clone() {
@@ -3606,9 +3762,11 @@ impl Inventory {
             return Ok(());
         };
         let request_id = operation_guard.id();
+        let draft_identity = DraftStore::for_source(self.workspace.draft_directory.as_path(), &selected.slot.path)
+            .identity_key(&source_sha256)?;
         let draft_generation = session
-            .draft_generation(&source_sha256)
-            .or_else(|| session.next_draft_generation(&source_sha256));
+            .draft_generation(&draft_identity)
+            .or_else(|| session.next_draft_generation(&draft_identity));
         let Some(draft_generation) = draft_generation else {
             cx.status = Some("Не удалось назначить поколение черновика.".to_owned());
             return Ok(());
@@ -3632,6 +3790,7 @@ impl Inventory {
                     request_id,
                     draft_generation,
                     source_path,
+                    draft_identity,
                     source_sha256,
                     result,
                 }),
@@ -3684,6 +3843,7 @@ struct SaveFinished {
     request_id: sse_app::SaveOperationId,
     draft_generation: sse_app::DraftGeneration,
     source_path: PathBuf,
+    draft_identity: String,
     source_sha256: String,
     result: std::result::Result<(Arc<LoadedSave>, String), String>,
 }
@@ -3753,16 +3913,15 @@ fn commit_save_edits_to(
         crc_status,
         format,
     );
-    Ok((
-        Arc::new(reloaded),
-        format!(
-            "Сохранено успешно. Backup: {}",
-            receipt.backup_path.file_name().map_or_else(
-                || receipt.backup_path.display().to_string(),
-                |name| name.to_string_lossy().into_owned()
-            )
-        ),
-    ))
+    let backup_name = receipt.backup_path.file_name().map_or_else(
+        || receipt.backup_path.display().to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    let mut save_message = format!("Сохранено успешно. Backup: {backup_name}");
+    if let Some(warning) = receipt.maintenance_warning.as_deref() {
+        save_message.push_str(&format!(" Ротация старых копий не завершена: {warning}"));
+    }
+    Ok((Arc::new(reloaded), save_message))
 }
 
 #[cfg(test)]
@@ -4811,25 +4970,18 @@ impl Screen for Inventory {
                             let _ = cx.tree.close_dialog()?;
                             self.start_save_write(cx, request)?;
                         }
-                        Ok(true) => {
+                        Ok(true) | Err(_) => {
+                            let Some((text, continue_label)) = process_check_prompt(result) else {
+                                return Ok(());
+                            };
                             self.process_check_complete = true;
                             if let Some(description) = self.process_description {
-                                cx.tree.set_text(description, SAVE_WHILE_GAME_RUNNING_WARNING)?;
+                                cx.tree.set_text(description, &text)?;
                             }
                             if let Some(continue_button) = self.process_continue {
-                                cx.tree.set_text(continue_button, "Всё равно сохранить")?;
+                                cx.tree.set_text(continue_button, continue_label)?;
                                 cx.tree.set_enabled(continue_button, true)?;
                             }
-                            if let Some(status) = self.status {
-                                cx.tree.set_text(status, SAVE_WHILE_GAME_RUNNING_WARNING)?;
-                            }
-                            cx.status = Some(SAVE_WHILE_GAME_RUNNING_WARNING.to_owned());
-                        }
-                        Err(error) => {
-                            self.pending_save_request = None;
-                            self.process_check_complete = false;
-                            let _ = cx.tree.close_dialog()?;
-                            let text = format!("Не удалось проверить запущенную игру; сохранение отменено: {error}");
                             if let Some(status) = self.status {
                                 cx.tree.set_text(status, &text)?;
                             }
@@ -5342,6 +5494,7 @@ impl Screen for Inventory {
                 request_id,
                 draft_generation,
                 source_path,
+                draft_identity,
                 source_sha256,
                 result,
             }) = payload.downcast_ref::<SaveFinished>()
@@ -5376,7 +5529,7 @@ impl Screen for Inventory {
                         let old_draft_is_current = self
                             .workspace
                             .session
-                            .clear_draft_if_current(source_sha256, *draft_generation);
+                            .clear_draft_if_current(draft_identity, *draft_generation);
                         if old_draft_is_current {
                             cx.app.discard_draft(source_sha256);
                         }
@@ -6589,7 +6742,7 @@ mod tests {
     use super::{
         add_external_file_banner, commit_save_edits_to, prepare_save_edits, prepare_xray_edits, AddRequest,
         DraftJournal, DraftPlan, DraftStore, Inventory, ItemHandle, LoadFinished, LoadedSave, Overview,
-        PendingInventoryEdits, S2Save, SaveBuffer, SaveSlot, Workspace,
+        PendingInventoryEdits, S2Save, SaveBuffer, SaveSlot, StartupBackupCheck, Workspace,
     };
     use crate::event_loop::{channel_pair, Message, WindowEvent};
     use crate::glyphs::Fonts;
@@ -6608,6 +6761,38 @@ mod tests {
     use std::time::UNIX_EPOCH;
 
     static NEXT_TEMP_DIRECTORY: AtomicU64 = AtomicU64::new(1);
+
+    #[test]
+    fn windows_path_comparison_does_not_merge_distinct_unpaired_surrogates() {
+        assert!(!super::windows_path_units_equal(
+            [0xd800].into_iter(),
+            [0xd801].into_iter()
+        ));
+    }
+
+    #[test]
+    fn windows_path_comparison_keeps_ascii_case_insensitive_matching() {
+        assert!(super::windows_path_units_equal(
+            [
+                b'C' as u16,
+                b'\\' as u16,
+                b'S' as u16,
+                b'a' as u16,
+                b'v' as u16,
+                b'e' as u16
+            ]
+            .into_iter(),
+            [
+                b'c' as u16,
+                b'\\' as u16,
+                b's' as u16,
+                b'a' as u16,
+                b'v' as u16,
+                b'e' as u16
+            ]
+            .into_iter(),
+        ));
+    }
 
     #[test]
     fn save_library_and_overview_dates_match_reference_patterns() {
@@ -7623,7 +7808,7 @@ mod tests {
             .ok_or_else(|| Error::damaged("X-Ray write did not create a backup journal"))?;
         let xray_journal = fs::read_to_string(xray_backup.journal_path)?;
         assert!(xray_journal.contains(&format!(
-            "\"operation\":{{\"mode\":\"replace\",\"money\":{xray_money},\"stack_count\":0}}"
+            "\"operation\":{{\"mode\":\"replace\",\"money\":{xray_money},\"stack_count\":0,\"move_count\":0,\"detach_count\":0,\"attach_count\":0,\"raw_count\":0,\"add_count\":0,\"durability_count\":0,\"upgrade_count\":0,\"relation_count\":0,\"player_faction\":false}}"
         )));
 
         let xray_stack_source =
@@ -7658,7 +7843,7 @@ mod tests {
             .ok_or_else(|| Error::damaged("X-Ray stack write did not create a backup journal"))?;
         let stack_journal = fs::read_to_string(stack_journal.journal_path)?;
         assert!(stack_journal.contains(&format!(
-            "\"operation\":{{\"mode\":\"replace\",\"money\":{xray_stack_money},\"stack_count\":1}}"
+            "\"operation\":{{\"mode\":\"replace\",\"money\":{xray_stack_money},\"stack_count\":1,\"move_count\":0,\"detach_count\":0,\"attach_count\":0,\"raw_count\":0,\"add_count\":0,\"durability_count\":0,\"upgrade_count\":0,\"relation_count\":0,\"player_faction\":false}}"
         )));
 
         let s2_source = include_bytes!("../../../../fixtures/synthetic/writer-s2-stacks/s2-stacks-source.sav");
@@ -7758,6 +7943,94 @@ mod tests {
     }
 
     #[test]
+    fn startup_interrupted_backup_check_offers_recovery() -> sse_core::Result<()> {
+        let temp = TempDirectory::new();
+        let saves = temp.0.join("saves");
+        let backups = temp.0.join("backups");
+        fs::create_dir_all(&saves)?;
+        let source = saves.join("slot.sav");
+        let original = include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-soc-source.sav");
+        let replacement = include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-soc-expected.sav");
+        fs::write(&source, original)?;
+        let receipt = sse_storage::transaction::replace_transaction(
+            &source,
+            &sse_codecs::sha256::sha256_hex(original),
+            replacement,
+            &backups,
+        )?;
+        let verified = fs::read_to_string(&receipt.journal_path)?;
+        fs::write(
+            &receipt.journal_path,
+            verified.replace("\"status\":\"verified\"", "\"status\":\"prepared\""),
+        )?;
+
+        let workspace = Workspace::with_paths(temp.0.join("drafts"), backups);
+        let mut overview = Overview::new(workspace);
+        let (proxy, receiver) = channel_pair::<AppMessage>();
+        let mut app = sse_app::state::AppState::new();
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        {
+            let mut cx = Context {
+                tree: &mut tree,
+                proxy: Some(&proxy),
+                status: None,
+                app: &mut app,
+            };
+            overview.build(&mut cx, host)?;
+            overview.startup_backup_check(&mut cx)?;
+        }
+
+        let message = receiver
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .map_err(|error| Error::System(error.to_string()))?;
+        let result = match &message {
+            Message::User(AppMessage::ToScreen(ScreenId::Overview, payload)) => {
+                payload.downcast_ref::<StartupBackupCheck>()
+            }
+            _ => None,
+        };
+        assert!(result.is_some(), "unexpected background message: {message:?}");
+        {
+            let mut cx = Context {
+                tree: &mut tree,
+                proxy: Some(&proxy),
+                status: None,
+                app: &mut app,
+            };
+            overview.message(&mut cx, &message, None)?;
+            assert!(cx
+                .status
+                .as_deref()
+                .is_some_and(|status| status.starts_with("Обнаружена прерванная запись сейва (1).")));
+        }
+        let button = overview
+            .backup_recovery_button
+            .ok_or_else(|| Error::damaged("recovery button was not built"))?;
+        assert!(tree.is_visible(button));
+        {
+            let mut cx = Context {
+                tree: &mut tree,
+                proxy: Some(&proxy),
+                status: None,
+                app: &mut app,
+            };
+            overview.message(&mut cx, &Message::User(AppMessage::Tick(0)), Some(button))?;
+        }
+        assert!(matches!(
+            receiver.recv_timeout(std::time::Duration::from_secs(1)),
+            Ok(Message::User(AppMessage::OpenBackups))
+        ));
+        Ok(())
+    }
+
+    #[test]
     fn inventory_draft_persists_and_global_undo_redo_updates_the_selected_save() -> sse_core::Result<()> {
         let temp = TempDirectory::new();
         let draft_directory = temp.0.join("drafts");
@@ -7805,7 +8078,7 @@ mod tests {
             cx.app.draft(&source_sha256).and_then(|draft| draft.money),
             Some(original_money.saturating_add(77))
         );
-        assert!(DraftStore::new(&draft_directory)
+        assert!(DraftStore::for_source(&draft_directory, "fixture.sav")
             .load(&source_sha256)?
             .is_some_and(|journal| journal.current().and_then(|draft| draft.money) == Some(original_money + 77)));
 
@@ -7814,7 +8087,9 @@ mod tests {
             .recv_timeout(std::time::Duration::from_secs(5))
             .map_err(|error| Error::System(format!("draft undo persistence timed out: {error}")))?;
         assert_eq!(cx.app.draft(&source_sha256).and_then(|draft| draft.money), None);
-        assert!(DraftStore::new(&draft_directory).load(&source_sha256)?.is_none());
+        assert!(DraftStore::for_source(&draft_directory, "fixture.sav")
+            .load(&source_sha256)?
+            .is_none());
 
         inventory.editor_action(super::EditorAction::Redo, &mut cx)?;
         let _ = receiver
@@ -7902,5 +8177,17 @@ mod tests {
         assert_eq!(super::xray_inventory_category("Артефакт", "af_medusa"), "АРТЕФАКТЫ");
         assert_eq!(super::s2_inventory_category(5, Some("ammo")), "БОЕПРИПАСЫ");
         assert_eq!(super::s2_inventory_category(3, None), "ПРОЧЕЕ");
+    }
+
+    #[test]
+    fn process_enumeration_error_requires_explicit_save_confirmation() {
+        assert_eq!(
+            super::process_check_prompt(&Err("permission denied".to_owned())),
+            Some((
+                "Не удалось проверить запущенную игру: permission denied. Сохранение не проверено.".to_owned(),
+                "Сохранить всё равно"
+            ))
+        );
+        assert_eq!(super::process_check_prompt(&Ok(false)), None);
     }
 }

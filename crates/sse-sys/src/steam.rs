@@ -52,12 +52,12 @@ impl SteamLibrary {
         }
         let handle = LibraryHandle::load(path)?;
         let init_classic = handle.symbol(c"SteamAPI_Init").map(|symbol| {
-            // SAFETY: ACCEPTANCE.md Part IV §3 invariants: this exact exported symbol has the C ABI `bool SteamAPI_Init(void)`;
+            // SAFETY: STEAM-FFI-SPEC §3 invariants: this exact exported symbol has the C ABI `bool SteamAPI_Init(void)`;
             // Steam's C++ bool is one byte, represented here as u8.
             unsafe { std::mem::transmute::<*mut c_void, InitClassicFn>(symbol.as_ptr()) }
         });
         let init_flat = handle.symbol(c"SteamAPI_InitFlat").map(|symbol| {
-            // SAFETY: ACCEPTANCE.md Part IV §3 keeps the exact InitFlat ABI call within sse-sys.
+            // SAFETY: AGENTS.md confines Steam ABI calls to sse-sys.
             // The SteamErrMsg output pointer is a writable buffer supplied by the call below.
             unsafe { std::mem::transmute::<*mut c_void, InitFlatFn>(symbol.as_ptr()) }
         });
@@ -84,7 +84,7 @@ impl SteamLibrary {
                 let initialize = self
                     .init_classic
                     .ok_or_else(|| Error::System("SteamAPI_Init export disappeared".to_owned()))?;
-                // SAFETY: ACCEPTANCE.md Part IV §3 invariants: the function pointer was resolved from this live library handle and has the
+                // SAFETY: STEAM-FFI-SPEC §3 invariants: the function pointer was resolved from this live library handle and has the
                 // exact `SteamAPI_Init` ABI. The worker's parent supplies SteamAppId and SteamGameId.
                 unsafe { initialize() != 0 }
             }
@@ -92,7 +92,7 @@ impl SteamLibrary {
                 let initialize = self
                     .init_flat
                     .ok_or_else(|| Error::System("SteamAPI_InitFlat export disappeared".to_owned()))?;
-                // SAFETY: ACCEPTANCE.md Part IV §2 specifies `SteamAPI_InitFlat(SteamErrMsg*) -> int` with zero as success. The function
+                // SAFETY: STEAM-FFI-SPEC §2 specifies `SteamAPI_InitFlat(SteamErrMsg*) -> int` with zero as success. The function
                 // pointer was resolved from this live library handle, and the call receives a live 1024-byte error buffer. The installed
                 // SDK ABI is not runtime-verified in this environment.
                 let mut error_message = [0_u8; 1024];
@@ -118,7 +118,7 @@ pub struct SteamSession<'library> {
 impl SteamSession<'_> {
     /// Pumps callbacks on the current worker thread.
     pub fn run_callbacks(&self) {
-        // SAFETY: ACCEPTANCE.md Part IV §3 invariants: the session guarantees successful initialization and keeps the library loaded.
+        // SAFETY: STEAM-FFI-SPEC §3 invariants: the session guarantees successful initialization and keeps the library loaded.
         unsafe { (self.library.run_callbacks)() };
     }
 
@@ -141,9 +141,9 @@ impl SteamSession<'_> {
             .handle
             .symbol(&symbol_name)
             .ok_or_else(|| Error::System("Steam ISteamRemoteStorage accessor was not found.".to_owned()))?;
-        // SAFETY: ACCEPTANCE.md Part IV §3 invariants: this versioned export is a zero-argument accessor returning its opaque interface pointer.
+        // SAFETY: STEAM-FFI-SPEC §3 invariants: this versioned export is a zero-argument accessor returning its opaque interface pointer.
         let accessor: AccessorFn = unsafe { std::mem::transmute(symbol.as_ptr()) };
-        // SAFETY: ACCEPTANCE.md Part IV §3 invariants: Steam has been initialized in this session and the accessor remains in its loaded library.
+        // SAFETY: STEAM-FFI-SPEC §3 invariants: Steam has been initialized in this session and the accessor remains in its loaded library.
         let interface = unsafe { accessor() };
         let interface = NonNull::new(interface)
             .ok_or_else(|| Error::System("Steam ISteamRemoteStorage interface is unavailable.".to_owned()))?;
@@ -162,9 +162,9 @@ impl SteamSession<'_> {
             let name = format!("SteamAPI_SteamUserStats_v{version:03}");
             let symbol_name = CString::new(name).map_err(|_| Error::Refused("invalid Steam symbol name".to_owned()))?;
             if let Some(symbol) = self.library.handle.symbol(&symbol_name) {
-                // SAFETY: ACCEPTANCE.md Part IV §3 invariants: this versioned export is a zero-argument accessor returning its opaque interface pointer.
+                // SAFETY: STEAM-FFI-SPEC §3 invariants: this versioned export is a zero-argument accessor returning its opaque interface pointer.
                 let accessor: AccessorFn = unsafe { std::mem::transmute(symbol.as_ptr()) };
-                // SAFETY: ACCEPTANCE.md Part IV §3 invariants: Steam has been initialized in this session and the accessor remains in its loaded library.
+                // SAFETY: STEAM-FFI-SPEC §3 invariants: Steam has been initialized in this session and the accessor remains in its loaded library.
                 let interface = unsafe { accessor() };
                 let interface = NonNull::new(interface)
                     .ok_or_else(|| Error::System("Steam ISteamUserStats interface is unavailable.".to_owned()))?;
@@ -186,7 +186,7 @@ impl SteamSession<'_> {
 
 impl Drop for SteamSession<'_> {
     fn drop(&mut self) {
-        // SAFETY: ACCEPTANCE.md Part IV §3 invariants: this guard is created only after one successful init and is dropped once before the library borrow ends.
+        // SAFETY: STEAM-FFI-SPEC §3 invariants: this guard is created only after one successful init and is dropped once before the library borrow ends.
         unsafe { (self.library.shutdown)() };
     }
 }
@@ -222,7 +222,7 @@ impl RemoteStorage<'_, '_> {
     /// Lists files newest first, skipping entries with invalid names or negative reported sizes.
     pub fn list_files(&self) -> Result<Vec<RemoteStorageFile>> {
         self.session.run_callbacks();
-        // SAFETY: ACCEPTANCE.md Part IV §3 invariants: the interface came from a non-null versioned accessor after init and is tied to the session.
+        // SAFETY: STEAM-FFI-SPEC §3 invariants: the interface came from a non-null versioned accessor after init and is tied to the session.
         let count = unsafe { (self.api.get_file_count)(self.interface.as_ptr()) };
         if !(0..=MAXIMUM_REMOTE_FILES).contains(&count) {
             return Err(Error::System(
@@ -239,7 +239,7 @@ impl RemoteStorage<'_, '_> {
             let index = i32::try_from(index)
                 .map_err(|_| Error::System("Steam RemoteStorage file index is not representable".to_owned()))?;
             let mut reported_size = 0_i32;
-            // SAFETY: ACCEPTANCE.md Part IV §3 invariants: index is within the validated file count and reported_size is a valid output pointer.
+            // SAFETY: STEAM-FFI-SPEC §3 invariants: index is within the validated file count and reported_size is a valid output pointer.
             let name_pointer =
                 unsafe { (self.api.get_file_name_and_size)(self.interface.as_ptr(), index, &mut reported_size) };
             if name_pointer.is_null() || reported_size < 0 {
@@ -251,11 +251,11 @@ impl RemoteStorage<'_, '_> {
             }
             let remote_name = CString::new(name.as_bytes())
                 .map_err(|_| Error::System("Steam returned a RemoteStorage name containing NUL".to_owned()))?;
-            // SAFETY: ACCEPTANCE.md Part IV §3 invariants: remote_name is NUL-terminated and remains alive for each synchronous Steam call.
+            // SAFETY: STEAM-FFI-SPEC §3 invariants: remote_name is NUL-terminated and remains alive for each synchronous Steam call.
             let timestamp = unsafe { (self.api.get_file_timestamp)(self.interface.as_ptr(), remote_name.as_ptr()) };
-            // SAFETY: ACCEPTANCE.md Part IV §3 invariants: same checked session/interface and live CString invariant as above.
+            // SAFETY: STEAM-FFI-SPEC §3 invariants: same checked session/interface and live CString invariant as above.
             let persisted = unsafe { (self.api.file_persisted)(self.interface.as_ptr(), remote_name.as_ptr()) != 0 };
-            // SAFETY: ACCEPTANCE.md Part IV §3 invariants: same checked session/interface and live CString invariant as above.
+            // SAFETY: STEAM-FFI-SPEC §3 invariants: same checked session/interface and live CString invariant as above.
             let exists = unsafe { (self.api.file_exists)(self.interface.as_ptr(), remote_name.as_ptr()) != 0 };
             files.push(RemoteStorageFile {
                 name,
@@ -278,11 +278,11 @@ impl RemoteStorage<'_, '_> {
     pub fn read_file(&self, name: &str) -> Result<Vec<u8>> {
         let name = steam_name(name)?;
         self.session.run_callbacks();
-        // SAFETY: ACCEPTANCE.md Part IV §3 invariants: interface is valid for this session and name is a live NUL-terminated UTF-8 string.
+        // SAFETY: STEAM-FFI-SPEC §3 invariants: interface is valid for this session and name is a live NUL-terminated UTF-8 string.
         if unsafe { (self.api.file_exists)(self.interface.as_ptr(), name.as_ptr()) == 0 } {
             return Err(Error::System("Steam RemoteStorage file does not exist.".to_owned()));
         }
-        // SAFETY: ACCEPTANCE.md Part IV §3 invariants: same valid interface and string lifetime as the preceding call.
+        // SAFETY: STEAM-FFI-SPEC §3 invariants: same valid interface and string lifetime as the preceding call.
         let reported_size = unsafe { (self.api.get_file_size)(self.interface.as_ptr(), name.as_ptr()) };
         let size = usize::try_from(reported_size)
             .map_err(|_| Error::System("Steam RemoteStorage returned an invalid or oversized file.".to_owned()))?;
@@ -297,7 +297,7 @@ impl RemoteStorage<'_, '_> {
         data.try_reserve_exact(size)
             .map_err(|error| Error::System(format!("Steam RemoteStorage read allocation failed: {error}")))?;
         data.resize(size, 0);
-        // SAFETY: ACCEPTANCE.md Part IV §3 invariants: data has exactly size writable bytes, size_i32 is checked, and the interface/name live through call.
+        // SAFETY: STEAM-FFI-SPEC §3 invariants: data has exactly size writable bytes, size_i32 is checked, and the interface/name live through call.
         let read = unsafe {
             (self.api.file_read)(
                 self.interface.as_ptr(),
@@ -317,7 +317,7 @@ impl RemoteStorage<'_, '_> {
     /// Reports whether Steam has persisted this remote file.
     pub fn file_persisted(&self, name: &str) -> Result<bool> {
         let name = steam_name(name)?;
-        // SAFETY: ACCEPTANCE.md Part IV §3 invariants: interface is valid for this session and name is a live NUL-terminated UTF-8 string.
+        // SAFETY: STEAM-FFI-SPEC §3 invariants: interface is valid for this session and name is a live NUL-terminated UTF-8 string.
         Ok(unsafe { (self.api.file_persisted)(self.interface.as_ptr(), name.as_ptr()) != 0 })
     }
 
@@ -331,7 +331,7 @@ impl RemoteStorage<'_, '_> {
         }
         let size = i32::try_from(data.len())
             .map_err(|_| Error::Refused("Steam RemoteStorage write size is not representable".to_owned()))?;
-        // SAFETY: ACCEPTANCE.md Part IV §3 invariants: interface is valid for this session; name and data remain valid for the synchronous call.
+        // SAFETY: STEAM-FFI-SPEC §3 invariants: interface is valid for this session; name and data remain valid for the synchronous call.
         Ok(unsafe { (self.api.file_write)(self.interface.as_ptr(), name.as_ptr(), data.as_ptr().cast(), size) != 0 })
     }
 }
@@ -405,7 +405,7 @@ impl UserStats<'_, '_> {
             .try_reserve_exact(capacity)
             .map_err(|error| Error::System(format!("Steam achievement list allocation failed: {error}")))?;
         for index in 0..count {
-            // SAFETY: ACCEPTANCE.md Part IV §3 invariants: index is less than the validated achievement count and the interface lives with the session.
+            // SAFETY: STEAM-FFI-SPEC §3 invariants: index is less than the validated achievement count and the interface lives with the session.
             let name_pointer = unsafe { (self.api.get_achievement_name)(self.interface.as_ptr(), index) };
             if name_pointer.is_null() {
                 continue;
@@ -417,7 +417,7 @@ impl UserStats<'_, '_> {
             let api_name = steam_name(&name)?;
             let mut achieved = 0_u8;
             let mut unlock_time = 0_u32;
-            // SAFETY: ACCEPTANCE.md Part IV §3 invariants: api_name is NUL-terminated and both output pointers are valid for this synchronous call.
+            // SAFETY: STEAM-FFI-SPEC §3 invariants: api_name is NUL-terminated and both output pointers are valid for this synchronous call.
             let returned = unsafe {
                 (self.api.get_achievement_state)(
                     self.interface.as_ptr(),
@@ -454,23 +454,23 @@ impl UserStats<'_, '_> {
         } else {
             self.api.clear_achievement
         };
-        // SAFETY: ACCEPTANCE.md Part IV §3 invariants: interface is valid for this session and name remains NUL-terminated through the call.
+        // SAFETY: STEAM-FFI-SPEC §3 invariants: interface is valid for this session and name remains NUL-terminated through the call.
         Ok(unsafe { function(self.interface.as_ptr(), name.as_ptr()) != 0 })
     }
 
     /// Persists the pending achievement changes through Steam.
     pub fn store_stats(&self) -> bool {
-        // SAFETY: ACCEPTANCE.md Part IV §3 invariants: interface is valid for this session and the function takes no caller-owned pointers.
+        // SAFETY: STEAM-FFI-SPEC §3 invariants: interface is valid for this session and the function takes no caller-owned pointers.
         unsafe { (self.api.store_stats)(self.interface.as_ptr()) != 0 }
     }
 
     fn count(&self) -> u32 {
-        // SAFETY: ACCEPTANCE.md Part IV §3 invariants: interface came from a non-null versioned accessor after init and is tied to the session.
+        // SAFETY: STEAM-FFI-SPEC §3 invariants: interface came from a non-null versioned accessor after init and is tied to the session.
         unsafe { (self.api.get_num_achievements)(self.interface.as_ptr()) }
     }
 
     fn attribute(&self, name: &CStr, key: &CStr) -> String {
-        // SAFETY: ACCEPTANCE.md Part IV §3 invariants: both strings are static or session-owned NUL-terminated values and are live for the call.
+        // SAFETY: STEAM-FFI-SPEC §3 invariants: both strings are static or session-owned NUL-terminated values and are live for the call.
         let pointer =
             unsafe { (self.api.get_achievement_attribute)(self.interface.as_ptr(), name.as_ptr(), key.as_ptr()) };
         copy_steam_string(pointer)
@@ -512,7 +512,7 @@ fn required_function<T: Copy>(handle: &LibraryHandle, name: &CStr) -> Result<T> 
     if std::mem::size_of::<T>() != std::mem::size_of::<*mut c_void>() {
         return Err(Error::System("Steam function pointer size is not supported".to_owned()));
     }
-    // SAFETY: ACCEPTANCE.md Part IV §3 invariants: all callers supply the exact C ABI function-pointer type documented for this symbol;
+    // SAFETY: STEAM-FFI-SPEC §3 invariants: all callers supply the exact C ABI function-pointer type documented for this symbol;
     // the pointer is non-null and belongs to the retained library handle.
     Ok(unsafe { std::mem::transmute_copy(&symbol.as_ptr()) })
 }
@@ -525,7 +525,7 @@ fn copy_steam_string(pointer: *const c_char) -> String {
     if pointer.is_null() {
         return String::new();
     }
-    // SAFETY: ACCEPTANCE.md Part IV §3 invariants: Steam returns null or a NUL-terminated string owned by the library; this value is copied
+    // SAFETY: STEAM-FFI-SPEC §3 invariants: Steam returns null or a NUL-terminated string owned by the library; this value is copied
     // immediately before another Steam call can invalidate its temporary storage.
     unsafe { CStr::from_ptr(pointer) }.to_string_lossy().into_owned()
 }
@@ -584,7 +584,7 @@ mod platform {
 
     #[cfg(target_os = "linux")]
     #[link(name = "dl")]
-    // SAFETY: ACCEPTANCE.md Part IV §3 keeps the platform ABI declarations in sse-sys.
+    // SAFETY: AGENTS.md confines OS ABI declarations to sse-sys.
     unsafe extern "C" {
         fn dlopen(filename: *const c_char, flags: i32) -> *mut c_void;
         fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
@@ -593,7 +593,7 @@ mod platform {
     }
 
     #[cfg(target_os = "macos")]
-    // SAFETY: ACCEPTANCE.md Part IV §3 keeps the platform ABI declarations in sse-sys.
+    // SAFETY: AGENTS.md confines OS ABI declarations to sse-sys.
     unsafe extern "C" {
         fn dlopen(filename: *const c_char, flags: i32) -> *mut c_void;
         fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
@@ -604,30 +604,30 @@ mod platform {
     pub(super) fn load(path: &Path) -> Result<NonNull<c_void>> {
         let bytes = path.as_os_str().as_bytes();
         let path = CString::new(bytes).map_err(|_| Error::Refused("Steam library path contains NUL".to_owned()))?;
-        // SAFETY: ACCEPTANCE.md Part IV §3 invariants: path is absolute and NUL-terminated; RTLD_NOW resolves dependencies before returning
+        // SAFETY: STEAM-FFI-SPEC §3 invariants: path is absolute and NUL-terminated; RTLD_NOW resolves dependencies before returning
         // and RTLD_LOCAL keeps Steam symbols out of the process-wide namespace.
         let handle = unsafe { dlopen(path.as_ptr(), RTLD_NOW | RTLD_LOCAL) };
         NonNull::new(handle).ok_or_else(|| Error::System(format!("Could not load Steam library: {}", last_error())))
     }
 
     pub(super) fn symbol(handle: NonNull<c_void>, name: &CStr) -> Option<NonNull<c_void>> {
-        // SAFETY: ACCEPTANCE.md Part IV §3 invariants: handle is a live dlopen handle and name is a NUL-terminated symbol name.
+        // SAFETY: STEAM-FFI-SPEC §3 invariants: handle is a live dlopen handle and name is a NUL-terminated symbol name.
         let pointer = unsafe { dlsym(handle.as_ptr(), name.as_ptr()) };
         NonNull::new(pointer)
     }
 
     pub(super) fn close(handle: NonNull<c_void>) {
-        // SAFETY: ACCEPTANCE.md Part IV §3 invariants: handle was returned by dlopen and is closed exactly once by LibraryHandle::drop.
+        // SAFETY: STEAM-FFI-SPEC §3 invariants: handle was returned by dlopen and is closed exactly once by LibraryHandle::drop.
         let _ = unsafe { dlclose(handle.as_ptr()) };
     }
 
     fn last_error() -> String {
-        // SAFETY: ACCEPTANCE.md Part IV §3 invariants: dlerror returns a thread-local NUL-terminated diagnostic or null.
+        // SAFETY: STEAM-FFI-SPEC §3 invariants: dlerror returns a thread-local NUL-terminated diagnostic or null.
         let pointer = unsafe { dlerror() };
         if pointer.is_null() {
             "dynamic loader returned no diagnostic".to_owned()
         } else {
-            // SAFETY: ACCEPTANCE.md Part IV §3 invariants: non-null dlerror output is NUL-terminated and is copied before another loader call.
+            // SAFETY: STEAM-FFI-SPEC §3 invariants: non-null dlerror output is NUL-terminated and is copied before another loader call.
             unsafe { CStr::from_ptr(pointer) }.to_string_lossy().into_owned()
         }
     }
@@ -641,7 +641,7 @@ mod platform {
     const LOAD_WITH_ALTERED_SEARCH_PATH: u32 = 0x0000_0008;
 
     #[link(name = "kernel32")]
-    // SAFETY: ACCEPTANCE.md Part IV §3 keeps the platform ABI declarations in sse-sys.
+    // SAFETY: AGENTS.md confines OS ABI declarations to sse-sys.
     unsafe extern "system" {
         fn LoadLibraryExW(filename: *const u16, file: *mut c_void, flags: u32) -> *mut c_void;
         fn GetProcAddress(module: *mut c_void, name: *const u8) -> Option<unsafe extern "system" fn()>;
@@ -654,7 +654,7 @@ mod platform {
             return Err(Error::Refused("Steam library path contains NUL".to_owned()));
         }
         wide.push(0);
-        // SAFETY: ACCEPTANCE.md Part IV §3 invariants: path was checked absolute, wide is terminated UTF-16, null file handle is required,
+        // SAFETY: STEAM-FFI-SPEC §3 invariants: path was checked absolute, wide is terminated UTF-16, null file handle is required,
         // and the altered-search-path flag is used with the full DLL path.
         let handle = unsafe { LoadLibraryExW(wide.as_ptr(), std::ptr::null_mut(), LOAD_WITH_ALTERED_SEARCH_PATH) };
         NonNull::new(handle).ok_or_else(|| {
@@ -666,13 +666,13 @@ mod platform {
     }
 
     pub(super) fn symbol(handle: NonNull<c_void>, name: &CStr) -> Option<NonNull<c_void>> {
-        // SAFETY: ACCEPTANCE.md Part IV §3 invariants: handle is a live LoadLibraryExW module and name is a NUL-terminated ASCII export name.
+        // SAFETY: STEAM-FFI-SPEC §3 invariants: handle is a live LoadLibraryExW module and name is a NUL-terminated ASCII export name.
         let function = unsafe { GetProcAddress(handle.as_ptr(), name.to_bytes_with_nul().as_ptr()) }?;
         NonNull::new(function as *const () as *mut c_void)
     }
 
     pub(super) fn close(handle: NonNull<c_void>) {
-        // SAFETY: ACCEPTANCE.md Part IV §3 invariants: handle was returned by LoadLibraryExW and is freed once by LibraryHandle::drop.
+        // SAFETY: STEAM-FFI-SPEC §3 invariants: handle was returned by LoadLibraryExW and is freed once by LibraryHandle::drop.
         let _ = unsafe { FreeLibrary(handle.as_ptr()) };
     }
 }

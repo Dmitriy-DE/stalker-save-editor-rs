@@ -170,8 +170,8 @@
       ],
       "expected": "xray-placement-cs-ee-expected.sav",
       "expectedRaw": "xray-placement-cs-ee-expected.raw",
-      "expectedRawSha256": "18c2414237b75191564d1c87f40d8edfc6878014ec0b047b020837da10baed97",
-      "expectedSha256": "76f786ff326ca4ae9bfe62a9192af1d8de0a621d49443b966a0903ee37a7235b",
+      "expectedRawSha256": "60a919fb225c123d1f3e6d02b2df82a35f2ca439ecb96b3ecb1359dd11e60b3a",
+      "expectedSha256": "c699e574b1aced052bc76b56227d769697626d8a52a2207416e07e182d3b4902",
       "handle": 13398,
       "releaseId": "stalker-cs-ee",
       "source": "xray-placement-cs-ee-source.sav",
@@ -181,7 +181,7 @@
         "storage": "inventory",
         "type": "ruck"
       },
-      "sourceSha256": "165955ca2919c077b6ea02eb577c4f306413907866d64f2ff77e60eb67730264",
+      "sourceSha256": "f1763a438a85e5be11b67ccfab8866fa4ba4723d2f4da1e57373a1e48e666669",
       "targetPlacement": {
         "baseSlot": 3,
         "slot": 3,
@@ -202,8 +202,8 @@
       ],
       "expected": "xray-placement-cop-ee-expected.sav",
       "expectedRaw": "xray-placement-cop-ee-expected.raw",
-      "expectedRawSha256": "7fbe9a0542d8f1dc26ff93e8a285524262ff414fe37f2c28868b16675664a581",
-      "expectedSha256": "d34c84a40289b4a95f7ce49ad3f823f19419be6cb137c08edb8a0b79ee77a0f5",
+      "expectedRawSha256": "bc0e66b0bf648fd54b1697437f4ca35faa08083c60d2da732884e066fa8629f2",
+      "expectedSha256": "e7ebf93f95d3d880c7af552c888f5ad8f72af02b1a73be1e223828a506f93c89",
       "handle": 13398,
       "releaseId": "stalker-cop-ee",
       "source": "xray-placement-cop-ee-source.sav",
@@ -213,7 +213,7 @@
         "storage": "inventory",
         "type": "ruck"
       },
-      "sourceSha256": "033c8960270cefcfa5dea7f0198de3fc8c6a5a8b0e1950e36b953fb536eee22e",
+      "sourceSha256": "e99118de3df18a539b0359affd16dc3b4e31a23a8c4e3960877062a747cccb1c",
       "targetPlacement": {
         "baseSlot": 3,
         "slot": 3,
