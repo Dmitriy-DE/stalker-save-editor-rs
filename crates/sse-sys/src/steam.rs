@@ -1,7 +1,9 @@
 //! Safe dynamic boundary for the Steamworks C ABI.
 
-use std::ffi::{c_char, c_void, CStr, CString};
-use std::path::Path;
+use std::cell::Cell;
+use std::collections::HashMap;
+use std::ffi::{c_char, c_void, CStr, CString, OsStr, OsString};
+use std::path::{Path, PathBuf};
 use std::ptr::NonNull;
 use std::time::{Duration, Instant};
 
@@ -10,6 +12,188 @@ use sse_core::{Error, Result};
 const MAXIMUM_REMOTE_FILES: i32 = 100_000;
 const MAXIMUM_FILE_BYTES: usize = 64 * 1024 * 1024;
 const MAXIMUM_ACHIEVEMENTS: u32 = 100_000;
+
+/// Operating system used when constructing standard Steam installation roots.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SteamRootPlatform {
+    /// Microsoft Windows.
+    Windows,
+    /// Linux distributions, including Steam Flatpak.
+    Linux,
+    /// Apple macOS.
+    MacOS,
+}
+
+/// Builds deterministic Steam roots from injected environment and registry values.
+///
+/// `registry_steam_path` is supplied by the Windows registry reader in this crate. Tests and
+/// save discovery can use the same path composition without consulting the host registry.
+#[must_use]
+pub fn steam_root_candidates(
+    platform: SteamRootPlatform,
+    home: &Path,
+    local_app_data: &Path,
+    environment: &HashMap<OsString, OsString>,
+    registry_steam_path: Option<&Path>,
+) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(path) = environment_path(environment, "STEAM_DIR", platform) {
+        push_steam_root(&mut roots, path, platform);
+    }
+    match platform {
+        SteamRootPlatform::Windows => {
+            if let Some(path) = registry_steam_path {
+                push_steam_root(&mut roots, path.to_path_buf(), platform);
+            }
+            for variable in ["ProgramFiles(x86)", "ProgramFiles"] {
+                if let Some(base) = environment_path(environment, variable, platform) {
+                    push_steam_root(&mut roots, base.join("Steam"), platform);
+                }
+            }
+            push_steam_root(&mut roots, local_app_data.join("Programs").join("Steam"), platform);
+        }
+        SteamRootPlatform::Linux => {
+            for path in [
+                home.join(".steam").join("steam"),
+                home.join(".steam").join("root"),
+                home.join(".local").join("share").join("Steam"),
+                home.join(".var")
+                    .join("app")
+                    .join("com.valvesoftware.Steam")
+                    .join("data")
+                    .join("Steam"),
+                PathBuf::from("/usr/lib/steam"),
+                PathBuf::from("/usr/lib/steam/steam"),
+            ] {
+                push_steam_root(&mut roots, path, platform);
+            }
+        }
+        SteamRootPlatform::MacOS => {
+            push_steam_root(
+                &mut roots,
+                home.join("Library").join("Application Support").join("Steam"),
+                platform,
+            );
+        }
+    }
+    roots
+}
+
+/// Returns the platform-default Steam installation roots, including the Windows registry path.
+#[must_use]
+pub fn default_steam_roots() -> Vec<PathBuf> {
+    let environment: HashMap<OsString, OsString> = std::env::vars_os().collect();
+    let platform = if cfg!(windows) {
+        SteamRootPlatform::Windows
+    } else if cfg!(target_os = "macos") {
+        SteamRootPlatform::MacOS
+    } else {
+        SteamRootPlatform::Linux
+    };
+    let home = environment_path(&environment, "HOME", platform)
+        .or_else(|| environment_path(&environment, "USERPROFILE", platform))
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_default();
+    let local_app_data =
+        environment_path(&environment, "LOCALAPPDATA", platform).unwrap_or_else(|| home.join("AppData").join("Local"));
+    let registry_path = windows_steam_path_from_registry();
+    steam_root_candidates(platform, &home, &local_app_data, &environment, registry_path.as_deref())
+}
+
+fn environment_path(
+    environment: &HashMap<OsString, OsString>,
+    name: &str,
+    platform: SteamRootPlatform,
+) -> Option<PathBuf> {
+    environment
+        .iter()
+        .find(|(key, _)| match platform {
+            SteamRootPlatform::Windows => key.to_string_lossy().eq_ignore_ascii_case(name),
+            SteamRootPlatform::Linux | SteamRootPlatform::MacOS => key.as_os_str() == OsStr::new(name),
+        })
+        .map(|(_, value)| PathBuf::from(value))
+        .filter(|path| !path.as_os_str().is_empty() && !path.to_string_lossy().trim().is_empty())
+}
+
+fn push_steam_root(roots: &mut Vec<PathBuf>, candidate: PathBuf, platform: SteamRootPlatform) {
+    let candidate_text = candidate.as_os_str().to_string_lossy();
+    if candidate_text.trim().is_empty() {
+        return;
+    }
+    let already_present = roots.iter().any(|root| {
+        if platform == SteamRootPlatform::Windows {
+            root.as_os_str().to_string_lossy().eq_ignore_ascii_case(&candidate_text)
+        } else {
+            root == &candidate
+        }
+    });
+    if !already_present {
+        roots.push(candidate);
+    }
+}
+
+#[cfg(windows)]
+fn windows_steam_path_from_registry() -> Option<PathBuf> {
+    use std::os::windows::ffi::OsStringExt;
+
+    const REG_SZ: u32 = 1;
+    const REG_EXPAND_SZ: u32 = 2;
+    const RRF_RT_REG_SZ: u32 = 0x0000_0002;
+    const RRF_RT_REG_EXPAND_SZ: u32 = 0x0000_0004;
+    const ERROR_SUCCESS: i32 = 0;
+    const MAXIMUM_REGISTRY_PATH_UNITS: usize = 32_768;
+    const MAXIMUM_REGISTRY_PATH_BYTES: u32 = 65_536;
+
+    #[link(name = "advapi32")]
+    // SAFETY: The declaration matches the Windows RegGetValueW system ABI.
+    unsafe extern "system" {
+        fn RegGetValueW(
+            key: *mut c_void,
+            sub_key: *const u16,
+            value_name: *const u16,
+            flags: u32,
+            value_type: *mut u32,
+            data: *mut c_void,
+            data_bytes: *mut u32,
+        ) -> i32;
+    }
+
+    let sub_key: Vec<u16> = r"Software\Valve\Steam".encode_utf16().chain([0]).collect();
+    let value_name: Vec<u16> = "SteamPath".encode_utf16().chain([0]).collect();
+    let mut data = vec![0_u16; MAXIMUM_REGISTRY_PATH_UNITS];
+    let mut data_bytes = MAXIMUM_REGISTRY_PATH_BYTES;
+    let mut value_type = 0_u32;
+    // SAFETY: The predefined current-user handle is valid, UTF-16 names are NUL-terminated, and
+    // `data` and its byte count remain writable for this synchronous registry query.
+    let status = unsafe {
+        RegGetValueW(
+            (-2_147_483_647_isize) as *mut c_void,
+            sub_key.as_ptr(),
+            value_name.as_ptr(),
+            RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ,
+            &mut value_type,
+            data.as_mut_ptr().cast(),
+            &mut data_bytes,
+        )
+    };
+    if status != ERROR_SUCCESS || !matches!(value_type, REG_SZ | REG_EXPAND_SZ) || data_bytes % 2 != 0 {
+        return None;
+    }
+    let units = usize::try_from(data_bytes.checked_div(2)?).ok()?;
+    let value = data.get(..units)?;
+    let length = value.iter().position(|unit| *unit == 0)?;
+    let value = value.get(..length)?;
+    if value.is_empty() {
+        return None;
+    }
+    let path = PathBuf::from(OsString::from_wide(value));
+    path.is_absolute().then_some(path)
+}
+
+#[cfg(not(windows))]
+fn windows_steam_path_from_registry() -> Option<PathBuf> {
+    None
+}
 
 type InitClassicFn = unsafe extern "C" fn() -> u8;
 type InitFlatFn = unsafe extern "C" fn(*mut c_char) -> i32;
@@ -77,6 +261,45 @@ impl SteamLibrary {
         })
     }
 
+    /// Checks that this library exports the RemoteStorage interface and functions used by the editor.
+    pub fn validate_remote_storage_exports(&self) -> Result<()> {
+        let mut available = Vec::new();
+        for version in 14_u8..=20_u8 {
+            let name = format!("SteamAPI_SteamRemoteStorage_v{version:03}");
+            let symbol_name = CString::new(name).map_err(|_| Error::Refused("invalid Steam symbol name".to_owned()))?;
+            if self.handle.symbol(&symbol_name).is_some() {
+                available.push(version);
+            }
+        }
+        if first_remote_storage_version(&available).is_none() {
+            return Err(Error::System(
+                "Steam ISteamRemoteStorage accessor was not found.".to_owned(),
+            ));
+        }
+        let _api = load_remote_storage_api(&self.handle)?;
+        Ok(())
+    }
+
+    /// Checks that this library exports the UserStats interface and functions used by the editor.
+    pub fn validate_user_stats_exports(&self) -> Result<()> {
+        let mut found = false;
+        for version in 11_u8..=13_u8 {
+            let name = format!("SteamAPI_SteamUserStats_v{version:03}");
+            let symbol_name = CString::new(name).map_err(|_| Error::Refused("invalid Steam symbol name".to_owned()))?;
+            if self.handle.symbol(&symbol_name).is_some() {
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            return Err(Error::System(
+                "Steam ISteamUserStats v013 accessor was not found.".to_owned(),
+            ));
+        }
+        let _api = load_user_stats_api(&self.handle)?;
+        Ok(())
+    }
+
     /// Initializes Steam and returns a session that calls `SteamAPI_Shutdown` on drop.
     pub fn init(&self) -> Result<SteamSession<'_>> {
         let initialized = match choose_init_entrypoint(self.init_classic.is_some(), self.init_flat.is_some()) {
@@ -106,13 +329,17 @@ impl SteamLibrary {
                 "SteamAPI_Init failed. The Steam client may not be running.".to_owned(),
             ));
         }
-        Ok(SteamSession { library: self })
+        Ok(SteamSession {
+            library: self,
+            stats_request_attempted: Cell::new(false),
+        })
     }
 }
 
 /// An initialized Steamworks session. Dropping it shuts Steam down once.
 pub struct SteamSession<'library> {
     library: &'library SteamLibrary,
+    stats_request_attempted: Cell<bool>,
 }
 
 impl SteamSession<'_> {
@@ -340,6 +567,7 @@ type GetNumAchievementsFn = unsafe extern "C" fn(*mut c_void) -> u32;
 type GetAchievementNameFn = unsafe extern "C" fn(*mut c_void, u32) -> *const c_char;
 type GetAchievementAttributeFn = unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char) -> *const c_char;
 type GetAchievementStateFn = unsafe extern "C" fn(*mut c_void, *const c_char, *mut u8, *mut u32) -> u8;
+type RequestCurrentStatsFn = unsafe extern "C" fn(*mut c_void) -> u8;
 type SetAchievementFn = unsafe extern "C" fn(*mut c_void, *const c_char) -> u8;
 type StoreStatsFn = unsafe extern "C" fn(*mut c_void) -> u8;
 
@@ -349,6 +577,7 @@ struct UserStatsApi {
     get_achievement_name: GetAchievementNameFn,
     get_achievement_attribute: GetAchievementAttributeFn,
     get_achievement_state: GetAchievementStateFn,
+    request_current_stats: Option<RequestCurrentStatsFn>,
     set_achievement: SetAchievementFn,
     clear_achievement: SetAchievementFn,
     store_stats: StoreStatsFn,
@@ -381,6 +610,11 @@ pub struct UserStats<'session, 'library> {
 impl UserStats<'_, '_> {
     /// Lists achievements, waiting up to ten seconds for Steam to provide its current stats.
     pub fn achievements(&self) -> Result<Vec<SteamAchievement>> {
+        request_current_stats_once(
+            &self.session.stats_request_attempted,
+            self.api.request_current_stats,
+            self.interface.as_ptr(),
+        )?;
         let deadline = Instant::now()
             .checked_add(Duration::from_secs(10))
             .ok_or_else(|| Error::System("Steam achievement deadline overflowed".to_owned()))?;
@@ -499,6 +733,7 @@ fn load_user_stats_api(handle: &LibraryHandle) -> Result<UserStatsApi> {
             c"SteamAPI_ISteamUserStats_GetAchievementDisplayAttribute",
         )?,
         get_achievement_state: required_function(handle, c"SteamAPI_ISteamUserStats_GetAchievementAndUnlockTime")?,
+        request_current_stats: optional_function(handle, c"SteamAPI_ISteamUserStats_RequestCurrentStats")?,
         set_achievement: required_function(handle, c"SteamAPI_ISteamUserStats_SetAchievement")?,
         clear_achievement: required_function(handle, c"SteamAPI_ISteamUserStats_ClearAchievement")?,
         store_stats: required_function(handle, c"SteamAPI_ISteamUserStats_StoreStats")?,
@@ -509,12 +744,47 @@ fn required_function<T: Copy>(handle: &LibraryHandle, name: &CStr) -> Result<T> 
     let symbol = handle
         .symbol(name)
         .ok_or_else(|| Error::System(format!("Steam export {} was not found.", name.to_string_lossy())))?;
+    function_from_symbol(symbol)
+}
+
+fn optional_function<T: Copy>(handle: &LibraryHandle, name: &CStr) -> Result<Option<T>> {
+    optional_function_from_symbol(handle.symbol(name))
+}
+
+fn optional_function_from_symbol<T: Copy>(symbol: Option<NonNull<c_void>>) -> Result<Option<T>> {
+    symbol.map(function_from_symbol).transpose()
+}
+
+fn function_from_symbol<T: Copy>(symbol: NonNull<c_void>) -> Result<T> {
     if std::mem::size_of::<T>() != std::mem::size_of::<*mut c_void>() {
         return Err(Error::System("Steam function pointer size is not supported".to_owned()));
     }
     // SAFETY: STEAM-FFI-SPEC §3 invariants: all callers supply the exact C ABI function-pointer type documented for this symbol;
     // the pointer is non-null and belongs to the retained library handle.
     Ok(unsafe { std::mem::transmute_copy(&symbol.as_ptr()) })
+}
+
+fn request_current_stats_once(
+    attempted: &Cell<bool>,
+    request: Option<RequestCurrentStatsFn>,
+    interface: *mut c_void,
+) -> Result<()> {
+    if attempted.get() {
+        return Ok(());
+    }
+    let Some(request) = request else {
+        attempted.set(true);
+        return Ok(());
+    };
+    // SAFETY: ACCEPTANCE.md Part IV §3 invariants: the non-null stats interface belongs to this initialized session and the resolved
+    // Steam export has the C ABI `bool ISteamUserStats::RequestCurrentStats()` represented here as u8.
+    if unsafe { request(interface) } == 0 {
+        return Err(Error::System(
+            "Steam could not request current stats. Verify that a Steam user is logged in.".to_owned(),
+        ));
+    }
+    attempted.set(true);
+    Ok(())
 }
 
 fn steam_name(name: &str) -> Result<CString> {
@@ -696,8 +966,128 @@ mod platform {
 
 #[cfg(test)]
 mod tests {
-    use super::{choose_init_entrypoint, first_remote_storage_version, InitEntrypoint, SteamLibrary};
+    use super::{
+        choose_init_entrypoint, first_remote_storage_version, optional_function_from_symbol, InitEntrypoint,
+        LibraryHandle, RequestCurrentStatsFn, SteamLibrary, SteamSession, UserStats, UserStatsApi,
+    };
+    use std::cell::Cell;
+    use std::ffi::{c_char, c_void};
+    use std::mem::ManuallyDrop;
     use std::path::Path;
+    use std::ptr::NonNull;
+
+    #[derive(Default)]
+    struct FakeStatsContext {
+        request_calls: usize,
+        count_calls: usize,
+        request_preceded_first_count: bool,
+    }
+
+    unsafe extern "C" fn no_op() {}
+
+    unsafe extern "C" fn request_current_stats(interface: *mut c_void) -> u8 {
+        // SAFETY: tests pass a live, exclusive pointer to `FakeStatsContext` for each callback.
+        let context = unsafe { &mut *interface.cast::<FakeStatsContext>() };
+        context.request_calls = context.request_calls.saturating_add(1);
+        1
+    }
+
+    unsafe extern "C" fn reject_current_stats(interface: *mut c_void) -> u8 {
+        // SAFETY: tests pass a live, exclusive pointer to `FakeStatsContext` for each callback.
+        let context = unsafe { &mut *interface.cast::<FakeStatsContext>() };
+        context.request_calls = context.request_calls.saturating_add(1);
+        0
+    }
+
+    unsafe extern "C" fn request_current_stats_probe(_interface: *mut c_void) -> u8 {
+        1
+    }
+
+    unsafe extern "C" fn get_one_achievement(interface: *mut c_void) -> u32 {
+        // SAFETY: tests pass a live, exclusive pointer to `FakeStatsContext` for each callback.
+        let context = unsafe { &mut *interface.cast::<FakeStatsContext>() };
+        if context.count_calls == 0 {
+            context.request_preceded_first_count = context.request_calls > 0;
+        }
+        context.count_calls = context.count_calls.saturating_add(1);
+        1
+    }
+
+    unsafe extern "C" fn no_achievement_name(_interface: *mut c_void, _index: u32) -> *const c_char {
+        std::ptr::null()
+    }
+
+    unsafe extern "C" fn no_achievement_attribute(
+        _interface: *mut c_void,
+        _name: *const c_char,
+        _key: *const c_char,
+    ) -> *const c_char {
+        std::ptr::null()
+    }
+
+    unsafe extern "C" fn unused_achievement_state(
+        _interface: *mut c_void,
+        _name: *const c_char,
+        _achieved: *mut u8,
+        _unlock_time: *mut u32,
+    ) -> u8 {
+        0
+    }
+
+    unsafe extern "C" fn unused_achievement_mutation(_interface: *mut c_void, _name: *const c_char) -> u8 {
+        0
+    }
+
+    unsafe extern "C" fn unused_store_stats(_interface: *mut c_void) -> u8 {
+        0
+    }
+
+    fn fake_library() -> ManuallyDrop<SteamLibrary> {
+        ManuallyDrop::new(SteamLibrary {
+            handle: LibraryHandle {
+                handle: NonNull::dangling(),
+            },
+            init_classic: None,
+            init_flat: None,
+            shutdown: no_op,
+            run_callbacks: no_op,
+        })
+    }
+
+    fn fake_user_stats_api(request: Option<RequestCurrentStatsFn>) -> UserStatsApi {
+        UserStatsApi {
+            get_num_achievements: get_one_achievement,
+            get_achievement_name: no_achievement_name,
+            get_achievement_attribute: no_achievement_attribute,
+            get_achievement_state: unused_achievement_state,
+            request_current_stats: request,
+            set_achievement: unused_achievement_mutation,
+            clear_achievement: unused_achievement_mutation,
+            store_stats: unused_store_stats,
+        }
+    }
+
+    fn with_fake_stats<R>(
+        request: Option<RequestCurrentStatsFn>,
+        operation: impl FnOnce(&UserStats<'_, '_>) -> R,
+    ) -> (R, FakeStatsContext) {
+        let mut context = FakeStatsContext::default();
+        let interface = NonNull::from(&mut context).cast();
+        let library = fake_library();
+        let result = {
+            let session = SteamSession {
+                library: &library,
+                stats_request_attempted: Cell::new(false),
+            };
+            let stats = UserStats {
+                session: &session,
+                interface,
+                api: fake_user_stats_api(request),
+            };
+            operation(&stats)
+        };
+        (result, context)
+    }
 
     #[test]
     fn init_uses_classic_symbol_before_flat_fallback() {
@@ -717,5 +1107,116 @@ mod tests {
     fn dynamic_library_rejects_relative_paths_before_loading() {
         let result = SteamLibrary::load(Path::new("steam_api"));
         assert!(matches!(result, Err(sse_core::Error::Refused(_))));
+    }
+
+    #[test]
+    fn absent_optional_request_export_does_not_block_achievement_reads() {
+        let (result, context) = with_fake_stats(None, |stats| stats.achievements());
+
+        assert!(matches!(result, Ok(achievements) if achievements.is_empty()));
+        assert_eq!(context.request_calls, 0);
+        assert_eq!(context.count_calls, 1);
+    }
+
+    #[test]
+    fn available_request_export_runs_once_before_achievement_reads() {
+        let (results, context) = with_fake_stats(Some(request_current_stats), |stats| {
+            (stats.achievements(), stats.achievements())
+        });
+
+        assert!(matches!(results.0, Ok(achievements) if achievements.is_empty()));
+        assert!(matches!(results.1, Ok(achievements) if achievements.is_empty()));
+        assert_eq!(context.request_calls, 1);
+        assert_eq!(context.count_calls, 2);
+        assert!(context.request_preceded_first_count);
+    }
+
+    #[test]
+    fn failed_request_current_stats_is_reported_before_reading_achievements() {
+        let (results, context) = with_fake_stats(Some(reject_current_stats), |stats| {
+            (stats.achievements(), stats.achievements())
+        });
+
+        assert!(matches!(results.0, Err(sse_core::Error::System(message)) if message.contains("logged in")));
+        assert!(matches!(results.1, Err(sse_core::Error::System(message)) if message.contains("logged in")));
+        assert_eq!(context.request_calls, 2);
+        assert_eq!(context.count_calls, 0);
+    }
+
+    #[test]
+    fn missing_optional_export_resolves_to_none() {
+        assert!(matches!(
+            optional_function_from_symbol::<RequestCurrentStatsFn>(None),
+            Ok(None)
+        ));
+    }
+
+    #[test]
+    fn optional_export_symbol_preserves_its_function_pointer() {
+        let address = request_current_stats_probe as *const () as *mut c_void;
+        let Some(symbol) = NonNull::new(address) else {
+            panic!("function address was null");
+        };
+        let resolved = optional_function_from_symbol::<RequestCurrentStatsFn>(Some(symbol));
+        let Ok(Some(request)) = resolved else {
+            panic!("optional function symbol did not resolve");
+        };
+
+        // SAFETY: `request` was produced from `request_current_stats_probe`, which ignores the interface pointer.
+        assert_eq!(unsafe { request(NonNull::dangling().as_ptr()) }, 1);
+    }
+}
+
+#[cfg(test)]
+mod steam_root_tests {
+    use super::{steam_root_candidates, SteamRootPlatform};
+    use std::collections::HashMap;
+    use std::ffi::OsString;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn windows_root_candidates_include_registry_override_and_standard_locations() {
+        let environment = HashMap::from([
+            (OsString::from("STEAM_DIR"), OsString::from(r"E:\SteamOverride")),
+            (
+                OsString::from("ProgramFiles(x86)"),
+                OsString::from(r"C:\Program Files (x86)"),
+            ),
+            (OsString::from("ProgramFiles"), OsString::from(r"C:\Program Files")),
+        ]);
+        let home = Path::new(r"C:\Users\tester");
+        let local_app_data = home.join("AppData/Local");
+        let registry_path = Path::new(r"D:\Steam");
+        let roots = steam_root_candidates(
+            SteamRootPlatform::Windows,
+            home,
+            &local_app_data,
+            &environment,
+            Some(registry_path),
+        );
+
+        for expected in [
+            PathBuf::from(r"E:\SteamOverride"),
+            registry_path.to_path_buf(),
+            PathBuf::from(r"C:\Program Files (x86)").join("Steam"),
+            PathBuf::from(r"C:\Program Files").join("Steam"),
+            local_app_data.join("Programs/Steam"),
+        ] {
+            assert!(roots.contains(&expected), "missing Steam root {expected:?}: {roots:?}");
+        }
+    }
+
+    #[test]
+    fn linux_environment_variable_names_remain_case_sensitive() {
+        let environment = HashMap::from([(OsString::from("steam_dir"), OsString::from("/wrong/Steam"))]);
+        let roots = steam_root_candidates(
+            SteamRootPlatform::Linux,
+            Path::new("/home/tester"),
+            Path::new("/home/tester/AppData/Local"),
+            &environment,
+            None,
+        );
+
+        assert!(!roots.contains(&PathBuf::from("/wrong/Steam")));
     }
 }

@@ -11,5 +11,8 @@ sse-codecs = { path = "../sse-codecs" }
 sse-sys = { path = "../sse-sys" }
 sse-xray = { path = "../sse-xray" }
 
+[dev-dependencies]
+sse-storage = { path = "../sse-storage" }
+
 [lints]
 workspace = true

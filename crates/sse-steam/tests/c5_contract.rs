@@ -12,8 +12,8 @@ use sse_steam::cloud::{
     UnavailableSaveFormatVerifier, MAX_CLOUD_FILE_BYTES,
 };
 use sse_steam::discovery::{
-    auto_cloud_path, find_auto_cloud_root, list_auto_cloud_files, locate_steam_api_library, parse_library_paths,
-    read_auto_cloud_file, STALKER_2_APP_ID,
+    auto_cloud_path, default_steam_roots, find_auto_cloud_root, list_auto_cloud_files, locate_steam_api_library,
+    parse_library_paths, read_auto_cloud_file, STALKER_2_APP_ID,
 };
 use sse_steam::native::serve_native_worker;
 use sse_steam::native_protocol::{self, NativeResponse};
@@ -28,15 +28,9 @@ fn temp_dir(label: &str) -> PathBuf {
     path
 }
 
+#[cfg(unix)]
 fn symlink_file(target: &std::path::Path, link: &std::path::Path) -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        std::os::unix::fs::symlink(target, link)
-    }
-    #[cfg(windows)]
-    {
-        std::os::windows::fs::symlink_file(target, link)
-    }
+    std::os::unix::fs::symlink(target, link)
 }
 
 #[test]
@@ -60,10 +54,102 @@ fn prefers_stalker_2_windows_steam_api_path_over_generic_game_dlls() {
     assert!(generic.parent().is_some_and(|path| fs::create_dir_all(path).is_ok()));
     assert!(fs::write(&preferred, b"test dll").is_ok());
     assert!(fs::write(&generic, b"test dll").is_ok());
+    let manifest = library.join("steamapps/appmanifest_1643320.acf");
+    assert!(manifest.parent().is_some_and(|path| fs::create_dir_all(path).is_ok()));
+    assert!(fs::write(
+        &manifest,
+        "\"AppState\" { \"appid\" \"1643320\" \"installdir\" \"Stalker 2\" }",
+    )
+    .is_ok());
 
-    let found = locate_steam_api_library([library.clone()], true);
-    assert_eq!(found.ok().flatten(), Some(preferred));
+    let found = locate_steam_api_library([library.clone()], 1_643_320, true);
+    assert_eq!(found.ok().flatten(), preferred.canonicalize().ok());
     let _ = fs::remove_dir_all(library);
+}
+
+#[test]
+fn steam_and_save_discovery_use_the_same_default_roots() {
+    assert_eq!(
+        default_steam_roots(),
+        sse_storage::discovery::SaveDirectoryLocator::default_steam_roots()
+    );
+}
+
+#[test]
+fn steam_api_discovery_ignores_a_library_from_an_unrelated_game() {
+    let library = temp_dir("steam-api-foreign-only");
+    let foreign = library.join("steamapps/common/Another Game/Binaries/Win64/steam_api64.dll");
+    assert!(foreign.parent().is_some_and(|path| fs::create_dir_all(path).is_ok()));
+    assert!(fs::write(&foreign, b"foreign game library").is_ok());
+
+    let found = locate_steam_api_library([library.clone()], 4500, true);
+    let _ = fs::remove_dir_all(library);
+    assert_eq!(found.ok().flatten(), None);
+}
+
+#[test]
+fn steam_api_discovery_uses_the_selected_apps_manifest_install_directory() {
+    let library = temp_dir("steam-api-selected-app");
+    let manifest = library.join("steamapps/appmanifest_4500.acf");
+    let target = library.join("steamapps/common/Shadow of Chernobyl/Binaries/Win64/steam_api64.dll");
+    let foreign = library.join("steamapps/common/Another Game/Binaries/Win64/steam_api64.dll");
+    assert!(manifest.parent().is_some_and(|path| fs::create_dir_all(path).is_ok()));
+    assert!(target.parent().is_some_and(|path| fs::create_dir_all(path).is_ok()));
+    assert!(foreign.parent().is_some_and(|path| fs::create_dir_all(path).is_ok()));
+    assert!(fs::write(
+        &manifest,
+        "\"AppState\" { \"appid\" \"4500\" \"installdir\" \"Shadow of Chernobyl\" }",
+    )
+    .is_ok());
+    assert!(fs::write(&target, b"selected game library").is_ok());
+    assert!(fs::write(&foreign, b"unrelated game library").is_ok());
+
+    let expected = target.canonicalize().ok();
+    let found = locate_steam_api_library([library.clone()], 4500, true);
+    let _ = fs::remove_dir_all(library);
+    assert_eq!(found.ok().flatten(), expected);
+}
+
+#[cfg(unix)]
+#[test]
+fn steam_api_discovery_rejects_a_selected_install_symlink_to_an_outside_library() {
+    let library = temp_dir("steam-api-symlink-escape");
+    let manifest = library.join("steamapps/appmanifest_4500.acf");
+    let target = library.join("steamapps/common/Shadow of Chernobyl/Binaries/Win64/steam_api64.dll");
+    let outside = library.join("outside/steam_api64.dll");
+    assert!(manifest.parent().is_some_and(|path| fs::create_dir_all(path).is_ok()));
+    assert!(target.parent().is_some_and(|path| fs::create_dir_all(path).is_ok()));
+    assert!(outside.parent().is_some_and(|path| fs::create_dir_all(path).is_ok()));
+    assert!(fs::write(
+        &manifest,
+        "\"AppState\" { \"appid\" \"4500\" \"installdir\" \"Shadow of Chernobyl\" }",
+    )
+    .is_ok());
+    assert!(fs::write(&outside, b"outside library").is_ok());
+    assert!(symlink_file(&outside, &target).is_ok());
+
+    let found = locate_steam_api_library([library.clone()], 4500, true);
+    let _ = fs::remove_dir_all(library);
+    assert_eq!(found.ok().flatten(), None);
+}
+
+#[test]
+fn steam_api_discovery_rejects_an_appmanifest_for_a_different_app_id() {
+    let library = temp_dir("steam-api-wrong-manifest");
+    let manifest = library.join("steamapps/appmanifest_4500.acf");
+    let foreign = library.join("steamapps/common/Another Game/Binaries/Win64/steam_api64.dll");
+    assert!(manifest.parent().is_some_and(|path| fs::create_dir_all(path).is_ok()));
+    assert!(foreign.parent().is_some_and(|path| fs::create_dir_all(path).is_ok()));
+    assert!(fs::write(
+        &manifest,
+        "\"AppState\" { \"appid\" \"41700\" \"installdir\" \"Another Game\" }",
+    )
+    .is_ok());
+    assert!(fs::write(&foreign, b"foreign app library").is_ok());
+
+    let found = locate_steam_api_library([library.clone()], 4500, true);
+    let _ = fs::remove_dir_all(library);
+    assert_eq!(found.ok().flatten(), None);
 }
 
 #[test]
@@ -174,8 +260,6 @@ fn auto_cloud_reader_lists_and_reads_bounded_files_under_the_stalker2_tree() {
     assert!(fs::write(&save_path, b"synthetic cloud save").is_ok());
     let outside = root.join("outside.sav");
     assert!(fs::write(&outside, b"outside synthetic file").is_ok());
-    let symlink = game_root.join("linked.sav");
-    let symlink_created = symlink_file(&outside, &symlink).is_ok();
     let oversized_path = game_root.join("oversized.sav");
     let oversized = fs::File::create(&oversized_path);
     assert!(oversized.is_ok_and(|file| file
@@ -195,10 +279,22 @@ fn auto_cloud_reader_lists_and_reads_bounded_files_under_the_stalker2_tree() {
     );
     assert!(read_auto_cloud_file(&root, "Stalker2/../outside.sav").is_err());
     assert!(read_auto_cloud_file(&root, "Stalker2/Saved/STEAM/SaveGames/Data/oversized.sav").is_err());
-    if symlink_created {
-        assert!(list_auto_cloud_files(&root).is_ok_and(|files| files.len() == 2));
-        assert!(read_auto_cloud_file(&root, "Stalker2/Saved/STEAM/SaveGames/Data/linked.sav").is_err());
-    }
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[cfg(unix)]
+#[test]
+fn auto_cloud_reader_refuses_symlinked_files() {
+    let root = temp_dir("autocloud-symlink");
+    let game_root = root.join("Stalker2/Saved/STEAM/SaveGames/Data");
+    assert!(fs::create_dir_all(&game_root).is_ok());
+    let outside = root.join("outside.sav");
+    assert!(fs::write(&outside, b"outside synthetic file").is_ok());
+    assert!(symlink_file(&outside, &game_root.join("linked.sav")).is_ok());
+
+    assert!(list_auto_cloud_files(&root).is_ok_and(|files| files.is_empty()));
+    assert!(read_auto_cloud_file(&root, "Stalker2/Saved/STEAM/SaveGames/Data/linked.sav").is_err());
 
     let _ = fs::remove_dir_all(root);
 }

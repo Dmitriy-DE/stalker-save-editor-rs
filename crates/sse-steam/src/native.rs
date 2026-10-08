@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use crate::api::{Achievement, CloudFile, SteamApi, SteamError, WriteFailure, WriteStage};
 use crate::cloud::{validate_remote_save_path, SaveFormatVerifier, XRaySaveFormatVerifier, MAX_CLOUD_FILE_BYTES};
-use crate::discovery::{default_steam_roots, locate_steam_api_library};
+use crate::discovery::{default_steam_roots, steam_api_library_candidates};
 use crate::native_protocol::{self, NativeRequest};
 
 const APP_SOC: u32 = 4_500;
@@ -17,11 +17,52 @@ const APP_CS_EE: u32 = 2_427_420;
 const APP_COP_EE: u32 = 2_427_430;
 const APP_STALKER_2: u32 = 1_643_320;
 
-/// Loads Steam's API library from the configured Steam roots.
-pub fn load_default_library() -> Result<SteamLibrary, SteamError> {
-    let path = locate_steam_api_library(default_steam_roots(), cfg!(windows))?
-        .ok_or_else(|| SteamError::new("Steam libsteam_api library was not found."))?;
-    SteamLibrary::load(&path).map_err(|error| SteamError::new(format!("Could not locate Steam libsteam_api: {error}")))
+#[derive(Clone, Copy)]
+enum SteamLibraryUse {
+    RemoteStorage,
+    UserStats,
+    Session,
+}
+
+/// Loads a compatible Steam API library from the selected app's Steam installation.
+fn load_default_library(app_id: u32, usage: SteamLibraryUse) -> Result<SteamLibrary, SteamError> {
+    let candidates = steam_api_library_candidates(default_steam_roots(), app_id, cfg!(windows))?;
+    if candidates.is_empty() {
+        return Err(SteamError::new(format!(
+            "Steam libsteam_api library for app {app_id} was not found."
+        )));
+    }
+    try_load_candidates(&candidates, |path| {
+        let library = SteamLibrary::load(path).map_err(|error| error.to_string())?;
+        match usage {
+            SteamLibraryUse::RemoteStorage => library
+                .validate_remote_storage_exports()
+                .map_err(|error| error.to_string())?,
+            SteamLibraryUse::UserStats => library
+                .validate_user_stats_exports()
+                .map_err(|error| error.to_string())?,
+            SteamLibraryUse::Session => {}
+        }
+        Ok(library)
+    })
+    .map_err(|error| SteamError::new(format!("Could not load Steam libsteam_api for app {app_id}: {error}")))
+}
+
+fn try_load_candidates<T>(
+    candidates: &[std::path::PathBuf],
+    mut load: impl FnMut(&std::path::Path) -> std::result::Result<T, String>,
+) -> std::result::Result<T, String> {
+    let mut last_error = None;
+    for candidate in candidates {
+        match load(candidate) {
+            Ok(library) => return Ok(library),
+            Err(error) => last_error = Some(error),
+        }
+    }
+    match last_error {
+        Some(error) => Err(error),
+        None => Err("no Steam API library candidates were found".to_owned()),
+    }
 }
 
 /// Steam API adapter borrowed from the process-owned library handle.
@@ -286,7 +327,7 @@ pub fn serve_native_worker(input: &mut impl BufRead, output: &mut impl Write) ->
             *app_id
         }
     };
-    let library = match load_default_library() {
+    let library = match load_default_library(app_id, SteamLibraryUse::RemoteStorage) {
         Ok(library) => library,
         Err(error) => {
             let stage = write_stage;
@@ -354,7 +395,7 @@ pub fn run_native_achievements(
         if !is_supported_app(app_id) {
             return Err("Achievements are limited to official S.T.A.L.K.E.R. releases.".to_owned());
         }
-        let library = load_default_library().map_err(|error| error.to_string())?;
+        let library = load_default_library(app_id, SteamLibraryUse::UserStats).map_err(|error| error.to_string())?;
         let mut api = NativeSteamApi::new(&library);
         api.initialize(app_id).map_err(|error| error.to_string())?;
         api.run_callbacks().map_err(|error| error.to_string())?;
@@ -419,7 +460,7 @@ pub fn run_native_session(
     if app_id != APP_STALKER_2 {
         return send_session_error(output, "Steam game sessions are supported only for S.T.A.L.K.E.R. 2.");
     }
-    let library = match load_default_library() {
+    let library = match load_default_library(app_id, SteamLibraryUse::Session) {
         Ok(library) => library,
         Err(error) => return send_session_error(output, &error.to_string()),
     };
@@ -591,5 +632,31 @@ mod tests {
         assert_eq!(converted.size, 123);
         assert_eq!(converted.timestamp, 456);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod library_candidate_tests {
+    use super::try_load_candidates;
+    use std::path::PathBuf;
+
+    #[test]
+    fn continues_after_a_candidate_fails_steam_export_validation() {
+        let candidates = [
+            PathBuf::from("selected-app/older-sdk"),
+            PathBuf::from("selected-app/newer-sdk"),
+        ];
+        let mut attempts = Vec::new();
+        let loaded = try_load_candidates(&candidates, |candidate| {
+            attempts.push(candidate.to_path_buf());
+            if candidate.ends_with("older-sdk") {
+                Err(String::from("required exports are missing"))
+            } else {
+                Ok(candidate.to_path_buf())
+            }
+        });
+
+        assert_eq!(loaded.ok(), candidates.get(1).cloned());
+        assert_eq!(attempts, candidates.to_vec());
     }
 }
