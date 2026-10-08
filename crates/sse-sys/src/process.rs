@@ -160,10 +160,13 @@ mod windows_tests {
         let Ok(mut child) = command.spawn() else {
             panic!("failed to spawn process-tree test child");
         };
-        let Ok(tree) = ProcessTree::attach(&child) else {
-            let _ = child.kill();
-            let _ = child.wait();
-            panic!("failed to attach process-tree test child");
+        let tree = match ProcessTree::attach(&child) {
+            Ok(tree) => tree,
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("failed to attach process-tree test child: {error}");
+            }
         };
 
         let mut status = None;
