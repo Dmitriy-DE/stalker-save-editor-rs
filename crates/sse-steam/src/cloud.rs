@@ -1,10 +1,8 @@
-//! Fresh-hash guarded Steam and Auto-Cloud write transactions.
+//! Fresh-hash guarded Steam Cloud write transactions.
 
 use std::collections::HashSet;
-use std::fs::{self, OpenOptions};
-use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use sse_codecs::sha256;
 
@@ -42,9 +40,19 @@ impl PreparedEdit {
             output,
         }
     }
+
+    /// Binds the output to a source hash captured before the user's write confirmation.
+    #[must_use]
+    pub fn from_source_sha256(source_sha256: [u8; 32], output: Vec<u8>) -> Self {
+        Self {
+            source_sha256,
+            output_sha256: sha256::sha256(&output),
+            output,
+        }
+    }
 }
 
-/// Result of a Steam or Auto-Cloud write.
+/// Result of a Steam Cloud write.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WriteReceipt {
     /// Final status.
@@ -55,6 +63,8 @@ pub struct WriteReceipt {
     pub backup_path: PathBuf,
     /// Recovery copy containing intended output bytes.
     pub recovery_path: PathBuf,
+    /// Journal that makes the recovery copies visible in the application's backup list.
+    pub journal_path: PathBuf,
     /// SHA-256 of the intended output.
     pub output_sha256: [u8; 32],
     /// Explanation when the write status is uncertain.
@@ -178,25 +188,43 @@ impl SteamCloudWriteTransaction {
         verifier
             .verify(app_id, &remote_name, &prepared.output)
             .map_err(|error| error.at_stage(WriteStage::BeforeWrite))?;
-        let (backup_path, recovery_path) = write_artifacts(artifact_directory, &remote_name, &fresh, &prepared.output)
-            .map_err(|error| error.at_stage(WriteStage::BeforeWrite))?;
+        let artifacts = sse_storage::transaction::write_cloud_recovery_artifacts(
+            artifact_directory,
+            app_id,
+            &remote_name,
+            &fresh,
+            &prepared.output,
+        )
+        .map_err(|error| SteamError::new(error.to_string()).at_stage(WriteStage::BeforeWrite))?;
+        let backup_path = artifacts.backup_path;
+        let recovery_path = artifacts.recovery_path;
+        let journal_path = artifacts.journal_path;
         drop(fresh);
 
         match api.write_file(&remote_name, &prepared.output) {
             Err(WriteFailure::NotAttempted(error)) => {
-                return Err(SteamError::new(format!("cloud write was not attempted: {error}"))
-                    .at_stage(WriteStage::BeforeWrite));
+                return Err(SteamError::new(format!(
+                    "cloud write was not attempted: {error}; recovery artifacts: {}, {}, {}",
+                    backup_path.display(),
+                    recovery_path.display(),
+                    journal_path.display(),
+                ))
+                .at_stage(WriteStage::BeforeWrite));
             }
             Err(WriteFailure::Rejected(error)) => {
-                return Err(
-                    SteamError::new(format!("Steam RemoteStorage rejected the write: {error}"))
-                        .at_stage(WriteStage::WriteRejected),
-                );
+                return Err(SteamError::new(format!(
+                    "Steam RemoteStorage rejected the write: {error}; recovery artifacts: {}, {}, {}",
+                    backup_path.display(),
+                    recovery_path.display(),
+                    journal_path.display(),
+                ))
+                .at_stage(WriteStage::WriteRejected));
             }
             Err(WriteFailure::Uncertain(error)) => {
                 return Ok(uncertain_receipt(
                     backup_path,
                     recovery_path,
+                    journal_path,
                     prepared.output_sha256,
                     format!("Steam write result is uncertain: {error}"),
                 ));
@@ -208,6 +236,7 @@ impl SteamCloudWriteTransaction {
             return Ok(uncertain_receipt(
                 backup_path,
                 recovery_path,
+                journal_path,
                 prepared.output_sha256,
                 format!("Steam callback dispatch failed after write: {error}"),
             ));
@@ -218,6 +247,7 @@ impl SteamCloudWriteTransaction {
                 return Ok(uncertain_receipt(
                     backup_path,
                     recovery_path,
+                    journal_path,
                     prepared.output_sha256,
                     "Steam has not confirmed that the file is persisted".to_owned(),
                 ));
@@ -226,6 +256,7 @@ impl SteamCloudWriteTransaction {
                 return Ok(uncertain_receipt(
                     backup_path,
                     recovery_path,
+                    journal_path,
                     prepared.output_sha256,
                     format!("Steam persisted check failed: {error}"),
                 ));
@@ -237,6 +268,7 @@ impl SteamCloudWriteTransaction {
                 return Ok(uncertain_receipt(
                     backup_path,
                     recovery_path,
+                    journal_path,
                     prepared.output_sha256,
                     format!("Steam read-back failed: {error}"),
                 ));
@@ -246,6 +278,7 @@ impl SteamCloudWriteTransaction {
             return Ok(uncertain_receipt(
                 backup_path,
                 recovery_path,
+                journal_path,
                 prepared.output_sha256,
                 "Steam read-back exceeds the configured size limit".to_owned(),
             ));
@@ -254,6 +287,7 @@ impl SteamCloudWriteTransaction {
             return Ok(uncertain_receipt(
                 backup_path,
                 recovery_path,
+                journal_path,
                 prepared.output_sha256,
                 "Steam read-back hash does not match the output".to_owned(),
             ));
@@ -263,6 +297,7 @@ impl SteamCloudWriteTransaction {
             stage: None,
             backup_path,
             recovery_path,
+            journal_path,
             output_sha256: prepared.output_sha256,
             reason: None,
         })
@@ -331,21 +366,6 @@ pub fn validate_remote_save_path(app_id: u32, remote_name: &str) -> Result<Strin
     Ok(normalized)
 }
 
-/// Writes an S.T.A.L.K.E.R. 2 Auto-Cloud file through the same guarded local transaction.
-pub fn write_auto_cloud(
-    root: &Path,
-    remote_name: &str,
-    prepared: &PreparedEdit,
-    artifact_directory: &Path,
-    write_enabled: bool,
-    verifier: &mut dyn SaveFormatVerifier,
-) -> Result<WriteReceipt, SteamError> {
-    let _ = (root, remote_name, prepared, artifact_directory, write_enabled, verifier);
-    Err(SteamError::new(
-        "Auto-Cloud writes are disabled until descriptor-relative path operations are available",
-    ))
-}
-
 fn validate_size(size: usize) -> Result<(), SteamError> {
     if size == 0 || size > MAX_CLOUD_FILE_BYTES {
         return Err(SteamError::new("cloud file size is outside the supported range"));
@@ -353,61 +373,10 @@ fn validate_size(size: usize) -> Result<(), SteamError> {
     Ok(())
 }
 
-fn write_artifacts(
-    directory: &Path,
-    remote_name: &str,
-    source: &[u8],
-    output: &[u8],
-) -> Result<(PathBuf, PathBuf), SteamError> {
-    fs::create_dir_all(directory).map_err(|error| SteamError::new(error.to_string()))?;
-    let first = unique_artifact_path(directory, &format!("{}-original", safe_stem(remote_name)))?;
-    let second = unique_artifact_path(directory, &format!("{}-edited", safe_stem(remote_name)))?;
-    write_exclusive(&first, source)?;
-    if let Err(error) = write_exclusive(&second, output) {
-        let _ = fs::remove_file(&first);
-        return Err(error);
-    }
-    Ok((first, second))
-}
-
-fn unique_artifact_path(directory: &Path, stem: &str) -> Result<PathBuf, SteamError> {
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| duration.as_nanos());
-    Ok(directory.join(format!("{stem}-{}-{timestamp}.sav", std::process::id())))
-}
-
-fn safe_stem(remote_name: &str) -> String {
-    remote_name
-        .rsplit(['/', '\\'])
-        .next()
-        .unwrap_or("cloud-save")
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-') {
-                character
-            } else {
-                '_'
-            }
-        })
-        .take(80)
-        .collect()
-}
-
-fn write_exclusive(path: &Path, data: &[u8]) -> Result<(), SteamError> {
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .map_err(|error| SteamError::new(error.to_string()))?;
-    file.write_all(data)
-        .map_err(|error| SteamError::new(error.to_string()))?;
-    file.sync_all().map_err(|error| SteamError::new(error.to_string()))
-}
-
 fn uncertain_receipt(
     backup_path: PathBuf,
     recovery_path: PathBuf,
+    journal_path: PathBuf,
     output_sha256: [u8; 32],
     reason: String,
 ) -> WriteReceipt {
@@ -416,6 +385,7 @@ fn uncertain_receipt(
         stage: Some(WriteStage::AfterWrite),
         backup_path,
         recovery_path,
+        journal_path,
         output_sha256,
         reason: Some(reason),
     }
@@ -475,8 +445,43 @@ mod tests {
         api.write_behavior = WriteBehavior::RejectWrite("FileWrite returned false".to_owned());
 
         let result = upload(&mut api, &artifacts);
-        assert!(result.is_err_and(|error| error.stage == Some(WriteStage::WriteRejected)));
+        assert!(result.is_err_and(|error| {
+            error.stage == Some(WriteStage::WriteRejected)
+                && error.message.contains("recovery artifacts")
+                && error.message.contains("_ORIGINAL.json")
+        }));
         assert_eq!(api.write_count, 0);
+        assert!(std::fs::remove_dir_all(artifacts).is_ok());
+    }
+
+    #[test]
+    fn upload_refuses_a_cloud_version_changed_after_confirmation() {
+        let artifacts = artifacts_directory();
+        let confirmed_source = b"cloud version shown for confirmation";
+        let prepared =
+            PreparedEdit::from_source_sha256(sse_codecs::sha256::sha256(confirmed_source), b"edited fixture".to_vec());
+        let mut api = ScriptedSteamApi::default();
+        api.files.insert(
+            "_appdata_/savedgames/slot.sav".into(),
+            b"newer cloud version from another device".to_vec(),
+        );
+        let mut verifier = AcceptFixtureBytes;
+
+        let result = SteamCloudWriteTransaction::upload(
+            &mut api,
+            &mut verifier,
+            4500,
+            "_appdata_/savedgames/slot.sav",
+            &prepared,
+            &artifacts,
+            true,
+        );
+
+        assert!(result.is_err_and(|error| {
+            error.stage == Some(WriteStage::BeforeWrite) && error.message.contains("cloud source changed")
+        }));
+        assert_eq!(api.write_count, 0);
+        assert!(std::fs::read_dir(&artifacts).is_ok_and(|mut files| files.next().is_none()));
         assert!(std::fs::remove_dir_all(artifacts).is_ok());
     }
 

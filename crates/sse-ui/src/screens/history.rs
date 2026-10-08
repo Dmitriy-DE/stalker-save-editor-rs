@@ -698,16 +698,18 @@ impl HistoryScreen {
                         backup: entry.backup_path.clone(),
                     },
                 });
-                cx.tree.set_visible(slot.secondary_button, true)?;
-                cx.tree.set_text(slot.secondary_button, "На место…")?;
-                self.actions.push(ActionButton {
-                    widget: slot.secondary_button,
-                    action: Action::RestoreInPlace {
-                        journal: entry.journal_path.clone(),
-                        source: entry.source_path.clone(),
-                        backup: entry.backup_path,
-                    },
-                });
+                if matches!(entry.operation_mode.as_deref(), Some("replace" | "restore")) {
+                    cx.tree.set_visible(slot.secondary_button, true)?;
+                    cx.tree.set_text(slot.secondary_button, "На место…")?;
+                    self.actions.push(ActionButton {
+                        widget: slot.secondary_button,
+                        action: Action::RestoreInPlace {
+                            journal: entry.journal_path.clone(),
+                            source: entry.source_path.clone(),
+                            backup: entry.backup_path,
+                        },
+                    });
+                }
             }
             if let Some(error) = entry.error {
                 cx.tree
@@ -1695,7 +1697,7 @@ fn timeline_order(left: &SaveSlot, right: &SaveSlot) -> std::cmp::Ordering {
         .then_with(|| left.path.cmp(&right.path))
 }
 
-fn format_system_time(value: SystemTime) -> String {
+pub(super) fn format_system_time(value: SystemTime) -> String {
     let Ok(duration) = value.duration_since(UNIX_EPOCH) else {
         return "дата неизвестна".to_owned();
     };
@@ -2832,6 +2834,54 @@ mod tests {
             .is_some_and(|name| name.to_string_lossy().starts_with("slot_restored_")));
         assert_eq!(fs::read(&restored)?, SYNTHETIC_XRAY_SAVE);
         assert_eq!(fs::read(&source)?, SYNTHETIC_XRAY_SAVE);
+        Ok(())
+    }
+
+    #[test]
+    fn steam_cloud_backup_offers_copy_restore_without_in_place_action() -> sse_core::Result<()> {
+        let temp = TempDirectory::new();
+        let backup_directory = temp.0.join("backups");
+        let receipt = transaction::write_cloud_recovery_artifacts(
+            &backup_directory,
+            4500,
+            "_appdata_/savedgames/slot.sav",
+            b"cloud original bytes",
+            b"prepared upload bytes",
+        )?;
+        let entries = transaction::list_backups(&backup_directory)?;
+        assert!(entries.iter().any(|entry| entry.journal_path == receipt.journal_path));
+
+        let fonts = Fonts::bundled()?;
+        let mut tree = Tree::new(fonts, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let mut app = sse_app::AppState::new();
+        let mut screen = HistoryScreen::new(
+            ScreenId::Backups,
+            "test",
+            Workspace::with_backup_directory(backup_directory),
+        );
+        {
+            let mut cx = Context {
+                tree: &mut tree,
+                proxy: None,
+                status: None,
+                app: &mut app,
+            };
+            screen.build(&mut cx, host)?;
+            screen.render_backups(&mut cx, entries)?;
+        }
+
+        assert_eq!(screen.actions.len(), 1);
+        assert!(matches!(
+            screen.actions.first().map(|action| &action.action),
+            Some(Action::Restore { .. })
+        ));
         Ok(())
     }
 

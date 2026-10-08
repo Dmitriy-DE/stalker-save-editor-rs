@@ -315,7 +315,7 @@ pub(crate) fn registry_with_save_workspace(save_workspace: saves::Workspace) -> 
     #[cfg(feature = "native-ui")]
     screens.extend(games::screens());
     #[cfg(feature = "native-ui")]
-    screens.extend(services::screens());
+    screens.extend(services::screens(save_workspace.clone()));
     screens.extend(app::screens_with_workspace(save_workspace));
     screens.sort_by_key(|screen| screen.id());
     screens
