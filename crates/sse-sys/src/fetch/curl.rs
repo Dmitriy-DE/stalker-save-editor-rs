@@ -144,6 +144,10 @@ unsafe extern "C" fn write_callback(data: *mut c_char, size: usize, count: usize
     }
     // SAFETY: WRITEDATA points to CallbackState for the synchronous duration of curl_easy_perform.
     let state = unsafe { &mut *user.cast::<CallbackState<'static>>() };
+    if isize::try_from(length).is_err() {
+        state.too_large = true;
+        return 0;
+    }
     let Ok(length64) = u64::try_from(length) else {
         state.too_large = true;
         return 0;
@@ -156,8 +160,12 @@ unsafe extern "C" fn write_callback(data: *mut c_char, size: usize, count: usize
         state.too_large = true;
         return 0;
     }
-    // SAFETY: libcurl guarantees data points to size*count readable bytes for this callback invocation.
-    let bytes = unsafe { std::slice::from_raw_parts(data.cast::<u8>(), length) };
+    let bytes = if length == 0 {
+        &[]
+    } else {
+        // SAFETY: the null check above and libcurl's callback contract provide `length` readable bytes.
+        unsafe { std::slice::from_raw_parts(data.cast::<u8>(), length) }
+    };
     if !(state.sink)(bytes) {
         state.cancelled = true;
         return 0;
@@ -427,4 +435,97 @@ pub(super) fn post(
     // SAFETY: headers came from curl_slist_append and are no longer referenced after handle cleanup.
     unsafe { (api.slist_free_all)(headers) };
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{write_callback, CallbackState};
+    use std::{
+        ffi::c_void,
+        io,
+        process::Command,
+        ptr,
+        sync::atomic::{AtomicBool, Ordering},
+    };
+
+    const CHILD_ENV: &str = "SSE_CURL_EMPTY_CALLBACK_CHILD";
+
+    fn run_child(test_name: &str, case: &str) -> io::Result<()> {
+        let output = Command::new(std::env::current_exe()?)
+            .arg("--exact")
+            .arg(test_name)
+            .arg("--nocapture")
+            .env(CHILD_ENV, case)
+            .output()?;
+        assert!(
+            output.status.success(),
+            "callback child failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn empty_curl_chunk_accepts_null_data_without_undefined_behavior() -> io::Result<()> {
+        run_child("fetch::curl::tests::empty_curl_chunk_child", "empty")
+    }
+
+    #[test]
+    fn empty_curl_chunk_child() {
+        if std::env::var(CHILD_ENV).ok().as_deref() != Some("empty") {
+            return;
+        }
+
+        let saw_valid_empty = AtomicBool::new(false);
+        let mut sink = |bytes: &[u8]| {
+            saw_valid_empty.store(bytes.is_empty(), Ordering::Relaxed);
+            true
+        };
+        let mut state = CallbackState {
+            sink: &mut sink,
+            received: 0,
+            limit: 1,
+            cancelled: false,
+            too_large: false,
+        };
+        let user = (&mut state as *mut CallbackState<'_>).cast::<c_void>();
+        // SAFETY: the state is live for this direct callback invocation; (null, 0) is the case under test.
+        let accepted = unsafe { write_callback(ptr::null_mut(), 0, 1, user) };
+        assert_eq!(accepted, 0);
+        assert!(saw_valid_empty.load(Ordering::Relaxed));
+        assert_eq!(state.received, 0);
+    }
+
+    #[test]
+    fn oversized_curl_chunk_is_rejected_before_slice_creation() -> io::Result<()> {
+        run_child("fetch::curl::tests::oversized_curl_chunk_child", "oversized")
+    }
+
+    #[test]
+    fn oversized_curl_chunk_child() -> io::Result<()> {
+        if std::env::var(CHILD_ENV).ok().as_deref() != Some("oversized") {
+            return Ok(());
+        }
+
+        let length = usize::try_from(isize::MAX)
+            .ok()
+            .and_then(|maximum| maximum.checked_add(1))
+            .ok_or_else(|| io::Error::other("could not construct an oversized slice length"))?;
+        let mut sink = |_: &[u8]| true;
+        let mut state = CallbackState {
+            sink: &mut sink,
+            received: 0,
+            limit: u64::MAX,
+            cancelled: false,
+            too_large: false,
+        };
+        let user = (&mut state as *mut CallbackState<'_>).cast::<c_void>();
+        // SAFETY: callback state is live; this verifies rejection before the callback reads its synthetic buffer.
+        let accepted =
+            unsafe { write_callback(ptr::NonNull::<std::ffi::c_char>::dangling().as_ptr(), length, 1, user) };
+        assert_eq!(accepted, 0);
+        assert!(state.too_large);
+        assert_eq!(state.received, 0);
+        Ok(())
+    }
 }
