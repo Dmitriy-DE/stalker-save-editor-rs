@@ -1491,6 +1491,100 @@ pub enum Icon {
     Warning,
     /// Information.
     Info,
+    /// Outline icon, `icons-clean/save.svg`.
+    D2Save,
+    /// Outline icon, `icons-clean/games.svg`.
+    D2Games,
+    /// Outline icon, `icons-clean/encyclopedia.svg`.
+    D2Encyclopedia,
+    /// Outline icon, `icons-clean/settings.svg`.
+    D2Settings,
+    /// Outline icon, `icons-clean/inventory.svg`.
+    D2Inventory,
+    /// Outline icon, `icons-clean/character.svg`.
+    D2Character,
+    /// Outline icon, `icons-clean/world.svg`.
+    D2World,
+    /// Outline icon, `icons-clean/history.svg`.
+    D2History,
+    /// Outline icon, `icons-clean/check.svg`.
+    D2Check,
+    /// Outline icon, `icons-clean/backups.svg`.
+    D2Backups,
+    /// Outline icon, `icons-clean/compare.svg`.
+    D2Compare,
+    /// Outline icon, `icons-clean/cloud.svg`.
+    D2Cloud,
+    /// Outline icon, `icons-clean/fixes.svg`.
+    D2Fixes,
+    /// Outline icon, `icons-clean/companion.svg`.
+    D2Companion,
+    /// Outline icon, `icons-clean/doctor.svg`.
+    D2Doctor,
+    /// Outline icon, `icons-clean/environment.svg`.
+    D2Environment,
+    /// Outline icon, `icons-clean/achievements.svg`.
+    D2Achievements,
+    /// Outline icon, `icons-clean/updates.svg`.
+    D2Updates,
+    /// Outline icon, `icons-clean/folder.svg`.
+    D2Folder,
+    /// Outline icon, `icons-clean/search.svg`.
+    D2Search,
+    /// Outline icon, `icons-clean/plus.svg`.
+    D2Plus,
+    /// Outline icon, `icons-clean/trash.svg`.
+    D2Trash,
+    /// Outline icon, `icons-clean/restore.svg`.
+    D2Restore,
+    /// Outline icon, `icons-clean/copy.svg`.
+    D2Copy,
+    /// Outline icon, `icons-clean/pencil.svg`.
+    D2Pencil,
+    /// Outline icon, `icons-clean/check-circle.svg`.
+    D2CheckCircle,
+    /// Outline icon, `icons-clean/warning.svg`.
+    D2Warning,
+    /// Outline icon, `icons-clean/error.svg`.
+    D2Error,
+    /// Outline icon, `icons-clean/info.svg`.
+    D2Info,
+    /// Outline icon, `icons-clean/arrow-right.svg`.
+    D2ArrowRight,
+    /// Outline icon, `icons-clean/arrow-left.svg`.
+    D2ArrowLeft,
+    /// Outline icon, `icons-clean/chevron-right.svg`.
+    D2ChevronRight,
+    /// Outline icon, `icons-clean/chevron-down.svg`.
+    D2ChevronDown,
+    /// Outline icon, `icons-clean/more.svg`.
+    D2More,
+    /// Outline icon, `icons-clean/close.svg`.
+    D2Close,
+    /// Outline icon, `icons-clean/undo.svg`.
+    D2Undo,
+    /// Outline icon, `icons-clean/redo.svg`.
+    D2Redo,
+    /// Outline icon, `icons-clean/factions.svg`.
+    D2Factions,
+    /// Outline icon, `icons-clean/stash.svg`.
+    D2Stash,
+    /// Outline icon, `icons-clean/transitions.svg`.
+    D2Transitions,
+    /// Outline icon, `icons-clean/lock.svg`.
+    D2Lock,
+    /// Outline icon, `icons-clean/star.svg`.
+    D2Star,
+    /// Outline icon, `icons-clean/filter.svg`.
+    D2Filter,
+    /// Outline icon, `icons-clean/sort.svg`.
+    D2Sort,
+    /// Outline icon, `icons-clean/menu.svg`.
+    D2Menu,
+    /// Filled radiation symbol, `icons-clean/radiation.svg` (no outline).
+    D2Radiation,
+    /// Emblem: outlined ring and filled blades, `icons-clean/sign-56.svg` scaled from its 56 grid to 24.
+    D2Sign,
 }
 
 impl Icon {
@@ -1526,6 +1620,119 @@ impl Icon {
             Self::Folder => "M3 7h7l2 2h9v11H3z M3 7V5h7l2 2",
             Self::Warning => "M12 3l10 18H2z M12 9v5 M12 18h.01",
             Self::Info => "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z M12 10v7 M12 7h.01",
+            Self::D2Save => "M5 4h11l3 3v13H5z M8 4v5h7V4 M8 20v-6h8v6",
+            Self::D2Games => "M7.5 8h9A4.5 4.5 0 0 1 21 12.5v2a2.5 2.5 0 0 1-4.6 1.4L15 14H9l-1.4 1.9A2.5 2.5 0 0 1 3 14.5v-2A4.5 4.5 0 0 1 7.5 8z M7.5 10.5v3M6 12h3 M15 11h.01M17 13h.01",
+            Self::D2Encyclopedia => "M12 6.5C10 5 7 4.5 3.5 5v13c3.5-.5 6.5 0 8.5 1.5 2-1.5 5-2 8.5-1.5V5C17 4.5 14 5 12 6.5z M12 6.5v13",
+            Self::D2Settings => "M9 12A3 3 0 1 0 15 12A3 3 0 1 0 9 12Z M10.3 3h3.4l.5 2.4 1.7.9 2.3-.9 1.7 3-1.8 1.6v2l1.8 1.6-1.7 3-2.3-.9-1.7.9-.5 2.4h-3.4l-.5-2.4-1.7-.9-2.3.9-1.7-3L5.4 13v-2L3.6 9.4l1.7-3 2.3.9 1.7-.9z",
+            Self::D2Inventory => "M6 10a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v10H6z M9.5 6V4h5v2 M9 14h6v3H9z",
+            Self::D2Character => "M8.5 8A3.5 3.5 0 1 0 15.5 8A3.5 3.5 0 1 0 8.5 8Z M5 20c.6-3.8 3.4-6 7-6s6.4 2.2 7 6",
+            Self::D2World => "M3 6.5 9 4l6 2.5L21 4v13.5L15 20l-6-2.5L3 20z M9 4v13.5M15 6.5V20",
+            Self::D2History => "M4 12a8 8 0 1 0 2.4-5.7L4 8.5 M4 4v4.5h4.5 M12 8v4l2.8 1.8",
+            Self::D2Check => "M12 3 19 6v5.2c0 4.4-2.9 7.9-7 9.8-4.1-1.9-7-5.4-7-9.8V6z M9 12 l 2.2 2.2L15.5 10",
+            Self::D2Backups => "M3.5 5h17v4h-17z M5 9v10h14V9 M10 13h4",
+            Self::D2Compare => "M7 4 3.5 7.5 7 11 M3.5 7.5H17 M17 13 l 3.5 3.5L17 20 M20.5 16.5H7",
+            Self::D2Cloud => "M7 18.5h10.5a4 4 0 0 0 .3-8A6 6 0 0 0 6.2 10 4.3 4.3 0 0 0 7 18.5z",
+            Self::D2Fixes => "M14.6 3.4a5 5 0 0 0-4.3 6.7l-6.4 6.4a2 2 0 0 0 2.9 2.9l6.4-6.4a5 5 0 0 0 6.7-4.3l-3 1.5-2.6-.9-.9-2.6z",
+            Self::D2Companion => "M9 3v4.5M15 3v4.5 M6 7.5h12V11a6 6 0 0 1-12 0z M12 17v4",
+            Self::D2Doctor => "M3 12h4l2.2-5.5 4.4 11 2.2-5.5H21",
+            Self::D2Environment => "M12 3.5 l 9 5-9 5-9-5z M3 13 l 9 5 9-5",
+            Self::D2Achievements => "M8 4h8v5a4 4 0 0 1-8 0z M8 6H5a3 3 0 0 0 3 4.5M16 6h3a3 3 0 0 1-3 4.5 M12 13v4M8 20.5h8M9.5 17h5v3.5h-5z",
+            Self::D2Updates => "M19.5 10A8 8 0 0 0 5.6 7.2L4 9 M4 4.5V9h4.5 M4.5 14a8 8 0 0 0 13.9 2.8L20 15 M20 19.5V15h-4.5",
+            Self::D2Folder => "M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2.5h8.5A1.5 1.5 0 0 1 21 9v9.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z",
+            Self::D2Search => "M4 10.5A6.5 6.5 0 1 0 17 10.5A6.5 6.5 0 1 0 4 10.5Z M15.5 15.5 l 5 5",
+            Self::D2Plus => "M12 5v14M5 12h14",
+            Self::D2Trash => "M4 7h16 M9 7V4h6v3 M6 7 l 1 13h10l1-13 M10 11v5.5M14 11v5.5",
+            Self::D2Restore => "M4 12a8 8 0 1 0 2.4-5.7L4 8.5 M4 4v4.5h4.5 M12 9v3.5",
+            Self::D2Copy => "M10 8.5H18.5A1.5 1.5 0 0 1 20 10V18.5A1.5 1.5 0 0 1 18.5 20H10A1.5 1.5 0 0 1 8.5 18.5V10A1.5 1.5 0 0 1 10 8.5Z M15.5 8.5V5.5A1.5 1.5 0 0 0 14 4H5.5A1.5 1.5 0 0 0 4 5.5V14a1.5 1.5 0 0 0 1.5 1.5h3",
+            Self::D2Pencil => "M4 20h4L19 9l-4-4L4 16z M13 7 l 4 4",
+            Self::D2CheckCircle => "M3 12A9 9 0 1 0 21 12A9 9 0 1 0 3 12Z M8 12.5 l 2.7 2.7L16 9.8",
+            Self::D2Warning => "M12 3.5 2.5 20h19z M12 10v4.5 M12 17.3h.01",
+            Self::D2Error => "M3 12A9 9 0 1 0 21 12A9 9 0 1 0 3 12Z M9 9 l 6 6M15 9l-6 6",
+            Self::D2Info => "M3 12A9 9 0 1 0 21 12A9 9 0 1 0 3 12Z M12 11v5.5 M12 7.7h.01",
+            Self::D2ArrowRight => "M5 12h14M13 6l6 6-6 6",
+            Self::D2ArrowLeft => "M19 12H5M11 6l-6 6 6 6",
+            Self::D2ChevronRight => "M9 6 l 6 6-6 6",
+            Self::D2ChevronDown => "M6 9 l 6 6 6-6",
+            Self::D2More => "M12 5h.01M12 12h.01M12 19h.01",
+            Self::D2Close => "M6 6l12 12M18 6 6 18",
+            Self::D2Undo => "M9 14 4 9l5-5 M4 9h10.5a5.5 5.5 0 0 1 0 11H11",
+            Self::D2Redo => "M15 14 l 5-5-5-5 M20 9H9.5a5.5 5.5 0 0 0 0 11H13",
+            Self::D2Factions => "M5 21V4 M5 4.5h12l-2.5 4 2.5 4H5",
+            Self::D2Stash => "M3.5 8.5 12 4l8.5 4.5v9L12 22l-8.5-4.5z M3.5 8.5 l 8.5 4.5 8.5-4.5M12 13v9",
+            Self::D2Transitions => "M5 20V5.5A1.5 1.5 0 0 1 6.5 4h7A1.5 1.5 0 0 1 15 5.5V20 M3 20h14 M17 9 l 3 3-3 3M14.5 12H20",
+            Self::D2Lock => "M6.5 10.5H17.5A1.5 1.5 0 0 1 19 12V19A1.5 1.5 0 0 1 17.5 20.5H6.5A1.5 1.5 0 0 1 5 19V12A1.5 1.5 0 0 1 6.5 10.5Z M8 10.5V7.5a4 4 0 0 1 8 0v3",
+            Self::D2Star => "M12 3.5 l 2.6 5.4 5.9.8-4.3 4.1 1 5.8-5.2-2.8-5.2 2.8 1-5.8-4.3-4.1 5.9-.8z",
+            Self::D2Filter => "M4 5h16l-6 7.5V19l-4 1.5v-8z",
+            Self::D2Sort => "M7 4v16M3.5 16.5 7 20l3.5-3.5 M13 6h8M13 11h6M13 16h4",
+            Self::D2Menu => "M4 6h16M4 12h16M4 18h16",
+            Self::D2Radiation => "",
+            Self::D2Sign => "M0.857 12A11.143 11.143 0 1 0 23.143 12A11.143 11.143 0 1 0 0.857 12Z",
+        }
+    }
+
+    /// Filled geometry on the 24×24 grid, drawn with the non-zero rule next to the outline; empty for outline icons.
+    #[must_use]
+    pub const fn fill_data(self) -> &'static str {
+        match self {
+            Self::D2Radiation => "M10.35 9.14L7.25 3.77A9.5 9.5 0 0 1 16.75 3.77L13.65 9.14A3.3 3.3 0 0 0 10.35 9.14ZM15.3 12L21.5 12A9.5 9.5 0 0 1 16.75 20.23L13.65 14.86A3.3 3.3 0 0 0 15.3 12ZM10.35 14.86L7.25 20.23A9.5 9.5 0 0 1 2.5 12L8.7 12A3.3 3.3 0 0 0 10.35 14.86Z M10 12A2 2 0 1 0 14 12A2 2 0 1 0 10 12Z",
+            Self::D2Sign => "M 10.371 9.18L 7.5 4.204A 9 9 0 0 1 16.5 4.204L 13.629 9.18A 3.257 3.257 0 0 0 10.371 9.18ZM 15.257 12L 21 12A 9 9 0 0 1 16.5 19.796L 13.629 14.82A 3.257 3.257 0 0 0 15.257 12ZM 10.371 14.82L 7.5 19.796A 9 9 0 0 1 3 12L 8.743 12A 3.257 3.257 0 0 0 10.371 14.82Z M10.114 12A1.886 1.886 0 1 0 13.886 12A1.886 1.886 0 1 0 10.114 12Z",
+            _ => "",
+        }
+    }
+
+    /// Outline width on the 24×24 grid: 2 for the original icons, 1.75 for the new outline icons,
+    /// 1.07 for the sign ring (its 2.5 on the 56 grid), 0 when there is no outline.
+    #[must_use]
+    pub const fn stroke_width(self) -> f64 {
+        match self {
+            Self::D2Radiation => 0.0,
+            Self::D2Sign => 1.07,
+            Self::D2Save
+            | Self::D2Games
+            | Self::D2Encyclopedia
+            | Self::D2Settings
+            | Self::D2Inventory
+            | Self::D2Character
+            | Self::D2World
+            | Self::D2History
+            | Self::D2Check
+            | Self::D2Backups
+            | Self::D2Compare
+            | Self::D2Cloud
+            | Self::D2Fixes
+            | Self::D2Companion
+            | Self::D2Doctor
+            | Self::D2Environment
+            | Self::D2Achievements
+            | Self::D2Updates
+            | Self::D2Folder
+            | Self::D2Search
+            | Self::D2Plus
+            | Self::D2Trash
+            | Self::D2Restore
+            | Self::D2Copy
+            | Self::D2Pencil
+            | Self::D2CheckCircle
+            | Self::D2Warning
+            | Self::D2Error
+            | Self::D2Info
+            | Self::D2ArrowRight
+            | Self::D2ArrowLeft
+            | Self::D2ChevronRight
+            | Self::D2ChevronDown
+            | Self::D2More
+            | Self::D2Close
+            | Self::D2Undo
+            | Self::D2Redo
+            | Self::D2Factions
+            | Self::D2Stash
+            | Self::D2Transitions
+            | Self::D2Lock
+            | Self::D2Star
+            | Self::D2Filter
+            | Self::D2Sort
+            | Self::D2Menu => 1.75,
+            _ => 2.0,
         }
     }
 
@@ -1571,9 +1778,62 @@ pub const ALL_ICONS: [Icon; 28] = [
     Icon::Info,
 ];
 
+/// The 47 design icons from `icons-clean` (46 outline or filled symbols and the sign; the logo is not an icon).
+pub const D2_ICONS: [Icon; 47] = [
+    Icon::D2Save,
+    Icon::D2Games,
+    Icon::D2Encyclopedia,
+    Icon::D2Settings,
+    Icon::D2Inventory,
+    Icon::D2Character,
+    Icon::D2World,
+    Icon::D2History,
+    Icon::D2Check,
+    Icon::D2Backups,
+    Icon::D2Compare,
+    Icon::D2Cloud,
+    Icon::D2Fixes,
+    Icon::D2Companion,
+    Icon::D2Doctor,
+    Icon::D2Environment,
+    Icon::D2Achievements,
+    Icon::D2Updates,
+    Icon::D2Folder,
+    Icon::D2Search,
+    Icon::D2Plus,
+    Icon::D2Trash,
+    Icon::D2Restore,
+    Icon::D2Copy,
+    Icon::D2Pencil,
+    Icon::D2CheckCircle,
+    Icon::D2Warning,
+    Icon::D2Error,
+    Icon::D2Info,
+    Icon::D2ArrowRight,
+    Icon::D2ArrowLeft,
+    Icon::D2ChevronRight,
+    Icon::D2ChevronDown,
+    Icon::D2More,
+    Icon::D2Close,
+    Icon::D2Undo,
+    Icon::D2Redo,
+    Icon::D2Factions,
+    Icon::D2Stash,
+    Icon::D2Transitions,
+    Icon::D2Lock,
+    Icon::D2Star,
+    Icon::D2Filter,
+    Icon::D2Sort,
+    Icon::D2Menu,
+    Icon::D2Radiation,
+    Icon::D2Sign,
+];
+
 #[cfg(test)]
 mod tests {
-    use super::{arc_to_cubics, FillRule, Icon, LineCap, LineJoin, Path, Point, StrokeStyle, Transform, ALL_ICONS};
+    use super::{
+        arc_to_cubics, FillRule, Icon, LineCap, LineJoin, Path, Point, StrokeStyle, Transform, ALL_ICONS, D2_ICONS,
+    };
 
     fn approx(left: f64, right: f64, epsilon: f64) -> bool {
         (left - right).abs() <= epsilon
@@ -1778,5 +2038,46 @@ mod tests {
             .path()
             .and_then(|path| path.flatten(Transform::identity(), 0.1, FillRule::NonZero));
         assert!(flat.as_ref().is_ok_and(|value| value.segments.len() == 2));
+    }
+
+    #[test]
+    fn d2_icons_parse_and_their_geometry_stays_in_the_box() {
+        // One variant per icons-clean file, the logo excluded.
+        assert_eq!(D2_ICONS.len(), 47);
+        for icon in D2_ICONS {
+            assert!(
+                !icon.path_data().is_empty() || !icon.fill_data().is_empty(),
+                "{icon:?}: no geometry"
+            );
+            if !icon.path_data().is_empty() {
+                let stroke = icon.path().and_then(|value| {
+                    value.stroke_to_fill(
+                        Transform::identity(),
+                        0.1,
+                        StrokeStyle {
+                            width: icon.stroke_width(),
+                            ..StrokeStyle::icon()
+                        },
+                    )
+                });
+                let inside = stroke.as_ref().is_ok_and(|value| {
+                    !value.segments.is_empty()
+                        && value.segments.iter().all(|segment| {
+                            [segment.from, segment.to]
+                                .into_iter()
+                                .all(|point| (0.0..=24.0).contains(&point.x) && (0.0..=24.0).contains(&point.y))
+                        })
+                });
+                assert!(inside, "{icon:?}: stroke missing or outside the box: {stroke:?}");
+            }
+            if !icon.fill_data().is_empty() {
+                let fill = Path::parse(icon.fill_data())
+                    .and_then(|value| value.flatten(Transform::identity(), 0.1, FillRule::NonZero));
+                assert!(
+                    fill.as_ref().is_ok_and(|value| !value.segments.is_empty()),
+                    "{icon:?}: {fill:?}"
+                );
+            }
+        }
     }
 }
