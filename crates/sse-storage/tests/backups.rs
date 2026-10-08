@@ -142,7 +142,7 @@ fn recovering_an_interrupted_write_clears_its_pending_recovery_status() {
         .all(|entry| entry.status != BackupStatus::Interrupted));
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[test]
 fn export_journal_keeps_non_unicode_source_and_output_paths_lossless() {
     use std::os::unix::ffi::OsStringExt;

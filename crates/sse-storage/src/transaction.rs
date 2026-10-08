@@ -2384,6 +2384,33 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn export_journal_paths_roundtrip_non_utf8_without_filesystem_access() -> TestResult {
+        use std::os::unix::ffi::OsStringExt;
+
+        let source = PathBuf::from(std::ffi::OsString::from_vec(b"source-\xff.sav".to_vec()));
+        let output = PathBuf::from(std::ffi::OsString::from_vec(b"edited-\xfe.sav".to_vec()));
+        let backup = PathBuf::from(std::ffi::OsString::from_vec(b"backup-\x80.sav".to_vec()));
+        let sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let encoded = super::serialize_export_journal(&super::ExportJournal {
+            status: "verified",
+            created_at: "2026-10-08T00:00:00.0000000+00:00",
+            source_path: &source,
+            source_sha256: sha256,
+            output_path: &output,
+            output_sha256: sha256,
+            backup_path: &backup,
+            summary: super::EditSummary::default(),
+        });
+        let fields = super::parse_top_fields(&encoded)?;
+
+        assert_eq!(super::path_field(&fields, "source_path", "source_path_native")?, source);
+        assert_eq!(super::path_field(&fields, "output_path", "output_path_native")?, output);
+        assert_eq!(super::path_field(&fields, "backup_path", "backup_path_native")?, backup);
+        Ok(())
+    }
+
     #[cfg(windows)]
     #[test]
     fn windows_native_path_decoder_preserves_utf16_code_units() -> TestResult {
