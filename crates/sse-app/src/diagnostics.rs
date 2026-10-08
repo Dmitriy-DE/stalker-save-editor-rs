@@ -21,6 +21,7 @@ const MAX_LOG_BYTES: u64 = 1024 * 1024;
 const MAX_CRASH_BYTES: usize = 64 * 1024;
 const MAX_BUNDLE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_AUTOMATIC_REPORT_BYTES: usize = 2 * 1024 * 1024;
+const MAX_AUTOMATIC_REPORT_CHARS: usize = 8_000;
 const MAX_REPORT_RESPONSE_BYTES: usize = 16 * 1024;
 const DEFAULT_REPORT_ENDPOINT: &str = "https://save-editor-downloads.save-editor.workers.dev/diagnostics";
 const PART_BYTES: usize = 256 * 1024;
@@ -115,13 +116,58 @@ pub fn redact(text: &str) -> String {
     {
         value = replace_ascii_case_insensitive(&value, &home, "<home>");
     }
+    value = redact_after_marker(&value, "/var/home/", "/var/<home>");
     value = redact_after_marker(&value, "/home/", "<home>");
     value = redact_after_marker(&value, "/Users/", "<home>");
-    value = redact_after_marker(&value, "C:\\Users\\", "<home>");
+    value = redact_windows_user_paths(&value);
+    value = redact_after_marker(&value, "/media/", "/media/<user>");
     value = redact_after_marker(&value, "drive_c/users/", "drive_c/users/<user>");
     value = redact_after_marker(&value, "drive_c\\users\\", "drive_c\\users\\<user>");
     value = redact_userdata(&value);
-    redact_steam_ids(&value)
+    value = redact_steam_ids(&value);
+    redact_unc_paths(&value)
+}
+
+fn redact_windows_user_paths(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = String::with_capacity(text.len());
+    let mut cursor = 0_usize;
+    let mut index = 0_usize;
+    while index < bytes.len() {
+        let root_separator = index.saturating_add(2);
+        let users_start = index.saturating_add(3);
+        let user_separator = index.saturating_add(8);
+        let is_user_root = bytes.get(index).is_some_and(u8::is_ascii_alphabetic)
+            && bytes.get(index.saturating_add(1)) == Some(&b':')
+            && bytes
+                .get(root_separator)
+                .is_some_and(|byte| matches!(*byte, b'/' | b'\\'))
+            && ascii_bytes_match(bytes, users_start, b"Users")
+            && bytes
+                .get(user_separator)
+                .is_some_and(|byte| matches!(*byte, b'/' | b'\\'));
+        if !is_user_root {
+            index = index.saturating_add(1);
+            continue;
+        }
+        if let Some(prefix) = text.get(cursor..index) {
+            out.push_str(prefix);
+        }
+        out.push_str("<home>");
+        let mut end = user_separator.saturating_add(1);
+        while let Some(byte) = bytes.get(end).copied() {
+            if matches!(byte, b'/' | b'\\' | b'\n' | b'\r' | b'"' | b'\'' | b';') {
+                break;
+            }
+            end = end.saturating_add(1);
+        }
+        cursor = end;
+        index = end;
+    }
+    if let Some(tail) = text.get(cursor..) {
+        out.push_str(tail);
+    }
+    out
 }
 
 fn replace_ascii_case_insensitive(text: &str, needle: &str, replacement: &str) -> String {
@@ -160,12 +206,51 @@ fn redact_after_marker(text: &str, marker: &str, replacement: &str) -> String {
         out.push_str(replacement);
         let mut end = start.saturating_add(marker.len());
         while let Some(byte) = text.as_bytes().get(end).copied() {
-            if byte == b'/' || byte == b'\\' || byte.is_ascii_whitespace() {
+            if byte == b'/' || byte == b'\\' {
+                break;
+            }
+            if byte == b'\n' || byte == b'\r' || byte == b'"' || byte == b'\'' || byte == b';' {
                 break;
             }
             end = end.saturating_add(1);
         }
         cursor = end;
+    }
+    if let Some(tail) = text.get(cursor..) {
+        out.push_str(tail);
+    }
+    out
+}
+
+fn redact_unc_paths(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = String::with_capacity(text.len());
+    let mut cursor = 0_usize;
+    let mut index = 0_usize;
+    while index < bytes.len() {
+        let next = index.saturating_add(1);
+        let is_unc_separator = matches!(bytes.get(index), Some(b'/' | b'\\')) && bytes.get(index) == bytes.get(next);
+        let starts_at_boundary = index == 0
+            || bytes
+                .get(index.saturating_sub(1))
+                .is_some_and(|byte| byte.is_ascii_whitespace() || matches!(*byte, b'=' | b'(' | b'[' | b'"' | b'\''));
+        if is_unc_separator && starts_at_boundary {
+            if let Some(prefix) = text.get(cursor..index) {
+                out.push_str(prefix);
+            }
+            out.push_str("<path>");
+            let mut end = index;
+            while let Some(byte) = bytes.get(end).copied() {
+                if byte == b'\n' || byte == b'\r' || byte == b';' || byte == b'"' || byte == b'\'' {
+                    break;
+                }
+                end = end.saturating_add(1);
+            }
+            cursor = end;
+            index = end;
+        } else {
+            index = index.saturating_add(1);
+        }
     }
     if let Some(tail) = text.get(cursor..) {
         out.push_str(tail);
@@ -210,6 +295,16 @@ fn redact_steam_ids(text: &str) -> String {
     let mut cursor = 0_usize;
     let mut index = 0_usize;
     while index < bytes.len() {
+        let steam_id_end = steam_id2_end(bytes, index).or_else(|| steam_id3_end(bytes, index));
+        if let Some(end) = steam_id_end {
+            if let Some(prefix) = text.get(cursor..index) {
+                out.push_str(prefix);
+            }
+            out.push_str("<steamid>");
+            cursor = end;
+            index = end;
+            continue;
+        }
         if bytes.get(index).is_some_and(u8::is_ascii_digit) {
             let start = index;
             while bytes.get(index).is_some_and(u8::is_ascii_digit) {
@@ -231,6 +326,57 @@ fn redact_steam_ids(text: &str) -> String {
         out.push_str(tail);
     }
     out
+}
+
+fn steam_id2_end(bytes: &[u8], start: usize) -> Option<usize> {
+    if !ascii_bytes_match(bytes, start, b"STEAM_") {
+        return None;
+    }
+    let mut end = start.checked_add(b"STEAM_".len())?;
+    if !scan_ascii_digits(bytes, &mut end) || bytes.get(end) != Some(&b':') {
+        return None;
+    }
+    end = end.saturating_add(1);
+    if !scan_ascii_digits(bytes, &mut end) || bytes.get(end) != Some(&b':') {
+        return None;
+    }
+    end = end.saturating_add(1);
+    scan_ascii_digits(bytes, &mut end).then_some(end)
+}
+
+fn steam_id3_end(bytes: &[u8], start: usize) -> Option<usize> {
+    if bytes.get(start) != Some(&b'[') || !ascii_bytes_match(bytes, start.saturating_add(1), b"U:") {
+        return None;
+    }
+    let mut end = start.checked_add(3)?;
+    if !scan_ascii_digits(bytes, &mut end) || bytes.get(end) != Some(&b':') {
+        return None;
+    }
+    end = end.saturating_add(1);
+    if !scan_ascii_digits(bytes, &mut end) || bytes.get(end) != Some(&b']') {
+        return None;
+    }
+    end.checked_add(1)
+}
+
+fn ascii_bytes_match(bytes: &[u8], start: usize, expected: &[u8]) -> bool {
+    let Some(end) = start.checked_add(expected.len()) else {
+        return false;
+    };
+    bytes.get(start..end).is_some_and(|actual| {
+        actual
+            .iter()
+            .zip(expected)
+            .all(|(actual, expected)| actual.eq_ignore_ascii_case(expected))
+    })
+}
+
+fn scan_ascii_digits(bytes: &[u8], index: &mut usize) -> bool {
+    let start = *index;
+    while bytes.get(*index).is_some_and(u8::is_ascii_digit) {
+        *index = index.saturating_add(1);
+    }
+    *index > start
 }
 
 /// Installs a panic hook that records a redacted crash marker before delegating to the previous hook.
@@ -291,7 +437,7 @@ pub fn dismiss_crash() {
 pub fn automatic_error_report(error_text: &str, stack: &str) -> String {
     let log = fs::read_to_string(log_directory().join(LOG_FILE)).unwrap_or_default();
     let log = tail_utf8(&log, 16 * 1024);
-    format!(
+    let report = format!(
         "Version: {}\nOS: {} {}\nError:\n{}\n\nStack:\n{}\n\nApplication log:\n{}\n",
         env!("CARGO_PKG_VERSION"),
         std::env::consts::OS,
@@ -299,7 +445,15 @@ pub fn automatic_error_report(error_text: &str, stack: &str) -> String {
         redact_paths(&redact(error_text)),
         redact_paths(&redact(stack)),
         redact_paths(&redact(log)),
-    )
+    );
+    truncate_chars(&report, MAX_AUTOMATIC_REPORT_CHARS).to_owned()
+}
+
+fn truncate_chars(value: &str, maximum: usize) -> &str {
+    value
+        .char_indices()
+        .nth(maximum)
+        .map_or(value, |(index, _)| value.get(..index).unwrap_or(value))
 }
 
 /// Builds an automatic report from the previous-run crash marker.
@@ -480,18 +634,84 @@ fn skip_json_value(reader: &mut sse_codecs::json::Reader<'_>, first: sse_codecs:
 
 fn redact_paths(text: &str) -> String {
     let mut output = String::with_capacity(text.len());
-    for segment in text.split_inclusive(char::is_whitespace) {
-        let token = segment.trim_end_matches(char::is_whitespace);
-        let whitespace = segment.get(token.len()..).unwrap_or_default();
-        let looks_like_path = token.contains('/') || token.contains('\\') || token.as_bytes().get(1) == Some(&b':');
-        if looks_like_path {
-            output.push_str("<path>");
-        } else {
-            output.push_str(token);
+    let bytes = text.as_bytes();
+    let mut cursor = 0_usize;
+    while let Some(start) = next_path_start(bytes, cursor) {
+        if let Some(prefix) = text.get(cursor..start) {
+            output.push_str(prefix);
         }
-        output.push_str(whitespace);
+        output.push_str("<path>");
+        let end = path_end(bytes, start);
+        cursor = end.max(start.saturating_add(1));
+    }
+    if let Some(tail) = text.get(cursor..) {
+        output.push_str(tail);
     }
     output
+}
+
+fn next_path_start(bytes: &[u8], from: usize) -> Option<usize> {
+    for index in from..bytes.len() {
+        let drive_path = bytes.get(index).is_some_and(u8::is_ascii_alphabetic)
+            && bytes.get(index.saturating_add(1)) == Some(&b':')
+            && bytes
+                .get(index.saturating_add(2))
+                .is_some_and(|byte| matches!(*byte, b'/' | b'\\'));
+        if drive_path {
+            return Some(index);
+        }
+        if matches!(bytes.get(index), Some(b'/' | b'\\')) {
+            let mut start = index;
+            while start > from {
+                let previous = bytes.get(start.saturating_sub(1)).copied().unwrap_or_default();
+                if previous.is_ascii_whitespace()
+                    || matches!(previous, b'=' | b'(' | b'[' | b'"' | b'\'' | b';' | b',' | b':')
+                {
+                    break;
+                }
+                start = start.saturating_sub(1);
+            }
+            return Some(start);
+        }
+    }
+    None
+}
+
+fn path_end(bytes: &[u8], start: usize) -> usize {
+    let mut end = start;
+    while let Some(byte) = bytes.get(end).copied() {
+        if matches!(byte, b'\n' | b'\r' | b';' | b'"' | b'\'' | b')' | b']' | b'}') {
+            break;
+        }
+        if byte.is_ascii_whitespace() && has_filename_extension(bytes, end) {
+            break;
+        }
+        if byte == b':'
+            && end > start.saturating_add(2)
+            && bytes.get(end.saturating_add(1)).is_some_and(u8::is_ascii_whitespace)
+        {
+            break;
+        }
+        end = end.saturating_add(1);
+    }
+    end
+}
+
+fn has_filename_extension(bytes: &[u8], end: usize) -> bool {
+    let tail_start = end.saturating_sub(10);
+    let tail = bytes.get(tail_start..end).unwrap_or_default();
+    let Some(dot) = tail.iter().rposition(|byte| *byte == b'.') else {
+        return false;
+    };
+    let extension = tail.get(dot.saturating_add(1)..).unwrap_or_default();
+    const KNOWN_EXTENSIONS: [&[u8]; 33] = [
+        b"sav", b"sav2", b"scop", b"dat", b"txt", b"log", b"json", b"cfg", b"ini", b"db", b"zip", b"dmp", b"mdmp",
+        b"exe", b"dll", b"bin", b"bak", b"tmp", b"toml", b"xml", b"yaml", b"yml", b"lua", b"script", b"png", b"jpg",
+        b"jpeg", b"svg", b"acf", b"vdf", b"rs", b"sh", b"lock",
+    ];
+    KNOWN_EXTENSIONS
+        .iter()
+        .any(|known| extension.eq_ignore_ascii_case(known))
 }
 
 /// Creates a redacted gzip diagnostics bundle without sending it anywhere.
@@ -878,8 +1098,107 @@ mod tests {
     }
 
     #[test]
+    fn redacts_steam_id_text_formats() {
+        let source = "steam2=STEAM_0:1:123456 steam3=[U:1:7654321]";
+        let redacted = redact(source);
+
+        assert!(
+            !redacted.contains("STEAM_0:1:123456"),
+            "leaked Steam2 ID in {redacted:?}"
+        );
+        assert!(!redacted.contains("[U:1:7654321]"), "leaked Steam3 ID in {redacted:?}");
+        assert_eq!(redacted.matches("<steamid>").count(), 2, "{redacted:?}");
+    }
+
+    #[test]
+    fn redacts_user_components_with_spaces() {
+        let source =
+            r#"windows=C:\Users\Alice Example\Documents\save.sav; media=/media/Bob Example/Saves folder/save.sav"#;
+        let redacted = redact(source);
+
+        for private_fragment in ["Alice", "Example", "Bob"] {
+            assert!(
+                !redacted.contains(private_fragment),
+                "leaked {private_fragment:?} in {redacted:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn preserves_absolute_var_home_path_shape_without_leaking_user() {
+        let redacted = redact("/var/home/Alice Example/saves/quicksave.sav");
+
+        assert_eq!(redacted, "/var/<home>/saves/quicksave.sav");
+    }
+
+    #[test]
+    fn redacts_run_media_and_non_c_drive_user_components() {
+        let source = r"mounted=/run/media/Alice Smith/Games/slot.sav; drive=D:\Users\Carol Example\Documents\save.sav";
+        let redacted = redact(source);
+
+        for private_fragment in ["Alice", "Smith", "Carol", "Example"] {
+            assert!(
+                !redacted.contains(private_fragment),
+                "leaked {private_fragment:?} in {redacted:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn redacts_unc_paths_with_spaced_components() {
+        let source = r#"unc=\\archive01\Profiles\Carol Example\Documents\save.sav; status=failed"#;
+        let redacted = redact(source);
+
+        assert!(!redacted.contains("archive01"), "leaked UNC host in {redacted:?}");
+        assert!(!redacted.contains("Carol Example"), "leaked UNC user in {redacted:?}");
+    }
+
+    #[test]
     fn automatic_report_endpoint_defaults_to_the_https_worker() {
         assert_eq!(automatic_report_endpoint(), DEFAULT_REPORT_ENDPOINT);
+    }
+
+    #[test]
+    fn automatic_report_is_bounded_to_the_preview_length() {
+        let long_error = "я".repeat(9_000);
+        let report = automatic_error_report(&long_error, "");
+
+        assert!(
+            report.chars().count() <= 8_000,
+            "report length: {}",
+            report.chars().count()
+        );
+    }
+
+    #[test]
+    fn automatic_report_redacts_path_components_after_spaces() {
+        let source = r"failed D:\Users\Alice Example Folder\OneDrive - Private Company\Save With Spaces.sav; code=1";
+        let report = redact_paths(source);
+
+        for private_fragment in [
+            "Alice",
+            "Example",
+            "Folder",
+            "OneDrive",
+            "Private",
+            "Company",
+            "Save",
+            "Spaces.sav",
+        ] {
+            assert!(
+                !report.contains(private_fragment),
+                "leaked {private_fragment:?} in {report:?}"
+            );
+        }
+        assert!(report.contains("<path>; code=1"), "{report:?}");
+    }
+
+    #[test]
+    fn automatic_report_does_not_leak_after_a_dotted_directory_name() {
+        let report = redact_paths("failed /home/Alice/OneDrive 2.0 Company; code=1");
+
+        assert!(!report.contains("Company"), "leaked folder name in {report:?}");
+        assert!(report.contains("<path>; code=1"), "{report:?}");
     }
 
     #[test]
@@ -995,7 +1314,7 @@ mod tests {
         let _ = fs::remove_dir_all(&directory);
         fs::create_dir_all(&directory)?;
         configure_log_directory(Some(directory.clone()));
-        info("home /home/alice and steam 76561198012345678");
+        info("home /home/alice/secret.sav and steam 76561198012345678");
         record_crash("test", "/Users/alice/crash");
         let gzip = diagnostics_bundle(Some("C:\\Users\\Alice\\environment"))?;
         assert_eq!(gzip.get(..3), Some(&[0x1f, 0x8b, 8][..]));
@@ -1011,7 +1330,7 @@ mod tests {
         )?;
         let text = String::from_utf8_lossy(&payload);
         assert!(text.contains("<home>"));
-        assert!(text.contains("<steamid>"));
+        assert!(text.contains("<steamid>"), "{text}");
         assert!(!text.contains("alice"));
         configure_log_directory(None);
         let _ = fs::remove_dir_all(directory);

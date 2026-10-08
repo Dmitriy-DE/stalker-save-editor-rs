@@ -17,7 +17,7 @@ fn temp_test_dir(name: &str) -> PathBuf {
 }
 
 #[test]
-fn default_settings_matches_csharp() {
+fn default_settings_start_with_reports_disabled() {
     let settings = AppSettings::default();
     assert_eq!(settings.save_directories, None);
     assert_eq!(settings.backup_directory, None);
@@ -29,7 +29,7 @@ fn default_settings_matches_csharp() {
     assert_eq!(settings.accent_id, "amber");
     assert_eq!(settings.ui_scale_percent, 0);
     assert_eq!(settings.navigation_collapsed, None);
-    assert!(settings.send_reports);
+    assert!(!settings.send_reports);
     assert!(!settings.reports_notice_shown);
     assert_eq!(settings.last_report_utc, None);
 }
