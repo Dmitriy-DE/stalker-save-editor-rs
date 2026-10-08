@@ -1557,9 +1557,11 @@ fn is_hash(value: &str) -> bool {
 #[cfg(test)]
 #[allow(clippy::expect_used)] // These tests use expect only to fail fast on temporary-fixture setup errors.
 mod transaction_tests {
+    #[cfg(unix)]
+    use super::write_atomic;
     use super::{
         begin_install_transaction, begin_uninstall_transaction, install_bundled, read_limited,
-        recover_install_transaction, write_atomic, PayloadFile, PlannedFileChange, JOURNAL_FILE, STATE_DIRECTORY,
+        recover_install_transaction, PayloadFile, PlannedFileChange, JOURNAL_FILE, STATE_DIRECTORY,
     };
     use std::fs;
     use std::path::PathBuf;
