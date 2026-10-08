@@ -452,9 +452,15 @@ impl Shell {
 
     #[cfg(test)]
     pub(crate) fn build_for_test(tree: &mut Tree, proxy: Option<Proxy<AppMessage>>) -> Result<Self> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        static NEXT_TEST_BACKUP_DIRECTORY: AtomicU64 = AtomicU64::new(0);
         let mut settings = sse_app::AppSettings::new();
         settings.reports_notice_shown = true;
         settings.send_reports = false;
+        let directory_id = NEXT_TEST_BACKUP_DIRECTORY.fetch_add(1, Ordering::Relaxed);
+        settings.backup_directory =
+            Some(std::env::temp_dir().join(format!("sse-shell-test-backups-{}-{directory_id}", std::process::id())));
         let mut shell = Self::build_with_settings(tree, None, settings)?;
         shell.proxy = proxy;
         Ok(shell)
@@ -1757,6 +1763,7 @@ impl Shell {
             }
             let wanted = match message {
                 Message::User(AppMessage::Tick(_)) => true,
+                Message::User(AppMessage::OpenBackups) => false,
                 Message::User(AppMessage::OpenGameFix { .. }) => screen.id() == ScreenId::GameFixes,
                 Message::User(AppMessage::OpenSavePicker { .. }) => false,
                 Message::User(AppMessage::ToScreen(id, _)) => *id == screen.id(),
@@ -2093,6 +2100,10 @@ impl Shell {
             if self.open_files_queue.is_none() && tree.dialog() != Some(self.open_file_dialog) {
                 self.open_return_screen = None;
             }
+            return Ok(Flow::Continue);
+        }
+        if matches!(message, Message::User(AppMessage::OpenBackups)) {
+            self.open(tree, ScreenId::Backups)?;
             return Ok(Flow::Continue);
         }
         if let Message::User(AppMessage::OpenGameFix { game_id, .. }) = message {
@@ -2817,6 +2828,7 @@ mod tests {
     use crate::event_loop::{channel_pair, Flow, Message, WindowEvent};
     use crate::glyphs::Fonts;
     use crate::raster::Color;
+    use crate::screens::AppMessage;
     use crate::widget::{Tree, WidgetId};
     use sse_storage::drafts::{DraftPlacement, DraftPlan, JsonValue};
     use std::path::Path;
@@ -2930,6 +2942,18 @@ mod tests {
             !status.is_empty() && status != previous_status,
             "save should report its unavailable state"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn startup_recovery_offer_opens_the_backup_screen() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut shell = Shell::build_for_test(&mut tree, None)?;
+        assert_eq!(shell.current(), Some(ScreenId::Overview));
+
+        let message = Message::User(AppMessage::OpenBackups);
+        assert_eq!(shell.handle(&mut tree, &message, None)?, Flow::Continue);
+        assert_eq!(shell.current(), Some(ScreenId::Backups));
         Ok(())
     }
 

@@ -80,6 +80,27 @@ fn basic_edits_use_the_schema_two_shape_readable_by_the_reference() {
     assert!(store.load(source_sha256).expect("draft read should succeed").is_some());
 }
 
+#[cfg(unix)]
+#[test]
+fn persisted_draft_permissions_are_restricted_at_creation() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = TemporaryDirectory::new();
+    let store = DraftStore::new(&directory.0);
+    let source_sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let mut plan = DraftPlan::empty(source_sha256).expect("valid plan");
+    plan.money = Some(5);
+    store
+        .save(DraftJournal::new(vec![plan], 0).expect("valid journal"))
+        .expect("draft should persist");
+
+    let path = store.path_for(source_sha256).expect("valid source hash");
+    assert_eq!(
+        fs::metadata(path).expect("draft metadata").permissions().mode() & 0o777,
+        0o600
+    );
+}
+
 #[test]
 fn schema_three_roundtrips_all_edits_and_supports_undo_redo_and_branching() {
     let directory = TemporaryDirectory::new();
@@ -347,6 +368,46 @@ fn rejects_invalid_source_hashes_and_does_not_load_for_a_different_save() {
 }
 
 #[test]
+fn identical_save_bytes_at_different_paths_have_separate_drafts() -> sse_core::Result<()> {
+    let directory = TemporaryDirectory::new();
+    let source_sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let first = DraftStore::for_source(&directory.0, directory.0.join("slot-a.sav"));
+    let second = DraftStore::for_source(&directory.0, directory.0.join("slot-b.sav"));
+    let mut first_plan = DraftPlan::empty(source_sha256).expect("valid plan");
+    first_plan.money = Some(111);
+    let mut second_plan = DraftPlan::empty(source_sha256).expect("valid plan");
+    second_plan.money = Some(222);
+
+    first
+        .save(DraftJournal::new(vec![first_plan], 0).expect("valid journal"))
+        .expect("first path draft should save");
+    second
+        .save(DraftJournal::new(vec![second_plan], 0).expect("valid journal"))
+        .expect("second path draft should save");
+
+    assert_ne!(first.path_for(source_sha256)?, second.path_for(source_sha256)?);
+    assert_eq!(
+        first
+            .load(source_sha256)?
+            .expect("first draft should exist")
+            .current()
+            .expect("first current plan should exist")
+            .money,
+        Some(111)
+    );
+    assert_eq!(
+        second
+            .load(source_sha256)?
+            .expect("second draft should exist")
+            .current()
+            .expect("second current plan should exist")
+            .money,
+        Some(222)
+    );
+    Ok(())
+}
+
+#[test]
 fn preserves_unmapped_legacy_edits_and_refuses_to_branch_over_them() {
     let directory = TemporaryDirectory::new();
     let store = DraftStore::new(&directory.0);
@@ -433,7 +494,7 @@ fn oversized_history_is_compacted_and_oversized_current_plan_is_refused() {
 }
 
 #[test]
-fn truncated_oversized_and_deterministically_mutated_drafts_fail_closed() {
+fn existing_corrupt_or_oversized_drafts_are_reported_instead_of_treated_as_absent() {
     let directory = TemporaryDirectory::new();
     let store = DraftStore::new(&directory.0);
     let source_sha256 = "0bb85823656a0280d6add2df2d0c7bdc80bc064eb9344eaafc3b5a73804cc3a0";
@@ -442,10 +503,10 @@ fn truncated_oversized_and_deterministically_mutated_drafts_fail_closed() {
 
     for end in 0..fixture.len() {
         fs::write(&path, &fixture[..end]).expect("truncated draft should be written");
-        assert!(store
-            .load(source_sha256)
-            .expect("truncated draft read should fail closed")
-            .is_none());
+        assert!(
+            store.load(source_sha256).is_err(),
+            "truncation at byte {end} was hidden"
+        );
     }
 
     let mut seed = 0x9e37_79b9_u32;
@@ -457,12 +518,27 @@ fn truncated_oversized_and_deterministically_mutated_drafts_fail_closed() {
         let index = (seed as usize) % mutated.len();
         mutated[index] ^= 1 << (seed % 8);
         fs::write(&path, mutated).expect("mutated draft should be written");
-        assert!(store.load(source_sha256).is_ok());
+        assert!(
+            !matches!(store.load(source_sha256), Ok(None)),
+            "existing mutated draft was treated as missing"
+        );
     }
 
     fs::write(&path, vec![0_u8; 2 * 1024 * 1024 + 1]).expect("oversized draft should be written");
-    assert!(store
-        .load(source_sha256)
-        .expect("oversized draft read should fail closed")
-        .is_none());
+    assert!(store.load(source_sha256).is_err(), "oversized draft was hidden");
+}
+
+#[test]
+fn save_does_not_overwrite_a_corrupt_existing_draft() {
+    let directory = TemporaryDirectory::new();
+    let store = DraftStore::new(&directory.0);
+    let source_sha256 = "0bb85823656a0280d6add2df2d0c7bdc80bc064eb9344eaafc3b5a73804cc3a0";
+    let path = store.path_for(source_sha256).expect("valid source hash");
+    let original = b"{not a draft";
+    fs::write(&path, original).expect("corrupt draft should be written");
+    let journal =
+        DraftJournal::new(vec![DraftPlan::empty(source_sha256).expect("valid plan")], 0).expect("valid journal");
+
+    assert!(store.save(journal).is_err());
+    assert_eq!(fs::read(path).expect("original must remain"), original);
 }

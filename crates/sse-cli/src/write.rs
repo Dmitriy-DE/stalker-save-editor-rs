@@ -47,6 +47,7 @@ struct PublishedWrite {
     backup_path: PathBuf,
     output_sha256: String,
     size: usize,
+    maintenance_warning: Option<String>,
 }
 
 struct WritePublication<'a> {
@@ -379,6 +380,9 @@ fn prepare_and_export(arguments: &[String]) -> Result<(), WriteFailure> {
     println!("Size: {}", receipt.size);
     println!("Backup: {}", receipt.backup_path.display());
     println!("SHA256: {}", receipt.output_sha256);
+    if let Some(warning) = receipt.maintenance_warning.as_deref() {
+        eprintln!("Warning: backup rotation did not complete: {warning}");
+    }
     if let Some(money) = options.money {
         println!("Money: {money}");
     }
@@ -433,6 +437,7 @@ fn publish_cli_write(
             backup_path: receipt.backup_path,
             output_sha256: receipt.output_sha256,
             size: replacement.len(),
+            maintenance_warning: receipt.maintenance_warning,
         });
     }
 
@@ -456,6 +461,7 @@ fn publish_cli_write(
         backup_path: receipt.backup_path,
         output_sha256: receipt.output_sha256,
         size: read_back.len(),
+        maintenance_warning: receipt.maintenance_warning,
     })
 }
 
@@ -580,6 +586,9 @@ fn prepare_and_export_s2(
     println!("Size: {}", receipt.size);
     println!("Backup: {}", receipt.backup_path.display());
     println!("SHA256: {}", receipt.output_sha256);
+    if let Some(warning) = receipt.maintenance_warning.as_deref() {
+        eprintln!("Warning: backup rotation did not complete: {warning}");
+    }
     if let Some(money) = options.money {
         println!("Money: {money}");
     }

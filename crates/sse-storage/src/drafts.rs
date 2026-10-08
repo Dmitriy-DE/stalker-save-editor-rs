@@ -1,6 +1,7 @@
 //! C#-compatible local draft journals with bounded undo history.
 
 use sse_codecs::json::{Event, Reader, Text, Writer};
+use sse_codecs::sha256::sha256_hex;
 use sse_core::{Error, Result};
 use std::collections::{BTreeMap, HashSet};
 #[cfg(unix)]
@@ -414,10 +415,11 @@ impl DraftJournal {
     }
 }
 
-/// Local draft store keyed only by the SHA-256 of the source save.
+/// Local draft store keyed by the source save's SHA-256 and, when available, its native path.
 #[derive(Debug, Clone)]
 pub struct DraftStore {
     directory: PathBuf,
+    source_path: Option<PathBuf>,
 }
 
 impl DraftStore {
@@ -426,34 +428,81 @@ impl DraftStore {
     pub fn new(directory: impl AsRef<Path>) -> Self {
         Self {
             directory: directory.as_ref().to_path_buf(),
+            source_path: None,
+        }
+    }
+
+    /// Creates a store whose draft identity includes the source path as well as its SHA-256.
+    #[must_use]
+    pub fn for_source(directory: impl AsRef<Path>, source_path: impl AsRef<Path>) -> Self {
+        Self {
+            directory: directory.as_ref().to_path_buf(),
+            source_path: Some(source_path.as_ref().to_path_buf()),
         }
     }
 
     /// Returns the path for a lowercase SHA-256 key.
     pub fn path_for(&self, source_sha256: &str) -> Result<PathBuf> {
         validate_source_sha256(source_sha256)?;
+        let Some(source_path) = self.source_path.as_deref() else {
+            return self.legacy_path_for(source_sha256);
+        };
+        let path_sha256 = sha256_hex(&native_path_bytes(source_path)?);
+        Ok(self.directory.join(format!("{source_sha256}-{path_sha256}.json")))
+    }
+
+    /// Returns the generation key used to prevent stale background writes for another source path.
+    pub fn identity_key(&self, source_sha256: &str) -> Result<String> {
+        validate_source_sha256(source_sha256)?;
+        let Some(source_path) = self.source_path.as_deref() else {
+            return Ok(source_sha256.to_owned());
+        };
+        Ok(format!(
+            "{source_sha256}:{}",
+            sha256_hex(&native_path_bytes(source_path)?)
+        ))
+    }
+
+    fn legacy_path_for(&self, source_sha256: &str) -> Result<PathBuf> {
+        validate_source_sha256(source_sha256)?;
         Ok(self.directory.join(format!("{source_sha256}.json")))
     }
 
-    /// Loads schemas 1–5, returning `None` for a missing, invalid, or oversized draft.
+    fn legacy_path_needs_recovery(&self, source_sha256: &str) -> Result<bool> {
+        if self.source_path.is_none() {
+            return Ok(false);
+        }
+        match fs::symlink_metadata(self.legacy_path_for(source_sha256)?) {
+            Ok(_) => Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    /// Loads schemas 1–5, returning `None` only when the draft does not exist.
     pub fn load(&self, source_sha256: &str) -> Result<Option<DraftJournal>> {
         let path = self.path_for(source_sha256)?;
-        if fs::symlink_metadata(&path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
-            return Ok(None);
-        }
-        let metadata = match fs::metadata(&path) {
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(Error::Refused("draft path is a symbolic link".to_owned()));
+            }
             Ok(metadata) => metadata,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(_) => return Ok(None),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                if self.legacy_path_needs_recovery(source_sha256)? {
+                    return Err(Error::Refused(
+                        "a legacy draft without source-path identity exists; recover or set it aside explicitly before editing this save"
+                            .to_owned(),
+                    ));
+                }
+                return Ok(None);
+            }
+            Err(error) => return Err(error.into()),
         };
         if metadata.len() > MAXIMUM_DRAFT_BYTES as u64 {
-            return Ok(None);
+            return Err(Error::Refused("draft exceeds the 2 MiB size limit".to_owned()));
         }
-        let bytes = match fs::read(&path) {
-            Ok(bytes) => bytes,
-            Err(_) => return Ok(None),
-        };
-        Ok(parse_journal(&bytes, source_sha256).ok())
+        let bytes = fs::read(&path)?;
+        parse_journal(&bytes, source_sha256).map(Some)
     }
 
     /// Saves a journal atomically; when history exceeds 2 MiB, keeps only the untouched and current states.
@@ -464,9 +513,11 @@ impl DraftStore {
             .ok_or_else(|| Error::Refused("draft journal index is out of range".to_owned()))?;
         let source_sha256 = current.source_sha256.clone();
         let path = self.path_for(&source_sha256)?;
+        // Preserve unreadable or unsupported drafts until the caller explicitly sets them aside.
+        let _existing = self.load(&source_sha256)?;
         if !current.has_changes() {
             match fs::remove_file(&path) {
-                Ok(()) => sync_directory(&self.directory),
+                Ok(()) => sync_directory(&self.directory)?,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                 Err(error) => return Err(error.into()),
             }
@@ -495,14 +546,42 @@ impl DraftStore {
     /// Moves a stored draft aside so unsupported content can be recovered later.
     pub fn set_aside(&self, source_sha256: &str) -> Result<Option<PathBuf>> {
         let path = self.path_for(source_sha256)?;
-        if !path.exists() {
-            return Ok(None);
-        }
+        let path = match fs::symlink_metadata(&path) {
+            Ok(_) => path,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let legacy_path = self.legacy_path_for(source_sha256)?;
+                match fs::symlink_metadata(&legacy_path) {
+                    Ok(_) => legacy_path,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                    Err(error) => return Err(error.into()),
+                }
+            }
+            Err(error) => return Err(error.into()),
+        };
         let id = NEXT_DRAFT_ID.fetch_add(1, Ordering::Relaxed);
         let kept = path.with_extension(format!("json.unsupported-{}-{id}", std::process::id()));
         fs::rename(&path, &kept)?;
-        sync_directory(&self.directory);
+        sync_directory(&self.directory)?;
         Ok(Some(kept))
+    }
+}
+
+fn native_path_bytes(path: &Path) -> Result<Vec<u8>> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        Ok(path.as_os_str().as_bytes().to_vec())
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        Ok(path.as_os_str().encode_wide().flat_map(u16::to_le_bytes).collect())
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        path.to_str()
+            .map(|path| path.as_bytes().to_vec())
+            .ok_or_else(|| Error::Refused("source path cannot be represented losslessly".to_owned()))
     }
 }
 
@@ -1207,12 +1286,12 @@ fn write_durable(directory: &Path, destination: &Path, bytes: &[u8]) -> Result<(
     let result = (|| {
         let mut options = OpenOptions::new();
         options.write(true).create_new(true);
-        let mut file = options.open(&temporary)?;
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&temporary, fs::Permissions::from_mode(0o600))?;
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
         }
+        let mut file = options.open(&temporary)?;
         file.write_all(bytes)?;
         file.sync_all()?;
         drop(file);
@@ -1220,7 +1299,7 @@ fn write_durable(directory: &Path, destination: &Path, bytes: &[u8]) -> Result<(
             return Err(Error::Refused("draft path is a symbolic link".to_owned()));
         }
         fs::rename(&temporary, destination)?;
-        sync_directory(directory);
+        sync_directory(directory)?;
         Ok(())
     })();
     if result.is_err() {
@@ -1229,13 +1308,12 @@ fn write_durable(directory: &Path, destination: &Path, bytes: &[u8]) -> Result<(
     result
 }
 
-fn sync_directory(directory: &Path) {
+fn sync_directory(directory: &Path) -> Result<()> {
     #[cfg(unix)]
-    if let Ok(handle) = File::open(directory) {
-        let _ = handle.sync_all();
-    }
+    File::open(directory)?.sync_all()?;
     #[cfg(not(unix))]
     let _ = directory;
+    Ok(())
 }
 
 impl From<Text<'_>> for JsonValue {

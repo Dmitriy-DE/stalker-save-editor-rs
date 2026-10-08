@@ -144,6 +144,7 @@ struct DiagnosisReport {
 struct QuestRepairCompletion {
     path: PathBuf,
     backup_path: PathBuf,
+    maintenance_warning: Option<String>,
     report: std::result::Result<DiagnosisReport, String>,
 }
 
@@ -447,16 +448,19 @@ impl HistoryScreen {
             let result = if context.is_cancelled() {
                 Err("Операция ремонта отменена.".to_owned())
             } else {
-                repair_quest_save(&path, &expected_sha256, &backup_directory).map(|backup_path| {
-                    let report = diagnose_save(&path, format_id.as_deref())
-                        .map(|(_, report)| report)
-                        .map_err(|error| error.to_string());
-                    QuestRepairCompletion {
-                        path,
-                        backup_path,
-                        report,
-                    }
-                })
+                repair_quest_save(&path, &expected_sha256, &backup_directory).map(
+                    |(backup_path, maintenance_warning)| {
+                        let report = diagnose_save(&path, format_id.as_deref())
+                            .map(|(_, report)| report)
+                            .map_err(|error| error.to_string());
+                        QuestRepairCompletion {
+                            path,
+                            backup_path,
+                            maintenance_warning,
+                            report,
+                        }
+                    },
+                )
             };
             drop(save_guard);
             proxy.send(AppMessage::ToScreen(
@@ -638,12 +642,12 @@ impl HistoryScreen {
     }
 
     fn render_backups_page(&mut self, cx: &mut Context<'_>) -> Result<()> {
-        let (visible, total, verified, pages) = match self.backup_entries.as_ref() {
+        let (visible, total, restorable, pages) = match self.backup_entries.as_ref() {
             Some(entries) => {
                 let total = entries.len();
-                let verified = entries
+                let restorable = entries
                     .iter()
-                    .filter(|entry| entry.status == BackupStatus::Verified)
+                    .filter(|entry| matches!(entry.status, BackupStatus::Verified | BackupStatus::Interrupted))
                     .count();
                 let pages = page_count(total);
                 let start = self.page.saturating_mul(MAXIMUM_VISIBLE_ENTRIES);
@@ -653,7 +657,7 @@ impl HistoryScreen {
                     .take(MAXIMUM_VISIBLE_ENTRIES)
                     .cloned()
                     .collect::<Vec<_>>();
-                (visible, total, verified, pages)
+                (visible, total, restorable, pages)
             }
             None => return Ok(()),
         };
@@ -662,7 +666,7 @@ impl HistoryScreen {
         self.set_summary(
             cx.tree,
             &format!(
-                "Записей: {total} · проверено: {verified} · страница {} из {pages}",
+                "Записей: {total} · восстановимо: {restorable} · страница {} из {pages}",
                 self.page.saturating_add(1)
             ),
         )?;
@@ -671,6 +675,7 @@ impl HistoryScreen {
             let status = match entry.status {
                 BackupStatus::Verified => "проверен",
                 BackupStatus::Missing => "файл отсутствует",
+                BackupStatus::Interrupted => "прервано, копия проверена",
                 BackupStatus::Corrupt => "ошибка проверки",
             };
             let Some(slot) = self.rows.get(row_index).copied() else {
@@ -680,7 +685,9 @@ impl HistoryScreen {
             cx.tree.set_text(slot.label, &format!("{file} · {status}"))?;
             cx.tree.set_visible(slot.button, false)?;
             cx.tree.set_visible(slot.secondary_button, false)?;
-            if entry.status == BackupStatus::Verified && self.id == ScreenId::Backups {
+            if matches!(entry.status, BackupStatus::Verified | BackupStatus::Interrupted)
+                && self.id == ScreenId::Backups
+            {
                 cx.tree.set_visible(slot.button, true)?;
                 cx.tree.set_text(slot.button, "В копию…")?;
                 self.actions.push(ActionButton {
@@ -989,13 +996,14 @@ impl HistoryScreen {
         let QuestRepairCompletion {
             path,
             backup_path,
+            maintenance_warning,
             report,
         } = completion;
         let backup_name = backup_path.file_name().map_or_else(
             || backup_path.display().to_string(),
             |name| name.to_string_lossy().into_owned(),
         );
-        let status = match report {
+        let mut status = match report {
             Ok(report) => {
                 self.render_diagnosis(cx, &path, report)?;
                 format!("КВЕСТЫ ИСПРАВЛЕНЫ. Backup: {backup_name}")
@@ -1008,6 +1016,9 @@ impl HistoryScreen {
                 )
             }
         };
+        if let Some(warning) = maintenance_warning {
+            status.push_str(&format!(" · ротация старых копий не завершена: {warning}"));
+        }
         self.set_summary(cx.tree, &status)?;
         Ok(())
     }
@@ -1024,6 +1035,9 @@ impl Screen for HistoryScreen {
 
     fn shown(&mut self, cx: &mut Context<'_>) -> Result<()> {
         self.workspace.poll_tasks();
+        if self.id == ScreenId::Backups {
+            self.request_refresh(cx.proxy.cloned())?;
+        }
         if self.id == ScreenId::Compare {
             let selected = cx.app.current_save().map(Path::to_path_buf);
             if self.compare_selection.first().cloned() != selected {
@@ -1969,7 +1983,7 @@ fn repair_quest_save(
     path: &Path,
     expected_source_sha256: &str,
     backup_directory: &Path,
-) -> std::result::Result<PathBuf, String> {
+) -> std::result::Result<(PathBuf, Option<String>), String> {
     let original = SaveBuffer::read(path).map_err(|error| error.to_string())?;
     let actual_sha256 = sse_codecs::sha256::sha256_hex(original.as_slice());
     if actual_sha256 != expected_source_sha256 {
@@ -1997,7 +2011,7 @@ fn repair_quest_save(
         sse_doctor::verify_quest_repair,
     )
     .map_err(|error| error.to_string())?;
-    Ok(receipt.backup_path)
+    Ok((receipt.backup_path, receipt.maintenance_warning))
 }
 
 fn quest_title(id: &str) -> &'static str {
