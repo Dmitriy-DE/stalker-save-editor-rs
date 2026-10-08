@@ -961,8 +961,14 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn timed_out_worker_returns_uncertain_for_a_write() {
-        let directory = temp_dir("timeout");
-        let worker = worker_script(&directory, "#!/bin/sh\ncat >/dev/null\nexec sleep 3\n");
+        // Run a stable system shell directly so this timeout test does not execute a
+        // freshly written script file that can transiently fail with ETXTBSY.
+        let worker = Path::new("/bin/sh");
+        let arguments = [
+            String::from("-c"),
+            String::from("cat >/dev/null\nexec sleep 3"),
+            String::from("--steam-native-worker"),
+        ];
         let request = NativeRequest::Write {
             app_id: 4500,
             file_name: "_appdata_/savedgames/slot.sav".into(),
@@ -978,8 +984,8 @@ mod tests {
         };
         let started = Instant::now();
         let result = run_native_process(
-            &worker,
-            &[String::from("--steam-native-worker")],
+            worker,
+            &arguments,
             4500,
             header,
             bytes,
@@ -997,7 +1003,6 @@ mod tests {
             "unexpected timeout result: {result:?}"
         );
         assert!(started.elapsed() < Duration::from_secs(2));
-        let _ = std::fs::remove_dir_all(directory);
     }
 
     #[cfg(unix)]
