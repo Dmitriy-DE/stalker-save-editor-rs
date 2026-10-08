@@ -243,7 +243,7 @@ fn valid_unicode_filename_must_be_saveable() {
     let result = replace_transaction(&source, &sse_codecs::sha256::sha256_hex(OLD), NEW, &t.0.join("backups"));
     assert!(result.is_ok(), "valid 184-byte filename cannot be saved: {result:?}");
 }
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[test]
 fn non_utf8_source_path_must_restore_to_the_original_path() {
     use std::os::unix::ffi::OsStringExt;

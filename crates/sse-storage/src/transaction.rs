@@ -1582,8 +1582,13 @@ fn decode_native_path(encoded: &str) -> Result<PathBuf> {
         }
         let wide = bytes
             .chunks_exact(2)
-            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
-            .collect::<Vec<_>>();
+            .map(|pair| {
+                let pair: [u8; 2] = pair
+                    .try_into()
+                    .map_err(|_| Error::Refused("journal Windows path has an odd byte count".to_owned()))?;
+                Ok(u16::from_le_bytes(pair))
+            })
+            .collect::<Result<Vec<_>>>()?;
         return Ok(PathBuf::from(OsString::from_wide(&wide)));
     }
     #[cfg(not(any(unix, windows)))]
@@ -2365,6 +2370,32 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_native_path_encoding_roundtrips_non_utf8_bytes_without_filesystem_access() -> TestResult {
+        use std::os::unix::ffi::OsStringExt;
+
+        let path = PathBuf::from(std::ffi::OsString::from_vec(b"slot-\xff.sav".to_vec()));
+        let encoded = super::encode_native_path(&path);
+
+        assert_eq!(encoded, "u:736c6f742dff2e736176");
+        assert_eq!(super::decode_native_path(&encoded)?, path);
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_native_path_decoder_preserves_utf16_code_units() -> TestResult {
+        use std::os::windows::ffi::OsStrExt;
+
+        let decoded = super::decode_native_path("w:41003dd800de")?;
+        let code_units = decoded.as_os_str().encode_wide().collect::<Vec<_>>();
+
+        assert_eq!(code_units, [0x0041_u16, 0xd83d, 0xde00]);
+        assert!(super::decode_native_path("w:41").is_err());
+        Ok(())
+    }
 
     #[test]
     fn replaces_and_records_a_synthetic_save() -> TestResult {
