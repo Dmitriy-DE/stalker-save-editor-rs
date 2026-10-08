@@ -7,6 +7,7 @@
 use crate::event_loop::Message;
 use crate::widget::{Tree, WidgetId};
 use sse_core::Result;
+use sse_storage::discovery::SaveDirectoryDiscoveryOptions;
 use std::any::Any;
 
 pub mod app;
@@ -19,6 +20,23 @@ pub mod services;
 pub mod shell;
 pub mod style;
 mod wizard;
+
+/// Discovery options shared by every save-library surface.
+pub(crate) fn save_directory_discovery_options() -> SaveDirectoryDiscoveryOptions {
+    let custom_save_directories = match sse_app::AppSettings::load(&sse_app::default_settings_path()) {
+        Ok(settings) => settings.save_directories,
+        Err(error) => {
+            sse_app::diagnostics::warn(&format!(
+                "settings file could not be loaded for save discovery: {error}"
+            ));
+            None
+        }
+    };
+    SaveDirectoryDiscoveryOptions {
+        custom_save_directories,
+        ..SaveDirectoryDiscoveryOptions::default()
+    }
+}
 
 #[cfg(test)]
 pub(crate) fn task_registry_test_guard() -> std::sync::MutexGuard<'static, ()> {
@@ -228,6 +246,8 @@ pub enum AppMessage {
     EditorAction(EditorAction),
     /// UI sound clips decoded from the selected game's files by a worker.
     SoundLoaded(String, Box<crate::sound::GameUiSounds>),
+    /// Durable settings-write result delivered by the settings writer.
+    SettingsWriteFinished(std::result::Result<(), String>),
 }
 
 /// Commands available from the shared editor toolbar and keyboard shortcuts.
@@ -253,8 +273,38 @@ impl std::fmt::Debug for AppMessage {
             Self::ToScreen(id, _) => write!(f, "ToScreen({id:?})"),
             Self::EditorAction(action) => write!(f, "EditorAction({action:?})"),
             Self::SoundLoaded(game, _) => write!(f, "SoundLoaded({game})"),
+            Self::SettingsWriteFinished(result) => write!(f, "SettingsWriteFinished({})", result.is_ok()),
         }
     }
+}
+
+/// Submits a settings mutation and reports its durable-write result without blocking the UI when a proxy exists.
+pub(crate) fn submit_settings_write(
+    patch: sse_app::settings_writer::SettingsPatch,
+    proxy: Option<crate::event_loop::Proxy<AppMessage>>,
+) -> Result<()> {
+    let result = sse_app::settings_writer::submit(patch);
+    let Some(proxy) = proxy else {
+        return result
+            .recv()
+            .map_err(|error| sse_core::Error::Refused(format!("settings writer stopped: {error}")))?;
+    };
+
+    std::thread::Builder::new()
+        .name("settings-write-result".to_owned())
+        .spawn(move || {
+            let result = match result.recv() {
+                Ok(Ok(())) => Ok(()),
+                Ok(Err(error)) => Err(error.to_string()),
+                Err(error) => Err(format!("settings writer stopped: {error}")),
+            };
+            if let Err(error) = &result {
+                sse_app::diagnostics::error(&format!("settings write failed: {error}"));
+            }
+            let _ = proxy.send(AppMessage::SettingsWriteFinished(result));
+        })
+        .map_err(|error| sse_core::Error::Refused(format!("could not start settings result worker: {error}")))?;
+    Ok(())
 }
 
 /// Everything a screen may touch while handling a message.

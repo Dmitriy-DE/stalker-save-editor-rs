@@ -1658,7 +1658,8 @@ fn clone_report(report: &CompareReport) -> CompareReport {
 }
 
 fn discover_saves() -> sse_core::Result<Vec<SaveSlot>> {
-    let candidates = SaveDirectoryLocator::find_candidate_directories(None);
+    let discovery_options = super::save_directory_discovery_options();
+    let candidates = SaveDirectoryLocator::find_candidate_directories(Some(&discovery_options));
     Ok(SaveSlotDiscovery::discover(&candidates).slots)
 }
 
