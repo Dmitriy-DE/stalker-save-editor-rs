@@ -179,6 +179,37 @@ fn task_failure_reporting() -> std::io::Result<()> {
 }
 
 #[test]
+fn panicked_task_sends_a_terminal_failure_event() -> std::io::Result<()> {
+    let manager = TaskManager::new();
+    let handle = manager.spawn("panicking_terminal", |_ctx| -> Result<(), String> {
+        panic!("intentional task panic");
+    })?;
+
+    let mut failure = None;
+    for _ in 0..50 {
+        for event in manager.poll_events() {
+            match event {
+                TaskEvent::Failed(id, message) if id == handle.id() => failure = Some(message),
+                TaskEvent::Completed(id, _) if id == handle.id() => {
+                    return Err(std::io::Error::other("panicked task reported success"));
+                }
+                _ => {}
+            }
+        }
+        if failure.is_some() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    assert_eq!(
+        failure.as_deref(),
+        Some("background task panicked: intentional task panic")
+    );
+    Ok(())
+}
+
+#[test]
 fn ui_thread_never_blocks_on_poll() {
     let manager = TaskManager::new();
     // Polling with no tasks returns immediately

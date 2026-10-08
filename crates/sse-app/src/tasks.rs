@@ -230,6 +230,14 @@ pub fn wait_for_named_tasks(names: &[&str], timeout: Duration) -> bool {
 
 type TaskEntry = (CancellationToken, JoinHandle<()>);
 
+fn panic_message(payload: &(dyn Any + Send)) -> String {
+    payload
+        .downcast_ref::<String>()
+        .cloned()
+        .or_else(|| payload.downcast_ref::<&str>().map(|message| (*message).to_owned()))
+        .unwrap_or_else(|| "non-string panic payload".to_owned())
+}
+
 /// Manages background task execution and non-blocking event dispatch.
 ///
 /// Designed to satisfy the strict rule: the UI thread NEVER blocks or waits.
@@ -291,20 +299,28 @@ impl TaskManager {
                     return;
                 }
 
-                let result = work(task_context.clone());
-
-                if task_context.is_cancelled() {
-                    let _ = sender.send(TaskEvent::Cancelled(task_id));
-                    return;
-                }
-
-                match result {
-                    Ok(val) => {
-                        let _ = sender.send(TaskEvent::Completed(task_id, Box::new(val)));
+                match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| work(task_context.clone()))) {
+                    Err(payload) => {
+                        let error = format!("background task panicked: {}", panic_message(payload.as_ref()));
+                        crate::diagnostics::error(&format!("background task '{name}' ({task_id:?}) failed: {error}"));
+                        let _ = sender.send(TaskEvent::Failed(task_id, error));
                     }
-                    Err(err) => {
-                        crate::diagnostics::error(&format!("background task '{name}' ({task_id:?}) failed: {err}"));
-                        let _ = sender.send(TaskEvent::Failed(task_id, err));
+                    Ok(result) => {
+                        if task_context.is_cancelled() {
+                            let _ = sender.send(TaskEvent::Cancelled(task_id));
+                            return;
+                        }
+                        match result {
+                            Ok(val) => {
+                                let _ = sender.send(TaskEvent::Completed(task_id, Box::new(val)));
+                            }
+                            Err(err) => {
+                                crate::diagnostics::error(&format!(
+                                    "background task '{name}' ({task_id:?}) failed: {err}"
+                                ));
+                                let _ = sender.send(TaskEvent::Failed(task_id, err));
+                            }
+                        }
                     }
                 }
             })
