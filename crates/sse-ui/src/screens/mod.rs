@@ -20,6 +20,17 @@ pub mod shell;
 pub mod style;
 mod wizard;
 
+#[cfg(test)]
+pub(crate) fn task_registry_test_guard() -> std::sync::MutexGuard<'static, ()> {
+    use std::sync::{Mutex, OnceLock};
+
+    // Background task names are process-global, so tests that inspect them must share this gate.
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// Every screen of the editor, in sidebar order (same as the C# 1.3.1 sidebar).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum ScreenId {

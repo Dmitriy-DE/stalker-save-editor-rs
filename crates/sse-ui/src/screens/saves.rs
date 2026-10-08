@@ -8032,6 +8032,7 @@ mod tests {
 
     #[test]
     fn inventory_draft_persists_and_global_undo_redo_updates_the_selected_save() -> sse_core::Result<()> {
+        let _task_guard = crate::screens::task_registry_test_guard();
         let temp = TempDirectory::new();
         let draft_directory = temp.0.join("drafts");
         let source = include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-source.sav");
