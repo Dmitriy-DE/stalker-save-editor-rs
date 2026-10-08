@@ -64,6 +64,7 @@ pub struct InventoryItem {
     pub placement: Option<String>,
     pub(crate) placement_offset: Option<usize>,
     pub(crate) placement_value: Option<u16>,
+    pub(crate) placement_width: Option<usize>,
     pub(crate) placement_base_slot: Option<u8>,
     /// Confirmed equipment condition in the serialized STATE field.
     pub condition: Option<f32>,
@@ -74,11 +75,12 @@ pub struct InventoryItem {
     pub(crate) client_condition_offset: Option<usize>,
 }
 
-struct PlacementFields {
-    category: String,
-    offset: usize,
-    packed: u16,
-    base_slot: Option<u8>,
+pub(crate) struct PlacementFields {
+    pub(crate) category: String,
+    pub(crate) offset: usize,
+    pub(crate) packed: u16,
+    pub(crate) width: usize,
+    pub(crate) base_slot: Option<u8>,
 }
 
 /// Indexed registry record. Offsets address the decompressed image and preserve all unknown bytes.
@@ -253,8 +255,8 @@ impl Save {
         }
         let actor = actor.ok_or_else(|| Error::damaged("X-Ray save has no actor object"))?;
         if !actor_version_supported(format, actor.version) {
-            return Err(Error::damaged(format!(
-                "actor spawn version {} is not supported for {}",
+            return Err(Error::Refused(format!(
+                "unsupported actor spawn version {} for {}",
                 actor.version,
                 format.id()
             )));
@@ -500,7 +502,7 @@ impl Save {
             if record.parent_id != self.actor_id || record.object_id == self.actor_id {
                 continue;
             }
-            let placement_fields = read_placement_fields(self.container.image(), record)?;
+            let placement_fields = read_placement_fields(self.container.image(), record, self.format)?;
             let condition_fields = read_condition_fields(self.container.image(), record);
             let stack = read_ammo_count(self.container.image(), record);
             items.push(InventoryItem {
@@ -513,6 +515,7 @@ impl Save {
                 placement: placement_fields.as_ref().map(|fields| fields.category.clone()),
                 placement_offset: placement_fields.as_ref().map(|fields| fields.offset),
                 placement_value: placement_fields.as_ref().map(|fields| fields.packed),
+                placement_width: placement_fields.as_ref().map(|fields| fields.width),
                 placement_base_slot: placement_fields.as_ref().and_then(|fields| fields.base_slot),
                 condition: condition_fields.map(|fields| fields.0),
                 durability_editable: condition_fields.is_some_and(|fields| fields.2.is_some()),
@@ -569,12 +572,19 @@ fn detect_format(container_version: u32, alife_version: u32, objects: &[u8]) -> 
         (6, 6) => Ok(Format::Cop),
         (3, 51) => Ok(Format::SocEe),
         (6, 54) => {
-            let has_marsh = objects.windows(5).any(|window| window == b"marsh");
-            let has_zaton = objects.windows(5).any(|window| window == b"zaton");
+            // A complete NUL-terminated level name is evidence; an item section containing the word is not.
+            let mut has_marsh = false;
+            let mut has_zaton = false;
+            for string in objects.split(|byte| *byte == 0) {
+                has_marsh |= string == b"marsh";
+                has_zaton |= string == b"zaton";
+            }
             match (has_marsh, has_zaton) {
                 (true, false) => Ok(Format::CsEe),
                 (false, true) => Ok(Format::CopEe),
-                _ => Err(Error::damaged("X-Ray Enhanced Edition markers are ambiguous")),
+                _ => Err(Error::Refused(
+                    "X-Ray Enhanced Edition level markers are missing or ambiguous".to_owned(),
+                )),
             }
         }
         _ => Err(Error::Refused(format!(
@@ -1153,19 +1163,50 @@ fn read_ammo_count(raw: &[u8], record: &ObjectRecord) -> Option<(u16, usize, usi
     Some((count, state_count_offset, update_count_offset))
 }
 
-fn read_placement_fields(raw: &[u8], record: &ObjectRecord) -> Result<Option<PlacementFields>> {
-    if record.client_data_length < 3 {
-        return Ok(None);
-    }
+pub(crate) fn read_placement_fields(
+    raw: &[u8],
+    record: &RegistryObject,
+    format: Format,
+) -> Result<Option<PlacementFields>> {
     let Some(start) = record.client_data_offset else {
+        return Ok(None);
+    };
+    let client_end = start
+        .checked_add(record.client_data_length)
+        .ok_or_else(|| Error::damaged("X-Ray client-data range overflows"))?;
+    let Some(client_data) = raw.get(start..client_end) else {
         return Ok(None);
     };
     let offset = start
         .checked_add(1)
         .ok_or_else(|| Error::damaged("X-Ray placement offset overflow"))?;
+    if format == Format::Cs && client_data.len() == 2 && client_data.first() == Some(&2) {
+        let Some(value) = client_data.get(1).copied().filter(|value| (1..=3).contains(value)) else {
+            return Ok(None);
+        };
+        let category = match value {
+            1 => "slot",
+            2 => "belt",
+            3 => "ruck",
+            _ => return Ok(None),
+        };
+        return Ok(Some(PlacementFields {
+            category: category.to_owned(),
+            offset,
+            packed: u16::from(value),
+            width: 1,
+            base_slot: None,
+        }));
+    }
+    if client_data.len() < 3 {
+        return Ok(None);
+    }
     let end = offset
         .checked_add(2)
         .ok_or_else(|| Error::damaged("X-Ray placement range overflow"))?;
+    if end > client_end {
+        return Ok(None);
+    }
     let Some(bytes) = raw.get(offset..end) else {
         return Ok(None);
     };
@@ -1184,6 +1225,7 @@ fn read_placement_fields(raw: &[u8], record: &ObjectRecord) -> Result<Option<Pla
                     category: "slot".to_owned(),
                     offset,
                     packed,
+                    width: 2,
                     base_slot: u8::try_from(base_slot).ok(),
                 }))
             } else {
@@ -1194,12 +1236,14 @@ fn read_placement_fields(raw: &[u8], record: &ObjectRecord) -> Result<Option<Pla
             category: "belt".to_owned(),
             offset,
             packed,
+            width: 2,
             base_slot: packed_base_slot(packed),
         })),
         3 => Ok(Some(PlacementFields {
             category: "ruck".to_owned(),
             offset,
             packed,
+            width: 2,
             base_slot: packed_base_slot(packed),
         })),
         _ => Ok(None),
@@ -1233,8 +1277,11 @@ fn read_condition_fields(raw: &[u8], record: &ObjectRecord) -> Option<(f32, usiz
     let update_payload = raw.get(update_start..update_end)?;
     let mut update_match = None;
     let mut update_matches = 0_u8;
-    for (relative, byte) in update_payload.iter().enumerate() {
-        let candidate = update_start.checked_add(relative)?;
+    for relative in [3_usize, 4] {
+        let Some(byte) = relative.checked_sub(2).and_then(|offset| update_payload.get(offset)) else {
+            continue;
+        };
+        let candidate = record.update_offset.checked_add(relative)?;
         let encoded = f32::from(*byte) / 255.0;
         if (encoded - condition).abs() <= (1.0 / 255.0) + 1.0e-6 {
             update_match = Some(candidate);
@@ -1372,7 +1419,7 @@ fn cp1251_char(byte: u8) -> char {
     clippy::type_complexity
 )]
 mod tests {
-    use super::{parse_relation_registry, parse_spawn, Format, Save};
+    use super::{detect_format, parse_relation_registry, parse_spawn, read_placement_fields, Format, Save};
     use crate::container::Container;
     use sse_core::Error;
 
@@ -1589,6 +1636,37 @@ mod tests {
     }
 
     #[test]
+    fn update_condition_mirror_uses_only_the_supported_packet_offsets() {
+        let condition = 0.75_f32;
+        let mut state = synthetic_dynamic_visual_state(b"", true);
+        state.extend_from_slice(&condition.to_le_bytes());
+        let update_offset = state.len().saturating_add(8);
+        let mut raw = vec![0_u8; update_offset.saturating_add(16)];
+        raw.get_mut(..state.len())
+            .expect("state should fit")
+            .copy_from_slice(&state);
+        let update_end = update_offset.saturating_add(16);
+        let update = raw.get_mut(update_offset..update_end).expect("update should fit");
+        update[..2].copy_from_slice(&0_u16.to_le_bytes());
+        let encoded = 191_u8;
+        update[3] = encoded;
+        update[11] = encoded;
+
+        let mut record = synthetic_creature_record(state.len());
+        record.name = "wpn_test".to_owned();
+        record.update_offset = update_offset;
+        record.update_length = 16;
+
+        let matches = super::read_condition_fields(&raw, &record).map(|fields| fields.2);
+        assert_eq!(matches, Some(Some(update_offset.saturating_add(3))));
+
+        let mut trailing_only = raw;
+        trailing_only[update_offset.saturating_add(3)] = 0;
+        let matches = super::read_condition_fields(&trailing_only, &record).map(|fields| fields.2);
+        assert_eq!(matches, Some(None));
+    }
+
+    #[test]
     fn spawn_parser_rejects_unterminated_dynamic_custom_data() {
         let packet = synthetic_spawn_packet(&synthetic_dynamic_visual_state(b"logic = true", false));
         assert!(parse_spawn(&packet, 0).is_err());
@@ -1768,6 +1846,47 @@ mod tests {
     }
 
     #[test]
+    fn unsupported_enhanced_mod_without_a_supported_level_marker_is_refused() {
+        let source = include_bytes!("../../../fixtures/synthetic/xray-call-of-pripyat-ee.sav");
+        let container = Container::read(source).expect("enhanced fixture should decompress");
+        let object_chunk = container
+            .chunks()
+            .iter()
+            .find(|chunk| chunk.kind == 2)
+            .expect("OBJECT chunk should exist");
+        let mut raw = container.image().to_vec();
+        let object_end = object_chunk.offset.saturating_add(object_chunk.length);
+        let object_data = raw
+            .get(object_chunk.offset..object_end)
+            .expect("OBJECT chunk should be in bounds");
+        let marker = object_data
+            .windows(5)
+            .position(|window| window == b"zaton")
+            .and_then(|offset| object_chunk.offset.checked_add(offset))
+            .expect("synthetic CoP fixture should include its level marker");
+        raw.get_mut(marker..marker.saturating_add(5))
+            .expect("level marker should fit")
+            .copy_from_slice(b"other");
+
+        let mod_save = pack(container.version(), &raw);
+        assert!(matches!(Save::read(&mod_save), Err(Error::Refused(_))));
+    }
+
+    #[test]
+    fn enhanced_level_markers_must_be_standalone_serialized_strings() {
+        assert!(matches!(
+            detect_format(6, 54, b"ammo_marsh_test\0"),
+            Err(Error::Refused(_))
+        ));
+        assert_eq!(detect_format(6, 54, b"\0marsh\0"), Ok(Format::CsEe));
+        assert_eq!(detect_format(6, 54, b"\0zaton\0"), Ok(Format::CopEe));
+        assert!(matches!(
+            detect_format(6, 54, b"\0marsh\0zaton\0"),
+            Err(Error::Refused(_))
+        ));
+    }
+
+    #[test]
     fn every_container_truncation_is_rejected() {
         let packed = include_bytes!("../../../fixtures/synthetic/xray-soc.sav");
         for length in 0..packed.len() {
@@ -1863,6 +1982,32 @@ mod tests {
         };
         assert_eq!(item.section, "bandage_existing");
         assert_eq!(item.count, None);
+    }
+
+    #[test]
+    fn clear_sky_reader_accepts_the_tagged_one_byte_placement_layout() {
+        let mut record = synthetic_creature_record(0);
+        record.client_data_offset = Some(0);
+        record.client_data_length = 2;
+        let fields = read_placement_fields(&[2, 1], &record, Format::Cs)
+            .expect("synthetic placement should not be damaged")
+            .expect("Clear Sky's tagged one-byte slot placement should be readable");
+        assert_eq!(fields.category, "slot");
+        assert_eq!(fields.packed, 1);
+        assert_eq!(fields.width, 1);
+    }
+
+    #[test]
+    fn clear_sky_reader_keeps_the_packed_two_byte_placement_layout() {
+        let mut record = synthetic_creature_record(0);
+        record.client_data_offset = Some(0);
+        record.client_data_length = 3;
+        let fields = read_placement_fields(&[2, 3, 0], &record, Format::Cs)
+            .expect("synthetic placement should not be damaged")
+            .expect("the packed two-byte placement should be readable");
+        assert_eq!(fields.category, "ruck");
+        assert_eq!(fields.packed, 3);
+        assert_eq!(fields.width, 2);
     }
 
     fn pack(version: u32, raw: &[u8]) -> Vec<u8> {

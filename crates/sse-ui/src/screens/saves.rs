@@ -438,7 +438,7 @@ enum SaveData {
         inventory: Vec<InventoryItem>,
     },
     Stalker2 {
-        save: S2Save,
+        save: Box<S2Save>,
         inventory: Vec<S2InventoryItem>,
         stash_items: Option<std::result::Result<Vec<S2StashItem>, String>>,
     },
@@ -558,7 +558,7 @@ impl LoadedSave {
             parameters,
             integrity,
             data: SaveData::Stalker2 {
-                save,
+                save: Box::new(save),
                 inventory,
                 stash_items,
             },

@@ -115,7 +115,13 @@ pub(crate) fn find_destination(state: &[u8], version: u16) -> Option<LevelChange
             continue;
         }
         let Some(position) = suffix.dest_position else { continue };
+        let Some(direction) = suffix.dest_direction else {
+            continue;
+        };
         if !position.x.is_finite() || !position.y.is_finite() || !position.z.is_finite() {
+            continue;
+        }
+        if !direction.x.is_finite() || !direction.y.is_finite() || !direction.z.is_finite() {
             continue;
         }
         let Some(tail_start) = start.checked_add(suffix.consumed_bytes) else {
@@ -367,5 +373,22 @@ mod tests {
         assert!(find_destination(&state, 118).is_some());
 
         assert!(find_destination(packet, 118).is_none());
+    }
+
+    #[test]
+    fn rejects_a_destination_with_non_finite_direction() -> Result<(), Error> {
+        let packet = include_bytes!("../../../fixtures/synthetic/xray-level-changer/synthetic-level-changer-soc.bin");
+        let mut malformed_suffix = packet.to_vec();
+        malformed_suffix
+            .get_mut(18..22)
+            .ok_or_else(|| Error::damaged("direction should be present in the version 118 suffix"))?
+            .copy_from_slice(&f32::NAN.to_le_bytes());
+
+        let mut state = vec![1, 0];
+        state.extend(std::iter::repeat_n(0_u8, 16));
+        state.push(0);
+        state.extend_from_slice(&malformed_suffix);
+        assert!(find_destination(&state, 118).is_none());
+        Ok(())
     }
 }
