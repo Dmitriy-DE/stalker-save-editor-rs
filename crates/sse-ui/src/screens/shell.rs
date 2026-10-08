@@ -100,6 +100,29 @@ struct ReportUploadFinished {
     local_saved: bool,
 }
 
+struct NativeFilePickerFinished {
+    request: u64,
+    result: std::result::Result<Option<Vec<PathBuf>>, String>,
+}
+
+fn spawn_native_file_picker<F>(proxy: Proxy<AppMessage>, request: u64, picker: F) -> std::io::Result<()>
+where
+    F: FnOnce() -> sse_core::Result<Option<Vec<PathBuf>>> + Send + 'static,
+{
+    std::thread::Builder::new()
+        .name("sse-native-file-picker".to_owned())
+        .spawn(move || {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(picker))
+                .map_err(|_| "native file picker panicked".to_owned())
+                .and_then(|result| result.map_err(|error| error.to_string()));
+            let _ = proxy.send(AppMessage::ToScreen(
+                ScreenId::Overview,
+                Box::new(NativeFilePickerFinished { request, result }),
+            ));
+        })
+        .map(|_| ())
+}
+
 #[derive(Default)]
 struct LibraryPreviewState {
     entries: VecDeque<LibraryPreviewEntry>,
@@ -294,6 +317,9 @@ pub struct Shell {
     save: WidgetId,
     open_button: WidgetId,
     open_files_queue: Option<OpenFilesQueue>,
+    native_file_picker_request: Option<u64>,
+    #[cfg(not(test))]
+    next_native_file_picker_request: u64,
     open_return_screen: Option<ScreenId>,
     open_file_dialog: WidgetId,
     open_path_widget: WidgetId,
@@ -1181,6 +1207,9 @@ impl Shell {
             save,
             open_button,
             open_files_queue: None,
+            native_file_picker_request: None,
+            #[cfg(not(test))]
+            next_native_file_picker_request: 0,
             open_return_screen: None,
             open_file_dialog,
             open_path_widget,
@@ -1586,20 +1615,37 @@ impl Shell {
             || self.library_workspace.is_restoring()
             || self.library_workspace.is_loading()
             || self.open_files_queue.is_some()
+            || self.native_file_picker_request.is_some()
         {
             return Ok(());
         }
         #[cfg(not(test))]
         if self.proxy.is_some() {
-            match sse_sys::file_dialog::open_files() {
-                Ok(Some(paths)) if !paths.is_empty() => {
-                    self.open_save_paths(tree, paths)?;
+            if cfg!(target_os = "macos") {
+                match sse_sys::file_dialog::open_files() {
+                    Ok(Some(paths)) if !paths.is_empty() => {
+                        self.open_save_paths(tree, paths)?;
+                        return Ok(());
+                    }
+                    Ok(Some(_) | None) => return Ok(()),
+                    Err(error) => {
+                        tree.set_text(self.status, &format!("Системный диалог недоступен: {error}"))?;
+                    }
+                }
+            } else {
+                self.next_native_file_picker_request = self.next_native_file_picker_request.saturating_add(1);
+                let request = self.next_native_file_picker_request;
+                self.native_file_picker_request = Some(request);
+                tree.set_enabled(self.open_button, false)?;
+                let Some(proxy) = self.proxy.clone() else {
                     return Ok(());
+                };
+                if let Err(error) = spawn_native_file_picker(proxy, request, sse_sys::file_dialog::open_files) {
+                    self.native_file_picker_request = None;
+                    tree.set_text(self.status, &format!("Системный диалог не запущен: {error}"))?;
+                    self.sync_saving_overlay(tree)?;
                 }
-                Ok(Some(_) | None) => return Ok(()),
-                Err(error) => {
-                    tree.set_text(self.status, &format!("Системный диалог недоступен: {error}"))?;
-                }
+                return Ok(());
             }
         }
         self.open_path_input = TextInput::new("", open_path_edit_config())?;
@@ -1890,7 +1936,10 @@ impl Shell {
         let busy = self.library_workspace.is_saving() || self.library_workspace.is_restoring();
         tree.set_enabled(
             self.open_button,
-            !busy && !self.library_workspace.is_loading() && self.open_files_queue.is_none(),
+            !busy
+                && !self.library_workspace.is_loading()
+                && self.open_files_queue.is_none()
+                && self.native_file_picker_request.is_none(),
         )?;
         if self.library_workspace.is_saving() {
             if !tree.dialog_open() {
@@ -1957,7 +2006,12 @@ impl Shell {
         let draft_write_active =
             sse_app::tasks::named_task_active("draft-save") || sse_app::tasks::named_task_active("draft-reset");
         let is_tick = matches!(message, Message::User(AppMessage::Tick(_)));
-        if self.close_waiting && !write_active && !save_session.is_saving() && !save_session.is_restoring() {
+        if self.close_waiting
+            && self.native_file_picker_request.is_none()
+            && !write_active
+            && !save_session.is_saving()
+            && !save_session.is_restoring()
+        {
             self.close_waiting = false;
             if draft_write_active {
                 self.begin_draft_close_wait();
@@ -2028,6 +2082,14 @@ impl Shell {
                     }
                     return Ok(Flow::Continue);
                 }
+                if self.native_file_picker_request.is_some() {
+                    self.close_waiting = true;
+                    tree.set_text(
+                        self.status,
+                        "Закройте системный диалог выбора файла, чтобы закрыть окно.",
+                    )?;
+                    return Ok(Flow::Continue);
+                }
                 if draft_write_active {
                     self.begin_draft_close_wait();
                     return Ok(Flow::Continue);
@@ -2069,6 +2131,33 @@ impl Shell {
             return Ok(Flow::Continue);
         }
         if let Message::User(AppMessage::ToScreen(ScreenId::Overview, payload)) = message {
+            if let Some(finished) = payload.downcast_ref::<NativeFilePickerFinished>() {
+                if self.native_file_picker_request == Some(finished.request) {
+                    self.native_file_picker_request = None;
+                    if self.close_waiting {
+                        self.close_waiting = false;
+                        return Ok(Flow::Exit);
+                    }
+                    match &finished.result {
+                        Ok(Some(paths)) if !paths.is_empty() => {
+                            if !self.open_save_paths(tree, paths.clone())? {
+                                self.open_return_screen = None;
+                                self.sync_saving_overlay(tree)?;
+                            }
+                        }
+                        Ok(Some(_) | None) => {
+                            self.open_return_screen = None;
+                            self.sync_saving_overlay(tree)?;
+                        }
+                        Err(error) => {
+                            self.open_return_screen = None;
+                            tree.set_text(self.status, &format!("Системный диалог недоступен: {error}"))?;
+                            self.sync_saving_overlay(tree)?;
+                        }
+                    }
+                    return Ok(Flow::Continue);
+                }
+            }
             if let Some(finished) = payload.downcast_ref::<ReportUploadFinished>() {
                 self.report_upload_pending = false;
                 tree.set_text(self.report_send, &report_text("Отправить"))?;
@@ -2136,7 +2225,10 @@ impl Shell {
         if let Message::User(AppMessage::OpenSavePicker { return_to }) = message {
             self.open_return_screen = Some(*return_to);
             self.show_open_file_dialog(tree)?;
-            if self.open_files_queue.is_none() && tree.dialog() != Some(self.open_file_dialog) {
+            if self.open_files_queue.is_none()
+                && self.native_file_picker_request.is_none()
+                && tree.dialog() != Some(self.open_file_dialog)
+            {
                 self.open_return_screen = None;
             }
             return Ok(Flow::Continue);
@@ -2871,7 +2963,10 @@ impl App<AppMessage> for Shell {
 
 #[cfg(test)]
 mod tests {
-    use super::{save_eligibility, wait_for_save_io, OpenFilesQueue, ScreenId, Shell};
+    use super::{
+        save_eligibility, spawn_native_file_picker, wait_for_save_io, NativeFilePickerFinished, OpenFilesQueue,
+        ScreenId, Shell,
+    };
     use crate::event_loop::{channel_pair, Flow, Message, WindowEvent};
     use crate::glyphs::Fonts;
     use crate::raster::Color;
@@ -2882,6 +2977,81 @@ mod tests {
 
     fn close_task_test_guard() -> std::sync::MutexGuard<'static, ()> {
         crate::screens::task_registry_test_guard()
+    }
+
+    #[test]
+    fn native_file_picker_runs_off_ui_thread_and_reports_completion() -> sse_core::Result<()> {
+        let (proxy, receiver) = channel_pair::<AppMessage>();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let ui_thread = std::thread::current().id();
+        spawn_native_file_picker(proxy, 41, move || {
+            started_tx
+                .send(std::thread::current().id())
+                .map_err(|error| sse_core::Error::System(error.to_string()))?;
+            release_rx
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .map_err(|error| sse_core::Error::System(error.to_string()))?;
+            Ok(None)
+        })?;
+
+        let worker_thread = started_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .map_err(|error| sse_core::Error::System(error.to_string()))?;
+        assert_ne!(worker_thread, ui_thread);
+        release_tx
+            .send(())
+            .map_err(|error| sse_core::Error::System(error.to_string()))?;
+        let message = receiver
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .map_err(|error| sse_core::Error::System(error.to_string()))?;
+        let Message::User(AppMessage::ToScreen(ScreenId::Overview, payload)) = message else {
+            return Err(sse_core::Error::Refused(
+                "file picker completion was not routed to the shell".to_owned(),
+            ));
+        };
+        let finished = payload
+            .downcast_ref::<NativeFilePickerFinished>()
+            .ok_or_else(|| sse_core::Error::Refused("file picker completion payload has the wrong type".to_owned()))?;
+        assert_eq!(finished.request, 41);
+        assert!(matches!(finished.result, Ok(None)));
+        Ok(())
+    }
+
+    #[test]
+    fn native_file_picker_cancel_clears_the_pending_request() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut shell = Shell::build_for_test(&mut tree, None)?;
+        shell.native_file_picker_request = Some(7);
+        let message = Message::User(AppMessage::ToScreen(
+            ScreenId::Overview,
+            Box::new(NativeFilePickerFinished {
+                request: 7,
+                result: Ok(None),
+            }),
+        ));
+
+        assert_eq!(shell.handle(&mut tree, &message, None)?, Flow::Continue);
+        assert_eq!(shell.native_file_picker_request, None);
+        Ok(())
+    }
+
+    #[test]
+    fn stale_native_file_picker_result_keeps_the_current_request_pending() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut shell = Shell::build_for_test(&mut tree, None)?;
+        shell.native_file_picker_request = Some(9);
+        let message = Message::User(AppMessage::ToScreen(
+            ScreenId::Overview,
+            Box::new(NativeFilePickerFinished {
+                request: 8,
+                result: Ok(None),
+            }),
+        ));
+
+        assert_eq!(shell.handle(&mut tree, &message, None)?, Flow::Continue);
+        assert_eq!(shell.native_file_picker_request, Some(9));
+        Ok(())
     }
 
     fn click(shell: &mut Shell, tree: &mut Tree, id: WidgetId) -> sse_core::Result<()> {
