@@ -12,6 +12,8 @@ use crate::MAX_COMPANION_FILE_BYTES;
 const COMMAND_FILE: &str = "save_editor_cmd.txt";
 const TEMP_COMMAND_FILE: &str = "save_editor_cmd.tmp";
 const REPLY_FILE: &str = "save_editor_out.txt";
+const COMMAND_MAX_AGE: Duration = Duration::from_secs(30);
+const COMMAND_MAX_FUTURE_SKEW_SECONDS: u64 = 5;
 static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 static SEND_GATES: OnceLock<Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>> = OnceLock::new();
 
@@ -126,6 +128,8 @@ impl CompanionClient {
         let command_path = self.directory.join(COMMAND_FILE);
         let temporary_path = self.directory.join(TEMP_COMMAND_FILE);
         let reply_path = self.directory.join(REPLY_FILE);
+        remove_stale_pending_file(&command_path);
+        remove_stale_pending_file(&temporary_path);
         if command_path.exists() || temporary_path.exists() {
             return Err(ProtocolError::CommandPending);
         }
@@ -138,10 +142,7 @@ impl CompanionClient {
             return Err(ProtocolError::Io(error));
         }
         drop(temporary);
-        if let Err(error) = fs::rename(&temporary_path, &command_path) {
-            let _ = fs::remove_file(&temporary_path);
-            return Err(ProtocolError::Io(error));
-        }
+        publish_command(&temporary_path, &command_path)?;
 
         let deadline = Instant::now()
             .checked_add(timeout)
@@ -161,7 +162,7 @@ impl CompanionClient {
             if remaining.is_zero() {
                 remove_owned_command(&command_path, line.as_bytes());
                 return Err(ProtocolError::Invalid(format!(
-                    "companion protocol timed out for request {id}"
+                    "companion protocol timed out for request {id}; the command outcome is unknown; check the game before retrying"
                 )));
             }
             std::thread::sleep(remaining.min(Duration::from_millis(50)));
@@ -236,11 +237,73 @@ impl CompanionClient {
 }
 
 fn fresh_id() -> String {
-    let timestamp = SystemTime::now()
+    let (timestamp, subsecond_nanos) = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_or(0, |value| value.as_nanos());
+        .map_or((0, 0), |value| (value.as_secs(), value.subsec_nanos()));
     let counter = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    format!("{:x}{:x}{:x}", std::process::id(), timestamp, counter)
+    format!("{timestamp}-{:x}{subsecond_nanos:08x}-{counter:x}", std::process::id())
+}
+
+fn publish_command(temporary_path: &Path, command_path: &Path) -> Result<(), ProtocolError> {
+    if let Err(error) = sse_sys::secure_fs::publish_new(temporary_path, command_path) {
+        let _ = fs::remove_file(temporary_path);
+        return if error.kind() == ErrorKind::AlreadyExists {
+            Err(ProtocolError::CommandPending)
+        } else {
+            Err(ProtocolError::Io(error))
+        };
+    }
+    Ok(())
+}
+
+fn request_timestamp(id: &str) -> Option<u64> {
+    let (timestamp, suffix) = id.split_once('-')?;
+    if suffix.is_empty() || !valid_id(id) {
+        return None;
+    }
+    timestamp.parse().ok()
+}
+
+fn remove_stale_pending_file(path: &Path) {
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return;
+    };
+    if !metadata.file_type().is_file() {
+        return;
+    }
+
+    let now = SystemTime::now();
+    let timestamp = File::open(path).ok().and_then(|file| {
+        let mut bytes = Vec::new();
+        file.take(
+            u64::try_from(MAX_COMPANION_FILE_BYTES)
+                .unwrap_or(u64::MAX)
+                .saturating_add(1),
+        )
+        .read_to_end(&mut bytes)
+        .ok()?;
+        if bytes.len() > MAX_COMPANION_FILE_BYTES {
+            return None;
+        }
+        let line = std::str::from_utf8(&bytes).ok()?.lines().next()?;
+        let mut fields = line.split_whitespace();
+        (fields.next()? == "v1").then(|| request_timestamp(fields.next()?))?
+    });
+    let stale_by_timestamp = timestamp.is_some_and(|sent| {
+        now.duration_since(UNIX_EPOCH).is_ok_and(|current| {
+            let current = current.as_secs();
+            sent > current.saturating_add(COMMAND_MAX_FUTURE_SKEW_SECONDS)
+                || current.saturating_sub(sent) > COMMAND_MAX_AGE.as_secs()
+        })
+    });
+    let stale_by_file_age = timestamp.is_none()
+        && metadata
+            .modified()
+            .ok()
+            .is_some_and(|modified| now.duration_since(modified).is_ok_and(|age| age > COMMAND_MAX_AGE));
+    if stale_by_timestamp || stale_by_file_age {
+        let _ = fs::remove_file(path);
+    }
 }
 
 fn read_reply_bytes(path: &Path) -> Result<Vec<u8>, std::io::Error> {
@@ -312,7 +375,7 @@ fn valid_id(id: &str) -> bool {
 
 fn format_command(command: &str, arguments: &[&str]) -> Result<String, ProtocolError> {
     let bounds = match command {
-        "ping" | "info" | "heal" | "repair_equipped" | "list_inventory" | "mark" | "jump_last" => (0, 0),
+        "ping" | "info" | "heal" | "repair_equipped" | "list_inventory" | "mark" | "jump_last" | "pos" => (0, 0),
         "give" => (1, 2),
         "money" | "god" | "noclip" | "timespeed" | "hotkeys" => (1, 1),
         "teleport" => (3, 3),
@@ -390,7 +453,18 @@ fn format_command(command: &str, arguments: &[&str]) -> Result<String, ProtocolE
 }
 
 fn remove_owned_command(path: &Path, expected: &[u8]) {
-    if fs::read(path).is_ok_and(|bytes| bytes == expected) {
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return;
+    };
+    if !metadata.file_type().is_file() || u64::try_from(expected.len()).is_ok_and(|length| metadata.len() != length) {
+        return;
+    }
+    let mut bytes = Vec::new();
+    let read = File::open(path).and_then(|file| {
+        file.take(u64::try_from(expected.len()).unwrap_or(u64::MAX).saturating_add(1))
+            .read_to_end(&mut bytes)
+    });
+    if read.is_ok() && bytes == expected {
         let _ = fs::remove_file(path);
     }
 }
@@ -398,7 +472,7 @@ fn remove_owned_command(path: &Path, expected: &[u8]) {
 #[cfg(test)]
 #[allow(clippy::expect_used)] // Test-only temporary files use expect to make fixture setup failures explicit.
 mod reader_tests {
-    use super::{parse_reply, read_reply_bytes, reply_id};
+    use super::{fresh_id, parse_reply, publish_command, read_reply_bytes, reply_id, request_timestamp, ProtocolError};
     use crate::MAX_COMPANION_FILE_BYTES;
     use std::fs;
     use std::io::ErrorKind;
@@ -410,6 +484,37 @@ mod reader_tests {
     fn temporary_file() -> PathBuf {
         let index = NEXT.fetch_add(1, Ordering::Relaxed);
         std::env::temp_dir().join(format!("sse-c6-reply-{}-{index}", std::process::id()))
+    }
+
+    #[test]
+    fn command_publisher_does_not_replace_an_existing_pending_command() {
+        let command = temporary_file();
+        let temporary = command.with_extension("tmp");
+        fs::write(&command, b"first request").expect("write pending command");
+        fs::write(&temporary, b"second request").expect("write next request");
+
+        let result = publish_command(&temporary, &command);
+
+        assert!(matches!(result, Err(ProtocolError::CommandPending)));
+        assert_eq!(fs::read(&command).expect("read pending command"), b"first request");
+        assert!(!temporary.exists());
+        let _ = fs::remove_file(command);
+    }
+
+    #[test]
+    fn generated_request_id_keeps_subsecond_uniqueness_and_a_second_timestamp() {
+        let id = fresh_id();
+        let mut fields = id.split('-');
+        let timestamp = fields.next().expect("timestamp field");
+        let process_nonce = fields.next().expect("process nonce field");
+        let counter = fields.next().expect("counter field");
+        let process_id = format!("{:x}", std::process::id());
+        let subsecond_nonce = process_nonce.strip_prefix(&process_id);
+
+        assert!(fields.next().is_none(), "request IDs remain three fields");
+        assert!(subsecond_nonce.is_some_and(|value| value.len() == 8 && u32::from_str_radix(value, 16).is_ok()));
+        assert!(u64::from_str_radix(counter, 16).is_ok());
+        assert_eq!(request_timestamp(&id), timestamp.parse().ok());
     }
 
     #[test]
