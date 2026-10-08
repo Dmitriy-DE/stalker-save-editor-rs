@@ -3853,6 +3853,7 @@ mod tests {
 
     #[test]
     fn close_waits_for_the_matching_wizard_task_and_ignores_stale_results() -> sse_core::Result<()> {
+        let _guard = close_task_test_guard();
         let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
         let mut shell = Shell::build_for_test(&mut tree, None)?;
         shell.wizard_task_request = Some(9);
