@@ -384,14 +384,19 @@ pub mod d2 {
             shrink: 0.0,
             ..Style::default()
         };
-        let look = control_look(&tokens::TAB_STATES, selected, tokens::RADIUS_BUTTON);
         tree.add(
             Some(parent),
             NodeKind::Leaf,
             style,
             icon_or_plain(label, label_style, icon),
-            look,
+            tab_look(selected),
         )
+    }
+
+    /// Look of a tab in its selected or unselected state, for switching the selection without rebuilding.
+    #[must_use]
+    pub fn tab_look(selected: bool) -> Look {
+        control_look(&tokens::TAB_STATES, selected, tokens::RADIUS_BUTTON)
     }
 
     /// A filter chip; 28 pixels high.

@@ -484,6 +484,7 @@ impl Tree {
             | Content::Input { text: old, .. }
             | Content::Paragraph { text: old, .. }
             | Content::Button { text: old, .. }
+            | Content::IconButton { text: old, .. }
                 if old != text =>
             {
                 text.clone_into(old);
