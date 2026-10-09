@@ -227,7 +227,7 @@ fn screenshot(args: &[String]) -> Result<()> {
     if let Some(id) = nav.and_then(|i| ScreenId::ALL.get(i)) {
         shell.open(&mut tree, *id)?;
     }
-    tree.resize(width, height);
+    shell.resize_window(&mut tree, width, height)?;
     shell.load_art_now(&mut tree, &sse_app::paths::default_data_directory().join("art"))?;
     let stride = usize::try_from(width).unwrap_or(0);
     let mut frame = vec![0_u32; stride.saturating_mul(usize::try_from(height).unwrap_or(0))];

@@ -94,25 +94,31 @@ pub enum ScreenId {
     Settings,
 }
 
-/// Sidebar group.
+/// Sidebar section; each one opens its screens as tabs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Group {
     /// СОХРАНЕНИЯ.
     Saves,
     /// ИГРЫ.
     Games,
-    /// ИНСТРУМЕНТЫ.
-    Tools,
+    /// ЭНЦИКЛОПЕДИЯ.
+    Encyclopedia,
+    /// НАСТРОЙКИ.
+    Settings,
 }
 
 impl Group {
+    /// All sections in sidebar order.
+    pub const ALL: [Self; 4] = [Self::Saves, Self::Games, Self::Encyclopedia, Self::Settings];
+
     /// Sidebar caption.
     #[must_use]
     pub const fn caption(self) -> &'static str {
         match self {
             Self::Saves => "СОХРАНЕНИЯ",
             Self::Games => "ИГРЫ",
-            Self::Tools => "ИНСТРУМЕНТЫ",
+            Self::Encyclopedia => "ЭНЦИКЛОПЕДИЯ",
+            Self::Settings => "НАСТРОЙКИ",
         }
     }
 }
@@ -205,7 +211,9 @@ impl ScreenId {
             | Self::Environment
             | Self::Companion
             | Self::Achievements => Group::Games,
-            Self::Cloud | Self::Encyclopedia | Self::Capabilities | Self::Updates | Self::Settings => Group::Tools,
+            Self::Cloud => Group::Saves,
+            Self::Encyclopedia => Group::Encyclopedia,
+            Self::Capabilities | Self::Updates | Self::Settings => Group::Settings,
         }
     }
 
