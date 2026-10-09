@@ -315,8 +315,9 @@ impl S2Save {
             .collect::<Vec<_>>();
         let (image, changed_ranges) = apply_changes_to_image(self, changes)?;
         let (packed, verified_container) = pack_and_verify_s2_image(self.container.image(), &image, &changed_ranges)?;
+        let verified = Self::from_container(verified_container)?;
+        verify_changes_readback(self, &verified, changes)?;
         if !durability_changes.is_empty() {
-            let verified = Self::from_container(verified_container)?;
             verify_durability_readback(self, &verified, &durability_changes)?;
         }
         Ok(packed)
@@ -718,6 +719,8 @@ impl S2NameTables {
             return Ok(None);
         }
         let keys = objects.records.iter().map(|record| record.type_key).collect::<Vec<_>>();
+        // Every block that fits the save's keys is a candidate; the names are used only if they agree on all keys.
+        let mut candidates = Vec::new();
         let mut search_from = 0_usize;
         while let Some(name_start) = find_subslice(raw, b"GunAK74_ST", search_from) {
             let Some(table_start) = name_start.checked_sub(4) else {
@@ -739,13 +742,25 @@ impl S2NameTables {
                         single_table: false,
                     };
                     if keys.is_empty() || keys.iter().any(|key| result.resolve(key).is_some()) {
-                        return Ok(Some(result));
+                        candidates.push(result);
                     }
                 }
             }
             search_from = checked_add(name_start, 1, "S2 name search offset overflow")?;
         }
-        Ok(None)
+        let resolution = |table: &Self| {
+            keys.iter()
+                .map(|key| table.resolve(key).map(str::to_owned))
+                .collect::<Vec<_>>()
+        };
+        let Some(first) = candidates.first().map(resolution) else {
+            return Ok(None);
+        };
+        if candidates.iter().all(|candidate| resolution(candidate) == first) {
+            Ok(candidates.into_iter().next())
+        } else {
+            Ok(None)
+        }
     }
 
     fn resolve(&self, type_key: &[u8]) -> Option<&str> {
@@ -2134,6 +2149,101 @@ fn pack_s2_container(image: &[u8], stream: &[u8]) -> Result<Vec<u8>> {
     Ok(packed)
 }
 
+/// Checks the written save's structure against what each change asked for, and that nothing else moved.
+///
+/// The image comparison in `pack_and_verify_s2_image` only proves the bytes equal the intended image; this
+/// reads the result back as a save: the money, the stack count, a moved item's footprint and owners, and every
+/// item the change set did not name.
+fn verify_changes_readback(source: &S2Save, verified: &S2Save, changes: &[S2Change]) -> Result<()> {
+    let damaged = |message: &str| Error::damaged(format!("S2 write read-back: {message}"));
+    let mut named = HashSet::new();
+    for change in changes {
+        match *change {
+            S2Change::SetMoney(amount) => {
+                if verified.money() != amount {
+                    return Err(damaged("money differs from the requested value"));
+                }
+            }
+            S2Change::SetStackCount { handle, count } => {
+                let item = verified
+                    .items()
+                    .into_iter()
+                    .find(|item| item.handle == handle)
+                    .ok_or_else(|| damaged("stack item disappeared"))?;
+                if item.count != count {
+                    return Err(damaged("stack count differs from the requested value"));
+                }
+                named.insert(handle);
+            }
+            S2Change::SetDurability { handle, .. } => {
+                named.insert(handle);
+            }
+            S2Change::MoveStashToBackpack { handle } => {
+                let owners = verified
+                    .index
+                    .owned_handles()
+                    .iter()
+                    .filter(|owned| **owned == handle)
+                    .count();
+                if owners != 1 {
+                    return Err(damaged("moved item is not owned exactly once by the backpack"));
+                }
+                if verified.unresolved_handles.contains(&handle) {
+                    return Err(damaged("moved item has unresolved backpack cells"));
+                }
+                let stash_before = source.stash()?;
+                let footprint = |cells: &[S2GridCell]| {
+                    let min_x = cells.iter().map(|cell| cell.x).min().unwrap_or_default();
+                    let min_y = cells.iter().map(|cell| cell.y).min().unwrap_or_default();
+                    let mut shape = cells
+                        .iter()
+                        .map(|cell| (cell.x.saturating_sub(min_x), cell.y.saturating_sub(min_y)))
+                        .collect::<Vec<_>>();
+                    shape.sort_unstable();
+                    shape
+                };
+                let stash_cells = stash_before
+                    .grid_cells()
+                    .iter()
+                    .filter(|cell| cell.handle == handle)
+                    .copied()
+                    .collect::<Vec<_>>();
+                let backpack_cells = verified
+                    .index
+                    .grid_cells()
+                    .iter()
+                    .filter(|cell| cell.handle == handle)
+                    .copied()
+                    .collect::<Vec<_>>();
+                if backpack_cells.is_empty() || footprint(&backpack_cells) != footprint(&stash_cells) {
+                    return Err(damaged("moved item's backpack cells do not match its stash footprint"));
+                }
+                if verified.stash()?.live_handles().contains(&handle) {
+                    return Err(damaged("moved item is still live in the stash"));
+                }
+                named.insert(handle);
+            }
+        }
+    }
+    // Offsets move when a stash item is inserted into the backpack; every other field must be equal.
+    let projection = |save: &S2Save| {
+        save.items()
+            .into_iter()
+            .filter(|item| !named.contains(&item.handle))
+            .map(|mut item| {
+                item.record_offset = 0;
+                item.count_offset = 0;
+                item.condition_offset = None;
+                item
+            })
+            .collect::<Vec<_>>()
+    };
+    if projection(source) != projection(verified) {
+        return Err(damaged("an item the change set did not name changed"));
+    }
+    Ok(())
+}
+
 fn verify_durability_readback(save: &S2Save, verified: &S2Save, changes: &[(u32, f32)]) -> Result<()> {
     let before = save
         .items()
@@ -2711,6 +2821,70 @@ mod tests {
             }],
         )
         .is_err_and(|error| error.to_string().contains("backpack grid")));
+    }
+
+    #[test]
+    fn stash_move_readback_rejects_a_shifted_backpack_cell() -> Result<(), Error> {
+        let handle = 0x3000_0010;
+        let changes = [S2Change::MoveStashToBackpack { handle }];
+        let source = S2Save::from_bytes(WRITER_S2_STASH_PACKED_SOURCE)?;
+        let good = S2Save::from_bytes(&source.write_changes(&changes)?)?;
+        let cell_index = good
+            .index()
+            .grid_cells()
+            .iter()
+            .position(|cell| cell.handle == handle)
+            .ok_or_else(|| Error::damaged("moved item should occupy backpack cells"))?;
+        let cell = good
+            .index()
+            .grid_cells()
+            .get(cell_index)
+            .copied()
+            .ok_or_else(|| Error::damaged("moved cell index should exist"))?;
+        let x_offset = good.index().grid_offset() + cell_index * 8 + 4;
+        let mut raw = good.container().image().to_vec();
+        raw.get_mut(x_offset..x_offset + 2)
+            .ok_or_else(|| Error::damaged("grid cell should be inside the image"))?
+            .copy_from_slice(&cell.x.saturating_add(1).to_le_bytes());
+        let corrupted = S2Save::from_bytes(&pack_raw(&raw))?;
+
+        match super::verify_changes_readback(&source, &corrupted, &changes) {
+            Err(Error::Damaged(_)) => Ok(()),
+            Err(error) => Err(error),
+            Ok(()) => Err(Error::damaged(
+                "a backpack cell moved away from the stash footprint must be rejected",
+            )),
+        }
+    }
+
+    #[test]
+    fn name_tables_with_two_disagreeing_candidates_are_refused() -> Result<(), Error> {
+        fn block(names: &[&str]) -> Vec<u8> {
+            let mut bytes = u16::try_from(names.len()).unwrap_or_default().to_le_bytes().to_vec();
+            for name in names {
+                bytes.extend_from_slice(&u16::try_from(name.len()).unwrap_or_default().to_le_bytes());
+                bytes.extend_from_slice(name.as_bytes());
+            }
+            bytes
+        }
+        let mut raw = block(&["GunAK74_ST", "GunAK74_MagA"]);
+        raw.extend_from_slice(&[0xff, 0xff]);
+        raw.extend_from_slice(&block(&["GunAK74_ST", "GunAK74_MagB"]));
+        let mut objects = super::S2ObjectIndex::default();
+        objects.records.push(super::S2ObjectRecordIndex {
+            handle: 0x3000_0001,
+            record_offset: 0,
+            count_offset: 0,
+            weight_offset: 0,
+            type_key_offset: 0,
+            kind_code: 0,
+            count: 1,
+            total_weight: 1.0,
+            type_key: [4, 1, 0],
+        });
+
+        assert!(super::S2NameTables::locate(&raw, &objects, false)?.is_none());
+        Ok(())
     }
 
     #[test]
