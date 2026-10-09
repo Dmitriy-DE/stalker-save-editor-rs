@@ -263,3 +263,20 @@ impl Stalker2ArmorUpgrades {
         670
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_json, JsonValue};
+
+    #[test]
+    fn fora_230_ordinary_laser_uses_aiming_speed_effect() {
+        let catalog = parse_json(include_str!("../data/s2_upgrades.json")).unwrap_or(JsonValue::Null);
+        let effect = catalog
+            .get("weapon_upgrades")
+            .and_then(|upgrades| upgrades.get("GunFora230_Upgrade_Attachment_Laser"))
+            .and_then(|upgrade| upgrade.get("effect"))
+            .and_then(JsonValue::as_str);
+
+        assert_eq!(effect, Some("AimingSpeed"));
+    }
+}

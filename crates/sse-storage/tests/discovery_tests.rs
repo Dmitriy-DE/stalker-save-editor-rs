@@ -589,8 +589,10 @@ fn library_index_parallel_saves_do_not_collide_on_temporary_files() {
             right_index.save(&right_path)
         });
 
-        assert!(left.join().expect("left save thread").is_ok());
-        assert!(right.join().expect("right save thread").is_ok());
+        let left_result = left.join().expect("left save thread");
+        assert!(left_result.is_ok(), "left index save failed: {left_result:?}");
+        let right_result = right.join().expect("right save thread");
+        assert!(right_result.is_ok(), "right index save failed: {right_result:?}");
         assert!(LibraryIndex::load(&temp.path.join(format!("library-{attempt}.left"))).is_some());
         assert!(LibraryIndex::load(&temp.path.join(format!("library-{attempt}.right"))).is_some());
     }
@@ -664,48 +666,45 @@ fn library_index_warm_scan_performance_333_saves_under_150ms() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn lists_a_save_once_when_its_folder_is_reachable_through_a_link() {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::symlink;
+    use std::os::unix::fs::symlink;
 
-        let temp = TempDir::new("slot-link");
-        let real = temp.path.join("AppData").join("Local").join("savedgames");
-        fs::create_dir_all(&real).expect("mkdir real");
+    let temp = TempDir::new("slot-link");
+    let real = temp.path.join("AppData").join("Local").join("savedgames");
+    fs::create_dir_all(&real).expect("mkdir real");
 
-        let save_file = real.join("quick.scop");
-        fs::write(&save_file, b"test content").expect("write quick.scop");
+    let save_file = real.join("quick.scop");
+    fs::write(&save_file, b"test content").expect("write quick.scop");
 
-        let link_parent = temp.path.join("Local Settings");
-        fs::create_dir_all(&link_parent).expect("mkdir link parent");
+    let link_parent = temp.path.join("Local Settings");
+    fs::create_dir_all(&link_parent).expect("mkdir link parent");
 
-        let link = link_parent.join("Application Data");
-        if symlink(temp.path.join("AppData").join("Local"), &link).is_ok() {
-            let candidates = vec![
-                SaveDirectoryCandidate::new("cop", "stalker-cop", &real),
-                SaveDirectoryCandidate::new("cop", "stalker-cop", link.join("savedgames")),
-            ];
+    let link = link_parent.join("Application Data");
+    symlink(temp.path.join("AppData").join("Local"), &link).expect("create directory symlink");
+    let candidates = vec![
+        SaveDirectoryCandidate::new("cop", "stalker-cop", &real),
+        SaveDirectoryCandidate::new("cop", "stalker-cop", link.join("savedgames")),
+    ];
 
-            let result = SaveSlotDiscovery::discover(&candidates);
-            let canonical_save = fs::canonicalize(&save_file).expect("canonical save path");
-            assert_eq!(result.slots.len(), 1, "Should deduplicate symlinked save directory");
-            assert_eq!(result.slots[0].path, canonical_save, "Path should be canonical");
+    let result = SaveSlotDiscovery::discover(&candidates);
+    let canonical_save = fs::canonicalize(&save_file).expect("canonical save path");
+    assert_eq!(result.slots.len(), 1, "Should deduplicate symlinked save directory");
+    assert_eq!(result.slots[0].path, canonical_save, "Path should be canonical");
 
-            let mut index = LibraryIndex::new();
-            let index_slots = index.scan_with_index(&candidates);
-            assert_eq!(
-                index_slots.len(),
-                1,
-                "scan_with_index should deduplicate symlinked save directory"
-            );
-            assert_eq!(
-                index_slots[0].path,
-                fs::canonicalize(&save_file).expect("canonical indexed save path"),
-                "Indexed path should be canonical"
-            );
-        }
-    }
+    let mut index = LibraryIndex::new();
+    let index_slots = index.scan_with_index(&candidates);
+    assert_eq!(
+        index_slots.len(),
+        1,
+        "scan_with_index should deduplicate symlinked save directory"
+    );
+    assert_eq!(
+        index_slots[0].path,
+        fs::canonicalize(&save_file).expect("canonical indexed save path"),
+        "Indexed path should be canonical"
+    );
 }
 
 #[test]
