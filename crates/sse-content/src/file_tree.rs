@@ -5,6 +5,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::UNIX_EPOCH;
@@ -13,6 +14,13 @@ use sse_core::{Error, Result};
 
 use crate::archive::{EntryDecoder, HeaderDecoder, XRayArchive, XRayArchiveEntry};
 use sse_codecs::sha256::sha256_hex;
+
+/// Maximum size of a loose game-data file read on demand (64 MiB).
+///
+/// This bound caps memory use for files read from the filesystem. Archive-backed readers keep
+/// their own format-specific limits.
+const MAX_LOOSE_FILE_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_FSGAME_FILE_BYTES: u64 = 1024 * 1024;
 
 /// Supported X-Ray game trilogy titles.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -56,13 +64,116 @@ impl GameFile {
         Self::new(relative_path, origin, move || Ok(bytes.clone()))
     }
 
-    /// Reads file bytes.
+    /// Creates a game file that is opened and read on demand with a 64 MiB size limit.
+    ///
+    /// The limit bounds memory use for loose filesystem inputs. Archive-backed [`GameFile`]s
+    /// use the archive reader's separate format-specific limit.
+    #[must_use]
+    pub fn from_path(relative_path: impl Into<String>, origin: impl Into<String>, path: impl Into<PathBuf>) -> Self {
+        let path = path.into();
+        Self::new(relative_path, origin, move || {
+            read_bounded_file(&path, MAX_LOOSE_FILE_BYTES)
+        })
+    }
+
+    /// Reads file bytes. Files created by [`GameFile::from_path`] are limited to 64 MiB.
     ///
     /// # Errors
-    /// Returns [`Error::Damaged`] or [`Error::System`] on failure.
+    /// Returns [`Error::Damaged`], [`Error::Refused`] or [`Error::System`] on failure.
     pub fn read(&self) -> Result<Vec<u8>> {
         (self.read_fn)()
     }
+}
+
+/// Reads at most `max_bytes + 1` bytes and refuses input that exceeds the limit.
+///
+/// The extra byte detects files that grow after their metadata was checked.
+///
+/// # Errors
+/// Returns [`Error::Refused`] when the input exceeds the limit and [`Error::System`]
+/// when the reader fails.
+pub(crate) fn read_bounded_bytes<R: Read>(reader: R, max_bytes: u64) -> Result<Vec<u8>> {
+    let read_limit = max_bytes
+        .checked_add(1)
+        .ok_or_else(|| Error::Refused("File read limit is too large".to_string()))?;
+    let mut bytes = Vec::new();
+    reader
+        .take(read_limit)
+        .read_to_end(&mut bytes)
+        .map_err(|error| Error::System(error.to_string()))?;
+    let exceeds_limit = match u64::try_from(bytes.len()) {
+        Ok(length) => length > max_bytes,
+        Err(_) => true,
+    };
+    if exceeds_limit {
+        return Err(Error::Refused(format!("File exceeds the {max_bytes}-byte read limit")));
+    }
+    Ok(bytes)
+}
+
+/// Opens a file once, checks its opened-handle size, then reads at most `max_bytes + 1` bytes.
+///
+/// # Errors
+/// Returns [`Error::Refused`] when the file exceeds the limit and [`Error::System`] when opening,
+/// inspecting or reading the file fails.
+pub(crate) fn read_bounded_file(path: &Path, max_bytes: u64) -> Result<Vec<u8>> {
+    let file = fs::File::open(path).map_err(|error| Error::System(error.to_string()))?;
+    let length = file.metadata().map_err(|error| Error::System(error.to_string()))?.len();
+    if length > max_bytes {
+        return Err(Error::Refused(format!("File exceeds the {max_bytes}-byte read limit")));
+    }
+    read_bounded_bytes(file, max_bytes)
+}
+
+/// Collects regular files below a directory without descending through directory symlinks.
+///
+/// Unreadable entries are skipped. Symlinks to regular files remain visible, matching the
+/// previous file-tree behavior. Traversal is iterative and tracks canonical directories.
+#[must_use]
+pub fn collect_files_recursive(directory: &Path) -> Vec<PathBuf> {
+    let mut pending = vec![(directory.to_path_buf(), true)];
+    let mut visited = HashSet::new();
+    let mut files = Vec::new();
+
+    while let Some((current, is_root)) = pending.pop() {
+        let metadata_result = if is_root {
+            fs::metadata(&current)
+        } else {
+            fs::symlink_metadata(&current)
+        };
+        let Ok(metadata) = metadata_result else {
+            continue;
+        };
+        if (!is_root && metadata.file_type().is_symlink()) || !metadata.is_dir() {
+            continue;
+        }
+
+        let canonical = current.canonicalize().unwrap_or_else(|_| current.clone());
+        if !visited.insert(canonical.clone()) {
+            continue;
+        }
+        let Ok(entries) = fs::read_dir(&current) else {
+            continue;
+        };
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if file_type.is_symlink() {
+                if fs::metadata(&path).is_ok_and(|target| target.is_file()) {
+                    files.push(path);
+                }
+            } else if file_type.is_dir() {
+                pending.push((path, false));
+            } else if file_type.is_file() {
+                files.push(path);
+            }
+        }
+    }
+
+    files
 }
 
 /// The composite view of an installed game's data.
@@ -213,8 +324,7 @@ impl GameFileTree {
         if include_loose_files && !archives_only {
             if let Some(root) = data_root {
                 if root.is_dir() {
-                    let mut loose_paths = Vec::new();
-                    enumerate_files_recursive(root, &mut loose_paths);
+                    let mut loose_paths = collect_files_recursive(root);
                     loose_paths.sort_by_key(|a| a.to_string_lossy().to_ascii_lowercase());
 
                     for path in loose_paths {
@@ -238,10 +348,7 @@ impl GameFileTree {
                             overlay = true;
                         }
 
-                        let captured_path = path.clone();
-                        let file = GameFile::new(relative.clone(), "gamedata", move || {
-                            fs::read(&captured_path).map_err(|e| Error::System(e.to_string()))
-                        });
+                        let file = GameFile::from_path(relative.clone(), "gamedata", path);
                         files.insert(relative, file);
                     }
                 }
@@ -333,13 +440,15 @@ impl CompanionArchiveLocator {
             };
         };
 
-        let contents = match fs::read_to_string(&fsgame) {
-            Ok(s) => s,
-            Err(e) => {
+        let contents = match read_bounded_file(&fsgame, MAX_FSGAME_FILE_BYTES)
+            .and_then(|bytes| String::from_utf8(bytes).map_err(|error| Error::Damaged(error.to_string())))
+        {
+            Ok(contents) => contents,
+            Err(error) => {
                 let fsgame_name = fsgame.file_name().unwrap_or_default().to_string_lossy();
                 return CompanionArchiveSearchResult {
                     archive_paths: Vec::new(),
-                    issues: vec![format!("Could not read {fsgame_name}: {e}")],
+                    issues: vec![format!("Could not read {fsgame_name}: {error}")],
                     fsgame_path: Some(fsgame),
                     game_data_directory: None,
                     game_config_directory: None,
@@ -392,7 +501,7 @@ impl CompanionArchiveLocator {
 
             let mut files = Vec::new();
             if alias.recursive {
-                enumerate_files_recursive(&dir, &mut files);
+                files.extend(collect_files_recursive(&dir));
             } else {
                 enumerate_files_top(&dir, &mut files);
             }
@@ -608,19 +717,6 @@ fn enumerate_files_top(dir: &Path, files: &mut Vec<PathBuf>) {
         for entry in entries.flatten() {
             let p = entry.path();
             if p.is_file() {
-                files.push(p);
-            }
-        }
-    }
-}
-
-fn enumerate_files_recursive(dir: &Path, files: &mut Vec<PathBuf>) {
-    if let Ok(entries) = fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let p = entry.path();
-            if p.is_dir() {
-                enumerate_files_recursive(&p, files);
-            } else if p.is_file() {
                 files.push(p);
             }
         }

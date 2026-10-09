@@ -11,7 +11,7 @@ use crate::dialogs::check_all_dialogs;
 use crate::globals::LuaGlobalsAnalyzer;
 use crate::infos::InfoPortionIndex;
 use crate::logic_refs::check_logic_refs_with_known;
-use crate::models::LintReport;
+use crate::models::{LintFinding, LintReport, LintSeverity};
 use crate::module_calls::{analyze_script_module, check_script_module_calls, check_xml_module_refs, ScriptModuleInfo};
 use crate::trade_items::check_trade_file;
 use sse_content::GameFileTree;
@@ -45,6 +45,16 @@ impl LintEngine {
         let start = Instant::now();
         let mut findings = Vec::new();
 
+        for issue in &tree.issues {
+            findings.push(LintFinding {
+                checker: "file_tree".to_string(),
+                file: tree_issue_file(issue).to_string(),
+                line: 0,
+                severity: LintSeverity::Error,
+                message: format!("File discovery was incomplete: {issue}"),
+            });
+        }
+
         let checker_filter = self.options.single_checker.as_deref();
 
         // 1. Gather all file contents
@@ -58,32 +68,41 @@ impl LintEngine {
         for (rel_path, file) in &tree.files {
             let lower = rel_path.to_ascii_lowercase();
             if lower.ends_with(".ltx") {
-                if let Ok(bytes) = file.read() {
-                    files_checked = files_checked.saturating_add(1);
-                    let text = sse_content::decode_windows_1251(&bytes);
-                    // Collect section headers for trade checker
-                    for line in text.lines() {
-                        let trimmed = line.trim();
-                        if trimmed.starts_with('[') {
-                            if let Some(end) = trimmed.find(']') {
-                                if let Some(sec) = trimmed.get(1..end) {
-                                    config_sections.insert(sec.trim().to_ascii_lowercase());
+                match file.read() {
+                    Ok(bytes) => {
+                        files_checked = files_checked.saturating_add(1);
+                        let text = sse_content::decode_windows_1251(&bytes);
+                        // Collect section headers for trade checker
+                        for line in text.lines() {
+                            let trimmed = line.trim();
+                            if trimmed.starts_with('[') {
+                                if let Some(end) = trimmed.find(']') {
+                                    if let Some(sec) = trimmed.get(1..end) {
+                                        config_sections.insert(sec.trim().to_ascii_lowercase());
+                                    }
                                 }
                             }
                         }
+                        ltx_files.insert(rel_path.clone(), text);
                     }
-                    ltx_files.insert(rel_path.clone(), text);
+                    Err(error) => findings.push(read_error_finding(rel_path, &error.to_string())),
                 }
             } else if lower.ends_with(".xml") {
-                if let Ok(bytes) = file.read() {
-                    files_checked = files_checked.saturating_add(1);
-                    let text = sse_content::decode_windows_1251(&bytes);
-                    xml_files.insert(rel_path.clone(), text);
+                match file.read() {
+                    Ok(bytes) => {
+                        files_checked = files_checked.saturating_add(1);
+                        let text = sse_content::decode_windows_1251(&bytes);
+                        xml_files.insert(rel_path.clone(), text);
+                    }
+                    Err(error) => findings.push(read_error_finding(rel_path, &error.to_string())),
                 }
             } else if lower.ends_with(".script") {
-                if let Ok(bytes) = file.read() {
-                    files_checked = files_checked.saturating_add(1);
-                    script_files.insert(rel_path.clone(), bytes);
+                match file.read() {
+                    Ok(bytes) => {
+                        files_checked = files_checked.saturating_add(1);
+                        script_files.insert(rel_path.clone(), bytes);
+                    }
+                    Err(error) => findings.push(read_error_finding(rel_path, &error.to_string())),
                 }
             }
         }
@@ -199,4 +218,21 @@ impl LintEngine {
             findings,
         }
     }
+}
+
+fn read_error_finding(path: &str, error: &str) -> LintFinding {
+    LintFinding {
+        checker: "read_file".to_string(),
+        file: path.to_string(),
+        line: 0,
+        severity: LintSeverity::Error,
+        message: format!("Could not read file; lint analysis is incomplete: {error}"),
+    }
+}
+
+fn tree_issue_file(issue: &str) -> &str {
+    issue
+        .strip_prefix("Could not read ")
+        .and_then(|path| path.split_once(':').map(|(path, _)| path))
+        .unwrap_or("game file tree")
 }
