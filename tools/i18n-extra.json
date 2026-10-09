@@ -661,5 +661,22 @@
     "ko": "위치",
     "zh-CN": "位置",
     "zh-TW": "位置"
+  },
+  "Предмет появится в рюкзаке после «Сохранить». До этого он лежит в черновике.": {
+    "ru": "Предмет появится в рюкзаке после «Сохранить». До этого он лежит в черновике.",
+    "uk": "Предмет з'явиться в рюкзаку після «Зберегти». До того він лежить у чернетці.",
+    "en": "The item will appear in the backpack after Save. Until then it sits in the draft.",
+    "de": "Der Gegenstand erscheint nach „Speichern“ im Rucksack. Bis dahin liegt er im Entwurf.",
+    "fr": "L'objet apparaîtra dans le sac à dos après « Enregistrer ». Jusque-là, il reste dans le brouillon.",
+    "it": "L'oggetto comparirà nello zaino dopo «Salva». Fino ad allora resta nella bozza.",
+    "es": "El objeto aparecerá en la mochila tras «Guardar». Hasta entonces queda en el borrador.",
+    "pl": "Przedmiot pojawi się w plecaku po «Zapisz». Do tego czasu leży w szkicu.",
+    "cs": "Předmět se objeví v batohu po «Uložit». Do té doby leží v konceptu.",
+    "pt-BR": "O item aparecerá na mochila após «Salvar». Até lá, ele fica no rascunho.",
+    "tr": "Eşya «Kaydet»ten sonra sırt çantasında görünür. O zamana kadar taslakta kalır.",
+    "ja": "アイテムは「保存」の後にリュックへ現れます。それまでは下書きに入っています。",
+    "ko": "항목은 «저장» 후 배낭에 나타납니다. 그 전까지는 초안에 있습니다.",
+    "zh-CN": "保存后物品会出现在背包中。在此之前它保留在草稿中。",
+    "zh-TW": "儲存後物品會出現在背包中。在此之前它保留在草稿中。"
   }
 }
