@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use sse_catalog::parse_json;
 use sse_codecs::sha256::sha256_hex;
-use sse_content::file_tree::{CompanionGame, GameFileTree};
+use sse_content::file_tree::{CompanionGame, GameFile, GameFileTree};
 
 use sse_core::{Error, Result};
 
@@ -1158,8 +1158,7 @@ impl GameFixEngine {
         absolute_path: &Path,
     ) -> Result<(Vec<u8>, bool, Option<String>)> {
         if absolute_path.is_file() {
-            let bytes =
-                fs::read(absolute_path).map_err(|e| Error::System(format!("Failed to read target source: {e}")))?;
+            let bytes = GameFile::from_path(relative_path.to_string(), "loose", absolute_path).read()?;
             return Ok((bytes, true, None));
         }
 

@@ -11,7 +11,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use sse_codecs::crc32::crc32;
-use sse_content::file_tree::{CompanionGame, GameFileTree};
+use sse_content::file_tree::{CompanionArchiveLocator, CompanionGame, GameFileTree};
 
 struct TempDir {
     path: PathBuf,
@@ -123,4 +123,73 @@ fn loads_archives_and_loose_overlay() {
     assert_ne!(tree.fingerprint, tree_with_overlay.fingerprint);
     let overlay_content = tree_with_overlay.files["configs/system.ltx"].read().unwrap();
     assert_eq!(overlay_content, b"[system]\nversion = 2.0_mod\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn loose_scan_does_not_follow_directory_symlinks() {
+    let temp = TempDir::new("file-tree-symlink");
+    let root = &temp.path;
+    fs::write(
+        root.join("fsgame.ltx"),
+        "$game_data$ = false | true | $fs_root$ | gamedata\\\n\
+         $game_config$ = true | false | $game_data$ | configs\\\n\
+         $arch_dir$ = false | false | $fs_root$ | archives\\\n",
+    )
+    .unwrap();
+
+    let config_dir = root.join("gamedata/configs");
+    fs::create_dir_all(&config_dir).unwrap();
+    fs::write(config_dir.join("system.ltx"), b"[system]\n").unwrap();
+    std::os::unix::fs::symlink(&config_dir, root.join("gamedata/config_alias")).unwrap();
+
+    let tree = GameFileTree::load_simple(CompanionGame::CallOfPripyat, root, |_| true, true).unwrap();
+
+    assert!(tree.files.contains_key("configs/system.ltx"));
+    assert!(!tree.files.contains_key("config_alias/system.ltx"));
+}
+
+#[test]
+fn oversized_loose_file_is_refused_before_reading_its_contents() {
+    let temp = TempDir::new("file-tree-oversized");
+    let root = &temp.path;
+    fs::write(
+        root.join("fsgame.ltx"),
+        "$game_data$ = false | true | $fs_root$ | gamedata\\\n\
+         $game_config$ = true | false | $game_data$ | configs\\\n\
+         $arch_dir$ = false | false | $fs_root$ | archives\\\n",
+    )
+    .unwrap();
+    let config_dir = root.join("gamedata/configs");
+    fs::create_dir_all(&config_dir).unwrap();
+    let oversized = config_dir.join("large.ltx");
+    fs::File::create(&oversized)
+        .unwrap()
+        .set_len(64 * 1024 * 1024 + 1)
+        .unwrap();
+
+    let tree = GameFileTree::load_simple(
+        CompanionGame::CallOfPripyat,
+        root,
+        |path| path == "configs/large.ltx",
+        true,
+    )
+    .unwrap();
+    let file = tree.files.get("configs/large.ltx").unwrap();
+
+    assert!(file.read().is_err(), "oversized loose content must be refused");
+}
+
+#[test]
+fn oversized_fsgame_file_is_refused_before_text_parsing() {
+    const MAX_FSGAME_BYTES: u64 = 1024 * 1024;
+    let temp = TempDir::new("fsgame-size-limit");
+    fs::File::create(temp.path.join("fsgame.ltx"))
+        .unwrap()
+        .set_len(MAX_FSGAME_BYTES + 1)
+        .unwrap();
+
+    let search = CompanionArchiveLocator::discover(&temp.path, &["fsgame.ltx"], CompanionGame::CallOfPripyat);
+
+    assert!(search.issues.iter().any(|issue| issue.contains("read limit")));
 }
