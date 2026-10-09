@@ -1668,22 +1668,11 @@ impl Overview {
         if let Some(header) = self.header_panel {
             cx.tree.set_visible(header, has_save)?;
         }
+        let (game, name, path) = info_header_values(&info_pairs);
         if let Some(id) = self.header_name {
-            let name = info_pairs
-                .iter()
-                .find(|(key, _)| key == "Имя файла")
-                .map_or("", |(_, value)| value.as_str());
             cx.tree.set_text(id, name)?;
         }
         if let Some(id) = self.header_path {
-            let game = info_pairs
-                .iter()
-                .find(|(key, _)| key == "Игра")
-                .map_or("", |(_, value)| value.as_str());
-            let path = info_pairs
-                .iter()
-                .find(|(key, _)| key == "Путь")
-                .map_or("", |(_, value)| value.as_str());
             cx.tree.set_text(id, &format!("{game} · {path}"))?;
         }
         if let Some(panel) = self.parameters_panel {
@@ -1729,7 +1718,7 @@ struct DetailSet {
 fn build_detail_set(tree: &mut crate::widget::Tree, parent: WidgetId) -> Result<DetailSet> {
     let info_panel = style::d2::panel(tree, parent)?;
     tree.set_style(info_panel, detail_panel_style())?;
-    style::d2::panel_title(tree, info_panel, "ИНФОРМАЦИЯ О СОХРАНЕНИИ")?;
+    style::d2::panel_title(tree, info_panel, crate::strings::t("ИНФОРМАЦИЯ О СОХРАНЕНИИ"))?;
     let info_empty = paragraph(tree, info_panel, "Выберите сохранение для просмотра.", Text::Body)?;
     let mut info_rows = Vec::with_capacity(DETAIL_INFO_SLOTS);
     for _ in 0..DETAIL_INFO_SLOTS {
@@ -1739,7 +1728,7 @@ fn build_detail_set(tree: &mut crate::widget::Tree, parent: WidgetId) -> Result<
     }
     let integrity_panel = style::d2::panel(tree, parent)?;
     tree.set_style(integrity_panel, detail_panel_style())?;
-    style::d2::panel_title(tree, integrity_panel, "ЦЕЛОСТНОСТЬ И МЕТАДАННЫЕ")?;
+    style::d2::panel_title(tree, integrity_panel, crate::strings::t("ЦЕЛОСТНОСТЬ И МЕТАДАННЫЕ"))?;
     let mut integrity_rows = Vec::with_capacity(DETAIL_INTEGRITY_SLOTS);
     for _ in 0..DETAIL_INTEGRITY_SLOTS {
         let row = style::d2::key_value_row(tree, integrity_panel, "", "")?;
@@ -1824,6 +1813,14 @@ fn detail_pairs(text: &str) -> Vec<(String, String)> {
             }
         })
         .collect()
+}
+
+fn info_header_values(pairs: &[(String, String)]) -> (&str, &str, &str) {
+    (
+        pairs.first().map_or("", |(_, value)| value.as_str()),
+        pairs.get(1).map_or("", |(_, value)| value.as_str()),
+        pairs.get(2).map_or("", |(_, value)| value.as_str()),
+    )
 }
 
 impl Screen for Overview {
@@ -1990,7 +1987,7 @@ impl Screen for Overview {
                 ..Style::default()
             },
             Content::Label {
-                text: "нет снимка".to_owned(),
+                text: crate::strings::t("нет снимка").to_owned(),
                 style: Text::Note.style(),
             },
             Look {
@@ -2043,7 +2040,7 @@ impl Screen for Overview {
         let parameters = style::d2::panel(cx.tree, column)?;
         self.parameters_panel = Some(parameters);
         grow_panel(cx.tree, parameters)?;
-        style::d2::panel_title(cx.tree, parameters, "ПАРАМЕТРЫ СТАЛКЕРА")?;
+        style::d2::panel_title(cx.tree, parameters, crate::strings::t("ПАРАМЕТРЫ СТАЛКЕРА"))?;
         let grid = cx.tree.add(
             Some(parameters),
             NodeKind::Wrap,
@@ -8777,5 +8774,16 @@ mod tests {
             ]
         );
         assert!(super::detail_pairs("").is_empty());
+    }
+
+    #[test]
+    fn overview_header_uses_values_without_assuming_localized_field_names() {
+        let pairs =
+            super::detail_pairs("Game: Shadow of Chernobyl\nFile name: quicksave.sav\nPath: browser:/quicksave.sav");
+
+        assert_eq!(
+            super::info_header_values(&pairs),
+            ("Shadow of Chernobyl", "quicksave.sav", "browser:/quicksave.sav")
+        );
     }
 }
