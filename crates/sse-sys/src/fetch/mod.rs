@@ -102,8 +102,9 @@ pub struct SystemFetch {
     pub max_bytes: u64,
     /// Connection timeout.
     pub connect_timeout: Duration,
-    /// Total transfer timeout.
-    pub total_timeout: Duration,
+    /// Limit on the whole transfer, or `None` for no whole-transfer limit. Connect and idle
+    /// timeouts still apply when this is `None`.
+    pub total_timeout: Option<Duration>,
     /// Maximum time without receiving response data.
     pub idle_timeout: Duration,
 }
@@ -111,10 +112,16 @@ pub struct SystemFetch {
 #[cfg(any(target_os = "windows", test))]
 fn read_with_total_timeout<T>(
     started: Instant,
-    total_timeout: Duration,
+    total_timeout: Option<Duration>,
     idle_timeout: Duration,
     read: impl FnOnce(Duration) -> Result<T>,
 ) -> Result<T> {
+    let Some(total_timeout) = total_timeout else {
+        if idle_timeout.is_zero() {
+            return Err(Error::System("HTTPS response idle timeout".to_owned()));
+        }
+        return read(idle_timeout);
+    };
     let elapsed = started.elapsed();
     let remaining = total_timeout
         .checked_sub(elapsed)
@@ -136,7 +143,7 @@ impl Default for SystemFetch {
         Self {
             max_bytes: DEFAULT_MAX_BYTES,
             connect_timeout: Duration::from_secs(10),
-            total_timeout: Duration::from_secs(60),
+            total_timeout: Some(Duration::from_secs(60)),
             idle_timeout: Duration::from_secs(15),
         }
     }
@@ -252,7 +259,7 @@ mod tests {
         let calls = Cell::new(0usize);
         let result = read_with_total_timeout(
             std::time::Instant::now(),
-            Duration::from_millis(25),
+            Some(Duration::from_millis(25)),
             Duration::from_secs(5),
             |read_timeout| {
                 calls.set(calls.get().saturating_add(1));
@@ -263,6 +270,20 @@ mod tests {
         );
 
         assert!(matches!(result, Err(Error::System(_))));
+        assert_eq!(calls.get(), 1);
+    }
+
+    #[test]
+    fn body_read_without_total_limit_is_bounded_only_by_idle_timeout() {
+        let calls = Cell::new(0usize);
+        let result = read_with_total_timeout(Instant::now(), None, Duration::from_secs(5), |read_timeout| {
+            calls.set(calls.get().saturating_add(1));
+            assert_eq!(read_timeout, Duration::from_secs(5));
+            std::thread::sleep(Duration::from_millis(40));
+            Ok(7usize)
+        });
+
+        assert_eq!(result.ok(), Some(7));
         assert_eq!(calls.get(), 1);
     }
 

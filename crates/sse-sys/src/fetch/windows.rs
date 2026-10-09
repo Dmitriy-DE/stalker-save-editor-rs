@@ -254,7 +254,7 @@ fn request(
         return Err(Error::System("WinHttpOpen failed".to_owned()));
     }
     let connect_ms = milliseconds(config.connect_timeout)?;
-    let total_ms = milliseconds(config.total_timeout)?;
+    let total_ms = config.total_timeout.map_or(Ok(0), milliseconds)?;
     let idle_ms = milliseconds(config.idle_timeout)?;
     // SAFETY: session is live; timeout integers are milliseconds.
     if unsafe { WinHttpSetTimeouts(session.0, connect_ms, connect_ms, total_ms, idle_ms) } == 0 {
@@ -333,40 +333,45 @@ fn request(
     } else {
         body.as_ptr().cast_mut().cast::<c_void>()
     };
-    super::read_with_total_timeout(started, config.total_timeout, config.total_timeout, |remaining| {
-        let remaining_ms = positive_milliseconds(remaining)?;
-        let request_connect_ms = connect_ms.min(remaining_ms);
-        let request_receive_ms = idle_ms.min(remaining_ms);
-        // SAFETY: request is live; WinHTTP allows timeout configuration on request handles.
-        if unsafe {
-            WinHttpSetTimeouts(
-                request.0,
-                request_connect_ms,
-                request_connect_ms,
-                remaining_ms,
-                request_receive_ms,
-            )
-        } == 0
-        {
-            return Err(Error::System("WinHTTP request timeout configuration failed".to_owned()));
-        }
-        // SAFETY: request, headers, and body remain live through the synchronous send call.
-        if unsafe {
-            WinHttpSendRequest(
-                request.0,
-                headers_pointer,
-                headers_len,
-                body_pointer,
-                body_length,
-                body_length,
-                0,
-            )
-        } == 0
-        {
-            return Err(Error::System("WinHttpSendRequest failed".to_owned()));
-        }
-        Ok(())
-    })?;
+    super::read_with_total_timeout(
+        started,
+        config.total_timeout,
+        config.total_timeout.unwrap_or(config.idle_timeout),
+        |remaining| {
+            let remaining_ms = positive_milliseconds(remaining)?;
+            let request_connect_ms = connect_ms.min(remaining_ms);
+            let request_receive_ms = idle_ms.min(remaining_ms);
+            // SAFETY: request is live; WinHTTP allows timeout configuration on request handles.
+            if unsafe {
+                WinHttpSetTimeouts(
+                    request.0,
+                    request_connect_ms,
+                    request_connect_ms,
+                    remaining_ms,
+                    request_receive_ms,
+                )
+            } == 0
+            {
+                return Err(Error::System("WinHTTP request timeout configuration failed".to_owned()));
+            }
+            // SAFETY: request, headers, and body remain live through the synchronous send call.
+            if unsafe {
+                WinHttpSendRequest(
+                    request.0,
+                    headers_pointer,
+                    headers_len,
+                    body_pointer,
+                    body_length,
+                    body_length,
+                    0,
+                )
+            } == 0
+            {
+                return Err(Error::System("WinHttpSendRequest failed".to_owned()));
+            }
+            Ok(())
+        },
+    )?;
     super::read_with_total_timeout(started, config.total_timeout, config.idle_timeout, |receive_timeout| {
         let receive_ms = positive_milliseconds(receive_timeout)?;
         // SAFETY: request is live; WinHTTP allows timeout configuration on request handles.
