@@ -23,22 +23,36 @@ pub enum Face {
     BodyBold,
     /// Oswald semi-bold, headings and navigation.
     Heading,
+    /// Oswald medium, weight 500.
+    HeadingMedium,
 }
 
-/// Text style: face, size in UI pixels.
+/// Text style: face, size in UI pixels, space between characters.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TextStyle {
     /// Font face.
     pub face: Face,
     /// Em size in pixels.
     pub size: f32,
+    /// Space added between two consecutive characters, in pixels.
+    pub tracking: f32,
 }
 
 impl TextStyle {
-    /// Creates a style.
+    /// Creates a style without extra spacing.
     #[must_use]
     pub const fn new(face: Face, size: f32) -> Self {
-        Self { face, size }
+        Self {
+            face,
+            size,
+            tracking: 0.0,
+        }
+    }
+
+    /// Returns the same style with the given spacing between characters.
+    #[must_use]
+    pub const fn with_tracking(self, tracking: f32) -> Self {
+        Self { tracking, ..self }
     }
 }
 
@@ -63,6 +77,7 @@ pub struct Fonts {
     body: Font<'static>,
     bold: Font<'static>,
     heading: Font<'static>,
+    heading_medium: Font<'static>,
     cache: HashMap<GlyphKey, GlyphMask>,
 }
 
@@ -76,6 +91,7 @@ impl Fonts {
             body: Font::parse(BODY_REGULAR, 0)?,
             bold: Font::parse(BODY_BOLD, 0)?,
             heading: Font::parse_with_weight(HEADING, 0, 600.0)?,
+            heading_medium: Font::parse_with_weight(HEADING, 0, 500.0)?,
             cache: HashMap::new(),
         })
     }
@@ -85,6 +101,7 @@ impl Fonts {
             Face::Body => &self.body,
             Face::BodyBold => &self.bold,
             Face::Heading => &self.heading,
+            Face::HeadingMedium => &self.heading_medium,
         }
     }
 
@@ -120,7 +137,7 @@ impl Fonts {
         for character in text.chars() {
             let glyph = font.glyph(character).unwrap_or(GlyphId(0));
             if let Some(left) = previous {
-                width += font.kerning(left, glyph) * scale;
+                width += font.kerning(left, glyph) * scale + style.tracking;
             }
             width += font.advance(glyph) * scale;
             previous = Some(glyph);
@@ -159,6 +176,9 @@ impl Fonts {
                 (glyph, font.advance(glyph), kerning)
             };
             pen += kerning * scale;
+            if previous.is_some() {
+                pen += style.tracking;
+            }
             previous = Some(glyph);
             if !character.is_whitespace() {
                 let whole = pen.floor();
@@ -261,6 +281,10 @@ impl crate::text::Metrics for StyleMetrics<'_> {
         let b = font.glyph(right).unwrap_or(GlyphId(0));
         font.kerning(a, b) * self.fonts.scale(self.style)
     }
+
+    fn tracking(&self) -> f32 {
+        self.style.tracking
+    }
 }
 
 struct Collect {
@@ -335,4 +359,30 @@ fn to_u8(value: f32) -> u8 {
 
 fn to_usize(value: u32) -> usize {
     usize::try_from(value).unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fonts() -> Fonts {
+        Fonts::bundled().unwrap_or_else(|error| panic!("{error:?}"))
+    }
+
+    #[test]
+    fn tracking_widens_a_line_by_gaps_between_characters() {
+        let fonts = fonts();
+        let plain = TextStyle::new(Face::Body, 14.0);
+        let spaced = plain.with_tracking(2.0);
+        let width = fonts.measure("ABC", spaced) - fonts.measure("ABC", plain);
+        assert!((width - 4.0).abs() < 1.0e-3);
+    }
+
+    #[test]
+    fn medium_heading_is_narrower_than_semi_bold() {
+        let fonts = fonts();
+        let medium = fonts.measure("ЗАГОЛОВОК", TextStyle::new(Face::HeadingMedium, 16.0));
+        let semi_bold = fonts.measure("ЗАГОЛОВОК", TextStyle::new(Face::Heading, 16.0));
+        assert!(medium > 0.0 && (medium - semi_bold).abs() > 1.0e-3);
+    }
 }

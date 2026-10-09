@@ -17,6 +17,7 @@ const MAX_CFF_SUBR_DEPTH: usize = 10;
 const MAX_CFF_FDS: usize = 512;
 const MAX_GVAR_TUPLES: usize = 4_095;
 const MAX_VARIATION_AXES: usize = 32;
+const MAX_HVAR_REGIONS: usize = 4_096;
 
 /// Identifier of a glyph in the font.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -129,6 +130,7 @@ struct VariationState {
     glyph_count: usize,
     data_offset: usize,
     long_offsets: bool,
+    advance_deltas: Vec<f32>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -394,7 +396,14 @@ impl<'a> Font<'a> {
         let Some(offset) = self.hmtx.offset.checked_add(relative) else {
             return 0.0;
         };
-        be_u16_at(self.data, offset).map_or(0.0, f32::from)
+        let base = be_u16_at(self.data, offset).map_or(0.0, f32::from);
+        let delta = self
+            .variation
+            .as_ref()
+            .and_then(|variation| variation.advance_deltas.get(usize::from(glyph.0)))
+            .copied()
+            .unwrap_or(0.0);
+        base + delta
     }
 
     /// Returns legacy `kern` format-0 horizontal kerning in font units.
@@ -1973,6 +1982,10 @@ fn parse_variation(
     if data_offset > checked_add(gvar.offset, gvar.length)? {
         return Err(Error::damaged("gvar data offset exceeds table"));
     }
+    let advance_deltas = match find_table(tables, *b"HVAR") {
+        Some(hvar) => parse_advance_deltas(data, hvar, glyph_count, &coords)?,
+        None => Vec::new(),
+    };
     Ok(Some(VariationState {
         gvar,
         axis_count,
@@ -1982,7 +1995,185 @@ fn parse_variation(
         glyph_count,
         data_offset,
         long_offsets,
+        advance_deltas,
     }))
+}
+
+fn parse_advance_deltas(data: &[u8], hvar: Table, glyph_count: usize, coords: &[f32]) -> Result<Vec<f32>> {
+    if hvar.length < 20 || be_u16_at(data, hvar.offset)? != 1 {
+        return Err(Error::damaged("unsupported HVAR header"));
+    }
+    let store = checked_add(hvar.offset, be_offset_at(data, hvar.offset, 4)?)?;
+    let map = match be_offset_at(data, hvar.offset, 8)? {
+        0 => None,
+        relative => Some(checked_add(hvar.offset, relative)?),
+    };
+    let scalars = region_scalars(data, store, coords)?;
+    let mut deltas = Vec::with_capacity(glyph_count);
+    for glyph in 0..glyph_count {
+        let (outer, inner) = delta_set_index(data, map, glyph)?;
+        deltas.push(item_delta(data, store, &scalars, outer, inner)?);
+    }
+    Ok(deltas)
+}
+
+fn be_offset_at(data: &[u8], base: usize, field: usize) -> Result<usize> {
+    usize::try_from(be_u32_at(data, checked_add(base, field)?)?)
+        .map_err(|_| Error::damaged("font offset does not fit usize"))
+}
+
+fn region_scalars(data: &[u8], store: usize, coords: &[f32]) -> Result<Vec<f32>> {
+    if be_u16_at(data, store)? != 1 {
+        return Err(Error::damaged("unsupported HVAR item variation store"));
+    }
+    let regions = checked_add(store, be_offset_at(data, store, 2)?)?;
+    let axis_count = usize::from(be_u16_at(data, regions)?);
+    let region_count = usize::from(be_u16_at(data, checked_add(regions, 2)?)?);
+    if axis_count != coords.len() || region_count > MAX_HVAR_REGIONS {
+        return Err(Error::damaged("HVAR regions disagree with fvar"));
+    }
+    let mut scalars = Vec::with_capacity(region_count);
+    for region in 0..region_count {
+        let mut scalar = 1.0_f32;
+        for axis in 0..axis_count {
+            let record = checked_add(
+                checked_add(regions, 4)?,
+                checked_mul(checked_add(checked_mul(region, axis_count)?, axis)?, 6)?,
+            )?;
+            let start = f2dot14(be_i16_at(data, record)?);
+            let peak = f2dot14(be_i16_at(data, checked_add(record, 2)?)?);
+            let end = f2dot14(be_i16_at(data, checked_add(record, 4)?)?);
+            let coord = coords.get(axis).copied().unwrap_or(0.0);
+            scalar *= axis_scalar(coord, start, peak, end);
+        }
+        scalars.push(scalar);
+    }
+    Ok(scalars)
+}
+
+fn axis_scalar(coord: f32, start: f32, peak: f32, end: f32) -> f32 {
+    if !(start <= peak && peak <= end) || coord < start || coord > end {
+        return if peak == 0.0 { 1.0 } else { 0.0 };
+    }
+    if coord == peak {
+        1.0
+    } else if coord < peak {
+        (coord - start) / (peak - start)
+    } else {
+        (end - coord) / (end - peak)
+    }
+}
+
+fn delta_set_index(data: &[u8], map: Option<usize>, glyph: usize) -> Result<(usize, usize)> {
+    let Some(map) = map else {
+        return Ok((0, glyph));
+    };
+    let format = first_byte(data, map)?;
+    let entry_format = first_byte(data, checked_add(map, 1)?)?;
+    let (count, entries) = match format {
+        0 => (
+            usize::from(be_u16_at(data, checked_add(map, 2)?)?),
+            checked_add(map, 4)?,
+        ),
+        1 => (
+            usize::try_from(be_u32_at(data, checked_add(map, 2)?)?)
+                .map_err(|_| Error::damaged("HVAR map count overflow"))?,
+            checked_add(map, 6)?,
+        ),
+        _ => return Err(Error::damaged("unsupported HVAR delta-set map format")),
+    };
+    let last = count
+        .checked_sub(1)
+        .ok_or_else(|| Error::damaged("HVAR delta-set map is empty"))?;
+    let entry_size = checked_add(usize::from((entry_format >> 4) & 3), 1)?;
+    let inner_bits = u32::from(entry_format & 0xF)
+        .checked_add(1)
+        .ok_or_else(|| Error::damaged("HVAR inner index width overflow"))?;
+    let position = checked_add(entries, checked_mul(glyph.min(last), entry_size)?)?;
+    let value = checked_range(data, position, entry_size)?
+        .iter()
+        .fold(0_usize, |acc, byte| {
+            acc.saturating_mul(256).saturating_add(usize::from(*byte))
+        });
+    let mask = 1_usize
+        .checked_shl(inner_bits)
+        .and_then(|bit| bit.checked_sub(1))
+        .ok_or_else(|| Error::damaged("HVAR inner index width is invalid"))?;
+    let inner = value & mask;
+    let outer = value.checked_shr(inner_bits).unwrap_or(0);
+    Ok((outer, inner))
+}
+
+fn item_delta(data: &[u8], store: usize, scalars: &[f32], outer: usize, inner: usize) -> Result<f32> {
+    let data_sets = usize::from(be_u16_at(data, checked_add(store, 6)?)?);
+    if outer >= data_sets {
+        return Err(Error::damaged("HVAR outer delta-set index is outside the store"));
+    }
+    let set = checked_add(
+        store,
+        be_offset_at(data, store, checked_add(8, checked_mul(outer, 4)?)?)?,
+    )?;
+    let items = usize::from(be_u16_at(data, set)?);
+    let word_field = be_u16_at(data, checked_add(set, 2)?)?;
+    let long = word_field & 0x8000 != 0;
+    let words = usize::from(word_field & 0x7FFF);
+    let region_indexes = usize::from(be_u16_at(data, checked_add(set, 4)?)?);
+    if inner >= items || words > region_indexes || region_indexes > MAX_HVAR_REGIONS {
+        return Err(Error::damaged("HVAR delta-set index is outside its data"));
+    }
+    let word_size = if long { 4 } else { 2 };
+    let short_size = if long { 2 } else { 1 };
+    let indexes = checked_add(set, 6)?;
+    let row_size = checked_add(
+        checked_mul(words, word_size)?,
+        checked_mul(region_indexes.saturating_sub(words), short_size)?,
+    )?;
+    let row = checked_add(
+        checked_add(indexes, checked_mul(region_indexes, 2)?)?,
+        checked_mul(inner, row_size)?,
+    )?;
+    let mut total = 0.0_f32;
+    for slot in 0..region_indexes {
+        let region = usize::from(be_u16_at(data, checked_add(indexes, checked_mul(slot, 2)?)?)?);
+        let scalar = scalars
+            .get(region)
+            .copied()
+            .ok_or_else(|| Error::damaged("HVAR region index is outside the region list"))?;
+        let delta = if slot < words {
+            let position = checked_add(row, checked_mul(slot, word_size)?)?;
+            if long {
+                i32_delta(data, position)?
+            } else {
+                f32::from(be_i16_at(data, position)?)
+            }
+        } else {
+            let position = checked_add(
+                row,
+                checked_add(
+                    checked_mul(words, word_size)?,
+                    checked_mul(slot.saturating_sub(words), short_size)?,
+                )?,
+            )?;
+            if long {
+                f32::from(be_i16_at(data, position)?)
+            } else {
+                f32::from(i8::from_be_bytes([first_byte(data, position)?]))
+            }
+        };
+        total += scalar * delta;
+    }
+    Ok(total)
+}
+
+fn i32_delta(data: &[u8], position: usize) -> Result<f32> {
+    Ok(be_i32_at(data, position)? as f32)
+}
+
+fn first_byte(data: &[u8], position: usize) -> Result<u8> {
+    checked_range(data, position, 1)?
+        .first()
+        .copied()
+        .ok_or_else(|| Error::damaged("font byte is outside input"))
 }
 
 fn apply_avar(data: &[u8], avar: Table, coords: &mut [f32]) -> Result<()> {
@@ -3142,5 +3333,77 @@ mod tests {
         }
         let nanos = start.elapsed().as_nanos() / u128::from(iterations);
         eprintln!("X6b rasterizer 16px: {nanos} ns/glyph");
+    }
+}
+
+#[cfg(test)]
+mod hvar_tests {
+    use super::{Font, GlyphId};
+
+    const OSWALD: &[u8] = include_bytes!("../../sse-ui/assets/fonts/Oswald-wght.ttf");
+
+    fn advance_of(font: &Font<'_>, character: char) -> f32 {
+        font.advance(font.glyph(character).unwrap_or(GlyphId(0)))
+    }
+
+    fn table_range(data: &[u8], tag: &[u8; 4]) -> Option<(usize, usize)> {
+        let count = usize::from(u16::from_be_bytes([*data.get(4)?, *data.get(5)?]));
+        (0..count).find_map(|index| {
+            let record = index.checked_mul(16)?.checked_add(12)?;
+            let bytes = data.get(record..record.checked_add(16)?)?;
+            if bytes.get(..4)? != tag {
+                return None;
+            }
+            let offset = u32::from_be_bytes(bytes.get(8..12)?.try_into().ok()?) as usize;
+            let length = u32::from_be_bytes(bytes.get(12..16)?.try_into().ok()?) as usize;
+            Some((offset, length))
+        })
+    }
+
+    #[test]
+    fn default_weight_advance_equals_hmtx() {
+        let plain = Font::parse(OSWALD, 0).unwrap_or_else(|error| panic!("{error:?}"));
+        let default = Font::parse_with_weight(OSWALD, 0, 400.0).unwrap_or_else(|error| panic!("{error:?}"));
+        for character in ['H', 'М'] {
+            assert_eq!(advance_of(&plain, character), advance_of(&default, character));
+        }
+    }
+
+    #[test]
+    fn advance_grows_with_weight() {
+        for character in ['H', 'М'] {
+            let widths: Vec<f32> = [400.0, 500.0, 600.0]
+                .into_iter()
+                .map(|weight| {
+                    let font = Font::parse_with_weight(OSWALD, 0, weight).unwrap_or_else(|error| panic!("{error:?}"));
+                    advance_of(&font, character)
+                })
+                .collect();
+            let [default, medium, semi_bold] = widths.as_slice() else {
+                panic!("three weights expected");
+            };
+            assert!(default < medium && medium < semi_bold, "{character}: {widths:?}");
+        }
+    }
+
+    #[test]
+    fn corrupted_hvar_is_refused_or_ignored_without_panic() {
+        let Some((offset, length)) = table_range(OSWALD, b"HVAR") else {
+            panic!("bundled Oswald has no HVAR table");
+        };
+        let mut state: u32 = 0x2545_F491;
+        for _ in 0..500 {
+            let mut bytes = OSWALD.to_vec();
+            for _ in 0..4 {
+                state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                let position = offset + (state as usize) % length;
+                if let Some(byte) = bytes.get_mut(position) {
+                    *byte = (state >> 24) as u8;
+                }
+            }
+            if let Ok(font) = Font::parse_with_weight(&bytes, 0, 600.0) {
+                let _ = advance_of(&font, 'H');
+            }
+        }
     }
 }
