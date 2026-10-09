@@ -29,7 +29,7 @@ pub(crate) fn screens_with_workspace(workspace: super::saves::Workspace) -> Vec<
 }
 
 fn tr(key: &str, args: &[&dyn std::fmt::Display]) -> String {
-    sse_catalog::I18nService::instance().tr_in(Some(crate::strings::current_language()), key, args)
+    crate::strings::tr_in(Some(crate::strings::current_language()), key, args)
 }
 
 #[derive(Clone, Copy)]
@@ -491,7 +491,7 @@ fn load_settings() -> (sse_app::AppSettings, Option<String>) {
             let detail = format!("settings.json is unchanged: {error}");
             (
                 sse_app::AppSettings::default(),
-                Some(sse_catalog::I18nService::instance().tr_in(
+                Some(crate::strings::tr_in(
                     Some(crate::strings::current_language()),
                     "Настройки не сохранены: {0}",
                     &[&detail],

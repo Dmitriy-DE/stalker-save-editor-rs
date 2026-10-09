@@ -217,7 +217,7 @@ fn text_upper(text: &str) -> String {
 }
 
 fn localized_static_text(language: &str, text: &str) -> String {
-    sse_catalog::I18nService::instance().tr_in(Some(language), text, &[])
+    crate::strings::t_in(language, text).to_owned()
 }
 
 /// Builders of the redesigned controls. Numbers come from [`theme::d2`]; icons are `Icon::D2*`.

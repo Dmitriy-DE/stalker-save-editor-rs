@@ -63,6 +63,25 @@ pub fn t_in<'a>(language: &str, key: &'a str) -> &'a str {
         Err(_) => key,
     }
 }
+/// Translates a key and formats positional placeholders without loading runtime JSON catalogs.
+#[must_use]
+pub fn tr_in(code: Option<&str>, key: &str, args: &[&dyn std::fmt::Display]) -> String {
+    let pattern = t_in(code.unwrap_or("ru"), key);
+    let mut result = pattern.to_owned();
+    for (index, arg) in args.iter().enumerate() {
+        let value = arg.to_string();
+        result = result.replace(&format!("{{{index}}}"), &value);
+        let prefix = format!("{{{index}:");
+        while let Some(start) = result.find(&prefix) {
+            let Some(end_offset) = result.get(start..).and_then(|text| text.find('}')) else {
+                break;
+            };
+            let end = start.saturating_add(end_offset);
+            result.replace_range(start..=end, &value);
+        }
+    }
+    result
+}
 type Row = (&'static str, [&'static str; 15]);
 static STRINGS: &[Row] = &[
     (" · в черновике", [" · в черновике", " · у чернетці", " · in draft", " · in draft", " · in draft", " · in draft", " · in draft", " · in draft", " · in draft", " · in draft", " · in draft", " · in draft", " · in draft", " · in draft", " · in draft"]),
@@ -547,6 +566,7 @@ static STRINGS: &[Row] = &[
     ("Выбор папки отменён.", ["Выбор папки отменён.", "Вибір теки скасовано.", "Folder selection cancelled.", "Folder selection cancelled.", "Folder selection cancelled.", "Folder selection cancelled.", "Folder selection cancelled.", "Folder selection cancelled.", "Folder selection cancelled.", "Folder selection cancelled.", "Folder selection cancelled.", "Folder selection cancelled.", "Folder selection cancelled.", "Folder selection cancelled.", "Folder selection cancelled."]),
     ("Выбор установки изменился; подтверждение отменено.", ["Выбор установки изменился; подтверждение отменено.", "Вибір інсталяції змінився; підтвердження скасовано.", "The selected installation changed; confirmation was canceled.", "The selected installation changed; confirmation was canceled.", "The selected installation changed; confirmation was canceled.", "The selected installation changed; confirmation was canceled.", "The selected installation changed; confirmation was canceled.", "The selected installation changed; confirmation was canceled.", "The selected installation changed; confirmation was canceled.", "The selected installation changed; confirmation was canceled.", "The selected installation changed; confirmation was canceled.", "The selected installation changed; confirmation was canceled.", "The selected installation changed; confirmation was canceled.", "The selected installation changed; confirmation was canceled.", "The selected installation changed; confirmation was canceled."]),
     ("Выбор файла доступен только в рабочем окне.", ["Выбор файла доступен только в рабочем окне.", "Вибір файла доступний лише в активному вікні.", "The file picker is only available in the active window.", "The file picker is only available in the active window.", "The file picker is only available in the active window.", "The file picker is only available in the active window.", "The file picker is only available in the active window.", "The file picker is only available in the active window.", "The file picker is only available in the active window.", "The file picker is only available in the active window.", "The file picker is only available in the active window.", "The file picker is only available in the active window.", "The file picker is only available in the active window.", "The file picker is only available in the active window.", "The file picker is only available in the active window."]),
+    ("Выбор файла отменён.", ["Выбор файла отменён.", "Вибір файла скасовано.", "File selection cancelled.", "Dateiauswahl abgebrochen.", "Sélection du fichier annulée.", "Selezione del file annullata.", "Selección de archivo cancelada.", "Anulowano wybór pliku.", "Výběr souboru byl zrušen.", "Seleção de arquivo cancelada.", "Dosya seçimi iptal edildi.", "ファイルの選択をキャンセルしました。", "파일 선택이 취소되었습니다.", "已取消文件选择。", "已取消檔案選擇。"]),
     ("Выбран {0}", ["Выбран {0}", "Вибрано {0}", "Selected {0}", "Selected {0}", "Selected {0}", "Selected {0}", "Selected {0}", "Selected {0}", "Selected {0}", "Selected {0}", "Selected {0}", "Selected {0}", "Selected {0}", "Selected {0}", "Selected {0}"]),
     ("Выбран профиль: {0}", ["Выбран профиль: {0}", "Вибрано профіль: {0}", "Selected profile: {0}", "Selected profile: {0}", "Selected profile: {0}", "Selected profile: {0}", "Selected profile: {0}", "Selected profile: {0}", "Selected profile: {0}", "Selected profile: {0}", "Selected profile: {0}", "Selected profile: {0}", "Selected profile: {0}", "Selected profile: {0}", "Selected profile: {0}"]),
     ("Выбран снимок: {0}", ["Выбран снимок: {0}", "Вибрано знімок: {0}", "Selected snapshot: {0}", "Selected snapshot: {0}", "Selected snapshot: {0}", "Selected snapshot: {0}", "Selected snapshot: {0}", "Selected snapshot: {0}", "Selected snapshot: {0}", "Selected snapshot: {0}", "Selected snapshot: {0}", "Selected snapshot: {0}", "Selected snapshot: {0}", "Selected snapshot: {0}", "Selected snapshot: {0}"]),
@@ -1125,6 +1145,7 @@ static STRINGS: &[Row] = &[
     ("Копия облачной версии: {0}", ["Копия облачной версии: {0}", "Копія хмарної версії: {0}", "Cloud version backup: {0}", "Cloud version backup: {0}", "Cloud version backup: {0}", "Cloud version backup: {0}", "Cloud version backup: {0}", "Cloud version backup: {0}", "Cloud version backup: {0}", "Cloud version backup: {0}", "Cloud version backup: {0}", "Cloud version backup: {0}", "Cloud version backup: {0}", "Cloud version backup: {0}", "Cloud version backup: {0}"]),
     ("Копия отправки: {0}", ["Копия отправки: {0}", "Копія завантаження: {0}", "Upload copy: {0}", "Upload copy: {0}", "Upload copy: {0}", "Upload copy: {0}", "Upload copy: {0}", "Upload copy: {0}", "Upload copy: {0}", "Upload copy: {0}", "Upload copy: {0}", "Upload copy: {0}", "Upload copy: {0}", "Upload copy: {0}", "Upload copy: {0}"]),
     ("Копия повреждена", ["Копия повреждена", "Копію пошкоджено", "The copy is damaged", "Die Kopie ist beschädigt", "La copie est endommagée", "La copia è danneggiata", "La copia está dañada", "Kopia jest uszkodzona", "Kopie je poškozená", "A cópia está danificada", "Kopya bozuk", "コピーが破損しています", "사본이 손상되었습니다", "副本已损坏", "副本已損壞"]),
+    ("Копия подготовлена для скачивания; исходный файл не изменён.", ["Копия подготовлена для скачивания; исходный файл не изменён.", "Копію підготовлено до завантаження; вихідний файл не змінено.", "The edited copy is ready to download; the source file is unchanged.", "Die bearbeitete Kopie kann heruntergeladen werden; die Quelldatei bleibt unverändert.", "La copie modifiée est prête à être téléchargée ; le fichier source reste inchangé.", "La copia modificata è pronta per il download; il file originale non è stato modificato.", "La copia editada está lista para descargar; el archivo original no se ha modificado.", "Edytowana kopia jest gotowa do pobrania; plik źródłowy pozostał bez zmian.", "Upravená kopie je připravena ke stažení; původní soubor zůstal beze změny.", "A cópia editada está pronta para download; o arquivo original não foi alterado.", "Düzenlenmiş kopya indirilmeye hazır; kaynak dosya değiştirilmedi.", "編集済みコピーをダウンロードできます。元のファイルは変更されていません。", "편집된 사본을 다운로드할 수 있습니다. 원본 파일은 변경되지 않았습니다.", "已准备好下载编辑后的副本；源文件未更改。", "已準備好下載編輯後的副本；來源檔案未變更。"]),
     ("Копия появится после первой операции записи в сохранение.", ["Копия появится после первой операции записи в сохранение.", "Копія з’явиться після першої операції запису до збереження.", "A copy will appear after the first operation that writes to a save.", "Eine Kopie wird nach dem ersten Schreibvorgang an einem Spielstand erstellt.", "Une copie sera créée après la première opération d’écriture sur une sauvegarde.", "La copia verrà creata dopo la prima operazione di scrittura su un salvataggio.", "La copia aparecerá después de la primera operación que escriba en una partida guardada.", "Kopia pojawi się po pierwszej operacji zapisu stanu gry.", "Záloha se vytvoří po první operaci zápisu do uložené hry.", "Uma cópia será criada após a primeira operação que gravar um jogo salvo.", "İlk kayıt yazma işleminden sonra bir yedek oluşturulur.", "セーブデータへの最初の書き込み操作後にコピーが作成されます。", "저장 파일에 처음 쓰기 작업을 수행하면 사본이 생성됩니다.", "首次写入存档后会生成备份。", "首次寫入存檔後會建立備份。"]),
     ("Копия проверена ({0}). Оригинальный файл пока не изменён.", ["Копия проверена ({0}). Оригинальный файл пока не изменён.", "Копію перевірено ({0}). Оригінальний файл поки не змінено.", "Copy verified ({0}). The original file is not changed yet.", "Kopie geprüft ({0}). Die Originaldatei ist noch unverändert.", "Copie vérifiée ({0}). Le fichier d’origine n’est pas encore modifié.", "Copia verificata ({0}). Il file originale non è ancora modificato.", "Copia verificada ({0}). El archivo original todavía no se ha modificado.", "Kopia sprawdzona ({0}). Oryginalny plik nie został jeszcze zmieniony.", "Kopie ověřena ({0}). Původní soubor zatím není změněn.", "Cópia verificada ({0}). O arquivo original ainda não foi alterado.", "Kopya doğrulandı ({0}). Özgün dosya henüz değiştirilmedi.", "コピーを検証しました ({0})。元のファイルはまだ変更されていません。", "사본 확인됨 ({0}). 원본 파일은 아직 변경되지 않았습니다.", "副本已验证（{0}）。原始文件尚未更改。", "副本已驗證（{0}）。原始檔案尚未變更。"]),
     ("Копия проверена: {0}; контрольная сумма {1}; размер {2} Б. Можно восстановить её отдельным файлом или откатить исходное сохранение.", ["Копия проверена: {0}; контрольная сумма {1}; размер {2} Б. Можно восстановить её отдельным файлом или откатить исходное сохранение.", "Копію перевірено: {0}; контрольна сума {1}; розмір {2} Б. Її можна відновити окремим файлом або відкотити вихідне збереження.", "Copy verified: {0}; checksum {1}; size {2} B. You can restore it as a separate file or roll back the original save.", "Kopie geprüft: {0}; Prüfsumme {1}; Größe {2} B. Du kannst sie als separate Datei wiederherstellen oder den ursprünglichen Spielstand zurücksetzen.", "Copie vérifiée : {0} ; somme de contrôle {1} ; taille {2} o. Vous pouvez la restaurer comme fichier séparé ou rétablir la sauvegarde d’origine.", "Copia verificata: {0}; checksum {1}; dimensione {2} B. Puoi ripristinarla come file separato o riportare indietro il salvataggio originale.", "Copia verificada: {0}; suma {1}; tamaño {2} B. Puedes restaurarla como archivo aparte o revertir la partida original.", "Kopia sprawdzona: {0}; suma kontrolna {1}; rozmiar {2} B. Możesz przywrócić ją jako osobny plik lub cofnąć oryginalny zapis.", "Kopie ověřena: {0}; kontrolní součet {1}; velikost {2} B. Můžeš ji obnovit jako samostatný soubor nebo vrátit původní uloženou pozici.", "Cópia verificada: {0}; soma {1}; tamanho {2} B. Você pode restaurá-la como arquivo separado ou reverter o save original.", "Kopya doğrulandı: {0}; sağlama toplamı {1}; boyut {2} B. Ayrı bir dosya olarak geri yükleyebilir veya özgün kaydı geri alabilirsin.", "コピーを検証しました: {0}、チェックサム {1}、サイズ {2} B。別ファイルとして復元するか、元のセーブを巻き戻せます。", "사본 확인됨: {0}; 체크섬 {1}; 크기 {2} B. 별도 파일로 복원하거나 원본 세이브를 되돌릴 수 있습니다.", "副本已验证：{0}；校验和 {1}；大小 {2} B。可恢复为单独文件，或回滚原始存档。", "副本已驗證：{0}；校驗碼 {1}；大小 {2} B。可還原為單獨檔案，或回復原始存檔。"]),
@@ -1332,6 +1353,7 @@ static STRINGS: &[Row] = &[
     ("Не удалось открыть образ обновления.", ["Не удалось открыть образ обновления.", "Не вдалося відкрити образ оновлення.", "Could not open the update disk image.", "Das Update-Image konnte nicht geöffnet werden.", "Impossible d’ouvrir l’image disque de la mise à jour.", "Impossibile aprire l’immagine disco dell’aggiornamento.", "No se pudo abrir la imagen de disco de la actualización.", "Nie udało się otworzyć obrazu dysku aktualizacji.", "Obraz aktualizace se nepodařilo otevřít.", "Não foi possível abrir a imagem de disco da atualização.", "Güncelleme disk görüntüsü açılamadı.", "更新用ディスクイメージを開けませんでした。", "업데이트 디스크 이미지를 열지 못했습니다.", "无法打开更新磁盘映像。", "無法開啟更新磁碟映像。"]),
     ("Не удалось открыть папку резервных копий: {0}", ["Не удалось открыть папку резервных копий: {0}", "Не вдалося відкрити теку резервних копій: {0}", "Could not open the backup folder: {0}", "Der Sicherungsordner konnte nicht geöffnet werden: {0}", "Impossible d’ouvrir le dossier des copies de sécurité : {0}", "Impossibile aprire la cartella dei backup: {0}", "No se pudo abrir la carpeta de copias de seguridad: {0}", "Nie udało się otworzyć folderu kopii zapasowych: {0}", "Složku záloh se nepodařilo otevřít: {0}", "Não foi possível abrir a pasta de backups: {0}", "Yedek klasörü açılamadı: {0}", "バックアップフォルダーを開けませんでした: {0}", "백업 폴더를 열지 못했습니다: {0}", "无法打开备份文件夹：{0}", "無法開啟備份資料夾：{0}"]),
     ("Не удалось открыть сохранение", ["Не удалось открыть сохранение", "Не вдалося відкрити збереження", "Could not open the save", "Der Spielstand konnte nicht geöffnet werden", "Impossible d’ouvrir la sauvegarde", "Impossibile aprire il salvataggio", "No se pudo abrir la partida", "Nie udało się otworzyć zapisu", "Uloženou pozici se nepodařilo otevřít", "Não foi possível abrir o save", "Kayıt açılamadı", "セーブを開けませんでした", "세이브를 열지 못했습니다", "无法打开存档", "無法開啟存檔"]),
+    ("Не удалось открыть файл в браузере.", ["Не удалось открыть файл в браузере.", "Не вдалося відкрити файл у браузері.", "Could not open the file in the browser.", "Die Datei konnte im Browser nicht geöffnet werden.", "Impossible d’ouvrir le fichier dans le navigateur.", "Impossibile aprire il file nel browser.", "No se pudo abrir el archivo en el navegador.", "Nie udało się otworzyć pliku w przeglądarce.", "Soubor se v prohlížeči nepodařilo otevřít.", "Não foi possível abrir o arquivo no navegador.", "Dosya tarayıcıda açılamadı.", "ブラウザーでファイルを開けませんでした。", "브라우저에서 파일을 열지 못했습니다.", "无法在浏览器中打开文件。", "無法在瀏覽器中開啟檔案。"]),
     ("Не удалось отправить журналы. Попробуй позже.", ["Не удалось отправить журналы. Попробуй позже.", "Не вдалося надіслати журнали. Спробуй пізніше.", "Could not send the logs. Try again later.", "Die Protokolle konnten nicht gesendet werden. Versuche es später erneut.", "Impossible d’envoyer les journaux. Réessayez plus tard.", "Impossibile inviare i log. Riprova più tardi.", "No se pudieron enviar los registros. Inténtalo más tarde.", "Nie udało się wysłać dzienników. Spróbuj później.", "Protokoly se nepodařilo odeslat. Zkus to později.", "Não foi possível enviar os logs. Tente mais tarde.", "Günlükler gönderilemedi. Daha sonra tekrar dene.", "ログを送信できませんでした。後でもう一度お試しください。", "로그를 보내지 못했습니다. 나중에 다시 시도하세요.", "无法发送日志。请稍后再试。", "無法傳送記錄。請稍後再試。"]),
     ("Не удалось очистить фикс: {0}", ["Не удалось очистить фикс: {0}", "Не вдалося очистити фікс: {0}", "Could not clean up the fix: {0}", "Fix konnte nicht bereinigt werden: {0}", "Impossible de nettoyer le correctif : {0}", "Impossibile pulire il fix: {0}", "No se pudo limpiar la corrección: {0}", "Nie udało się usunąć poprawki: {0}", "Opravu se nepodařilo vyčistit: {0}", "Não foi possível limpar a correção: {0}", "Düzeltme temizlenemedi: {0}", "修正をクリーンアップできませんでした: {0}", "수정을 정리하지 못했습니다: {0}", "无法清理修复：{0}", "無法清理修正：{0}"]),
     ("Не удалось переключить моды S2: {0}", ["Не удалось переключить моды S2: {0}", "Не вдалося перемкнути моди S2: {0}", "Could not switch S2 mods: {0}", "Could not switch S2 mods: {0}", "Could not switch S2 mods: {0}", "Could not switch S2 mods: {0}", "Could not switch S2 mods: {0}", "Could not switch S2 mods: {0}", "Could not switch S2 mods: {0}", "Could not switch S2 mods: {0}", "Could not switch S2 mods: {0}", "Could not switch S2 mods: {0}", "Could not switch S2 mods: {0}", "Could not switch S2 mods: {0}", "Could not switch S2 mods: {0}"]),
@@ -2979,6 +3001,50 @@ mod tests {
     fn russian_is_source() {
         for (key, values) in STRINGS {
             assert_eq!(values.first().copied(), Some(*key));
+        }
+    }
+    #[test]
+    fn translated_placeholders_are_formatted() {
+        assert_eq!(
+            tr_in(Some("en"), "Настройки не сохранены: {0}", &[&"bad input"]),
+            "Settings not saved: bad input"
+        );
+        assert_eq!(tr_in(Some("en"), "Unknown {0}", &[&"value"]), "Unknown value");
+    }
+    #[test]
+    fn translated_placeholders_with_format_specifiers_are_formatted() {
+        assert_eq!(tr_in(Some("en"), "Value {0:X4}", &[&17]), "Value 17");
+    }
+    #[test]
+    fn shell_translations_match_runtime_catalogs_for_all_languages() {
+        let catalogs = sse_catalog::I18nService::new();
+        let detail = "settings.json is unchanged: invalid path";
+        let detail_args: [&dyn std::fmt::Display; 1] = [&detail];
+        let count = 3_usize;
+        let count_args: [&dyn std::fmt::Display; 1] = [&count];
+        for language in LANGUAGES {
+            for key in [
+                "Выберите сохранение для редактирования.",
+                "Нет несохранённых изменений.",
+                "Отправлять анонимные отчёты об ошибках?",
+            ] {
+                assert_eq!(
+                    tr_in(Some(language), key, &[]),
+                    catalogs.tr_in(Some(language), key, &[])
+                );
+            }
+            let warning = "Настройки не сохранены: {0}";
+            assert_eq!(
+                tr_in(Some(language), warning, &detail_args),
+                catalogs.tr_in(Some(language), warning, &detail_args),
+                "settings warning in {language}"
+            );
+            let draft = "Черновик: {0} действ.";
+            assert_eq!(
+                tr_in(Some(language), draft, &count_args),
+                catalogs.tr_in(Some(language), draft, &count_args),
+                "draft badge in {language}"
+            );
         }
     }
 }

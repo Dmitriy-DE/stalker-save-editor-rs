@@ -26,7 +26,7 @@ fn t(key: &str) -> &str {
 }
 
 fn tr_in(language: &str, key: &str, args: &[&dyn std::fmt::Display]) -> String {
-    sse_catalog::I18nService::instance().tr_in(Some(language), key, args)
+    crate::strings::tr_in(Some(language), key, args)
 }
 
 fn tr(key: &str, args: &[&dyn std::fmt::Display]) -> String {

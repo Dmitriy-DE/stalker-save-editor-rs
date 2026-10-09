@@ -208,7 +208,7 @@ fn installation_count_text(language: &str, count: usize) -> String {
 }
 
 fn tr(language: &str, key: &str, args: &[&dyn std::fmt::Display]) -> String {
-    sse_catalog::I18nService::instance().tr_in(Some(language), key, args)
+    crate::strings::tr_in(Some(language), key, args)
 }
 
 fn discovery_status_text(language: &str, status: &DiscoveryStatus) -> String {

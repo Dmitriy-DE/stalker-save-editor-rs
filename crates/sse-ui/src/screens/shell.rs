@@ -30,7 +30,7 @@ const LIBRARY_PREVIEW_CACHE_ENTRIES: usize = 32;
 const MAX_OPENED_SAVE_FILES: usize = 512;
 
 fn tr(key: &str, args: &[&dyn std::fmt::Display]) -> String {
-    sse_catalog::I18nService::instance().tr_in(Some(crate::strings::current_language()), key, args)
+    crate::strings::tr_in(Some(crate::strings::current_language()), key, args)
 }
 
 fn draft_close_warning() -> &'static str {
@@ -775,7 +775,6 @@ enum SaveReason {
 
 impl SaveReason {
     fn localized(self, language: &str) -> String {
-        let i18n = sse_catalog::I18nService::instance();
         match self {
             Self::SelectSave => crate::strings::t_in(language, "Выберите сохранение для редактирования.").to_owned(),
             Self::UnmappedDraft => crate::strings::t_in(
@@ -784,8 +783,8 @@ impl SaveReason {
             )
             .to_owned(),
             Self::UnsupportedFormat(format_name) => {
-                let format_name = i18n.tr_in(Some(language), format_name, &[]);
-                i18n.tr_in(
+                let format_name = crate::strings::t_in(language, format_name);
+                crate::strings::tr_in(
                     Some(language),
                     "Эта правка для формата {0} не поддерживается (см. «Возможности»).",
                     &[&format_name],
@@ -807,7 +806,7 @@ impl SaveReason {
 }
 
 fn draft_badge_text(language: &str, count: usize) -> String {
-    sse_catalog::I18nService::instance().tr_in(Some(language), "Черновик: {0} действ.", &[&count])
+    crate::strings::tr_in(Some(language), "Черновик: {0} действ.", &[&count])
 }
 
 struct SaveEligibility {
@@ -1079,7 +1078,7 @@ fn compact_library_button(tree: &mut Tree, parent: WidgetId, text: &str) -> Resu
 }
 
 fn report_text(key: &str) -> String {
-    sse_catalog::I18nService::instance().tr_in(Some(crate::strings::current_language()), key, &[])
+    crate::strings::tr_in(Some(crate::strings::current_language()), key, &[])
 }
 
 fn startup_language(settings: &sse_app::AppSettings) -> String {
@@ -1127,7 +1126,7 @@ impl Shell {
         let shell = Self::build_with_settings(tree, proxy, settings)?;
         if let Some(error) = warning {
             let detail = format!("settings.json is unchanged: {error}");
-            let warning = sse_catalog::I18nService::instance().tr_in(
+            let warning = crate::strings::tr_in(
                 Some(crate::strings::current_language()),
                 "Настройки не сохранены: {0}",
                 &[&detail],

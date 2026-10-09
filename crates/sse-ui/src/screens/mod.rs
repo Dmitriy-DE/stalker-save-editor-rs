@@ -447,7 +447,7 @@ impl Screen for Placeholder {
         style::label(
             cx.tree,
             card,
-            &sse_catalog::I18nService::instance().tr_in(
+            &crate::strings::tr_in(
                 Some(crate::strings::current_language()),
                 "Экран в работе ({0})",
                 &[&self.id.package()],
