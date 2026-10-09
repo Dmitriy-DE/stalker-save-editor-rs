@@ -2677,6 +2677,8 @@ impl Shell {
         self.sync_sections(tree)?;
         self.scroll.scroll_to(0.0);
         tree.set_scroll_y(self.content, 0)?;
+        // The previous screen's pixels must not survive where the new one draws nothing.
+        tree.damage_all();
         self.show(tree, index)
     }
 

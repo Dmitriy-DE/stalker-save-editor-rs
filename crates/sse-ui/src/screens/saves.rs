@@ -3,7 +3,8 @@
 use super::style::{self, Button, Text};
 use super::{AppMessage, Context, EditorAction, Screen, ScreenId};
 use crate::edit::{Clipboard, EditConfig, FieldMode, InputFilter, Key, Modifiers};
-use crate::event_loop::Message;
+use crate::event_loop::{Message, WindowEvent};
+use crate::glyphs::{Face, TextStyle};
 use crate::layout::{NodeKind, Size, Style};
 use crate::process_guard::{is_windows_file_busy_error_text, running_game_for_format, SAVE_WHILE_GAME_RUNNING_WARNING};
 use crate::raster::Color;
@@ -1358,9 +1359,15 @@ struct Overview {
     rows: Vec<WidgetId>,
     row_containers: Vec<WidgetId>,
     list_status: Option<WidgetId>,
-    selected_info: Option<WidgetId>,
-    selected_parameters: Option<WidgetId>,
-    selected_integrity: Option<WidgetId>,
+    list_card: Option<WidgetId>,
+    header_panel: Option<WidgetId>,
+    header_name: Option<WidgetId>,
+    header_path: Option<WidgetId>,
+    parameters_panel: Option<WidgetId>,
+    tiles: Vec<WidgetId>,
+    details_wide: Option<WidgetId>,
+    details_narrow: Option<WidgetId>,
+    details: Vec<DetailSet>,
     search_text: Option<WidgetId>,
     search_input: Option<TextInput>,
     search_query: String,
@@ -1385,9 +1392,15 @@ impl Overview {
             rows: Vec::new(),
             row_containers: Vec::new(),
             list_status: None,
-            selected_info: None,
-            selected_parameters: None,
-            selected_integrity: None,
+            list_card: None,
+            header_panel: None,
+            header_name: None,
+            header_path: None,
+            parameters_panel: None,
+            tiles: Vec::new(),
+            details_wide: None,
+            details_narrow: None,
+            details: Vec::new(),
             search_text: None,
             search_input: None,
             search_query: String::new(),
@@ -1563,23 +1576,13 @@ impl Overview {
                 }
             }
         }
-        let (info, parameters, integrity) = state.selected.as_ref().map_or(
-            (
-                "Выберите сохранение для просмотра.".to_owned(),
-                "Деньги: —\nПредметов: —\nТайников: —\nИгровое время: —".to_owned(),
-                "Размер файла: —\nИзменён: —\nSHA-256: —\nФормат: —\nСборка игры: —".to_owned(),
-            ),
-            |save| (save.info.clone(), save.parameters.clone(), save.integrity.clone()),
-        );
-        if let Some(id) = self.selected_info {
-            cx.tree.set_text(id, &info)?;
-        }
-        if let Some(id) = self.selected_parameters {
-            cx.tree.set_text(id, &parameters)?;
-        }
-        if let Some(id) = self.selected_integrity {
-            cx.tree.set_text(id, &integrity)?;
-        }
+        let selected = state
+            .selected
+            .as_ref()
+            .map(|save| (save.info.clone(), save.parameters.clone(), save.integrity.clone()));
+        let compact = cx.tree.size().0 < 1600;
+        self.apply_compact(cx.tree, compact)?;
+        self.render_details(cx, selected)?;
         if let Some(id) = self.previous {
             cx.tree.set_visible(id, pages > 1 && self.page > 0)?;
         }
@@ -1589,6 +1592,188 @@ impl Overview {
         }
         Ok(())
     }
+}
+
+impl Overview {
+    /// Width-dependent layout: the library width and the wide or stacked detail layout.
+    fn apply_compact(&self, tree: &mut crate::widget::Tree, compact: bool) -> Result<()> {
+        if let Some(list) = self.list_card {
+            tree.set_style(list, overview_list_style(if compact { 248.0 } else { LIBRARY_WIDTH }))?;
+        }
+        if let Some(wide) = self.details_wide {
+            tree.set_visible(wide, !compact)?;
+        }
+        if let Some(narrow) = self.details_narrow {
+            tree.set_visible(narrow, compact)?;
+        }
+        Ok(())
+    }
+
+    fn render_details(&self, cx: &mut Context<'_>, selected: Option<(String, String, String)>) -> Result<()> {
+        let has_save = selected.is_some();
+        let (info, parameters, integrity) = selected.unwrap_or_default();
+        let info_pairs = detail_pairs(&info);
+        let parameter_pairs = detail_pairs(&parameters);
+        let integrity_pairs = detail_pairs(&integrity);
+        if let Some(header) = self.header_panel {
+            cx.tree.set_visible(header, has_save)?;
+        }
+        if let Some(id) = self.header_name {
+            let name = info_pairs
+                .iter()
+                .find(|(key, _)| key == "Имя файла")
+                .map_or("", |(_, value)| value.as_str());
+            cx.tree.set_text(id, name)?;
+        }
+        if let Some(id) = self.header_path {
+            let game = info_pairs
+                .iter()
+                .find(|(key, _)| key == "Игра")
+                .map_or("", |(_, value)| value.as_str());
+            let path = info_pairs
+                .iter()
+                .find(|(key, _)| key == "Путь")
+                .map_or("", |(_, value)| value.as_str());
+            cx.tree.set_text(id, &format!("{game} · {path}"))?;
+        }
+        if let Some(panel) = self.parameters_panel {
+            cx.tree.set_visible(panel, has_save && !parameter_pairs.is_empty())?;
+        }
+        for (index, tile) in self.tiles.iter().enumerate() {
+            let pair = parameter_pairs.get(index);
+            cx.tree.set_visible(*tile, pair.is_some())?;
+            if let Some((key, value)) = pair {
+                set_pair(cx.tree, *tile, key, value)?;
+            }
+        }
+        for set in &self.details {
+            cx.tree.set_visible(set.info_empty, !has_save)?;
+            for (index, row) in set.info_rows.iter().enumerate() {
+                let pair = info_pairs.get(index).filter(|_| has_save);
+                cx.tree.set_visible(*row, pair.is_some())?;
+                if let Some((key, value)) = pair {
+                    set_pair(cx.tree, *row, key, value)?;
+                }
+            }
+            cx.tree.set_visible(set.integrity_panel, has_save)?;
+            for (index, row) in set.integrity_rows.iter().enumerate() {
+                let pair = integrity_pairs.get(index).filter(|_| has_save);
+                cx.tree.set_visible(*row, pair.is_some())?;
+                if let Some((key, value)) = pair {
+                    set_pair(cx.tree, *row, key, value)?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// One layout of the information and integrity panels; the screen keeps one for the wide row and one for the stack.
+struct DetailSet {
+    info_empty: WidgetId,
+    info_rows: Vec<WidgetId>,
+    integrity_panel: WidgetId,
+    integrity_rows: Vec<WidgetId>,
+}
+
+fn build_detail_set(tree: &mut crate::widget::Tree, parent: WidgetId) -> Result<DetailSet> {
+    let info_panel = style::d2::panel(tree, parent)?;
+    tree.set_style(info_panel, detail_panel_style())?;
+    style::d2::panel_title(tree, info_panel, "ИНФОРМАЦИЯ О СОХРАНЕНИИ")?;
+    let info_empty = paragraph(tree, info_panel, "Выберите сохранение для просмотра.", Text::Body)?;
+    let mut info_rows = Vec::with_capacity(DETAIL_INFO_SLOTS);
+    for _ in 0..DETAIL_INFO_SLOTS {
+        let row = style::d2::key_value_row(tree, info_panel, "", "")?;
+        tree.set_visible(row, false)?;
+        info_rows.push(row);
+    }
+    let integrity_panel = style::d2::panel(tree, parent)?;
+    tree.set_style(integrity_panel, detail_panel_style())?;
+    style::d2::panel_title(tree, integrity_panel, "ЦЕЛОСТНОСТЬ И МЕТАДАННЫЕ")?;
+    let mut integrity_rows = Vec::with_capacity(DETAIL_INTEGRITY_SLOTS);
+    for _ in 0..DETAIL_INTEGRITY_SLOTS {
+        let row = style::d2::key_value_row(tree, integrity_panel, "", "")?;
+        tree.set_visible(row, false)?;
+        integrity_rows.push(row);
+    }
+    Ok(DetailSet {
+        info_empty,
+        info_rows,
+        integrity_panel,
+        integrity_rows,
+    })
+}
+
+const LIBRARY_WIDTH: f32 = 300.0;
+const DETAIL_TILE_SLOTS: usize = 8;
+const DETAIL_INFO_SLOTS: usize = 4;
+const DETAIL_INTEGRITY_SLOTS: usize = 6;
+
+fn overview_list_style(width: f32) -> Style {
+    Style {
+        preferred: Size::new(width, 0.0),
+        min: Size::new(width, 0.0),
+        shrink: 0.0,
+        padding: crate::layout::Edges::all(crate::theme::CARD_PADDING),
+        gap: Size::new(0.0, 0.0),
+        align_items: crate::layout::Align::Stretch,
+        ..Style::default()
+    }
+}
+
+fn detail_panel_style() -> Style {
+    Style {
+        grow: 1.0,
+        shrink: 0.0,
+        min: Size::new(340.0, 0.0),
+        padding: crate::layout::Edges::all(crate::theme::d2::PANEL_PADDING.0),
+        gap: Size::new(0.0, 0.0),
+        align_items: crate::layout::Align::Stretch,
+        ..Style::default()
+    }
+}
+
+fn grow_panel(tree: &mut crate::widget::Tree, panel: WidgetId) -> Result<()> {
+    tree.set_style(
+        panel,
+        Style {
+            grow: 1.0,
+            shrink: 0.0,
+            padding: crate::layout::Edges::all(crate::theme::d2::PANEL_PADDING.0),
+            gap: Size::new(0.0, 0.0),
+            align_items: crate::layout::Align::Stretch,
+            ..Style::default()
+        },
+    )
+}
+
+/// Key and value of a tile or a key-value row, both labels of the widget in order.
+fn set_pair(tree: &mut crate::widget::Tree, widget: WidgetId, key: &str, value: &str) -> Result<()> {
+    let parts = tree.children(widget);
+    if let Some(label) = parts.first() {
+        tree.set_text(*label, &key.to_uppercase())?;
+    }
+    if let Some(label) = parts.get(1) {
+        tree.set_text(*label, value)?;
+    }
+    Ok(())
+}
+
+/// Splits a details text into key and value pairs: one per line segment separated by " · ", the key before the first
+/// ": ". Segments without a value or with the "—" placeholder carry no data and are left out.
+fn detail_pairs(text: &str) -> Vec<(String, String)> {
+    text.lines()
+        .flat_map(|line| line.split(" · "))
+        .filter_map(|segment| {
+            let (key, value) = segment.split_once(": ")?;
+            let value = value.trim();
+            if value.is_empty() || value == "—" {
+                None
+            } else {
+                Some((key.trim().to_owned(), value.to_owned()))
+            }
+        })
+        .collect()
 }
 
 impl Screen for Overview {
@@ -1609,17 +1794,20 @@ impl Screen for Overview {
         self.backup_recovery_row = Some(recovery_row);
         self.backup_recovery_label = Some(recovery_label);
         self.backup_recovery_button = Some(recovery_button);
-        let list = style::card(cx.tree, host)?;
-        cx.tree.set_style(
-            list,
+        let body = cx.tree.add(
+            Some(host),
+            NodeKind::Row,
             Style {
-                padding: crate::layout::Edges::all(crate::theme::CARD_PADDING),
-                gap: Size::new(0.0, 0.0),
-                align_items: crate::layout::Align::Stretch,
-                shrink: 0.0,
+                grow: 1.0,
+                gap: Size::new(crate::theme::CONTROL_GAP + 6.0, 0.0),
                 ..Style::default()
             },
+            Content::Panel,
+            Look::default(),
         )?;
+        let list = style::card(cx.tree, body)?;
+        self.list_card = Some(list);
+        cx.tree.set_style(list, overview_list_style(LIBRARY_WIDTH))?;
         style::label(cx.tree, list, "СОХРАНЕНИЯ", Text::Heading)?;
         let actions = style::row(cx.tree, list)?;
         cx.tree.set_style(
@@ -1709,30 +1897,145 @@ impl Screen for Overview {
             self.row_containers.push(row_container);
             self.rows.push(row);
         }
-        let overview = style::card(cx.tree, host)?;
-        style::label(cx.tree, overview, "ИНФОРМАЦИЯ О СОХРАНЕНИИ", Text::Heading)?;
-        self.selected_info = Some(paragraph(
-            cx.tree,
-            overview,
-            "Выберите сохранение для просмотра.",
-            Text::Body,
+        let column = cx.tree.add(
+            Some(body),
+            NodeKind::Column,
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                gap: Size::new(0.0, crate::theme::CONTROL_GAP + 2.0),
+                align_items: crate::layout::Align::Stretch,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        let header = style::d2::panel(cx.tree, column)?;
+        cx.tree.set_style(
+            header,
+            Style {
+                shrink: 0.0,
+                padding: crate::layout::Edges::all(crate::theme::d2::PANEL_PADDING.0),
+                ..Style::default()
+            },
+        )?;
+        self.header_panel = Some(header);
+        let header_row = cx.tree.add(
+            Some(header),
+            NodeKind::Row,
+            Style {
+                gap: Size::new(16.0, 0.0),
+                align_items: crate::layout::Align::Center,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        cx.tree.add(
+            Some(header_row),
+            NodeKind::Leaf,
+            Style {
+                min: Size::new(112.0, 63.0),
+                shrink: 0.0,
+                ..Style::default()
+            },
+            Content::Label {
+                text: "нет снимка".to_owned(),
+                style: Text::Note.style(),
+            },
+            Look {
+                fill: Some(style::d2::argb(crate::theme::d2::PANEL_RAISED)),
+                border: Some((style::d2::argb(crate::theme::d2::BORDER_SUBTLE), 1.0)),
+                text: style::d2::argb(crate::theme::d2::TEXT_MUTED),
+                align: crate::widget::TextAlign::Center,
+                ..Look::default()
+            },
+        )?;
+        let header_text = cx.tree.add(
+            Some(header_row),
+            NodeKind::Column,
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: Size::new(0.0, 0.0),
+                gap: Size::new(0.0, 4.0),
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        self.header_name = Some(cx.tree.add(
+            Some(header_text),
+            NodeKind::Leaf,
+            Style::default(),
+            Content::Label {
+                text: String::new(),
+                style: TextStyle::new(Face::HeadingMedium, 22.0),
+            },
+            Look {
+                text: style::rgb(crate::theme::TEXT_PRIMARY),
+                ..Look::default()
+            },
         )?);
-        let parameters = style::card(cx.tree, host)?;
-        style::label(cx.tree, parameters, "ПАРАМЕТРЫ СТАЛКЕРА", Text::Heading)?;
-        self.selected_parameters = Some(paragraph(
-            cx.tree,
-            parameters,
-            "Деньги: — · Предметов: — · Тайников: —\nИгровое время: — · Персонаж: — · Здоровье: —\nРанг: — · Репутация: — · Задания: — · Убито: — · Погода: —",
-            Text::Note,
+        self.header_path = Some(cx.tree.add(
+            Some(header_text),
+            NodeKind::Leaf,
+            Style::default(),
+            Content::Label {
+                text: String::new(),
+                style: TextStyle::new(Face::Body, 13.0),
+            },
+            Look {
+                text: style::rgb(crate::theme::TEXT_SECONDARY),
+                ..Look::default()
+            },
         )?);
-        let integrity = style::card(cx.tree, host)?;
-        style::label(cx.tree, integrity, "ЦЕЛОСТНОСТЬ И МЕТАДАННЫЕ", Text::Heading)?;
-        self.selected_integrity = Some(paragraph(
-            cx.tree,
-            integrity,
-            "Размер файла: — · Изменён: —\nSHA-256: —\nФормат: — · Сборка игры: —",
-            Text::Note,
-        )?);
+        let parameters = style::d2::panel(cx.tree, column)?;
+        self.parameters_panel = Some(parameters);
+        grow_panel(cx.tree, parameters)?;
+        style::d2::panel_title(cx.tree, parameters, "ПАРАМЕТРЫ СТАЛКЕРА")?;
+        let grid = cx.tree.add(
+            Some(parameters),
+            NodeKind::Wrap,
+            Style {
+                gap: Size::new(8.0, 8.0),
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        for _ in 0..DETAIL_TILE_SLOTS {
+            let tile = style::d2::tile(cx.tree, grid, "", "")?;
+            cx.tree.set_visible(tile, false)?;
+            self.tiles.push(tile);
+        }
+        let wide = cx.tree.add(
+            Some(column),
+            NodeKind::Row,
+            Style {
+                gap: Size::new(crate::theme::CONTROL_GAP + 2.0, 0.0),
+                align_items: crate::layout::Align::Stretch,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        self.details_wide = Some(wide);
+        let wide_set = build_detail_set(cx.tree, wide)?;
+        let narrow = cx.tree.add(
+            Some(column),
+            NodeKind::Column,
+            Style {
+                gap: Size::new(0.0, crate::theme::CONTROL_GAP + 2.0),
+                align_items: crate::layout::Align::Stretch,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        self.details_narrow = Some(narrow);
+        let narrow_set = build_detail_set(cx.tree, narrow)?;
+        self.details = vec![wide_set, narrow_set];
         Ok(())
     }
 
@@ -1764,6 +2067,9 @@ impl Screen for Overview {
         self.workspace.poll_tasks();
         if let Message::User(AppMessage::Tick(seconds)) = message {
             schedule_file_check(&self.workspace, cx, *seconds);
+        }
+        if let Message::Window(WindowEvent::Resized { width, .. }) = message {
+            self.apply_compact(cx.tree, *width < 1600)?;
         }
         if let Some(search_widget) = self.search_text {
             self.search_focused = cx.tree.focused() == Some(search_widget);
@@ -8212,5 +8518,68 @@ mod tests {
             ))
         );
         assert_eq!(super::process_check_prompt(&Ok(false)), None);
+    }
+
+    #[test]
+    fn overview_details_switch_between_row_and_stack_by_width() -> sse_core::Result<()> {
+        let temp = TempDirectory::new();
+        let (proxy, _receiver) = channel_pair::<AppMessage>();
+        let mut overview = Overview::new(Workspace::with_draft_directory(temp.0.join("drafts")));
+        let mut app = sse_app::AppState::new();
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: Some(&proxy),
+            status: None,
+            app: &mut app,
+        };
+        overview.build(&mut cx, host)?;
+        let wide = overview
+            .details_wide
+            .ok_or_else(|| Error::damaged("missing wide details"))?;
+        let narrow = overview
+            .details_narrow
+            .ok_or_else(|| Error::damaged("missing stacked details"))?;
+        overview.message(
+            &mut cx,
+            &Message::Window(crate::event_loop::WindowEvent::Resized {
+                width: 1920,
+                height: 1080,
+            }),
+            None,
+        )?;
+        assert!(cx.tree.is_visible(wide));
+        assert!(!cx.tree.is_visible(narrow));
+        overview.message(
+            &mut cx,
+            &Message::Window(crate::event_loop::WindowEvent::Resized {
+                width: 1366,
+                height: 768,
+            }),
+            None,
+        )?;
+        assert!(!cx.tree.is_visible(wide));
+        assert!(cx.tree.is_visible(narrow));
+        Ok(())
+    }
+
+    #[test]
+    fn detail_pairs_skip_placeholders_and_split_segments() {
+        let pairs = super::detail_pairs("Деньги: 100 RU · Предметов: —\nРанг: —\nПуть: /a: b");
+        assert_eq!(
+            pairs,
+            vec![
+                ("Деньги".to_owned(), "100 RU".to_owned()),
+                ("Путь".to_owned(), "/a: b".to_owned()),
+            ]
+        );
+        assert!(super::detail_pairs("").is_empty());
     }
 }
