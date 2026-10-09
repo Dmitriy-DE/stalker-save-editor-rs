@@ -2331,6 +2331,7 @@ struct Inventory {
     compact: bool,
     page_size: usize,
     item_list: Option<WidgetId>,
+    item_spacer: Option<WidgetId>,
     selected_item: Option<ItemHandle>,
     inspector_summary: Option<WidgetId>,
     inspector_condition_heading: Option<WidgetId>,
@@ -2602,6 +2603,7 @@ impl Inventory {
             compact: false,
             page_size: 8,
             item_list: None,
+            item_spacer: None,
             selected_item: None,
             inspector_summary: None,
             inspector_condition_heading: None,
@@ -2634,17 +2636,36 @@ impl Inventory {
             self.compact = window_width < 1600;
         }
         cx.tree.update_layout()?;
-        if let Some(list) = self.item_list {
-            // Before the window has a size the list has no height: keep the last page size.
-            let height = usize::try_from(cx.tree.rect(list)?.height).unwrap_or(0);
+        if let (Some(list), Some(spacer)) = (self.item_list, self.item_spacer) {
+            // The list shows the rows that fit in the space it shares with the spacer below the paging row.
+            // Before the window has a size there is no room yet: keep the last page size.
+            let room = usize::try_from(cx.tree.rect(list)?.height)
+                .unwrap_or(0)
+                .saturating_add(usize::try_from(cx.tree.rect(spacer)?.height).unwrap_or(0));
             let row_pitch = (INVENTORY_ROW_HEIGHT + INVENTORY_ROW_GAP) as usize;
-            if height > 0 {
-                self.page_size = height
+            if room > 0 {
+                self.page_size = room
                     .saturating_add(INVENTORY_ROW_GAP as usize)
                     .checked_div(row_pitch)
                     .unwrap_or(0)
                     .clamp(1, INVENTORY_MAX_PAGE_SIZE);
             }
+            let rows = u32::try_from(self.page_size).unwrap_or(1);
+            let list_pixels = rows
+                .saturating_mul(INVENTORY_ROW_HEIGHT)
+                .saturating_add(rows.saturating_sub(1).saturating_mul(INVENTORY_ROW_GAP));
+            let list_height = f32::from(u16::try_from(list_pixels).unwrap_or(0));
+            cx.tree.set_style(
+                list,
+                Style {
+                    preferred: crate::layout::Size::new(0.0, list_height),
+                    min: crate::layout::Size::new(0.0, list_height),
+                    shrink: 0.0,
+                    gap: Size::new(0.0, INVENTORY_ROW_GAP as f32),
+                    align_items: crate::layout::Align::Stretch,
+                    ..Style::default()
+                },
+            )?;
         }
         let page_size = self.page_size;
         if let Some(id) = self.key_header {
@@ -3226,7 +3247,6 @@ impl Inventory {
                 _ => false,
             };
             cx.tree.set_enabled(id, add_enabled)?;
-            cx.tree.set_text(id, t("+ Добавить предмет"))?;
         }
         let (upgrade_options, selected_upgrades, upgrades_editable) = match (&selected.data, handle) {
             (SaveData::Xray { save, inventory }, ItemHandle::Xray(item_handle)) => {
@@ -4983,7 +5003,7 @@ impl Screen for Inventory {
                 preferred: crate::layout::Size::new(0.0, 0.0),
                 min: crate::layout::Size::new(0.0, 0.0),
                 padding: crate::layout::Edges::all(crate::theme::d2::PANEL_PADDING.0),
-                gap: Size::new(0.0, crate::theme::CONTROL_GAP),
+                gap: Size::new(0.0, 8.0),
                 align_items: crate::layout::Align::Stretch,
                 ..Style::default()
             },
@@ -5036,7 +5056,27 @@ impl Screen for Inventory {
         self.money_input_widget = Some(input);
         self.money_input = Some(TextInput::new("", money_input_config())?);
         for (amount, label) in [(10_000_u32, "+10 000"), (50_000, "+50 000"), (100_000, "+100 000")] {
-            let button = style::button(cx.tree, money, label, Button::Secondary)?;
+            let button = style::d2::button(
+                cx.tree,
+                money,
+                label,
+                style::d2::ButtonKind::Secondary,
+                style::d2::ButtonSize::Small,
+            )?;
+            cx.tree.set_style(
+                button,
+                Style {
+                    min: crate::layout::Size::new(0.0, crate::theme::d2::CONTROL_HEIGHT_SMALL.1),
+                    padding: crate::layout::Edges {
+                        left: 10.0,
+                        top: 0.0,
+                        right: 10.0,
+                        bottom: 0.0,
+                    },
+                    shrink: 0.0,
+                    ..Style::default()
+                },
+            )?;
             self.money_buttons.push((button, amount));
         }
         let filters = style::row(cx.tree, inventory)?;
@@ -5104,24 +5144,6 @@ impl Screen for Inventory {
             )?;
             self.categories.push((id, category));
         }
-        self.empty_results = Some(paragraph(
-            cx.tree,
-            inventory,
-            "⌕\nПредметы не найдены\nИзмените поиск или категорию.",
-            Text::Note,
-        )?);
-        if let Some(id) = self.empty_results {
-            cx.tree.set_visible(id, false)?;
-        }
-        self.reset_filters = Some(style::button(
-            cx.tree,
-            inventory,
-            "Сбросить фильтры",
-            Button::Secondary,
-        )?);
-        if let Some(id) = self.reset_filters {
-            cx.tree.set_visible(id, false)?;
-        }
         let header = cx.tree.add(
             Some(inventory),
             NodeKind::Row,
@@ -5172,8 +5194,8 @@ impl Screen for Inventory {
             Some(inventory),
             NodeKind::Column,
             Style {
-                grow: 1.0,
-                shrink: 1.0,
+                grow: 0.0,
+                shrink: 0.0,
                 min: crate::layout::Size::new(0.0, 0.0),
                 gap: Size::new(0.0, INVENTORY_ROW_GAP as f32),
                 align_items: crate::layout::Align::Stretch,
@@ -5184,6 +5206,24 @@ impl Screen for Inventory {
         )?;
         cx.tree.set_clip_children(item_rows, true)?;
         self.item_list = Some(item_rows);
+        self.empty_results = Some(paragraph(
+            cx.tree,
+            item_rows,
+            "⌕\nПредметы не найдены\nИзмените поиск или категорию.",
+            Text::Note,
+        )?);
+        if let Some(id) = self.empty_results {
+            cx.tree.set_visible(id, false)?;
+        }
+        self.reset_filters = Some(style::button(
+            cx.tree,
+            item_rows,
+            "Сбросить фильтры",
+            Button::Secondary,
+        )?);
+        if let Some(id) = self.reset_filters {
+            cx.tree.set_visible(id, false)?;
+        }
         for _ in 0..INVENTORY_MAX_PAGE_SIZE {
             let stack = cx.tree.add(
                 Some(item_rows),
@@ -5260,11 +5300,28 @@ impl Screen for Inventory {
         self.page_range = Some(style::label(cx.tree, pages, "", Text::Note)?);
         self.next = Some(library_icon_button(cx.tree, pages, Icon::D2ArrowRight)?);
         self.export = Some(style::button(cx.tree, inventory, "Сохранить", Button::Primary)?);
-        self.status = Some(style::label(
-            cx.tree,
-            inventory,
-            "Изменения пока не подготовлены.",
-            Text::Note,
+        let status = style::label(cx.tree, pages, "Изменения пока не подготовлены.", Text::Note)?;
+        cx.tree.set_style(
+            status,
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: Size::new(0.0, 0.0),
+                ..Style::default()
+            },
+        )?;
+        self.status = Some(status);
+        self.item_spacer = Some(cx.tree.add(
+            Some(inventory),
+            NodeKind::Leaf,
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: crate::layout::Size::new(0.0, 0.0),
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
         )?);
         let side = cx.tree.add(
             Some(body),
@@ -8002,6 +8059,18 @@ mod tests {
                 );
             }
         }
+        Ok(())
+    }
+
+    #[test]
+    fn inventory_shows_at_least_five_rows_at_1366x768() -> sse_core::Result<()> {
+        // The shell header and tabs take about 240 px of the 768 px window; the inventory gets the rest.
+        let (screen, _, _) = rendered_inventory(1366, 768 - 240)?;
+        assert!(
+            screen.page_size >= 5,
+            "only {} rows fit in the 1366x768 window",
+            screen.page_size
+        );
         Ok(())
     }
 
