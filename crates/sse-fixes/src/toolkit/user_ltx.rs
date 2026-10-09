@@ -244,6 +244,17 @@ impl ManagedUserLtxSettings {
         Ok(results)
     }
 
+    /// Checks managed settings without touching `user.ltx`, so callers can refuse before changing anything else.
+    ///
+    /// # Errors
+    /// Returns an error for keys outside the managed allow-list or values out of range.
+    pub fn validate_managed_settings(settings_to_update: &BTreeMap<String, String>) -> Result<()> {
+        for (k, v) in settings_to_update {
+            validate_setting_value(k, v)?;
+        }
+        Ok(())
+    }
+
     /// Updates or appends managed settings in `user.ltx`, preserving existing formatting.
     ///
     /// # Errors

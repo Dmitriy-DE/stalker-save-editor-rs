@@ -571,3 +571,63 @@ fn install_audit_does_not_follow_symlink_cycles_in_gamedata() {
     let audit = ToolkitInstallAudit::audit_installation(&fixture.root, GameTarget::ClearSky, &engine).unwrap();
     assert_eq!(audit.custom_mod_count, 1);
 }
+
+#[test]
+fn profile_with_unknown_fix_leaves_installed_fixes_untouched() {
+    let fixture = ToolkitTestFixture::new(GameTarget::ClearSky, "11450472");
+    let script = "gamedata/scripts/profile_keep.script";
+    fixture.write_file(script, b"val = 10\n");
+    let engine = GameFixEngine::with_synthetic(true);
+    let keep = make_synthetic_fix("cs.test.keep", script, "val = 10\n", "val = 20\n", "11450472");
+    engine.install(&keep, &fixture.root).unwrap();
+
+    let profile = ToolkitProfile {
+        name: "Unknown fix".to_string(),
+        description: String::new(),
+        game: GameTarget::ClearSky,
+        target_fix_ids: vec!["cs.not.in.catalog".to_string()],
+        user_ltx_overrides: BTreeMap::new(),
+        s2_mods_enabled: None,
+    };
+    let catalog = sse_fixes::GameFixCatalog;
+    assert!(ToolkitProfileService::apply_profile(&fixture.root, &profile, &engine, &catalog).is_err());
+
+    let ids: Vec<String> = engine
+        .list_installed(&fixture.root, None)
+        .unwrap()
+        .into_iter()
+        .map(|f| f.id)
+        .collect();
+    assert_eq!(ids, vec!["cs.test.keep".to_string()]);
+}
+
+#[test]
+fn profile_with_refused_setting_leaves_installed_fixes_untouched() {
+    let fixture = ToolkitTestFixture::new(GameTarget::ClearSky, "11450472");
+    let script = "gamedata/scripts/profile_keep2.script";
+    fixture.write_file(script, b"val = 10\n");
+    let engine = GameFixEngine::with_synthetic(true);
+    let keep = make_synthetic_fix("cs.test.keep2", script, "val = 10\n", "val = 20\n", "11450472");
+    engine.install(&keep, &fixture.root).unwrap();
+
+    let mut overrides = BTreeMap::new();
+    overrides.insert("unknown_cheat_cmd".to_string(), "1".to_string());
+    let profile = ToolkitProfile {
+        name: "Bad setting".to_string(),
+        description: String::new(),
+        game: GameTarget::ClearSky,
+        target_fix_ids: vec![],
+        user_ltx_overrides: overrides,
+        s2_mods_enabled: None,
+    };
+    let catalog = sse_fixes::GameFixCatalog;
+    assert!(ToolkitProfileService::apply_profile(&fixture.root, &profile, &engine, &catalog).is_err());
+
+    let ids: Vec<String> = engine
+        .list_installed(&fixture.root, None)
+        .unwrap()
+        .into_iter()
+        .map(|f| f.id)
+        .collect();
+    assert_eq!(ids, vec!["cs.test.keep2".to_string()]);
+}

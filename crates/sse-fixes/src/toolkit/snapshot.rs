@@ -223,6 +223,17 @@ impl ToolkitSnapshotService {
     ) -> Result<SnapshotRestoreReport> {
         let snapshot = Self::get_snapshot(game_directory, snapshot_id)?;
 
+        // Refuse before any change: a snapshot that cannot be fully restored must not uninstall fixes first.
+        for fix in &snapshot.installed_fixes {
+            if GameFixCatalog::try_get(&fix.fix_id).is_none() {
+                return Err(Error::Refused(format!(
+                    "Fix '{}' required by snapshot is not available in catalog",
+                    fix.fix_id
+                )));
+            }
+        }
+        ManagedUserLtxSettings::validate_managed_settings(&snapshot.managed_user_ltx)?;
+
         // 1. Reconcile fixes
         let current_installed = engine.list_installed(game_directory, None)?;
         let current_ids: Vec<String> = current_installed.into_iter().map(|f| f.id).collect();
