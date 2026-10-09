@@ -223,29 +223,36 @@ fn run_state(args: &[String]) -> ExitCode {
     let catalogue = GameFixCatalog::for_game(target);
     let recommended = GameFixCatalog::for_preset(target, GameFixPreset::Recommended);
 
-    let compatible_recommended: Vec<_> = if !recommended.is_empty() {
-        if let Some(ref build) = steam_build_id {
-            if recommended
-                .iter()
-                .all(|d| d.supported_steam_build_ids.iter().any(|b| b == build))
-            {
-                recommended.clone()
-            } else {
-                Vec::new()
-            }
-        } else {
-            Vec::new()
-        }
+    let compatible_recommended: Vec<_> = if !recommended.is_empty()
+        && recommended
+            .iter()
+            .all(|definition| definition.supports_detected_build_or_hashes(steam_build_id.as_deref()))
+    {
+        recommended.clone()
     } else {
         Vec::new()
     };
+    let hash_fallback_used = steam_build_id.as_deref().is_none_or(|build| {
+        recommended.iter().any(|definition| {
+            !definition
+                .supported_steam_build_ids
+                .iter()
+                .any(|supported| supported == build)
+        })
+    });
 
     let status_note: Option<&'static str> = if catalogue.is_empty() {
         Some("No evidence-validated game-file fixes are currently catalogued.")
     } else if recommended.is_empty() {
         Some("Catalogued fixes are experimental or research-only and are not included in safe presets.")
     } else if compatible_recommended.is_empty() {
-        Some("The detected build is not supported by the complete safe preset.")
+        Some(if steam_build_id.is_some() {
+            "The detected build is not supported by the complete safe preset."
+        } else {
+            "Steam build ID is unavailable and the complete safe preset lacks exact source-file hash anchors."
+        })
+    } else if hash_fallback_used {
+        Some("Steam build ID is missing or unlisted; exact source-file hashes are checked before any write.")
     } else {
         None
     };

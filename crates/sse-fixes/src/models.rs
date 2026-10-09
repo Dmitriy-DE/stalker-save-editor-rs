@@ -543,6 +543,43 @@ pub struct GameFixDefinition {
     pub spawn_edits: Vec<SpawnEditOperation>,
 }
 
+impl GameFixDefinition {
+    /// Returns whether the detected Steam build is listed, or every operation has a complete source-hash anchor.
+    ///
+    /// The engine verifies every source file hash before writing when the build is absent or unlisted.
+    #[must_use]
+    pub fn supports_detected_build_or_hashes(&self, steam_build_id: Option<&str>) -> bool {
+        if steam_build_id.is_some_and(|build_id| {
+            self.supported_steam_build_ids
+                .iter()
+                .any(|supported| supported == build_id)
+        }) {
+            return true;
+        }
+
+        let has_operations = !self.text_patches.is_empty() || !self.overlays.is_empty() || !self.spawn_edits.is_empty();
+        has_operations
+            && self
+                .text_patches
+                .iter()
+                .all(|patch| has_sha256_anchor(&patch.expected_file_sha256))
+            && self
+                .overlays
+                .iter()
+                .all(|overlay| has_sha256_anchor(&overlay.expected_file_sha256))
+            && self
+                .spawn_edits
+                .iter()
+                .all(|edit| has_sha256_anchor(&edit.expected_file_sha256))
+    }
+}
+
+fn has_sha256_anchor(value: &Option<String>) -> bool {
+    value
+        .as_deref()
+        .is_some_and(|hash| hash.len() == 64 && hash.bytes().all(|byte| byte.is_ascii_hexdigit()))
+}
+
 /// Reason a game fix operation failed or was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GameFixFailure {
@@ -642,7 +679,7 @@ pub struct GameFixManifest {
     pub fix_id: String,
     /// Target game.
     pub game: GameTarget,
-    /// Detected Steam build ID.
+    /// Detected Steam build ID; empty when Steam metadata was unavailable and source hashes were used.
     pub steam_build_id: String,
     /// Fix version.
     pub version: String,
