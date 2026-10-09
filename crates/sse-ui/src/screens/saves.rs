@@ -2391,6 +2391,28 @@ fn add_panel_style(bottom_margin: f32) -> Style {
     }
 }
 
+/// Width a candidate's name may take: the side column less the panel padding and the button's own padding.
+fn add_candidate_name_width(compact: bool) -> f32 {
+    side_column_width(compact) - 2.0 * crate::theme::d2::PANEL_PADDING.0 - 20.0
+}
+
+/// `text`, shortened with an ellipsis at its end until it fits in `max_width` pixels.
+fn fit_text(tree: &crate::widget::Tree, text: &str, max_width: f32) -> String {
+    let style = Text::Body.style();
+    if tree.measure_text(text, style) <= max_width {
+        return text.to_owned();
+    }
+    let mut chars: Vec<char> = text.chars().collect();
+    while !chars.is_empty() {
+        chars.pop();
+        let candidate: String = chars.iter().collect::<String>() + "…";
+        if tree.measure_text(&candidate, style) <= max_width {
+            return candidate;
+        }
+    }
+    "…".to_owned()
+}
+
 /// Gap between the children of the add panel.
 const ADD_PANEL_GAP: f32 = 10.0;
 
@@ -2444,6 +2466,8 @@ struct Inventory {
     add_quantity_widget: Option<WidgetId>,
     add_quantity: Option<TextInput>,
     add_candidate_rows: Vec<(WidgetId, Option<String>)>,
+    /// Per candidate row: its column and the wrapped note under the name (key and reason).
+    add_candidate_slots: Vec<(WidgetId, WidgetId)>,
     add_empty: Option<WidgetId>,
     add_previous: Option<WidgetId>,
     add_next: Option<WidgetId>,
@@ -2722,6 +2746,7 @@ impl Inventory {
             add_quantity_widget: None,
             add_quantity: None,
             add_candidate_rows: Vec::new(),
+            add_candidate_slots: Vec::new(),
             add_empty: None,
             add_previous: None,
             add_next: None,
@@ -2799,7 +2824,12 @@ impl Inventory {
         self.sync_add_list_cap(cx)?;
         // A wrapped note measures its lines at its minimum width, so the width it is drawn in is given here.
         let note_width = side_column_width(self.compact) - 2.0 * crate::theme::d2::PANEL_PADDING.0;
-        for note in [self.add_note, self.add_draft_note].into_iter().flatten() {
+        let candidate_notes = self.add_candidate_slots.iter().map(|(_, note)| *note);
+        for note in [self.add_note, self.add_draft_note]
+            .into_iter()
+            .flatten()
+            .chain(candidate_notes)
+        {
             cx.tree.set_style(
                 note,
                 Style {
@@ -3986,27 +4016,31 @@ impl Inventory {
                 .find(|candidate| candidate.template_available)
                 .map(|candidate| candidate.key.clone());
         }
-        for (offset, (widget, slot)) in self.add_candidate_rows.iter_mut().enumerate() {
+        let slots = self.add_candidate_slots.clone();
+        for (offset, (widget, key)) in self.add_candidate_rows.iter_mut().enumerate() {
+            let Some((column, note)) = slots.get(offset).copied() else {
+                continue;
+            };
             if let Some(candidate) = matching.get(start.saturating_add(offset)) {
-                *slot = Some(candidate.key.clone());
+                *key = Some(candidate.key.clone());
                 let suffix = if candidate.template_available {
                     String::new()
                 } else {
                     t(" · нет подтверждённого шаблона в сейве").to_owned()
                 };
-                cx.tree.set_text(
-                    *widget,
-                    &format!("{} · {}{suffix}", candidate.display_name, candidate.key),
-                )?;
-                cx.tree.set_visible(*widget, true)?;
+                // The name is shortened to the button's width; the key and reason wrap under it.
+                let name = fit_text(cx.tree, &candidate.display_name, add_candidate_name_width(self.compact));
+                cx.tree.set_text(*widget, &name)?;
+                cx.tree.set_text(note, &format!("{}{suffix}", candidate.key))?;
+                cx.tree.set_visible(column, true)?;
                 cx.tree.set_enabled(*widget, candidate.template_available)?;
                 cx.tree.set_look(
                     *widget,
                     style::nav(self.add_selected_key.as_deref() == Some(&candidate.key)),
                 )?;
             } else {
-                *slot = None;
-                cx.tree.set_visible(*widget, false)?;
+                *key = None;
+                cx.tree.set_visible(column, false)?;
             }
         }
         if let Some(empty) = self.add_empty {
@@ -5762,9 +5796,24 @@ impl Screen for Inventory {
         self.add_empty = Some(add_empty);
         cx.tree.set_visible(add_empty, false)?;
         for _ in 0..ADD_ITEM_PAGE_SIZE {
-            let widget = style::button(cx.tree, add_list, "", Button::Secondary)?;
-            cx.tree.set_visible(widget, false)?;
+            // A candidate is two lines: its name on the button, and below it the key and the reason, wrapped.
+            let slot = cx.tree.add(
+                Some(add_list),
+                NodeKind::Column,
+                Style {
+                    gap: Size::new(0.0, 2.0),
+                    align_items: crate::layout::Align::Stretch,
+                    ..Style::default()
+                },
+                Content::Panel,
+                Look::default(),
+            )?;
+            let widget = style::button(cx.tree, slot, "", Button::Secondary)?;
+            let note = paragraph(cx.tree, slot, "", Text::Note)?;
+            keep_height(cx.tree, note)?;
+            cx.tree.set_visible(slot, false)?;
             self.add_candidate_rows.push((widget, None));
+            self.add_candidate_slots.push((slot, note));
         }
         // The paging row stays under the candidate list, outside its scroll, so it is always in reach.
         let add_pages = style::row(cx.tree, panel)?;
@@ -5786,7 +5835,18 @@ impl Screen for Inventory {
         // The chosen candidate: its name and key, shown above the quantity.
         let selected_name = style::label(cx.tree, panel, "", Text::Heading)?;
         let selected_key = style::label(cx.tree, panel, "", Text::Note)?;
-        keep_height(cx.tree, selected_name)?;
+        // The chosen candidate starts 12 px below the list, as the blocks of the frame do.
+        cx.tree.set_style(
+            selected_name,
+            Style {
+                shrink: 0.0,
+                margin: crate::layout::Edges {
+                    top: 12.0,
+                    ..crate::layout::Edges::default()
+                },
+                ..Style::default()
+            },
+        )?;
         keep_height(cx.tree, selected_key)?;
         cx.tree.set_visible(selected_name, false)?;
         cx.tree.set_visible(selected_key, false)?;
