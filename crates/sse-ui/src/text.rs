@@ -19,6 +19,11 @@ pub trait Metrics {
 
     /// Pair kerning in UI pixels.
     fn kerning(&self, left: char, right: char) -> f32;
+
+    /// Space added between two consecutive characters, in UI pixels.
+    fn tracking(&self) -> f32 {
+        0.0
+    }
 }
 
 /// Locale rules that affect case folding.
@@ -209,7 +214,7 @@ pub fn break_lines<M: Metrics>(text: &str, max_width: f32, metrics: &M) -> Vec<L
                 candidate = Some(BreakCandidate {
                     next_cluster: at.saturating_add(1),
                     end_byte: cluster.start,
-                    width: before_width + metrics.advance('-'),
+                    width: before_width + boundary_spacing(last_visible, Some('-'), metrics) + metrics.advance('-'),
                     append_hyphen: true,
                 });
             } else if cluster.whitespace || is_break_after(cluster.last_char) {
@@ -270,6 +275,10 @@ pub fn caret_positions<M: Metrics>(text: &str, metrics: &M) -> Vec<Caret> {
             }
         }
     });
+    let last = carets.len().saturating_sub(1);
+    for caret in carets.iter_mut().take(last).skip(1) {
+        caret.x += metrics.tracking();
+    }
     carets
 }
 
@@ -318,7 +327,7 @@ pub fn ellipsize_end<M: Metrics>(text: &str, max_width: f32, metrics: &M) -> Str
         let addition = cluster_addition(previous, cluster, metrics);
         let candidate_width = width
             + addition
-            + boundary_kerning(cluster.last_visible.or(previous), Some(ELLIPSIS), metrics)
+            + boundary_spacing(cluster.last_visible.or(previous), Some(ELLIPSIS), metrics)
             + ellipsis_width;
         if candidate_width > max_width {
             break;
@@ -595,7 +604,7 @@ fn try_add_right<M: Metrics>(
     }
     let index = right_start.saturating_sub(1);
     let cluster = clusters.get(index).copied()?;
-    let internal_kern = boundary_kerning(cluster.last_visible, right_first, metrics);
+    let internal_kern = boundary_spacing(cluster.last_visible, right_first, metrics);
     let new_right_width = cluster.width + internal_kern + right_width;
     let new_right_first = cluster.first_visible.or(right_first);
     let total = joined_middle_width(
@@ -621,9 +630,9 @@ fn joined_middle_width<M: Metrics>(
     metrics: &M,
 ) -> f32 {
     left_width
-        + boundary_kerning(left_last, Some(ELLIPSIS), metrics)
+        + boundary_spacing(left_last, Some(ELLIPSIS), metrics)
         + ellipsis_width
-        + boundary_kerning(Some(ELLIPSIS), right_first, metrics)
+        + boundary_spacing(Some(ELLIPSIS), right_first, metrics)
         + right_width
 }
 
@@ -784,7 +793,7 @@ fn measure_cluster<M: Metrics>(slice: &str, metrics: &M) -> (f32, Option<char>, 
             continue;
         }
         if let Some(left) = previous {
-            width += metrics.kerning(left, character);
+            width += metrics.kerning(left, character) + metrics.tracking();
         }
         width += metrics.advance(character);
         if first.is_none() {
@@ -796,12 +805,12 @@ fn measure_cluster<M: Metrics>(slice: &str, metrics: &M) -> (f32, Option<char>, 
 }
 
 fn cluster_addition<M: Metrics>(previous: Option<char>, cluster: Cluster, metrics: &M) -> f32 {
-    boundary_kerning(previous, cluster.first_visible, metrics) + cluster.width
+    boundary_spacing(previous, cluster.first_visible, metrics) + cluster.width
 }
 
-fn boundary_kerning<M: Metrics>(left: Option<char>, right: Option<char>, metrics: &M) -> f32 {
+fn boundary_spacing<M: Metrics>(left: Option<char>, right: Option<char>, metrics: &M) -> f32 {
     match (left, right) {
-        (Some(a), Some(b)) => metrics.kerning(a, b),
+        (Some(a), Some(b)) => metrics.kerning(a, b) + metrics.tracking(),
         _ => 0.0,
     }
 }
@@ -1172,6 +1181,44 @@ mod tests {
     fn kerning_is_counted() {
         let mono = Mono;
         assert!((measure_text("AV", &mono) - 1.75).abs() < f32::EPSILON);
+    }
+
+    struct Spaced(f32);
+
+    impl Metrics for Spaced {
+        fn advance(&self, _: char) -> f32 {
+            1.0
+        }
+
+        fn kerning(&self, _: char, _: char) -> f32 {
+            0.0
+        }
+
+        fn tracking(&self) -> f32 {
+            self.0
+        }
+    }
+
+    #[test]
+    fn tracking_is_added_between_characters_only() {
+        let width = measure_text("ABC", &Spaced(2.0)) - measure_text("ABC", &Spaced(0.0));
+        assert!((width - 4.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn caret_after_second_character_moves_by_two_tracking() {
+        let plain = caret_positions("ABC", &Spaced(0.0));
+        let spaced = caret_positions("ABC", &Spaced(1.0));
+        let shift = spaced.get(2).map_or(f32::NAN, |caret| caret.x) - plain.get(2).map_or(f32::NAN, |caret| caret.x);
+        assert!((shift - 2.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn end_ellipsis_with_tracking_fits() {
+        let metrics = Spaced(1.0);
+        let result = ellipsize_end("abcdefghij", 6.5, &metrics);
+        assert!(result.ends_with(ELLIPSIS));
+        assert!(measure_text(&result, &metrics) <= 6.5);
     }
 
     #[test]
