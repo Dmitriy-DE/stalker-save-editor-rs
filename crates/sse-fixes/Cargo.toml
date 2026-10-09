@@ -10,6 +10,7 @@ sse-core = { path = "../sse-core" }
 sse-content = { path = "../sse-content" }
 sse-catalog = { path = "../sse-catalog" }
 sse-codecs = { path = "../sse-codecs" }
+sse-sys = { path = "../sse-sys" }
 
 [build-dependencies]
 sse-codecs = { path = "../sse-codecs" }

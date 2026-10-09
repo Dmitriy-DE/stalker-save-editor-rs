@@ -4,15 +4,15 @@ use sse_codecs::json::{Event, Reader, Text, Writer};
 use sse_codecs::sha256::sha256_hex;
 use sse_core::{Error, Result};
 use std::collections::{BTreeMap, HashSet};
+use std::fs;
 #[cfg(unix)]
 use std::fs::File;
-use std::fs::{self, OpenOptions};
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 const MAXIMUM_DRAFT_BYTES: usize = 2 * 1024 * 1024;
 const MAXIMUM_HISTORY_STEPS: usize = 100;
+static NEXT_DRAFT_ID: AtomicU64 = AtomicU64::new(1);
 const LEGACY_PLAN_FIELDS: &[&str] = &[
     "adds",
     "attach",
@@ -27,7 +27,6 @@ const LEGACY_PLAN_FIELDS: &[&str] = &[
     "stacks",
     "upgrades",
 ];
-static NEXT_DRAFT_ID: AtomicU64 = AtomicU64::new(1);
 
 /// JSON value retained for draft fields this build cannot interpret.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1281,31 +1280,28 @@ fn tuple(value: &JsonValue, length: usize) -> Result<&[JsonValue]> {
 
 fn write_durable(directory: &Path, destination: &Path, bytes: &[u8]) -> Result<()> {
     fs::create_dir_all(directory)?;
-    let id = NEXT_DRAFT_ID.fetch_add(1, Ordering::Relaxed);
-    let temporary = directory.join(format!(".draft-{}-{id}.tmp", std::process::id()));
-    let result = (|| {
-        let mut options = OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
+    sse_sys::secure_fs::atomic_write_checked(
+        destination,
+        bytes,
+        sse_sys::secure_fs::AtomicWriteOptions::create_or_replace().with_unix_mode(0o600),
+        |candidate| match fs::symlink_metadata(candidate) {
+            Ok(metadata) if metadata.file_type().is_symlink() => Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "draft path is a symbolic link",
+            )),
+            Ok(_) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        },
+    )
+    .map_err(|error| {
+        if error.kind() == std::io::ErrorKind::PermissionDenied && error.to_string() == "draft path is a symbolic link"
         {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
+            Error::Refused("draft path is a symbolic link".to_owned())
+        } else {
+            Error::from(error)
         }
-        let mut file = options.open(&temporary)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        drop(file);
-        if fs::symlink_metadata(destination).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
-            return Err(Error::Refused("draft path is a symbolic link".to_owned()));
-        }
-        fs::rename(&temporary, destination)?;
-        sync_directory(directory)?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(temporary);
-    }
-    result
+    })
 }
 
 fn sync_directory(directory: &Path) -> Result<()> {

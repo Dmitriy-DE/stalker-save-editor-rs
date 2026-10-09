@@ -174,7 +174,9 @@ impl GameContentService {
             if let Some(b) = built {
                 let _ = fs::create_dir_all(&cache_root);
                 if let Ok(written_bytes) = CatalogBundleWriter::write(&[&b]) {
-                    atomic_write_file(&catalog_path, &written_bytes);
+                    if let Err(error) = atomic_write_file(&catalog_path, &written_bytes) {
+                        issues.push(format!("could not write installed-game catalog cache: {error}"));
+                    }
                 }
                 bundle = Some(b);
             } else {
@@ -326,11 +328,12 @@ fn write_chunk(output: &mut Vec<u8>, chunk_type: &[u8; 4], data: &[u8]) {
     output.extend_from_slice(&crc.to_be_bytes());
 }
 
-fn atomic_write_file(path: &Path, bytes: &[u8]) {
-    let tmp = path.with_extension("tmp");
-    if fs::write(&tmp, bytes).is_ok() {
-        let _ = fs::rename(&tmp, path);
-    }
+fn atomic_write_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    sse_sys::secure_fs::atomic_write(
+        path,
+        bytes,
+        sse_sys::secure_fs::AtomicWriteOptions::create_or_replace().without_parent_sync(),
+    )
 }
 
 fn safe_language(lang: &str) -> String {
@@ -455,7 +458,9 @@ impl IconSource {
         let png_bytes = GameContentService::to_png(&cropped);
 
         let _ = fs::create_dir_all(&self.cache_directory);
-        atomic_write_file(&cache_path, &png_bytes);
+        if let Err(error) = atomic_write_file(&cache_path, &png_bytes) {
+            eprintln!("could not write catalog icon cache: {error}");
+        }
 
         Some(png_bytes)
     }
@@ -479,5 +484,23 @@ impl IconSource {
 
         atlases.insert(texture.to_string(), decoded.clone());
         decoded
+    }
+}
+
+#[cfg(test)]
+mod atomic_write_tests {
+    use super::atomic_write_file;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn atomic_write_file_reports_a_missing_parent() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        let path = std::env::temp_dir()
+            .join(format!("sse-catalog-missing-parent-{}-{unique}", std::process::id()))
+            .join("catalog.json");
+
+        assert!(atomic_write_file(&path, b"catalog").is_err());
     }
 }
