@@ -250,7 +250,9 @@ fn print_json_report(report: &sse_lint::LintReport) {
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
 
-    use super::{load_tree_for_lint, run_lint};
+    #[cfg(unix)]
+    use super::load_tree_for_lint;
+    use super::run_lint;
     use sse_core::ExitCode;
     use std::fs;
     use std::path::PathBuf;
