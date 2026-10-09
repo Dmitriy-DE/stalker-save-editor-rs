@@ -228,6 +228,7 @@ fn screenshot(args: &[String]) -> Result<()> {
         shell.open(&mut tree, *id)?;
     }
     tree.resize(width, height);
+    shell.load_art_now(&mut tree, &sse_app::paths::default_data_directory().join("art"))?;
     let stride = usize::try_from(width).unwrap_or(0);
     let mut frame = vec![0_u32; stride.saturating_mul(usize::try_from(height).unwrap_or(0))];
     tree.paint(&mut frame, stride)?;
@@ -403,6 +404,12 @@ fn ci_budget() -> Result<()> {
         )));
     }
 
+    // The window decodes its pictures on a worker thread, so they are not part of the startup budget. Load them
+    // here, after the startup measurement, and measure the screen switches with them on screen.
+    let art_started = Instant::now();
+    shell.load_art_now(&mut tree, &sse_app::paths::default_data_directory().join("art"))?;
+    let art_load = art_started.elapsed();
+
     // Screen hosts are lazy by design so startup stays below its own budget. Warm each host once,
     // then measure the steady-state switch that the cache is intended to make cheap. Shell::open
     // still calls shown() on every activation, so this does not bypass fresh screen state.
@@ -433,10 +440,10 @@ fn ci_budget() -> Result<()> {
                 "idle RSS budget exceeded: {rss_kib} KiB > {RSS_BUDGET_KIB} KiB"
             )));
         }
-        println!("budget startup={startup:?} switch_worst={worst_switch:?} rss={rss_kib}KiB");
+        println!("budget startup={startup:?} art_load={art_load:?} switch_worst={worst_switch:?} rss={rss_kib}KiB");
     }
     #[cfg(not(target_os = "linux"))]
-    println!("budget startup={startup:?} switch_worst={worst_switch:?}");
+    println!("budget startup={startup:?} art_load={art_load:?} switch_worst={worst_switch:?}");
     Ok(())
 }
 

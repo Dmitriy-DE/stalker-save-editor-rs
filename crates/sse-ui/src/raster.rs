@@ -230,6 +230,7 @@ pub struct ImageRef<'a> {
     height: u32,
     stride: usize,
     solid_pixel: Option<u32>,
+    opaque: bool,
 }
 
 impl<'a> ImageRef<'a> {
@@ -240,13 +241,21 @@ impl<'a> ImageRef<'a> {
     pub fn new(pixels: &'a [u32], width: u32, height: u32, stride: usize) -> Result<Self> {
         validate_plane(pixels.len(), width, height, stride, "image")?;
         let solid_pixel = detect_solid_pixel(pixels, width, height, stride);
+        let opaque = detect_opaque(pixels, width, height, stride);
         Ok(Self {
             pixels,
             width,
             height,
             stride,
             solid_pixel,
+            opaque,
         })
+    }
+
+    /// Whether every pixel has full alpha.
+    #[must_use]
+    pub const fn is_opaque(self) -> bool {
+        self.opaque
     }
 
     fn pixel(self, x: u32, y: u32) -> u32 {
@@ -451,6 +460,43 @@ impl<'a> Surface<'a> {
     ///
     /// [`ImageFilter::Box`] computes exact source-pixel overlap and is intended for downscaling;
     /// [`ImageFilter::Bilinear`] is the faster general scaler.
+    /// Draws an opaque image of the destination's size one-to-one by copying rows; any other image goes through
+    /// [`Surface::blit_image`] with bilinear filtering.
+    pub fn blit_opaque_copy(&mut self, image: ImageRef<'_>, destination: Rect) {
+        if !image.opaque || image.width != destination.width || image.height != destination.height {
+            self.blit_image(image, destination, ImageFilter::Bilinear);
+            return;
+        }
+        let bounds = intersect_rect(destination, self.clip);
+        let Some((start_y, end_y)) = rect_y_range(bounds) else {
+            return;
+        };
+        let (Ok(width), Ok(start_x)) = (usize::try_from(bounds.width), usize::try_from(bounds.x)) else {
+            return;
+        };
+        let source_x = usize::try_from(coordinate_offset(bounds.x, destination.x)).unwrap_or(0);
+        for y in start_y..end_y {
+            let source_y =
+                usize::try_from(coordinate_offset(i32::try_from(y).unwrap_or(i32::MAX), destination.y)).unwrap_or(0);
+            let Some(source) = source_y
+                .checked_mul(image.stride)
+                .and_then(|row| row.checked_add(source_x))
+                .and_then(|start| image.pixels.get(start..start.checked_add(width)?))
+            else {
+                continue;
+            };
+            let Some(target) = y
+                .checked_mul(self.stride)
+                .and_then(|row| row.checked_add(start_x))
+                .and_then(|start| self.pixels.get_mut(start..start.checked_add(width)?))
+            else {
+                continue;
+            };
+            target.copy_from_slice(source);
+        }
+    }
+
+    /// Draws an image with the given filter.
     pub fn blit_image(&mut self, image: ImageRef<'_>, destination: Rect, filter: ImageFilter) {
         if image.width == 0 || image.height == 0 || destination.width == 0 || destination.height == 0 {
             return;
@@ -1627,6 +1673,17 @@ fn validate_plane(length: usize, width: u32, height: u32, stride: usize, name: &
         )));
     }
     Ok(())
+}
+
+fn detect_opaque(pixels: &[u32], width: u32, height: u32, stride: usize) -> bool {
+    let (Ok(columns), Ok(rows)) = (usize::try_from(width), usize::try_from(height)) else {
+        return false;
+    };
+    (0..rows).all(|row| {
+        row.checked_mul(stride)
+            .and_then(|start| pixels.get(start..start.checked_add(columns)?))
+            .is_some_and(|line| line.iter().all(|pixel| pixel >> 24 == 0xFF))
+    })
 }
 
 fn detect_solid_pixel(pixels: &[u32], width: u32, height: u32, stride: usize) -> Option<u32> {

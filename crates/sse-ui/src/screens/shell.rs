@@ -7,6 +7,7 @@ use crate::event_loop::{App, Flow, Message, Proxy, WindowEvent};
 use crate::glyphs::{to_px, Face, TextStyle};
 use crate::layout::{Align, Edges, NodeKind, Size, Style};
 use crate::path::Icon;
+use crate::theme;
 use crate::widget::{Content, ImageData, Look, TextAlign, Tree, WidgetId};
 use crate::widgets::scroll::ScrollView;
 use crate::widgets::text_input::TextInput;
@@ -103,6 +104,412 @@ struct ReportUploadFinished {
 struct NativeFilePickerFinished {
     request: u64,
     result: std::result::Result<Option<Vec<PathBuf>>, String>,
+}
+
+const ART_HEADER_HEIGHT: f32 = 152.0;
+const ART_HEADER_HEIGHT_COMPACT: f32 = 124.0;
+const ART_COMPACT_WIDTH: u32 = 1600;
+const ART_TOPBAR_HEIGHT: u32 = 44;
+const ART_MAX_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Which background picture a decoded file belongs to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ArtSlot {
+    /// Full window behind the content, right of the menu.
+    Window,
+    /// Menu background.
+    Sidebar,
+    /// Header strip above the page.
+    Header,
+}
+
+impl ArtSlot {
+    const ALL: [Self; 3] = [Self::Window, Self::Sidebar, Self::Header];
+    const STEMS: [&'static str; 3] = ["art-window", "art-sidebar", "art-header"];
+
+    const fn index(self) -> usize {
+        match self {
+            Self::Window => 0,
+            Self::Sidebar => 1,
+            Self::Header => 2,
+        }
+    }
+}
+
+/// A background picture scaled to its layer and darkened by its scrim, decoded off the interface thread.
+pub struct ArtBaked {
+    slot: ArtSlot,
+    size: (u32, u32),
+    image: ImageData,
+}
+
+struct ArtLayers {
+    window: WidgetId,
+    sidebar: WidgetId,
+    header: WidgetId,
+    window_frame: WidgetId,
+    sidebar_box: WidgetId,
+    header_frame: WidgetId,
+    header_box: WidgetId,
+    cache: [Option<ImageData>; 3],
+    wanted: [Option<(u32, u32)>; 3],
+    pending: [Option<(u32, u32)>; 3],
+    menu_width: f32,
+    header_height: f32,
+    directory: Option<PathBuf>,
+    proxy: Option<Proxy<AppMessage>>,
+}
+
+impl ArtLayers {
+    fn build(tree: &mut Tree, root: WidgetId, proxy: Option<Proxy<AppMessage>>) -> Result<Self> {
+        let stretch = Style {
+            align_self: Some(Align::Stretch),
+            ..Style::default()
+        };
+        let window_frame = tree.add(Some(root), NodeKind::Stack, stretch, Content::Panel, Look::default())?;
+        let window = tree.add(
+            Some(window_frame),
+            NodeKind::Leaf,
+            stretch,
+            Content::Image(None),
+            Look::default(),
+        )?;
+        let sidebar_frame = tree.add(Some(root), NodeKind::Row, stretch, Content::Panel, Look::default())?;
+        let sidebar_box = tree.add(
+            Some(sidebar_frame),
+            NodeKind::Stack,
+            stretch,
+            Content::Panel,
+            Look::default(),
+        )?;
+        let sidebar = tree.add(
+            Some(sidebar_box),
+            NodeKind::Leaf,
+            stretch,
+            Content::Image(None),
+            Look::default(),
+        )?;
+        let header_frame = tree.add(Some(root), NodeKind::Column, stretch, Content::Panel, Look::default())?;
+        let header_box = tree.add(
+            Some(header_frame),
+            NodeKind::Stack,
+            stretch,
+            Content::Panel,
+            Look::default(),
+        )?;
+        let header = tree.add(
+            Some(header_box),
+            NodeKind::Leaf,
+            stretch,
+            Content::Image(None),
+            Look::default(),
+        )?;
+        let mut layers = Self {
+            window,
+            sidebar,
+            header,
+            window_frame,
+            sidebar_box,
+            header_frame,
+            header_box,
+            cache: [None, None, None],
+            wanted: [None, None, None],
+            pending: [None, None, None],
+            menu_width: 0.0,
+            header_height: 0.0,
+            directory: None,
+            proxy,
+        };
+        layers.restyle(tree, 0.0, ART_HEADER_HEIGHT)?;
+        Ok(layers)
+    }
+
+    fn image_node(&self, slot: ArtSlot) -> WidgetId {
+        match slot {
+            ArtSlot::Window => self.window,
+            ArtSlot::Sidebar => self.sidebar,
+            ArtSlot::Header => self.header,
+        }
+    }
+
+    fn restyle(&mut self, tree: &mut Tree, menu_width: f32, header_height: f32) -> Result<()> {
+        let right_of_menu = Edges {
+            left: menu_width,
+            top: 0.0,
+            right: 0.0,
+            bottom: 0.0,
+        };
+        let stretch = Style {
+            align_self: Some(Align::Stretch),
+            ..Style::default()
+        };
+        tree.set_style(
+            self.window_frame,
+            Style {
+                grow: 1.0,
+                margin: right_of_menu,
+                ..stretch
+            },
+        )?;
+        tree.set_style(
+            self.sidebar_box,
+            Style {
+                min: Size::new(menu_width, 0.0),
+                preferred: Size::new(menu_width, 0.0),
+                shrink: 0.0,
+                ..stretch
+            },
+        )?;
+        tree.set_style(
+            self.header_frame,
+            Style {
+                margin: right_of_menu,
+                ..stretch
+            },
+        )?;
+        tree.set_style(
+            self.header_box,
+            Style {
+                min: Size::new(0.0, header_height),
+                preferred: Size::new(0.0, header_height),
+                shrink: 0.0,
+                ..stretch
+            },
+        )?;
+        self.menu_width = menu_width;
+        self.header_height = header_height;
+        Ok(())
+    }
+
+    fn finish(&mut self, tree: &mut Tree, menu: WidgetId, baked: &ArtBaked) -> Result<()> {
+        let index = baked.slot.index();
+        if let Some(entry) = self.pending.get_mut(index) {
+            *entry = None;
+        }
+        if self.wanted.get(index).copied().flatten() == Some(baked.size) {
+            self.show(tree, menu, baked.slot, baked.image.clone())?;
+        }
+        self.sync(tree, menu)
+    }
+
+    fn show(&mut self, tree: &mut Tree, menu: WidgetId, slot: ArtSlot, image: ImageData) -> Result<()> {
+        tree.set_image(self.image_node(slot), Some(image.clone()))?;
+        if slot == ArtSlot::Sidebar {
+            tree.set_look(
+                menu,
+                Look {
+                    border: Some((rgb(style::BORDER_SUBTLE), 1.0)),
+                    ..Look::default()
+                },
+            )?;
+        }
+        if let Some(entry) = self.cache.get_mut(slot.index()) {
+            *entry = Some(image);
+        }
+        Ok(())
+    }
+
+    /// Re-scales the pictures whose layers changed size. Without a worker proxy the work runs here, otherwise on a
+    /// worker thread that answers with an [`ArtBaked`] message. A layer keeps its previous picture until the new one
+    /// has been built, and at most one build per layer runs at a time.
+    fn sync(&mut self, tree: &mut Tree, menu: WidgetId) -> Result<()> {
+        tree.update_layout()?;
+        let menu_width = u16::try_from(tree.rect(menu)?.width).map_or(f32::from(u16::MAX), f32::from);
+        let header_height = if tree.size().0 < ART_COMPACT_WIDTH {
+            ART_HEADER_HEIGHT_COMPACT
+        } else {
+            ART_HEADER_HEIGHT
+        };
+        if menu_width != self.menu_width || header_height != self.header_height {
+            self.restyle(tree, menu_width, header_height)?;
+            tree.update_layout()?;
+        }
+        let Some(directory) = self.directory.clone() else {
+            return Ok(());
+        };
+        for slot in ArtSlot::ALL {
+            let index = slot.index();
+            let rect = tree.rect(self.image_node(slot))?;
+            let size = (rect.width, rect.height);
+            if size.0 == 0 || size.1 == 0 {
+                continue;
+            }
+            if let Some(entry) = self.wanted.get_mut(index) {
+                *entry = Some(size);
+            }
+            let fresh = self
+                .cache
+                .get(index)
+                .and_then(Option::as_ref)
+                .is_some_and(|image| (image.width, image.height) == size);
+            if fresh || self.pending.get(index).copied().flatten().is_some() {
+                continue;
+            }
+            match self.proxy.clone() {
+                Some(proxy) => {
+                    if let Some(entry) = self.pending.get_mut(index) {
+                        *entry = Some(size);
+                    }
+                    spawn_art_bake(proxy, directory.clone(), slot, size);
+                }
+                None => {
+                    if let Some(image) = bake_art(&directory, slot, size) {
+                        self.show(tree, menu, slot, image)?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The picture of one slot at `size`: decoded, cover-scaled from its anchor and darkened by its scrim (the window
+/// also by the top-bar scrim over its first rows).
+fn bake_art(directory: &Path, slot: ArtSlot, size: (u32, u32)) -> Option<ImageData> {
+    let source = load_art(directory, ArtSlot::STEMS.get(slot.index())?)?;
+    cover(&source, size.0, size.1, slot)
+}
+
+fn spawn_art_bake(proxy: Proxy<AppMessage>, directory: PathBuf, slot: ArtSlot, size: (u32, u32)) {
+    let _ = std::thread::Builder::new().name("art-bake".to_owned()).spawn(move || {
+        if let Some(image) = bake_art(&directory, slot, size) {
+            let _ = proxy.send(AppMessage::ToScreen(
+                ScreenId::Overview,
+                Box::new(ArtBaked { slot, size, image }),
+            ));
+        }
+    });
+}
+
+/// Scales a picture to cover `width`×`height` and crops it from the slot's anchor: the window from its top-left, the
+/// menu from the bottom, the header from the right edge. Nearest-neighbour sampling in integer arithmetic; the scrims
+/// are composed into the output so the layer is opaque.
+fn cover(source: &ImageData, width: u32, height: u32, slot: ArtSlot) -> Option<ImageData> {
+    let (sw, sh) = (u64::from(source.width), u64::from(source.height));
+    let (dw, dh) = (u64::from(width), u64::from(height));
+    if sw == 0 || sh == 0 || dw == 0 || dh == 0 {
+        return None;
+    }
+    let by_height = sw.checked_mul(dh)?.div_ceil(sh);
+    let (ws, hs) = if by_height >= dw {
+        (by_height, dh)
+    } else {
+        (dw, sh.checked_mul(dw)?.div_ceil(sw))
+    };
+    let (x0, y0) = match slot {
+        ArtSlot::Window => (0, 0),
+        ArtSlot::Sidebar => (ws.saturating_sub(dw) / 2, hs.saturating_sub(dh)),
+        ArtSlot::Header => (ws.saturating_sub(dw), hs.saturating_sub(dh) / 2),
+    };
+    let columns: Vec<usize> = (0..dw)
+        .map(|x| usize::try_from(x.saturating_add(x0).checked_mul(sw)?.checked_div(ws)?).ok())
+        .collect::<Option<_>>()?;
+    let rows: Vec<usize> = (0..dh)
+        .map(|y| usize::try_from(y.saturating_add(y0).checked_mul(sh)?.checked_div(hs)?).ok())
+        .collect::<Option<_>>()?;
+    let stride = usize::try_from(sw).ok()?;
+    let mut pixels = Vec::with_capacity(columns.len().checked_mul(rows.len())?);
+    for (row_index, row) in rows.into_iter().enumerate() {
+        let line = source.pixels.get(row.checked_mul(stride)?..)?;
+        let window_top = slot == ArtSlot::Window && row_index < ART_TOPBAR_HEIGHT as usize;
+        for column in &columns {
+            let mut pixel = over_scrim(
+                *line.get(*column)?,
+                match slot {
+                    ArtSlot::Window => theme::d2::SCRIM_CONTENT,
+                    ArtSlot::Sidebar => theme::d2::SCRIM_SIDEBAR,
+                    ArtSlot::Header => theme::d2::SCRIM_HEADER,
+                },
+            );
+            if window_top {
+                pixel = over_scrim(pixel, theme::d2::SCRIM_TOPBAR);
+            }
+            pixels.push(pixel);
+        }
+    }
+    Some(ImageData {
+        width,
+        height,
+        pixels: pixels.into(),
+    })
+}
+
+/// Composes a `0xRRGGBBAA` scrim over an opaque premultiplied BGRA pixel; the result is opaque.
+fn over_scrim(pixel: u32, scrim: u32) -> u32 {
+    let [red, green, blue, alpha] = scrim.to_be_bytes();
+    let keep = u32::from(u8::MAX.saturating_sub(alpha));
+    let mix = |colour: u8, channel: u32| {
+        let premultiplied = u32::from(colour).wrapping_mul(u32::from(alpha)).wrapping_add(127) / 255;
+        premultiplied
+            .wrapping_add(channel.wrapping_mul(keep).wrapping_add(127) / 255)
+            .min(255)
+    };
+    let r = mix(red, (pixel >> 16) & 0xFF);
+    let g = mix(green, (pixel >> 8) & 0xFF);
+    let b = mix(blue, pixel & 0xFF);
+    0xFF00_0000 | (r << 16) | (g << 8) | b
+}
+
+fn load_art(directory: &Path, stem: &str) -> Option<ImageData> {
+    for extension in ["jpg", "jpeg", "png"] {
+        let path = directory.join(format!("{stem}.{extension}"));
+        let Ok(metadata) = std::fs::metadata(&path) else {
+            continue;
+        };
+        if metadata.len() > ART_MAX_BYTES {
+            continue;
+        }
+        let Ok(bytes) = std::fs::read(&path) else { continue };
+        let decoded = if extension == "png" {
+            sse_codecs::png::decode(&bytes)
+                .ok()
+                .map(|image| (image.width, image.height, premultiplied(&image.pixels)))
+        } else {
+            sse_codecs::jpeg::decode(&bytes).ok().map(|image| {
+                (
+                    image.width,
+                    image.height,
+                    opaque_premultiplied(image.channels, &image.pixels),
+                )
+            })
+        };
+        if let Some((width, height, pixels)) = decoded {
+            return Some(ImageData {
+                width,
+                height,
+                pixels: pixels.into(),
+            });
+        }
+    }
+    None
+}
+
+fn opaque_premultiplied(channels: u8, pixels: &[u8]) -> Vec<u32> {
+    if channels == 3 {
+        return pixels
+            .chunks_exact(3)
+            .map(|rgb| match *rgb {
+                [r, g, b] => 0xFF00_0000 | (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b),
+                _ => 0xFF00_0000,
+            })
+            .collect();
+    }
+    pixels
+        .iter()
+        .map(|value| 0xFF00_0000 | (u32::from(*value) << 16) | (u32::from(*value) << 8) | u32::from(*value))
+        .collect()
+}
+
+fn premultiplied(rgba: &[u8]) -> Vec<u32> {
+    fn scale(value: u8, alpha: u8) -> u32 {
+        u32::from(value).wrapping_mul(u32::from(alpha)).wrapping_add(127) / 255
+    }
+    rgba.chunks_exact(4)
+        .map(|pixel| match *pixel {
+            [r, g, b, a] => (u32::from(a) << 24) | (scale(r, a) << 16) | (scale(g, a) << 8) | scale(b, a),
+            _ => 0,
+        })
+        .collect()
 }
 
 fn spawn_native_file_picker<F>(proxy: Proxy<AppMessage>, request: u64, picker: F) -> std::io::Result<()>
@@ -324,6 +731,7 @@ fn display_format_name(format_id: &str) -> &'static str {
 
 /// The editor frame and its screens.
 pub struct Shell {
+    art: ArtLayers,
     screens: Vec<Box<dyn Screen>>,
     hosts: Vec<Option<WidgetId>>,
     nav: Vec<WidgetId>,
@@ -563,6 +971,10 @@ impl Shell {
             ..Style::default()
         };
         let root = tree.add(None, NodeKind::Stack, root_style, Content::Panel, Look::default())?;
+        let mut art = ArtLayers::build(tree, root, proxy.clone())?;
+        if interactive {
+            art.directory = Some(sse_app::paths::default_data_directory().join("art"));
+        }
         let frame = tree.add(
             Some(root),
             NodeKind::Row,
@@ -1220,6 +1632,7 @@ impl Shell {
 
         let hosts = vec![None; screens.len()];
         let mut shell = Self {
+            art,
             screens,
             hosts,
             nav,
@@ -1375,6 +1788,12 @@ impl Shell {
         }
     }
 
+    /// Loads the background pictures from `directory` on the calling thread; for headless snapshots and budgets.
+    pub fn load_art_now(&mut self, tree: &mut Tree, directory: &Path) -> Result<()> {
+        self.art.directory = Some(directory.to_path_buf());
+        self.art.sync(tree, self.sidebar)
+    }
+
     fn apply_navigation(&mut self, tree: &mut Tree, collapsed: bool) -> Result<()> {
         self.nav_collapsed = collapsed;
         let width = if collapsed { 58.0 } else { 236.0 };
@@ -1423,7 +1842,7 @@ impl Shell {
             };
             tree.set_text(id, text)?;
         }
-        Ok(())
+        self.art.sync(tree, self.sidebar)
     }
 
     fn sync_navigation_width(&mut self, tree: &mut Tree, width: u32) -> Result<()> {
@@ -2326,6 +2745,10 @@ impl Shell {
             return Ok(Flow::Continue);
         }
         if let Message::User(AppMessage::ToScreen(ScreenId::Overview, payload)) = message {
+            if let Some(baked) = payload.downcast_ref::<ArtBaked>() {
+                self.art.finish(tree, self.sidebar, baked)?;
+                return Ok(Flow::Continue);
+            }
             if let Some(finished) = payload.downcast_ref::<NativeFilePickerFinished>() {
                 if self.native_file_picker_request == Some(finished.request) {
                     self.native_file_picker_request = None;
@@ -2385,6 +2808,7 @@ impl Shell {
         }
         if let Message::Window(WindowEvent::Resized { width, .. }) = message {
             self.sync_navigation_width(tree, *width)?;
+            self.art.sync(tree, self.sidebar)?;
             let sidebar_width = if self.nav_collapsed { 58 } else { 236 };
             let panel_width = width.saturating_sub(sidebar_width);
             tree.set_visible(self.edition, panel_width >= 1000)?;
@@ -3160,6 +3584,7 @@ impl App<AppMessage> for Shell {
 
 #[cfg(test)]
 mod tests {
+    use super::ArtSlot;
     use super::{
         save_eligibility, spawn_native_file_picker, wait_for_save_io, NativeFilePickerFinished, OpenFilesQueue,
         ScreenId, Shell,
@@ -3171,6 +3596,7 @@ mod tests {
     use crate::widget::{Tree, WidgetId};
     use sse_storage::drafts::{DraftPlacement, DraftPlan, JsonValue};
     use std::path::Path;
+    use std::path::PathBuf;
 
     fn close_task_test_guard() -> std::sync::MutexGuard<'static, ()> {
         crate::screens::task_registry_test_guard()
@@ -4515,6 +4941,77 @@ mod tests {
         assert_eq!(shell.handle(&mut tree, &tick, Some(shell.force_close_yes))?, Flow::Exit);
         let _ = write_tx.send(());
         let _ = sse_app::tasks::wait_for_named_tasks(&["game-read", "game-write"], std::time::Duration::from_secs(1));
+        Ok(())
+    }
+
+    fn art_directory(tag: &str) -> sse_core::Result<PathBuf> {
+        let directory = std::env::temp_dir().join(format!("sse-art-{tag}-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).map_err(|error| sse_core::Error::System(error.to_string()))?;
+        for (stem, [r, g, b]) in ArtSlot::STEMS
+            .into_iter()
+            .zip([[120, 70, 30], [30, 200, 60], [30, 60, 200]])
+        {
+            let pixels: Vec<u8> = (0..64 * 64).flat_map(|_| [r, g, b, 255]).collect();
+            let png = sse_codecs::png_encode::encode_rgba8(64, 64, &pixels)?;
+            std::fs::write(directory.join(format!("{stem}.png")), png)
+                .map_err(|error| sse_core::Error::System(error.to_string()))?;
+        }
+        Ok(directory)
+    }
+
+    #[test]
+    fn art_layers_show_their_pictures_in_their_regions() -> sse_core::Result<()> {
+        let mut tree = Tree::new(crate::glyphs::Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let mut shell = Shell::build_for_test(&mut tree, None)?;
+        tree.resize(1600, 900);
+        shell.load_art_now(&mut tree, &art_directory("regions")?)?;
+        let mut frame = vec![0_u32; 1600 * 900];
+        tree.damage_all();
+        tree.paint(&mut frame, 1600)?;
+        let channels = |x: usize, y: usize| {
+            let [_, r, g, b] = frame.get(y * 1600 + x).copied().unwrap_or_default().to_be_bytes();
+            (i32::from(r), i32::from(g), i32::from(b))
+        };
+        let (hr, hg, hb) = channels(1000, 130);
+        assert!(
+            hb > hr + 60 && hb > hg + 60,
+            "header centre is not blue: {hr} {hg} {hb}"
+        );
+        let (cr, cg, cb) = channels(1000, 600);
+        assert!(
+            cr > cg && cg > cb && cr > 20,
+            "content below the header is not brown: {cr} {cg} {cb}"
+        );
+        let (mr, mg, mb) = channels(220, 600);
+        assert!(mg > mr + 30 && mg > mb + 30, "menu centre is not green: {mr} {mg} {mb}");
+        Ok(())
+    }
+
+    #[test]
+    fn art_is_scaled_once_per_layer_size() -> sse_core::Result<()> {
+        let mut tree = Tree::new(crate::glyphs::Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let mut shell = Shell::build_for_test(&mut tree, None)?;
+        tree.resize(1600, 900);
+        shell.load_art_now(&mut tree, &art_directory("cache")?)?;
+        let built = shell.art.cache[0].as_ref().map(|image| image.pixels.as_ptr());
+        assert!(built.is_some(), "window picture was not built");
+        let mut frame = vec![0_u32; 1600 * 900];
+        tree.damage_all();
+        tree.paint(&mut frame, 1600)?;
+        shell.open(&mut tree, ScreenId::Inventory)?;
+        tree.paint(&mut frame, 1600)?;
+        shell.art.sync(&mut tree, shell.sidebar)?;
+        let repainted = shell.art.cache[0].as_ref().map(|image| image.pixels.as_ptr());
+        assert_eq!(built, repainted, "a repaint or a screen switch rebuilt the picture");
+        tree.resize(1366, 768);
+        shell.art.sync(&mut tree, shell.sidebar)?;
+        let rect = tree.rect(shell.art.window)?;
+        let resized = shell.art.cache[0].as_ref().map(|image| (image.width, image.height));
+        assert_eq!(
+            resized,
+            Some((rect.width, rect.height)),
+            "the picture does not match the new layer size"
+        );
         Ok(())
     }
 }
