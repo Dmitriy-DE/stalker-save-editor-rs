@@ -222,7 +222,7 @@ fn localized_static_text(language: &str, text: &str) -> String {
 
 /// Builders of the redesigned controls. Numbers come from [`theme::d2`]; icons are `Icon::D2*`.
 pub mod d2 {
-    use super::text_upper;
+    use super::{localized_static_text, text_upper};
     use crate::glyphs::{Face, TextStyle};
     use crate::layout::{Align, Edges, NodeKind, Size, Style};
     use crate::path::Icon;
@@ -347,7 +347,7 @@ pub mod d2 {
             ButtonSize::Normal => tokens::CONTROL_HEIGHT.0,
             ButtonSize::Small => tokens::CONTROL_HEIGHT_SMALL.0,
         };
-        let label = text_upper(text);
+        let label = text_upper(&localized_static_text(crate::strings::current_language(), text));
         let label_style = text_style(tokens::TYPE_TAB_BUTTON);
         let padding = padded(16.0, 16.0);
         let style = Style {
@@ -381,7 +381,7 @@ pub mod d2 {
     /// # Errors
     /// Returns an error from the widget tree.
     pub fn tab(tree: &mut Tree, parent: WidgetId, text: &str, icon: Option<Icon>, selected: bool) -> Result<WidgetId> {
-        let label = text_upper(text);
+        let label = text_upper(&localized_static_text(crate::strings::current_language(), text));
         let label_style = text_style(tokens::TYPE_TAB_BUTTON);
         let padding = padded(tokens::TAB_PADDING.0, tokens::TAB_PADDING.0);
         let style = Style {
@@ -413,7 +413,7 @@ pub mod d2 {
     /// # Errors
     /// Returns an error from the widget tree.
     pub fn chip(tree: &mut Tree, parent: WidgetId, text: &str, icon: Option<Icon>, selected: bool) -> Result<WidgetId> {
-        let label = text_upper(text);
+        let label = text_upper(&localized_static_text(crate::strings::current_language(), text));
         let label_style = TextStyle::new(Face::HeadingMedium, 12.0).with_tracking(0.6);
         let padding = padded(10.0, 10.0);
         let style = Style {
@@ -449,7 +449,7 @@ pub mod d2 {
             BadgeKind::Slot => tokens::BADGE_SLOT,
             BadgeKind::Draft => tokens::BADGE_DRAFT,
         };
-        let label = text_upper(text);
+        let label = text_upper(&localized_static_text(crate::strings::current_language(), text));
         let label_style = text_style(tokens::TYPE_BADGE);
         let padding = padded(8.0, 8.0);
         let style = Style {

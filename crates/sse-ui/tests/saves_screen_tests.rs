@@ -1,42 +1,43 @@
 //! Integration checks for the save screens.
 
 use sse_ui::glyphs::Fonts;
-use sse_ui::layout::{NodeKind, Style};
 use sse_ui::raster::Color;
-use sse_ui::screens::saves;
-use sse_ui::screens::Context;
-use sse_ui::widget::{Content, Look, Tree};
+use sse_ui::screens::shell::Shell;
+use sse_ui::widget::Tree;
+
+/// Points the settings and save data at an empty directory, so the check never reads the machine's files.
+fn isolate_data_directory() -> sse_core::Result<std::path::PathBuf> {
+    let directory = std::env::temp_dir().join(format!("sse-saves-screen-{}", std::process::id()));
+    std::fs::create_dir_all(&directory)?;
+    for key in [
+        "HOME",
+        "XDG_DATA_HOME",
+        "STALKER_SAVE_EDITOR_DATA",
+        "USERPROFILE",
+        "LOCALAPPDATA",
+    ] {
+        std::env::set_var(key, &directory);
+    }
+    Ok(directory)
+}
 
 #[test]
 fn save_overview_exposes_an_interactive_action_without_scanning_on_screenshot() -> sse_core::Result<()> {
+    let directory = isolate_data_directory()?;
     let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
-    let host = tree.add(
-        None,
-        NodeKind::Column,
-        Style::default(),
-        Content::Panel,
-        Look::default(),
-    )?;
-    let Some(mut screen) = saves::screens().into_iter().next() else {
-        return Err(sse_core::Error::damaged("save screen registry is empty"));
-    };
-    let mut app_state = sse_app::state::AppState::new();
-    let mut context = Context {
-        tree: &mut tree,
-        proxy: None,
-        status: None,
-        app: &mut app_state,
-    };
-    screen.build(&mut context, host)?;
-    tree.resize(1280, 800);
-    tree.update_layout()?;
+    let mut shell = Shell::build(&mut tree, None)?;
+    shell.resize_window(&mut tree, 1280, 800)?;
 
-    let has_body_action = (0..800)
-        .step_by(4)
-        .any(|y| (240..1280).step_by(4).any(|x| tree.hit(x, y).is_some()));
-    assert!(
-        has_body_action,
-        "save overview should have a clickable refresh or save row"
+    let find = shell.library_find_button();
+    let rect = tree.rect(find)?;
+    let x = rect.x + i32::try_from(rect.width / 2).unwrap_or_default();
+    let y = rect.y + i32::try_from(rect.height / 2).unwrap_or_default();
+    assert_eq!(
+        tree.hit(x, y),
+        Some(find),
+        "the save library should offer a clickable Find action"
     );
+    assert!(!shell.library_scanning(), "a screenshot should not start a save scan");
+    let _ = std::fs::remove_dir_all(&directory);
     Ok(())
 }

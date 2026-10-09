@@ -26,6 +26,7 @@ const KEY_DOWN: u32 = 0xff54;
 const SAVE_LIBRARY_PAGE_SIZE: usize = 8;
 const LIBRARY_PREVIEW_WIDTH: u32 = 96;
 const LIBRARY_PREVIEW_HEIGHT: u32 = 54;
+const LIBRARY_ROW_HEIGHT: f32 = 70.0;
 const LIBRARY_PREVIEW_CACHE_ENTRIES: usize = 32;
 const MAX_OPENED_SAVE_FILES: usize = 512;
 
@@ -962,12 +963,16 @@ pub struct Shell {
     open_path_input: TextInput,
     open_path_clipboard: ShellClipboard,
     library: WidgetId,
+    library_find: WidgetId,
+    library_search: super::saves::LibrarySearch,
     library_refresh: WidgetId,
     library_previous: WidgetId,
     library_next: WidgetId,
+    library_pager: WidgetId,
+    library_pages: WidgetId,
     library_count: WidgetId,
     library_status: WidgetId,
-    library_rows: Vec<(WidgetId, WidgetId, WidgetId, WidgetId)>,
+    library_rows: Vec<LibraryRow>,
     library_page: usize,
     library_previews: LibraryPreviewState,
     library_workspace: super::saves::Workspace,
@@ -1047,34 +1052,85 @@ fn top_button(tree: &mut Tree, parent: WidgetId, text: &str, primary: bool) -> R
     )
 }
 
-fn compact_library_button(tree: &mut Tree, parent: WidgetId, text: &str) -> Result<WidgetId> {
-    let colors = crate::theme::current().colors;
-    let label = crate::strings::t(text).to_uppercase();
-    let label_style = TextStyle::new(Face::Heading, 10.0);
-    let min_width = (tree.measure_text(&label, label_style) + 10.0).ceil().max(64.0);
+/// One row of the library list: the preview (picture or plate), the name, the game and the date with size.
+#[derive(Clone, Copy)]
+struct LibraryRow {
+    row: WidgetId,
+    image: WidgetId,
+    plate: WidgetId,
+    select: WidgetId,
+    game: WidgetId,
+    meta: WidgetId,
+}
+
+/// Look of the empty preview plate: raised panel with a subtle border.
+fn library_plate_look() -> Look {
+    Look {
+        fill: Some(style::d2::argb(theme::d2::PANEL_RAISED)),
+        border: Some((style::d2::argb(theme::d2::BORDER_SUBTLE), 1.0)),
+        radius: theme::BUTTON_RADIUS,
+        ..Look::default()
+    }
+}
+
+/// 28-pixel icon button in the secondary state colours.
+fn library_icon_button(tree: &mut Tree, parent: WidgetId, icon: Icon) -> Result<WidgetId> {
+    let [normal, hover, ..] = theme::d2::BUTTON_SECONDARY;
+    let disabled = theme::d2::BUTTON_SECONDARY[4];
     tree.add(
         Some(parent),
         NodeKind::Leaf,
         Style {
-            min: Size::new(min_width, 30.0),
-            padding: padded(5.0, 0.0, 5.0, 0.0),
-            shrink: 1.0,
+            min: Size::new(28.0, 28.0),
+            preferred: Size::new(28.0, 28.0),
+            shrink: 0.0,
             ..Style::default()
         },
-        Content::Button {
-            text: label,
-            style: label_style,
+        Content::IconButton {
+            icon,
+            text: String::new(),
+            style: TextStyle::new(Face::Heading, 14.0),
         },
         Look {
-            fill: Some(rgb(colors.background[2])),
-            hover_fill: Some(rgb(colors.background[3])),
-            border: Some((rgb(colors.borders[1]), 1.0)),
-            radius: crate::theme::BUTTON_RADIUS,
-            text: rgb(colors.text[0]),
+            fill: Some(style::d2::argb(normal.fill)),
+            hover_fill: Some(style::d2::argb(hover.fill)),
+            border: Some((style::d2::argb(normal.border), 1.0)),
+            text: style::d2::argb(normal.text),
+            disabled: Some(crate::widget::DisabledLook {
+                fill: style::d2::argb(disabled.fill),
+                border: style::d2::argb(disabled.border),
+                text: style::d2::argb(disabled.text),
+            }),
+            radius: theme::BUTTON_RADIUS,
             align: TextAlign::Center,
+            icon_size: 16,
             ..Look::default()
         },
     )
+}
+
+/// Size of a preview box: 96 by 54 in the standard layout, 72 by 41 in the compact one.
+fn library_preview_style(width: f32, height: f32) -> Style {
+    Style {
+        min: Size::new(width, height),
+        preferred: Size::new(width, height),
+        shrink: 0.0,
+        ..Style::default()
+    }
+}
+
+/// Library panel width by window width: 220 under 1100 of the middle column, 340 from 2200, 248 when compact, 300 otherwise.
+fn library_panel_width(window_width: u32) -> f32 {
+    let middle_width = window_width.saturating_sub(244);
+    if middle_width < 1100 {
+        220.0
+    } else if middle_width >= 1956 {
+        340.0
+    } else if window_width < 1600 {
+        248.0
+    } else {
+        300.0
+    }
 }
 
 fn report_text(key: &str) -> String {
@@ -1480,9 +1536,9 @@ impl Shell {
             Some(viewport),
             NodeKind::Column,
             Style {
-                preferred: Size::new(256.0, 0.0),
-                min: Size::new(256.0, 0.0),
-                max: Size::new(256.0, f32::INFINITY),
+                preferred: Size::new(276.0, 0.0),
+                min: Size::new(276.0, 0.0),
+                max: Size::new(276.0, f32::INFINITY),
                 shrink: 0.0,
                 padding: padded(12.0, 12.0, 12.0, 12.0),
                 gap: Size::new(0.0, 8.0),
@@ -1491,15 +1547,66 @@ impl Shell {
             },
             Content::Panel,
             Look {
-                fill: Some(rgb(style::BG_PANEL)),
-                border: Some((rgb(style::BORDER_SUBTLE), 1.0)),
+                fill: Some(style::d2::argb(theme::d2::PANEL)),
+                border: Some((style::d2::argb(theme::d2::BORDER_SUBTLE), 1.0)),
+                radius: theme::d2::RADIUS_PANEL,
                 ..Look::default()
             },
         )?;
-        let library_heading = tree.add(
+        let library_header = tree.add(
+            Some(library),
+            NodeKind::Row,
+            Style {
+                min: Size::new(0.0, 52.0),
+                preferred: Size::new(0.0, 52.0),
+                shrink: 0.0,
+                gap: Size::new(8.0, 0.0),
+                align_items: Align::Center,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        let library_title = style::d2::panel_title(tree, library_header, crate::strings::t("БИБЛИОТЕКА СОХРАНЕНИЙ"))?;
+        tree.set_style(
+            library_title,
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: Size::new(0.0, 0.0),
+                ..Style::default()
+            },
+        )?;
+        let library_count = style::label(tree, library_header, "0", Text::Note)?;
+        let library_actions = tree.add(
+            Some(library),
+            NodeKind::Row,
+            Style {
+                gap: Size::new(6.0, 0.0),
+                align_items: Align::Center,
+                shrink: 0.0,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        let library_find = style::d2::button(
+            tree,
+            library_actions,
+            crate::strings::t("Найти сейвы"),
+            style::d2::ButtonKind::Secondary,
+            style::d2::ButtonSize::Small,
+        )?;
+        let mut library_search = super::saves::LibrarySearch::new()?;
+        library_search.build(tree, library)?;
+        let library_refresh = library_icon_button(tree, library_actions, Icon::D2Updates)?;
+        tree.set_tooltip(library_refresh, crate::strings::t("Обновить"))?;
+        let library_status = style::label(tree, library, "Ищу сейвы…", Text::Note)?;
+        let library_list = tree.add(
             Some(library),
             NodeKind::Column,
             Style {
+                grow: 1.0,
                 gap: Size::new(0.0, 4.0),
                 align_items: Align::Stretch,
                 ..Style::default()
@@ -1507,72 +1614,25 @@ impl Shell {
             Content::Panel,
             Look::default(),
         )?;
-        for line in [crate::strings::t("БИБЛИОТЕКА"), crate::strings::t("СОХРАНЕНИЙ")] {
-            tree.add(
-                Some(library_heading),
-                NodeKind::Leaf,
-                Style {
-                    min: Size::new(0.0, 0.0),
-                    shrink: 1.0,
-                    ..Style::default()
-                },
-                Content::Label {
-                    text: line.to_owned(),
-                    style: TextStyle::new(Face::Heading, 13.0),
-                },
-                Look {
-                    text: rgb(crate::theme::current().colors.text[0]),
-                    ..Look::default()
-                },
-            )?;
-        }
-        let library_actions = tree.add(
-            Some(library_heading),
-            NodeKind::Row,
-            Style {
-                gap: Size::new(4.0, 0.0),
-                align_items: Align::Center,
-                ..Style::default()
-            },
-            Content::Panel,
-            Look::default(),
-        )?;
-        let library_count = style::label(tree, library_actions, "0", Text::Note)?;
-        let library_refresh = tree.add(
-            Some(library_actions),
-            NodeKind::Leaf,
-            Style {
-                min: Size::new(34.0, 30.0),
-                padding: padded(5.0, 0.0, 5.0, 0.0),
-                shrink: 0.0,
-                ..Style::default()
-            },
-            Content::Button {
-                text: "↻".to_owned(),
-                style: TextStyle::new(Face::Heading, 14.0),
-            },
-            Look {
-                fill: Some(rgb(style::BG_PANEL)),
-                border: Some((rgb(style::BORDER_SUBTLE), 1.0)),
-                radius: crate::theme::BUTTON_RADIUS,
-                text: rgb(crate::theme::current().colors.text[0]),
-                align: TextAlign::Center,
-                ..Look::default()
-            },
-        )?;
         let mut library_rows = Vec::with_capacity(SAVE_LIBRARY_PAGE_SIZE);
-        let library_status = style::label(tree, library, "Ищу сейвы…", Text::Note)?;
         for _ in 0..SAVE_LIBRARY_PAGE_SIZE {
             let row = tree.add(
-                Some(library),
+                Some(library_list),
                 NodeKind::Row,
                 Style {
-                    gap: Size::new(5.0, 0.0),
+                    min: Size::new(0.0, LIBRARY_ROW_HEIGHT),
+                    preferred: Size::new(0.0, LIBRARY_ROW_HEIGHT),
+                    shrink: 0.0,
+                    padding: padded(8.0, 8.0, 8.0, 8.0),
+                    gap: Size::new(8.0, 0.0),
                     align_items: Align::Center,
                     ..Style::default()
                 },
                 Content::Panel,
-                Look::default(),
+                Look {
+                    radius: theme::BUTTON_RADIUS,
+                    ..Look::default()
+                },
             )?;
             let image = tree.add(
                 Some(row),
@@ -1584,11 +1644,25 @@ impl Shell {
                     ..Style::default()
                 },
                 Content::Image(None),
+                library_plate_look(),
+            )?;
+            let plate = tree.add(
+                Some(row),
+                NodeKind::Leaf,
+                Style {
+                    min: Size::new(LIBRARY_PREVIEW_WIDTH as f32, LIBRARY_PREVIEW_HEIGHT as f32),
+                    preferred: Size::new(LIBRARY_PREVIEW_WIDTH as f32, LIBRARY_PREVIEW_HEIGHT as f32),
+                    shrink: 0.0,
+                    ..Style::default()
+                },
+                Content::Label {
+                    text: crate::strings::t("нет снимка").to_owned(),
+                    style: TextStyle::new(Face::Body, 11.0),
+                },
                 Look {
-                    fill: Some(rgb(crate::theme::current().colors.background[1])),
-                    border: Some((rgb(crate::theme::current().colors.borders[0]), 1.0)),
-                    radius: crate::theme::BUTTON_RADIUS,
-                    ..Look::default()
+                    text: style::d2::argb(theme::d2::TEXT_MUTED),
+                    align: TextAlign::Center,
+                    ..library_plate_look()
                 },
             )?;
             let details_column = tree.add(
@@ -1596,6 +1670,9 @@ impl Shell {
                 NodeKind::Column,
                 Style {
                     grow: 1.0,
+                    shrink: 1.0,
+                    min: Size::new(0.0, 0.0),
+                    gap: Size::new(0.0, 2.0),
                     align_items: Align::Stretch,
                     ..Style::default()
                 },
@@ -1606,58 +1683,94 @@ impl Shell {
                 Some(details_column),
                 NodeKind::Leaf,
                 Style {
-                    min: Size::new(0.0, 30.0),
-                    padding: padded(7.0, 0.0, 7.0, 0.0),
+                    min: Size::new(0.0, 20.0),
+                    shrink: 1.0,
                     ..Style::default()
                 },
                 Content::Button {
-                    text: crate::strings::t("нет снимка").to_owned(),
-                    style: TextStyle::new(Face::Body, 12.0),
+                    text: String::new(),
+                    style: TextStyle::new(Face::BodyBold, 14.0),
                 },
                 Look {
-                    fill: Some(rgb(crate::theme::current().colors.background[2])),
-                    hover_fill: Some(rgb(crate::theme::current().colors.background[3])),
-                    border: Some((rgb(crate::theme::current().colors.borders[0]), 1.0)),
-                    radius: crate::theme::BUTTON_RADIUS,
-                    text: rgb(crate::theme::current().colors.text[0]),
+                    fill: None,
+                    hover_fill: Some(style::d2::argb(theme::d2::ROW_HOVER)),
+                    border: None,
+                    text: style::d2::argb(theme::d2::TEXT_PRIMARY),
+                    align: TextAlign::Start,
+                    radius: theme::BUTTON_RADIUS,
                     ..Look::default()
                 },
             )?;
-            let details = tree.add(
+            let game = tree.add(
                 Some(details_column),
                 NodeKind::Leaf,
                 Style {
-                    padding: padded(7.0, 0.0, 4.0, 3.0),
+                    min: Size::new(0.0, 0.0),
+                    shrink: 1.0,
                     ..Style::default()
                 },
                 Content::Label {
                     text: String::new(),
-                    style: TextStyle::new(Face::Body, 11.0),
+                    style: TextStyle::new(Face::Body, 12.0),
                 },
                 Look {
-                    text: rgb(style::TEXT_MUTED),
+                    text: style::d2::argb(theme::d2::TEXT_SECONDARY),
+                    ..Look::default()
+                },
+            )?;
+            let meta = tree.add(
+                Some(details_column),
+                NodeKind::Leaf,
+                Style {
+                    min: Size::new(0.0, 0.0),
+                    shrink: 1.0,
+                    ..Style::default()
+                },
+                Content::Label {
+                    text: String::new(),
+                    style: TextStyle::new(Face::Body, 12.0),
+                },
+                Look {
+                    text: style::d2::argb(theme::d2::TEXT_MUTED),
                     ..Look::default()
                 },
             )?;
             tree.set_visible(row, false)?;
             tree.set_tooltip(image, crate::strings::t("нет снимка"))?;
-            library_rows.push((row, image, select, details));
+            library_rows.push(LibraryRow {
+                row,
+                image,
+                plate,
+                select,
+                game,
+                meta,
+            });
         }
-        let library_pages = tree.add(
+        let library_pager = tree.add(
             Some(library),
             NodeKind::Row,
             Style {
                 gap: Size::new(4.0, 0.0),
                 align_items: Align::Center,
+                shrink: 0.0,
                 ..Style::default()
             },
             Content::Panel,
             Look::default(),
         )?;
-        let library_previous = compact_library_button(tree, library_pages, "Назад")?;
-        let library_next = compact_library_button(tree, library_pages, "Дальше")?;
-        tree.set_visible(library_previous, false)?;
-        tree.set_visible(library_next, false)?;
+        let library_pages = style::label(tree, library_pager, "", Text::Note)?;
+        tree.set_style(
+            library_pages,
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: Size::new(0.0, 0.0),
+                ..Style::default()
+            },
+        )?;
+        let library_previous = library_icon_button(tree, library_pager, Icon::D2ArrowLeft)?;
+        let library_next = library_icon_button(tree, library_pager, Icon::D2ArrowRight)?;
+        tree.set_visible(library_pager, false)?;
         tree.set_clip_children(library, true)?;
         tree.set_visible(library, true)?;
         let content_style = Style {
@@ -1941,9 +2054,13 @@ impl Shell {
             open_path_input,
             open_path_clipboard: ShellClipboard::default(),
             library,
+            library_find,
+            library_search,
             library_refresh,
             library_previous,
             library_next,
+            library_pager,
+            library_pages,
             library_count,
             library_status,
             library_rows,
@@ -2068,6 +2185,18 @@ impl Shell {
         tree.resize(width, height);
         self.handle(tree, &Message::Window(WindowEvent::Resized { width, height }), None)?;
         Ok(())
+    }
+
+    /// The Find button of the save library panel.
+    #[must_use]
+    pub const fn library_find_button(&self) -> WidgetId {
+        self.library_find
+    }
+
+    /// Whether a save discovery is running for the library panel.
+    #[must_use]
+    pub fn library_scanning(&self) -> bool {
+        self.library_workspace.library_snapshot().0
     }
 
     /// Loads the background pictures from `directory` on the calling thread; for headless snapshots and budgets.
@@ -3196,6 +3325,14 @@ impl Shell {
                 tree.set_visible(self.tooltip, false)?;
             }
         }
+        if !self.wizard.is_showing(tree)
+            && self
+                .library_search
+                .handle(tree, message, clicked, &self.library_workspace)?
+        {
+            self.library_page = 0;
+            self.render_library(tree)?;
+        }
         if let Message::Window(WindowEvent::Resized { width, .. }) = message {
             self.sync_navigation_width(tree, *width)?;
             self.art.sync(tree, self.sidebar)?;
@@ -3229,20 +3366,13 @@ impl Shell {
                     ..Style::default()
                 },
             )?;
-            let middle_width = width.saturating_sub(244);
-            let library_width = if middle_width < 1100 {
-                220.0
-            } else if middle_width >= 1900 {
-                300.0
-            } else {
-                280.0
-            };
+            let library_width = library_panel_width(*width) - 24.0;
             tree.set_style(
                 self.library,
                 Style {
-                    preferred: Size::new(library_width - 24.0, 0.0),
-                    min: Size::new(library_width - 24.0, 0.0),
-                    max: Size::new(library_width - 24.0, f32::INFINITY),
+                    preferred: Size::new(library_width, 0.0),
+                    min: Size::new(library_width, 0.0),
+                    max: Size::new(library_width, f32::INFINITY),
                     shrink: 0.0,
                     padding: padded(12.0, 12.0, 12.0, 12.0),
                     gap: Size::new(0.0, 8.0),
@@ -3250,6 +3380,11 @@ impl Shell {
                     ..Style::default()
                 },
             )?;
+            let (preview_width, preview_height) = if *width < 1600 { (72.0, 41.0) } else { (96.0, 54.0) };
+            for library_row in &self.library_rows {
+                tree.set_style(library_row.image, library_preview_style(preview_width, preview_height))?;
+                tree.set_style(library_row.plate, library_preview_style(preview_width, preview_height))?;
+            }
         }
         if (self.library_workspace.is_saving() || self.library_workspace.is_restoring())
             && !matches!(
@@ -3448,7 +3583,7 @@ impl Shell {
             self.render_library(tree)?;
             return Ok(Flow::Continue);
         }
-        if clicked.is_some() && clicked == Some(self.library_refresh) {
+        if clicked.is_some() && (clicked == Some(self.library_refresh) || clicked == Some(self.library_find)) {
             let status = {
                 let mut cx = Context {
                     tree: &mut *tree,
@@ -3475,9 +3610,7 @@ impl Shell {
             self.render_library(tree)?;
             return Ok(Flow::Continue);
         }
-        if let Some(offset) =
-            clicked.and_then(|id| self.library_rows.iter().position(|(_, _, select, _)| *select == id))
-        {
+        if let Some(offset) = clicked.and_then(|id| self.library_rows.iter().position(|row| row.select == id)) {
             let index = self
                 .library_page
                 .saturating_mul(SAVE_LIBRARY_PAGE_SIZE)
@@ -3715,105 +3848,106 @@ impl Shell {
 
     fn render_library(&mut self, tree: &mut Tree) -> Result<()> {
         let (scanning, error, slots) = self.library_workspace.library_snapshot();
+        let query = self.library_workspace.search_query();
+        self.library_search.show(tree, &query)?;
         let pages = slots.len().saturating_add(SAVE_LIBRARY_PAGE_SIZE - 1) / SAVE_LIBRARY_PAGE_SIZE;
         self.library_page = self.library_page.min(pages.saturating_sub(1));
-        let text = if scanning {
-            format!("{} · …", slots.len())
-        } else if let Some(error) = error.as_deref() {
-            tr(
-                "{0} · ошибка: {1}",
-                &[
-                    &slots.len(),
-                    &super::saves::short_text(&crate::status::localize_writer_status(error), 24),
-                ],
-            )
-        } else {
-            slots.len().to_string()
-        };
-        tree.set_text(self.library_count, &text)?;
+        tree.set_text(self.library_count, &slots.len().to_string())?;
         let start = self.library_page.saturating_mul(SAVE_LIBRARY_PAGE_SIZE);
         let visible_slots: Vec<SaveSlot> = slots.iter().skip(start).take(SAVE_LIBRARY_PAGE_SIZE).cloned().collect();
         let selected_path = self.app.current_save();
-        let row_widgets = self.library_rows.clone();
-        for (offset, (row, image, select, details)) in row_widgets.iter().enumerate() {
-            if let Some(slot) = visible_slots.get(offset) {
-                let preview = self.library_previews.get(&PreviewKey::from(slot));
-                let filename = slot
-                    .path
-                    .file_name()
-                    .map(|name| name.to_string_lossy())
-                    .unwrap_or_else(|| crate::strings::t("без имени").into());
-                let game =
-                    super::saves::format_display_name(slot.format_id.as_deref().unwrap_or(&slot.candidate_release_id));
-                let displayed_filename = super::saves::short_text(&filename, 24);
-                tree.set_image(*image, preview.as_ref().and_then(|entry| entry.image.clone()))?;
-                let image_tooltip = if preview.as_ref().is_some_and(|entry| entry.image.is_some()) {
-                    crate::strings::t("Скриншот, сохранённый игрой вместе с этим сохранением.")
-                } else {
-                    crate::strings::t("нет снимка")
-                };
-                tree.set_tooltip(*image, image_tooltip)?;
-                let selection_label = if preview.as_ref().is_some_and(|entry| entry.image.is_some()) {
-                    displayed_filename.to_string()
-                } else if preview.as_ref().is_some_and(|entry| entry.s2_jpeg_available) {
-                    format!("JPEG · {displayed_filename}")
-                } else {
-                    tr("нет снимка · {0}", &[&displayed_filename])
-                };
-                tree.set_text(*select, &selection_label)?;
-                tree.set_enabled(*select, slot.detection_error.is_none())?;
-                let s2_detail = preview
-                    .as_ref()
-                    .and_then(|entry| entry.s2_detail.as_deref())
-                    .map(|detail| format!(" · {detail}"))
-                    .unwrap_or_default();
-                tree.set_text(
-                    *details,
-                    &format!(
-                        "{} · {} · {}{}",
-                        game,
-                        super::saves::display_file_time(slot.last_write_time_utc, true, false),
-                        super::saves::display_size(slot.size),
-                        s2_detail
-                    ),
-                )?;
-                let is_selected = selected_path.is_some_and(|path| path == slot.path);
-                tree.set_look(
-                    *select,
-                    Look {
-                        fill: Some(rgb(if is_selected {
-                            crate::theme::current().colors.accent[0]
-                        } else {
-                            crate::theme::current().colors.background[2]
-                        })),
-                        hover_fill: Some(rgb(crate::theme::current().colors.background[3])),
-                        border: Some((rgb(crate::theme::current().colors.borders[0]), 1.0)),
-                        radius: crate::theme::BUTTON_RADIUS,
-                        text: rgb(crate::theme::current().colors.text[0]),
-                        ..Look::default()
-                    },
-                )?;
-                tree.set_visible(*row, true)?;
+        let rows = self.library_rows.clone();
+        for (offset, library_row) in rows.iter().enumerate() {
+            let Some(slot) = visible_slots.get(offset) else {
+                tree.set_visible(library_row.row, false)?;
+                continue;
+            };
+            let preview = self.library_previews.get(&PreviewKey::from(slot));
+            let has_image = preview.as_ref().is_some_and(|entry| entry.image.is_some());
+            let filename = slot
+                .path
+                .file_name()
+                .map(|name| name.to_string_lossy())
+                .unwrap_or_else(|| crate::strings::t("без имени").into());
+            let game =
+                super::saves::format_display_name(slot.format_id.as_deref().unwrap_or(&slot.candidate_release_id));
+            tree.set_image(
+                library_row.image,
+                preview.as_ref().and_then(|entry| entry.image.clone()),
+            )?;
+            tree.set_visible(library_row.image, has_image)?;
+            tree.set_visible(library_row.plate, !has_image)?;
+            tree.set_text(library_row.select, &super::saves::short_text(&filename, 24))?;
+            tree.set_enabled(library_row.select, slot.detection_error.is_none())?;
+            tree.set_text(library_row.game, game)?;
+            let s2_detail = preview
+                .as_ref()
+                .and_then(|entry| entry.s2_detail.as_deref())
+                .map(|detail| format!(" · {detail}"))
+                .unwrap_or_default();
+            let jpeg_note = if !has_image && preview.as_ref().is_some_and(|entry| entry.s2_jpeg_available) {
+                " · JPEG"
             } else {
-                tree.set_visible(*row, false)?;
-            }
+                ""
+            };
+            tree.set_text(
+                library_row.meta,
+                &format!(
+                    "{} · {}{}{}",
+                    super::saves::display_file_time(slot.last_write_time_utc, true, false),
+                    super::saves::display_size(slot.size),
+                    s2_detail,
+                    jpeg_note
+                ),
+            )?;
+            let is_selected = selected_path.is_some_and(|path| path == slot.path);
+            tree.set_look(
+                library_row.row,
+                Look {
+                    fill: is_selected.then(|| style::d2::argb(theme::d2::ACCENT_TINT)),
+                    border: is_selected.then(|| (style::d2::argb(theme::d2::ACCENT), 1.0)),
+                    radius: theme::BUTTON_RADIUS,
+                    ..Look::default()
+                },
+            )?;
+            tree.set_visible(library_row.row, true)?;
         }
         let status = if scanning {
             crate::strings::t("Поиск сейвов…").to_owned()
         } else if let Some(error) = error.as_deref() {
             super::saves::short_text(&crate::status::localize_writer_status(error), 20)
+        } else if self.library_workspace.is_loading() {
+            crate::strings::t("Проверяю выбранный сейв…").to_owned()
+        } else if slots.is_empty() && query.is_empty() {
+            crate::strings::t("Сейвы ещё не искали или не найдены. Нажмите «Найти сейвы».").to_owned()
         } else if slots.is_empty() {
             crate::strings::t("Сейвы не найдены").to_owned()
         } else {
-            String::new()
+            crate::strings::tr_in(
+                Some(crate::strings::current_language()),
+                "{0} сейвов · каталогов проверено: {1} · страница {2} из {3}",
+                &[
+                    &slots.len(),
+                    &self.library_workspace.searched_path_count(),
+                    &self.library_page.saturating_add(1),
+                    &pages,
+                ],
+            )
         };
         tree.set_text(self.library_status, &status)?;
-        tree.set_visible(self.library_status, scanning || error.is_some() || slots.is_empty())?;
-        tree.set_visible(self.library_previous, pages > 1 && self.library_page > 0)?;
-        tree.set_visible(
-            self.library_next,
-            pages > 1 && self.library_page.saturating_add(1) < pages,
+        tree.set_visible(self.library_status, !status.is_empty())?;
+        tree.set_visible(self.library_pager, !slots.is_empty())?;
+        let last = start.saturating_add(SAVE_LIBRARY_PAGE_SIZE).min(slots.len());
+        tree.set_text(
+            self.library_pages,
+            &crate::strings::tr_in(
+                Some(crate::strings::current_language()),
+                "{0}–{1} из {2}",
+                &[&start.saturating_add(1), &last, &slots.len()],
+            ),
         )?;
+        tree.set_enabled(self.library_previous, self.library_page > 0)?;
+        tree.set_enabled(self.library_next, self.library_page.saturating_add(1) < pages)?;
         self.schedule_library_preview(&visible_slots);
         Ok(())
     }
@@ -4460,7 +4594,9 @@ mod tests {
             shell.set_proxy(proxy);
 
             assert!(shell.open_save(&mut tree, &path)?);
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            let deadline = std::time::Instant::now()
+                .checked_add(std::time::Duration::from_secs(10))
+                .ok_or_else(|| sse_core::Error::System("deadline overflow".to_owned()))?;
             let mut load_finished = false;
             let mut preview_finished = None;
             while std::time::Instant::now() < deadline {
@@ -4504,7 +4640,7 @@ mod tests {
             let first_image = shell
                 .library_rows
                 .first()
-                .map(|row| row.1)
+                .map(|row| row.image)
                 .ok_or_else(|| sse_core::Error::System("save library has no preview row".to_owned()))?;
             assert!(tree.image(first_image)?.is_some());
             Ok(())
@@ -5138,7 +5274,7 @@ mod tests {
     fn save_library_uses_reference_width_breakpoints() -> sse_core::Result<()> {
         let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
         let mut shell = Shell::build_for_test(&mut tree, None)?;
-        for (width, expected) in [(940, 220), (1500, 280), (2200, 300)] {
+        for (width, expected) in [(940, 220), (1500, 248), (1920, 300), (2200, 340)] {
             tree.resize(width, 700);
             let message = Message::Window(WindowEvent::Resized { width, height: 700 });
             shell.handle(&mut tree, &message, None)?;
@@ -5147,6 +5283,245 @@ mod tests {
             assert_eq!(tree.rect(shell.library)?.width, expected, "window width {width}");
         }
         Ok(())
+    }
+
+    /// Waits until the save at `path` is in the library listing, passing the messages through the shell.
+    fn wait_for_save(
+        shell: &mut Shell,
+        tree: &mut Tree,
+        receiver: &std::sync::mpsc::Receiver<Message<super::super::AppMessage>>,
+        path: &Path,
+    ) -> sse_core::Result<()> {
+        let name = path.file_name().map(std::ffi::OsStr::to_os_string);
+        let deadline = std::time::Instant::now()
+            .checked_add(std::time::Duration::from_secs(60))
+            .ok_or_else(|| sse_core::Error::System("deadline overflow".to_owned()))?;
+        loop {
+            let (scanning, error, slots) = shell.library_workspace.library_snapshot();
+            let listed = slots
+                .iter()
+                .any(|slot| slot.path.file_name().map(std::ffi::OsStr::to_os_string) == name);
+            if listed && !shell.library_workspace.is_loading() {
+                return Ok(());
+            }
+            if std::time::Instant::now() >= deadline {
+                panic!(
+                    "save {} should appear in the library: scanning={scanning} error={error:?} listed={}",
+                    path.display(),
+                    slots.len()
+                );
+            }
+            if let Ok(message) = receiver.recv_timeout(std::time::Duration::from_millis(100)) {
+                shell.handle(tree, &message, None)?;
+            }
+        }
+    }
+
+    /// Opens copies of the fixture save and waits until each one has finished loading.
+    fn load_library_fixtures(
+        shell: &mut Shell,
+        tree: &mut Tree,
+        receiver: &std::sync::mpsc::Receiver<Message<super::super::AppMessage>>,
+        paths: &[PathBuf],
+    ) -> sse_core::Result<()> {
+        for path in paths {
+            assert!(shell.open_save(tree, path)?);
+            wait_for_save(shell, tree, receiver, path)?;
+        }
+        shell.render_library(tree)?;
+        Ok(())
+    }
+
+    fn fixture_save_copies(directory: &Path, count: usize) -> sse_core::Result<Vec<PathBuf>> {
+        let fixture = include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-source.sav");
+        (0..count)
+            .map(|index| {
+                let path = directory.join(format!("save-{index:02}.sav"));
+                std::fs::write(&path, fixture)?;
+                std::fs::canonicalize(&path).map_err(sse_core::Error::from)
+            })
+            .collect()
+    }
+
+    fn library_key(shell: &mut Shell, tree: &mut Tree, character: char) -> sse_core::Result<()> {
+        let key = Message::Window(WindowEvent::Key {
+            pressed: true,
+            keysym: u32::from(character),
+            text: Some(character),
+            ctrl: false,
+            shift: false,
+        });
+        shell.handle(tree, &key, None)?;
+        Ok(())
+    }
+
+    #[test]
+    fn library_rows_page_select_and_filter_from_the_shell_panel() -> sse_core::Result<()> {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| sse_core::Error::System(error.to_string()))?
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!("sse-shell-library-{}-{nonce}", std::process::id()));
+        std::fs::create_dir(&directory)?;
+        let result = (|| {
+            let paths = fixture_save_copies(&directory, 9)?;
+            let (proxy, receiver) = channel_pair::<super::super::AppMessage>();
+            let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+            let mut shell = Shell::build_for_test(&mut tree, None)?;
+            shell.set_proxy(proxy);
+            load_library_fixtures(&mut shell, &mut tree, &receiver, &paths)?;
+
+            assert_eq!(tree.text(shell.library_pages)?, "1–8 из 9");
+            assert!(tree.is_enabled(shell.library_next)?);
+            assert!(!tree.is_enabled(shell.library_previous)?);
+
+            shell.handle(
+                &mut tree,
+                &Message::Window(WindowEvent::Resized {
+                    width: 1366,
+                    height: 768,
+                }),
+                None,
+            )?;
+            shell.handle(
+                &mut tree,
+                &Message::Window(WindowEvent::Resized {
+                    width: 1366,
+                    height: 768,
+                }),
+                Some(shell.library_next),
+            )?;
+            shell.render_library(&mut tree)?;
+            assert_eq!(shell.library_page, 1);
+            assert_eq!(tree.text(shell.library_pages)?, "9–9 из 9");
+            assert!(!tree.is_enabled(shell.library_next)?);
+            assert!(tree.is_enabled(shell.library_previous)?);
+
+            shell.handle(
+                &mut tree,
+                &Message::Window(WindowEvent::Resized {
+                    width: 1366,
+                    height: 768,
+                }),
+                Some(shell.library_previous),
+            )?;
+            shell.render_library(&mut tree)?;
+            assert_eq!(shell.library_page, 0);
+
+            let loads_before_select = shell.library_workspace.load_request();
+            let first_select = shell
+                .library_rows
+                .first()
+                .map(|row| row.select)
+                .ok_or_else(|| sse_core::Error::System("no library row".to_owned()))?;
+            shell.handle(
+                &mut tree,
+                &Message::Window(WindowEvent::Resized {
+                    width: 1366,
+                    height: 768,
+                }),
+                Some(first_select),
+            )?;
+            assert!(
+                shell.library_workspace.load_request() != loads_before_select,
+                "clicking a library row should start loading that save"
+            );
+
+            let first_path = paths
+                .first()
+                .ok_or_else(|| sse_core::Error::System("no fixture".to_owned()))?;
+            wait_for_save(&mut shell, &mut tree, &receiver, first_path)?;
+            let deadline = std::time::Instant::now()
+                .checked_add(std::time::Duration::from_secs(60))
+                .ok_or_else(|| sse_core::Error::System("deadline overflow".to_owned()))?;
+            while shell.app.current_save().is_none() && std::time::Instant::now() < deadline {
+                if let Ok(message) = receiver.recv_timeout(std::time::Duration::from_millis(100)) {
+                    shell.handle(&mut tree, &message, None)?;
+                }
+            }
+            shell.render_library(&mut tree)?;
+            let mut accent_rows = 0;
+            for library_row in shell.library_rows.clone() {
+                if tree.is_visible(library_row.row) && tree.look(library_row.row)?.border.is_some() {
+                    let look = tree.look(library_row.row)?;
+                    assert_eq!(
+                        look.fill,
+                        Some(super::super::style::d2::argb(crate::theme::d2::ACCENT_TINT))
+                    );
+                    assert_eq!(
+                        look.border,
+                        Some((super::super::style::d2::argb(crate::theme::d2::ACCENT), 1.0))
+                    );
+                    accent_rows += 1;
+                }
+            }
+            assert_eq!(accent_rows, 1, "exactly one row is the open save");
+
+            let search = shell
+                .library_search
+                .widget
+                .ok_or_else(|| sse_core::Error::System("no field".to_owned()))?;
+            shell.handle(
+                &mut tree,
+                &Message::Window(WindowEvent::Resized {
+                    width: 1366,
+                    height: 768,
+                }),
+                Some(search),
+            )?;
+            library_key(&mut shell, &mut tree, 'z')?;
+            library_key(&mut shell, &mut tree, 'z')?;
+            assert_eq!(shell.library_workspace.search_query(), "zz");
+            let (_, _, filtered) = shell.library_workspace.library_snapshot();
+            assert!(filtered.is_empty(), "no file name contains zz");
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&directory);
+        result
+    }
+
+    #[test]
+    fn library_find_button_is_clickable_on_the_save_screens() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut shell = Shell::build_for_test(&mut tree, None)?;
+        shell.resize_window(&mut tree, 1280, 800)?;
+        let rect = tree.rect(shell.library_find)?;
+        let x = rect.x + i32::try_from(rect.width / 2).unwrap_or_default();
+        let y = rect.y + i32::try_from(rect.height / 2).unwrap_or_default();
+        assert_eq!(tree.hit(x, y), Some(shell.library_find));
+        Ok(())
+    }
+
+    #[test]
+    fn overview_wheel_reaches_the_integrity_panel_at_1366() -> sse_core::Result<()> {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| sse_core::Error::System(error.to_string()))?
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!("sse-shell-wheel-{}-{nonce}", std::process::id()));
+        std::fs::create_dir(&directory)?;
+        let result = (|| {
+            let paths = fixture_save_copies(&directory, 1)?;
+            let (proxy, receiver) = channel_pair::<super::super::AppMessage>();
+            let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+            let mut shell = Shell::build_for_test(&mut tree, None)?;
+            shell.set_proxy(proxy);
+            shell.resize_window(&mut tree, 1366, 768)?;
+            load_library_fixtures(&mut shell, &mut tree, &receiver, &paths)?;
+            let viewport = tree.rect(shell.content)?;
+            assert!(
+                tree.content_height(shell.content)? > viewport.height as f32,
+                "the detail column should be taller than the window at 1366x768"
+            );
+            shell.handle(&mut tree, &Message::Window(WindowEvent::Wheel { delta: 3 }), None)?;
+            assert!(
+                shell.scroll.offset_y() > 0.0,
+                "the wheel should scroll the detail column"
+            );
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&directory);
+        result
     }
 
     #[test]

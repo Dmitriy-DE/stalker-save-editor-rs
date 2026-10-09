@@ -8,8 +8,7 @@ use crate::glyphs::{Face, TextStyle};
 use crate::layout::{NodeKind, Size, Style};
 use crate::process_guard::{is_windows_file_busy_error_text, running_game_for_format, SAVE_WHILE_GAME_RUNNING_WARNING};
 use crate::raster::Color;
-use crate::widget::{Content, Look, WidgetId};
-use crate::widgets::table::{Header, Table};
+use crate::widget::{Content, Look, Tree, WidgetId};
 use crate::widgets::text_input::TextInput;
 use sse_core::{Error, Result, SaveBuffer};
 use sse_s2::{S2Change, S2InventoryItem, S2Save, S2StashItem, S2StashLayout};
@@ -65,7 +64,6 @@ macro_rules! tr {
     }};
 }
 
-const SAVE_PAGE_SIZE: usize = 10;
 const INVENTORY_PAGE_SIZE: usize = 8;
 const ADD_ITEM_PAGE_SIZE: usize = 8;
 const MAXIMUM_STASH_ROWS: usize = 10;
@@ -257,14 +255,38 @@ impl Workspace {
 
     pub(crate) fn library_snapshot(&self) -> (bool, Option<String>, Vec<SaveSlot>) {
         let state = self.lock();
+        let query = state.search_query.to_lowercase();
         (
             state.scanning,
             state.load_error.clone(),
             library_slots(&state)
                 .into_iter()
                 .filter(|slot| slot.detection_error.is_none())
+                .filter(|slot| {
+                    slot.path
+                        .file_name()
+                        .map(|name| name.to_string_lossy().to_lowercase().contains(&query))
+                        .unwrap_or(query.is_empty())
+                })
                 .collect(),
         )
+    }
+
+    /// The file-name filter shared by the library panel and the save list.
+    pub(crate) fn search_query(&self) -> String {
+        self.lock().search_query.clone()
+    }
+
+    /// How many directories the last discovery searched; shown in the library status.
+    pub(crate) fn searched_path_count(&self) -> usize {
+        self.lock()
+            .discovery
+            .as_ref()
+            .map_or(0, |result| result.searched_paths.len())
+    }
+
+    pub(crate) fn set_search_query(&self, query: &str) {
+        query.clone_into(&mut self.lock().search_query);
     }
 
     pub(crate) fn refresh_library(&self, cx: &mut Context<'_>) {
@@ -421,6 +443,7 @@ impl Workspace {
 #[derive(Default)]
 struct WorkspaceState {
     tasks: sse_app::TaskManager,
+    search_query: String,
     scanning: bool,
     discovery: Option<sse_storage::discovery::SaveDiscoveryResult>,
     manually_opened: Vec<SaveSlot>,
@@ -749,7 +772,7 @@ pub(super) fn display_size(bytes: u64) -> String {
     }
 }
 
-fn start_discovery(workspace: &Workspace, cx: &mut Context<'_>) {
+pub(super) fn start_discovery(workspace: &Workspace, cx: &mut Context<'_>) {
     let Some(proxy) = cx.proxy.cloned() else {
         cx.status = Some(t("Поиск сейвов начнётся в работающем окне редактора.").to_owned());
         return;
@@ -1403,14 +1426,6 @@ fn add_backup_recovery_banner(
 /// Save list and selected-save overview.
 struct Overview {
     workspace: Workspace,
-    page: usize,
-    refresh: Option<WidgetId>,
-    previous: Option<WidgetId>,
-    next: Option<WidgetId>,
-    rows: Vec<WidgetId>,
-    row_containers: Vec<WidgetId>,
-    list_status: Option<WidgetId>,
-    list_card: Option<WidgetId>,
     header_panel: Option<WidgetId>,
     header_name: Option<WidgetId>,
     header_path: Option<WidgetId>,
@@ -1419,10 +1434,6 @@ struct Overview {
     details_wide: Option<WidgetId>,
     details_narrow: Option<WidgetId>,
     details: Vec<DetailSet>,
-    search_text: Option<WidgetId>,
-    search_input: Option<TextInput>,
-    search_query: String,
-    search_focused: bool,
     external_banner_row: Option<WidgetId>,
     external_banner: Option<WidgetId>,
     external_reload: Option<WidgetId>,
@@ -1436,14 +1447,6 @@ impl Overview {
     fn new(workspace: Workspace) -> Self {
         Self {
             workspace,
-            page: 0,
-            refresh: None,
-            previous: None,
-            next: None,
-            rows: Vec::new(),
-            row_containers: Vec::new(),
-            list_status: None,
-            list_card: None,
             header_panel: None,
             header_name: None,
             header_path: None,
@@ -1452,10 +1455,6 @@ impl Overview {
             details_wide: None,
             details_narrow: None,
             details: Vec::new(),
-            search_text: None,
-            search_input: None,
-            search_query: String::new(),
-            search_focused: false,
             external_banner_row: None,
             external_banner: None,
             external_reload: None,
@@ -1506,126 +1505,6 @@ impl Overview {
             self.external_reload,
             state.external_change,
         )?;
-        let query = self.search_query.to_lowercase();
-        let slots = state
-            .discovery
-            .as_ref()
-            .map_or(&[][..], |result| result.slots.as_slice());
-        let row_ids = slots
-            .iter()
-            .enumerate()
-            .filter(|(_, slot)| {
-                slot.path
-                    .file_name()
-                    .map(|name| name.to_string_lossy().to_lowercase().contains(&query))
-                    .unwrap_or(query.is_empty())
-            })
-            .map(|(index, _)| u64::try_from(index).unwrap_or(u64::MAX))
-            .collect::<Vec<_>>();
-        let mut table = Table::new(
-            row_ids,
-            40.0,
-            vec![
-                Header {
-                    label: t("Игра").to_owned(),
-                    sortable: true,
-                    direction: None,
-                },
-                Header {
-                    label: t("Дата").to_owned(),
-                    sortable: true,
-                    direction: None,
-                },
-            ],
-        )?;
-        table.header_click(0, false, |left, right, _| {
-            let left = usize::try_from(left).ok().and_then(|index| slots.get(index));
-            let right = usize::try_from(right).ok().and_then(|index| slots.get(index));
-            left.map(save_game_key).cmp(&right.map(save_game_key))
-        })?;
-        table.header_click(1, true, |left, right, _| {
-            let left = usize::try_from(left).ok().and_then(|index| slots.get(index));
-            let right = usize::try_from(right).ok().and_then(|index| slots.get(index));
-            left.map(|slot| slot.last_write_time_utc)
-                .cmp(&right.map(|slot| slot.last_write_time_utc))
-        })?;
-        table.header_click(1, true, |left, right, _| {
-            let left = usize::try_from(left).ok().and_then(|index| slots.get(index));
-            let right = usize::try_from(right).ok().and_then(|index| slots.get(index));
-            left.map(|slot| slot.last_write_time_utc)
-                .cmp(&right.map(|slot| slot.last_write_time_utc))
-        })?;
-        let slot_count = table.view_len();
-        let pages = slot_count.saturating_add(SAVE_PAGE_SIZE.saturating_sub(1)) / SAVE_PAGE_SIZE;
-        self.page = self.page.min(pages.saturating_sub(1));
-        let start = self.page.saturating_mul(SAVE_PAGE_SIZE);
-        if let Some(status) = self.list_status {
-            let text = if state.scanning {
-                t("Ищу сейвы…").to_owned()
-            } else if let Some(error) = state.load_error.as_deref() {
-                tr("Ошибка чтения: {0}", &[&error])
-            } else if state.loading {
-                t("Проверяю выбранный сейв…").to_owned()
-            } else if slot_count == 0 {
-                t("Сейвы ещё не искали или не найдены. Нажмите «Найти сейвы».").to_owned()
-            } else {
-                let searched = state.discovery.as_ref().map_or(0, |result| result.searched_paths.len());
-                let current_page = self.page.saturating_add(1);
-                tr(
-                    "{0} сейвов · каталогов проверено: {1} · страница {2} из {3}",
-                    &[&slot_count, &searched, &current_page, &pages],
-                )
-            };
-            cx.tree.set_text(status, &text)?;
-        }
-        if let Some(id) = self.search_text {
-            cx.tree.set_text(
-                id,
-                if self.search_query.is_empty() {
-                    t("Поиск по имени файла…")
-                } else {
-                    &self.search_query
-                },
-            )?;
-        }
-        for (offset, id) in self.rows.iter().enumerate() {
-            let container = self.row_containers.get(offset).copied();
-            let slot = table
-                .visible_row(start.saturating_add(offset))
-                .and_then(|row| usize::try_from(row).ok())
-                .and_then(|index| slots.get(index));
-            if let Some(slot) = slot {
-                let file_name = slot
-                    .path
-                    .file_name()
-                    .map(|name| name.to_string_lossy())
-                    .unwrap_or_else(|| t("без имени").into());
-                let shortened = short_text(&file_name, 26);
-                let game = slot
-                    .format_id
-                    .as_deref()
-                    .or(Some(slot.candidate_release_id.as_str()))
-                    .unwrap_or(t("неизвестный формат"));
-                cx.tree.set_text(
-                    *id,
-                    &format!(
-                        "{} · {shortened} · {} · {}",
-                        short_text(game, 16),
-                        display_size(slot.size),
-                        display_file_time(slot.last_write_time_utc, true, false)
-                    ),
-                )?;
-                cx.tree.set_visible(*id, true)?;
-                if let Some(container) = container {
-                    cx.tree.set_visible(container, true)?;
-                }
-            } else {
-                cx.tree.set_visible(*id, false)?;
-                if let Some(container) = container {
-                    cx.tree.set_visible(container, false)?;
-                }
-            }
-        }
         let selected = state
             .selected
             .as_ref()
@@ -1633,13 +1512,6 @@ impl Overview {
         let compact = cx.tree.size().0 < 1600;
         self.apply_compact(cx.tree, compact)?;
         self.render_details(cx, selected)?;
-        if let Some(id) = self.previous {
-            cx.tree.set_visible(id, pages > 1 && self.page > 0)?;
-        }
-        if let Some(id) = self.next {
-            cx.tree
-                .set_visible(id, pages > 1 && self.page.saturating_add(1) < pages)?;
-        }
         Ok(())
     }
 }
@@ -1647,9 +1519,6 @@ impl Overview {
 impl Overview {
     /// Width-dependent layout: the library width and the wide or stacked detail layout.
     fn apply_compact(&self, tree: &mut crate::widget::Tree, compact: bool) -> Result<()> {
-        if let Some(list) = self.list_card {
-            tree.set_style(list, overview_list_style(if compact { 248.0 } else { LIBRARY_WIDTH }))?;
-        }
         if let Some(wide) = self.details_wide {
             tree.set_visible(wide, !compact)?;
         }
@@ -1743,22 +1612,9 @@ fn build_detail_set(tree: &mut crate::widget::Tree, parent: WidgetId) -> Result<
     })
 }
 
-const LIBRARY_WIDTH: f32 = 300.0;
 const DETAIL_TILE_SLOTS: usize = 8;
 const DETAIL_INFO_SLOTS: usize = 4;
 const DETAIL_INTEGRITY_SLOTS: usize = 6;
-
-fn overview_list_style(width: f32) -> Style {
-    Style {
-        preferred: Size::new(width, 0.0),
-        min: Size::new(width, 0.0),
-        shrink: 0.0,
-        padding: crate::layout::Edges::all(crate::theme::CARD_PADDING),
-        gap: Size::new(0.0, 0.0),
-        align_items: crate::layout::Align::Stretch,
-        ..Style::default()
-    }
-}
 
 fn detail_panel_style() -> Style {
     Style {
@@ -1852,98 +1708,6 @@ impl Screen for Overview {
             Content::Panel,
             Look::default(),
         )?;
-        let list = style::card(cx.tree, body)?;
-        self.list_card = Some(list);
-        cx.tree.set_style(list, overview_list_style(LIBRARY_WIDTH))?;
-        style::label(cx.tree, list, "СОХРАНЕНИЯ", Text::Heading)?;
-        let actions = style::row(cx.tree, list)?;
-        cx.tree.set_style(
-            actions,
-            Style {
-                margin: crate::layout::Edges {
-                    top: 4.0,
-                    bottom: 4.0,
-                    ..crate::layout::Edges::default()
-                },
-                gap: Size::new(crate::theme::CONTROL_GAP, 0.0),
-                align_items: crate::layout::Align::Center,
-                ..Style::default()
-            },
-        )?;
-        self.refresh = Some(style::button(cx.tree, actions, "Найти сейвы", Button::Primary)?);
-        let colors = crate::theme::current().colors;
-        let search = cx.tree.add(
-            Some(actions),
-            NodeKind::Leaf,
-            Style {
-                grow: 1.0,
-                min: Size::new(180.0, crate::theme::BUTTON_HEIGHT),
-                padding: crate::layout::Edges {
-                    left: 10.0,
-                    top: 0.0,
-                    right: 10.0,
-                    bottom: 0.0,
-                },
-                ..Style::default()
-            },
-            Content::Input {
-                text: t("Поиск по имени файла…").to_owned(),
-                style: Text::Body.style(),
-            },
-            Look {
-                fill: Some(style::rgb(colors.background[4])),
-                border: Some((style::rgb(colors.borders[1]), 1.0)),
-                radius: crate::theme::BUTTON_RADIUS,
-                text: style::rgb(colors.text[0]),
-                ..Look::default()
-            },
-        )?;
-        self.search_text = Some(search);
-        self.search_input = Some(TextInput::new("", inventory_search_config())?);
-        self.previous = Some(style::button(cx.tree, actions, "Назад", Button::Secondary)?);
-        self.next = Some(style::button(cx.tree, actions, "Дальше", Button::Secondary)?);
-        let headings = style::label(cx.tree, list, "ИГРА · СОХРАНЕНИЕ · РАЗМЕР · ДАТА ИЗМЕНЕНИЯ", Text::Note)?;
-        cx.tree.set_style(
-            headings,
-            Style {
-                margin: crate::layout::Edges {
-                    top: 2.0,
-                    ..crate::layout::Edges::default()
-                },
-                ..Style::default()
-            },
-        )?;
-        let status = style::label(cx.tree, list, "Сейвы ещё не искали.", Text::Note)?;
-        cx.tree.set_style(
-            status,
-            Style {
-                margin: crate::layout::Edges {
-                    top: 2.0,
-                    ..crate::layout::Edges::default()
-                },
-                ..Style::default()
-            },
-        )?;
-        self.list_status = Some(status);
-        for _ in 0..SAVE_PAGE_SIZE {
-            let row_container = cx.tree.add(
-                Some(list),
-                NodeKind::Column,
-                Style {
-                    margin: crate::layout::Edges {
-                        top: 4.0,
-                        ..crate::layout::Edges::default()
-                    },
-                    ..Style::default()
-                },
-                Content::Panel,
-                Look::default(),
-            )?;
-            let row = style::button(cx.tree, row_container, "", Button::Secondary)?;
-            cx.tree.set_visible(row_container, false)?;
-            self.row_containers.push(row_container);
-            self.rows.push(row);
-        }
         let column = cx.tree.add(
             Some(body),
             NodeKind::Column,
@@ -2100,7 +1864,6 @@ impl Screen for Overview {
             cx.status = Some(t("Открытие сейва требует фонового канала приложения.").to_owned());
             return Ok(false);
         }
-        self.page = 0;
         start_load_path(&self.workspace, path, cx);
         Ok(true)
     }
@@ -2118,106 +1881,6 @@ impl Screen for Overview {
         if let Message::Window(WindowEvent::Resized { width, .. }) = message {
             self.apply_compact(cx.tree, *width < 1600)?;
         }
-        if let Some(search_widget) = self.search_text {
-            self.search_focused = cx.tree.focused() == Some(search_widget);
-            if let Some(input) = self.search_input.as_mut() {
-                input.focus(self.search_focused, 0);
-            }
-        }
-        if let Message::Window(crate::event_loop::WindowEvent::Ime(event)) = message {
-            if let Some(input) = self.search_input.as_mut().filter(|input| input.focused()) {
-                input.apply_ime_event(event)?;
-                let display = input.display_text();
-                if let Some(widget) = self.search_text {
-                    cx.tree.set_input_text(widget, &display)?;
-                }
-                if matches!(event, crate::event_loop::ImeEvent::Commit(_)) {
-                    self.search_query = input.text();
-                    self.page = 0;
-                    return self.render(cx);
-                }
-            }
-            return Ok(());
-        }
-        if let Message::Window(crate::event_loop::WindowEvent::Key {
-            pressed: true,
-            keysym,
-            text,
-            ctrl,
-            shift,
-            ..
-        }) = message
-        {
-            if *ctrl && matches!(*keysym, 0x46 | 0x66) {
-                if let Some(search_widget) = self.search_text {
-                    self.search_focused = cx.tree.is_visible(search_widget);
-                    if self.search_focused {
-                        cx.tree.set_focus(Some(search_widget))?;
-                        if let Some(input) = self.search_input.as_mut() {
-                            input.focus(true, 0);
-                        }
-                    }
-                }
-                return self.render(cx);
-            }
-            if *keysym == 0xff09 {
-                return self.render(cx);
-            }
-            if self.search_input.as_ref().is_some_and(TextInput::focused) {
-                if matches!(*keysym, 0xff0d | 0xff1b) {
-                    self.search_focused = false;
-                    if let Some(input) = self.search_input.as_mut() {
-                        input.focus(false, 0);
-                    }
-                    cx.tree.set_focus(None)?;
-                    return self.render(cx);
-                }
-                let key = match *keysym {
-                    0xff08 => Key::Backspace,
-                    0xffff => Key::Delete,
-                    0xff51 => Key::Left,
-                    0xff53 => Key::Right,
-                    0xff50 => Key::Home,
-                    0xff57 => Key::End,
-                    value if *ctrl && matches!(value, 0x61 | 0x41) => Key::A,
-                    value if *ctrl && matches!(value, 0x7a | 0x5a) => Key::Z,
-                    _ => Key::Character(text.unwrap_or('\0')),
-                };
-                let typed = text.map(|character| character.to_string());
-                let mut clipboard = SaveClipboard::default();
-                if let Some(input) = self.search_input.as_mut() {
-                    let _ = input.key(
-                        key,
-                        Modifiers {
-                            ctrl: *ctrl,
-                            shift: *shift,
-                        },
-                        typed.as_deref(),
-                        &mut clipboard,
-                    )?;
-                    self.search_query = input.text();
-                    if let Some(widget) = self.search_text {
-                        cx.tree.set_text(widget, &self.search_query)?;
-                    }
-                }
-                self.page = 0;
-                return self.render(cx);
-            }
-        }
-        if clicked.is_some() && clicked == self.search_text {
-            if let Some(widget) = self.search_text {
-                cx.tree.set_focus(Some(widget))?;
-            }
-            self.search_focused = true;
-            if let Some(input) = self.search_input.as_mut() {
-                input.focus(true, 0);
-            }
-            return self.render(cx);
-        }
-        if clicked.is_some() && clicked == self.refresh {
-            start_discovery(&self.workspace, cx);
-            return Ok(());
-        }
         if clicked.is_some() && clicked == self.backup_recovery_button {
             if let Some(proxy) = cx.proxy {
                 let _ = proxy.send(AppMessage::OpenBackups);
@@ -2226,37 +1889,6 @@ impl Screen for Overview {
         }
         if clicked.is_some() && clicked == self.external_reload {
             return start_reload_selected(&self.workspace, cx);
-        }
-        if clicked.is_some() && clicked == self.previous {
-            self.page = self.page.saturating_sub(1);
-            return self.render(cx);
-        }
-        if clicked.is_some() && clicked == self.next {
-            self.page = self.page.saturating_add(1);
-            return self.render(cx);
-        }
-        if let Some(offset) = clicked.and_then(|id| self.rows.iter().position(|row| *row == id)) {
-            let state = self.workspace.lock();
-            let index = self.page.saturating_mul(SAVE_PAGE_SIZE).saturating_add(offset);
-            let query = self.search_query.to_lowercase();
-            let slot = state.discovery.as_ref().and_then(|result| {
-                result
-                    .slots
-                    .iter()
-                    .filter(|slot| {
-                        slot.path
-                            .file_name()
-                            .map(|name| name.to_string_lossy().to_lowercase().contains(&query))
-                            .unwrap_or(query.is_empty())
-                    })
-                    .nth(index)
-                    .cloned()
-            });
-            if let Some(slot) = slot {
-                drop(state);
-                start_load(&self.workspace, slot, cx);
-                return Ok(());
-            }
         }
         if let Message::User(AppMessage::ToScreen(ScreenId::Overview, payload)) = message {
             if let Some(StartupBackupCheck(Ok(interrupted_count))) = payload.downcast_ref::<StartupBackupCheck>() {
@@ -2617,6 +2249,158 @@ fn money_input_config() -> EditConfig {
         max_graphemes: 10,
         history_limit: 32,
         filter: InputFilter::Any,
+    }
+}
+
+/// The file-name field of the library panel. It writes the shared filter in [`Workspace`].
+pub(super) struct LibrarySearch {
+    pub(super) widget: Option<WidgetId>,
+    input: TextInput,
+}
+
+impl LibrarySearch {
+    pub(super) fn new() -> Result<Self> {
+        Ok(Self {
+            widget: None,
+            input: TextInput::new("", inventory_search_config())?,
+        })
+    }
+
+    /// Adds the field to `parent` and keeps its widget for focus and clicks.
+    pub(super) fn build(&mut self, tree: &mut Tree, parent: WidgetId) -> Result<WidgetId> {
+        let colors = crate::theme::current().colors;
+        let widget = tree.add(
+            Some(parent),
+            NodeKind::Leaf,
+            Style {
+                grow: 0.0,
+                shrink: 1.0,
+                preferred: Size::new(0.0, crate::theme::BUTTON_HEIGHT),
+                min: Size::new(0.0, crate::theme::BUTTON_HEIGHT),
+                padding: crate::layout::Edges {
+                    left: 10.0,
+                    top: 0.0,
+                    right: 10.0,
+                    bottom: 0.0,
+                },
+                ..Style::default()
+            },
+            Content::Input {
+                text: crate::strings::t("Поиск по имени файла…").to_owned(),
+                style: Text::Body.style(),
+            },
+            Look {
+                fill: Some(style::rgb(colors.background[4])),
+                border: Some((style::rgb(colors.borders[1]), 1.0)),
+                radius: crate::theme::BUTTON_RADIUS,
+                text: style::rgb(colors.text[0]),
+                ..Look::default()
+            },
+        )?;
+        self.widget = Some(widget);
+        Ok(widget)
+    }
+
+    /// Shows the filter text, or the placeholder while the filter is empty.
+    pub(super) fn show(&self, tree: &mut Tree, query: &str) -> Result<()> {
+        if let Some(widget) = self.widget {
+            tree.set_text(
+                widget,
+                if query.is_empty() {
+                    crate::strings::t("Поиск по имени файла…")
+                } else {
+                    query
+                },
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Handles focus, text input and clicks for the field. Returns `true` when the shared filter changed.
+    pub(super) fn handle(
+        &mut self,
+        tree: &mut Tree,
+        message: &Message<AppMessage>,
+        clicked: Option<WidgetId>,
+        workspace: &Workspace,
+    ) -> Result<bool> {
+        if let Some(widget) = self.widget {
+            let focused = tree.focused() == Some(widget);
+            self.input.focus(focused, 0);
+        }
+        if let Message::Window(crate::event_loop::WindowEvent::Ime(event)) = message {
+            if self.input.focused() {
+                self.input.apply_ime_event(event)?;
+                let display = self.input.display_text();
+                if let Some(widget) = self.widget {
+                    tree.set_input_text(widget, &display)?;
+                }
+                if matches!(event, crate::event_loop::ImeEvent::Commit(_)) {
+                    workspace.set_search_query(&self.input.text());
+                    return Ok(true);
+                }
+            }
+            return Ok(false);
+        }
+        if let Message::Window(crate::event_loop::WindowEvent::Key {
+            pressed: true,
+            keysym,
+            text,
+            ctrl,
+            shift,
+            ..
+        }) = message
+        {
+            if *ctrl && matches!(*keysym, 0x46 | 0x66) {
+                if let Some(widget) = self.widget.filter(|widget| tree.is_visible(*widget)) {
+                    tree.set_focus(Some(widget))?;
+                    self.input.focus(true, 0);
+                }
+                return Ok(false);
+            }
+            if self.input.focused() {
+                if matches!(*keysym, 0xff0d | 0xff1b) {
+                    self.input.focus(false, 0);
+                    tree.set_focus(None)?;
+                    return Ok(false);
+                }
+                let key = match *keysym {
+                    0xff08 => Key::Backspace,
+                    0xffff => Key::Delete,
+                    0xff51 => Key::Left,
+                    0xff53 => Key::Right,
+                    0xff50 => Key::Home,
+                    0xff57 => Key::End,
+                    value if *ctrl && matches!(value, 0x61 | 0x41) => Key::A,
+                    value if *ctrl && matches!(value, 0x7a | 0x5a) => Key::Z,
+                    _ => Key::Character(text.unwrap_or('\0')),
+                };
+                let typed = text.map(|character| character.to_string());
+                let mut clipboard = SaveClipboard::default();
+                let _ = self.input.key(
+                    key,
+                    Modifiers {
+                        ctrl: *ctrl,
+                        shift: *shift,
+                    },
+                    typed.as_deref(),
+                    &mut clipboard,
+                )?;
+                let query = self.input.text();
+                if let Some(widget) = self.widget {
+                    tree.set_text(widget, &query)?;
+                }
+                workspace.set_search_query(&query);
+                return Ok(true);
+            }
+        }
+        if clicked.is_some() && clicked == self.widget {
+            if let Some(widget) = self.widget {
+                tree.set_focus(Some(widget))?;
+            }
+            self.input.focus(true, 0);
+        }
+        Ok(false)
     }
 }
 
