@@ -150,6 +150,17 @@ impl ToolkitProfileService {
         _catalog: &GameFixCatalog,
     ) -> Result<ProfileApplyResult> {
         ensure_xray_profile(profile.game)?;
+        // Refuse before any change: a profile that cannot be fully applied must not uninstall fixes first.
+        for target_id in &profile.target_fix_ids {
+            if GameFixCatalog::try_get(target_id).is_none() {
+                return Err(Error::Refused(format!(
+                    "Fix '{target_id}' specified in profile '{}' not found in catalog",
+                    profile.name
+                )));
+            }
+        }
+        ManagedUserLtxSettings::validate_managed_settings(&profile.user_ltx_overrides)?;
+
         // 1. Mandatory pre-switch snapshot
         let pre_snapshot = ToolkitSnapshotService::create_snapshot(
             game_directory,
