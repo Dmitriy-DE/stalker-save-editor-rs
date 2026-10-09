@@ -1932,12 +1932,25 @@ impl DeclaredChunkChanges {
 
 /// Groups the source-image byte ranges that a change set writes, by the OBJECT record that contains them.
 fn declared_record_writes(source: &Save, writes: &[PendingWrite]) -> Result<HashMap<u16, Vec<Range<usize>>>> {
+    let object_chunk = source
+        .chunks()
+        .iter()
+        .find(|chunk| chunk.kind == 2)
+        .ok_or_else(|| Error::damaged("missing X-Ray OBJECT chunk"))?;
+    let object_end = object_chunk
+        .offset
+        .checked_add(object_chunk.length)
+        .ok_or_else(|| Error::damaged("X-Ray OBJECT chunk range overflows"))?;
     let mut by_record: HashMap<u16, Vec<Range<usize>>> = HashMap::new();
     for write in writes {
         let end = write
             .offset
             .checked_add(write.length)
             .ok_or_else(|| Error::damaged("X-Ray write range overflows"))?;
+        // Writes outside the OBJECT payload are checked by the chunk loop of the caller, not here.
+        if write.offset < object_chunk.offset || end > object_end {
+            continue;
+        }
         let record = source
             .registry_objects()
             .iter()
@@ -5461,6 +5474,144 @@ mod tests {
         let error = verify_changed_image_ranges(&source, &replacement, &corrupted, &writes, &[2], &changes)
             .expect_err("a byte outside the declared money write must be rejected");
         assert!(error.to_string().contains("declared writes"), "{error}");
+        Ok(())
+    }
+
+    #[test]
+    fn writes_outside_the_object_chunk_are_not_attributed_to_records() -> TestResult {
+        let source = Save::read(include_bytes!(
+            "../../../fixtures/synthetic/writer-money/xray-money-soc-source.sav"
+        ))?;
+        let alife = source
+            .chunks()
+            .iter()
+            .find(|chunk| chunk.kind == 0)
+            .ok_or("ALIFE chunk should exist")?;
+        let outside = [PendingWrite::u32(alife.offset, 0)];
+        assert!(super::declared_record_writes(&source, &outside)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn single_changes_paired_with_addition_or_removal_never_report_damage() -> TestResult {
+        let fixtures: [&[u8]; 4] = [
+            include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-source.sav"),
+            include_bytes!("../../../fixtures/synthetic/writer-add/xray-add-soc-source.sav"),
+            include_bytes!("../../../fixtures/synthetic/writer-factions/soc-source.sav"),
+            include_bytes!("../../../fixtures/synthetic/writer-durability/xray-durability-cop-source.sav"),
+        ];
+        for fixture in fixtures {
+            // An unequipped actor-owned item is removed by the pairs; the others carry the single changes and templates.
+            let initial = Save::read(fixture)?;
+            let removal = initial
+                .inventory()?
+                .iter()
+                .rev()
+                .find(|item| item.placement_value.is_none_or(|value| value & 0x0F != 1))
+                .map(|item| item.handle);
+            let seeded = match removal {
+                Some(handle) => seed_removable_source(fixture, handle)?,
+                None => initial.repack(initial.raw_image())?,
+            };
+            let source = Save::read(seeded.as_slice())?;
+            let items = source.inventory()?;
+            let actor_id = source.actor_id();
+            let money = source.money()?;
+            let mut singles = vec![Change::SetMoney {
+                target_object: actor_id,
+                old_value: money,
+                new_value: money.checked_add(1).ok_or("money overflow")?,
+            }];
+            if let Some(item) = items.iter().find(|item| item.count.is_some_and(|count| count >= 2)) {
+                let old_value = item.count.ok_or("stack count should be known")?;
+                singles.push(Change::SetStack {
+                    target_object: item.handle,
+                    old_value,
+                    new_value: old_value - 1,
+                });
+            }
+            if let Some(item) = items.iter().find(|item| item.condition.is_some()) {
+                let old_value = item.condition.ok_or("condition should be known")?;
+                singles.push(Change::SetDurability {
+                    target_object: item.handle,
+                    old_value,
+                    new_value: if old_value > 0.5 {
+                        old_value - 0.25
+                    } else {
+                        old_value + 0.25
+                    },
+                });
+            }
+            if let Some(item) = items.iter().find(|item| item.placement_value.is_some()) {
+                singles.push(Change::SetPlacement {
+                    target_object: item.handle,
+                    destination: Placement::Ruck,
+                });
+            }
+            if let Some(old_value) = source.player_faction() {
+                singles.push(Change::SetPlayerFaction {
+                    target_object: actor_id,
+                    old_value,
+                    faction_key: "bandit".to_owned(),
+                });
+            }
+            singles.push(Change::SetFactionRelation {
+                target_object: actor_id,
+                faction_key: "bandit".to_owned(),
+                old_value: None,
+                new_value: 375,
+            });
+            singles.push(Change::AddInfoPortions {
+                target_object: actor_id,
+                info_portions: vec!["pair_matrix_flag".to_owned()],
+            });
+
+            let ids = source
+                .registry_objects()
+                .iter()
+                .map(|record| record.object_id)
+                .collect::<std::collections::HashSet<_>>();
+            let added_id = (1..u16::MAX)
+                .rev()
+                .find(|candidate| !ids.contains(candidate))
+                .ok_or("fixture should have a free object id")?;
+            let template = items
+                .iter()
+                .find(|item| Some(item.handle) != removal && item.count.is_none())
+                .or_else(|| items.iter().find(|item| Some(item.handle) != removal));
+            let mut partners = Vec::new();
+            if let Some(handle) = removal {
+                partners.push(Change::RemoveItem { target_object: handle });
+            }
+            if let Some(template) = template {
+                let quantity = if template.section.to_ascii_lowercase().starts_with("ammo_") {
+                    17
+                } else {
+                    1
+                };
+                partners.push(Change::AddItem {
+                    template_object: template.handle,
+                    item_key: template.section.clone(),
+                    object_id: added_id,
+                    quantity,
+                });
+            }
+
+            let mut accepted = 0_usize;
+            for single in &singles {
+                for partner in &partners {
+                    let changes = ChangeSet::new(vec![single.clone(), partner.clone()]);
+                    match apply(&source, &changes) {
+                        Ok(_) => accepted = accepted.saturating_add(1),
+                        Err(sse_core::Error::Damaged(message)) => {
+                            return Err(format!("{single:?} with {partner:?} reported damage: {message}").into());
+                        }
+                        Err(_) => {}
+                    }
+                }
+            }
+            assert!(accepted > 0, "at least one pair should be applicable to this fixture");
+        }
         Ok(())
     }
 
