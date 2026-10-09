@@ -501,11 +501,33 @@ fn load_settings() -> (sse_app::AppSettings, Option<String>) {
     }
 }
 
-fn save_settings(settings: &sse_app::AppSettings, proxy: Option<crate::event_loop::Proxy<AppMessage>>) -> Result<()> {
-    super::submit_settings_write(
-        sse_app::settings_writer::SettingsPatch::Replace(settings.clone()),
-        proxy,
-    )
+/// Sends one field of the settings to the shared writer; the screen never writes a whole snapshot,
+/// so changes made elsewhere (save folders, sidebar, report consent) are kept.
+fn save_setting(
+    patch: sse_app::settings_writer::SettingsPatch,
+    proxy: Option<crate::event_loop::Proxy<AppMessage>>,
+) -> Result<()> {
+    super::submit_settings_write(patch, proxy)
+}
+
+/// Sends every field this screen edits; used by the explicit «Сохранить настройки» action.
+fn save_all_settings(
+    settings: &sse_app::AppSettings,
+    proxy: Option<crate::event_loop::Proxy<AppMessage>>,
+) -> Result<()> {
+    use sse_app::settings_writer::SettingsPatch;
+    let patches = [
+        SettingsPatch::Language(settings.language.clone()),
+        SettingsPatch::BackupDirectory(settings.backup_directory.clone()),
+        SettingsPatch::SoundEnabled(settings.sound_enabled),
+        SettingsPatch::MusicEnabled(settings.music_enabled),
+        SettingsPatch::SoundVolume(settings.sound_volume),
+        SettingsPatch::SendReports(settings.send_reports),
+    ];
+    for patch in patches {
+        save_setting(patch, proxy.clone())?;
+    }
+    Ok(())
 }
 
 const LANGUAGE_NAMES: [&str; 15] = [
@@ -1208,7 +1230,8 @@ impl Screen for Settings {
             if let Some(value) = self.theme_value {
                 cx.tree.set_text(value, crate::strings::t(theme_name))?;
             }
-            match save_settings(&self.settings, cx.proxy.cloned()) {
+            let patch = sse_app::settings_writer::SettingsPatch::Theme(self.settings.theme_id.clone());
+            match save_setting(patch, cx.proxy.cloned()) {
                 Ok(()) => cx.status = Some(crate::strings::t("Сохраняю…").to_owned()),
                 Err(error) => cx.status = Some(tr("Не удалось сохранить настройки: {0}", &[&error])),
             }
@@ -1236,7 +1259,8 @@ impl Screen for Settings {
                     ),
                 )?;
             }
-            match save_settings(&self.settings, cx.proxy.cloned()) {
+            let patch = sse_app::settings_writer::SettingsPatch::Accent(self.settings.accent_id.clone());
+            match save_setting(patch, cx.proxy.cloned()) {
                 Ok(()) => cx.status = Some(crate::strings::t("Сохраняю…").to_owned()),
                 Err(error) => cx.status = Some(tr("Не удалось сохранить настройки: {0}", &[&error])),
             }
@@ -1255,7 +1279,8 @@ impl Screen for Settings {
                 };
                 cx.tree.set_text(value, &label)?;
             }
-            match save_settings(&self.settings, cx.proxy.cloned()) {
+            let patch = sse_app::settings_writer::SettingsPatch::Scale(percent);
+            match save_setting(patch, cx.proxy.cloned()) {
                 Ok(()) => cx.status = Some(crate::strings::t("Сохраняю…").to_owned()),
                 Err(error) => cx.status = Some(tr("Не удалось сохранить настройки: {0}", &[&error])),
             }
@@ -1280,7 +1305,7 @@ impl Screen for Settings {
             self.settings.language = crate::strings::LANGUAGES
                 .get(self.language)
                 .map(|code| (*code).to_owned());
-            match save_settings(&self.settings, cx.proxy.cloned()) {
+            match save_all_settings(&self.settings, cx.proxy.cloned()) {
                 Ok(()) => cx.status = Some(crate::strings::t("Сохраняю…").to_owned()),
                 Err(error) => {
                     cx.status = Some(format!(
