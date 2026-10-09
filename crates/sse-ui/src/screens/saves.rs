@@ -2636,6 +2636,35 @@ impl Inventory {
             self.compact = window_width < 1600;
         }
         cx.tree.update_layout()?;
+        if let (Some(side), Some(inspector), Some(actions)) =
+            (self.side_column, self.inspector_panel, self.actions_panel)
+        {
+            // The inspector takes exactly the room the pinned action panel leaves in the side column.
+            let side_height = u16::try_from(cx.tree.rect(side)?.height).map_or(0.0, f32::from);
+            let actions_height = u16::try_from(cx.tree.rect(actions)?.height).map_or(0.0, f32::from);
+            if side_height > 0.0 {
+                // A preferred height is the content box: the panel padding is added on top of it.
+                let room = (side_height
+                    - actions_height
+                    - crate::theme::CONTROL_GAP
+                    - 2.0 * crate::theme::d2::PANEL_PADDING.0)
+                    .max(0.0);
+                cx.tree.set_style(
+                    inspector,
+                    Style {
+                        grow: 1.0,
+                        shrink: 1.0,
+                        preferred: crate::layout::Size::new(0.0, room),
+                        min: crate::layout::Size::new(0.0, 0.0),
+                        max: crate::layout::Size::new(f32::INFINITY, room),
+                        padding: crate::layout::Edges::all(crate::theme::d2::PANEL_PADDING.0),
+                        gap: Size::new(0.0, crate::theme::CONTROL_GAP),
+                        align_items: crate::layout::Align::Stretch,
+                        ..Style::default()
+                    },
+                )?;
+            }
+        }
         if let (Some(list), Some(spacer)) = (self.item_list, self.item_spacer) {
             // The list shows the rows that fit in the space it shares with the spacer below the paging row.
             // Before the window has a size there is no room yet: keep the last page size.
@@ -2659,8 +2688,8 @@ impl Inventory {
                 list,
                 Style {
                     preferred: crate::layout::Size::new(0.0, list_height),
-                    min: crate::layout::Size::new(0.0, list_height),
-                    shrink: 0.0,
+                    min: crate::layout::Size::new(0.0, 0.0),
+                    shrink: 1.0,
                     gap: Size::new(0.0, INVENTORY_ROW_GAP as f32),
                     align_items: crate::layout::Align::Stretch,
                     ..Style::default()
@@ -5345,6 +5374,9 @@ impl Screen for Inventory {
             Style {
                 grow: 1.0,
                 shrink: 1.0,
+                // Takes the room left by the action panel and clips its content instead of pushing that panel down.
+                preferred: crate::layout::Size::new(0.0, 0.0),
+                min: crate::layout::Size::new(0.0, 0.0),
                 padding: crate::layout::Edges::all(crate::theme::d2::PANEL_PADDING.0),
                 gap: Size::new(0.0, crate::theme::CONTROL_GAP),
                 align_items: crate::layout::Align::Stretch,
@@ -5520,28 +5552,49 @@ impl Screen for Inventory {
         self.actions_panel = Some(actions);
         let edit_actions = cx.tree.add(
             Some(actions),
-            NodeKind::Wrap,
+            NodeKind::Row,
             Style {
-                gap: Size::new(8.0, 8.0),
+                gap: Size::new(8.0, 0.0),
+                align_items: crate::layout::Align::Stretch,
                 ..Style::default()
             },
             Content::Panel,
             Look::default(),
         )?;
-        self.remove_button = Some(style::d2::button(
+        // Two equal buttons share the panel width on one row at every window size.
+        let remove = style::d2::button(
             cx.tree,
             edit_actions,
             t("Удалить предмет"),
             style::d2::ButtonKind::Danger,
             style::d2::ButtonSize::Normal,
-        )?);
-        self.add_button = Some(style::d2::button(
+        )?;
+        let add = style::d2::button(
             cx.tree,
             edit_actions,
             t("+ Добавить предмет"),
             style::d2::ButtonKind::Secondary,
             style::d2::ButtonSize::Normal,
-        )?);
+        )?;
+        for id in [remove, add] {
+            cx.tree.set_style(
+                id,
+                Style {
+                    grow: 1.0,
+                    shrink: 1.0,
+                    min: crate::layout::Size::new(0.0, crate::theme::d2::CONTROL_HEIGHT.0),
+                    padding: crate::layout::Edges {
+                        left: 8.0,
+                        top: 0.0,
+                        right: 8.0,
+                        bottom: 0.0,
+                    },
+                    ..Style::default()
+                },
+            )?;
+        }
+        self.remove_button = Some(remove);
+        self.add_button = Some(add);
         let overlay_host = cx.tree.overlay_host().unwrap_or(host);
         let confirmation = style::card(cx.tree, overlay_host)?;
         self.process_confirmation = Some(confirmation);
@@ -8036,28 +8089,51 @@ mod tests {
     }
 
     #[test]
-    fn inventory_actions_and_paging_stay_inside_the_window() -> sse_core::Result<()> {
-        for (width, height) in [(1920_u32, 1080_u32), (1366, 768)] {
-            let (screen, tree, _) = rendered_inventory(width, height)?;
-            let buttons = [
+    fn inventory_actions_and_paging_stay_inside_the_work_area() -> sse_core::Result<()> {
+        // The work area is the window minus the shell's header, tabs and status bar (about 240 px at the top and 30 px
+        // at the bottom). Every control and column must end above its bottom edge.
+        for (width, work_height) in [(1920_u32, 1080_u32 - 270), (1366, 768 - 270)] {
+            let (screen, tree, _) = rendered_inventory(width, work_height)?;
+            let work_bottom = i64::from(work_height);
+            let card = tree.rect(screen.inventory_card.ok_or_else(|| Error::damaged("no centre panel"))?)?;
+            let side = tree.rect(screen.side_column.ok_or_else(|| Error::damaged("no side column"))?)?;
+            let inspector = tree.rect(screen.inspector_panel.ok_or_else(|| Error::damaged("no inspector"))?)?;
+            let actions = tree.rect(screen.actions_panel.ok_or_else(|| Error::damaged("no action panel"))?)?;
+            let controls = [
                 ("remove", screen.remove_button),
                 ("add", screen.add_button),
                 ("previous page", screen.previous),
                 ("next page", screen.next),
             ];
-            for (name, id) in buttons {
+            let mut rects = vec![
+                ("centre", card),
+                ("side", side),
+                ("inspector", inspector),
+                ("actions", actions),
+            ];
+            for (name, id) in controls {
                 let id = id.ok_or_else(|| Error::damaged("missing inventory control"))?;
-                let rect = tree.rect(id)?;
+                rects.push((name, tree.rect(id)?));
+            }
+            for (name, rect) in rects {
                 assert!(
                     rect.x >= 0 && rect.y >= 0,
-                    "{name} starts outside the window at {width}x{height}: {rect:?}"
+                    "{name} starts outside at {width}x{work_height}: {rect:?}"
                 );
                 assert!(
-                    i64::from(rect.x) + i64::from(rect.width) <= i64::from(width)
-                        && i64::from(rect.y) + i64::from(rect.height) <= i64::from(height),
-                    "{name} ends outside the window at {width}x{height}: {rect:?}"
+                    i64::from(rect.x) + i64::from(rect.width) <= i64::from(width),
+                    "{name} runs past the right edge at {width}: {rect:?}"
+                );
+                assert!(
+                    i64::from(rect.y) + i64::from(rect.height) <= work_bottom,
+                    "{name} runs below the work area at {width}x{work_height}: {rect:?}"
                 );
             }
+            assert_eq!(
+                card.y + i32::try_from(card.height).unwrap_or_default(),
+                side.y + i32::try_from(side.height).unwrap_or_default(),
+                "centre and side columns end on the same line"
+            );
         }
         Ok(())
     }
