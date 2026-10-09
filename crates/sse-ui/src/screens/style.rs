@@ -267,7 +267,8 @@ pub mod d2 {
         Draft,
     }
 
-    fn argb(value: u32) -> Color {
+    /// Colour from `0xRRGGBBAA`, alpha included.
+    pub fn argb(value: u32) -> Color {
         let [r, g, b, a] = value.to_be_bytes();
         Color::rgba(r, g, b, a)
     }
