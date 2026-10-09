@@ -3,7 +3,7 @@
 use super::style::{self, Button, Text};
 use super::{AppMessage, Context, EditorAction, Screen, ScreenId};
 use crate::edit::{Clipboard, EditConfig, FieldMode, InputFilter, Key, Modifiers};
-use crate::event_loop::Message;
+use crate::event_loop::{Message, WindowEvent};
 use crate::glyphs::{Face, TextStyle};
 use crate::layout::{NodeKind, Size, Style};
 use crate::process_guard::{is_windows_file_busy_error_text, running_game_for_format, SAVE_WHILE_GAME_RUNNING_WARNING};
@@ -1365,11 +1365,9 @@ struct Overview {
     header_path: Option<WidgetId>,
     parameters_panel: Option<WidgetId>,
     tiles: Vec<WidgetId>,
-    info_panel: Option<WidgetId>,
-    info_empty: Option<WidgetId>,
-    info_rows: Vec<WidgetId>,
-    integrity_panel: Option<WidgetId>,
-    integrity_rows: Vec<WidgetId>,
+    details_wide: Option<WidgetId>,
+    details_narrow: Option<WidgetId>,
+    details: Vec<DetailSet>,
     search_text: Option<WidgetId>,
     search_input: Option<TextInput>,
     search_query: String,
@@ -1400,11 +1398,9 @@ impl Overview {
             header_path: None,
             parameters_panel: None,
             tiles: Vec::new(),
-            info_panel: None,
-            info_empty: None,
-            info_rows: Vec::new(),
-            integrity_panel: None,
-            integrity_rows: Vec::new(),
+            details_wide: None,
+            details_narrow: None,
+            details: Vec::new(),
             search_text: None,
             search_input: None,
             search_query: String::new(),
@@ -1585,10 +1581,7 @@ impl Overview {
             .as_ref()
             .map(|save| (save.info.clone(), save.parameters.clone(), save.integrity.clone()));
         let compact = cx.tree.size().0 < 1600;
-        if let Some(list) = self.list_card {
-            cx.tree
-                .set_style(list, overview_list_style(if compact { 248.0 } else { LIBRARY_WIDTH }))?;
-        }
+        self.apply_compact(cx.tree, compact)?;
         self.render_details(cx, selected)?;
         if let Some(id) = self.previous {
             cx.tree.set_visible(id, pages > 1 && self.page > 0)?;
@@ -1602,6 +1595,20 @@ impl Overview {
 }
 
 impl Overview {
+    /// Width-dependent layout: the library width and the wide or stacked detail layout.
+    fn apply_compact(&self, tree: &mut crate::widget::Tree, compact: bool) -> Result<()> {
+        if let Some(list) = self.list_card {
+            tree.set_style(list, overview_list_style(if compact { 248.0 } else { LIBRARY_WIDTH }))?;
+        }
+        if let Some(wide) = self.details_wide {
+            tree.set_visible(wide, !compact)?;
+        }
+        if let Some(narrow) = self.details_narrow {
+            tree.set_visible(narrow, compact)?;
+        }
+        Ok(())
+    }
+
     fn render_details(&self, cx: &mut Context<'_>, selected: Option<(String, String, String)>) -> Result<()> {
         let has_save = selected.is_some();
         let (info, parameters, integrity) = selected.unwrap_or_default();
@@ -1639,28 +1646,62 @@ impl Overview {
                 set_pair(cx.tree, *tile, key, value)?;
             }
         }
-        if let Some(id) = self.info_empty {
-            cx.tree.set_visible(id, !has_save)?;
-        }
-        for (index, row) in self.info_rows.iter().enumerate() {
-            let pair = info_pairs.get(index).filter(|_| has_save);
-            cx.tree.set_visible(*row, pair.is_some())?;
-            if let Some((key, value)) = pair {
-                set_pair(cx.tree, *row, key, value)?;
+        for set in &self.details {
+            cx.tree.set_visible(set.info_empty, !has_save)?;
+            for (index, row) in set.info_rows.iter().enumerate() {
+                let pair = info_pairs.get(index).filter(|_| has_save);
+                cx.tree.set_visible(*row, pair.is_some())?;
+                if let Some((key, value)) = pair {
+                    set_pair(cx.tree, *row, key, value)?;
+                }
             }
-        }
-        if let Some(panel) = self.integrity_panel {
-            cx.tree.set_visible(panel, has_save)?;
-        }
-        for (index, row) in self.integrity_rows.iter().enumerate() {
-            let pair = integrity_pairs.get(index).filter(|_| has_save);
-            cx.tree.set_visible(*row, pair.is_some())?;
-            if let Some((key, value)) = pair {
-                set_pair(cx.tree, *row, key, value)?;
+            cx.tree.set_visible(set.integrity_panel, has_save)?;
+            for (index, row) in set.integrity_rows.iter().enumerate() {
+                let pair = integrity_pairs.get(index).filter(|_| has_save);
+                cx.tree.set_visible(*row, pair.is_some())?;
+                if let Some((key, value)) = pair {
+                    set_pair(cx.tree, *row, key, value)?;
+                }
             }
         }
         Ok(())
     }
+}
+
+/// One layout of the information and integrity panels; the screen keeps one for the wide row and one for the stack.
+struct DetailSet {
+    info_empty: WidgetId,
+    info_rows: Vec<WidgetId>,
+    integrity_panel: WidgetId,
+    integrity_rows: Vec<WidgetId>,
+}
+
+fn build_detail_set(tree: &mut crate::widget::Tree, parent: WidgetId) -> Result<DetailSet> {
+    let info_panel = style::d2::panel(tree, parent)?;
+    tree.set_style(info_panel, detail_panel_style())?;
+    style::d2::panel_title(tree, info_panel, "ИНФОРМАЦИЯ О СОХРАНЕНИИ")?;
+    let info_empty = paragraph(tree, info_panel, "Выберите сохранение для просмотра.", Text::Body)?;
+    let mut info_rows = Vec::with_capacity(DETAIL_INFO_SLOTS);
+    for _ in 0..DETAIL_INFO_SLOTS {
+        let row = style::d2::key_value_row(tree, info_panel, "", "")?;
+        tree.set_visible(row, false)?;
+        info_rows.push(row);
+    }
+    let integrity_panel = style::d2::panel(tree, parent)?;
+    tree.set_style(integrity_panel, detail_panel_style())?;
+    style::d2::panel_title(tree, integrity_panel, "ЦЕЛОСТНОСТЬ И МЕТАДАННЫЕ")?;
+    let mut integrity_rows = Vec::with_capacity(DETAIL_INTEGRITY_SLOTS);
+    for _ in 0..DETAIL_INTEGRITY_SLOTS {
+        let row = style::d2::key_value_row(tree, integrity_panel, "", "")?;
+        tree.set_visible(row, false)?;
+        integrity_rows.push(row);
+    }
+    Ok(DetailSet {
+        info_empty,
+        info_rows,
+        integrity_panel,
+        integrity_rows,
+    })
 }
 
 const LIBRARY_WIDTH: f32 = 300.0;
@@ -1863,6 +1904,7 @@ impl Screen for Overview {
                 grow: 1.0,
                 shrink: 1.0,
                 gap: Size::new(0.0, crate::theme::CONTROL_GAP + 2.0),
+                align_items: crate::layout::Align::Stretch,
                 ..Style::default()
             },
             Content::Panel,
@@ -1967,40 +2009,33 @@ impl Screen for Overview {
             cx.tree.set_visible(tile, false)?;
             self.tiles.push(tile);
         }
-        let details = cx.tree.add(
+        let wide = cx.tree.add(
             Some(column),
-            NodeKind::Column,
+            NodeKind::Row,
             Style {
-                gap: Size::new(0.0, crate::theme::CONTROL_GAP + 2.0),
+                gap: Size::new(crate::theme::CONTROL_GAP + 2.0, 0.0),
+                align_items: crate::layout::Align::Stretch,
                 ..Style::default()
             },
             Content::Panel,
             Look::default(),
         )?;
-        let info = style::d2::panel(cx.tree, details)?;
-        self.info_panel = Some(info);
-        cx.tree.set_style(info, detail_panel_style())?;
-        style::d2::panel_title(cx.tree, info, "ИНФОРМАЦИЯ О СОХРАНЕНИИ")?;
-        self.info_empty = Some(paragraph(
-            cx.tree,
-            info,
-            "Выберите сохранение для просмотра.",
-            Text::Body,
-        )?);
-        for _ in 0..DETAIL_INFO_SLOTS {
-            let row = style::d2::key_value_row(cx.tree, info, "", "")?;
-            cx.tree.set_visible(row, false)?;
-            self.info_rows.push(row);
-        }
-        let integrity = style::d2::panel(cx.tree, details)?;
-        self.integrity_panel = Some(integrity);
-        cx.tree.set_style(integrity, detail_panel_style())?;
-        style::d2::panel_title(cx.tree, integrity, "ЦЕЛОСТНОСТЬ И МЕТАДАННЫЕ")?;
-        for _ in 0..DETAIL_INTEGRITY_SLOTS {
-            let row = style::d2::key_value_row(cx.tree, integrity, "", "")?;
-            cx.tree.set_visible(row, false)?;
-            self.integrity_rows.push(row);
-        }
+        self.details_wide = Some(wide);
+        let wide_set = build_detail_set(cx.tree, wide)?;
+        let narrow = cx.tree.add(
+            Some(column),
+            NodeKind::Column,
+            Style {
+                gap: Size::new(0.0, crate::theme::CONTROL_GAP + 2.0),
+                align_items: crate::layout::Align::Stretch,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        self.details_narrow = Some(narrow);
+        let narrow_set = build_detail_set(cx.tree, narrow)?;
+        self.details = vec![wide_set, narrow_set];
         Ok(())
     }
 
@@ -2032,6 +2067,9 @@ impl Screen for Overview {
         self.workspace.poll_tasks();
         if let Message::User(AppMessage::Tick(seconds)) = message {
             schedule_file_check(&self.workspace, cx, *seconds);
+        }
+        if let Message::Window(WindowEvent::Resized { width, .. }) = message {
+            self.apply_compact(cx.tree, *width < 1600)?;
         }
         if let Some(search_widget) = self.search_text {
             self.search_focused = cx.tree.focused() == Some(search_widget);
@@ -8480,6 +8518,56 @@ mod tests {
             ))
         );
         assert_eq!(super::process_check_prompt(&Ok(false)), None);
+    }
+
+    #[test]
+    fn overview_details_switch_between_row_and_stack_by_width() -> sse_core::Result<()> {
+        let temp = TempDirectory::new();
+        let (proxy, _receiver) = channel_pair::<AppMessage>();
+        let mut overview = Overview::new(Workspace::with_draft_directory(temp.0.join("drafts")));
+        let mut app = sse_app::AppState::new();
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: Some(&proxy),
+            status: None,
+            app: &mut app,
+        };
+        overview.build(&mut cx, host)?;
+        let wide = overview
+            .details_wide
+            .ok_or_else(|| Error::damaged("missing wide details"))?;
+        let narrow = overview
+            .details_narrow
+            .ok_or_else(|| Error::damaged("missing stacked details"))?;
+        overview.message(
+            &mut cx,
+            &Message::Window(crate::event_loop::WindowEvent::Resized {
+                width: 1920,
+                height: 1080,
+            }),
+            None,
+        )?;
+        assert!(cx.tree.is_visible(wide));
+        assert!(!cx.tree.is_visible(narrow));
+        overview.message(
+            &mut cx,
+            &Message::Window(crate::event_loop::WindowEvent::Resized {
+                width: 1366,
+                height: 768,
+            }),
+            None,
+        )?;
+        assert!(!cx.tree.is_visible(wide));
+        assert!(cx.tree.is_visible(narrow));
+        Ok(())
     }
 
     #[test]
