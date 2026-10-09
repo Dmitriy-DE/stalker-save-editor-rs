@@ -1,7 +1,7 @@
 //! Platform-specific installation handoff matching release 1.3.1.
 
 use crate::detector::UpdateInstallation;
-use crate::fetch::{hex_encode, Sha256Hasher};
+use crate::fetch::Sha256Hasher;
 use crate::manifest::UpdateArtifact;
 use crate::platform;
 use sse_core::{Error, Result};
@@ -256,7 +256,7 @@ fn stage_verified_copy(artifact: &UpdateArtifact, source: &Path, root: &Path) ->
     if copied != artifact.size {
         return Err(Error::damaged("File size mismatch"));
     }
-    let actual = hex_encode(&hasher.finish());
+    let actual = hasher.finalize_hex();
     if !actual.eq_ignore_ascii_case(&artifact.sha256) {
         return Err(Error::damaged("File SHA-256 mismatch"));
     }

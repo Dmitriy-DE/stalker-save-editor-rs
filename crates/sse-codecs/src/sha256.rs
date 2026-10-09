@@ -35,12 +35,26 @@ impl Sha256 {
 
     /// Adds another input chunk to the hash.
     pub fn update(&mut self, data: &[u8]) {
-        self.total_len = self.total_len.wrapping_add(data.len() as u64);
-        for &byte in data {
-            if let Some(slot) = self.buffer.get_mut(self.buffered_len) {
-                *slot = byte;
+        self.total_len = self.total_len.saturating_add(data.len() as u64);
+        let mut offset = 0_usize;
+        while offset < data.len() {
+            let space = 64_usize.saturating_sub(self.buffered_len);
+            let available = data.len().saturating_sub(offset);
+            let to_copy = space.min(available);
+            let end = self.buffered_len.saturating_add(to_copy);
+            let source_end = offset.saturating_add(to_copy);
+
+            if let (Some(destination), Some(source)) = (
+                self.buffer.get_mut(self.buffered_len..end),
+                data.get(offset..source_end),
+            ) {
+                destination.copy_from_slice(source);
+                self.buffered_len = end;
+                offset = source_end;
+            } else {
+                break;
             }
-            self.buffered_len = self.buffered_len.wrapping_add(1);
+
             if self.buffered_len == 64 {
                 process_block(&self.buffer, &mut self.state);
                 self.buffered_len = 0;
@@ -99,6 +113,14 @@ impl Sha256 {
     #[must_use]
     pub fn finalize_hex(self) -> String {
         digest_hex(&self.finalize())
+    }
+
+    /// Finishes the hash and returns its 32-byte digest.
+    ///
+    /// This alias keeps existing streaming callers source-compatible.
+    #[must_use]
+    pub fn finish(self) -> [u8; 32] {
+        self.finalize()
     }
 }
 
@@ -226,6 +248,19 @@ mod tests {
         assert_eq!(
             sha256_hex(b"abc"),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    #[test]
+    fn finish_alias_matches_finalize_for_existing_streaming_callers() {
+        let mut hasher = Sha256::new();
+        hasher.update(b"abc");
+        assert_eq!(
+            hasher.finish(),
+            [
+                0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea, 0x41, 0x41, 0x40, 0xde, 0x5d, 0xae, 0x22, 0x23, 0xb0,
+                0x03, 0x61, 0xa3, 0x96, 0x17, 0x7a, 0x9c, 0xb4, 0x10, 0xff, 0x61, 0xf2, 0x00, 0x15, 0xad,
+            ]
         );
     }
 
