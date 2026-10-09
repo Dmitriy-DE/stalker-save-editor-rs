@@ -177,12 +177,6 @@ impl S2Save {
         })
     }
 
-    /// True when the packed input has the supported S2 container and wallet layout.
-    #[must_use]
-    pub fn detect(data: &[u8]) -> bool {
-        Self::from_bytes(data).is_ok()
-    }
-
     /// Container metadata and unpacked save image.
     #[must_use]
     pub const fn container(&self) -> &S2Container {
@@ -199,16 +193,6 @@ impl S2Save {
     #[must_use]
     pub fn money(&self) -> u32 {
         read_u32(self.container.image(), self.index.money_offset).unwrap_or_default()
-    }
-
-    /// Wallet-anchor occurrence count (one for current saves, zero for the legacy layout).
-    #[must_use]
-    pub const fn money_anchor_count(&self) -> usize {
-        if self.index.is_legacy {
-            0
-        } else {
-            1
-        }
     }
 
     /// Read-only inventory item views assembled from the image and its index.
@@ -293,12 +277,6 @@ impl S2Save {
             });
         }
         Ok(items)
-    }
-
-    /// Whether this S2 layout can be written with the supported Kraken encoder.
-    #[must_use]
-    pub const fn can_write(&self) -> bool {
-        !self.index.is_legacy
     }
 
     /// Applies supported changes and encodes a packed S2 save with a CRC-checked read-back.
@@ -782,12 +760,6 @@ impl S2NameTables {
             )
         };
         self.tables.get(table_index)?.get(name_index).map(String::as_str)
-    }
-
-    /// Resolves a save-local type key to its display name.
-    #[must_use]
-    pub fn display_name(&self, type_key: &[u8]) -> Option<&str> {
-        self.resolve(type_key)
     }
 
     /// Number of parsed name tables.
@@ -1369,7 +1341,6 @@ fn has_unique_backpack_grid_handle(index: &S2InventoryIndex, handle: u32) -> boo
 /// Wallet and grid offsets plus validated handle references.
 pub struct S2InventoryIndex {
     money_offset: usize,
-    owned_flag_offset: usize,
     owned_count_offset: usize,
     owned_handles_offset: usize,
     owned_handles: Vec<u32>,
@@ -1396,7 +1367,6 @@ impl S2InventoryIndex {
             [] => (locate_legacy_wallet(raw)?, true),
             _ => return Err(Error::damaged("S2 wallet anchor is ambiguous")),
         };
-        let owned_flag_offset = checked_add(money_offset, 4, "S2 owned flag offset overflow")?;
         let owned_count_offset = checked_add(money_offset, 8, "S2 owned count offset overflow")?;
         let owned_count = usize::from(read_u16(raw, owned_count_offset)?);
         if owned_count > MAXIMUM_OWNED_HANDLES {
@@ -1498,7 +1468,6 @@ impl S2InventoryIndex {
         let grid_end_offset = checked_add(grid_offset, grid_bytes, "S2 grid end offset overflow")?;
         Ok(Self {
             money_offset,
-            owned_flag_offset,
             owned_count_offset,
             owned_handles_offset,
             owned_handles,
@@ -1518,12 +1487,6 @@ impl S2InventoryIndex {
     #[must_use]
     pub const fn money_offset(&self) -> usize {
         self.money_offset
-    }
-
-    /// Owned-list flag offset.
-    #[must_use]
-    pub const fn owned_flag_offset(&self) -> usize {
-        self.owned_flag_offset
     }
 
     /// Owned-list count offset.
@@ -2600,7 +2563,6 @@ mod tests {
         let Ok(parsed) = parsed else { return };
         let result = apply_changes_to_image(&parsed, &[S2Change::SetMoney(876_543)]);
         assert_eq!(result.map(|(image, _)| image), Ok(WRITER_S2_MONEY_EXPECTED.to_vec()));
-        assert!(parsed.can_write());
         let packed = parsed.write_changes(&[S2Change::SetMoney(876_543)]);
         assert!(packed.is_ok());
         let Ok(packed) = packed else { return };
@@ -3196,12 +3158,11 @@ mod tests {
     fn legacy_1031_reader_matches_the_synthetic_reference_values() {
         let raw = legacy_synthetic_raw();
         let packed = pack_raw(&raw);
-        assert!(S2Save::detect(&packed));
+        assert!(S2Save::from_bytes(&packed).is_ok());
         let save = S2Save::from_bytes(&packed);
         assert_eq!(
             save.map(|value| (
                 value.money(),
-                value.money_anchor_count(),
                 value.index().is_legacy(),
                 value.index().owned_handles().len(),
                 value.name_tables().map(super::S2NameTables::table_count),
@@ -3224,7 +3185,6 @@ mod tests {
             )),
             Ok((
                 85_433,
-                0,
                 true,
                 6,
                 Some(1),
@@ -3248,7 +3208,6 @@ mod tests {
         assert!(parsed.is_ok());
         let Ok(parsed) = parsed else { return };
 
-        assert!(!parsed.can_write());
         assert!(parsed
             .write_changes(&[S2Change::SetMoney(85_434)])
             .is_err_and(|error| error.to_string().contains(
@@ -3311,7 +3270,6 @@ mod tests {
         objects.by_handle.insert(handle, vec![0]);
         let index = S2InventoryIndex {
             money_offset: 0,
-            owned_flag_offset: 0,
             owned_count_offset: 0,
             owned_handles_offset: 0,
             owned_handles: vec![handle],
@@ -3441,7 +3399,6 @@ mod tests {
         objects.by_handle.insert(handle, vec![0]);
         let index = S2InventoryIndex {
             money_offset: 0,
-            owned_flag_offset: 0,
             owned_count_offset: 0,
             owned_handles_offset: 0,
             owned_handles: vec![handle],
@@ -3577,7 +3534,7 @@ mod tests {
             Ok((true, SYNTHETIC_SAVE.len(), true))
         );
 
-        assert!(S2Save::detect(SYNTHETIC_SAVE));
+        assert!(S2Save::from_bytes(SYNTHETIC_SAVE).is_ok());
         assert_eq!(
             S2Save::from_bytes(SYNTHETIC_SAVE).map(|value| (
                 value.container().image().len(),
