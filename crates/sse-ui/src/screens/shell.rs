@@ -5553,10 +5553,10 @@ mod tests {
             hb > hr + 60 && hb > hg + 60,
             "header centre is not blue: {hr} {hg} {hb}"
         );
-        let (cr, cg, cb) = channels(1000, 600);
+        let (cr, cg, cb) = channels(1590, 700);
         assert!(
             cr > cg && cg > cb && cr > 20,
-            "content below the header is not brown: {cr} {cg} {cb}"
+            "window background beside the content card is not brown: {cr} {cg} {cb}"
         );
         let (mr, mg, mb) = channels(220, 600);
         assert!(mg > mr + 30 && mg > mb + 30, "menu centre is not green: {mr} {mg} {mb}");

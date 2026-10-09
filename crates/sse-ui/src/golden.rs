@@ -184,7 +184,7 @@ mod tests {
         let mut actual = Vec::with_capacity(ScreenId::ALL.len());
         let mut tree = Tree::new(Fonts::bundled()?, crate::screens::style::rgb(BG_BASE));
         let mut shell = Shell::build_for_test(&mut tree, None)?;
-        shell.resize_window(&mut tree, 1280, 800)?;
+        tree.resize(1280, 800);
         for id in &ScreenId::ALL {
             shell.open(&mut tree, *id)?;
             let mut frame = vec![0_u32; 1280 * 800];
