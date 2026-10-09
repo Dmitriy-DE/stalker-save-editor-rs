@@ -75,7 +75,7 @@ impl UpdateService {
             Ok((state, manifest, artifact)) => UpdateCheckResult {
                 state,
                 manifest: Some(manifest),
-                artifact: Some(artifact),
+                artifact: (state == UpdateState::Available).then_some(artifact),
                 error: None,
             },
             Err(CheckFailure::Unavailable(error)) => failed_check(UpdateState::Unavailable, error),
@@ -170,6 +170,10 @@ impl UpdateService {
             )
             .map_err(CheckFailure::Unavailable)?
             .clone();
+        let artifact = UpdateArtifact {
+            release_version: manifest.version.clone(),
+            ..artifact
+        };
 
         // 6. Compare versions with downgrade protection
         let state = compare_versions(&self.current_version, &manifest.version).map_err(CheckFailure::Invalid)?;
@@ -188,6 +192,7 @@ impl UpdateService {
         destination: &Path,
         progress: Option<&mut dyn FnMut(u64, u64)>,
     ) -> Result<PathBuf> {
+        ensure_update_available(&self.current_version, artifact)?;
         download_artifact(fetch, artifact, destination, progress)
     }
 
@@ -201,7 +206,18 @@ impl UpdateService {
         verified_archive: &Path,
         runner: &mut dyn ProcessRunner,
     ) -> Result<UpdateInstallResult> {
+        ensure_update_available(&self.current_version, artifact)?;
         install_artifact(artifact, verified_archive, &self.installation, runner)
+    }
+}
+
+/// Refuses an artifact unless the release it came from is strictly newer than the installed build.
+fn ensure_update_available(current_version: &str, artifact: &UpdateArtifact) -> Result<()> {
+    match compare_versions(current_version, &artifact.release_version)? {
+        UpdateState::Available => Ok(()),
+        _ => Err(Error::Refused(
+            "The update package is not newer than the installed version".to_string(),
+        )),
     }
 }
 
@@ -218,10 +234,12 @@ fn failed_check(state: UpdateState, error: Error) -> UpdateCheckResult {
 mod tests {
     use super::{UpdateService, DEFAULT_MANIFEST_URL};
     use crate::detector::UpdateInstallation;
-    use crate::manifest::{UpdateState, MAXIMUM_MANIFEST_BYTES};
+    use crate::fetch::{Fetch, Response};
+    use crate::installer::ProcessRunner;
+    use crate::manifest::{UpdateArtifact, UpdateState, MAXIMUM_MANIFEST_BYTES};
     use crate::signature::MAXIMUM_SIGNATURE_BYTES;
     use crate::test_support::MemoryFetch;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     fn service() -> UpdateService {
         UpdateService::new(
@@ -295,5 +313,85 @@ mod tests {
         assert!(result.error.is_some());
         assert!(result.manifest.is_none());
         assert!(result.artifact.is_none());
+    }
+
+    /// Counts download requests so a refused download can be shown to make no network call.
+    #[derive(Default)]
+    struct CountingFetch {
+        calls: usize,
+    }
+
+    impl Fetch for CountingFetch {
+        fn get(
+            &mut self,
+            _url: &str,
+            _range_from: u64,
+            _sink: &mut dyn FnMut(&[u8]) -> bool,
+        ) -> sse_core::Result<Response> {
+            self.calls = self.calls.saturating_add(1);
+            Err(sse_core::Error::Refused("network must not be used".to_owned()))
+        }
+
+        fn get_with_response(
+            &mut self,
+            _url: &str,
+            _range_from: u64,
+            _on_response: &mut dyn FnMut(&Response) -> bool,
+            _sink: &mut dyn FnMut(&[u8]) -> bool,
+        ) -> sse_core::Result<Response> {
+            self.calls = self.calls.saturating_add(1);
+            Err(sse_core::Error::Refused("network must not be used".to_owned()))
+        }
+    }
+
+    fn artifact_for_release(release_version: &str) -> UpdateArtifact {
+        UpdateArtifact {
+            target: "linux".to_owned(),
+            architecture: "x86_64".to_owned(),
+            kind: "portable".to_owned(),
+            file: "save-editor.tar.gz".to_owned(),
+            size: 1,
+            sha256: "0".repeat(64),
+            url: "https://updates.test/save-editor.tar.gz".to_owned(),
+            release_version: release_version.to_owned(),
+        }
+    }
+
+    #[test]
+    fn download_refuses_a_release_that_is_not_newer() {
+        let service = service();
+        for release in ["1.0.0", "0.9.0"] {
+            let mut fetch = CountingFetch::default();
+            let artifact = artifact_for_release(release);
+            let result = service.download(&mut fetch, &artifact, Path::new("/tmp/save-editor-download"), None);
+
+            assert!(result.is_err(), "release {release} must be refused");
+            assert_eq!(fetch.calls, 0, "no request for release {release}");
+        }
+    }
+
+    #[test]
+    fn install_refuses_a_release_that_is_not_newer() {
+        let service = service();
+        for release in ["1.0.0", "0.9.0"] {
+            let mut runner = RecordingRunner::default();
+            let artifact = artifact_for_release(release);
+            let result = service.install(&artifact, Path::new("/tmp/save-editor-download.tar.gz"), &mut runner);
+
+            assert!(result.is_err(), "release {release} must be refused");
+            assert!(runner.program.is_none(), "no process for release {release}");
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingRunner {
+        program: Option<String>,
+    }
+
+    impl ProcessRunner for RecordingRunner {
+        fn run(&mut self, program: &str, _args: &[&str]) -> sse_core::Result<i32> {
+            self.program = Some(program.to_owned());
+            Ok(0)
+        }
     }
 }

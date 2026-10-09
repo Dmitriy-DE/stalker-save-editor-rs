@@ -198,6 +198,9 @@ pub struct UpdateArtifact {
     pub sha256: String,
     /// Download URL.
     pub url: String,
+    /// Version of the release manifest this artifact came from; set when the artifact is
+    /// selected from a verified manifest. Empty for artifacts that were not selected from one.
+    pub release_version: String,
 }
 
 impl UpdateArtifact {
@@ -494,6 +497,7 @@ fn parse_single_artifact(reader: &mut sse_codecs::json::Reader<'_>) -> Result<Up
         size: size.ok_or_else(|| Error::damaged("missing size in artifact"))?,
         sha256: sha256.ok_or_else(|| Error::damaged("missing sha256 in artifact"))?,
         url: url.ok_or_else(|| Error::damaged("missing url in artifact"))?,
+        release_version: String::new(),
     })
 }
 
