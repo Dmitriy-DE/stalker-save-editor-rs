@@ -3485,11 +3485,14 @@ impl Inventory {
         let plan = cx.app.draft(source_sha256);
         let current = if let Some(input) = self.money_input.as_ref() {
             let typed = input.text();
-            let Ok(value) = typed.parse::<u32>() else { return Ok(()) };
-            if value > 2_000_000_000 {
-                return Ok(());
+            match typed.parse::<u32>() {
+                Ok(value) if value <= 2_000_000_000 => value,
+                _ => {
+                    cx.app.set_invalid_numeric_input(true);
+                    cx.status = Some(t("Введены некорректные значения (проверьте введённые числа).").to_owned());
+                    return Ok(());
+                }
             }
-            value
         } else {
             pending_money
                 .or_else(|| plan.and_then(|plan| plan.money))
@@ -8624,6 +8627,68 @@ mod tests {
         )?;
         assert!(cx.app.has_invalid_numeric_input());
         assert_eq!(cx.tree.focused(), Some(field));
+        Ok(())
+    }
+
+    #[test]
+    fn money_increment_reports_invalid_input_instead_of_silent_noop() -> sse_core::Result<()> {
+        let temp = TempDirectory::new();
+        let source = include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-source.sav");
+        let loaded = load_xray(source, "fixture.sav", "stalker-cop", "cop")?;
+        let source_sha256 = loaded.source_sha256.clone();
+        let workspace = Workspace::with_draft_directory(temp.0.join("drafts"));
+        workspace.lock().selected = Some(Arc::new(loaded));
+        let mut app = sse_app::state::AppState::new();
+        app.set_current_save_identity(PathBuf::from("fixture.sav"), source_sha256.clone());
+        app.set_draft_journal(DraftJournal::new(vec![DraftPlan::empty(&source_sha256)?], 0)?);
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let mut inventory = Inventory::new(workspace);
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: None,
+            status: None,
+            app: &mut app,
+        };
+        inventory.build(&mut cx, host)?;
+        let button = inventory
+            .money_buttons
+            .first()
+            .map(|(id, _)| *id)
+            .ok_or_else(|| Error::damaged("money increment button is missing"))?;
+
+        for invalid in ["x", "2000000001"] {
+            inventory.money_input = Some(super::TextInput::new(invalid, super::money_input_config())?);
+            cx.app.set_invalid_numeric_input(false);
+            cx.status = None;
+
+            inventory.message(
+                &mut cx,
+                &Message::Window(WindowEvent::Button {
+                    button: 1,
+                    pressed: false,
+                    x: 0,
+                    y: 0,
+                }),
+                Some(button),
+            )?;
+
+            assert_eq!(
+                cx.status.as_deref(),
+                Some(super::t("Введены некорректные значения (проверьте введённые числа)."))
+            );
+            assert!(cx.app.has_invalid_numeric_input());
+            assert_eq!(
+                inventory.money_input.as_ref().map(super::TextInput::text).as_deref(),
+                Some(invalid)
+            );
+        }
         Ok(())
     }
 
