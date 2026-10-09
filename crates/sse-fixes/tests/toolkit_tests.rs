@@ -152,6 +152,181 @@ mouse_sens 0.12\r\n";
 }
 
 #[test]
+fn user_ltx_managed_keys_are_case_insensitive() {
+    let fixture = ToolkitTestFixture::new(GameTarget::ClearSky, "11450472");
+    fixture.write_file("_appdata_/user.ltx", b"G_FOV 67.5\r\nHUD_CROSSHAIR on\r\n");
+
+    let read = ManagedUserLtxSettings::read_managed_settings(&fixture.root).unwrap();
+    assert_eq!(read.get("g_fov").map(String::as_str), Some("67.5"));
+    assert_eq!(read.get("hud_crosshair").map(String::as_str), Some("on"));
+
+    let updates = BTreeMap::from([
+        ("g_fov".to_string(), "85.0".to_string()),
+        ("hud_crosshair".to_string(), "off".to_string()),
+    ]);
+    assert_eq!(
+        ManagedUserLtxSettings::update_managed_settings(&fixture.root, &updates).unwrap(),
+        2
+    );
+
+    let updated_text = fixture.read_file_string("_appdata_/user.ltx");
+    assert_eq!(
+        updated_text.lines().filter(|line| line.starts_with("G_FOV ")).count(),
+        1
+    );
+    assert_eq!(
+        updated_text
+            .lines()
+            .filter(|line| line.starts_with("HUD_CROSSHAIR "))
+            .count(),
+        1
+    );
+    assert!(updated_text.contains("G_FOV 85.0"));
+    assert!(updated_text.contains("HUD_CROSSHAIR off"));
+
+    let baseline = BTreeMap::from([
+        ("g_fov".to_string(), "85.0".to_string()),
+        ("hud_crosshair".to_string(), "off".to_string()),
+    ]);
+    assert!(ManagedUserLtxSettings::detect_drift(&fixture.root, &baseline)
+        .unwrap()
+        .is_clean());
+}
+
+#[test]
+fn user_ltx_read_refuses_managed_keys_duplicated_with_different_casing() {
+    let fixture = ToolkitTestFixture::new(GameTarget::ClearSky, "11450472");
+    fixture.write_file("_appdata_/user.ltx", b"G_FOV 67.5\ng_fov 70.0\n");
+
+    let error = ManagedUserLtxSettings::read_managed_settings(&fixture.root).unwrap_err();
+
+    assert!(error.to_string().contains("more than one g_fov"));
+}
+
+#[test]
+fn user_ltx_update_refuses_managed_keys_duplicated_with_different_casing() {
+    let fixture = ToolkitTestFixture::new(GameTarget::ClearSky, "11450472");
+    let original = b"G_FOV 67.5\ng_fov 70.0\n";
+    fixture.write_file("_appdata_/user.ltx", original);
+    let updates = BTreeMap::from([("g_fov".to_string(), "85.0".to_string())]);
+
+    let error = ManagedUserLtxSettings::update_managed_settings(&fixture.root, &updates).unwrap_err();
+
+    assert!(error.to_string().contains("more than one g_fov"));
+    assert_eq!(fs::read(fixture.root.join("_appdata_/user.ltx")).unwrap(), original);
+}
+
+#[test]
+fn user_ltx_rejects_duplicate_managed_keys_with_different_casing() {
+    let fixture = ToolkitTestFixture::new(GameTarget::ClearSky, "11450472");
+    let original = b"G_FOV 67.5\r\n";
+    fixture.write_file("_appdata_/user.ltx", original);
+    let updates = BTreeMap::from([
+        ("G_FOV".to_string(), "80.0".to_string()),
+        ("g_fov".to_string(), "90.0".to_string()),
+    ]);
+
+    let error = ManagedUserLtxSettings::update_managed_settings(&fixture.root, &updates).unwrap_err();
+
+    assert!(error.to_string().contains("provided more than once"));
+    assert_eq!(fs::read(fixture.root.join("_appdata_/user.ltx")).unwrap(), original);
+}
+
+#[test]
+fn fsgame_appdata_root_rejects_parent_path_escape() {
+    let fixture = ToolkitTestFixture::new(GameTarget::ClearSky, "11450472");
+    let game = fixture.root.join("game");
+    let outside = fixture.root.join("outside");
+    fs::create_dir_all(&game).unwrap();
+    fs::create_dir_all(&outside).unwrap();
+    fs::write(outside.join("user.ltx"), b"g_fov 70.0\n").unwrap();
+
+    let separator = std::path::MAIN_SEPARATOR;
+    let outside_name = outside.file_name().unwrap().to_string_lossy();
+    let escape = format!("..{separator}{outside_name}{separator}");
+    fs::write(
+        game.join("fsgame.ltx"),
+        format!("$app_data_root$ = true| false| $fs_root$| {escape}\n"),
+    )
+    .unwrap();
+
+    let resolved = ManagedUserLtxSettings::resolve_path(&game).unwrap();
+
+    assert_eq!(resolved, game.join("_appdata_").join("user.ltx"));
+    assert!(ManagedUserLtxSettings::read_managed_settings(&game).unwrap().is_empty());
+}
+
+#[test]
+fn fsgame_appdata_root_accepts_an_in_game_custom_directory() {
+    let fixture = ToolkitTestFixture::new(GameTarget::ClearSky, "11450472");
+    let game = fixture.root.join("game");
+    let appdata = game.join("user-data");
+    fs::create_dir_all(&appdata).unwrap();
+    fs::write(appdata.join("user.ltx"), b"g_fov 72.0\n").unwrap();
+    fs::write(
+        game.join("fsgame.ltx"),
+        "$app_data_root$ = true| false| $fs_root$| user-data/\n",
+    )
+    .unwrap();
+
+    assert_eq!(
+        ManagedUserLtxSettings::resolve_path(&game),
+        Some(appdata.join("user.ltx"))
+    );
+    assert_eq!(
+        ManagedUserLtxSettings::read_managed_settings(&game)
+            .unwrap()
+            .get("g_fov")
+            .map(String::as_str),
+        Some("72.0")
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn fsgame_appdata_root_rejects_absolute_path_escape() {
+    let fixture = ToolkitTestFixture::new(GameTarget::ClearSky, "11450472");
+    let game = fixture.root.join("game");
+    let outside = fixture.root.join("outside");
+    fs::create_dir_all(&game).unwrap();
+    fs::create_dir_all(&outside).unwrap();
+    fs::write(outside.join("user.ltx"), b"g_fov 70.0\n").unwrap();
+    let outside_path = outside.to_string_lossy();
+    fs::write(
+        game.join("fsgame.ltx"),
+        format!("$app_data_root$ = true| false| $fs_root$| {outside_path}\\\n"),
+    )
+    .unwrap();
+
+    let resolved = ManagedUserLtxSettings::resolve_path(&game).unwrap();
+
+    assert_eq!(resolved, game.join("_appdata_").join("user.ltx"));
+    assert!(ManagedUserLtxSettings::read_managed_settings(&game).unwrap().is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn fsgame_appdata_root_rejects_symlink_escape() {
+    let fixture = ToolkitTestFixture::new(GameTarget::ClearSky, "11450472");
+    let game = fixture.root.join("game");
+    let outside = fixture.root.join("outside");
+    fs::create_dir_all(&game).unwrap();
+    fs::create_dir_all(&outside).unwrap();
+    fs::write(outside.join("user.ltx"), b"g_fov 70.0\n").unwrap();
+    std::os::unix::fs::symlink(&outside, game.join("custom-data")).unwrap();
+    fs::write(
+        game.join("fsgame.ltx"),
+        "$app_data_root$ = true| false| $fs_root$| custom-data/\n",
+    )
+    .unwrap();
+
+    let resolved = ManagedUserLtxSettings::resolve_path(&game).unwrap();
+
+    assert_eq!(resolved, game.join("_appdata_").join("user.ltx"));
+    assert!(ManagedUserLtxSettings::read_managed_settings(&game).unwrap().is_empty());
+}
+
+#[test]
 fn user_ltx_validates_bounds_and_rejects_unmanaged_keys() {
     let fixture = ToolkitTestFixture::new(GameTarget::ClearSky, "11450472");
     fixture.write_file("_appdata_/user.ltx", b"g_fov 70.0\r\n");
