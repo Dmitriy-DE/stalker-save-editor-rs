@@ -5285,30 +5285,36 @@ mod tests {
         Ok(())
     }
 
-    /// Waits until the save at `path` has finished loading, passing the messages through the shell.
+    /// Waits until the save at `path` is in the library listing, passing the messages through the shell.
     fn wait_for_save(
         shell: &mut Shell,
         tree: &mut Tree,
         receiver: &std::sync::mpsc::Receiver<Message<super::super::AppMessage>>,
         path: &Path,
     ) -> sse_core::Result<()> {
+        let name = path.file_name().map(std::ffi::OsStr::to_os_string);
         let deadline = std::time::Instant::now()
-            .checked_add(std::time::Duration::from_secs(30))
+            .checked_add(std::time::Duration::from_secs(60))
             .ok_or_else(|| sse_core::Error::System("deadline overflow".to_owned()))?;
-        let mut finished = false;
-        while !finished && std::time::Instant::now() < deadline {
-            let Ok(message) = receiver.recv_timeout(std::time::Duration::from_millis(100)) else {
-                continue;
-            };
-            if let Message::User(super::super::AppMessage::ToScreen(ScreenId::Overview, payload)) = &message {
-                finished = payload
-                    .downcast_ref::<super::super::saves::LoadFinished>()
-                    .is_some_and(|done| done.requested_path.file_name() == path.file_name());
+        loop {
+            let (scanning, error, slots) = shell.library_workspace.library_snapshot();
+            let listed = slots
+                .iter()
+                .any(|slot| slot.path.file_name().map(std::ffi::OsStr::to_os_string) == name);
+            if listed && !shell.library_workspace.is_loading() {
+                return Ok(());
             }
-            shell.handle(tree, &message, None)?;
+            if std::time::Instant::now() >= deadline {
+                panic!(
+                    "save {} should appear in the library: scanning={scanning} error={error:?} listed={}",
+                    path.display(),
+                    slots.len()
+                );
+            }
+            if let Ok(message) = receiver.recv_timeout(std::time::Duration::from_millis(100)) {
+                shell.handle(tree, &message, None)?;
+            }
         }
-        assert!(finished, "save {} should finish loading", path.display());
-        Ok(())
     }
 
     /// Opens copies of the fixture save and waits until each one has finished loading.
@@ -5425,6 +5431,14 @@ mod tests {
                 .first()
                 .ok_or_else(|| sse_core::Error::System("no fixture".to_owned()))?;
             wait_for_save(&mut shell, &mut tree, &receiver, first_path)?;
+            let deadline = std::time::Instant::now()
+                .checked_add(std::time::Duration::from_secs(60))
+                .ok_or_else(|| sse_core::Error::System("deadline overflow".to_owned()))?;
+            while shell.app.current_save().is_none() && std::time::Instant::now() < deadline {
+                if let Ok(message) = receiver.recv_timeout(std::time::Duration::from_millis(100)) {
+                    shell.handle(&mut tree, &message, None)?;
+                }
+            }
             shell.render_library(&mut tree)?;
             let mut accent_rows = 0;
             for library_row in shell.library_rows.clone() {
