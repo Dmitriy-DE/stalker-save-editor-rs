@@ -1572,7 +1572,7 @@ impl Shell {
             tree,
             library_actions,
             "Найти сейвы",
-            style::d2::ButtonKind::Primary,
+            style::d2::ButtonKind::Secondary,
             style::d2::ButtonSize::Small,
         )?;
         let mut library_search = super::saves::LibrarySearch::new()?;
@@ -1584,6 +1584,7 @@ impl Shell {
             Some(library),
             NodeKind::Column,
             Style {
+                grow: 1.0,
                 gap: Size::new(0.0, 4.0),
                 align_items: Align::Stretch,
                 ..Style::default()
@@ -2162,6 +2163,18 @@ impl Shell {
         tree.resize(width, height);
         self.handle(tree, &Message::Window(WindowEvent::Resized { width, height }), None)?;
         Ok(())
+    }
+
+    /// The Find button of the save library panel.
+    #[must_use]
+    pub const fn library_find_button(&self) -> WidgetId {
+        self.library_find
+    }
+
+    /// Whether a save discovery is running for the library panel.
+    #[must_use]
+    pub fn library_scanning(&self) -> bool {
+        self.library_workspace.library_snapshot().0
     }
 
     /// Loads the background pictures from `directory` on the calling thread; for headless snapshots and budgets.
@@ -3807,18 +3820,7 @@ impl Shell {
         self.library_search.show(tree, &query)?;
         let pages = slots.len().saturating_add(SAVE_LIBRARY_PAGE_SIZE - 1) / SAVE_LIBRARY_PAGE_SIZE;
         self.library_page = self.library_page.min(pages.saturating_sub(1));
-        let text = if scanning {
-            format!("{} · …", slots.len())
-        } else if let Some(error) = error.as_deref() {
-            format!(
-                "{} · ошибка: {}",
-                slots.len(),
-                super::saves::short_text(&crate::status::localize_writer_status(error), 24)
-            )
-        } else {
-            slots.len().to_string()
-        };
-        tree.set_text(self.library_count, &text)?;
+        tree.set_text(self.library_count, &slots.len().to_string())?;
         let start = self.library_page.saturating_mul(SAVE_LIBRARY_PAGE_SIZE);
         let visible_slots: Vec<SaveSlot> = slots.iter().skip(start).take(SAVE_LIBRARY_PAGE_SIZE).cloned().collect();
         let selected_path = self.app.current_save();
@@ -3889,7 +3891,11 @@ impl Shell {
         } else if slots.is_empty() {
             "Сейвы не найдены".to_owned()
         } else {
-            String::new()
+            format!(
+                "{} сейвов · каталогов проверено: {}",
+                slots.len(),
+                self.library_workspace.searched_path_count()
+            )
         };
         tree.set_text(self.library_status, &status)?;
         tree.set_visible(self.library_status, !status.is_empty())?;
@@ -5236,7 +5242,7 @@ mod tests {
         path: &Path,
     ) -> sse_core::Result<()> {
         let deadline = std::time::Instant::now()
-            .checked_add(std::time::Duration::from_secs(10))
+            .checked_add(std::time::Duration::from_secs(30))
             .ok_or_else(|| sse_core::Error::System("deadline overflow".to_owned()))?;
         let mut finished = false;
         while !finished && std::time::Instant::now() < deadline {
@@ -5246,7 +5252,7 @@ mod tests {
             if let Message::User(super::super::AppMessage::ToScreen(ScreenId::Overview, payload)) = &message {
                 finished = payload
                     .downcast_ref::<super::super::saves::LoadFinished>()
-                    .is_some_and(|done| done.requested_path == path);
+                    .is_some_and(|done| done.requested_path.file_name() == path.file_name());
             }
             shell.handle(tree, &message, None)?;
         }

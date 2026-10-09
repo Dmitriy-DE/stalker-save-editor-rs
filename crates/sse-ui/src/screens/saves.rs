@@ -233,6 +233,14 @@ impl Workspace {
         self.lock().search_query.clone()
     }
 
+    /// How many directories the last discovery searched; shown in the library status.
+    pub(crate) fn searched_path_count(&self) -> usize {
+        self.lock()
+            .discovery
+            .as_ref()
+            .map_or(0, |result| result.searched_paths.len())
+    }
+
     pub(crate) fn set_search_query(&self, query: &str) {
         query.clone_into(&mut self.lock().search_query);
     }
@@ -1695,7 +1703,7 @@ impl Screen for Overview {
                 ..Style::default()
             },
             Content::Label {
-                text: "нет снимка".to_owned(),
+                text: crate::strings::t("нет снимка").to_owned(),
                 style: Text::Note.style(),
             },
             Look {
