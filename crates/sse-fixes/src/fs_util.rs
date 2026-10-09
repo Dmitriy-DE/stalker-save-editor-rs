@@ -2,15 +2,10 @@
 
 #[cfg(test)]
 use std::cell::Cell;
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::SystemTime;
 
 use sse_core::{Error, Result};
-
-static COUNTER: AtomicU64 = AtomicU64::new(1);
 
 #[cfg(test)]
 thread_local! {
@@ -56,45 +51,25 @@ impl AtomicFileWriter {
             return Err(Error::System("injected atomic write failure".to_owned()));
         }
 
-        if !overwrite && path.exists() {
-            return Err(Error::Refused(format!(
-                "Refusing to overwrite existing file: {}",
-                path.display()
-            )));
-        }
-
-        if let Some(parent) = path.parent() {
+        if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
             fs::create_dir_all(parent).map_err(|e| Error::System(e.to_string()))?;
         }
 
-        let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let nanos = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .map_or(0, |d| d.as_nanos());
-        let temp_name = format!(
-            "{}.tmp-{nanos:x}-{id:x}",
-            path.file_name().unwrap_or_default().to_string_lossy()
-        );
-        let temp_path = path.with_file_name(temp_name);
-
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temp_path)
-            .map_err(|e| Error::System(e.to_string()))?;
-
-        if file.write_all(bytes).is_err() || file.sync_all().is_err() {
-            let _ = fs::remove_file(&temp_path);
-            return Err(Error::System("Failed to write temporary file".to_string()));
+        let options = if overwrite {
+            sse_sys::secure_fs::AtomicWriteOptions::create_or_replace()
+        } else {
+            sse_sys::secure_fs::AtomicWriteOptions::create_new()
         }
-        drop(file);
+        .without_parent_sync();
 
-        if fs::rename(&temp_path, path).is_err() {
-            let _ = fs::remove_file(&temp_path);
-            return Err(Error::System("Failed to rename temporary file".to_string()));
+        match sse_sys::secure_fs::atomic_write(path, bytes, options) {
+            Ok(()) => Ok(()),
+            Err(_error) if !overwrite && fs::symlink_metadata(path).is_ok() => Err(Error::Refused(format!(
+                "Refusing to overwrite existing file: {}",
+                path.display()
+            ))),
+            Err(error) => Err(Error::System(error.to_string())),
         }
-
-        Ok(())
     }
 }
 
@@ -201,4 +176,28 @@ fn is_symlink_or_reparse(path: &Path) -> bool {
         return false;
     };
     meta.file_type().is_symlink()
+}
+
+#[cfg(test)]
+mod atomic_writer_tests {
+    use super::AtomicFileWriter;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn no_overwrite_keeps_existing_bytes_and_staging_clean() -> std::io::Result<()> {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        let directory = std::env::temp_dir().join(format!("sse-fixes-atomic-{}-{unique}", std::process::id()));
+        std::fs::create_dir(&directory)?;
+        let destination = directory.join("existing.json");
+        std::fs::write(&destination, b"original")?;
+
+        assert!(AtomicFileWriter::write(&destination, b"replacement", false).is_err());
+        assert_eq!(std::fs::read(&destination)?, b"original");
+        assert_eq!(std::fs::read_dir(&directory)?.count(), 1);
+
+        std::fs::remove_dir_all(directory)?;
+        Ok(())
+    }
 }

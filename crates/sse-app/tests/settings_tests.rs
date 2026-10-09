@@ -102,6 +102,45 @@ fn atomic_save_and_load_file() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+#[cfg(unix)]
+#[test]
+fn atomic_save_refuses_symlink_destination_without_changing_its_target() -> std::io::Result<()> {
+    use std::os::unix::fs::symlink;
+
+    let dir = temp_test_dir("symlink_settings");
+    let original = dir.join("original.json");
+    let destination = dir.join("settings.json");
+    fs::write(&original, b"original")?;
+    symlink(&original, &destination)?;
+
+    let error = AppSettings::default()
+        .save(&destination)
+        .expect_err("settings must not replace a symlink");
+
+    assert!(matches!(error, sse_core::Error::Refused(_)));
+    assert_eq!(fs::read(&original)?, b"original");
+    assert!(fs::symlink_metadata(&destination)?.file_type().is_symlink());
+    assert_eq!(fs::read_dir(&dir)?.count(), 2);
+    fs::remove_dir_all(dir)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn atomic_settings_file_has_owner_only_permissions() -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = temp_test_dir("settings_permissions");
+    let destination = dir.join("settings.json");
+    AppSettings::default()
+        .save(&destination)
+        .expect("settings save should succeed");
+
+    assert_eq!(fs::metadata(&destination)?.permissions().mode() & 0o777, 0o600);
+    fs::remove_dir_all(dir)?;
+    Ok(())
+}
+
 #[test]
 fn load_missing_file_returns_defaults() {
     let dir = temp_test_dir("missing");

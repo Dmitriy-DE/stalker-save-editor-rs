@@ -19,6 +19,7 @@ dependencies = [
  "sse-codecs",
  "sse-content",
  "sse-core",
+ "sse-sys",
 ]
 
 [[package]]
@@ -86,6 +87,7 @@ dependencies = [
  "sse-codecs",
  "sse-content",
  "sse-core",
+ "sse-sys",
 ]
 
 [[package]]
