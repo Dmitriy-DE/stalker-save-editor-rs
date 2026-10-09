@@ -362,12 +362,161 @@ impl ArtLayers {
 }
 
 /// The picture of one slot at `size`: decoded, cover-scaled from its anchor and darkened by its scrim (the window
-/// also by the top-bar scrim over its first rows).
+/// also by the top-bar scrim over its first rows). A JPEG is scaled while it decodes, so the full picture is never
+/// held; a file in the data directory wins over the built-in one, and a file that does not decode is replaced by it.
 fn bake_art(directory: Option<&Path>, slot: ArtSlot, size: (u32, u32)) -> Option<ImageData> {
-    let source = directory
-        .and_then(|directory| load_art(directory, ArtSlot::STEMS.get(slot.index())?))
-        .or_else(|| decode_embedded_art(slot))?;
-    cover(&source, size.0, size.1, slot)
+    let stem = ArtSlot::STEMS.get(slot.index())?;
+    if let Some((path, bytes)) = directory.and_then(|directory| read_art_file(directory, stem)) {
+        let baked = if path.extension().is_some_and(|extension| extension == "png") {
+            sse_codecs::png::decode(&bytes).ok().and_then(|image| {
+                let source = ImageData {
+                    width: image.width,
+                    height: image.height,
+                    pixels: premultiplied(&image.pixels).into(),
+                };
+                cover(&source, size.0, size.1, slot)
+            })
+        } else {
+            cover_jpeg(&bytes, size, slot)
+        };
+        if baked.is_some() {
+            return baked;
+        }
+        sse_app::diagnostics::warn(&format!(
+            "background picture {} could not be decoded; the built-in one is used",
+            path.display()
+        ));
+    }
+    cover_jpeg(EMBEDDED_ART.get(slot.index())?, size, slot)
+}
+
+/// The first readable file `<stem>.jpg`, `.jpeg` or `.png` in `directory`, within the size limit.
+fn read_art_file(directory: &Path, stem: &str) -> Option<(PathBuf, Vec<u8>)> {
+    ["jpg", "jpeg", "png"].into_iter().find_map(|extension| {
+        let path = directory.join(format!("{stem}.{extension}"));
+        let metadata = std::fs::metadata(&path).ok()?;
+        if metadata.len() > ART_MAX_BYTES {
+            return None;
+        }
+        let bytes = std::fs::read(&path).ok()?;
+        Some((path, bytes))
+    })
+}
+
+/// A cover-scaled layer that is filled while a JPEG decodes: each source row is sampled into the target rows it maps
+/// to, so the decoder never has to hold the whole source picture.
+struct CoverStream {
+    slot: ArtSlot,
+    channels: usize,
+    width: usize,
+    height: usize,
+    columns: Vec<usize>,
+    rows: Vec<usize>,
+    pixels: Vec<u32>,
+    next: usize,
+}
+
+impl CoverStream {
+    fn new(header: sse_codecs::jpeg::Header, size: (u32, u32), slot: ArtSlot) -> Option<Self> {
+        let (sw, sh) = (u64::from(header.width), u64::from(header.height));
+        let (dw, dh) = (u64::from(size.0), u64::from(size.1));
+        if sw == 0 || sh == 0 || dw == 0 || dh == 0 {
+            return None;
+        }
+        let by_height = sw.checked_mul(dh)?.div_ceil(sh);
+        let (ws, hs) = if by_height >= dw {
+            (by_height, dh)
+        } else {
+            (dw, sh.checked_mul(dw)?.div_ceil(sw))
+        };
+        let (x0, y0) = match slot {
+            ArtSlot::Window => (0, 0),
+            ArtSlot::Sidebar => (ws.saturating_sub(dw) / 2, hs.saturating_sub(dh)),
+            ArtSlot::Header => (ws.saturating_sub(dw), hs.saturating_sub(dh) / 2),
+        };
+        let columns: Vec<usize> = (0..dw)
+            .map(|x| usize::try_from(x.saturating_add(x0).checked_mul(sw)?.checked_div(ws)?).ok())
+            .collect::<Option<_>>()?;
+        let rows: Vec<usize> = (0..dh)
+            .map(|y| usize::try_from(y.saturating_add(y0).checked_mul(sh)?.checked_div(hs)?).ok())
+            .collect::<Option<_>>()?;
+        let width = usize::try_from(dw).ok()?;
+        let height = usize::try_from(dh).ok()?;
+        Some(Self {
+            slot,
+            channels: usize::from(header.channels),
+            width,
+            height,
+            columns,
+            rows,
+            pixels: vec![0; width.checked_mul(height)?],
+            next: 0,
+        })
+    }
+
+    fn consume(&mut self, source_row: usize, bytes: &[u8]) {
+        while self.next < self.height {
+            if self.rows.get(self.next).is_none_or(|row| *row > source_row) {
+                break;
+            }
+            let window_top = self.slot == ArtSlot::Window && self.next < ART_TOPBAR_HEIGHT as usize;
+            let start = self.next.saturating_mul(self.width);
+            for (x, column) in self.columns.iter().enumerate() {
+                let at = column.saturating_mul(self.channels);
+                let sample = |offset: usize| bytes.get(at.saturating_add(offset)).copied().unwrap_or(0);
+                let (red, green, blue) = if self.channels == 1 {
+                    (sample(0), sample(0), sample(0))
+                } else {
+                    (sample(0), sample(1), sample(2))
+                };
+                let mut pixel = over_scrim(opaque_pixel(red, green, blue), scrim_for(self.slot));
+                if window_top {
+                    pixel = over_scrim(pixel, theme::d2::SCRIM_TOPBAR);
+                }
+                if let Some(target) = self.pixels.get_mut(start.saturating_add(x)) {
+                    *target = pixel;
+                }
+            }
+            self.next = self.next.saturating_add(1);
+        }
+    }
+
+    fn finish(self) -> Option<ImageData> {
+        if self.next < self.height {
+            return None;
+        }
+        Some(ImageData {
+            width: u32::try_from(self.width).ok()?,
+            height: u32::try_from(self.height).ok()?,
+            pixels: self.pixels.into(),
+        })
+    }
+}
+
+fn cover_jpeg(bytes: &[u8], size: (u32, u32), slot: ArtSlot) -> Option<ImageData> {
+    let mut stream: Option<CoverStream> = None;
+    sse_codecs::jpeg::decode_rows(bytes, |event| match event {
+        sse_codecs::jpeg::RowEvent::Header(header) => stream = CoverStream::new(header, size, slot),
+        sse_codecs::jpeg::RowEvent::Row(row, pixels) => {
+            if let Some(stream) = stream.as_mut() {
+                stream.consume(row, pixels);
+            }
+        }
+    })
+    .ok()?;
+    stream?.finish()
+}
+
+fn opaque_pixel(red: u8, green: u8, blue: u8) -> u32 {
+    0xFF00_0000 | (u32::from(red) << 16) | (u32::from(green) << 8) | u32::from(blue)
+}
+
+fn scrim_for(slot: ArtSlot) -> u32 {
+    match slot {
+        ArtSlot::Window => theme::d2::SCRIM_CONTENT,
+        ArtSlot::Sidebar => theme::d2::SCRIM_SIDEBAR,
+        ArtSlot::Header => theme::d2::SCRIM_HEADER,
+    }
 }
 
 /// Pictures compiled into the program; a layer uses one when the data directory has no usable file for it.
@@ -376,16 +525,6 @@ const EMBEDDED_ART: [&[u8]; 3] = [
     include_bytes!("../../assets/art/art-sidebar.jpg"),
     include_bytes!("../../assets/art/art-header.jpg"),
 ];
-
-fn decode_embedded_art(slot: ArtSlot) -> Option<ImageData> {
-    let bytes = EMBEDDED_ART.get(slot.index())?;
-    let image = sse_codecs::jpeg::decode(bytes).ok()?;
-    Some(ImageData {
-        width: image.width,
-        height: image.height,
-        pixels: opaque_premultiplied(image.channels, &image.pixels).into(),
-    })
-}
 
 fn spawn_art_bake(proxy: Proxy<AppMessage>, directory: Option<PathBuf>, slot: ArtSlot, size: (u32, u32)) {
     let _ = std::thread::Builder::new().name("art-bake".to_owned()).spawn(move || {
@@ -465,60 +604,6 @@ fn over_scrim(pixel: u32, scrim: u32) -> u32 {
     let g = mix(green, (pixel >> 8) & 0xFF);
     let b = mix(blue, pixel & 0xFF);
     0xFF00_0000 | (r << 16) | (g << 8) | b
-}
-
-fn load_art(directory: &Path, stem: &str) -> Option<ImageData> {
-    for extension in ["jpg", "jpeg", "png"] {
-        let path = directory.join(format!("{stem}.{extension}"));
-        let Ok(metadata) = std::fs::metadata(&path) else {
-            continue;
-        };
-        if metadata.len() > ART_MAX_BYTES {
-            continue;
-        }
-        let Ok(bytes) = std::fs::read(&path) else { continue };
-        let decoded = if extension == "png" {
-            sse_codecs::png::decode(&bytes)
-                .ok()
-                .map(|image| (image.width, image.height, premultiplied(&image.pixels)))
-        } else {
-            sse_codecs::jpeg::decode(&bytes).ok().map(|image| {
-                (
-                    image.width,
-                    image.height,
-                    opaque_premultiplied(image.channels, &image.pixels),
-                )
-            })
-        };
-        if let Some((width, height, pixels)) = decoded {
-            return Some(ImageData {
-                width,
-                height,
-                pixels: pixels.into(),
-            });
-        }
-        sse_app::diagnostics::warn(&format!(
-            "background picture {} could not be decoded; the built-in one is used",
-            path.display()
-        ));
-    }
-    None
-}
-
-fn opaque_premultiplied(channels: u8, pixels: &[u8]) -> Vec<u32> {
-    if channels == 3 {
-        return pixels
-            .chunks_exact(3)
-            .map(|rgb| match *rgb {
-                [r, g, b] => 0xFF00_0000 | (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b),
-                _ => 0xFF00_0000,
-            })
-            .collect();
-    }
-    pixels
-        .iter()
-        .map(|value| 0xFF00_0000 | (u32::from(*value) << 16) | (u32::from(*value) << 8) | u32::from(*value))
-        .collect()
 }
 
 fn premultiplied(rgba: &[u8]) -> Vec<u32> {
@@ -831,7 +916,7 @@ pub struct Shell {
     crumbs: WidgetId,
     header: WidgetId,
     title_small: WidgetId,
-    tab_row: WidgetId,
+    tab_rows: Vec<WidgetId>,
     viewport: WidgetId,
     tabs: Vec<WidgetId>,
     section_last: [usize; 4],
@@ -1327,31 +1412,33 @@ impl Shell {
                 ..Look::default()
             },
         )?;
-        let tab_row = tree.add(
-            Some(main),
-            NodeKind::Wrap,
-            Style {
-                min: Size::new(0.0, 36.0),
-                padding: padded(24.0, 0.0, 24.0, 0.0),
-                gap: Size::new(6.0, 0.0),
-                align_items: Align::Center,
-                shrink: 0.0,
-                ..Style::default()
-            },
-            Content::Panel,
-            Look::default(),
-        )?;
+        let mut tab_rows = Vec::with_capacity(Group::ALL.len());
         let mut tab_slots: Vec<Option<WidgetId>> = vec![None; screens.len()];
         for group in Group::ALL {
+            let tab_row = tree.add(
+                Some(main),
+                NodeKind::Wrap,
+                Style {
+                    min: Size::new(0.0, 36.0),
+                    padding: padded(24.0, 0.0, 24.0, 0.0),
+                    gap: Size::new(6.0, 0.0),
+                    align_items: Align::Start,
+                    shrink: 0.0,
+                    ..Style::default()
+                },
+                Content::Panel,
+                Look::default(),
+            )?;
+            tree.set_visible(tab_row, false)?;
+            tab_rows.push(tab_row);
             for (index, screen) in screens.iter().enumerate() {
                 if screen.id().group() != group {
                     continue;
                 }
                 let text = crate::strings::t(screen.id().title());
                 let tab = style::d2::tab(tree, tab_row, text, tab_icon(screen.id()), false)?;
-                tree.set_visible(tab, false)?;
-                if let Some(slot) = tab_slots.get_mut(index) {
-                    *slot = Some(tab);
+                if let Some(entry) = tab_slots.get_mut(index) {
+                    *entry = Some(tab);
                 }
             }
         }
@@ -1553,7 +1640,7 @@ impl Shell {
         tree.set_visible(library, true)?;
         let content_style = Style {
             grow: 1.0,
-            margin: padded(20.0, 0.0, 12.0, 20.0),
+            margin: padded(0.0, 0.0, 12.0, 20.0),
             align_items: Align::Stretch,
             ..Style::default()
         };
@@ -1807,7 +1894,7 @@ impl Shell {
             crumbs,
             header,
             title_small,
-            tab_row,
+            tab_rows,
             viewport,
             tabs,
             section_last,
@@ -2614,11 +2701,11 @@ impl Shell {
             tree.set_look(*nav, section_look(active, self.nav_collapsed))?;
         }
         for (index, tab) in self.tabs.iter().enumerate() {
-            let same_section = self.screens.get(index).map(|screen| screen.id().group()) == selected_group;
             tree.set_look(*tab, style::d2::tab_look(index == self.selected))?;
-            tree.set_visible(*tab, same_section && show_tabs)?;
         }
-        tree.set_visible(self.tab_row, show_tabs)?;
+        for (slot, row) in self.tab_rows.iter().enumerate() {
+            tree.set_visible(*row, show_tabs && Group::ALL.get(slot).copied() == selected_group)?;
+        }
         tree.set_visible(
             self.library,
             self.screens
@@ -3092,17 +3179,19 @@ impl Shell {
             tree.set_visible(self.title_small, compact)?;
             tree.set_style(self.header, header_style(compact))?;
             let margin = if compact { 16.0 } else { 24.0 };
-            tree.set_style(
-                self.tab_row,
-                Style {
-                    min: Size::new(0.0, 36.0),
-                    padding: padded(margin, 0.0, margin, 0.0),
-                    gap: Size::new(6.0, 6.0),
-                    align_items: Align::Center,
-                    shrink: 0.0,
-                    ..Style::default()
-                },
-            )?;
+            for row in self.tab_rows.iter().copied() {
+                tree.set_style(
+                    row,
+                    Style {
+                        min: Size::new(0.0, 36.0),
+                        padding: padded(margin, 0.0, margin, 0.0),
+                        gap: Size::new(6.0, 6.0),
+                        align_items: Align::Start,
+                        shrink: 0.0,
+                        ..Style::default()
+                    },
+                )?;
+            }
             tree.set_style(
                 self.viewport,
                 Style {
@@ -4158,6 +4247,40 @@ mod tests {
             checked = checked.saturating_add(1);
         }
         assert!(checked > 0, "no tab was visible");
+        Ok(())
+    }
+
+    #[test]
+    fn tab_strip_starts_where_the_content_starts() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut shell = Shell::build_for_test(&mut tree, None)?;
+        shell.resize_window(&mut tree, 1920, 1080)?;
+        for index in [0_usize, 9, 19] {
+            open_by_mouse(&mut shell, &mut tree, index)?;
+            tree.update_layout()?;
+            let first = shell
+                .tabs
+                .iter()
+                .copied()
+                .find(|tab| tree.is_visible(*tab))
+                .ok_or_else(|| sse_core::Error::Refused("no visible tab".to_owned()))?;
+            let content = if tree.is_visible(shell.library) {
+                tree.rect(shell.library)?
+            } else {
+                let host = shell
+                    .hosts
+                    .get(index)
+                    .copied()
+                    .flatten()
+                    .ok_or_else(|| sse_core::Error::Refused("screen has no host".to_owned()))?;
+                tree.rect(host)?
+            };
+            assert_eq!(
+                tree.rect(first)?.x,
+                content.x,
+                "tabs of screen {index} do not start with its content"
+            );
+        }
         Ok(())
     }
 
@@ -5396,6 +5519,60 @@ mod tests {
         );
         let (mr, mg, mb) = channels(220, 600);
         assert!(mg > mr + 30 && mg > mb + 30, "menu centre is not green: {mr} {mg} {mb}");
+        Ok(())
+    }
+
+    fn picture_directory(tag: &str, file: Option<(&str, &[u8])>) -> sse_core::Result<PathBuf> {
+        let directory = std::env::temp_dir().join(format!("sse-art-source-{tag}-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).map_err(|error| sse_core::Error::System(error.to_string()))?;
+        if let Some((name, bytes)) = file {
+            std::fs::write(directory.join(name), bytes).map_err(|error| sse_core::Error::System(error.to_string()))?;
+        }
+        Ok(directory)
+    }
+
+    #[test]
+    fn art_source_is_the_data_file_then_the_built_in_picture() -> sse_core::Result<()> {
+        let size = (64, 64);
+        let built_in = super::bake_art(None, ArtSlot::Window, size)
+            .ok_or_else(|| sse_core::Error::Refused("no built-in picture".to_owned()))?;
+        let green: Vec<u8> = (0..64 * 64).flat_map(|_| [30, 200, 60, 255]).collect();
+        let user = picture_directory(
+            "user",
+            Some(("art-window.png", &sse_codecs::png_encode::encode_rgba8(64, 64, &green)?)),
+        )?;
+        let overridden = super::bake_art(Some(&user), ArtSlot::Window, size)
+            .ok_or_else(|| sse_core::Error::Refused("user picture was not used".to_owned()))?;
+        assert_ne!(
+            overridden.pixels, built_in.pixels,
+            "a data-directory picture must replace the built-in one"
+        );
+        let [_, red, green_value, blue] = overridden
+            .pixels
+            .get(32 * 64 + 32)
+            .copied()
+            .unwrap_or_default()
+            .to_be_bytes();
+        assert!(
+            green_value > red && green_value > blue,
+            "the user picture should be green: {red} {green_value} {blue}"
+        );
+
+        let broken = picture_directory("broken", Some(("art-window.png", b"not a picture")))?;
+        let fallback = super::bake_art(Some(&broken), ArtSlot::Window, size)
+            .ok_or_else(|| sse_core::Error::Refused("broken file left no picture".to_owned()))?;
+        assert_eq!(
+            fallback.pixels, built_in.pixels,
+            "a broken file must fall back to the built-in picture"
+        );
+
+        let missing = std::env::temp_dir().join(format!("sse-art-source-missing-{}", std::process::id()));
+        let absent = super::bake_art(Some(&missing), ArtSlot::Window, size)
+            .ok_or_else(|| sse_core::Error::Refused("missing directory left no picture".to_owned()))?;
+        assert_eq!(
+            absent.pixels, built_in.pixels,
+            "a missing directory must use the built-in picture"
+        );
         Ok(())
     }
 

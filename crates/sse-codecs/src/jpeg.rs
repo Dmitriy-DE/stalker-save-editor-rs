@@ -33,6 +33,46 @@ pub struct Image {
 /// Returns [`Error::Damaged`] for malformed or truncated streams and [`Error::Refused`] for JPEG processes
 /// this decoder does not implement.
 pub fn decode(data: &[u8]) -> Result<Image> {
+    let mut pixels = Vec::new();
+    let mut header = None;
+    decode_rows(data, |event| match event {
+        RowEvent::Header(found) => header = Some(found),
+        RowEvent::Row(_, row) => pixels.extend_from_slice(row),
+    })?;
+    let header = header.ok_or_else(|| Error::damaged("JPEG has no frame"))?;
+    Ok(Image {
+        width: header.width,
+        height: header.height,
+        channels: header.channels,
+        pixels,
+    })
+}
+
+/// Size and channel count of a JPEG, known before its rows are produced.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Header {
+    /// Width in pixels.
+    pub width: u32,
+    /// Height in pixels.
+    pub height: u32,
+    /// 1 for greyscale, 3 for red, green, blue.
+    pub channels: u8,
+}
+
+/// What [`decode_rows`] reports: the header first, then every row top to bottom.
+#[derive(Clone, Copy, Debug)]
+pub enum RowEvent<'a> {
+    /// Size and channels of the picture.
+    Header(Header),
+    /// Row index and its bytes (`width * channels` of them).
+    Row(usize, &'a [u8]),
+}
+
+/// Decodes a baseline JPEG and reports its rows one by one, without holding the whole picture.
+///
+/// # Errors
+/// As [`decode`].
+pub fn decode_rows(data: &[u8], mut sink: impl FnMut(RowEvent<'_>)) -> Result<()> {
     if data.get(..2) != Some(&[0xFF, 0xD8][..]) {
         return Err(Error::damaged("JPEG does not start with SOI"));
     }
@@ -81,7 +121,12 @@ pub fn decode(data: &[u8]) -> Result<Image> {
                     left: 0,
                 };
                 let planes = decode_scan(&mut bits, frame, &scan, &quant, &dc, &ac, restart_interval)?;
-                return Ok(to_image(frame, &planes));
+                sink(RowEvent::Header(Header {
+                    width: u32::try_from(frame.width).unwrap_or(0),
+                    height: u32::try_from(frame.height).unwrap_or(0),
+                    channels: u8::try_from(frame.components.len()).unwrap_or(1),
+                }));
+                return emit_rows(frame, &planes, &mut sink);
             }
             0xE0..=0xEF | 0xFE => {
                 segment(data, &mut position)?;
@@ -748,22 +793,22 @@ fn decode_scan(
     Ok(planes)
 }
 
-fn to_image(frame: &Frame, planes: &[Plane]) -> Image {
+fn emit_rows(frame: &Frame, planes: &[Plane], sink: &mut impl FnMut(RowEvent<'_>)) -> Result<()> {
     let width = frame.width;
     let height = frame.height;
     if frame.components.len() == 1 {
-        let samples = planes
-            .first()
-            .map(|plane| crop(plane, width, height).samples)
-            .unwrap_or_default();
-        return Image {
-            width: u32::try_from(width).unwrap_or(0),
-            height: u32::try_from(height).unwrap_or(0),
-            channels: 1,
-            pixels: samples,
+        let (Some(plane), Some(component)) = (planes.first(), frame.components.first()) else {
+            return Err(Error::damaged("JPEG has no decoded plane"));
         };
+        let mut line = Vec::with_capacity(width);
+        let mut colsums = Vec::new();
+        for y in 0..height {
+            line.clear();
+            upsample_row(plane, component, frame, width, y, &mut line, &mut colsums);
+            sink(RowEvent::Row(y, &line));
+        }
+        return Ok(());
     }
-    let mut pixels = Vec::with_capacity(width.saturating_mul(height).saturating_mul(3));
     let (Some(luma), Some(cb), Some(cr), Some(luma_component), Some(cb_component), Some(cr_component)) = (
         planes.first(),
         planes.get(1),
@@ -772,17 +817,13 @@ fn to_image(frame: &Frame, planes: &[Plane]) -> Image {
         frame.components.get(1),
         frame.components.get(2),
     ) else {
-        return Image {
-            width: 0,
-            height: 0,
-            channels: 1,
-            pixels,
-        };
+        return Err(Error::damaged("JPEG has no three decoded planes"));
     };
     let mut luma_row = Vec::with_capacity(width);
     let mut cb_row = Vec::with_capacity(width);
     let mut cr_row = Vec::with_capacity(width);
     let mut colsums = Vec::new();
+    let mut pixels = Vec::with_capacity(width.saturating_mul(3));
     for y in 0..height {
         luma_row.clear();
         cb_row.clear();
@@ -790,6 +831,7 @@ fn to_image(frame: &Frame, planes: &[Plane]) -> Image {
         upsample_row(luma, luma_component, frame, width, y, &mut luma_row, &mut colsums);
         upsample_row(cb, cb_component, frame, width, y, &mut cb_row, &mut colsums);
         upsample_row(cr, cr_component, frame, width, y, &mut cr_row, &mut colsums);
+        pixels.clear();
         for x in 0..width {
             let y_value = i64::from(luma_row.get(x).copied().unwrap_or(0));
             let cb_value = i64::from(cb_row.get(x).copied().unwrap_or(128)).wrapping_sub(128);
@@ -804,27 +846,13 @@ fn to_image(frame: &Frame, planes: &[Plane]) -> Image {
             let b = y_value.wrapping_add(116_130_i64.wrapping_mul(cb_value).wrapping_add(32_768) >> 16);
             pixels.extend([clamp8(r), clamp8(g), clamp8(b)]);
         }
+        sink(RowEvent::Row(y, &pixels));
     }
-    Image {
-        width: u32::try_from(width).unwrap_or(0),
-        height: u32::try_from(height).unwrap_or(0),
-        channels: 3,
-        pixels,
-    }
+    Ok(())
 }
 
 fn clamp8(value: i64) -> u8 {
     u8::try_from(value.clamp(0, 255)).unwrap_or(0)
-}
-
-fn crop(plane: &Plane, width: usize, height: usize) -> Plane {
-    let mut samples = Vec::with_capacity(width.saturating_mul(height));
-    for y in 0..height {
-        if let Some(row) = plane.samples.get(y.saturating_mul(plane.width)..) {
-            samples.extend_from_slice(row.get(..width).unwrap_or(&[]));
-        }
-    }
-    Plane { width, samples }
 }
 
 fn upsample_row(
