@@ -25,6 +25,20 @@ pub enum SettingsPatch {
         /// New report-sending value, or None to keep the current value.
         send_reports: Option<bool>,
     },
+    /// Set the interface language code; `None` returns to system detection.
+    Language(Option<String>),
+    /// Set whether sound effects are enabled.
+    SoundEnabled(bool),
+    /// Set whether menu music is enabled.
+    MusicEnabled(bool),
+    /// Set the sound volume in percent.
+    SoundVolume(u32),
+    /// Set the backup directory override; `None` restores the default.
+    BackupDirectory(Option<PathBuf>),
+    /// Set whether crash and telemetry reports may be sent.
+    SendReports(bool),
+    /// Add directories to the save discovery list; paths already listed (ignoring case and spaces) are skipped.
+    AddSaveDirectories(Vec<PathBuf>),
 }
 
 struct Request {
@@ -96,7 +110,26 @@ fn apply_patch(settings: &mut AppSettings, patch: SettingsPatch) {
                 settings.send_reports = value;
             }
         }
+        SettingsPatch::Language(value) => settings.language = value,
+        SettingsPatch::SoundEnabled(value) => settings.sound_enabled = value,
+        SettingsPatch::MusicEnabled(value) => settings.music_enabled = value,
+        SettingsPatch::SoundVolume(value) => settings.sound_volume = value,
+        SettingsPatch::BackupDirectory(value) => settings.backup_directory = value,
+        SettingsPatch::SendReports(value) => settings.send_reports = value,
+        SettingsPatch::AddSaveDirectories(paths) => {
+            let directories = settings.save_directories.get_or_insert_with(Vec::new);
+            for path in paths {
+                let key = directory_key(&path);
+                if !directories.iter().any(|item| directory_key(item) == key) {
+                    directories.push(path);
+                }
+            }
+        }
     }
+}
+
+fn directory_key(path: &std::path::Path) -> String {
+    path.to_string_lossy().trim().to_lowercase()
 }
 
 /// Queues one settings mutation and returns a receiver for its durable-write result.
@@ -122,6 +155,40 @@ mod tests {
     #[test]
     fn patch_variants_are_cloneable() {
         let _ = SettingsPatch::Scale(125).clone();
+    }
+
+    #[test]
+    fn field_patches_keep_changes_made_by_other_screens() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        let directory = std::env::temp_dir().join(format!("sse_settings_fields_{unique}"));
+        fs::create_dir_all(&directory).expect("create test directory");
+        let path = directory.join("settings.json");
+        AppSettings::default().save(&path).expect("write initial settings");
+
+        let (tx, rx) = mpsc::channel();
+        let worker_path = path.clone();
+        let worker = std::thread::spawn(move || run_writer(worker_path, rx));
+        let send = |patch: SettingsPatch| {
+            let (done_tx, done_rx) = mpsc::channel();
+            tx.send(Request { patch, done: done_tx }).expect("send patch");
+            done_rx.recv().expect("receive result").expect("patch writes settings");
+        };
+
+        // The setup wizard adds a folder; the settings screen, opened earlier, then changes the language.
+        send(SettingsPatch::AddSaveDirectories(vec![PathBuf::from("saves-a")]));
+        send(SettingsPatch::AddSaveDirectories(vec![PathBuf::from("SAVES-A ")]));
+        send(SettingsPatch::Language(Some("en".to_owned())));
+        send(SettingsPatch::SoundVolume(40));
+        drop(tx);
+        worker.join().expect("settings writer thread exits");
+
+        let saved = AppSettings::load(&path).expect("load settings");
+        assert_eq!(saved.language.as_deref(), Some("en"));
+        assert_eq!(saved.sound_volume, 40);
+        assert_eq!(saved.save_directories, Some(vec![PathBuf::from("saves-a")]));
+        let _ = fs::remove_dir_all(directory);
     }
 
     #[test]

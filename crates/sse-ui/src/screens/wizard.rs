@@ -289,38 +289,33 @@ impl Wizard {
         {
             return Ok(false);
         }
-        directories.push(path);
         super::submit_settings_write(
-            sse_app::settings_writer::SettingsPatch::SaveDirectories(directories.clone()),
+            sse_app::settings_writer::SettingsPatch::AddSaveDirectories(vec![path]),
             None,
         )?;
         Ok(true)
     }
     pub(super) fn auto_search() -> Result<usize> {
         let settings_path = sse_app::default_settings_path();
-        let mut settings = sse_app::AppSettings::load(&settings_path)?;
+        let settings = sse_app::AppSettings::load(&settings_path)?;
         let options = SaveDirectoryDiscoveryOptions {
             custom_save_directories: settings.save_directories.clone(),
             ..SaveDirectoryDiscoveryOptions::default()
         };
-        let directories = settings.save_directories.get_or_insert_with(Vec::new);
-        let mut known: std::collections::HashSet<String> = directories
+        let mut known: std::collections::HashSet<String> = settings
+            .save_directories
             .iter()
+            .flatten()
             .map(|path| path.to_string_lossy().trim().to_lowercase())
             .collect();
-        let mut added = 0_usize;
-        for candidate in SaveDirectoryLocator::find_candidate_directories(Some(&options)) {
-            let key = candidate.directory_path.to_string_lossy().trim().to_lowercase();
-            if known.insert(key) {
-                directories.push(candidate.directory_path);
-                added = added.saturating_add(1);
-            }
-        }
+        let found: Vec<PathBuf> = SaveDirectoryLocator::find_candidate_directories(Some(&options))
+            .into_iter()
+            .map(|candidate| candidate.directory_path)
+            .filter(|path| known.insert(path.to_string_lossy().trim().to_lowercase()))
+            .collect();
+        let added = found.len();
         if added > 0 {
-            super::submit_settings_write(
-                sse_app::settings_writer::SettingsPatch::SaveDirectories(directories.clone()),
-                None,
-            )?;
+            super::submit_settings_write(sse_app::settings_writer::SettingsPatch::AddSaveDirectories(found), None)?;
         }
         Ok(added)
     }
