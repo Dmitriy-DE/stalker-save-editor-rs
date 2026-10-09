@@ -7,6 +7,7 @@ use crate::event_loop::{App, Flow, Message, Proxy, WindowEvent};
 use crate::glyphs::{to_px, Face, TextStyle};
 use crate::layout::{Align, Edges, NodeKind, Size, Style};
 use crate::path::Icon;
+use crate::theme;
 use crate::widget::{Content, ImageData, Look, TextAlign, Tree, WidgetId};
 use crate::widgets::scroll::ScrollView;
 use crate::widgets::text_input::TextInput;
@@ -103,6 +104,236 @@ struct ReportUploadFinished {
 struct NativeFilePickerFinished {
     request: u64,
     result: std::result::Result<Option<Vec<PathBuf>>, String>,
+}
+
+const ART_MENU_WIDTH: f32 = 236.0;
+const ART_HEADER_HEIGHT: f32 = 152.0;
+const ART_TOPBAR_HEIGHT: f32 = 44.0;
+const ART_MAX_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Which background picture a decoded file belongs to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ArtSlot {
+    /// Full window behind the content, right of the menu.
+    Window,
+    /// Menu background.
+    Sidebar,
+    /// Header strip above the page.
+    Header,
+}
+
+/// A background picture decoded off the interface thread.
+pub struct ArtLoaded {
+    slot: ArtSlot,
+    image: ImageData,
+}
+
+#[derive(Clone, Copy)]
+struct ArtLayers {
+    window: WidgetId,
+    window_scrim: WidgetId,
+    sidebar: WidgetId,
+    sidebar_scrim: WidgetId,
+    header: WidgetId,
+    header_scrim: WidgetId,
+    topbar_scrim: WidgetId,
+}
+
+impl ArtLayers {
+    fn build(tree: &mut Tree, root: WidgetId) -> Result<Self> {
+        let offset = Edges {
+            left: ART_MENU_WIDTH,
+            top: 0.0,
+            right: 0.0,
+            bottom: 0.0,
+        };
+        let window_style = Style {
+            grow: 1.0,
+            align_self: Some(Align::Stretch),
+            margin: offset,
+            ..Style::default()
+        };
+        let sidebar_style = Style {
+            min: Size::new(ART_MENU_WIDTH, 0.0),
+            preferred: Size::new(ART_MENU_WIDTH, 0.0),
+            align_self: Some(Align::Stretch),
+            shrink: 0.0,
+            ..Style::default()
+        };
+        let header_style = Style {
+            min: Size::new(0.0, ART_HEADER_HEIGHT),
+            align_self: Some(Align::Stretch),
+            margin: offset,
+            ..Style::default()
+        };
+        let topbar_style = Style {
+            min: Size::new(0.0, ART_TOPBAR_HEIGHT),
+            align_self: Some(Align::Stretch),
+            margin: offset,
+            ..Style::default()
+        };
+        let image = |tree: &mut Tree, style: Style| {
+            tree.add(Some(root), NodeKind::Leaf, style, Content::Image(None), Look::default())
+        };
+        let window = image(tree, window_style)?;
+        let window_scrim = tree.add(
+            Some(root),
+            NodeKind::Leaf,
+            window_style,
+            Content::Panel,
+            Look::default(),
+        )?;
+        let sidebar = image(tree, sidebar_style)?;
+        let sidebar_scrim = tree.add(
+            Some(root),
+            NodeKind::Leaf,
+            sidebar_style,
+            Content::Panel,
+            Look::default(),
+        )?;
+        let header = image(tree, header_style)?;
+        let header_scrim = tree.add(
+            Some(root),
+            NodeKind::Leaf,
+            header_style,
+            Content::Panel,
+            Look::default(),
+        )?;
+        let topbar_scrim = tree.add(
+            Some(root),
+            NodeKind::Leaf,
+            topbar_style,
+            Content::Panel,
+            Look::default(),
+        )?;
+        Ok(Self {
+            window,
+            window_scrim,
+            sidebar,
+            sidebar_scrim,
+            header,
+            header_scrim,
+            topbar_scrim,
+        })
+    }
+
+    fn apply(self, tree: &mut Tree, menu: WidgetId, loaded: &ArtLoaded) -> Result<()> {
+        let (image_node, scrim_node, scrim_colour) = match loaded.slot {
+            ArtSlot::Window => (self.window, self.window_scrim, theme::d2::SCRIM_CONTENT),
+            ArtSlot::Sidebar => (self.sidebar, self.sidebar_scrim, theme::d2::SCRIM_SIDEBAR),
+            ArtSlot::Header => (self.header, self.header_scrim, theme::d2::SCRIM_HEADER),
+        };
+        tree.set_image(image_node, Some(loaded.image.clone()))?;
+        tree.set_look(
+            scrim_node,
+            Look {
+                fill: Some(argb(scrim_colour)),
+                ..Look::default()
+            },
+        )?;
+        if loaded.slot == ArtSlot::Window {
+            tree.set_look(
+                self.topbar_scrim,
+                Look {
+                    fill: Some(argb(theme::d2::SCRIM_TOPBAR)),
+                    ..Look::default()
+                },
+            )?;
+        }
+        if loaded.slot == ArtSlot::Sidebar {
+            tree.set_look(
+                menu,
+                Look {
+                    border: Some((rgb(style::BORDER_SUBTLE), 1.0)),
+                    ..Look::default()
+                },
+            )?;
+        }
+        Ok(())
+    }
+}
+
+fn argb(value: u32) -> crate::raster::Color {
+    let [r, g, b, a] = value.to_be_bytes();
+    crate::raster::Color::rgba(r, g, b, a)
+}
+
+fn spawn_art_loader(proxy: Proxy<AppMessage>, directory: PathBuf) {
+    let _ = std::thread::Builder::new()
+        .name("art-loader".to_owned())
+        .spawn(move || {
+            for (slot, stem) in [
+                (ArtSlot::Window, "art-window"),
+                (ArtSlot::Sidebar, "art-sidebar"),
+                (ArtSlot::Header, "art-header"),
+            ] {
+                if let Some(image) = load_art(&directory, stem) {
+                    let _ = proxy.send(AppMessage::ToScreen(
+                        ScreenId::Overview,
+                        Box::new(ArtLoaded { slot, image }),
+                    ));
+                }
+            }
+        });
+}
+
+fn load_art(directory: &Path, stem: &str) -> Option<ImageData> {
+    for extension in ["jpg", "jpeg", "png"] {
+        let path = directory.join(format!("{stem}.{extension}"));
+        let Ok(metadata) = std::fs::metadata(&path) else {
+            continue;
+        };
+        if metadata.len() > ART_MAX_BYTES {
+            continue;
+        }
+        let Ok(bytes) = std::fs::read(&path) else { continue };
+        let decoded = if extension == "png" {
+            sse_codecs::png::decode(&bytes)
+                .ok()
+                .map(|image| (image.width, image.height, image.pixels))
+        } else {
+            sse_codecs::jpeg::decode(&bytes)
+                .ok()
+                .map(|image| (image.width, image.height, rgba_from(image.channels, &image.pixels)))
+        };
+        if let Some((width, height, rgba)) = decoded {
+            return Some(ImageData {
+                width,
+                height,
+                pixels: premultiplied(&rgba).into(),
+            });
+        }
+    }
+    None
+}
+
+fn rgba_from(channels: u8, pixels: &[u8]) -> Vec<u8> {
+    if channels == 3 {
+        return pixels
+            .chunks_exact(3)
+            .flat_map(|rgb| match *rgb {
+                [r, g, b] => [r, g, b, 255],
+                _ => [0, 0, 0, 255],
+            })
+            .collect();
+    }
+    pixels.iter().flat_map(|value| [*value, *value, *value, 255]).collect()
+}
+
+fn premultiplied(rgba: &[u8]) -> Vec<u32> {
+    fn scale(value: u8, alpha: u8) -> u32 {
+        u32::from(value)
+            .checked_mul(u32::from(alpha))
+            .and_then(|product| product.checked_add(127))
+            .and_then(|product| product.checked_div(255))
+            .unwrap_or(0)
+    }
+    rgba.chunks_exact(4)
+        .map(|pixel| match *pixel {
+            [r, g, b, a] => (u32::from(a) << 24) | (scale(r, a) << 16) | (scale(g, a) << 8) | scale(b, a),
+            _ => 0,
+        })
+        .collect()
 }
 
 fn spawn_native_file_picker<F>(proxy: Proxy<AppMessage>, request: u64, picker: F) -> std::io::Result<()>
@@ -324,6 +555,7 @@ fn display_format_name(format_id: &str) -> &'static str {
 
 /// The editor frame and its screens.
 pub struct Shell {
+    art: ArtLayers,
     screens: Vec<Box<dyn Screen>>,
     hosts: Vec<Option<WidgetId>>,
     nav: Vec<WidgetId>,
@@ -555,6 +787,9 @@ impl Shell {
         settings: sse_app::AppSettings,
     ) -> Result<Self> {
         let interactive = proxy.is_some();
+        if let Some(loader_proxy) = proxy.clone() {
+            spawn_art_loader(loader_proxy, sse_app::paths::default_data_directory().join("art"));
+        }
         let language = startup_language(&settings);
         crate::strings::set_language(Some(&language));
         let open_path_input = TextInput::new("", open_path_edit_config())?;
@@ -563,6 +798,7 @@ impl Shell {
             ..Style::default()
         };
         let root = tree.add(None, NodeKind::Stack, root_style, Content::Panel, Look::default())?;
+        let art = ArtLayers::build(tree, root)?;
         let frame = tree.add(
             Some(root),
             NodeKind::Row,
@@ -1220,6 +1456,7 @@ impl Shell {
 
         let hosts = vec![None; screens.len()];
         let mut shell = Self {
+            art,
             screens,
             hosts,
             nav,
@@ -2321,6 +2558,10 @@ impl Shell {
             return Ok(Flow::Continue);
         }
         if let Message::User(AppMessage::ToScreen(ScreenId::Overview, payload)) = message {
+            if let Some(loaded) = payload.downcast_ref::<ArtLoaded>() {
+                self.art.apply(tree, self.sidebar, loaded)?;
+                return Ok(Flow::Continue);
+            }
             if let Some(finished) = payload.downcast_ref::<NativeFilePickerFinished>() {
                 if self.native_file_picker_request == Some(finished.request) {
                     self.native_file_picker_request = None;
@@ -3159,11 +3400,12 @@ mod tests {
         save_eligibility, spawn_native_file_picker, wait_for_save_io, NativeFilePickerFinished, OpenFilesQueue,
         ScreenId, Shell,
     };
+    use super::{ArtLoaded, ArtSlot};
     use crate::event_loop::{channel_pair, Flow, Message, WindowEvent};
     use crate::glyphs::Fonts;
     use crate::raster::Color;
     use crate::screens::AppMessage;
-    use crate::widget::{Tree, WidgetId};
+    use crate::widget::{ImageData, Tree, WidgetId};
     use sse_storage::drafts::{DraftPlacement, DraftPlan, JsonValue};
     use std::path::Path;
 
@@ -4499,6 +4741,41 @@ mod tests {
         assert_eq!(shell.handle(&mut tree, &tick, Some(shell.force_close_yes))?, Flow::Exit);
         let _ = write_tx.send(());
         let _ = sse_app::tasks::wait_for_named_tasks(&["game-read", "game-write"], std::time::Duration::from_secs(1));
+        Ok(())
+    }
+
+    #[test]
+    fn background_picture_is_drawn_under_its_scrim() -> sse_core::Result<()> {
+        let mut tree = Tree::new(crate::glyphs::Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let shell = Shell::build_for_test(&mut tree, None)?;
+        tree.resize(1280, 800);
+        let mut frame = vec![0_u32; 1280 * 800];
+        tree.damage_all();
+        tree.paint(&mut frame, 1280)?;
+        let before = frame.get(600 * 1280 + 1272).copied().unwrap_or_default();
+        let red = ImageData {
+            width: 64,
+            height: 64,
+            pixels: vec![0xFF_FF_00_00_u32; 64 * 64].into(),
+        };
+        shell.art.apply(
+            &mut tree,
+            shell.sidebar,
+            &ArtLoaded {
+                slot: ArtSlot::Window,
+                image: red,
+            },
+        )?;
+        tree.damage_all();
+        tree.paint(&mut frame, 1280)?;
+        let after = frame.get(600 * 1280 + 1272).copied().unwrap_or_default();
+        let red_before = (before >> 16) & 0xFF;
+        let red_after = (after >> 16) & 0xFF;
+        assert!(
+            red_after > red_before + 20,
+            "picture is not drawn: {before:08x} -> {after:08x}"
+        );
+        assert!(red_after < 200, "scrim does not dim the picture: {after:08x}");
         Ok(())
     }
 }

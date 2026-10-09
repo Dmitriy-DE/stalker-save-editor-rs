@@ -38,6 +38,8 @@ pub mod vorbis;
 /// ZIP reader and reproducible writer.
 pub mod zip;
 
+/// Baseline JPEG decoder with libjpeg-compatible IDCT and upsampling.
+pub mod jpeg;
 /// PNG decoder to RGBA8.
 pub mod png;
 /// Minimal deterministic RGBA8 PNG encoder for golden tests.
