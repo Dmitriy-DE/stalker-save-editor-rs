@@ -110,11 +110,23 @@ fn test_data_root() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::GameFixContentStore;
+    use std::path::Path;
 
     #[test]
     fn test_executable_fixpack_store_is_temporary() {
+        let directory = GameFixContentStore::default_directory();
+        let temporary = std::env::temp_dir();
+        let data_root = match directory.parent().and_then(Path::parent) {
+            Some(root) => root,
+            None => directory.as_path(),
+        };
+        let is_temporary = directory.starts_with(&temporary)
+            || match (std::fs::canonicalize(data_root), std::fs::canonicalize(&temporary)) {
+                (Ok(data_root), Ok(temporary)) => data_root.starts_with(temporary),
+                _ => false,
+            };
         assert!(
-            GameFixContentStore::default_directory().starts_with(std::env::temp_dir()),
+            is_temporary,
             "test fixpack data must stay under the temporary directory"
         );
     }
