@@ -3,10 +3,13 @@
 use sse_content::atlas::AtlasBuilder;
 use sse_content::dds::RgbaImage;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let icons_dir = Path::new("/home/dmytro/Projects/save-editor-next/src/StalkerSaveEditor.Desktop/Assets/Icons");
+    let Some(icons_arg) = std::env::args_os().nth(1) else {
+        return Err("usage: pack_atlas <directory-with-xray-and-s2-icon-folders>".into());
+    };
+    let icons_dir = PathBuf::from(icons_arg);
     if !icons_dir.is_dir() {
         eprintln!("Icons directory not found: {}", icons_dir.display());
         return Ok(());
