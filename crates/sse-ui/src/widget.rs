@@ -98,6 +98,16 @@ pub struct Look {
     pub hover_text: Option<Color>,
     /// Text alignment.
     pub align: TextAlign,
+    /// Border while the pointer is over the widget.
+    pub hover_border: Option<(Color, f32)>,
+    /// Border while the widget is held down.
+    pub pressed_border: Option<(Color, f32)>,
+    /// Text colour while the widget is held down.
+    pub pressed_text: Option<Color>,
+    /// Keyboard focus ring: colour, width and gap between the border and the ring.
+    pub focus_ring: Option<(Color, f32, f32)>,
+    /// Colours used while the widget is not enabled.
+    pub disabled: Option<DisabledLook>,
 }
 
 impl Default for Look {
@@ -112,8 +122,24 @@ impl Default for Look {
             text: Color::rgba(255, 255, 255, 255),
             hover_text: None,
             align: TextAlign::Start,
+            hover_border: None,
+            pressed_border: None,
+            pressed_text: None,
+            focus_ring: None,
+            disabled: None,
         }
     }
+}
+
+/// Colours of a control that is not enabled.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DisabledLook {
+    /// Fill colour.
+    pub fill: Color,
+    /// Border colour.
+    pub border: Color,
+    /// Text colour.
+    pub text: Color,
 }
 
 /// What a widget shows and whether it reacts to the pointer.
@@ -215,6 +241,7 @@ pub struct Tree {
     hover: Option<WidgetId>,
     pressed: Option<WidgetId>,
     focused: Option<WidgetId>,
+    keyboard_focus: bool,
     input_composition: Option<InputComposition>,
     previous_dialog_focus: Option<WidgetId>,
     modal_dialog: Option<WidgetId>,
@@ -242,6 +269,7 @@ impl Tree {
             hover: None,
             pressed: None,
             focused: None,
+            keyboard_focus: false,
             input_composition: None,
             previous_dialog_focus: None,
             modal_dialog: None,
@@ -308,6 +336,7 @@ impl Tree {
         if count == 0 {
             return None;
         }
+        self.keyboard_focus = true;
         let mut index = self
             .focused
             .map_or(if reverse { 0 } else { count.saturating_sub(1) }, |id| id.0);
@@ -868,6 +897,23 @@ impl Tree {
         self.restyle(id)
     }
 
+    /// Direct children of a widget, in the order they were added.
+    #[must_use]
+    pub fn children(&self, id: WidgetId) -> Vec<WidgetId> {
+        (0..self.nodes.len())
+            .map(WidgetId)
+            .filter(|child| self.nodes.get(child.0).is_some_and(|node| node.parent == Some(id)))
+            .collect()
+    }
+
+    /// Whether the widget takes pointer and keyboard input.
+    ///
+    /// # Errors
+    /// Returns an error for an unknown widget.
+    pub fn is_enabled(&self, id: WidgetId) -> Result<bool> {
+        Ok(self.node(id)?.enabled)
+    }
+
     /// Makes this widget a clipping viewport for descendants.
     pub fn set_clip_children(&mut self, id: WidgetId, clip_children: bool) -> Result<()> {
         let node = self.node_mut(id)?;
@@ -1090,7 +1136,7 @@ impl Tree {
 
     /// Pointer moved; updates hover and damages what changed. Returns true when hover changed.
     pub fn pointer_moved(&mut self, x: i32, y: i32) -> bool {
-        let hit = self.hit_interactive(x, y, false);
+        let hit = self.hit_interactive(x, y, true);
         if hit == self.hover {
             return false;
         }
@@ -1121,6 +1167,7 @@ impl Tree {
         self.pointer_moved(x, y);
         let hit = self.hit(x, y);
         if pressed {
+            self.keyboard_focus = false;
             self.pressed = hit;
             if let Some(rect) = hit.and_then(|id| self.nodes.get(id.0)).map(|node| node.rect) {
                 self.add_damage(rect);
@@ -1266,6 +1313,12 @@ impl Tree {
                 }
             }
             let previous_clip = surface.replace_clip(clipped_area);
+            let state = PaintState {
+                hovered,
+                pressed,
+                enabled: node.enabled,
+                focus_ring: self.focused == Some(id) && self.keyboard_focus,
+            };
             paint_node(
                 surface,
                 (&mut self.fonts, &mut self.icon_cache),
@@ -1273,7 +1326,7 @@ impl Tree {
                 padding,
                 &look,
                 &content,
-                (hovered, pressed),
+                state,
             );
             surface.replace_clip(previous_clip);
         }
@@ -1356,6 +1409,14 @@ fn overlay_composition(text: &str, start: usize, end: usize, composition: &str) 
     displayed
 }
 
+#[derive(Clone, Copy)]
+struct PaintState {
+    hovered: bool,
+    pressed: bool,
+    enabled: bool,
+    focus_ring: bool,
+}
+
 fn paint_node(
     surface: &mut Surface<'_>,
     resources: (&mut Fonts, &mut IconCache),
@@ -1363,11 +1424,30 @@ fn paint_node(
     padding: layout::Edges,
     look: &Look,
     content: &Content,
-    (hovered, pressed): (bool, bool),
+    state: PaintState,
 ) {
+    let PaintState {
+        hovered,
+        pressed,
+        enabled,
+        focus_ring,
+    } = state;
     let radii = Radii::all(f64::from(look.radius));
     let interactive = content.interactive();
-    let fill = if interactive && pressed {
+    let disabled = if enabled { None } else { look.disabled };
+    if let Some((color, width, gap)) = look.focus_ring.filter(|_| focus_ring) {
+        let grow = width + gap;
+        let ring = Rect::new(
+            rect.x.saturating_sub(to_px(grow)),
+            rect.y.saturating_sub(to_px(grow)),
+            rect.width.saturating_add(to_u32(grow * 2.0)),
+            rect.height.saturating_add(to_u32(grow * 2.0)),
+        );
+        surface.border(ring, Radii::all(f64::from(look.radius + grow)), f64::from(width), color);
+    }
+    let fill = if let Some(colors) = disabled {
+        Some(colors.fill)
+    } else if interactive && pressed {
         look.pressed_fill.or(look.hover_fill).or(look.fill)
     } else if interactive && hovered {
         look.hover_fill.or(look.fill)
@@ -1377,8 +1457,17 @@ fn paint_node(
     if let Some(color) = fill {
         surface.fill_rect(rect, radii, color);
     }
+    let border = if let Some(colors) = disabled {
+        Some((colors.border, look.border.map_or(1.0, |(_, width)| width)))
+    } else if interactive && pressed {
+        look.pressed_border.or(look.border)
+    } else if interactive && hovered {
+        look.hover_border.or(look.border)
+    } else {
+        look.border
+    };
     if !matches!(content, Content::Image(_)) {
-        if let Some((color, width)) = look.border {
+        if let Some((color, width)) = border {
             surface.border(rect, radii, f64::from(width), color);
         }
     }
@@ -1427,7 +1516,11 @@ fn paint_node(
     let Some((text, style)) = content.text() else {
         return;
     };
-    let color = if interactive && hovered {
+    let color = if let Some(colors) = disabled {
+        colors.text
+    } else if interactive && pressed {
+        look.pressed_text.or(look.hover_text).unwrap_or(look.text)
+    } else if interactive && hovered {
         look.hover_text.unwrap_or(look.text)
     } else {
         look.text
@@ -1763,6 +1856,143 @@ mod tests {
         assert!(tree.set_focus(Some(background)).is_err());
         let rect = tree.rect(background)?;
         assert_eq!(tree.hit(rect.x + 1, rect.y + 1), None);
+        Ok(())
+    }
+
+    fn two_buttons(first_look: Look) -> sse_core::Result<(Tree, WidgetId, WidgetId)> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let root = tree.add(
+            None,
+            NodeKind::Column,
+            Style {
+                padding: crate::layout::Edges {
+                    left: 10.0,
+                    top: 10.0,
+                    right: 10.0,
+                    bottom: 10.0,
+                },
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        let button_style = Style {
+            min: crate::layout::Size::new(80.0, 30.0),
+            ..Style::default()
+        };
+        let first = tree.add(
+            Some(root),
+            NodeKind::Leaf,
+            button_style,
+            Content::Button {
+                text: "A".to_owned(),
+                style: TextStyle::new(Face::Body, 14.0),
+            },
+            first_look,
+        )?;
+        let second = tree.add(
+            Some(root),
+            NodeKind::Leaf,
+            button_style,
+            Content::Button {
+                text: "B".to_owned(),
+                style: TextStyle::new(Face::Body, 14.0),
+            },
+            Look::default(),
+        )?;
+        tree.resize(200, 100);
+        tree.update_layout()?;
+        Ok((tree, first, second))
+    }
+
+    fn paint_frame(tree: &mut Tree) -> sse_core::Result<Vec<u32>> {
+        let mut frame = vec![0_u32; 200 * 100];
+        tree.damage_all();
+        tree.paint(&mut frame, 200)?;
+        Ok(frame)
+    }
+
+    fn pixel(frame: &[u32], x: i32, y: i32) -> u32 {
+        usize::try_from(y)
+            .ok()
+            .and_then(|row| row.checked_mul(200))
+            .and_then(|offset| offset.checked_add(usize::try_from(x).ok()?))
+            .and_then(|index| frame.get(index).copied())
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn disabled_control_receives_no_click_or_hover() -> sse_core::Result<()> {
+        let (mut tree, first, _) = two_buttons(Look::default())?;
+        let rect = tree.rect(first)?;
+        let (x, y) = (rect.x.saturating_add(2), rect.y.saturating_add(2));
+        tree.set_enabled(first, false)?;
+        assert!(!tree.is_enabled(first)?);
+        assert_eq!(tree.hit(x, y), None);
+        assert!(!tree.pointer_moved(x, y), "a disabled control must not take hover");
+        assert_eq!(tree.pointer_button(true, x, y), None);
+        assert_eq!(tree.pointer_button(false, x, y), None);
+        Ok(())
+    }
+
+    #[test]
+    fn tab_skips_disabled_control() -> sse_core::Result<()> {
+        let (mut tree, first, second) = two_buttons(Look::default())?;
+        tree.set_enabled(first, false)?;
+        assert_eq!(tree.focus_next(false), Some(second));
+        Ok(())
+    }
+
+    #[test]
+    fn disabled_control_is_drawn_with_disabled_look() -> sse_core::Result<()> {
+        let disabled = super::DisabledLook {
+            fill: Color::rgba(17, 34, 51, 255),
+            border: Color::rgba(0, 0, 0, 255),
+            text: Color::rgba(90, 90, 90, 255),
+        };
+        let look = Look {
+            fill: Some(Color::rgba(200, 0, 0, 255)),
+            disabled: Some(disabled),
+            ..Look::default()
+        };
+        let (mut tree, first, _) = two_buttons(look)?;
+        let rect = tree.rect(first)?;
+        tree.set_enabled(first, false)?;
+        let frame = paint_frame(&mut tree)?;
+        let probe = pixel(&frame, rect.x.saturating_add(3), rect.y.saturating_add(15));
+        assert_eq!(probe, Color::rgba(17, 34, 51, 255).to_u32());
+        Ok(())
+    }
+
+    #[test]
+    fn focus_ring_shows_after_tab_and_not_after_mouse_click() -> sse_core::Result<()> {
+        let ring = Color::rgba(255, 0, 0, 255);
+        let look = Look {
+            focus_ring: Some((ring, 2.0, 2.0)),
+            ..Look::default()
+        };
+        let (mut tree, first, _) = two_buttons(look)?;
+        let rect = tree.rect(first)?;
+        let probe_x = rect.x.saturating_sub(4);
+        let probe_y = rect.y.saturating_add(15);
+
+        assert_eq!(tree.focus_next(false), Some(first));
+        let frame = paint_frame(&mut tree)?;
+        assert_eq!(
+            pixel(&frame, probe_x, probe_y),
+            ring.to_u32(),
+            "keyboard focus draws the ring"
+        );
+
+        let (x, y) = (rect.x.saturating_add(10), rect.y.saturating_add(10));
+        tree.pointer_button(true, x, y);
+        tree.pointer_button(false, x, y);
+        let frame = paint_frame(&mut tree)?;
+        assert_ne!(
+            pixel(&frame, probe_x, probe_y),
+            ring.to_u32(),
+            "a mouse click must not draw the ring"
+        );
         Ok(())
     }
 }
