@@ -337,6 +337,11 @@ fn milliseconds(value: std::time::Duration) -> Result<c_long> {
     c_long::try_from(value.as_millis()).map_err(|_| Error::Refused("timeout is too large".to_owned()))
 }
 
+/// libcurl treats a total timeout of zero as no limit.
+fn total_milliseconds(value: Option<std::time::Duration>) -> Result<c_long> {
+    value.map_or(Ok(0), milliseconds)
+}
+
 fn curl_error(api: &Api, code: c_int) -> Error {
     // SAFETY: curl_easy_strerror returns a static NUL-terminated string for a CURLcode.
     let pointer = unsafe { (api.easy_strerror)(code) };
@@ -396,7 +401,7 @@ pub(super) fn get_with_response(
         set_long(CURLOPT_MAXREDIRS, 8)?;
         set_long(CURLOPT_NOSIGNAL, 1)?;
         set_long(CURLOPT_CONNECTTIMEOUT_MS, milliseconds(config.connect_timeout)?)?;
-        set_long(CURLOPT_TIMEOUT_MS, milliseconds(config.total_timeout)?)?;
+        set_long(CURLOPT_TIMEOUT_MS, total_milliseconds(config.total_timeout)?)?;
         set_long(CURLOPT_NOPROGRESS, 0)?;
         if let Some(range) = &range {
             // SAFETY: range CString lives through perform and CURLOPT_RANGE expects a char pointer.
@@ -558,7 +563,7 @@ pub(super) fn post(
         set_long(CURLOPT_FOLLOWLOCATION, 0)?;
         set_long(CURLOPT_NOSIGNAL, 1)?;
         set_long(CURLOPT_CONNECTTIMEOUT_MS, milliseconds(config.connect_timeout)?)?;
-        set_long(CURLOPT_TIMEOUT_MS, milliseconds(config.total_timeout)?)?;
+        set_long(CURLOPT_TIMEOUT_MS, total_milliseconds(config.total_timeout)?)?;
         // SAFETY: the header list remains live until after handle cleanup.
         let code = unsafe { (api.easy_setopt)(handle, CURLOPT_HTTPHEADER, headers) };
         if code != CURLE_OK {

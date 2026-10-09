@@ -128,9 +128,40 @@ fn official_https_url(url: &str) -> bool {
     authority.eq_ignore_ascii_case(UPDATE_HOST) || authority.eq_ignore_ascii_case(&format!("{UPDATE_HOST}:443"))
 }
 
+/// Configuration for the small signed metadata requests (manifest and its signature): the whole
+/// transfer is bounded.
+fn manifest_fetch_config() -> sse_sys::fetch::SystemFetch {
+    sse_sys::fetch::SystemFetch {
+        max_bytes: crate::manifest::MAXIMUM_ARTIFACT_BYTES,
+        ..sse_sys::fetch::SystemFetch::default()
+    }
+}
+
+/// Configuration for the artifact download: a large package may take longer than any fixed whole-
+/// transfer limit, so only connect and idle timeouts apply.
+fn artifact_fetch_config() -> sse_sys::fetch::SystemFetch {
+    sse_sys::fetch::SystemFetch {
+        max_bytes: crate::manifest::MAXIMUM_ARTIFACT_BYTES,
+        total_timeout: None,
+        ..sse_sys::fetch::SystemFetch::default()
+    }
+}
+
 impl Fetch for DefaultFetch {
     fn get(&mut self, url: &str, range_from: u64, sink: &mut dyn FnMut(&[u8]) -> bool) -> Result<Response> {
-        self.get_with_response(url, range_from, &mut |_| true, sink)
+        if !official_https_url(url) {
+            return Err(Error::Refused(
+                "Update fetch is restricted to the official HTTPS host".to_owned(),
+            ));
+        }
+        let mut fetch = manifest_fetch_config();
+        let response = sse_sys::fetch::Fetch::get_with_response(&mut fetch, url, range_from, &mut |_| true, sink)?;
+        if !official_https_url(&response.final_url) {
+            return Err(Error::Refused(
+                "Update redirect left the official HTTPS host".to_owned(),
+            ));
+        }
+        Ok(response)
     }
 
     fn get_with_response(
@@ -145,10 +176,7 @@ impl Fetch for DefaultFetch {
                 "Update fetch is restricted to the official HTTPS host".to_owned(),
             ));
         }
-        let mut fetch = sse_sys::fetch::SystemFetch {
-            max_bytes: crate::manifest::MAXIMUM_ARTIFACT_BYTES,
-            ..sse_sys::fetch::SystemFetch::default()
-        };
+        let mut fetch = artifact_fetch_config();
         let mut checked_response = |response: &Response| {
             if !official_https_url(&response.final_url) {
                 return false;
@@ -459,6 +487,24 @@ pub fn verify_existing_file(path: &Path, artifact: &UpdateArtifact) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn artifact_fetch_has_no_whole_transfer_limit_but_keeps_connect_and_idle_limits() {
+        let artifact = artifact_fetch_config();
+        let defaults = sse_sys::fetch::SystemFetch::default();
+
+        assert_eq!(artifact.total_timeout, None);
+        assert_eq!(artifact.connect_timeout, defaults.connect_timeout);
+        assert_eq!(artifact.idle_timeout, defaults.idle_timeout);
+    }
+
+    #[test]
+    fn manifest_fetch_keeps_the_whole_transfer_limit() {
+        let manifest = manifest_fetch_config();
+
+        assert_eq!(manifest.total_timeout, Some(std::time::Duration::from_secs(60)));
+        assert_eq!(manifest.max_bytes, crate::manifest::MAXIMUM_ARTIFACT_BYTES);
+    }
 
     #[test]
     fn default_fetch_origin_filter_rejects_non_https_and_foreign_hosts() {
