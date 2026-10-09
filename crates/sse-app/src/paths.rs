@@ -145,8 +145,16 @@ mod tests {
     #[test]
     fn test_executables_default_app_data_and_logs_to_temporary_root() {
         let data_directory = default_data_directory();
+        let data_is_in_temp_dir = env::temp_dir()
+            .canonicalize()
+            .ok()
+            .zip(data_directory.parent().and_then(|parent| fs::canonicalize(parent).ok()))
+            .zip(data_directory.file_name())
+            .is_some_and(|((temporary_directory, data_parent), data_name)| {
+                data_parent.join(data_name).starts_with(temporary_directory)
+            });
         assert!(
-            data_directory.starts_with(env::temp_dir()),
+            data_is_in_temp_dir,
             "test data must stay under the temporary directory: {}",
             data_directory.display()
         );
