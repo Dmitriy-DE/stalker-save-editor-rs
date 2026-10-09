@@ -781,6 +781,14 @@ impl Tree {
         }
     }
 
+    /// Current look of a widget.
+    ///
+    /// # Errors
+    /// Returns an error for an unknown widget.
+    pub fn look(&self, id: WidgetId) -> Result<&Look> {
+        Ok(&self.node(id)?.look)
+    }
+
     /// Replaces how a widget looks.
     ///
     /// # Errors
