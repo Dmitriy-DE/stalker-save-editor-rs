@@ -55,6 +55,12 @@ jobs:
           set -o pipefail
           cargo run --release -p sse-ui --bin sse-ui-dev -- --ci-i18n-buttons | tee target/i18n-qa/buttons.txt
 
+      - name: Rust UI source localization guard
+        if: matrix.os == 'ubuntu-24.04'
+        run: |
+          PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tools/tests
+          python3 tools/check_i18n_source.py
+
       - name: Upload translation layout report
         if: always() && matrix.os == 'ubuntu-24.04'
         uses: actions/upload-artifact@v4
