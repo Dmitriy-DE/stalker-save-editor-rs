@@ -461,31 +461,34 @@ struct Bits<'a> {
 impl Bits<'_> {
     fn bit(&mut self) -> Result<u8> {
         if self.left == 0 {
-            self.fill();
+            self.fill()?;
         }
         self.left = self.left.saturating_sub(1);
         Ok(u8::from(self.acc.checked_shr(self.left).unwrap_or(0) & 1 == 1))
     }
 
-    fn fill(&mut self) {
-        let mut byte = 0_u8;
-        match self.data.get(self.position).copied() {
+    /// Loads the next entropy-coded byte. The data must end with the scan, not inside it: running out
+    /// of bytes, or meeting a marker other than a stuffed `0xFF 0x00`, means the scan is truncated or
+    /// damaged. Restart markers are consumed only by [`Bits::restart`].
+    fn fill(&mut self) -> Result<()> {
+        let byte = match self.data.get(self.position).copied() {
             Some(0xFF) => match self.data.get(self.position.saturating_add(1)).copied() {
                 Some(0x00) => {
-                    byte = 0xFF;
                     self.position = self.position.saturating_add(2);
+                    0xFF
                 }
-                Some(_) => {}
-                None => {}
+                Some(_) => return Err(Error::damaged("JPEG marker inside entropy-coded data")),
+                None => return Err(Error::damaged("JPEG scan ends inside a stuffed byte")),
             },
             Some(value) => {
-                byte = value;
                 self.position = self.position.saturating_add(1);
+                value
             }
-            None => {}
-        }
+            None => return Err(Error::damaged("JPEG scan data is truncated")),
+        };
         self.acc = self.acc.wrapping_shl(8) | u32::from(byte);
         self.left = 8;
+        Ok(())
     }
 
     fn receive(&mut self, size: u32) -> Result<i64> {
@@ -1045,16 +1048,48 @@ mod tests {
         assert!(decode(&bytes).is_err());
     }
 
+    /// Offset of the first entropy-coded byte of the fixture's only scan.
+    fn scan_data_start(bytes: &[u8]) -> usize {
+        let sos = bytes
+            .windows(2)
+            .position(|pair| pair == [0xFF, 0xDA])
+            .unwrap_or_else(|| panic!("fixture has no SOS"));
+        let length_at = sos.saturating_add(2);
+        let length = bytes
+            .get(length_at..length_at.saturating_add(2))
+            .and_then(|pair| <[u8; 2]>::try_from(pair).ok())
+            .map_or(0, |pair| usize::from(u16::from_be_bytes(pair)));
+        length_at.saturating_add(length)
+    }
+
     #[test]
-    fn truncated_inputs_never_panic() {
-        for length in 0..YUV420.len() {
+    fn every_truncation_inside_the_scan_is_damaged() {
+        let start = scan_data_start(YUV420);
+        // The last two bytes are EOI; dropping only them leaves a complete scan.
+        for length in start.saturating_add(1)..=YUV420.len().saturating_sub(3) {
             let prefix = YUV420.get(..length).unwrap_or_default();
-            let _ = decode(prefix);
+            assert!(
+                matches!(decode(prefix), Err(Error::Damaged(_))),
+                "truncation to {length} bytes was accepted"
+            );
         }
     }
 
     #[test]
-    fn corrupted_copies_never_panic() {
+    fn truncated_inputs_never_panic() {
+        for length in 0..YUV420.len() {
+            let prefix = YUV420.get(..length).unwrap_or_default();
+            if let Ok(image) = decode(prefix) {
+                assert_eq!(
+                    image.pixels.len(),
+                    usize::try_from(image.width * image.height).unwrap_or(0) * usize::from(image.channels)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn corrupted_copies_never_panic_and_keep_the_frame_size() {
         let mut state: u32 = 0x9E37_79B9;
         for _ in 0..2000 {
             let mut bytes = YUV420.to_vec();
@@ -1065,7 +1100,12 @@ mod tests {
                     *byte ^= u8::try_from(state >> 24).unwrap_or(1);
                 }
             }
-            let _ = decode(&bytes);
+            if let Ok(image) = decode(&bytes) {
+                assert_eq!(
+                    image.pixels.len(),
+                    usize::try_from(image.width * image.height).unwrap_or(0) * usize::from(image.channels)
+                );
+            }
         }
     }
 }
