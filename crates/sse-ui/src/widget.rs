@@ -8,7 +8,7 @@ use crate::event_loop::ImeEvent;
 use crate::glyphs::{to_px, to_u32, Fonts, TextStyle};
 use crate::layout::{self, Constraints, Layout, NodeId, NodeKind, Size, Style};
 use crate::path::Icon;
-use crate::raster::{Color, ImageFilter, ImageRef, MaskRef, Radii, Rect, Surface};
+use crate::raster::{Color, ImageRef, MaskRef, Radii, Rect, Surface};
 use crate::widgets::icon::IconCache;
 use sse_core::{Error, Result};
 use std::sync::Arc;
@@ -1488,7 +1488,7 @@ fn paint_node(
                 rect.width.saturating_sub(to_u32(padding.left + padding.right)),
                 rect.height.saturating_sub(to_u32(padding.top + padding.bottom)),
             );
-            surface.blit_image(source, destination, ImageFilter::Bilinear);
+            surface.blit_opaque_copy(source, destination);
         }
         if let Some((color, width)) = look.border {
             surface.border(rect, radii, f64::from(width), color);
