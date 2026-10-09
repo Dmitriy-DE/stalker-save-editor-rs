@@ -301,6 +301,11 @@ fn hero_cover_width(compact: bool) -> f32 {
     }
 }
 
+/// A whole pixel count as a float, for layout arithmetic. Values beyond the range of the window are clamped.
+fn px_i64(value: i64) -> f32 {
+    f32::from(i16::try_from(value).unwrap_or(i16::MAX))
+}
+
 /// Width of the installation list card.
 fn list_width(compact: bool) -> f32 {
     if compact {
@@ -311,6 +316,30 @@ fn list_width(compact: bool) -> f32 {
 }
 
 /// A cover plate: raised panel, subtle border, and the radiation sign in the metal colour (no cover art exists).
+/// Width of the key column of the selected game's fields.
+const KEY_COLUMN: f32 = 120.0;
+
+/// Size of the radiation sign on a cover plate.
+const PLATE_ICON: u32 = 32;
+
+/// Style of a cover plate of `width`×`height`. The sign is drawn at the left padding, so the padding centres it; the
+/// content box takes what is left of the width.
+fn plate_style(width: f32, height: f32) -> Style {
+    let left = ((width - f32::from(u16::try_from(PLATE_ICON).unwrap_or(0))) / 2.0).max(0.0);
+    Style {
+        min: crate::layout::Size::new(width - left, height),
+        preferred: crate::layout::Size::new(width - left, height),
+        padding: crate::layout::Edges {
+            left,
+            top: 0.0,
+            right: 0.0,
+            bottom: 0.0,
+        },
+        shrink: 0.0,
+        ..Style::default()
+    }
+}
+
 fn cover_plate(tree: &mut Tree, parent: WidgetId, style: Style) -> Result<WidgetId> {
     let plate = tree.add(
         Some(parent),
@@ -326,6 +355,7 @@ fn cover_plate(tree: &mut Tree, parent: WidgetId, style: Style) -> Result<Widget
             border: Some((style::d2::argb(theme::d2::BORDER_SUBTLE), 1.0)),
             radius: 2.0,
             text: style::d2::argb(theme::d2::BORDER_METAL),
+            icon_size: PLATE_ICON,
             ..Look::default()
         },
     )?;
@@ -365,7 +395,6 @@ pub struct GamesOverview {
     rows: Vec<InstallRow>,
     empty_panel: Option<WidgetId>,
     empty_search_hint: Option<WidgetId>,
-    empty_doctor_button: Option<WidgetId>,
     footer_doctor_button: Option<WidgetId>,
 
     // Right: ВЫБРАННАЯ ИГРА
@@ -390,6 +419,7 @@ pub struct GamesOverview {
     mods_note: Option<WidgetId>,
     right_card: Option<WidgetId>,
     left_card: Option<WidgetId>,
+    list_scroll: Option<WidgetId>,
     hero_plate: Option<WidgetId>,
 }
 
@@ -404,7 +434,6 @@ impl GamesOverview {
             rows: Vec::new(),
             empty_panel: None,
             empty_search_hint: None,
-            empty_doctor_button: None,
             footer_doctor_button: None,
 
             target_prev_button: None,
@@ -426,6 +455,7 @@ impl GamesOverview {
             mods_note: None,
             right_card: None,
             left_card: None,
+            list_scroll: None,
             hero_plate: None,
         }
     }
@@ -463,30 +493,15 @@ impl GamesOverview {
             )?;
         }
         for row in &self.rows {
-            cx.tree.set_style(
-                row.plate,
-                crate::layout::Style {
-                    min: crate::layout::Size::new(cover_width, cover_height),
-                    preferred: crate::layout::Size::new(cover_width, cover_height),
-                    shrink: 0.0,
-                    ..crate::layout::Style::default()
-                },
-            )?;
+            cx.tree.set_style(row.plate, plate_style(cover_width, cover_height))?;
         }
         if let Some(plate) = self.hero_plate {
             let cover_w = hero_cover_width(self.compact);
-            cx.tree.set_style(
-                plate,
-                crate::layout::Style {
-                    min: crate::layout::Size::new(cover_w, cover_w * 9.0 / 16.0),
-                    preferred: crate::layout::Size::new(cover_w, cover_w * 9.0 / 16.0),
-                    shrink: 0.0,
-                    ..crate::layout::Style::default()
-                },
-            )?;
+            cx.tree.set_style(plate, plate_style(cover_w, cover_w * 9.0 / 16.0))?;
         }
         // Texts that wrap take the width they are drawn in, which is known only after a layout pass.
         cx.tree.update_layout()?;
+        self.sync_list_cap(cx)?;
         let right_width = self
             .right_card
             .map(|id| cx.tree.rect(id).map(|rect| rect.width as f32))
@@ -553,7 +568,12 @@ impl GamesOverview {
                 cx.tree.set_visible(row.stack, true)?;
                 let language = crate::strings::current_language();
                 let selected = selected_installation.as_ref() == Some(&install.directory);
-                cx.tree.set_text(row.name, install.target.title_in(language))?;
+                let name_width = list_width(self.compact) - 2.0 * 8.0 - 2.0 * 8.0 - cover_width - 12.0 - 2.0;
+                let name = {
+                    let metrics = cx.tree.fonts().metrics(Text::Heading.style());
+                    text::ellipsize_end(install.target.title_in(language), name_width, &metrics)
+                };
+                cx.tree.set_text(row.name, &name)?;
                 let path_str = install.directory.to_string_lossy();
                 let shortened = text::ellipsize_middle(&path_str, path_width, &PathMetrics);
                 cx.tree.set_text(row.path, &shortened)?;
@@ -633,6 +653,37 @@ impl GamesOverview {
         }
 
         Ok(())
+    }
+}
+
+impl GamesOverview {
+    /// Caps the installation list at the room the left card has, so the list scrolls instead of pushing the card's
+    /// footer below the window. The room comes from the window and from the other parts of the card, which are
+    /// measured from their rectangles and do not depend on the list.
+    fn sync_list_cap(&self, cx: &mut Context<'_>) -> Result<()> {
+        let (Some(scroll), Some(card)) = (self.list_scroll, self.left_card) else {
+            return Ok(());
+        };
+        let window_height = px_i64(i64::from(cx.tree.size().1));
+        let card_top = px_i64(i64::from(cx.tree.rect(card)?.y));
+        let mut others = 0.0_f32;
+        for child in cx.tree.children(card) {
+            if child != scroll {
+                others += px_i64(i64::from(cx.tree.rect(child)?.height));
+            }
+        }
+        // The shell keeps 12 px below the content and a 30 px status bar under the window.
+        let cap = (window_height - card_top - 42.0 - others).max(0.0);
+        cx.tree.set_style(
+            scroll,
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: crate::layout::Size::new(0.0, 0.0),
+                max: crate::layout::Size::new(f32::INFINITY, cap),
+                ..Style::default()
+            },
+        )
     }
 }
 
@@ -819,22 +870,32 @@ impl Screen for GamesOverview {
                 },
             )?,
         );
-        self.empty_doctor_button = Some(style::d2::button(
-            cx.tree,
-            empty_card,
-            crate::strings::t("Открыть Доктор игры"),
-            style::d2::ButtonKind::Secondary,
-            style::d2::ButtonSize::Normal,
-        )?);
 
         // Installation rows container
-        let list_container = cx.tree.add(
+        // The list scrolls inside a height capped to the room the card has: its rows must not size the window.
+        let list_scroll = cx.tree.add(
             Some(left_card),
-            crate::layout::NodeKind::Column,
+            crate::layout::NodeKind::Scroll {
+                horizontal: false,
+                vertical: true,
+                offset_x: 0.0,
+                offset_y: 0.0,
+            },
             crate::layout::Style {
                 grow: 1.0,
                 shrink: 1.0,
                 min: crate::layout::Size::new(0.0, 0.0),
+                ..crate::layout::Style::default()
+            },
+            crate::widget::Content::Panel,
+            crate::widget::Look::default(),
+        )?;
+        cx.tree.set_clip_children(list_scroll, true)?;
+        self.list_scroll = Some(list_scroll);
+        let list_container = cx.tree.add(
+            Some(list_scroll),
+            crate::layout::NodeKind::Column,
+            crate::layout::Style {
                 padding: crate::layout::Edges::all(8.0),
                 gap: crate::layout::Size::new(0.0, 4.0),
                 align_items: crate::layout::Align::Stretch,
@@ -843,7 +904,6 @@ impl Screen for GamesOverview {
             crate::widget::Content::Panel,
             crate::widget::Look::default(),
         )?;
-        cx.tree.set_clip_children(list_container, true)?;
         let (cover_width, cover_height) = cover_size(self.compact);
         for _ in 0..MAX_INSTALLATION_ROWS {
             let stack = cx.tree.add(
@@ -871,16 +931,7 @@ impl Screen for GamesOverview {
                 crate::widget::Content::Panel,
                 crate::widget::Look::default(),
             )?;
-            let plate = cover_plate(
-                cx.tree,
-                card,
-                crate::layout::Style {
-                    min: crate::layout::Size::new(cover_width, cover_height),
-                    preferred: crate::layout::Size::new(cover_width, cover_height),
-                    shrink: 0.0,
-                    ..crate::layout::Style::default()
-                },
-            )?;
+            let plate = cover_plate(cx.tree, card, plate_style(cover_width, cover_height))?;
             let info = cx.tree.add(
                 Some(card),
                 crate::layout::NodeKind::Column,
@@ -1014,12 +1065,7 @@ impl Screen for GamesOverview {
         self.hero_plate = Some(cover_plate(
             cx.tree,
             hero_row,
-            crate::layout::Style {
-                min: crate::layout::Size::new(cover_w, cover_w * 9.0 / 16.0),
-                preferred: crate::layout::Size::new(cover_w, cover_w * 9.0 / 16.0),
-                shrink: 0.0,
-                ..crate::layout::Style::default()
-            },
+            plate_style(cover_w, cover_w * 9.0 / 16.0),
         )?);
         let details = cx.tree.add(
             Some(hero_row),
@@ -1068,16 +1114,41 @@ impl Screen for GamesOverview {
                 .copied()
                 .ok_or_else(|| sse_core::Error::damaged("key-value row without a value"))
         };
-        let status_row = style::d2::key_value_row(cx.tree, details, crate::strings::t("Статус:        "), "")?;
+        let status_row = style::d2::key_value_row(cx.tree, details, crate::strings::t("Статус:"), "")?;
         self.status_value = Some(value_of(cx.tree, status_row)?);
-        let platform_row = style::d2::key_value_row(cx.tree, details, crate::strings::t("Платформа:     "), "")?;
+        let platform_row = style::d2::key_value_row(cx.tree, details, crate::strings::t("Платформа:"), "")?;
         self.platform_value = Some(value_of(cx.tree, platform_row)?);
-        let build_row = style::d2::key_value_row(cx.tree, details, crate::strings::t("Номер сборки:  "), "")?;
+        let build_row = style::d2::key_value_row(cx.tree, details, crate::strings::t("Номер сборки:"), "")?;
         self.build_value = Some(value_of(cx.tree, build_row)?);
-        let folder_row = style::d2::key_value_row(cx.tree, details, crate::strings::t("Папка игры:    "), "")?;
+        let folder_row = style::d2::key_value_row(cx.tree, details, crate::strings::t("Папка игры:"), "")?;
         self.folder_value = Some(value_of(cx.tree, folder_row)?);
-        let saves_row = style::d2::key_value_row(cx.tree, details, crate::strings::t("Число сейвов:  "), "")?;
+        let saves_row = style::d2::key_value_row(cx.tree, details, crate::strings::t("Число сейвов:"), "")?;
         self.saves_value = Some(value_of(cx.tree, saves_row)?);
+        // Every key takes the same column, so the values line up; the last row keeps 12 px above the button.
+        for row in [status_row, platform_row, build_row, folder_row, saves_row] {
+            if let Some(key) = cx.tree.children(row).first().copied() {
+                cx.tree.set_style(
+                    key,
+                    Style {
+                        min: crate::layout::Size::new(KEY_COLUMN, 0.0),
+                        shrink: 0.0,
+                        ..Style::default()
+                    },
+                )?;
+            }
+        }
+        cx.tree.set_style(
+            saves_row,
+            Style {
+                gap: crate::layout::Size::new(8.0, 0.0),
+                align_items: crate::layout::Align::Center,
+                margin: crate::layout::Edges {
+                    bottom: 12.0,
+                    ..crate::layout::Edges::default()
+                },
+                ..Style::default()
+            },
+        )?;
 
         self.open_folder_button = Some(style::d2::button(
             cx.tree,
@@ -1100,15 +1171,21 @@ impl Screen for GamesOverview {
             },
         )?;
         style::d2::panel_title(cx.tree, actions, crate::strings::t("БЫСТРЫЕ ДЕЙСТВИЯ"))?;
-        let actions_row = style::row(cx.tree, actions)?;
-        cx.tree.set_style(
-            actions_row,
+        // Four columns of equal share of the card's width.
+        let actions_row = cx.tree.add(
+            Some(actions),
+            crate::layout::NodeKind::Grid {
+                columns: vec![crate::layout::Track::Fraction(1.0); 4],
+                rows: vec![crate::layout::Track::Auto],
+            },
             crate::layout::Style {
                 shrink: 0.0,
                 gap: crate::layout::Size::new(8.0, 0.0),
                 align_items: crate::layout::Align::Stretch,
                 ..crate::layout::Style::default()
             },
+            crate::widget::Content::Panel,
+            crate::widget::Look::default(),
         )?;
         let action = |tree: &mut Tree, row: WidgetId, text: &str| -> Result<WidgetId> {
             let id = style::d2::button(
@@ -1231,11 +1308,7 @@ impl Screen for GamesOverview {
         }
 
         // 2. Check if user clicked "Открыть Доктор игры"
-        if clicked.is_some()
-            && (clicked == self.empty_doctor_button
-                || clicked == self.footer_doctor_button
-                || clicked == self.action_doctor)
-        {
+        if clicked.is_some() && (clicked == self.footer_doctor_button || clicked == self.action_doctor) {
             cx.status = Some(crate::strings::t("Переход в раздел «Доктор игры»").to_owned());
             return Ok(());
         }

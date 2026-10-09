@@ -2199,6 +2199,21 @@ impl Shell {
         self.library_workspace.library_snapshot().0
     }
 
+    /// Starts the search for game installations the way the "Найти установки" button does. Returns `false` when the
+    /// current screen has no such button.
+    ///
+    /// Only for sse-ui-dev (screenshots); not part of the screen API.
+    #[doc(hidden)]
+    pub fn start_game_discovery(&mut self, tree: &mut Tree) -> Result<bool> {
+        let label = crate::strings::t("Найти установки").to_lowercase();
+        let Some(button) = find_button_with_text(tree, self.content, &label) else {
+            return Ok(false);
+        };
+        let pointer = Message::Window(crate::event_loop::WindowEvent::PointerLeft);
+        self.handle(tree, &pointer, Some(button))?;
+        Ok(true)
+    }
+
     /// Opens the inventory's add-item panel the way a click on its button does. Returns `false` when the current
     /// screen has no such button.
     ///
@@ -4158,12 +4173,12 @@ impl App<AppMessage> for Shell {
     }
 }
 
-/// First visible widget under `root` whose text contains `needle` (lower case, ignoring case of the text).
+/// First visible widget under `root` whose text is `needle`, ignoring case (a button's label is its whole text).
 /// Only for sse-ui-dev (through `Shell::open_add_item`).
 fn find_button_with_text(tree: &Tree, root: WidgetId, needle: &str) -> Option<WidgetId> {
     let mut stack = vec![root];
     while let Some(id) = stack.pop() {
-        if tree.is_visible(id) && tree.text(id).is_ok_and(|text| text.to_lowercase().contains(needle)) {
+        if tree.is_visible(id) && tree.text(id).is_ok_and(|text| text.to_lowercase() == needle) {
             return Some(id);
         }
         stack.extend(tree.children(id));
