@@ -228,6 +228,7 @@ fn screenshot(args: &[String]) -> Result<()> {
         shell.open(&mut tree, *id)?;
     }
     tree.resize(width, height);
+    shell.load_art_now(&mut tree, &sse_app::paths::default_data_directory().join("art"))?;
     let stride = usize::try_from(width).unwrap_or(0);
     let mut frame = vec![0_u32; stride.saturating_mul(usize::try_from(height).unwrap_or(0))];
     tree.paint(&mut frame, stride)?;
@@ -391,6 +392,7 @@ fn ci_budget() -> Result<()> {
     let mut tree = Tree::new(Fonts::bundled()?, rgb(BG_BASE));
     let mut shell = Shell::build(&mut tree, None)?;
     tree.resize(1280, 860);
+    shell.load_art_now(&mut tree, &sse_app::paths::default_data_directory().join("art"))?;
     // Budget the application state/layout startup separately from the presentation framebuffer.
     // Native presenters own their buffers; counting this 4.2 MiB benchmark Vec as idle application
     // RSS made the measurement dependent on benchmark resolution rather than editor state.

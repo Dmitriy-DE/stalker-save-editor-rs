@@ -106,8 +106,9 @@ struct NativeFilePickerFinished {
     result: std::result::Result<Option<Vec<PathBuf>>, String>,
 }
 
-const ART_MENU_WIDTH: f32 = 236.0;
 const ART_HEADER_HEIGHT: f32 = 152.0;
+const ART_HEADER_HEIGHT_COMPACT: f32 = 124.0;
+const ART_COMPACT_WIDTH: u32 = 1600;
 const ART_TOPBAR_HEIGHT: f32 = 44.0;
 const ART_MAX_BYTES: u64 = 64 * 1024 * 1024;
 
@@ -122,13 +123,25 @@ pub enum ArtSlot {
     Header,
 }
 
+impl ArtSlot {
+    const ALL: [Self; 3] = [Self::Window, Self::Sidebar, Self::Header];
+    const STEMS: [&'static str; 3] = ["art-window", "art-sidebar", "art-header"];
+
+    const fn index(self) -> usize {
+        match self {
+            Self::Window => 0,
+            Self::Sidebar => 1,
+            Self::Header => 2,
+        }
+    }
+}
+
 /// A background picture decoded off the interface thread.
 pub struct ArtLoaded {
     slot: ArtSlot,
     image: ImageData,
 }
 
-#[derive(Clone, Copy)]
 struct ArtLayers {
     window: WidgetId,
     window_scrim: WidgetId,
@@ -137,76 +150,64 @@ struct ArtLayers {
     header: WidgetId,
     header_scrim: WidgetId,
     topbar_scrim: WidgetId,
+    sources: [Option<ImageData>; 3],
+    scaled: [Option<((u32, u32), ImageData)>; 3],
+    menu_width: f32,
+    header_height: f32,
 }
 
 impl ArtLayers {
     fn build(tree: &mut Tree, root: WidgetId) -> Result<Self> {
-        let offset = Edges {
-            left: ART_MENU_WIDTH,
-            top: 0.0,
-            right: 0.0,
-            bottom: 0.0,
-        };
-        let window_style = Style {
-            grow: 1.0,
-            align_self: Some(Align::Stretch),
-            margin: offset,
-            ..Style::default()
-        };
-        let sidebar_style = Style {
-            min: Size::new(ART_MENU_WIDTH, 0.0),
-            preferred: Size::new(ART_MENU_WIDTH, 0.0),
-            align_self: Some(Align::Stretch),
-            shrink: 0.0,
-            ..Style::default()
-        };
-        let header_style = Style {
-            min: Size::new(0.0, ART_HEADER_HEIGHT),
-            align_self: Some(Align::Stretch),
-            margin: offset,
-            ..Style::default()
-        };
-        let topbar_style = Style {
-            min: Size::new(0.0, ART_TOPBAR_HEIGHT),
-            align_self: Some(Align::Stretch),
-            margin: offset,
-            ..Style::default()
-        };
-        let image = |tree: &mut Tree, style: Style| {
-            tree.add(Some(root), NodeKind::Leaf, style, Content::Image(None), Look::default())
-        };
-        let window = image(tree, window_style)?;
+        let window = tree.add(
+            Some(root),
+            NodeKind::Leaf,
+            Style::default(),
+            Content::Image(None),
+            Look::default(),
+        )?;
         let window_scrim = tree.add(
             Some(root),
             NodeKind::Leaf,
-            window_style,
+            Style::default(),
             Content::Panel,
             Look::default(),
         )?;
-        let sidebar = image(tree, sidebar_style)?;
+        let sidebar = tree.add(
+            Some(root),
+            NodeKind::Leaf,
+            Style::default(),
+            Content::Image(None),
+            Look::default(),
+        )?;
         let sidebar_scrim = tree.add(
             Some(root),
             NodeKind::Leaf,
-            sidebar_style,
+            Style::default(),
             Content::Panel,
             Look::default(),
         )?;
-        let header = image(tree, header_style)?;
+        let header = tree.add(
+            Some(root),
+            NodeKind::Leaf,
+            Style::default(),
+            Content::Image(None),
+            Look::default(),
+        )?;
         let header_scrim = tree.add(
             Some(root),
             NodeKind::Leaf,
-            header_style,
+            Style::default(),
             Content::Panel,
             Look::default(),
         )?;
         let topbar_scrim = tree.add(
             Some(root),
             NodeKind::Leaf,
-            topbar_style,
+            Style::default(),
             Content::Panel,
             Look::default(),
         )?;
-        Ok(Self {
+        let mut layers = Self {
             window,
             window_scrim,
             sidebar,
@@ -214,16 +215,74 @@ impl ArtLayers {
             header,
             header_scrim,
             topbar_scrim,
-        })
+            sources: [None, None, None],
+            scaled: [None, None, None],
+            menu_width: 0.0,
+            header_height: 0.0,
+        };
+        layers.restyle(tree, 0.0, ART_HEADER_HEIGHT)?;
+        Ok(layers)
     }
 
-    fn apply(self, tree: &mut Tree, menu: WidgetId, loaded: &ArtLoaded) -> Result<()> {
-        let (image_node, scrim_node, scrim_colour) = match loaded.slot {
-            ArtSlot::Window => (self.window, self.window_scrim, theme::d2::SCRIM_CONTENT),
-            ArtSlot::Sidebar => (self.sidebar, self.sidebar_scrim, theme::d2::SCRIM_SIDEBAR),
-            ArtSlot::Header => (self.header, self.header_scrim, theme::d2::SCRIM_HEADER),
+    fn image_node(&self, slot: ArtSlot) -> WidgetId {
+        match slot {
+            ArtSlot::Window => self.window,
+            ArtSlot::Sidebar => self.sidebar,
+            ArtSlot::Header => self.header,
+        }
+    }
+
+    fn restyle(&mut self, tree: &mut Tree, menu_width: f32, header_height: f32) -> Result<()> {
+        let offset = Edges {
+            left: menu_width,
+            top: 0.0,
+            right: 0.0,
+            bottom: 0.0,
         };
-        tree.set_image(image_node, Some(loaded.image.clone()))?;
+        let full = Style {
+            grow: 1.0,
+            align_self: Some(Align::Stretch),
+            margin: offset,
+            ..Style::default()
+        };
+        let menu = Style {
+            min: Size::new(menu_width, 0.0),
+            preferred: Size::new(menu_width, 0.0),
+            align_self: Some(Align::Stretch),
+            shrink: 0.0,
+            ..Style::default()
+        };
+        let header = Style {
+            min: Size::new(0.0, header_height),
+            align_self: Some(Align::Stretch),
+            margin: offset,
+            ..Style::default()
+        };
+        let topbar = Style {
+            min: Size::new(0.0, ART_TOPBAR_HEIGHT),
+            align_self: Some(Align::Stretch),
+            margin: offset,
+            ..Style::default()
+        };
+        tree.set_style(self.window, full)?;
+        tree.set_style(self.window_scrim, full)?;
+        tree.set_style(self.sidebar, menu)?;
+        tree.set_style(self.sidebar_scrim, menu)?;
+        tree.set_style(self.header, header)?;
+        tree.set_style(self.header_scrim, header)?;
+        tree.set_style(self.topbar_scrim, topbar)?;
+        self.menu_width = menu_width;
+        self.header_height = header_height;
+        Ok(())
+    }
+
+    fn apply(&mut self, tree: &mut Tree, menu: WidgetId, loaded: &ArtLoaded) -> Result<()> {
+        let index = loaded.slot.index();
+        let (scrim_node, scrim_colour) = match loaded.slot {
+            ArtSlot::Window => (self.window_scrim, theme::d2::SCRIM_CONTENT),
+            ArtSlot::Sidebar => (self.sidebar_scrim, theme::d2::SCRIM_SIDEBAR),
+            ArtSlot::Header => (self.header_scrim, theme::d2::SCRIM_HEADER),
+        };
         tree.set_look(
             scrim_node,
             Look {
@@ -249,8 +308,94 @@ impl ArtLayers {
                 },
             )?;
         }
+        if let Some(entry) = self.sources.get_mut(index) {
+            *entry = Some(loaded.image.clone());
+        }
+        if let Some(entry) = self.scaled.get_mut(index) {
+            *entry = None;
+        }
+        self.sync(tree, menu)
+    }
+
+    fn sync(&mut self, tree: &mut Tree, menu: WidgetId) -> Result<()> {
+        tree.update_layout()?;
+        let menu_width = u16::try_from(tree.rect(menu)?.width).map_or(f32::from(u16::MAX), f32::from);
+        let header_height = if tree.size().0 < ART_COMPACT_WIDTH {
+            ART_HEADER_HEIGHT_COMPACT
+        } else {
+            ART_HEADER_HEIGHT
+        };
+        if menu_width != self.menu_width || header_height != self.header_height {
+            self.restyle(tree, menu_width, header_height)?;
+            tree.update_layout()?;
+        }
+        for slot in ArtSlot::ALL {
+            let index = slot.index();
+            let Some(source) = self.sources.get(index).and_then(Option::as_ref) else {
+                continue;
+            };
+            let rect = tree.rect(self.image_node(slot))?;
+            let (width, height) = (rect.width, rect.height);
+            if width == 0 || height == 0 {
+                continue;
+            }
+            let fresh = self
+                .scaled
+                .get(index)
+                .and_then(Option::as_ref)
+                .is_some_and(|(size, _)| *size == (width, height));
+            if fresh {
+                continue;
+            }
+            if let Some(image) = cover(source, width, height, slot) {
+                tree.set_image(self.image_node(slot), Some(image.clone()))?;
+                if let Some(entry) = self.scaled.get_mut(index) {
+                    *entry = Some(((width, height), image));
+                }
+            }
+        }
         Ok(())
     }
+}
+
+/// Scales a picture to cover `width`×`height` and crops it from the slot's anchor: the window from its top-left, the
+/// menu from the bottom, the header from the right edge. Nearest-neighbour sampling in integer arithmetic.
+fn cover(source: &ImageData, width: u32, height: u32, slot: ArtSlot) -> Option<ImageData> {
+    let (sw, sh) = (u64::from(source.width), u64::from(source.height));
+    let (dw, dh) = (u64::from(width), u64::from(height));
+    if sw == 0 || sh == 0 || dw == 0 || dh == 0 {
+        return None;
+    }
+    let by_height = sw.checked_mul(dh)?.div_ceil(sh);
+    let (ws, hs) = if by_height >= dw {
+        (by_height, dh)
+    } else {
+        (dw, sh.checked_mul(dw)?.div_ceil(sw))
+    };
+    let (x0, y0) = match slot {
+        ArtSlot::Window => (0, 0),
+        ArtSlot::Sidebar => (ws.saturating_sub(dw) / 2, hs.saturating_sub(dh)),
+        ArtSlot::Header => (ws.saturating_sub(dw), hs.saturating_sub(dh) / 2),
+    };
+    let columns: Vec<usize> = (0..dw)
+        .map(|x| usize::try_from(x.saturating_add(x0).checked_mul(sw)?.checked_div(ws)?).ok())
+        .collect::<Option<_>>()?;
+    let rows: Vec<usize> = (0..dh)
+        .map(|y| usize::try_from(y.saturating_add(y0).checked_mul(sh)?.checked_div(hs)?).ok())
+        .collect::<Option<_>>()?;
+    let stride = usize::try_from(sw).ok()?;
+    let mut pixels = Vec::with_capacity(columns.len().checked_mul(rows.len())?);
+    for row in rows {
+        let line = source.pixels.get(row.checked_mul(stride)?..)?;
+        for column in &columns {
+            pixels.push(*line.get(*column)?);
+        }
+    }
+    Some(ImageData {
+        width,
+        height,
+        pixels: pixels.into(),
+    })
 }
 
 fn argb(value: u32) -> crate::raster::Color {
@@ -262,11 +407,7 @@ fn spawn_art_loader(proxy: Proxy<AppMessage>, directory: PathBuf) {
     let _ = std::thread::Builder::new()
         .name("art-loader".to_owned())
         .spawn(move || {
-            for (slot, stem) in [
-                (ArtSlot::Window, "art-window"),
-                (ArtSlot::Sidebar, "art-sidebar"),
-                (ArtSlot::Header, "art-header"),
-            ] {
+            for (slot, stem) in ArtSlot::ALL.into_iter().zip(ArtSlot::STEMS) {
                 if let Some(image) = load_art(&directory, stem) {
                     let _ = proxy.send(AppMessage::ToScreen(
                         ScreenId::Overview,
@@ -322,11 +463,7 @@ fn rgba_from(channels: u8, pixels: &[u8]) -> Vec<u8> {
 
 fn premultiplied(rgba: &[u8]) -> Vec<u32> {
     fn scale(value: u8, alpha: u8) -> u32 {
-        u32::from(value)
-            .checked_mul(u32::from(alpha))
-            .and_then(|product| product.checked_add(127))
-            .and_then(|product| product.checked_div(255))
-            .unwrap_or(0)
+        u32::from(value).wrapping_mul(u32::from(alpha)).wrapping_add(127) / 255
     }
     rgba.chunks_exact(4)
         .map(|pixel| match *pixel {
@@ -1607,6 +1744,16 @@ impl Shell {
         }
     }
 
+    /// Loads the background pictures from `directory` on the calling thread; for headless snapshots and budgets.
+    pub fn load_art_now(&mut self, tree: &mut Tree, directory: &Path) -> Result<()> {
+        for (slot, stem) in ArtSlot::ALL.into_iter().zip(ArtSlot::STEMS) {
+            if let Some(image) = load_art(directory, stem) {
+                self.art.apply(tree, self.sidebar, &ArtLoaded { slot, image })?;
+            }
+        }
+        Ok(())
+    }
+
     fn apply_navigation(&mut self, tree: &mut Tree, collapsed: bool) -> Result<()> {
         self.nav_collapsed = collapsed;
         let width = if collapsed { 58.0 } else { 236.0 };
@@ -1655,7 +1802,7 @@ impl Shell {
             };
             tree.set_text(id, text)?;
         }
-        Ok(())
+        self.art.sync(tree, self.sidebar)
     }
 
     fn sync_navigation_width(&mut self, tree: &mut Tree, width: u32) -> Result<()> {
@@ -2621,6 +2768,7 @@ impl Shell {
         }
         if let Message::Window(WindowEvent::Resized { width, .. }) = message {
             self.sync_navigation_width(tree, *width)?;
+            self.art.sync(tree, self.sidebar)?;
             let sidebar_width = if self.nav_collapsed { 58 } else { 236 };
             let panel_width = width.saturating_sub(sidebar_width);
             tree.set_visible(self.edition, panel_width >= 1000)?;
@@ -4747,7 +4895,7 @@ mod tests {
     #[test]
     fn background_picture_is_drawn_under_its_scrim() -> sse_core::Result<()> {
         let mut tree = Tree::new(crate::glyphs::Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
-        let shell = Shell::build_for_test(&mut tree, None)?;
+        let mut shell = Shell::build_for_test(&mut tree, None)?;
         tree.resize(1280, 800);
         let mut frame = vec![0_u32; 1280 * 800];
         tree.damage_all();

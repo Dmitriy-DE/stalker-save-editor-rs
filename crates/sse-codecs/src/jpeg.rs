@@ -550,6 +550,10 @@ const FIX_2_562915447: i64 = 20995;
 const FIX_3_072711026: i64 = 25172;
 
 fn idct_1d(input: [i64; 8], shift: u32) -> [i64; 8] {
+    if input.iter().skip(1).all(|value| *value == 0) {
+        let constant = descale(input[0].wrapping_shl(CONST_BITS), shift);
+        return [constant; 8];
+    }
     let [in0, in1, in2, in3, in4, in5, in6, in7] = input;
     let z1 = in2.wrapping_add(in6).wrapping_mul(FIX_0_541196100);
     let tmp2 = z1.wrapping_add(in6.wrapping_mul(-FIX_1_847759065));
@@ -631,7 +635,6 @@ fn idct_block(coefficients: &[i64; 64]) -> [u8; 64] {
 
 struct Plane {
     width: usize,
-    height: usize,
     samples: Vec<u8>,
 }
 
@@ -642,17 +645,8 @@ impl Plane {
             .ok_or_else(|| Error::damaged("JPEG plane size overflow"))?;
         Ok(Self {
             width,
-            height,
             samples: vec![0; count],
         })
-    }
-
-    fn sample(&self, x: usize, y: usize) -> i64 {
-        let x = x.min(self.width.saturating_sub(1));
-        let y = y.min(self.height.saturating_sub(1));
-        self.samples
-            .get(y.saturating_mul(self.width).saturating_add(x))
-            .map_or(0, |value| i64::from(*value))
     }
 }
 
@@ -816,11 +810,11 @@ fn clamp8(value: i64) -> u8 {
 fn crop(plane: &Plane, width: usize, height: usize) -> Plane {
     let mut samples = Vec::with_capacity(width.saturating_mul(height));
     for y in 0..height {
-        for x in 0..width {
-            samples.push(u8::try_from(plane.sample(x, y)).unwrap_or(0));
+        if let Some(row) = plane.samples.get(y.saturating_mul(plane.width)..) {
+            samples.extend_from_slice(row.get(..width).unwrap_or(&[]));
         }
     }
-    Plane { width, height, samples }
+    Plane { width, samples }
 }
 
 fn upsample(plane: &Plane, component: &Component, frame: &Frame, width: usize, height: usize) -> Plane {
@@ -828,70 +822,96 @@ fn upsample(plane: &Plane, component: &Component, frame: &Frame, width: usize, h
     let factor_y = frame.v_max.checked_div(component.v).unwrap_or(1);
     let real_width = width.saturating_mul(component.h).div_ceil(frame.h_max).max(1);
     let real_height = height.saturating_mul(component.v).div_ceil(frame.v_max).max(1);
-    let source = |x: usize, y: usize| {
-        plane.sample(
-            x.min(real_width.saturating_sub(1)),
-            y.min(real_height.saturating_sub(1)),
-        )
+    let row = |index: usize| -> &[u8] {
+        let index = index.min(real_height.saturating_sub(1));
+        plane
+            .samples
+            .get(index.saturating_mul(plane.width)..)
+            .and_then(|line| line.get(..real_width))
+            .unwrap_or(&[])
     };
     let mut samples = Vec::with_capacity(width.saturating_mul(height));
+    let mut colsums = Vec::with_capacity(real_width);
     for y in 0..height {
-        for x in 0..width {
-            let value = match (factor_x, factor_y) {
-                (1, 1) => source(x, y),
-                (2, 1) => h2v1(&source, x / 2, x % 2 == 1, y, real_width),
-                (2, 2) => h2v2(&source, x / 2, x % 2 == 1, y, real_width, real_height),
-                _ => source(
-                    x.checked_div(factor_x).unwrap_or(0),
-                    y.checked_div(factor_y).unwrap_or(0),
-                ),
-            };
-            samples.push(u8::try_from(value.clamp(0, 255)).unwrap_or(0));
+        match (factor_x, factor_y) {
+            (1, 1) => samples.extend_from_slice(row(y).get(..width).unwrap_or(&[])),
+            (2, 1) => fancy_h2v1(row(y), width, &mut samples),
+            (2, 2) => {
+                let source = y.checked_div(2).unwrap_or(0);
+                let neighbour = if y % 2 == 1 {
+                    row(source.saturating_add(1))
+                } else {
+                    row(source.saturating_sub(1))
+                };
+                colsums.clear();
+                colsums.extend(
+                    row(source)
+                        .iter()
+                        .zip(neighbour.iter())
+                        .map(|(a, b)| i32::from(*a).wrapping_mul(3).wrapping_add(i32::from(*b))),
+                );
+                fancy_h2v2(&colsums, width, &mut samples);
+            }
+            _ => {
+                let line = row(y.checked_div(factor_y).unwrap_or(0));
+                for x in 0..width {
+                    let column = x.checked_div(factor_x).unwrap_or(0);
+                    samples.push(line.get(column).copied().unwrap_or(0));
+                }
+            }
         }
     }
-    Plane { width, height, samples }
+    Plane { width, samples }
 }
 
-fn h2v1(source: &impl Fn(usize, usize) -> i64, column: usize, odd: bool, y: usize, width: usize) -> i64 {
-    let this = source(column, y).wrapping_mul(3);
-    if !odd {
-        if column == 0 {
-            return source(0, y);
-        }
-        return this.wrapping_add(source(column.saturating_sub(1), y)).wrapping_add(1) >> 2;
+fn fancy_h2v1(line: &[u8], width: usize, out: &mut Vec<u8>) {
+    let last = line.len().saturating_sub(1);
+    for x in 0..width {
+        let column = x.checked_div(2).unwrap_or(0);
+        let this = i32::from(line.get(column).copied().unwrap_or(0)).wrapping_mul(3);
+        let value = if x % 2 == 0 {
+            if column == 0 {
+                i32::from(line.first().copied().unwrap_or(0))
+            } else {
+                let left = i32::from(line.get(column.saturating_sub(1)).copied().unwrap_or(0));
+                this.wrapping_add(left).wrapping_add(1) >> 2
+            }
+        } else if column >= last {
+            i32::from(line.get(column).copied().unwrap_or(0))
+        } else {
+            let right = i32::from(line.get(column.saturating_add(1)).copied().unwrap_or(0));
+            this.wrapping_add(right).wrapping_add(2) >> 2
+        };
+        out.push(u8::try_from(value.clamp(0, 255)).unwrap_or(0));
     }
-    if column.saturating_add(1) >= width {
-        return source(column, y);
-    }
-    this.wrapping_add(source(column.saturating_add(1), y)).wrapping_add(2) >> 2
 }
 
-fn h2v2(source: &impl Fn(usize, usize) -> i64, column: usize, odd: bool, y: usize, width: usize, height: usize) -> i64 {
-    let row = y / 2;
-    let neighbour = if y % 2 == 1 {
-        row.saturating_add(1).min(height.saturating_sub(1))
-    } else {
-        row.saturating_sub(1)
-    };
-    let sums = |x: usize| source(x, row).wrapping_mul(3).wrapping_add(source(x, neighbour));
-    let this = sums(column);
-    if !odd {
-        if column == 0 {
-            return this.wrapping_mul(4).wrapping_add(8) >> 4;
-        }
-        return this
-            .wrapping_mul(3)
-            .wrapping_add(sums(column.saturating_sub(1)))
-            .wrapping_add(8)
-            >> 4;
+fn fancy_h2v2(colsums: &[i32], width: usize, out: &mut Vec<u8>) {
+    let last = colsums.len().saturating_sub(1);
+    let sum = |index: usize| colsums.get(index.min(last)).copied().unwrap_or(0);
+    for x in 0..width {
+        let column = x.checked_div(2).unwrap_or(0);
+        let value = if x % 2 == 0 {
+            if column == 0 {
+                sum(0).wrapping_mul(4).wrapping_add(8) >> 4
+            } else {
+                sum(column)
+                    .wrapping_mul(3)
+                    .wrapping_add(sum(column.saturating_sub(1)))
+                    .wrapping_add(8)
+                    >> 4
+            }
+        } else if column >= last {
+            sum(column).wrapping_mul(4).wrapping_add(7) >> 4
+        } else {
+            sum(column)
+                .wrapping_mul(3)
+                .wrapping_add(sum(column.saturating_add(1)))
+                .wrapping_add(7)
+                >> 4
+        };
+        out.push(u8::try_from(value.clamp(0, 255)).unwrap_or(0));
     }
-    if column.saturating_add(1) >= width {
-        return this.wrapping_mul(4).wrapping_add(7) >> 4;
-    }
-    this.wrapping_mul(3)
-        .wrapping_add(sums(column.saturating_add(1)))
-        .wrapping_add(7)
-        >> 4
 }
 
 #[cfg(test)]
