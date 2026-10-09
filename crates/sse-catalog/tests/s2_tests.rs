@@ -27,6 +27,33 @@ fn non_russian_ui_falls_back_to_english_not_cyrillic() {
 }
 
 #[test]
+fn neutral_exoskeleton_name_has_no_wiki_markup() {
+    let catalog = Stalker2ItemCatalog::load_embedded();
+    assert_eq!(
+        catalog.name(Some("Exoskeleton_Neutral_Armor"), "en"),
+        Some("Exoskeleton")
+    );
+}
+
+#[test]
+fn update_20_weapons_have_display_names_and_descriptions_without_wiki_markup() {
+    let catalog = Stalker2ItemCatalog::load_embedded();
+
+    assert_eq!(catalog.name(Some("GunArevPrecise_AR"), "en"), Some("Jagerblick"));
+    assert_eq!(catalog.name(Some("GunFora230_PP"), "en"), Some("Fora-230"));
+    assert_eq!(catalog.name(Some("GunGP3A_DMR"), "en"), Some("GP3A"));
+    assert_eq!(catalog.name(Some("GunSKP_DMR"), "en"), Some("SKP"));
+    assert_eq!(
+        catalog.description(Some("GunDnipro_ST"), "en"),
+        Some("Designed to replace the Soviet AKM-74 in special force units, this Ukrainian assault rifle is utilized not just by military special forces, but also by seasoned stalkers.")
+    );
+    assert_eq!(
+        catalog.description(Some("GunGauss_SP"), "en"),
+        Some("Developed in the Zone and incorporating an electromagnetic bullet acceleration system, this sniper rifle is used exclusively within the Zone")
+    );
+}
+
+#[test]
 fn canonicalizes_save_sids() {
     let catalog = Stalker2ItemCatalog::load_embedded();
 

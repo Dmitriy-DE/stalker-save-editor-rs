@@ -3942,7 +3942,7 @@
    },
    "icon": "s2/Exoskeleton_Neutral_Armor.png",
    "names": {
-    "en": "|image = Exoskeletoncop.jpg",
+    "en": "Exoskeleton",
     "pl": "Egzoszkielet",
     "ru": "Экзоскелет",
     "uk": "Екзоскелет"
@@ -4669,7 +4669,7 @@
    },
    "icon": "s2/GunArevPrecise_AR.png",
    "names": {
-    "en": "| hoc_ammo1=s2_5.56_fmj"
+    "en": "Jagerblick"
    },
    "variant_of": "ARev"
   },
@@ -4936,7 +4936,7 @@
   },
   "GunDnipro_ST": {
    "descriptions": {
-    "en": "quote=Designed to replace the Soviet AKM-74 in special force units, this Ukrainian assault rifle is utilized not just by military special forces, but also by seasoned stalkers.",
+    "en": "Designed to replace the Soviet AKM-74 in special force units, this Ukrainian assault rifle is utilized not just by military special forces, but also by seasoned stalkers.",
     "ru": "Украинская штурмовая винтовка для замены советского АКМ-74 в спецподразделениях. Встречается не только у военного спецназа, но и у ветеранов сталкерского ремесла."
    },
    "icon": "s2/GunDnipro_ST.png",
@@ -5049,7 +5049,7 @@
   "GunFora230_PP": {
    "icon": "s2/GunFora230_PP.png",
    "names": {
-    "en": "|hoc_ammo1=s2_9x19_fmj"
+    "en": "Fora-230"
    }
   },
   "GunFora_MagIncreased": {
@@ -5262,7 +5262,7 @@
   "GunGP3A_DMR": {
    "icon": "s2/GunGP3A_DMR.png",
    "names": {
-    "en": "|hoc_ammo1=s2_7.62x51_fmj"
+    "en": "GP3A"
    }
   },
   "GunGauss_MagIncreased": {
@@ -5276,7 +5276,7 @@
   },
   "GunGauss_SP": {
    "descriptions": {
-    "en": "quote=Developed in the Zone and incorporating an electromagnetic bullet acceleration system, this sniper rifle is used exclusively within the Zone",
+    "en": "Developed in the Zone and incorporating an electromagnetic bullet acceleration system, this sniper rifle is used exclusively within the Zone",
     "ru": "Снайперская винтовка, использующая для разгона пули систему электромагнитов. Была разработана и используется исключительно внутри Зоны."
    },
    "icon": "s2/GunGauss_SP.png",
@@ -6629,7 +6629,7 @@
   "GunSKP_DMR": {
    "icon": "s2/GunSKP_DMR.png",
    "names": {
-    "en": "|hoc_ammo1=s2_7.62x54_fmj"
+    "en": "SKP"
    }
   },
   "GunSPSA_SG": {
