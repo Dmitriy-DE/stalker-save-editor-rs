@@ -214,9 +214,30 @@ jobs:
           path: dist/
       - name: Build release manifest
         run: tools/package.sh --manifest-only
+      - name: Check manifest signature
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -s dist/latest.json.sig ] && grep -q '[^[:space:]]' dist/latest.json.sig; then
+            echo "SIGNED=true" >> "$GITHUB_ENV"
+            cargo run --locked --release -p sse-cli -- update verify-manifest dist/latest.json dist/latest.json.sig
+          else
+            echo "SIGNED=false" >> "$GITHUB_ENV"
+            echo "::warning::latest.json is NOT SIGNED - do not publish this manifest"
+            echo "**NOT SIGNED - do not publish latest.json** (the owner signs it locally)" >> "$GITHUB_STEP_SUMMARY"
+          fi
       - uses: actions/upload-artifact@v4
+        if: env.SIGNED == 'true'
         with:
           name: release-manifest
+          path: dist/
+          retention-days: 30
+          if-no-files-found: error
+          include-hidden-files: true
+      - uses: actions/upload-artifact@v4
+        if: env.SIGNED != 'true'
+        with:
+          name: release-manifest-UNSIGNED-DO-NOT-PUBLISH
           path: dist/
           retention-days: 30
           if-no-files-found: error
