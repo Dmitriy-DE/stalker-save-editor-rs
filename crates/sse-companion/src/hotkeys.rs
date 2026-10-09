@@ -272,6 +272,9 @@ impl HotkeyLayout {
         let previous = parent.join(format!(".{file_name}.previous-{}-{sequence}", std::process::id()));
         let had_target = path.exists();
         if had_target {
+            keep_unreadable_layout(path, parent, &file_name, sequence)?;
+        }
+        if had_target {
             if let Err(error) = fs::rename(path, &previous) {
                 let _ = fs::remove_file(&temporary);
                 return Err(HotkeyError::from_io(error));
@@ -289,6 +292,22 @@ impl HotkeyLayout {
         }
         Ok(())
     }
+}
+
+/// Copies an existing layout that cannot be parsed to a sibling file before a save replaces it.
+fn keep_unreadable_layout(path: &Path, parent: &Path, file_name: &str, sequence: u64) -> Result<(), HotkeyError> {
+    let Ok(text) = fs::read_to_string(path) else {
+        return Ok(());
+    };
+    if HotkeyLayout::parse(&text).is_ok() {
+        return Ok(());
+    }
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs());
+    let copy = parent.join(format!("{file_name}.damaged-{stamp}-{sequence}"));
+    fs::copy(path, copy).map_err(HotkeyError::from_io)?;
+    Ok(())
 }
 
 impl Default for HotkeyLayout {
