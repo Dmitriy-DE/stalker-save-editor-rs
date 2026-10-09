@@ -1269,6 +1269,8 @@ fn apply_with_catalog_internal(
         }
     }
     if !seen_moves.is_empty() {
+        let source_items = save.inventory()?;
+        let verified_items = verified.inventory()?;
         for change in changes.changes() {
             if let Change::MoveItem {
                 target_object,
@@ -1285,6 +1287,22 @@ fn apply_with_catalog_internal(
                     return Err(Error::Refused(format!(
                         "stash transfer parent read-back failed for 0x{target_object:04X}"
                     )));
+                }
+                if *new_parent == verified.actor_id() {
+                    // A placement the transfer did not write keeps its value; a written one must read back as backpack.
+                    let before = source_items
+                        .iter()
+                        .find(|item| item.handle == *target_object)
+                        .and_then(|item| item.placement_value);
+                    let after = verified_items
+                        .iter()
+                        .find(|item| item.handle == *target_object)
+                        .and_then(|item| item.placement_value);
+                    if after != before && after.is_some_and(|value| value & 0x0F != 3) {
+                        return Err(Error::Refused(format!(
+                            "stash item placement read-back failed for 0x{target_object:04X}"
+                        )));
+                    }
                 }
             }
         }
@@ -1796,7 +1814,8 @@ fn verify_changed_image_ranges(
 
     let declared = DeclaredChunkChanges::from_changes(source, changes);
     if replaced_chunks.contains(&2) {
-        verify_object_chunk_records(source, replacement_layout, replacement_image, &declared)?;
+        let record_writes = declared_record_writes(source, writes)?;
+        verify_object_chunk_records(source, replacement_layout, replacement_image, &declared, &record_writes)?;
     }
     if replaced_chunks.contains(&9) {
         verify_relation_chunk_records(source, replacement_layout, replacement_image, &declared)?;
@@ -1866,6 +1885,7 @@ fn verify_changed_image_ranges(
 #[derive(Default)]
 struct DeclaredChunkChanges {
     object_records: HashSet<u16>,
+    upgrade_records: HashSet<u16>,
     added_objects: HashSet<u16>,
     removed_objects: HashSet<u16>,
     info_rows: HashSet<u16>,
@@ -1882,9 +1902,12 @@ impl DeclaredChunkChanges {
                 | Change::SetDurability { target_object, .. }
                 | Change::SetPlacement { target_object, .. }
                 | Change::MoveItem { target_object, .. }
-                | Change::SetPlayerFaction { target_object, .. }
-                | Change::SetUpgrades { target_object, .. } => {
+                | Change::SetPlayerFaction { target_object, .. } => {
                     declared.object_records.insert(*target_object);
+                }
+                Change::SetUpgrades { target_object, .. } => {
+                    declared.object_records.insert(*target_object);
+                    declared.upgrade_records.insert(*target_object);
                 }
                 Change::RemoveItem { target_object } => {
                     declared.removed_objects.insert(*target_object);
@@ -1907,11 +1930,89 @@ impl DeclaredChunkChanges {
     }
 }
 
+/// Groups the source-image byte ranges that a change set writes, by the OBJECT record that contains them.
+fn declared_record_writes(source: &Save, writes: &[PendingWrite]) -> Result<HashMap<u16, Vec<Range<usize>>>> {
+    let mut by_record: HashMap<u16, Vec<Range<usize>>> = HashMap::new();
+    for write in writes {
+        let end = write
+            .offset
+            .checked_add(write.length)
+            .ok_or_else(|| Error::damaged("X-Ray write range overflows"))?;
+        let record = source
+            .registry_objects()
+            .iter()
+            .find(|record| {
+                let record_end = record.record_offset.saturating_add(record.record_length);
+                record.record_offset <= write.offset && end <= record_end
+            })
+            .ok_or_else(|| Error::damaged("X-Ray write is outside every OBJECT record"))?;
+        by_record.entry(record.object_id).or_default().push(write.offset..end);
+    }
+    Ok(by_record)
+}
+
+/// Checks a record the change set declared as edited: every byte outside its declared writes must be unchanged.
+///
+/// A record that an upgrade replacement resized keeps its bytes before the upgrade vector and after it, shifted
+/// by the size change; the SPAWN length and the STATE size field are rewritten by the replacement and are excluded.
+fn verify_declared_record_bytes(
+    before: &[u8],
+    after: &[u8],
+    writes: &[Range<usize>],
+    upgrade_vector: Option<Range<usize>>,
+    framing: &[Range<usize>],
+) -> Result<()> {
+    let excluded = |index: usize| writes.iter().chain(framing).any(|range| range.contains(&index));
+    let collateral = || Error::damaged("X-Ray OBJECT record changed outside its declared writes");
+    let Some(vector) = upgrade_vector else {
+        if before.len() != after.len() {
+            return Err(Error::damaged(
+                "X-Ray OBJECT record changed length without a declared upgrade",
+            ));
+        }
+        for (index, (old, new)) in before.iter().zip(after).enumerate() {
+            if old != new && !excluded(index) {
+                return Err(collateral());
+            }
+        }
+        return Ok(());
+    };
+    if vector.start > vector.end
+        || vector.end > before.len()
+        || writes
+            .iter()
+            .any(|write| write.start < vector.end && vector.start < write.end)
+    {
+        return Err(Error::damaged("X-Ray upgrade vector overlaps a declared write"));
+    }
+    let delta = isize::try_from(after.len())
+        .ok()
+        .and_then(|after_length| after_length.checked_sub(isize::try_from(before.len()).ok()?))
+        .ok_or_else(|| Error::damaged("X-Ray OBJECT record size delta overflow"))?;
+    for index in 0..vector.start {
+        match (before.get(index), after.get(index)) {
+            (Some(old), Some(new)) if old == new || excluded(index) => {}
+            _ => return Err(collateral()),
+        }
+    }
+    for index in vector.end..before.len() {
+        let shifted = index
+            .checked_add_signed(delta)
+            .ok_or_else(|| Error::damaged("X-Ray OBJECT record shifted offset overflow"))?;
+        match (before.get(index), after.get(shifted)) {
+            (Some(old), Some(new)) if old == new || excluded(index) => {}
+            _ => return Err(collateral()),
+        }
+    }
+    Ok(())
+}
+
 fn verify_object_chunk_records(
     source: &Save,
     replacement_layout: &Save,
     replacement_image: &[u8],
     declared: &DeclaredChunkChanges,
+    record_writes: &HashMap<u16, Vec<Range<usize>>>,
 ) -> Result<()> {
     let source_payload = source.object_chunk_bytes(source.raw_image())?;
     let replacement_payload = replacement_layout.object_chunk_bytes(replacement_image)?;
@@ -1980,7 +2081,45 @@ fn verify_object_chunk_records(
                         "X-Ray OBJECT record 0x{object_id:04X} changed its object id"
                     )));
                 }
-                if before_bytes != after_bytes && !declared.object_records.contains(object_id) {
+                if declared.object_records.contains(object_id) {
+                    let relative = |range: &Range<usize>| -> Result<Range<usize>> {
+                        let start = range
+                            .start
+                            .checked_sub(before_record.record_offset)
+                            .ok_or_else(|| Error::damaged("X-Ray declared write precedes its record"))?;
+                        let end = range
+                            .end
+                            .checked_sub(before_record.record_offset)
+                            .ok_or_else(|| Error::damaged("X-Ray declared write precedes its record"))?;
+                        Ok(start..end)
+                    };
+                    let writes = record_writes
+                        .get(object_id)
+                        .map_or(&[][..], Vec::as_slice)
+                        .iter()
+                        .map(relative)
+                        .collect::<Result<Vec<_>>>()?;
+                    let (vector, framing) = if declared.upgrade_records.contains(object_id) {
+                        let (offset, length, _) = upgrade_vector_range(source.raw_image(), before_record)?;
+                        let start = offset
+                            .checked_sub(before_record.record_offset)
+                            .ok_or_else(|| Error::damaged("X-Ray upgrade vector precedes its record"))?;
+                        let state_start = before_record
+                            .state_offset
+                            .checked_sub(before_record.record_offset)
+                            .ok_or_else(|| Error::damaged("X-Ray STATE precedes its record"))?;
+                        let state_size = state_start
+                            .checked_sub(2)
+                            .ok_or_else(|| Error::damaged("X-Ray STATE size field precedes its record"))?;
+                        (
+                            Some(start..start.saturating_add(length)),
+                            vec![0..2, state_size..state_start],
+                        )
+                    } else {
+                        (None, Vec::new())
+                    };
+                    verify_declared_record_bytes(before_bytes, after_bytes, &writes, vector, &framing)?;
+                } else if before_bytes != after_bytes {
                     return Err(Error::damaged(format!(
                         "X-Ray OBJECT record 0x{object_id:04X} changed without a declared edit"
                     )));
@@ -5281,6 +5420,47 @@ mod tests {
             .ok_or("added item should be in the verified inventory")?;
         assert!(item.placement_value.is_some_and(|value| value & 0x0F == 3));
         assert_eq!(item.condition, original_condition);
+        Ok(())
+    }
+
+    #[test]
+    fn declared_record_bytes_outside_its_writes_are_rejected_when_the_object_chunk_is_rebuilt() -> TestResult {
+        let packed = include_bytes!("../../../fixtures/synthetic/writer-add/xray-add-soc-ammo-source.sav");
+        let source = Save::read(packed)?;
+        let actor_id = source.actor_id();
+        let money = source.money()?;
+        let new_money = money.checked_add(1).ok_or("money test value overflow")?;
+        let changes = ChangeSet::new(vec![
+            Change::SetMoney {
+                target_object: actor_id,
+                old_value: money,
+                new_value: new_money,
+            },
+            Change::AddItem {
+                template_object: 4660,
+                item_key: "ammo_9x39_pab9".to_owned(),
+                object_id: 4661,
+                quantity: 17,
+            },
+        ]);
+        let output = apply(&source, &changes)?;
+        let replacement = Save::read(output.as_slice())?;
+        let writes = [PendingWrite::u32(source.money_offset(), new_money)];
+
+        verify_changed_image_ranges(&source, &replacement, replacement.raw_image(), &writes, &[2], &changes)?;
+
+        let actor = replacement
+            .registry_objects()
+            .iter()
+            .find(|record| record.object_id == actor_id)
+            .ok_or("replacement actor should exist")?;
+        let mut corrupted = replacement.raw_image().to_vec();
+        *corrupted
+            .get_mut(actor.state_offset)
+            .ok_or("actor STATE should be inside the image")? ^= 1;
+        let error = verify_changed_image_ranges(&source, &replacement, &corrupted, &writes, &[2], &changes)
+            .expect_err("a byte outside the declared money write must be rejected");
+        assert!(error.to_string().contains("declared writes"), "{error}");
         Ok(())
     }
 
