@@ -1593,7 +1593,7 @@ impl Shell {
         let library_find = style::d2::button(
             tree,
             library_actions,
-            "Найти сейвы",
+            crate::strings::t("Найти сейвы"),
             style::d2::ButtonKind::Secondary,
             style::d2::ButtonSize::Small,
         )?;
@@ -3868,7 +3868,7 @@ impl Shell {
                 .path
                 .file_name()
                 .map(|name| name.to_string_lossy())
-                .unwrap_or_else(|| "без имени".into());
+                .unwrap_or_else(|| crate::strings::t("без имени").into());
             let game =
                 super::saves::format_display_name(slot.format_id.as_deref().unwrap_or(&slot.candidate_release_id));
             tree.set_image(
