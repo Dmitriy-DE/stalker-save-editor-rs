@@ -324,9 +324,7 @@ impl ArtLayers {
             self.restyle(tree, menu_width, header_height)?;
             tree.update_layout()?;
         }
-        let Some(directory) = self.directory.clone() else {
-            return Ok(());
-        };
+        let directory = self.directory.clone();
         for slot in ArtSlot::ALL {
             let index = slot.index();
             let rect = tree.rect(self.image_node(slot))?;
@@ -353,7 +351,7 @@ impl ArtLayers {
                     spawn_art_bake(proxy, directory.clone(), slot, size);
                 }
                 None => {
-                    if let Some(image) = bake_art(&directory, slot, size) {
+                    if let Some(image) = bake_art(directory.as_deref(), slot, size) {
                         self.show(tree, menu, slot, image)?;
                     }
                 }
@@ -365,14 +363,33 @@ impl ArtLayers {
 
 /// The picture of one slot at `size`: decoded, cover-scaled from its anchor and darkened by its scrim (the window
 /// also by the top-bar scrim over its first rows).
-fn bake_art(directory: &Path, slot: ArtSlot, size: (u32, u32)) -> Option<ImageData> {
-    let source = load_art(directory, ArtSlot::STEMS.get(slot.index())?)?;
+fn bake_art(directory: Option<&Path>, slot: ArtSlot, size: (u32, u32)) -> Option<ImageData> {
+    let source = directory
+        .and_then(|directory| load_art(directory, ArtSlot::STEMS.get(slot.index())?))
+        .or_else(|| decode_embedded_art(slot))?;
     cover(&source, size.0, size.1, slot)
 }
 
-fn spawn_art_bake(proxy: Proxy<AppMessage>, directory: PathBuf, slot: ArtSlot, size: (u32, u32)) {
+/// Pictures compiled into the program; a layer uses one when the data directory has no usable file for it.
+const EMBEDDED_ART: [&[u8]; 3] = [
+    include_bytes!("../../assets/art/art-window.jpg"),
+    include_bytes!("../../assets/art/art-sidebar.jpg"),
+    include_bytes!("../../assets/art/art-header.jpg"),
+];
+
+fn decode_embedded_art(slot: ArtSlot) -> Option<ImageData> {
+    let bytes = EMBEDDED_ART.get(slot.index())?;
+    let image = sse_codecs::jpeg::decode(bytes).ok()?;
+    Some(ImageData {
+        width: image.width,
+        height: image.height,
+        pixels: opaque_premultiplied(image.channels, &image.pixels).into(),
+    })
+}
+
+fn spawn_art_bake(proxy: Proxy<AppMessage>, directory: Option<PathBuf>, slot: ArtSlot, size: (u32, u32)) {
     let _ = std::thread::Builder::new().name("art-bake".to_owned()).spawn(move || {
-        if let Some(image) = bake_art(&directory, slot, size) {
+        if let Some(image) = bake_art(directory.as_deref(), slot, size) {
             let _ = proxy.send(AppMessage::ToScreen(
                 ScreenId::Overview,
                 Box::new(ArtBaked { slot, size, image }),
@@ -480,6 +497,10 @@ fn load_art(directory: &Path, stem: &str) -> Option<ImageData> {
                 pixels: pixels.into(),
             });
         }
+        sse_app::diagnostics::warn(&format!(
+            "background picture {} could not be decoded; the built-in one is used",
+            path.display()
+        ));
     }
     None
 }

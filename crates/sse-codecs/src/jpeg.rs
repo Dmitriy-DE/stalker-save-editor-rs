@@ -751,54 +751,64 @@ fn decode_scan(
 fn to_image(frame: &Frame, planes: &[Plane]) -> Image {
     let width = frame.width;
     let height = frame.height;
-    let full: Vec<Plane> = frame
-        .components
-        .iter()
-        .zip(planes)
-        .map(|(component, plane)| {
-            if frame.components.len() == 1 {
-                return crop(plane, width, height);
-            }
-            upsample(plane, component, frame, width, height)
-        })
-        .collect();
-    let channels = full.len();
-    let mut pixels = Vec::with_capacity(width.saturating_mul(height).saturating_mul(channels));
-    if channels == 1 {
-        for plane in &full {
-            pixels.extend(plane.samples.iter().copied());
-        }
-    } else {
-        let (luma, cb, cr) = match (full.first(), full.get(1), full.get(2)) {
-            (Some(y), Some(cb), Some(cr)) => (y, cb, cr),
-            _ => {
-                return Image {
-                    width: 0,
-                    height: 0,
-                    channels: 1,
-                    pixels,
-                }
-            }
+    if frame.components.len() == 1 {
+        let samples = planes
+            .first()
+            .map(|plane| crop(plane, width, height).samples)
+            .unwrap_or_default();
+        return Image {
+            width: u32::try_from(width).unwrap_or(0),
+            height: u32::try_from(height).unwrap_or(0),
+            channels: 1,
+            pixels: samples,
         };
-        for index in 0..width.saturating_mul(height) {
-            let y = i64::from(luma.samples.get(index).copied().unwrap_or(0));
-            let cb = i64::from(cb.samples.get(index).copied().unwrap_or(128)).wrapping_sub(128);
-            let cr = i64::from(cr.samples.get(index).copied().unwrap_or(128)).wrapping_sub(128);
-            let r = y.wrapping_add(91_881_i64.wrapping_mul(cr).wrapping_add(32_768) >> 16);
-            let g = y.wrapping_add(
+    }
+    let mut pixels = Vec::with_capacity(width.saturating_mul(height).saturating_mul(3));
+    let (Some(luma), Some(cb), Some(cr), Some(luma_component), Some(cb_component), Some(cr_component)) = (
+        planes.first(),
+        planes.get(1),
+        planes.get(2),
+        frame.components.first(),
+        frame.components.get(1),
+        frame.components.get(2),
+    ) else {
+        return Image {
+            width: 0,
+            height: 0,
+            channels: 1,
+            pixels,
+        };
+    };
+    let mut luma_row = Vec::with_capacity(width);
+    let mut cb_row = Vec::with_capacity(width);
+    let mut cr_row = Vec::with_capacity(width);
+    let mut colsums = Vec::new();
+    for y in 0..height {
+        luma_row.clear();
+        cb_row.clear();
+        cr_row.clear();
+        upsample_row(luma, luma_component, frame, width, y, &mut luma_row, &mut colsums);
+        upsample_row(cb, cb_component, frame, width, y, &mut cb_row, &mut colsums);
+        upsample_row(cr, cr_component, frame, width, y, &mut cr_row, &mut colsums);
+        for x in 0..width {
+            let y_value = i64::from(luma_row.get(x).copied().unwrap_or(0));
+            let cb_value = i64::from(cb_row.get(x).copied().unwrap_or(128)).wrapping_sub(128);
+            let cr_value = i64::from(cr_row.get(x).copied().unwrap_or(128)).wrapping_sub(128);
+            let r = y_value.wrapping_add(91_881_i64.wrapping_mul(cr_value).wrapping_add(32_768) >> 16);
+            let g = y_value.wrapping_add(
                 32_768_i64
-                    .wrapping_sub(22_554_i64.wrapping_mul(cb))
-                    .wrapping_sub(46_802_i64.wrapping_mul(cr))
+                    .wrapping_sub(22_554_i64.wrapping_mul(cb_value))
+                    .wrapping_sub(46_802_i64.wrapping_mul(cr_value))
                     >> 16,
             );
-            let b = y.wrapping_add(116_130_i64.wrapping_mul(cb).wrapping_add(32_768) >> 16);
+            let b = y_value.wrapping_add(116_130_i64.wrapping_mul(cb_value).wrapping_add(32_768) >> 16);
             pixels.extend([clamp8(r), clamp8(g), clamp8(b)]);
         }
     }
     Image {
         width: u32::try_from(width).unwrap_or(0),
         height: u32::try_from(height).unwrap_or(0),
-        channels: u8::try_from(channels).unwrap_or(1),
+        channels: 3,
         pixels,
     }
 }
@@ -817,11 +827,19 @@ fn crop(plane: &Plane, width: usize, height: usize) -> Plane {
     Plane { width, samples }
 }
 
-fn upsample(plane: &Plane, component: &Component, frame: &Frame, width: usize, height: usize) -> Plane {
+fn upsample_row(
+    plane: &Plane,
+    component: &Component,
+    frame: &Frame,
+    width: usize,
+    y: usize,
+    out: &mut Vec<u8>,
+    colsums: &mut Vec<i32>,
+) {
     let factor_x = frame.h_max.checked_div(component.h).unwrap_or(1);
     let factor_y = frame.v_max.checked_div(component.v).unwrap_or(1);
     let real_width = width.saturating_mul(component.h).div_ceil(frame.h_max).max(1);
-    let real_height = height.saturating_mul(component.v).div_ceil(frame.v_max).max(1);
+    let real_height = frame.height.saturating_mul(component.v).div_ceil(frame.v_max).max(1);
     let row = |index: usize| -> &[u8] {
         let index = index.min(real_height.saturating_sub(1));
         plane
@@ -830,38 +848,33 @@ fn upsample(plane: &Plane, component: &Component, frame: &Frame, width: usize, h
             .and_then(|line| line.get(..real_width))
             .unwrap_or(&[])
     };
-    let mut samples = Vec::with_capacity(width.saturating_mul(height));
-    let mut colsums = Vec::with_capacity(real_width);
-    for y in 0..height {
-        match (factor_x, factor_y) {
-            (1, 1) => samples.extend_from_slice(row(y).get(..width).unwrap_or(&[])),
-            (2, 1) => fancy_h2v1(row(y), width, &mut samples),
-            (2, 2) => {
-                let source = y.checked_div(2).unwrap_or(0);
-                let neighbour = if y % 2 == 1 {
-                    row(source.saturating_add(1))
-                } else {
-                    row(source.saturating_sub(1))
-                };
-                colsums.clear();
-                colsums.extend(
-                    row(source)
-                        .iter()
-                        .zip(neighbour.iter())
-                        .map(|(a, b)| i32::from(*a).wrapping_mul(3).wrapping_add(i32::from(*b))),
-                );
-                fancy_h2v2(&colsums, width, &mut samples);
-            }
-            _ => {
-                let line = row(y.checked_div(factor_y).unwrap_or(0));
-                for x in 0..width {
-                    let column = x.checked_div(factor_x).unwrap_or(0);
-                    samples.push(line.get(column).copied().unwrap_or(0));
-                }
+    match (factor_x, factor_y) {
+        (1, 1) => out.extend_from_slice(row(y).get(..width).unwrap_or(&[])),
+        (2, 1) => fancy_h2v1(row(y), width, out),
+        (2, 2) => {
+            let source = y.checked_div(2).unwrap_or(0);
+            let neighbour = if y % 2 == 1 {
+                row(source.saturating_add(1))
+            } else {
+                row(source.saturating_sub(1))
+            };
+            colsums.clear();
+            colsums.extend(
+                row(source)
+                    .iter()
+                    .zip(neighbour.iter())
+                    .map(|(a, b)| i32::from(*a).wrapping_mul(3).wrapping_add(i32::from(*b))),
+            );
+            fancy_h2v2(colsums, width, out);
+        }
+        _ => {
+            let line = row(y.checked_div(factor_y).unwrap_or(0));
+            for x in 0..width {
+                let column = x.checked_div(factor_x).unwrap_or(0);
+                out.push(line.get(column).copied().unwrap_or(0));
             }
         }
     }
-    Plane { width, samples }
 }
 
 fn fancy_h2v1(line: &[u8], width: usize, out: &mut Vec<u8>) {
