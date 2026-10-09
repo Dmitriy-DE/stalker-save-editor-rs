@@ -2535,7 +2535,9 @@ impl Screen for GameFixes {
                         );
                     }
                     let text = match build.as_deref() {
-                        Some(build) => crate::strings::t_in(&language, "НАЙДЕНА СБОРКА STEAM: {0}.").replace("{0}", build),
+                        Some(build) => {
+                            crate::strings::t_in(&language, "НАЙДЕНА СБОРКА STEAM: {0}.").replace("{0}", build)
+                        }
                         None => crate::strings::t_in(
                             &language,
                             "STEAM BUILD ID НЕ НАЙДЕН. ПРИ УСТАНОВКЕ ИСХОДНЫЕ ФАЙЛЫ ПРОВЕРЯТСЯ ПО SHA-256.",
@@ -2583,8 +2585,9 @@ impl Screen for GameFixes {
                 .any(|definition| !definition.supports_detected_build_or_hashes(build))
             {
                 cx.status = Some(match build {
-                    Some(build) => crate::strings::t("СБОРКА STEAM {0} НЕ ПОДДЕРЖИВАЕТ ВЫБРАННЫЙ ПРЕСЕТ.")
-                        .replace("{0}", build),
+                    Some(build) => {
+                        crate::strings::t("СБОРКА STEAM {0} НЕ ПОДДЕРЖИВАЕТ ВЫБРАННЫЙ ПРЕСЕТ.").replace("{0}", build)
+                    }
                     None => crate::strings::t(
                         "НЕТ STEAM BUILD ID; У ОДНОГО ИЗ ВЫБРАННЫХ ИСПРАВЛЕНИЙ НЕТ ПОЛНЫХ SHA-256 ЯКОРЕЙ.",
                     )
@@ -2642,8 +2645,10 @@ impl Screen for GameFixes {
                     cx.status = Some(match verified.build.as_deref() {
                         Some(build) => crate::strings::t("СБОРКА STEAM {0} НЕ ПОДДЕРЖИВАЕТ ВЫБРАННОЕ ИСПРАВЛЕНИЕ.")
                             .replace("{0}", build),
-                        None => crate::strings::t("НЕТ STEAM BUILD ID; ЭТО ИСПРАВЛЕНИЕ НЕ ИМЕЕТ ПОЛНЫХ SHA-256 ЯКОРЕЙ.")
-                            .to_owned(),
+                        None => {
+                            crate::strings::t("НЕТ STEAM BUILD ID; ЭТО ИСПРАВЛЕНИЕ НЕ ИМЕЕТ ПОЛНЫХ SHA-256 ЯКОРЕЙ.")
+                                .to_owned()
+                        }
                     });
                     return Ok(());
                 }
@@ -3885,7 +3890,7 @@ mod game_fixes_tests {
         );
         std::fs::write(state.join("transaction.json"), journal)?;
 
-        load_fix_rows(sse_fixes::GameTarget::ShadowOfChernobyl, Some(&root)).map_err(sse_core::Error::System)?;
+        load_fix_rows(sse_fixes::GameTarget::ShadowOfChernobyl, Some(&root), "ru").map_err(sse_core::Error::System)?;
 
         assert_eq!(std::fs::read(&target)?, original);
         assert!(!state.exists(), "recovered transaction state should be cleaned up");

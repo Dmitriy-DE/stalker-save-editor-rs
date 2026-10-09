@@ -680,8 +680,6 @@ impl Screen for Settings {
         )?;
         #[cfg(feature = "native-ui")]
         {
-            style::label(cx.tree, general, "[ STEAM CLOUD ]", Text::Value)?;
-            style::label(cx.tree, general, crate::strings::t("Откройте экран Steam Cloud, чтобы просматривать состояние синхронизации и выполнять действия с явным подтверждением."), Text::Body)?;
             self.open_cloud_button = Some(style::button(
                 cx.tree,
                 general,
