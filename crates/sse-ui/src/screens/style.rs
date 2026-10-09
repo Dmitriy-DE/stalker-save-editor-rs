@@ -396,7 +396,10 @@ pub mod d2 {
     /// Look of a tab in its selected or unselected state, for switching the selection without rebuilding.
     #[must_use]
     pub fn tab_look(selected: bool) -> Look {
-        control_look(&tokens::TAB_STATES, selected, tokens::RADIUS_BUTTON)
+        Look {
+            icon_size: 16,
+            ..control_look(&tokens::TAB_STATES, selected, tokens::RADIUS_BUTTON)
+        }
     }
 
     /// A filter chip; 28 pixels high.

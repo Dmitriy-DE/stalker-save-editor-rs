@@ -512,6 +512,55 @@ fn premultiplied(rgba: &[u8]) -> Vec<u32> {
         .collect()
 }
 
+fn argb(value: u32) -> crate::raster::Color {
+    let [r, g, b, a] = value.to_be_bytes();
+    crate::raster::Color::rgba(r, g, b, a)
+}
+
+/// Look of a sidebar section: the selected one is an amber plate, hover and press are the menu-item states.
+fn section_look(selected: bool, collapsed: bool) -> Look {
+    let [normal, hover, pressed, selected_state, _] = crate::theme::d2::MENU_ITEM_STATES;
+    let base = if selected { selected_state } else { normal };
+    Look {
+        fill: selected.then(|| argb(selected_state.fill)),
+        hover_fill: Some(argb(hover.fill)),
+        pressed_fill: Some(argb(pressed.fill)),
+        text: argb(base.text),
+        hover_text: Some(argb(hover.text)),
+        pressed_text: Some(argb(pressed.text)),
+        radius: crate::theme::BUTTON_RADIUS,
+        align: if collapsed { TextAlign::Center } else { TextAlign::Start },
+        icon_size: 22,
+        ..Look::default()
+    }
+}
+
+/// Icon of a screen's tab, from the screen tab definitions of the design.
+const fn tab_icon(id: ScreenId) -> Option<Icon> {
+    match id {
+        ScreenId::Overview => Some(Icon::D2Info),
+        ScreenId::Inventory => Some(Icon::D2Inventory),
+        ScreenId::Factions => Some(Icon::D2Factions),
+        ScreenId::Stashes => Some(Icon::D2Stash),
+        ScreenId::Transitions => Some(Icon::D2Transitions),
+        ScreenId::Backups => Some(Icon::D2Backups),
+        ScreenId::Compare => Some(Icon::D2Compare),
+        ScreenId::Timeline => Some(Icon::D2History),
+        ScreenId::SaveDoctor => Some(Icon::D2Doctor),
+        ScreenId::Cloud => Some(Icon::D2Cloud),
+        ScreenId::Games => Some(Icon::D2Games),
+        ScreenId::GameFixes => Some(Icon::D2Fixes),
+        ScreenId::GameDoctor => Some(Icon::D2Doctor),
+        ScreenId::Environment => Some(Icon::D2Environment),
+        ScreenId::Companion => Some(Icon::D2Companion),
+        ScreenId::Achievements => Some(Icon::D2Achievements),
+        ScreenId::Settings => Some(Icon::D2Settings),
+        ScreenId::Updates => Some(Icon::D2Updates),
+        ScreenId::Capabilities => Some(Icon::D2Check),
+        ScreenId::Encyclopedia => None,
+    }
+}
+
 fn header_style(compact: bool) -> Style {
     Style {
         min: Size::new(0.0, if compact { 80.0 } else { 108.0 }),
@@ -749,6 +798,8 @@ pub struct Shell {
     sidebar: WidgetId,
     nav_toggle: WidgetId,
     nav_brand: Vec<WidgetId>,
+    logo: WidgetId,
+    logo_icon: WidgetId,
     nav_collapsed: bool,
     nav_user_choice: Option<bool>,
     content: WidgetId,
@@ -760,6 +811,7 @@ pub struct Shell {
     header: WidgetId,
     title_small: WidgetId,
     tab_row: WidgetId,
+    viewport: WidgetId,
     tabs: Vec<WidgetId>,
     section_last: [usize; 4],
     edition: WidgetId,
@@ -1022,16 +1074,25 @@ impl Shell {
             Content::Panel,
             sidebar_look,
         )?;
-        let brand = Style {
-            padding: padded(20.0, 0.0, 20.0, 0.0),
-            ..Style::default()
-        };
-        tree.add(
+        let logo = tree.add(
             Some(sidebar),
+            NodeKind::Row,
+            Style {
+                min: Size::new(0.0, 96.0),
+                padding: padded(20.0, 0.0, 20.0, 0.0),
+                gap: Size::new(12.0, 0.0),
+                align_items: Align::Center,
+                shrink: 0.0,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        let logo_icon = tree.add(
+            Some(logo),
             NodeKind::Leaf,
             Style {
-                min: Size::new(0.0, 28.0),
-                padding: padded(20.0, 0.0, 0.0, 0.0),
+                min: Size::new(44.0, 44.0),
                 ..Style::default()
             },
             Content::IconButton {
@@ -1041,13 +1102,24 @@ impl Shell {
             },
             Look {
                 text: rgb(style::ACCENT),
+                icon_size: 44,
                 ..Look::default()
             },
         )?;
-        let brand_title = tree.add(
-            Some(sidebar),
+        let logo_text = tree.add(
+            Some(logo),
+            NodeKind::Column,
+            Style {
+                gap: Size::new(0.0, 2.0),
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        tree.add(
+            Some(logo_text),
             NodeKind::Leaf,
-            brand,
+            Style::default(),
             Content::Label {
                 text: "S.T.A.L.K.E.R.".to_owned(),
                 style: TextStyle::new(Face::Heading, 22.0),
@@ -1057,23 +1129,19 @@ impl Shell {
                 ..Look::default()
             },
         )?;
-        let brand_subtitle = tree.add(
-            Some(sidebar),
+        tree.add(
+            Some(logo_text),
             NodeKind::Leaf,
-            Style {
-                padding: padded(20.0, 0.0, 20.0, 6.0),
-                ..Style::default()
-            },
+            Style::default(),
             Content::Label {
-                text: crate::strings::t("РЕДАКТОР СОХРАНЕНИЙ").to_owned(),
-                style: TextStyle::new(Face::Heading, 12.0),
+                text: "SAVE EDITOR".to_owned(),
+                style: TextStyle::new(Face::HeadingMedium, 12.0).with_tracking(4.4),
             },
             Look {
-                text: rgb(style::TEXT_MUTED),
+                text: rgb(style::ACCENT),
                 ..Look::default()
             },
         )?;
-
         let library_workspace =
             super::saves::Workspace::with_backup_directory(sse_app::paths::backup_directory(&settings));
         let screens = super::registry_with_save_workspace(library_workspace.clone());
@@ -1088,20 +1156,26 @@ impl Shell {
         for (section, icon) in Group::ALL.into_iter().zip(section_icons) {
             let item = Style {
                 min: Size::new(0.0, 48.0),
-                padding: padded(16.0, 0.0, 12.0, 0.0),
+                padding: padded(14.0, 0.0, 14.0, 0.0),
+                margin: Edges {
+                    left: 16.0,
+                    top: 0.0,
+                    right: 12.0,
+                    bottom: 0.0,
+                },
                 ..Style::default()
             };
             let content = Content::IconButton {
                 icon,
                 text: crate::strings::t(section.caption()).to_owned(),
-                style: TextStyle::new(Face::Heading, 16.0),
+                style: TextStyle::new(Face::HeadingMedium, 16.0).with_tracking(0.6),
             };
             nav.push(tree.add(
                 Some(sidebar),
                 NodeKind::Leaf,
                 item,
                 content,
-                style::nav(section == Group::Saves),
+                section_look(section == Group::Saves, false),
             )?);
         }
         let nav_spacer = tree.add(
@@ -1234,7 +1308,7 @@ impl Shell {
         )?;
         let tab_row = tree.add(
             Some(main),
-            NodeKind::Row,
+            NodeKind::Wrap,
             Style {
                 min: Size::new(0.0, 36.0),
                 padding: padded(24.0, 0.0, 24.0, 0.0),
@@ -1253,7 +1327,7 @@ impl Shell {
                     continue;
                 }
                 let text = crate::strings::t(screen.id().title());
-                let tab = style::d2::tab(tree, tab_row, text, None, false)?;
+                let tab = style::d2::tab(tree, tab_row, text, tab_icon(screen.id()), false)?;
                 tree.set_visible(tab, false)?;
                 if let Some(slot) = tab_slots.get_mut(index) {
                     *slot = Some(tab);
@@ -1699,7 +1773,9 @@ impl Shell {
             nav,
             sidebar,
             nav_toggle,
-            nav_brand: vec![brand_title, brand_subtitle],
+            nav_brand: vec![logo_text],
+            logo,
+            logo_icon,
             nav_collapsed: false,
             nav_user_choice: settings.navigation_collapsed,
             content,
@@ -1711,6 +1787,7 @@ impl Shell {
             header,
             title_small,
             tab_row,
+            viewport,
             tabs,
             section_last,
             edition,
@@ -1879,13 +1956,102 @@ impl Shell {
                 min: Size::new(width, 0.0),
                 shrink: 0.0,
                 padding: padded(0.0, 0.0, 0.0, 0.0),
+                gap: Size::new(0.0, 4.0),
                 align_items: Align::Stretch,
                 ..Style::default()
+            },
+        )?;
+        tree.set_style(
+            self.logo,
+            Style {
+                min: Size::new(0.0, if collapsed { 72.0 } else { 96.0 }),
+                padding: padded(
+                    if collapsed { 8.0 } else { 20.0 },
+                    0.0,
+                    if collapsed { 8.0 } else { 20.0 },
+                    0.0,
+                ),
+                gap: Size::new(if collapsed { 0.0 } else { 12.0 }, 0.0),
+                align_items: Align::Center,
+                shrink: 0.0,
+                ..Style::default()
+            },
+        )?;
+        tree.set_look(
+            self.logo_icon,
+            Look {
+                text: rgb(style::ACCENT),
+                icon_size: if collapsed { 36 } else { 44 },
+                ..Look::default()
             },
         )?;
         for id in &self.nav_brand {
             tree.set_visible(*id, !collapsed)?;
         }
+        let selected_group = self.screens.get(self.selected).map(|screen| screen.id().group());
+        for (slot, id) in self.nav.iter().copied().enumerate() {
+            let active = Group::ALL.get(slot).copied() == selected_group;
+            let margin = if collapsed {
+                Edges {
+                    left: 8.0,
+                    top: 0.0,
+                    right: 8.0,
+                    bottom: 0.0,
+                }
+            } else {
+                Edges {
+                    left: 16.0,
+                    top: 0.0,
+                    right: 12.0,
+                    bottom: 0.0,
+                }
+            };
+            let padding = if collapsed {
+                padded(12.0, 0.0, 12.0, 0.0)
+            } else {
+                padded(14.0, 0.0, 14.0, 0.0)
+            };
+            tree.set_style(
+                id,
+                Style {
+                    min: Size::new(0.0, 48.0),
+                    padding,
+                    margin,
+                    ..Style::default()
+                },
+            )?;
+            tree.set_look(id, section_look(active, collapsed))?;
+            tree.set_text(
+                id,
+                if collapsed {
+                    ""
+                } else {
+                    crate::strings::t(Group::ALL.get(slot).map_or("", |group| group.caption()))
+                },
+            )?;
+        }
+        tree.set_style(
+            self.nav_toggle,
+            Style {
+                min: Size::new(0.0, 36.0),
+                padding: if collapsed {
+                    padded(12.0, 0.0, 12.0, 0.0)
+                } else {
+                    padded(16.0, 0.0, 12.0, 0.0)
+                },
+                margin: if collapsed {
+                    Edges {
+                        left: 8.0,
+                        top: 0.0,
+                        right: 8.0,
+                        bottom: 0.0,
+                    }
+                } else {
+                    Edges::default()
+                },
+                ..Style::default()
+            },
+        )?;
         tree.set_text(
             self.nav_toggle,
             if collapsed {
@@ -1902,14 +2068,6 @@ impl Shell {
                 "Свернуть меню"
             }),
         )?;
-        for (index, id) in self.nav.iter().copied().enumerate() {
-            let text = if collapsed {
-                ""
-            } else {
-                crate::strings::t(Group::ALL.get(index).map_or("", |group| group.caption()))
-            };
-            tree.set_text(id, text)?;
-        }
         self.art.sync(tree, self.sidebar)
     }
 
@@ -2432,7 +2590,7 @@ impl Shell {
         });
         for (slot, nav) in self.nav.iter().enumerate() {
             let active = Group::ALL.get(slot).copied() == selected_group;
-            tree.set_look(*nav, style::nav(active))?;
+            tree.set_look(*nav, section_look(active, self.nav_collapsed))?;
         }
         for (index, tab) in self.tabs.iter().enumerate() {
             let same_section = self.screens.get(index).map(|screen| screen.id().group()) == selected_group;
@@ -2912,6 +3070,27 @@ impl Shell {
             tree.set_visible(self.title, !compact)?;
             tree.set_visible(self.title_small, compact)?;
             tree.set_style(self.header, header_style(compact))?;
+            let margin = if compact { 16.0 } else { 24.0 };
+            tree.set_style(
+                self.tab_row,
+                Style {
+                    min: Size::new(0.0, 36.0),
+                    padding: padded(margin, 0.0, margin, 0.0),
+                    gap: Size::new(6.0, 6.0),
+                    align_items: Align::Center,
+                    shrink: 0.0,
+                    ..Style::default()
+                },
+            )?;
+            tree.set_style(
+                self.viewport,
+                Style {
+                    grow: 1.0,
+                    align_items: Align::Stretch,
+                    padding: padded(margin, 0.0, margin, 0.0),
+                    ..Style::default()
+                },
+            )?;
             let middle_width = width.saturating_sub(244);
             let library_width = if middle_width < 1100 {
                 220.0
@@ -3937,6 +4116,27 @@ mod tests {
             .ok_or_else(|| sse_core::Error::Refused("no section".to_owned()))?;
         click(&mut shell, &mut tree, saves)?;
         assert_eq!(shell.current(), Some(ScreenId::Inventory));
+        Ok(())
+    }
+
+    #[test]
+    fn tabs_stay_inside_the_window_at_1366() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut shell = Shell::build_for_test(&mut tree, None)?;
+        shell.resize_window(&mut tree, 1366, 768)?;
+        open_by_mouse(&mut shell, &mut tree, 0)?;
+        tree.update_layout()?;
+        let mut checked = 0_usize;
+        for tab in shell.tabs.clone() {
+            if !tree.is_visible(tab) {
+                continue;
+            }
+            let rect = tree.rect(tab)?;
+            let right = rect.x.saturating_add(i32::try_from(rect.width).unwrap_or(i32::MAX));
+            assert!(right <= 1366, "tab right edge {right} is outside the window");
+            checked = checked.saturating_add(1);
+        }
+        assert!(checked > 0, "no tab was visible");
         Ok(())
     }
 

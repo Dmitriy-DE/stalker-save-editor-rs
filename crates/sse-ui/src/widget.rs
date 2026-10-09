@@ -108,6 +108,8 @@ pub struct Look {
     pub focus_ring: Option<(Color, f32, f32)>,
     /// Colours used while the widget is not enabled.
     pub disabled: Option<DisabledLook>,
+    /// Side of the icon of an icon button, in pixels; the icon is clamped to the widget's height.
+    pub icon_size: u32,
 }
 
 impl Default for Look {
@@ -127,6 +129,7 @@ impl Default for Look {
             pressed_text: None,
             focus_ring: None,
             disabled: None,
+            icon_size: 18,
         }
     }
 }
@@ -1503,7 +1506,7 @@ fn paint_node(
         return;
     }
     if let Content::IconButton { icon, .. } = content {
-        let size = u16::try_from(rect.height.min(18)).unwrap_or(18);
+        let size = u16::try_from(rect.height.min(look.icon_size)).unwrap_or(18);
         if let Ok(bitmap) = resources.1.get(*icon, size, look.text.to_u32()) {
             if let Ok(mask) = MaskRef::new(&bitmap.alpha, u32::from(size), u32::from(size), usize::from(size)) {
                 let x = rect.x.saturating_add(to_px(padding.left.max(8.0)));
