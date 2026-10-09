@@ -208,10 +208,6 @@ pub enum DiscoveryStatus {
     Found(usize),
 }
 
-fn installation_count_text(language: &str, count: usize) -> String {
-    tr(language, "Найдено: {0}", &[&count])
-}
-
 fn tr(language: &str, key: &str, args: &[&dyn std::fmt::Display]) -> String {
     crate::strings::tr_in(Some(language), key, args)
 }
@@ -299,6 +295,11 @@ fn hero_cover_width(compact: bool) -> f32 {
     } else {
         400.0
     }
+}
+
+/// A small count as a float, for layout arithmetic.
+fn count_f32(value: usize) -> f32 {
+    f32::from(u16::try_from(value).unwrap_or(u16::MAX))
 }
 
 /// A whole pixel count as a float, for layout arithmetic. Values beyond the range of the window are clamped.
@@ -390,7 +391,6 @@ pub struct GamesOverview {
 
     // Left card: НАЙДЕННЫЕ УСТАНОВКИ
     discover_button: Option<WidgetId>,
-    installations_count: Option<WidgetId>,
     discovery_status: Option<WidgetId>,
     rows: Vec<InstallRow>,
     empty_panel: Option<WidgetId>,
@@ -420,6 +420,13 @@ pub struct GamesOverview {
     right_card: Option<WidgetId>,
     left_card: Option<WidgetId>,
     list_scroll: Option<WidgetId>,
+    list_pager: Option<WidgetId>,
+    list_previous: Option<WidgetId>,
+    list_range: Option<WidgetId>,
+    list_next: Option<WidgetId>,
+    /// Index of the shown page of installations, and the rows a page holds at the window's size.
+    page: usize,
+    page_size: usize,
     hero_plate: Option<WidgetId>,
 }
 
@@ -429,7 +436,6 @@ impl GamesOverview {
             workspace,
             compact: false,
             discover_button: None,
-            installations_count: None,
             discovery_status: None,
             rows: Vec::new(),
             empty_panel: None,
@@ -456,6 +462,12 @@ impl GamesOverview {
             right_card: None,
             left_card: None,
             list_scroll: None,
+            list_pager: None,
+            list_previous: None,
+            list_range: None,
+            list_next: None,
+            page: 0,
+            page_size: 1,
             hero_plate: None,
         }
     }
@@ -499,9 +511,15 @@ impl GamesOverview {
             let cover_w = hero_cover_width(self.compact);
             cx.tree.set_style(plate, plate_style(cover_w, cover_w * 9.0 / 16.0))?;
         }
+        // The pager is part of the card's room, so it is shown before the list's room is measured.
+        let has_installations = !installations.is_empty();
+        if let Some(pager) = self.list_pager {
+            cx.tree.set_visible(pager, has_installations)?;
+        }
         // Texts that wrap take the width they are drawn in, which is known only after a layout pass.
         cx.tree.update_layout()?;
-        self.sync_list_cap(cx)?;
+        let capacity = self.sync_list_cap(cx)?;
+        self.page_size = self.rows_that_fit(cx.tree, capacity);
         let right_width = self
             .right_card
             .map(|id| cx.tree.rect(id).map(|rect| rect.width as f32))
@@ -531,12 +549,6 @@ impl GamesOverview {
             )?;
         }
 
-        // Update count label
-        if let Some(id) = self.installations_count {
-            let count_text = installation_count_text(crate::strings::current_language(), installations.len());
-            cx.tree.set_text(id, &count_text)?;
-        }
-
         // Update discovery status text
         if let Some(id) = self.discovery_status {
             let language = crate::strings::current_language();
@@ -563,8 +575,23 @@ impl GamesOverview {
         // Installation rows: the card shows the cover plate, the name, the path and the source
         let (cover_width, _) = cover_size(self.compact);
         let path_width = list_width(self.compact) - 2.0 * 16.0 - 2.0 * 8.0 - cover_width - 12.0 - 2.0;
+        // The page: the rows that fit, from the page's first installation.
+        let total = installations.len();
+        let pages = total
+            .saturating_add(self.page_size.saturating_sub(1))
+            .checked_div(self.page_size)
+            .unwrap_or(0);
+        if self.page >= pages {
+            self.page = 0;
+        }
+        let start = self.page.saturating_mul(self.page_size);
         for (i, row) in self.rows.iter().enumerate() {
-            if let Some(install) = installations.get(i) {
+            let shown = if i < self.page_size {
+                installations.get(start.saturating_add(i))
+            } else {
+                None
+            };
+            if let Some(install) = shown {
                 cx.tree.set_visible(row.stack, true)?;
                 let language = crate::strings::current_language();
                 let selected = selected_installation.as_ref() == Some(&install.directory);
@@ -595,6 +622,30 @@ impl GamesOverview {
             } else {
                 cx.tree.set_visible(row.stack, false)?;
             }
+        }
+
+        // Pager: arrows and the range of the rows shown, as in the library.
+        if let Some(pager) = self.list_pager {
+            cx.tree.set_visible(pager, total > 0)?;
+        }
+        if let Some(id) = self.list_previous {
+            cx.tree.set_enabled(id, self.page > 0)?;
+        }
+        if let Some(id) = self.list_next {
+            cx.tree.set_enabled(id, self.page.saturating_add(1) < pages)?;
+        }
+        if let Some(id) = self.list_range {
+            let text = if total == 0 {
+                String::new()
+            } else {
+                let last = start.saturating_add(self.page_size).min(total);
+                tr(
+                    crate::strings::current_language(),
+                    "{0}–{1} из {2}",
+                    &[&start.saturating_add(1), &last, &total],
+                )
+            };
+            cx.tree.set_text(id, &text)?;
         }
 
         // Selected installation details
@@ -660,9 +711,9 @@ impl GamesOverview {
     /// Caps the installation list at the room the left card has, so the list scrolls instead of pushing the card's
     /// footer below the window. The room comes from the window and from the other parts of the card, which are
     /// measured from their rectangles and do not depend on the list.
-    fn sync_list_cap(&self, cx: &mut Context<'_>) -> Result<()> {
+    fn sync_list_cap(&self, cx: &mut Context<'_>) -> Result<f32> {
         let (Some(scroll), Some(card)) = (self.list_scroll, self.left_card) else {
-            return Ok(());
+            return Ok(0.0);
         };
         let window_height = px_i64(i64::from(cx.tree.size().1));
         let card_top = px_i64(i64::from(cx.tree.rect(card)?.y));
@@ -683,7 +734,30 @@ impl GamesOverview {
                 max: crate::layout::Size::new(f32::INFINITY, cap),
                 ..Style::default()
             },
-        )
+        )?;
+        Ok(cap)
+    }
+
+    /// Rows that fit in a list of `capacity` pixels. A row is as tall as its card was laid out (the text column may be
+    /// taller than the cover); rows are 4 px apart, and the list has 8 px of padding on each side.
+    fn rows_that_fit(&self, tree: &crate::widget::Tree, capacity: f32) -> usize {
+        let (_, cover_height) = cover_size(self.compact);
+        let measured = self
+            .rows
+            .first()
+            .and_then(|row| tree.rect(row.stack).ok())
+            .map_or(0.0, |rect| f32::from(u16::try_from(rect.height).unwrap_or(0)));
+        let row_height = if measured > 0.0 { measured } else { cover_height + 16.0 };
+        let mut rows = 0_usize;
+        while rows < MAX_INSTALLATION_ROWS {
+            let next = count_f32(rows.saturating_add(1));
+            let needed = next * row_height + (next - 1.0) * 4.0 + 16.0;
+            if needed > capacity {
+                break;
+            }
+            rows = rows.saturating_add(1);
+        }
+        rows.max(1)
     }
 }
 
@@ -825,8 +899,6 @@ impl Screen for GamesOverview {
             crate::strings::t("Поиск установок ещё не выполнялся."),
             Text::Value,
         )?);
-        let initial_count = installation_count_text(crate::strings::current_language(), 0);
-        self.installations_count = Some(style::label(cx.tree, status_row, &initial_count, Text::Note)?);
 
         // Empty state (shown when no installations)
         let empty_card = cx.tree.add(
@@ -994,6 +1066,40 @@ impl Screen for GamesOverview {
             });
         }
 
+        // Pager of the list, as in the library: arrows and the range of the rows shown.
+        let pager = cx.tree.add(
+            Some(left_card),
+            crate::layout::NodeKind::Row,
+            crate::layout::Style {
+                min: crate::layout::Size::new(0.0, 28.0),
+                padding: crate::layout::Edges {
+                    left: 16.0,
+                    top: 0.0,
+                    right: 16.0,
+                    bottom: 0.0,
+                },
+                gap: crate::layout::Size::new(8.0, 0.0),
+                align_items: crate::layout::Align::Center,
+                shrink: 0.0,
+                ..crate::layout::Style::default()
+            },
+            crate::widget::Content::Panel,
+            crate::widget::Look::default(),
+        )?;
+        self.list_pager = Some(pager);
+        self.list_previous = Some(super::shell::library_icon_button(
+            cx.tree,
+            pager,
+            crate::path::Icon::D2ArrowLeft,
+        )?);
+        self.list_range = Some(style::label(cx.tree, pager, "", Text::Note)?);
+        self.list_next = Some(super::shell::library_icon_button(
+            cx.tree,
+            pager,
+            crate::path::Icon::D2ArrowRight,
+        )?);
+        cx.tree.set_visible(pager, false)?;
+
         // Footer of the list: the doctor for the selected installation.
         let footer = cx.tree.add(
             Some(left_card),
@@ -1114,15 +1220,15 @@ impl Screen for GamesOverview {
                 .copied()
                 .ok_or_else(|| sse_core::Error::damaged("key-value row without a value"))
         };
-        let status_row = style::d2::key_value_row(cx.tree, details, crate::strings::t("Статус:"), "")?;
+        let status_row = style::d2::key_value_row(cx.tree, details, crate::strings::t("Статус:        "), "")?;
         self.status_value = Some(value_of(cx.tree, status_row)?);
-        let platform_row = style::d2::key_value_row(cx.tree, details, crate::strings::t("Платформа:"), "")?;
+        let platform_row = style::d2::key_value_row(cx.tree, details, crate::strings::t("Платформа:     "), "")?;
         self.platform_value = Some(value_of(cx.tree, platform_row)?);
-        let build_row = style::d2::key_value_row(cx.tree, details, crate::strings::t("Номер сборки:"), "")?;
+        let build_row = style::d2::key_value_row(cx.tree, details, crate::strings::t("Номер сборки:  "), "")?;
         self.build_value = Some(value_of(cx.tree, build_row)?);
-        let folder_row = style::d2::key_value_row(cx.tree, details, crate::strings::t("Папка игры:"), "")?;
+        let folder_row = style::d2::key_value_row(cx.tree, details, crate::strings::t("Папка игры:    "), "")?;
         self.folder_value = Some(value_of(cx.tree, folder_row)?);
-        let saves_row = style::d2::key_value_row(cx.tree, details, crate::strings::t("Число сейвов:"), "")?;
+        let saves_row = style::d2::key_value_row(cx.tree, details, crate::strings::t("Число сейвов:  "), "")?;
         self.saves_value = Some(value_of(cx.tree, saves_row)?);
         // Every key takes the same column, so the values line up; the last row keeps 12 px above the button.
         for row in [status_row, platform_row, build_row, folder_row, saves_row] {
@@ -1368,13 +1474,24 @@ impl Screen for GamesOverview {
             return self.render(cx);
         }
 
+        // Pager arrows of the installation list
+        if clicked.is_some() && clicked == self.list_previous {
+            self.page = self.page.saturating_sub(1);
+            return self.render(cx);
+        }
+        if clicked.is_some() && clicked == self.list_next {
+            self.page = self.page.saturating_add(1);
+            return self.render(cx);
+        }
+
         // 5. Click on an installation row
         for (i, row) in self.rows.iter().enumerate() {
             if clicked.is_some() && clicked == Some(row.select) {
+                let index = self.page.saturating_mul(self.page_size).saturating_add(i);
                 let mut state = self.workspace.lock();
                 if let Some((target, directory)) = state
                     .installations
-                    .get(i)
+                    .get(index)
                     .map(|inst| (inst.target, inst.directory.clone()))
                 {
                     state.selected_target = Some(target);
@@ -1418,6 +1535,12 @@ impl Screen for GamesOverview {
                 state.discovering = false;
                 state.installations.clone_from(&result.installations);
                 state.status_message = Some(result.status.clone());
+                // The search is over: the status bar says what it found, instead of "searching".
+                cx.status = Some(discovery_status_text(
+                    crate::strings::current_language(),
+                    &result.status,
+                ));
+                self.page = 0;
                 if state
                     .selected_installation
                     .as_ref()
@@ -4721,7 +4844,7 @@ mod steam_manifest_warning_tests {
 
 #[cfg(test)]
 mod game_target_localization_tests {
-    use super::{discovery_status_text, installation_count_text, tr, DiscoveryStatus, GameInstallSource, GameTarget};
+    use super::{discovery_status_text, tr, DiscoveryStatus, GameInstallSource, GameTarget};
 
     #[test]
     fn game_titles_and_selected_install_source_follow_the_interface_language() {
@@ -4756,7 +4879,6 @@ mod game_target_localization_tests {
     #[test]
     fn games_overview_header_and_installation_count_are_localized() {
         assert_eq!(crate::strings::t_in("en", "НАЙДЕННЫЕ УСТАНОВКИ"), "FOUND INSTALLATIONS");
-        assert_eq!(installation_count_text("en", 4), "Found: 4");
         assert_eq!(discovery_status_text("en", &DiscoveryStatus::Found(2)), "●  FOUND 2");
     }
 
