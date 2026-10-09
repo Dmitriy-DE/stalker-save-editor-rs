@@ -219,12 +219,12 @@ fn text_upper(text: &str) -> String {
 pub mod d2 {
     use super::text_upper;
     use crate::glyphs::{Face, TextStyle};
-    use crate::layout::{Edges, NodeKind, Size, Style};
+    use crate::layout::{Align, Edges, NodeKind, Size, Style};
     use crate::path::Icon;
     use crate::raster::Color;
     use crate::theme::d2::{self as tokens, StateLook, TextSpec};
     use crate::widget::{Content, DisabledLook, Look, TextAlign, Tree, WidgetId};
-    use sse_core::Result;
+    use sse_core::{Error, Result};
 
     /// Visual role of a button.
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -509,7 +509,13 @@ pub mod d2 {
     pub fn tile(tree: &mut Tree, parent: WidgetId, key: &str, value: &str) -> Result<WidgetId> {
         let style = Style {
             min: Size::new(tokens::TILE_MIN_WIDTH.0, tokens::TILE_MIN_HEIGHT.0),
-            padding: padded(tokens::TILE_PADDING_HORIZONTAL.0, tokens::TILE_PADDING_HORIZONTAL.0),
+            padding: Edges {
+                left: tokens::TILE_PADDING_HORIZONTAL.0,
+                top: tokens::TILE_PADDING_VERTICAL.0,
+                right: tokens::TILE_PADDING_HORIZONTAL.0,
+                bottom: tokens::TILE_PADDING_VERTICAL.0,
+            },
+            gap: Size::new(0.0, 4.0),
             ..Style::default()
         };
         let look = Look {
@@ -616,7 +622,11 @@ pub mod d2 {
         let row = tree.add(
             Some(parent),
             NodeKind::Row,
-            Style::default(),
+            Style {
+                gap: Size::new(8.0, 0.0),
+                align_items: Align::Center,
+                ..Style::default()
+            },
             Content::Panel,
             Look::default(),
         )?;
@@ -694,14 +704,41 @@ pub mod d2 {
             ] {
                 badge(&mut tree, panel, "Установлено", kind)?;
             }
-            tile(&mut tree, panel, "Игровое время", "48 650 RU")?;
-            key_value_row(&mut tree, panel, "Версия", "2.0.0")?;
+            let tile_id = tile(&mut tree, panel, "Игровое время", "48 650 RU")?;
+            let row = key_value_row(&mut tree, panel, "Версия", "2.0.0")?;
             controls.push(input(&mut tree, panel, "Поиск предметов…")?);
             for (index, id) in controls.iter().enumerate() {
                 tree.set_enabled(*id, index % 2 == 1)?;
             }
             tree.resize(960, 720);
             tree.update_layout()?;
+            let tile_rect = tree.rect(tile_id)?;
+            let tile_children = tree.children(tile_id);
+            let label = tile_children
+                .first()
+                .copied()
+                .ok_or_else(|| Error::Refused("tile without label".to_owned()))?;
+            assert!(
+                tree.rect(label)?.y >= tile_rect.y.saturating_add(10),
+                "tile label touches the border"
+            );
+            let row_children = tree.children(row);
+            let key = row_children
+                .first()
+                .copied()
+                .ok_or_else(|| Error::Refused("row without key".to_owned()))?;
+            let value = row_children
+                .get(1)
+                .copied()
+                .ok_or_else(|| Error::Refused("row without value".to_owned()))?;
+            let key_rect = tree.rect(key)?;
+            let key_end = key_rect
+                .x
+                .saturating_add(i32::try_from(key_rect.width).unwrap_or(i32::MAX));
+            assert!(
+                tree.rect(value)?.x >= key_end.saturating_add(8),
+                "key and value need an 8 pixel gap"
+            );
             tree.focus_next(false);
             if let Some(first) = controls.first() {
                 let rect = tree.rect(*first)?;

@@ -897,6 +897,15 @@ impl Tree {
         self.restyle(id)
     }
 
+    /// Direct children of a widget, in the order they were added.
+    #[must_use]
+    pub fn children(&self, id: WidgetId) -> Vec<WidgetId> {
+        (0..self.nodes.len())
+            .map(WidgetId)
+            .filter(|child| self.nodes.get(child.0).is_some_and(|node| node.parent == Some(id)))
+            .collect()
+    }
+
     /// Whether the widget takes pointer and keyboard input.
     ///
     /// # Errors
