@@ -32,6 +32,8 @@ const MAX_DIAGNOSTIC_GAME_LOG_FILES: usize = 64;
 static LOG_GATE: Mutex<()> = Mutex::new(());
 static LOG_DIRECTORY: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
 static PANIC_HOOK: OnceLock<()> = OnceLock::new();
+#[cfg(test)]
+pub(crate) static LOG_DIRECTORY_TEST_GATE: Mutex<()> = Mutex::new(());
 
 /// Returns the directory containing the application log and crash marker.
 #[must_use]
@@ -1121,8 +1123,6 @@ mod tests {
     use sse_codecs::inflate::inflate_raw;
     use sse_sys::fetch::Response;
 
-    static TEST_GATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
     #[test]
     fn diagnostic_timestamps_use_readable_utc_calendar_time() {
         assert_eq!(
@@ -1137,7 +1137,7 @@ mod tests {
 
     #[test]
     fn save_write_outcomes_are_logged_with_readable_time_and_redacted_paths() -> Result<()> {
-        let _guard = TEST_GATE
+        let _guard = LOG_DIRECTORY_TEST_GATE
             .lock()
             .map_err(|_| Error::System("diagnostics test gate poisoned".to_owned()))?;
         let directory = std::env::temp_dir().join(format!("sse-save-write-log-{}", std::process::id()));
@@ -1338,7 +1338,7 @@ mod tests {
 
     #[test]
     fn warning_lines_are_written_with_redacted_paths() -> Result<()> {
-        let _guard = TEST_GATE
+        let _guard = LOG_DIRECTORY_TEST_GATE
             .lock()
             .map_err(|_| Error::System("diagnostics test gate poisoned".to_owned()))?;
         let directory = std::env::temp_dir().join(format!("sse-warning-log-{}", std::process::id()));
@@ -1361,7 +1361,7 @@ mod tests {
 
     #[test]
     fn automatic_report_contains_only_redacted_diagnostics() -> Result<()> {
-        let _guard = TEST_GATE
+        let _guard = LOG_DIRECTORY_TEST_GATE
             .lock()
             .map_err(|_| Error::System("diagnostics test gate poisoned".to_owned()))?;
         let directory = std::env::temp_dir().join(format!("sse-auto-report-{}", std::process::id()));
@@ -1442,7 +1442,7 @@ mod tests {
 
     #[test]
     fn bundle_is_valid_gzip_with_redacted_payload() -> Result<()> {
-        let _guard = TEST_GATE
+        let _guard = LOG_DIRECTORY_TEST_GATE
             .lock()
             .map_err(|_| Error::System("diagnostics test gate poisoned".to_owned()))?;
         let directory = std::env::temp_dir().join(format!("sse-diagnostics-{}", std::process::id()));
