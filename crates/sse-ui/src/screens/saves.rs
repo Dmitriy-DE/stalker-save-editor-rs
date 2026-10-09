@@ -3950,7 +3950,7 @@ impl Inventory {
         let (reloaded, download) = match prepare_browser_save(&request.selected, &request.edits, &request.stash_moves) {
             Ok(prepared) => prepared,
             Err(error) => {
-                let message = format!("Не удалось сохранить копию в браузере: {error}");
+                let message = tr("Не удалось сохранить копию в браузере: {0}", &[&error]);
                 if let Some(status) = self.status {
                     cx.tree.set_text(status, &message)?;
                 }
@@ -3959,7 +3959,7 @@ impl Inventory {
             }
         };
         if let Err(error) = self.workspace.queue_browser_download(download) {
-            let message = format!("Не удалось начать скачивание копии: {error}");
+            let message = tr("Не удалось начать скачивание копии: {0}", &[&error]);
             if let Some(status) = self.status {
                 cx.tree.set_text(status, &message)?;
             }
@@ -4271,12 +4271,12 @@ fn prepare_browser_save(
     reloaded.slot.size = u64::try_from(packed.len()).unwrap_or(u64::MAX);
     reloaded.info = save_info(&reloaded.slot);
     let (crc_status, format) = match &reloaded.data {
-        SaveData::Xray { save, .. } => ("не подтверждается отдельным полем", save.format().id()),
+        SaveData::Xray { save, .. } => (t("не подтверждается отдельным полем"), save.format().id()),
         SaveData::Stalker2 { save, .. } => (
             if save.container().stored_crc32() == save.container().computed_crc32() {
                 "OK (CRC32)"
             } else {
-                "ошибка"
+                t("ошибка")
             },
             "S2",
         ),
