@@ -8,12 +8,24 @@
 //! - Settings file: `<DataDirectory>/settings.json`
 
 use std::env;
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 /// Returns the default root directory where the application keeps its own data
 /// (never the game's folders).
 #[must_use]
 pub fn default_data_directory() -> PathBuf {
+    if is_test_or_example_executable() {
+        if let Some(custom) = env::var_os("STALKER_SAVE_EDITOR_DATA")
+            .map(PathBuf::from)
+            .filter(|path| !path.as_os_str().to_string_lossy().trim().is_empty())
+            .filter(|path| is_under_temporary_directory(path))
+        {
+            return custom;
+        }
+        return env::temp_dir().join(format!("stalker-save-editor-test-{}", std::process::id()));
+    }
+
     if let Ok(custom) = env::var("STALKER_SAVE_EDITOR_DATA") {
         if !custom.trim().is_empty() {
             return PathBuf::from(custom);
@@ -55,6 +67,25 @@ pub fn default_data_directory() -> PathBuf {
     }
 
     PathBuf::from("StalkerSaveEditor")
+}
+
+fn is_test_or_example_executable() -> bool {
+    cfg!(test)
+        || env::current_exe()
+            .ok()
+            .and_then(|executable| executable.parent().map(Path::to_path_buf))
+            .and_then(|parent| parent.file_name().map(|name| name.to_owned()))
+            .is_some_and(|name| name == "deps" || name == "examples")
+}
+
+fn is_under_temporary_directory(path: &Path) -> bool {
+    let Ok(temporary_directory) = fs::canonicalize(env::temp_dir()) else {
+        return false;
+    };
+    let Ok(path) = fs::canonicalize(path) else {
+        return false;
+    };
+    path.starts_with(temporary_directory)
 }
 
 /// Returns the configured backup directory, or `<DataDirectory>/backups`.
@@ -109,5 +140,16 @@ mod tests {
         };
 
         assert_eq!(backup_directory(&settings), default_data_directory().join("backups"));
+    }
+
+    #[test]
+    fn test_executables_default_app_data_and_logs_to_temporary_root() {
+        let data_directory = default_data_directory();
+        assert!(
+            data_directory.starts_with(env::temp_dir()),
+            "test data must stay under the temporary directory: {}",
+            data_directory.display()
+        );
+        assert_eq!(crate::diagnostics::log_directory(), data_directory.join("logs"));
     }
 }

@@ -4,6 +4,9 @@
 use sse_app::settings::AppSettings;
 use std::fs;
 use std::path::PathBuf;
+use std::process::Command;
+use std::sync::{Arc, Barrier};
+use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn temp_test_dir(name: &str) -> PathBuf {
@@ -100,6 +103,48 @@ fn atomic_save_and_load_file() {
     assert_eq!(reloaded.sound_volume, 90);
 
     let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn concurrent_settings_writers_leave_one_valid_file_and_no_staging_files() {
+    let directory = temp_test_dir("concurrent_atomic_save");
+    let settings_path = directory.join("settings.json");
+    let writer_count = 8;
+    let barrier = Arc::new(Barrier::new(writer_count));
+    let writers = (0..writer_count)
+        .map(|index| {
+            let barrier = Arc::clone(&barrier);
+            let settings_path = settings_path.clone();
+            thread::spawn(move || {
+                let settings = AppSettings {
+                    language: Some(format!("writer-{index}")),
+                    theme_id: format!("theme-{index}"),
+                    ..AppSettings::default()
+                };
+                barrier.wait();
+                settings.save(&settings_path).expect("concurrent save should succeed");
+            })
+        })
+        .collect::<Vec<_>>();
+
+    for writer in writers {
+        writer.join().expect("settings writer should not panic");
+    }
+
+    let loaded = AppSettings::load(&settings_path).expect("concurrent result should be valid JSON");
+    assert!(loaded
+        .theme_id
+        .strip_prefix("theme-")
+        .and_then(|index| index.parse::<usize>().ok())
+        .is_some_and(|index| index < writer_count));
+    let entries = fs::read_dir(&directory)
+        .expect("read settings directory")
+        .collect::<std::io::Result<Vec<_>>>()
+        .expect("read directory entries");
+    assert_eq!(entries.len(), 1, "only settings.json should remain");
+    assert_eq!(entries[0].file_name(), "settings.json");
+
+    fs::remove_dir_all(directory).expect("remove temporary test directory");
 }
 
 #[cfg(unix)]
@@ -212,4 +257,32 @@ fn reads_csharp_snake_case_settings_snapshot() {
     assert!(!settings.send_reports);
     assert!(settings.reports_notice_shown);
     assert_eq!(settings.last_report_utc.as_deref(), Some("2026-10-05T18:30:00Z"));
+}
+
+#[test]
+fn integration_test_process_isolates_settings_and_logs_without_environment_override() {
+    const CHILD_MARKER: &str = "SSE_TEST_DATA_ISOLATION_CHILD";
+    if std::env::var_os(CHILD_MARKER).is_some() {
+        let data_directory = sse_app::paths::default_data_directory();
+        assert!(data_directory.starts_with(std::env::temp_dir()));
+        assert_eq!(sse_app::diagnostics::log_directory(), data_directory.join("logs"));
+        return;
+    }
+
+    let output = Command::new(std::env::current_exe().expect("test executable path"))
+        .args([
+            "--exact",
+            "integration_test_process_isolates_settings_and_logs_without_environment_override",
+            "--nocapture",
+        ])
+        .env_remove("STALKER_SAVE_EDITOR_DATA")
+        .env(CHILD_MARKER, "1")
+        .output()
+        .expect("isolated child test should start");
+
+    assert!(
+        output.status.success(),
+        "child test failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }

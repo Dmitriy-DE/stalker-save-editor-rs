@@ -33,6 +33,66 @@ fn tr(key: &str, args: &[&dyn std::fmt::Display]) -> String {
     tr_in(crate::strings::current_language(), key, args)
 }
 
+fn format_xray_game_time(game_time: u64) -> String {
+    const MILLIS_PER_DAY: u64 = 86_400_000;
+    const MILLIS_PER_HOUR: u64 = 3_600_000;
+    const MILLIS_PER_MINUTE: u64 = 60_000;
+
+    let mut days_since_year_one = game_time / MILLIS_PER_DAY;
+    if days_since_year_one >= 3_650_000 {
+        return "—".to_owned();
+    }
+
+    let mut year = 1_u32;
+    loop {
+        let days_in_year = if is_leap_year(year) { 366 } else { 365 };
+        if days_since_year_one < days_in_year {
+            break;
+        }
+        days_since_year_one = days_since_year_one.saturating_sub(days_in_year);
+        year = year.saturating_add(1);
+    }
+    if !(1990..=2100).contains(&year) {
+        return "—".to_owned();
+    }
+
+    let month_lengths = [
+        31_u64,
+        if is_leap_year(year) { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
+    let mut month = 1_u32;
+    for days_in_month in month_lengths {
+        if days_since_year_one < days_in_month {
+            break;
+        }
+        days_since_year_one = days_since_year_one.saturating_sub(days_in_month);
+        month = month.saturating_add(1);
+    }
+    if month > 12 {
+        return "—".to_owned();
+    }
+
+    let day = days_since_year_one.saturating_add(1);
+    let milliseconds_today = game_time % MILLIS_PER_DAY;
+    let hour = milliseconds_today / MILLIS_PER_HOUR;
+    let minute = (milliseconds_today % MILLIS_PER_HOUR) / MILLIS_PER_MINUTE;
+    format!("{day:02}.{month:02}.{year:04} {hour:02}:{minute:02}")
+}
+
+fn is_leap_year(year: u32) -> bool {
+    year % 400 == 0 || year % 4 == 0 && year % 100 != 0
+}
+
 fn tr_named_in(language: &str, key: &str, args: &[(&str, &dyn std::fmt::Display)]) -> String {
     let mut translated = tr_in(language, key, &[]);
     for (name, value) in args {
@@ -588,7 +648,7 @@ impl LoadedSave {
         slot.format_id = Some(format.to_owned());
         let info = save_info(&slot);
         let item_count = inventory.len();
-        let game_time = save.game_time();
+        let game_time = format_xray_game_time(save.game_time());
         let parameters = tr(
             "Деньги: {0} RU · Предметов: {1} · Тайников: —\nИгровое время: {2} · Персонаж: — · Здоровье: —\nРанг: — · Репутация: — · Задания: — · Убито: — · Погода: —",
             &[&money, &item_count, &game_time],
@@ -7248,6 +7308,13 @@ mod tests {
     fn save_library_and_overview_dates_match_reference_patterns() {
         assert_eq!(super::display_file_time(UNIX_EPOCH, true, false), "01.01.70 00:00");
         assert_eq!(super::display_file_time(UNIX_EPOCH, false, true), "01.01.1970 00:00:00");
+    }
+
+    #[test]
+    fn xray_game_time_matches_csharp_overview_format() {
+        assert_eq!(super::format_xray_game_time(63_480_696_003_240), "16.08.2012 06:40");
+        assert_eq!(super::format_xray_game_time(0), "—");
+        assert_eq!(super::format_xray_game_time(u64::MAX), "—");
     }
 
     #[test]
