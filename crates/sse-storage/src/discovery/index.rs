@@ -425,9 +425,8 @@ fn scan_single_index_entry(
     let (format_id, game_id, detection_error, header_hash) =
         match crate::discovery::slot::read_file_header(path, HEADER_SAMPLE_BYTES) {
             Ok(header) => {
-                let (fid, gid, err) =
-                    crate::discovery::slot::detect_format_for_file(path, &header, size, candidate_release_id)
-                        .unwrap_or_else(|error| (None, None, Some(format!("IOException: {error}"))));
+                let (fid, gid, err) = crate::discovery::slot::detect_format_for_file(path, &header, size)
+                    .unwrap_or_else(|error| (None, None, Some(format!("IOException: {error}"))));
                 let hash = LibraryIndex::compute_header_hash(&header);
                 (fid, gid, err, hash)
             }

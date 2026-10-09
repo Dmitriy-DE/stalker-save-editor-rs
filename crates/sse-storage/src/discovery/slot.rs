@@ -224,7 +224,7 @@ fn scan_single_slot(path: &std::path::Path, candidate_game_id: &str, candidate_r
     }
 
     let detection = read_file_header(path, HEADER_SAMPLE_BYTES)
-        .and_then(|header_bytes| detect_format_for_file(path, &header_bytes, size, candidate_release_id));
+        .and_then(|header_bytes| detect_format_for_file(path, &header_bytes, size));
 
     match detection {
         Ok((format_id, game_id, detection_error)) => SaveSlot {
@@ -264,7 +264,6 @@ pub(crate) fn detect_format_for_file(
     path: &std::path::Path,
     header_bytes: &[u8],
     size: u64,
-    candidate_release_id: &str,
 ) -> io::Result<(Option<String>, Option<String>, Option<String>)> {
     if size > MAXIMUM_UNPACKED_SIZE {
         return Ok((
@@ -278,16 +277,11 @@ pub(crate) fn detect_format_for_file(
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "save size does not fit this platform"))?;
         if full_size > header_bytes.len() {
             return with_full_xray_ee_detection(|| {
-                read_file_header(path, full_size)
-                    .map(|full_bytes| detect_format_with_context(&full_bytes, Some(path), Some(candidate_release_id)))
+                read_file_header(path, full_size).map(|full_bytes| detect_format_with_context(&full_bytes, Some(path)))
             });
         }
     }
-    Ok(detect_format_with_context(
-        header_bytes,
-        Some(path),
-        Some(candidate_release_id),
-    ))
+    Ok(detect_format_with_context(header_bytes, Some(path)))
 }
 
 fn has_save_extension(file_name: &str) -> bool {
@@ -307,20 +301,19 @@ fn format_io_error(err: &io::Error) -> String {
 /// Detects the format and game family of save file bytes.
 #[must_use]
 pub fn detect_format(bytes: &[u8]) -> (Option<String>, Option<String>, Option<String>) {
-    detect_format_with_context(bytes, None, None)
+    detect_format_with_context(bytes, None)
 }
 
 pub(crate) fn detect_format_with_context(
     bytes: &[u8],
     path: Option<&std::path::Path>,
-    candidate_release_id: Option<&str>,
 ) -> (Option<String>, Option<String>, Option<String>) {
     if let Some(format_id) = detect_xray(bytes) {
         let game_id = family_for_format(&format_id);
         return (Some(format_id), game_id, None);
     }
 
-    if detect_stalker2(bytes, path, candidate_release_id) {
+    if detect_stalker2(bytes, path) {
         return (Some("stalker2".to_string()), Some("stalker2".to_string()), None);
     }
 
@@ -474,48 +467,50 @@ fn parse_xray_chunks(raw: &[u8]) -> Option<(u32, &[u8])> {
     }
 }
 
-fn detect_stalker2(bytes: &[u8], path: Option<&std::path::Path>, candidate_release_id: Option<&str>) -> bool {
+/// Largest S2 save that discovery identifies by its container trailer; a larger file is not identified here.
+const S2_CONTAINER_CHECK_LIMIT: u64 = 64 * 1024 * 1024;
+const S2_MAXIMUM_UNPACKED_SIZE: u32 = 256 * 1024 * 1024;
+
+fn detect_stalker2(bytes: &[u8], path: Option<&std::path::Path>) -> bool {
+    match path {
+        Some(path) => detect_stalker2_file(path),
+        None => s2_container_is_valid(bytes),
+    }
+}
+
+/// Reads the whole file, because the trailer check covers all of it; a 4 KiB sample cannot prove a container.
+fn detect_stalker2_file(path: &std::path::Path) -> bool {
+    let Ok(metadata) = fs::metadata(path) else {
+        return false;
+    };
+    let size = metadata.len();
+    if !(8..=S2_CONTAINER_CHECK_LIMIT).contains(&size) {
+        return false;
+    }
+    let Ok(size) = usize::try_from(size) else {
+        return false;
+    };
+    read_file_header(path, size).is_ok_and(|bytes| s2_container_is_valid(&bytes))
+}
+
+/// The checks `sse-s2` makes before it decodes a container: the unpacked size is in range, and the CRC-32 trailer
+/// matches the rest of the bytes. `bytes` must be the whole container.
+fn s2_container_is_valid(bytes: &[u8]) -> bool {
     if bytes.len() < 8 {
         return false;
     }
-
-    let magic = match read_u32_le(bytes, 0) {
-        Some(m) => m,
-        None => return false,
+    let Some(trailer_offset) = bytes.len().checked_sub(4) else {
+        return false;
     };
-    if magic == XRAY_MAGIC {
+    let (Some(unpacked_size), Some(stored_crc)) = (read_u32_le(bytes, 0), read_u32_le(bytes, trailer_offset)) else {
+        return false;
+    };
+    if unpacked_size == 0 || unpacked_size > S2_MAXIMUM_UNPACKED_SIZE {
         return false;
     }
-
-    let unpacked_size = magic;
-    if unpacked_size == 0 || u64::from(unpacked_size) > MAXIMUM_UNPACKED_SIZE {
-        return false;
-    }
-
-    if bytes.len() >= 8 {
-        if let Some(pos) = bytes.len().checked_sub(4) {
-            if let Some(stored_crc) = read_u32_le(bytes, pos) {
-                if let Some(body) = bytes.get(..pos) {
-                    if sse_codecs::crc32::crc32(body) == stored_crc {
-                        return true;
-                    }
-                }
-            }
-        }
-    }
-
-    let file_name = path.and_then(|p| p.file_name()).and_then(|n| n.to_str()).unwrap_or("");
-    let lower = file_name.to_ascii_lowercase();
-
-    if candidate_release_id == Some("stalker2") || lower.ends_with(".sav") {
-        if let Some(first_stream_byte) = bytes.get(4) {
-            if *first_stream_byte != 0 {
-                return true;
-            }
-        }
-    }
-
-    false
+    bytes
+        .get(..trailer_offset)
+        .is_some_and(|body| sse_codecs::crc32::crc32(body) == stored_crc)
 }
 
 fn family_for_format(format_id: &str) -> Option<String> {
