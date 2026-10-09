@@ -556,3 +556,39 @@ fn preset_batch_applies_multiple_fixes() {
     let installed = engine.list_installed(&fixture.root, None).unwrap();
     assert_eq!(installed.len(), 2);
 }
+
+#[test]
+fn all_spawn_refuses_waypoint_name_outside_latin1_instead_of_writing_question_marks() {
+    let original = synthetic_all_spawn::build("[logic]\nactive = walker\n", "path_walk", "name00a=guard", 5);
+    let edit = SpawnEditOperation {
+        relative_path: "gamedata/spawns/all.spawn".to_string(),
+        kind: SpawnEditKind::PatrolPoint,
+        target: "path_walk".to_string(),
+        expected_file_sha256: None,
+        point: 0,
+        expected: "name00a=guard".to_string(),
+        replacement: Some("Точка=guard".to_string()),
+        position: None,
+        level_vertex_id: Some(7),
+        game_vertex_id: None,
+    };
+    assert!(AllSpawnEditor::apply(&original, &[edit]).is_err());
+}
+
+#[test]
+fn all_spawn_refuses_custom_data_outside_latin1_instead_of_writing_question_marks() {
+    let original = synthetic_all_spawn::build("[logic]\nactive = walker\n", "path_walk", "name00a=guard", 5);
+    let edit = SpawnEditOperation {
+        relative_path: "gamedata/spawns/all.spawn".to_string(),
+        kind: SpawnEditKind::CustomData,
+        target: "npc_1".to_string(),
+        expected_file_sha256: None,
+        point: 0,
+        expected: "[logic]\nactive = walker\n".to_string(),
+        replacement: Some("[logic]\nactive = Ёжик\n".to_string()),
+        position: None,
+        level_vertex_id: None,
+        game_vertex_id: None,
+    };
+    assert!(AllSpawnEditor::apply(&original, &[edit]).is_err());
+}

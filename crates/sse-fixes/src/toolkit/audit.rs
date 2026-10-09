@@ -236,11 +236,16 @@ fn collect_files_recursive(dir: &Path) -> Result<Vec<PathBuf>> {
     let entries = fs::read_dir(dir).map_err(Error::from)?;
     for entry in entries {
         let entry = entry.map_err(Error::from)?;
+        // Symlinks are skipped: following `gamedata/loop -> ..` would recurse without end.
+        let file_type = entry.file_type().map_err(Error::from)?;
+        if file_type.is_symlink() {
+            continue;
+        }
         let path = entry.path();
-        if path.is_dir() {
+        if file_type.is_dir() {
             let mut sub = collect_files_recursive(&path)?;
             files.append(&mut sub);
-        } else if path.is_file() {
+        } else if file_type.is_file() {
             files.push(path);
         }
     }

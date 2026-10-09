@@ -322,7 +322,9 @@ impl ManagedUserLtxSettings {
         let mut output_text = lines.join(line_ending);
         output_text.push_str(line_ending);
 
-        let output_bytes = encode_ltx_bytes(&output_text);
+        // Refuse to write rather than fall back to UTF-8: X-Ray reads user.ltx as cp1251.
+        let output_bytes = crate::engine::encode_patch_text(&output_text, 1251)
+            .map_err(|e| Error::damaged(format!("{} was not written: {e}", path.display())))?;
         AtomicFileWriter::write(&path, &output_bytes, true)?;
 
         Ok(applied_count)
@@ -395,7 +397,8 @@ fn validate_setting_value(key: &str, val: &str) -> Result<()> {
             let parsed: f64 = trimmed
                 .parse()
                 .map_err(|_| Error::Refused(format!("Invalid float value '{val}' for setting '{key}'")))?;
-            if parsed < *min || parsed > *max {
+            // NaN compares false with everything, so it must be refused explicitly.
+            if !parsed.is_finite() || parsed < *min || parsed > *max {
                 return Err(Error::Refused(format!(
                     "Value {parsed} for '{key}' is out of bounds [{min}, {max}]"
                 )));
@@ -484,8 +487,4 @@ fn decode_ltx_bytes(bytes: &[u8]) -> Result<String> {
         return Ok(utf8.to_string());
     }
     crate::engine::decode_patch_text(bytes, 1251)
-}
-
-fn encode_ltx_bytes(text: &str) -> Vec<u8> {
-    crate::engine::encode_patch_text(text, 1251).unwrap_or_else(|_| text.as_bytes().to_vec())
 }
