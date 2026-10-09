@@ -26,6 +26,7 @@ pub fn run_update(args: &[String]) -> ExitCode {
     match first.as_str() {
         "check" => run_check(rest),
         "download" => run_download(rest),
+        "verify-manifest" => run_verify_manifest(rest),
         _ => {
             eprintln!("{UPDATE_USAGE}");
             ExitCode::Usage
@@ -206,6 +207,34 @@ fn run_check(args: &[String]) -> ExitCode {
     }
 }
 
+/// Checks `latest.json` against its detached signature with the same verifier the updater uses.
+///
+/// Exit code 0 only for a valid signature; an empty or invalid signature is refused.
+fn run_verify_manifest(args: &[String]) -> ExitCode {
+    let [manifest, signature] = args else {
+        eprintln!("Usage: stalker-save update verify-manifest MANIFEST SIGNATURE");
+        return ExitCode::Usage;
+    };
+    let (Ok(manifest_bytes), Ok(signature_bytes)) = (std::fs::read(manifest), std::fs::read(signature)) else {
+        eprintln!("Error: cannot read the manifest or its signature");
+        return ExitCode::System;
+    };
+    if signature_bytes.iter().all(u8::is_ascii_whitespace) {
+        eprintln!("Refused: the manifest signature is empty; the manifest is not signed");
+        return ExitCode::Refused;
+    }
+    match sse_update::verify_signature(&manifest_bytes, &signature_bytes, None) {
+        Ok(()) => {
+            println!("Signature valid");
+            ExitCode::Done
+        }
+        Err(error) => {
+            eprintln!("Refused: manifest signature is invalid: {error}");
+            ExitCode::Refused
+        }
+    }
+}
+
 fn run_download(args: &[String]) -> ExitCode {
     let opts = match parse_options(args) {
         Ok(o) => o,
@@ -257,5 +286,39 @@ fn run_download(args: &[String]) -> ExitCode {
             eprintln!("Download failed: {e}");
             ExitCode::System
         }
+    }
+}
+
+#[cfg(test)]
+mod verify_manifest_tests {
+    use super::{run_verify_manifest, ExitCode};
+
+    fn write_pair(name: &str, manifest: &[u8], signature: &[u8]) -> (std::path::PathBuf, std::path::PathBuf) {
+        let directory = std::env::temp_dir().join(format!("sse-verify-manifest-{name}-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&directory);
+        let manifest_path = directory.join("latest.json");
+        let signature_path = directory.join("latest.json.sig");
+        assert!(std::fs::write(&manifest_path, manifest).is_ok());
+        assert!(std::fs::write(&signature_path, signature).is_ok());
+        (manifest_path, signature_path)
+    }
+
+    #[test]
+    fn empty_signature_is_refused_and_never_reported_valid() {
+        let (manifest, signature) = write_pair("empty", b"{}\n", b"");
+        let args = [manifest.display().to_string(), signature.display().to_string()];
+        assert_eq!(run_verify_manifest(&args), ExitCode::Refused);
+    }
+
+    #[test]
+    fn garbage_signature_is_refused() {
+        let (manifest, signature) = write_pair("garbage", b"{}\n", b"not a signature");
+        let args = [manifest.display().to_string(), signature.display().to_string()];
+        assert_eq!(run_verify_manifest(&args), ExitCode::Refused);
+    }
+
+    #[test]
+    fn wrong_argument_count_is_a_usage_error() {
+        assert_eq!(run_verify_manifest(&["only-one".to_owned()]), ExitCode::Usage);
     }
 }
