@@ -1,13 +1,14 @@
 //! S2 save screens: discovery, overview, inventory, factions, stashes and transitions.
 
+use super::shell::library_icon_button;
 use super::style::{self, Button, Text};
 use super::{AppMessage, Context, EditorAction, Screen, ScreenId};
 use crate::edit::{Clipboard, EditConfig, FieldMode, InputFilter, Key, Modifiers};
 use crate::event_loop::{Message, WindowEvent};
 use crate::glyphs::{Face, TextStyle};
 use crate::layout::{NodeKind, Size, Style};
+use crate::path::Icon;
 use crate::process_guard::{is_windows_file_busy_error_text, running_game_for_format, SAVE_WHILE_GAME_RUNNING_WARNING};
-use crate::raster::Color;
 use crate::widget::{Content, Look, Tree, WidgetId};
 use crate::widgets::text_input::TextInput;
 use sse_core::{Error, Result, SaveBuffer};
@@ -1995,9 +1996,74 @@ impl Screen for Overview {
     }
 }
 
+/// Text and state of one item row in the inventory table.
+struct ItemCells<'a> {
+    name: &'a str,
+    key: &'a str,
+    place: &'a str,
+    condition: &'a str,
+    condition_ratio: Option<f32>,
+    count: &'a str,
+    selected: bool,
+    editable: bool,
+}
+
+/// Fills one table row: the name, key, placement, condition (coloured by threshold), count and the selection look.
+fn fill_item_row(tree: &mut Tree, row: &ItemControls, cells: &ItemCells<'_>, compact: bool) -> Result<()> {
+    tree.set_visible(row.row, true)?;
+    tree.set_text(row.label, cells.name)?;
+    tree.set_text(row.key, cells.key)?;
+    tree.set_visible(row.key, !compact)?;
+    tree.set_text(row.place, cells.place)?;
+    let condition_color = match cells.condition_ratio {
+        Some(value) if value >= 0.75 => crate::theme::d2::SUCCESS,
+        Some(value) if value >= 0.4 => crate::theme::d2::ACCENT,
+        Some(_) => crate::theme::d2::DANGER,
+        None => crate::theme::d2::TEXT_MUTED,
+    };
+    tree.set_text(row.condition, cells.condition)?;
+    tree.set_look(
+        row.condition,
+        Look {
+            text: style::d2::argb(condition_color),
+            ..Look::default()
+        },
+    )?;
+    tree.set_text(row.count, cells.count)?;
+    tree.set_visible(row.select, true)?;
+    tree.set_enabled(row.select, true)?;
+    tree.set_look(
+        row.select,
+        Look {
+            fill: cells.selected.then(|| style::d2::argb(crate::theme::d2::ACCENT_TINT)),
+            border: cells.selected.then(|| (style::d2::argb(crate::theme::d2::ACCENT), 1.0)),
+            hover_fill: Some(style::d2::argb(crate::theme::d2::ROW_HOVER)),
+            radius: crate::theme::BUTTON_RADIUS,
+            ..Look::default()
+        },
+    )?;
+    tree.set_visible(row.decrease, cells.editable)?;
+    tree.set_visible(row.increase, cells.editable)?;
+    Ok(())
+}
+
+/// Placement shown in the table: only when the draft changes it, so an unchanged item shows nothing.
+fn placement_label(state: &WorkspaceState, handle: ItemHandle) -> String {
+    match state.pending_placements.get(&handle) {
+        Some(DraftPlacement::Ruck) => t("Рюкзак").to_owned(),
+        Some(DraftPlacement::Belt) => t("Пояс").to_owned(),
+        Some(DraftPlacement::Slot(slot)) => tr("Слот {0}", &[slot]),
+        None => String::new(),
+    }
+}
+
 struct ItemControls {
     row: WidgetId,
     label: WidgetId,
+    key: WidgetId,
+    place: WidgetId,
+    condition: WidgetId,
+    count: WidgetId,
     select: WidgetId,
     decrease: WidgetId,
     increase: WidgetId,
@@ -2219,6 +2285,12 @@ struct Inventory {
     export: Option<WidgetId>,
     status: Option<WidgetId>,
     rows: Vec<ItemControls>,
+    key_header: Option<WidgetId>,
+    page_range: Option<WidgetId>,
+    side_column: Option<WidgetId>,
+    inspector_panel: Option<WidgetId>,
+    actions_panel: Option<WidgetId>,
+    compact: bool,
     selected_item: Option<ItemHandle>,
     inspector_summary: Option<WidgetId>,
     inspector_condition_heading: Option<WidgetId>,
@@ -2482,6 +2554,12 @@ impl Inventory {
             export: None,
             status: None,
             rows: Vec::new(),
+            key_header: None,
+            page_range: None,
+            side_column: None,
+            inspector_panel: None,
+            actions_panel: None,
+            compact: false,
             selected_item: None,
             inspector_summary: None,
             inspector_condition_heading: None,
@@ -2509,6 +2587,13 @@ impl Inventory {
 
     fn render(&mut self, cx: &mut Context<'_>) -> Result<()> {
         let state = self.workspace.lock();
+        let window_width = cx.tree.size().0;
+        if window_width > 0 {
+            self.compact = window_width < 1600;
+        }
+        if let Some(id) = self.key_header {
+            cx.tree.set_visible(id, !self.compact)?;
+        }
         render_external_file_banner(
             cx,
             self.external_banner_row,
@@ -2522,8 +2607,8 @@ impl Inventory {
             if let Some(panel) = self.add_panel {
                 cx.tree.set_visible(panel, false)?;
             }
-            if let Some(card) = self.inventory_card {
-                cx.tree.set_visible(card, true)?;
+            if let Some(inspector) = self.inspector_panel {
+                cx.tree.set_visible(inspector, true)?;
             }
             if let Some(id) = self.money_label {
                 cx.tree.set_text(id, t("Сначала выберите сейв на экране «Обзор»."))?;
@@ -2543,8 +2628,8 @@ impl Inventory {
             if let Some(panel) = self.add_panel {
                 cx.tree.set_visible(panel, false)?;
             }
-            if let Some(card) = self.inventory_card {
-                cx.tree.set_visible(card, true)?;
+            if let Some(inspector) = self.inspector_panel {
+                cx.tree.set_visible(inspector, true)?;
             }
         }
         let selected_for_inspector = Arc::clone(selected);
@@ -2624,57 +2709,36 @@ impl Inventory {
                                     .to_string()
                             },
                         );
-                        let condition = state
-                            .pending_durability
-                            .get(&ItemHandle::Xray(item.handle))
-                            .map(|value| format!("{value}%"))
-                            .or_else(|| item.condition.map(|value| format!("{:.0}%", value * 100.0)))
-                            .unwrap_or_else(|| "—".to_owned());
-                        let name = sse_catalog::SaveNaming::item_name(save.format().id(), &item.section, None);
-                        cx.tree.set_text(
-                            row.label,
-                            &format!(
-                                "◇ {} · {} · {condition} · × {count}",
-                                short_text(&name, 20),
-                                t(&item.category),
-                            ),
-                        )?;
                         let condition_ratio = state
                             .pending_durability
                             .get(&ItemHandle::Xray(item.handle))
                             .map(|value| f32::from(*value) / 100.0)
                             .or(item.condition);
-                        let condition_color = match condition_ratio {
-                            Some(value) if value >= 0.75 => Color::rgba(104, 200, 144, 255),
-                            Some(value) if value >= 0.4 => Color::rgba(231, 190, 91, 255),
-                            Some(_) => Color::rgba(220, 103, 91, 255),
-                            None => Color::rgba(145, 155, 160, 255),
-                        };
-                        cx.tree.set_look(
-                            row.label,
-                            Look {
-                                text: condition_color,
-                                ..Look::default()
-                            },
-                        )?;
-                        cx.tree.set_visible(row.label, true)?;
-                        cx.tree.set_visible(row.select, true)?;
-                        cx.tree.set_enabled(row.select, true)?;
-                        cx.tree.set_text(
-                            row.select,
-                            if self.selected_item == Some(ItemHandle::Xray(item.handle)) {
-                                t("Выбрано")
-                            } else {
-                                t("Осмотреть")
-                            },
-                        )?;
-                        cx.tree.set_look(
-                            row.select,
-                            style::nav(self.selected_item == Some(ItemHandle::Xray(item.handle))),
-                        )?;
+                        let condition = state
+                            .pending_durability
+                            .get(&ItemHandle::Xray(item.handle))
+                            .map(|value| format!("{value}%"))
+                            .or_else(|| item.condition.map(|value| format!("{:.0}%", value * 100.0)))
+                            .unwrap_or_default();
+                        let name = sse_catalog::SaveNaming::item_name(save.format().id(), &item.section, None);
+                        let place = placement_label(&state, ItemHandle::Xray(item.handle));
+                        let selected = self.selected_item == Some(ItemHandle::Xray(item.handle));
                         let editable = stack_editable && item.count.is_some();
-                        cx.tree.set_visible(row.decrease, editable)?;
-                        cx.tree.set_visible(row.increase, editable)?;
+                        fill_item_row(
+                            cx.tree,
+                            row,
+                            &ItemCells {
+                                name: &short_text(&name, 22),
+                                key: &item.section,
+                                place: &place,
+                                condition: &condition,
+                                condition_ratio,
+                                count: &count,
+                                selected,
+                                editable,
+                            },
+                            self.compact,
+                        )?;
                         row.handle = Some(ItemHandle::Xray(item.handle));
                     } else {
                         row.handle = None;
@@ -2691,11 +2755,20 @@ impl Inventory {
                     / INVENTORY_PAGE_SIZE;
                 self.page = self.page.min(pages.saturating_sub(1));
                 if let Some(id) = self.previous {
-                    cx.tree.set_visible(id, pages > 1 && self.page > 0)?;
+                    cx.tree.set_enabled(id, self.page > 0)?;
                 }
                 if let Some(id) = self.next {
+                    cx.tree.set_enabled(id, self.page.saturating_add(1) < pages)?;
+                }
+                if let Some(id) = self.page_range {
+                    let last = start.saturating_add(INVENTORY_PAGE_SIZE).min(visible_groups.len());
+                    let range = crate::strings::tr_in(
+                        Some(crate::strings::current_language()),
+                        "{0}–{1} из {2}",
+                        &[&start.saturating_add(1), &last, &visible_groups.len()],
+                    );
                     cx.tree
-                        .set_visible(id, pages > 1 && self.page.saturating_add(1) < pages)?;
+                        .set_text(id, if visible_groups.is_empty() { "" } else { &range })?;
                 }
                 let has_changes = pending_money != money
                     || !state.pending_durability.is_empty()
@@ -2793,39 +2866,26 @@ impl Inventory {
                             "{:02x}{:02x}{:02x}",
                             item.type_key[0], item.type_key[1], item.type_key[2]
                         );
-                        let category = t(s2_inventory_category(item.kind_code, item.display_name.as_deref()));
-                        let condition = item
-                            .condition
-                            .map_or_else(|| "—".to_owned(), |value| format!("{value:.0}%"));
-                        cx.tree.set_text(
-                            row.label,
-                            &tr!(
-                                "◇ {name} · {category} · {condition} · × {count} · {key}",
-                                name = short_text(name, 18),
-                                category = category,
-                                condition = condition,
-                                count = count,
-                                key = key
-                            ),
-                        )?;
-                        cx.tree.set_visible(row.label, true)?;
-                        cx.tree.set_visible(row.select, true)?;
-                        cx.tree.set_enabled(row.select, true)?;
-                        cx.tree.set_text(
-                            row.select,
-                            if self.selected_item == Some(ItemHandle::Stalker2(item.handle)) {
-                                t("Выбрано")
-                            } else {
-                                t("Осмотреть")
-                            },
-                        )?;
-                        cx.tree.set_look(
-                            row.select,
-                            style::nav(self.selected_item == Some(ItemHandle::Stalker2(item.handle))),
-                        )?;
+                        let condition_ratio = item.condition.map(|value| value / 100.0);
+                        let condition = item.condition.map_or_else(String::new, |value| format!("{value:.0}%"));
+                        let place = placement_label(&state, ItemHandle::Stalker2(item.handle));
+                        let selected = self.selected_item == Some(ItemHandle::Stalker2(item.handle));
                         let editable = writable && item.editable_count;
-                        cx.tree.set_visible(row.decrease, editable)?;
-                        cx.tree.set_visible(row.increase, editable)?;
+                        fill_item_row(
+                            cx.tree,
+                            row,
+                            &ItemCells {
+                                name: &short_text(name, 18),
+                                key: &key,
+                                place: &place,
+                                condition: &condition,
+                                condition_ratio,
+                                count: &count,
+                                selected,
+                                editable,
+                            },
+                            self.compact,
+                        )?;
                         row.handle = Some(ItemHandle::Stalker2(item.handle));
                     } else {
                         cx.tree.set_visible(row.row, false)?;
@@ -2842,11 +2902,20 @@ impl Inventory {
                     / INVENTORY_PAGE_SIZE;
                 self.page = self.page.min(pages.saturating_sub(1));
                 if let Some(id) = self.previous {
-                    cx.tree.set_visible(id, pages > 1 && self.page > 0)?;
+                    cx.tree.set_enabled(id, self.page > 0)?;
                 }
                 if let Some(id) = self.next {
+                    cx.tree.set_enabled(id, self.page.saturating_add(1) < pages)?;
+                }
+                if let Some(id) = self.page_range {
+                    let last = start.saturating_add(INVENTORY_PAGE_SIZE).min(visible_groups.len());
+                    let range = crate::strings::tr_in(
+                        Some(crate::strings::current_language()),
+                        "{0}–{1} из {2}",
+                        &[&start.saturating_add(1), &last, &visible_groups.len()],
+                    );
                     cx.tree
-                        .set_visible(id, pages > 1 && self.page.saturating_add(1) < pages)?;
+                        .set_text(id, if visible_groups.is_empty() { "" } else { &range })?;
                 }
                 let has_changes = pending_money != money
                     || !state.pending_durability.is_empty()
@@ -3186,10 +3255,10 @@ impl Inventory {
             cx.tree.set_visible(control.widget, visible)?;
         }
         if let Some(id) = self.previous {
-            cx.tree.set_visible(id, false)?;
+            cx.tree.set_visible(id, visible)?;
         }
         if let Some(id) = self.next {
-            cx.tree.set_visible(id, false)?;
+            cx.tree.set_visible(id, visible)?;
         }
         Ok(())
     }
@@ -3555,8 +3624,8 @@ impl Inventory {
             .map(|candidate| candidate.key.clone());
         self.add_search = Some(TextInput::new("", inventory_search_config())?);
         self.add_quantity = Some(TextInput::new("1", add_quantity_config())?);
-        if let Some(card) = self.inventory_card {
-            cx.tree.set_visible(card, false)?;
+        if let Some(inspector) = self.inspector_panel {
+            cx.tree.set_visible(inspector, false)?;
         }
         if let Some(panel) = self.add_panel {
             cx.tree.set_visible(panel, true)?;
@@ -3580,8 +3649,8 @@ impl Inventory {
         if let Some(panel) = self.add_panel {
             cx.tree.set_visible(panel, false)?;
         }
-        if let Some(card) = self.inventory_card {
-            cx.tree.set_visible(card, true)?;
+        if let Some(inspector) = self.inspector_panel {
+            cx.tree.set_visible(inspector, true)?;
         }
         if let Some(search) = self.add_search.as_mut() {
             search.focus(false, 0);
@@ -4821,9 +4890,34 @@ impl Screen for Inventory {
         self.external_banner_row = Some(row);
         self.external_banner = Some(banner);
         self.external_reload = Some(reload);
-        let inventory = style::card(cx.tree, host)?;
+        let body = cx.tree.add(
+            Some(host),
+            NodeKind::Row,
+            Style {
+                grow: 1.0,
+                gap: Size::new(crate::theme::CONTROL_GAP + 6.0, 0.0),
+                align_items: crate::layout::Align::Stretch,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        let inventory = style::d2::panel(cx.tree, body)?;
+        cx.tree.set_style(
+            inventory,
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                preferred: crate::layout::Size::new(0.0, 0.0),
+                min: crate::layout::Size::new(0.0, 0.0),
+                padding: crate::layout::Edges::all(crate::theme::d2::PANEL_PADDING.0),
+                gap: Size::new(0.0, crate::theme::CONTROL_GAP),
+                align_items: crate::layout::Align::Stretch,
+                ..Style::default()
+            },
+        )?;
         self.inventory_card = Some(inventory);
-        style::label(cx.tree, inventory, "ИНВЕНТАРЬ", Text::Heading)?;
+        style::d2::panel_title(cx.tree, inventory, t("ИНВЕНТАРЬ"))?;
         let money = style::row(cx.tree, inventory)?;
         self.money_label = Some(style::label(
             cx.tree,
@@ -4869,7 +4963,7 @@ impl Screen for Inventory {
             NodeKind::Leaf,
             Style {
                 grow: 1.0,
-                min: crate::layout::Size::new(220.0, crate::theme::BUTTON_HEIGHT),
+                min: crate::layout::Size::new(180.0, crate::theme::BUTTON_HEIGHT),
                 padding: crate::layout::Edges {
                     left: 10.0,
                     top: 0.0,
@@ -4894,7 +4988,17 @@ impl Screen for Inventory {
         self.search = Some(TextInput::new("", inventory_search_config())?);
         self.clear_search = Some(style::button(cx.tree, filters, "Очистить", Button::Secondary)?);
         self.search_count = Some(style::label(cx.tree, filters, "Найдено: 0", Text::Note)?);
-        let chips = style::row(cx.tree, inventory)?;
+        let chips = cx.tree.add(
+            Some(inventory),
+            NodeKind::Wrap,
+            Style {
+                gap: Size::new(6.0, 6.0),
+                align_items: crate::layout::Align::Center,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
         for category in INVENTORY_CATEGORIES {
             let id = cx.tree.add(
                 Some(chips),
@@ -4935,34 +5039,203 @@ impl Screen for Inventory {
         if let Some(id) = self.reset_filters {
             cx.tree.set_visible(id, false)?;
         }
-        let pages = style::row(cx.tree, inventory)?;
-        self.previous = Some(style::button(cx.tree, pages, "Назад", Button::Secondary)?);
-        self.next = Some(style::button(cx.tree, pages, "Дальше", Button::Secondary)?);
+        let header = cx.tree.add(
+            Some(inventory),
+            NodeKind::Row,
+            Style {
+                min: crate::layout::Size::new(0.0, 36.0),
+                preferred: crate::layout::Size::new(0.0, 36.0),
+                shrink: 0.0,
+                gap: Size::new(8.0, 0.0),
+                align_items: crate::layout::Align::Center,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look {
+                border: Some((style::d2::argb(crate::theme::d2::BORDER_SUBTLE), 1.0)),
+                ..Look::default()
+            },
+        )?;
+        let header_name = style::label(cx.tree, header, t("Предмет"), Text::Note)?;
+        cx.tree.set_style(
+            header_name,
+            Style {
+                grow: 2.0,
+                shrink: 1.0,
+                min: Size::new(0.0, 0.0),
+                ..Style::default()
+            },
+        )?;
+        let key_header = style::label(cx.tree, header, t("Ключ"), Text::Note)?;
+        cx.tree.set_style(
+            key_header,
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: Size::new(0.0, 0.0),
+                ..Style::default()
+            },
+        )?;
+        self.key_header = Some(key_header);
+        let place_header = style::label(cx.tree, header, t("Место"), Text::Note)?;
+        let condition_header = style::label(cx.tree, header, t("Состояние"), Text::Note)?;
+        let count_header = style::label(cx.tree, header, t("Количество"), Text::Note)?;
+        for id in [place_header, condition_header, count_header] {
+            cx.tree.set_style(
+                id,
+                Style {
+                    min: Size::new(64.0, 0.0),
+                    shrink: 0.0,
+                    ..Style::default()
+                },
+            )?;
+        }
         let item_rows = cx.tree.add(
             Some(inventory),
             NodeKind::Column,
-            Style::default(),
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                gap: Size::new(0.0, 4.0),
+                align_items: crate::layout::Align::Stretch,
+                ..Style::default()
+            },
             Content::Panel,
             Look::default(),
         )?;
         for _ in 0..INVENTORY_PAGE_SIZE {
-            let row = style::row(cx.tree, item_rows)?;
-            cx.tree.set_visible(row, false)?;
-            let label = style::label(cx.tree, row, "", Text::Body)?;
-            let select = style::button(cx.tree, row, "Осмотреть", Button::Secondary)?;
-            let decrease = style::button(cx.tree, row, "−", Button::Secondary)?;
-            let increase = style::button(cx.tree, row, "+", Button::Secondary)?;
-            self.rows.push(ItemControls {
-                row,
+            let stack = cx.tree.add(
+                Some(item_rows),
+                NodeKind::Stack,
+                Style {
+                    min: crate::layout::Size::new(0.0, 44.0),
+                    preferred: crate::layout::Size::new(0.0, 44.0),
+                    shrink: 0.0,
+                    align_items: crate::layout::Align::Stretch,
+                    ..Style::default()
+                },
+                Content::Panel,
+                Look::default(),
+            )?;
+            cx.tree.set_visible(stack, false)?;
+            let select = cx.tree.add(
+                Some(stack),
+                NodeKind::Leaf,
+                Style::default(),
+                Content::Button {
+                    text: String::new(),
+                    style: Text::Body.style(),
+                },
+                Look {
+                    hover_fill: Some(style::d2::argb(crate::theme::d2::ROW_HOVER)),
+                    radius: crate::theme::BUTTON_RADIUS,
+                    ..Look::default()
+                },
+            )?;
+            let content = style::row(cx.tree, stack)?;
+            cx.tree.set_style(
+                content,
+                Style {
+                    gap: Size::new(8.0, 0.0),
+                    align_items: crate::layout::Align::Center,
+                    padding: crate::layout::Edges {
+                        left: 10.0,
+                        top: 0.0,
+                        right: 10.0,
+                        bottom: 0.0,
+                    },
+                    ..Style::default()
+                },
+            )?;
+            let label = style::label(cx.tree, content, "", Text::Body)?;
+            cx.tree.set_style(
                 label,
+                Style {
+                    grow: 2.0,
+                    shrink: 1.0,
+                    min: Size::new(0.0, 0.0),
+                    ..Style::default()
+                },
+            )?;
+            let key = style::label(cx.tree, content, "", Text::Note)?;
+            cx.tree.set_style(
+                key,
+                Style {
+                    grow: 1.0,
+                    shrink: 1.0,
+                    min: Size::new(0.0, 0.0),
+                    ..Style::default()
+                },
+            )?;
+            let place = style::label(cx.tree, content, "", Text::Note)?;
+            let condition = style::label(cx.tree, content, "", Text::Body)?;
+            let count = style::label(cx.tree, content, "", Text::Body)?;
+            for id in [place, condition, count] {
+                cx.tree.set_style(
+                    id,
+                    Style {
+                        min: Size::new(64.0, 0.0),
+                        shrink: 0.0,
+                        ..Style::default()
+                    },
+                )?;
+            }
+            let decrease = style::button(cx.tree, content, "−", Button::Secondary)?;
+            let increase = style::button(cx.tree, content, "+", Button::Secondary)?;
+            self.rows.push(ItemControls {
+                row: stack,
+                label,
+                key,
+                place,
+                condition,
+                count,
                 select,
                 decrease,
                 increase,
                 handle: None,
             });
         }
-        let inspector = style::card(cx.tree, inventory)?;
-        style::label(cx.tree, inspector, "ВЫБРАННЫЙ ПРЕДМЕТ", Text::Heading)?;
+        let pages = style::row(cx.tree, inventory)?;
+        self.previous = Some(library_icon_button(cx.tree, pages, Icon::D2ArrowLeft)?);
+        self.page_range = Some(style::label(cx.tree, pages, "", Text::Note)?);
+        self.next = Some(library_icon_button(cx.tree, pages, Icon::D2ArrowRight)?);
+        self.export = Some(style::button(cx.tree, inventory, "Сохранить", Button::Primary)?);
+        self.status = Some(style::label(
+            cx.tree,
+            inventory,
+            "Изменения пока не подготовлены.",
+            Text::Note,
+        )?);
+        let side = cx.tree.add(
+            Some(body),
+            NodeKind::Column,
+            Style {
+                preferred: Size::new(360.0, 0.0),
+                min: Size::new(360.0, 0.0),
+                max: Size::new(360.0, f32::INFINITY),
+                shrink: 0.0,
+                gap: Size::new(0.0, crate::theme::CONTROL_GAP),
+                align_items: crate::layout::Align::Stretch,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        self.side_column = Some(side);
+        let inspector = style::d2::panel(cx.tree, side)?;
+        cx.tree.set_style(
+            inspector,
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                padding: crate::layout::Edges::all(crate::theme::d2::PANEL_PADDING.0),
+                gap: Size::new(0.0, crate::theme::CONTROL_GAP),
+                align_items: crate::layout::Align::Stretch,
+                ..Style::default()
+            },
+        )?;
+        self.inspector_panel = Some(inspector);
+        style::d2::panel_title(cx.tree, inspector, t("ВЫБРАННЫЙ ПРЕДМЕТ"))?;
         let inspector_summary = paragraph(
             cx.tree,
             inspector,
@@ -4987,44 +5260,56 @@ impl Screen for Inventory {
             "Состояние / прочность: —",
             Text::Value,
         )?);
-        let condition_row = style::row(cx.tree, inspector)?;
+        let condition_row = cx.tree.add(
+            Some(inspector),
+            NodeKind::Wrap,
+            Style {
+                gap: Size::new(6.0, 6.0),
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
         for (percent, label) in [(100_u8, "100%"), (75, "75%"), (50, "50%")] {
             let button = style::button(cx.tree, condition_row, label, Button::Secondary)?;
             self.condition_buttons.push((button, percent));
         }
         style::label(cx.tree, inspector, "РАЗМЕЩЕНИЕ", Text::Heading)?;
         self.inspector_placement = Some(style::label(cx.tree, inspector, "Размещение: —", Text::Body)?);
-        let placement_row = style::row(cx.tree, inspector)?;
+        let placement_row = cx.tree.add(
+            Some(inspector),
+            NodeKind::Wrap,
+            Style {
+                gap: Size::new(6.0, 6.0),
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
         for (label, destination) in [("Рюкзак", DraftPlacement::Ruck), ("Пояс", DraftPlacement::Belt)] {
             let button = style::button(cx.tree, placement_row, label, Button::Secondary)?;
             self.placement_buttons.push((button, destination));
         }
         style::label(cx.tree, inspector, "МОДИФИКАЦИИ", Text::Heading)?;
         self.inspector_upgrades = Some(style::label(cx.tree, inspector, "Модификации: —", Text::Body)?);
-        let upgrade_row = style::row(cx.tree, inspector)?;
+        let upgrade_row = cx.tree.add(
+            Some(inspector),
+            NodeKind::Wrap,
+            Style {
+                gap: Size::new(6.0, 6.0),
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
         for _ in 0..MAXIMUM_UPGRADE_ROWS {
             let widget = style::button(cx.tree, upgrade_row, "", Button::Secondary)?;
             cx.tree.set_visible(widget, false)?;
             self.upgrade_controls.push(UpgradeControl { widget, key: None });
         }
-        let edit_actions = style::row(cx.tree, inspector)?;
-        self.remove_button = Some(style::button(cx.tree, edit_actions, "Удалить предмет", Button::Danger)?);
-        self.add_button = Some(style::button(
-            cx.tree,
-            edit_actions,
-            "+ Добавить предмет",
-            Button::Primary,
-        )?);
-        self.export = Some(style::button(cx.tree, inventory, "Сохранить", Button::Primary)?);
-        self.status = Some(style::label(
-            cx.tree,
-            inventory,
-            "Изменения пока не подготовлены.",
-            Text::Note,
-        )?);
-        let panel = style::card(cx.tree, host)?;
+        let panel = style::d2::panel(cx.tree, side)?;
         self.add_panel = Some(panel);
-        style::label(cx.tree, panel, "ДОБАВИТЬ ПРЕДМЕТ", Text::Heading)?;
+        style::d2::panel_title(cx.tree, panel, t("ДОБАВИТЬ ПРЕДМЕТ"))?;
         style::label(
             cx.tree,
             panel,
@@ -5103,6 +5388,33 @@ impl Screen for Inventory {
         self.add_confirm = Some(style::button(cx.tree, add_actions, "Добавить", Button::Primary)?);
         self.add_cancel = Some(style::button(cx.tree, add_actions, "Отмена", Button::Secondary)?);
         cx.tree.set_visible(panel, false)?;
+        let actions = style::d2::panel(cx.tree, side)?;
+        cx.tree.set_style(
+            actions,
+            Style {
+                shrink: 0.0,
+                padding: crate::layout::Edges::all(crate::theme::d2::PANEL_PADDING.0),
+                gap: Size::new(0.0, 8.0),
+                align_items: crate::layout::Align::Stretch,
+                ..Style::default()
+            },
+        )?;
+        self.actions_panel = Some(actions);
+        let edit_actions = style::row(cx.tree, actions)?;
+        self.remove_button = Some(style::d2::button(
+            cx.tree,
+            edit_actions,
+            t("Удалить предмет"),
+            style::d2::ButtonKind::Danger,
+            style::d2::ButtonSize::Normal,
+        )?);
+        self.add_button = Some(style::d2::button(
+            cx.tree,
+            edit_actions,
+            t("+ Добавить предмет"),
+            style::d2::ButtonKind::Outline,
+            style::d2::ButtonSize::Normal,
+        )?);
         let overlay_host = cx.tree.overlay_host().unwrap_or(host);
         let confirmation = style::card(cx.tree, overlay_host)?;
         self.process_confirmation = Some(confirmation);
@@ -5133,6 +5445,25 @@ impl Screen for Inventory {
         message: &Message<AppMessage>,
         clicked: Option<WidgetId>,
     ) -> Result<()> {
+        if let Message::Window(crate::event_loop::WindowEvent::Resized { width, .. }) = message {
+            self.compact = *width < 1600;
+            if let Some(side) = self.side_column {
+                let side_width = if self.compact { 296.0 } else { 360.0 };
+                cx.tree.set_style(
+                    side,
+                    Style {
+                        preferred: Size::new(side_width, 0.0),
+                        min: Size::new(side_width, 0.0),
+                        max: Size::new(side_width, f32::INFINITY),
+                        shrink: 0.0,
+                        gap: Size::new(0.0, crate::theme::CONTROL_GAP),
+                        align_items: crate::layout::Align::Stretch,
+                        ..Style::default()
+                    },
+                )?;
+            }
+            self.render(cx)?;
+        }
         self.workspace.poll_tasks();
         if let Message::User(AppMessage::ToScreen(ScreenId::Inventory, payload)) = message {
             if let Some(SaveProcessCheckFinished { request_id, result }) =
@@ -7487,6 +7818,116 @@ mod tests {
             i64::from(summary.y) + i64::from(summary.height) <= i64::from(condition_heading.y),
             "item summary {summary:?} overlaps condition heading {condition_heading:?}"
         );
+        Ok(())
+    }
+
+    /// The Inventory with the durability fixture loaded and rendered at the given window size.
+    fn rendered_inventory(width: u32, height: u32) -> sse_core::Result<(Inventory, Tree, crate::widget::WidgetId)> {
+        let source = include_bytes!("../../../../fixtures/synthetic/writer-durability/xray-durability-cop-source.sav");
+        let loaded = Arc::new(load_xray(
+            source,
+            "xray-durability-cop-source.sav",
+            "stalker-cop",
+            "cop",
+        )?);
+        let workspace = Workspace::default();
+        workspace.lock().selected = Some(loaded);
+        let mut screen = Inventory::new(workspace);
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        tree.resize(width, height);
+        let mut app = sse_app::AppState::new();
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: None,
+            status: None,
+            app: &mut app,
+        };
+        screen.build(&mut cx, host)?;
+        screen.render(&mut cx)?;
+        cx.tree.update_layout()?;
+        Ok((screen, tree, host))
+    }
+
+    #[test]
+    fn inventory_row_click_selects_the_item_and_keeps_the_stepper_on_the_row() -> sse_core::Result<()> {
+        let (mut screen, mut tree, _) = rendered_inventory(1920, 1080)?;
+        let row = screen.rows.first().ok_or_else(|| Error::damaged("no item row"))?;
+        let clicked = row.select;
+        let handle = row.handle.ok_or_else(|| Error::damaged("first row has no item"))?;
+        let mut app = sse_app::AppState::new();
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: None,
+            status: None,
+            app: &mut app,
+        };
+        screen.message(
+            &mut cx,
+            &Message::Window(crate::event_loop::WindowEvent::Resized {
+                width: 1920,
+                height: 1080,
+            }),
+            Some(clicked),
+        )?;
+        assert_eq!(
+            screen.selected_item,
+            Some(handle),
+            "a click on the row selects its item"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn inventory_layout_fits_the_window_and_compact_hides_the_key_column() -> sse_core::Result<()> {
+        for (width, height, compact) in [(1920_u32, 1080_u32, false), (1366, 768, true)] {
+            let (screen, tree, _) = rendered_inventory(width, height)?;
+            let card = tree.rect(screen.inventory_card.ok_or_else(|| Error::damaged("no centre panel"))?)?;
+            let side = tree.rect(screen.side_column.ok_or_else(|| Error::damaged("no side column"))?)?;
+            assert!(
+                card.x >= 0 && i64::from(card.x) + i64::from(card.width) <= i64::from(width),
+                "centre {card:?} inside {width}"
+            );
+            assert!(
+                side.x >= 0 && i64::from(side.x) + i64::from(side.width) <= i64::from(width),
+                "side {side:?} inside {width}"
+            );
+            assert!(
+                card.x + i32::try_from(card.width).unwrap_or_default() <= side.x,
+                "centre and side do not overlap"
+            );
+            let key = screen.key_header.ok_or_else(|| Error::damaged("no key header"))?;
+            assert_eq!(tree.is_visible(key), !compact, "key column visibility at {width}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn inventory_add_panel_takes_the_inspector_place() -> sse_core::Result<()> {
+        let (mut screen, mut tree, _) = rendered_inventory(1920, 1080)?;
+        let inspector = screen.inspector_panel.ok_or_else(|| Error::damaged("no inspector"))?;
+        let panel = screen.add_panel.ok_or_else(|| Error::damaged("no add panel"))?;
+        let mut app = sse_app::AppState::new();
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: None,
+            status: None,
+            app: &mut app,
+        };
+        assert!(cx.tree.is_visible(inspector));
+        assert!(!cx.tree.is_visible(panel));
+        screen.open_add_panel(&mut cx)?;
+        assert!(!cx.tree.is_visible(inspector), "the inspector steps aside while adding");
+        assert!(cx.tree.is_visible(panel));
+        screen.close_add_panel(&mut cx)?;
+        assert!(cx.tree.is_visible(inspector));
+        assert!(!cx.tree.is_visible(panel));
         Ok(())
     }
 

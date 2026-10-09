@@ -1074,7 +1074,7 @@ fn library_plate_look() -> Look {
 }
 
 /// 28-pixel icon button in the secondary state colours.
-fn library_icon_button(tree: &mut Tree, parent: WidgetId, icon: Icon) -> Result<WidgetId> {
+pub(super) fn library_icon_button(tree: &mut Tree, parent: WidgetId, icon: Icon) -> Result<WidgetId> {
     let [normal, hover, ..] = theme::d2::BUTTON_SECONDARY;
     let disabled = theme::d2::BUTTON_SECONDARY[4];
     tree.add(
