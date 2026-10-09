@@ -1044,14 +1044,17 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn native_worker_process_preserves_raw_read_bytes() {
-        let directory = temp_dir("data-response");
-        let worker = worker_script(
-            &directory,
-            "#!/bin/sh\nIFS= read -r request\nprintf '{\"type\":\"data\",\"size\":4}\\n'\nprintf test\n",
-        );
+        // Run a stable system shell directly so this test does not execute a
+        // freshly written script file that can transiently fail with ETXTBSY.
+        let worker = Path::new("/bin/sh");
+        let arguments = [
+            String::from("-c"),
+            String::from("IFS= read -r request\nprintf '{\"type\":\"data\",\"size\":4}\\n'\nprintf test\n"),
+            String::from("--steam-native-worker"),
+        ];
         let response = run_native_process(
-            &worker,
-            &[String::from("--steam-native-worker")],
+            worker,
+            &arguments,
             4500,
             br#"{"operation":"read","appId":4500,"fileName":"slot.sav"}"#.to_vec(),
             Vec::new(),
@@ -1059,7 +1062,6 @@ mod tests {
             false,
         );
         assert_eq!(response, Ok(NativeResponse::Data(b"test".to_vec())));
-        let _ = std::fs::remove_dir_all(directory);
     }
 
     #[cfg(unix)]

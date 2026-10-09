@@ -11,6 +11,10 @@ use std::fs;
 #[cfg(unix)]
 use std::fs::File;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+
+// A first-run settings save must not race another in-process writer for the absent destination.
+static SETTINGS_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
 /// User preferences matching `src/StalkerSaveEditor.Desktop/Services/AppSettings.cs`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -270,6 +274,9 @@ impl AppSettings {
         fs::create_dir_all(parent)?;
 
         let bytes = self.to_json_bytes()?;
+        let _write_guard = SETTINGS_WRITE_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         sse_sys::secure_fs::atomic_write_checked(
             path,
             &bytes,

@@ -15,6 +15,14 @@ impl GameFixContentStore {
     /// Default fix-pack store directory in user's data folder.
     #[must_use]
     pub fn default_directory() -> PathBuf {
+        if is_test_or_example_executable() {
+            return test_data_root().join("content").join("fixpacks");
+        }
+        if let Ok(path) = std::env::var("STALKER_SAVE_EDITOR_DATA") {
+            if !path.trim().is_empty() {
+                return PathBuf::from(path).join("content").join("fixpacks");
+            }
+        }
         if let Ok(path) = std::env::var("XDG_DATA_HOME") {
             if !path.is_empty() {
                 return PathBuf::from(path)
@@ -73,5 +81,53 @@ impl GameFixContentStore {
     #[must_use]
     pub fn contains(store_dir: &Path, sha256: &str) -> bool {
         Self::read(store_dir, sha256).is_some()
+    }
+}
+
+fn is_test_or_example_executable() -> bool {
+    cfg!(test)
+        || std::env::current_exe()
+            .ok()
+            .and_then(|executable| executable.parent().map(Path::to_path_buf))
+            .and_then(|parent| parent.file_name().map(|name| name.to_owned()))
+            .is_some_and(|name| name == "deps" || name == "examples")
+}
+
+fn test_data_root() -> PathBuf {
+    if let Some(custom) = std::env::var_os("STALKER_SAVE_EDITOR_DATA")
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+    {
+        if let (Ok(temporary), Ok(custom_path)) = (fs::canonicalize(std::env::temp_dir()), fs::canonicalize(&custom)) {
+            if custom_path.starts_with(temporary) {
+                return custom;
+            }
+        }
+    }
+    std::env::temp_dir().join(format!("stalker-save-editor-test-{}", std::process::id()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::GameFixContentStore;
+    use std::path::Path;
+
+    #[test]
+    fn test_executable_fixpack_store_is_temporary() {
+        let directory = GameFixContentStore::default_directory();
+        let temporary = std::env::temp_dir();
+        let data_root = match directory.parent().and_then(Path::parent) {
+            Some(root) => root,
+            None => directory.as_path(),
+        };
+        let is_temporary = directory.starts_with(&temporary)
+            || match (std::fs::canonicalize(data_root), std::fs::canonicalize(&temporary)) {
+                (Ok(data_root), Ok(temporary)) => data_root.starts_with(temporary),
+                _ => false,
+            };
+        assert!(
+            is_temporary,
+            "test fixpack data must stay under the temporary directory"
+        );
     }
 }

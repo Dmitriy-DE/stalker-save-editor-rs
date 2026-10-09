@@ -23,7 +23,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
+      - name: Test workspace with isolated app data
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            python tools/check_data_isolation.py -- cargo test --workspace
+          else
+            python3 tools/check_data_isolation.py -- cargo test --workspace
+          fi
       - run: cargo build --release -p sse-cli
 
       - name: Install shipped Windows GNU target
@@ -45,7 +52,7 @@ jobs:
 
       - name: UI performance budgets
         if: matrix.os == 'ubuntu-24.04'
-        run: cargo run --release -p sse-ui --bin sse-ui-dev -- --ci-budget
+        run: python3 tools/check_data_isolation.py -- cargo run --release -p sse-ui --bin sse-ui-dev -- --ci-budget
 
       - name: Translation button layout report
         if: matrix.os == 'ubuntu-24.04'
@@ -53,14 +60,14 @@ jobs:
         run: |
           mkdir -p target/i18n-qa
           set -o pipefail
-          cargo run --release -p sse-ui --bin sse-ui-dev -- --ci-i18n-buttons | tee target/i18n-qa/buttons.txt
+          python3 tools/check_data_isolation.py -- cargo run --release -p sse-ui --bin sse-ui-dev -- --ci-i18n-buttons | tee target/i18n-qa/buttons.txt
 
       - name: Rust UI source localization guard
         if: matrix.os == 'ubuntu-24.04'
         run: |
           python3 -m unittest discover -s tools -p check_ui_i18n.py
           python3 tools/check_ui_i18n.py
-          PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tools/tests
+          python3 tools/check_data_isolation.py -- python3 -m unittest discover -s tools/tests
           python3 tools/check_i18n_source.py
 
       - name: Upload translation layout report
@@ -73,23 +80,23 @@ jobs:
 
       - name: Fuzz smoke new save formats
         if: matrix.os == 'ubuntu-24.04'
-        run: cargo test -p sse-fuzz-smoke --release -- --nocapture
+        run: python3 tools/check_data_isolation.py -- cargo test -p sse-fuzz-smoke --release -- --nocapture
 
       - name: Fuzz smoke unpacked X-Ray and S2 writer paths
         if: matrix.os == 'ubuntu-24.04'
         run: |
-          cargo test --locked -p sse-xray --release unpacked_image_mutation_repack_read_and_write_fuzz_smoke
-          cargo test --locked -p sse-s2 --release unpacked_image_mutation_repack_read_and_write_fuzz_smoke
+          python3 tools/check_data_isolation.py -- cargo test --locked -p sse-xray --release unpacked_image_mutation_repack_read_and_write_fuzz_smoke
+          python3 tools/check_data_isolation.py -- cargo test --locked -p sse-s2 --release unpacked_image_mutation_repack_read_and_write_fuzz_smoke
 
       - name: Render acceptance screenshots
         if: matrix.os == 'ubuntu-24.04'
         shell: bash
         run: |
           mkdir -p target/acceptance-screenshots
-          cargo run --release -p sse-ui --bin sse-ui-dev -- --screenshot target/acceptance-screenshots/overview-940x600.png 940x600 0
-          cargo run --release -p sse-ui --bin sse-ui-dev -- --screenshot target/acceptance-screenshots/capabilities-940x600.png 940x600 17
-          cargo run --release -p sse-ui --bin sse-ui-dev -- --screenshot target/acceptance-screenshots/overview-1280x860.png 1280x860 0
-          cargo run --release -p sse-ui --bin sse-ui-dev -- --screenshot target/acceptance-screenshots/capabilities-1280x860.png 1280x860 17
+          python3 tools/check_data_isolation.py -- cargo run --release -p sse-ui --bin sse-ui-dev -- --screenshot target/acceptance-screenshots/overview-940x600.png 940x600 0
+          python3 tools/check_data_isolation.py -- cargo run --release -p sse-ui --bin sse-ui-dev -- --screenshot target/acceptance-screenshots/capabilities-940x600.png 940x600 17
+          python3 tools/check_data_isolation.py -- cargo run --release -p sse-ui --bin sse-ui-dev -- --screenshot target/acceptance-screenshots/overview-1280x860.png 1280x860 0
+          python3 tools/check_data_isolation.py -- cargo run --release -p sse-ui --bin sse-ui-dev -- --screenshot target/acceptance-screenshots/capabilities-1280x860.png 1280x860 17
       - name: Upload acceptance screenshots
         if: matrix.os == 'ubuntu-24.04'
         uses: actions/upload-artifact@v4

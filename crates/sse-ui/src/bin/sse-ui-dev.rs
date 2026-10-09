@@ -10,9 +10,59 @@ use sse_ui::screens::style::rgb;
 use sse_ui::screens::{AppMessage, ScreenId};
 use sse_ui::theme::BG_BASE;
 use sse_ui::widget::Tree;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+struct TemporaryDataDirectory(Option<PathBuf>);
+
+impl TemporaryDataDirectory {
+    fn initialize() -> Result<Self> {
+        if std::env::var_os("STALKER_SAVE_EDITOR_DATA")
+            .map(PathBuf::from)
+            .is_some_and(|path| is_temporary_data_directory(&path))
+        {
+            return Ok(Self(None));
+        }
+
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| Error::System(format!("system clock is before Unix epoch: {error}")))?
+            .as_nanos();
+        let directory =
+            std::env::temp_dir().join(format!("stalker-save-editor-dev-{}-{timestamp}", std::process::id()));
+        std::fs::create_dir(&directory)
+            .map_err(|error| Error::System(format!("could not create temporary developer data directory: {error}")))?;
+        std::env::set_var("STALKER_SAVE_EDITOR_DATA", &directory);
+        Ok(Self(Some(directory)))
+    }
+}
+
+fn is_temporary_data_directory(path: &Path) -> bool {
+    let Ok(temporary_root) = std::fs::canonicalize(std::env::temp_dir()) else {
+        return false;
+    };
+    let Ok(directory) = std::fs::canonicalize(path) else {
+        return false;
+    };
+    directory != temporary_root && directory.starts_with(temporary_root)
+}
+
+impl Drop for TemporaryDataDirectory {
+    fn drop(&mut self) {
+        if let Some(directory) = self.0.take() {
+            let _ = std::fs::remove_dir_all(directory);
+        }
+    }
+}
+
 fn main() -> std::process::ExitCode {
+    let _isolated_data = match TemporaryDataDirectory::initialize() {
+        Ok(directory) => directory,
+        Err(error) => {
+            eprintln!("sse-ui-dev: {error}");
+            return std::process::ExitCode::FAILURE;
+        }
+    };
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
         Some("--screenshot") => screenshot(&args),
@@ -344,8 +394,9 @@ fn encode_png(frame: &[u32], width: u32, height: u32) -> Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{bench_size, ensure_buttons_fit, ClippedButton};
+    use super::{bench_size, ensure_buttons_fit, is_temporary_data_directory, ClippedButton};
     use sse_ui::screens::ScreenId;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn benchmark_reads_requested_pixel_dimensions() {
@@ -367,5 +418,20 @@ mod tests {
         assert!(message.contains("Settings"));
         assert!(message.contains("A label that does not fit"));
         assert!(ensure_buttons_fit(&[]).is_ok());
+    }
+
+    #[test]
+    fn developer_data_override_is_only_trusted_inside_a_temporary_subdirectory() -> std::io::Result<()> {
+        let temporary_root = std::env::temp_dir();
+        assert!(!is_temporary_data_directory(&temporary_root));
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        let directory = temporary_root.join(format!("sse-ui-dev-data-{}-{unique}", std::process::id()));
+        std::fs::create_dir(&directory)?;
+        assert!(is_temporary_data_directory(&directory));
+        std::fs::remove_dir(directory)?;
+        Ok(())
     }
 }

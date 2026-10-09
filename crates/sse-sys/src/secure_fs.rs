@@ -134,6 +134,25 @@ pub struct AtomicWriteOptions {
     sync_parent: bool,
 }
 
+struct StagedAtomicFile {
+    path: std::path::PathBuf,
+    file: Option<File>,
+    cleanup_on_drop: bool,
+}
+
+impl Drop for StagedAtomicFile {
+    fn drop(&mut self) {
+        let path = &self.path;
+        if self.cleanup_on_drop {
+            drop_staged_file_before_cleanup(self.file.take(), || {
+                let _ = std::fs::remove_file(path);
+            });
+        } else {
+            drop(self.file.take());
+        }
+    }
+}
+
 impl AtomicWriteOptions {
     /// Creates a new destination and refuses to replace any existing path.
     #[must_use]
@@ -190,7 +209,20 @@ pub fn atomic_write_checked(
     path: &Path,
     bytes: &[u8],
     options: AtomicWriteOptions,
+    validate_path: impl FnMut(&Path) -> io::Result<()>,
+) -> io::Result<()> {
+    atomic_write_checked_with_writer(path, bytes, options, validate_path, |file, bytes| {
+        file.write_all(bytes)?;
+        file.sync_all()
+    })
+}
+
+fn atomic_write_checked_with_writer(
+    path: &Path,
+    bytes: &[u8],
+    options: AtomicWriteOptions,
     mut validate_path: impl FnMut(&Path) -> io::Result<()>,
+    write_staged: impl FnOnce(&mut File, &[u8]) -> io::Result<()>,
 ) -> io::Result<()> {
     let parent = path
         .parent()
@@ -229,36 +261,44 @@ pub fn atomic_write_checked(
                         return Err(error);
                     }
                 }
-                staged = Some((temporary, file));
+                staged = Some(StagedAtomicFile {
+                    path: temporary,
+                    file: Some(file),
+                    cleanup_on_drop: true,
+                });
                 break;
             }
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
             Err(error) => return Err(error),
         }
     }
-    let Some((temporary, mut file)) = staged else {
+    let Some(mut staged) = staged else {
         return Err(io::Error::new(
             io::ErrorKind::AlreadyExists,
             "could not allocate a unique atomic-write temporary file",
         ));
     };
 
-    let result = (|| {
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        drop(file);
+    (|| {
+        let file = staged
+            .file
+            .as_mut()
+            .ok_or_else(|| io::Error::other("atomic write staging file was already closed"))?;
+        write_staged(file, bytes)?;
+        drop(staged.file.take());
 
         validate_path(path)?;
-        validate_path(&temporary)?;
+        validate_path(&staged.path)?;
         let publish_result = match options.mode {
-            AtomicWriteMode::CreateNew => publish_new(&temporary, path),
+            AtomicWriteMode::CreateNew => publish_new(&staged.path, path),
             AtomicWriteMode::CreateOrReplace => match std::fs::symlink_metadata(path) {
-                Ok(_) => replace_existing(&temporary, path),
-                Err(error) if error.kind() == io::ErrorKind::NotFound => publish_new(&temporary, path),
+                Ok(_) => replace_existing(&staged.path, path),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => publish_new(&staged.path, path),
                 Err(error) => Err(error),
             },
         };
         publish_result?;
+        staged.cleanup_on_drop = false;
 
         if options.sync_parent {
             if let Err(error) = sync_atomic_write_parent(parent) {
@@ -269,12 +309,7 @@ pub fn atomic_write_checked(
             }
         }
         Ok(())
-    })();
-
-    if result.is_err() {
-        let _ = std::fs::remove_file(&temporary);
-    }
-    result
+    })()
 }
 
 fn sync_atomic_write_parent(parent: &Path) -> io::Result<()> {
@@ -283,6 +318,11 @@ fn sync_atomic_write_parent(parent: &Path) -> io::Result<()> {
     #[cfg(not(unix))]
     let _ = parent;
     Ok(())
+}
+
+fn drop_staged_file_before_cleanup<T>(file: Option<T>, cleanup: impl FnOnce()) {
+    drop(file);
+    cleanup();
 }
 
 #[cfg(target_os = "linux")]
@@ -636,6 +676,7 @@ fn current_effective_uid() -> u32 {
 
 #[cfg(test)]
 mod tests {
+    use super::atomic_write_checked_with_writer;
     use super::{atomic_write, publish_new, AtomicWriteOptions};
     #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
     use super::{open_owned_regular, LINUX_O_NOFOLLOW};
@@ -882,5 +923,62 @@ mod tests {
 
         std::fs::remove_dir_all(directory)?;
         Ok(())
+    }
+
+    #[test]
+    fn atomic_write_removes_staging_file_after_write_failure() -> std::io::Result<()> {
+        use std::io::Write;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        let directory = std::env::temp_dir().join(format!("sse-atomic-write-failure-{}-{unique}", std::process::id()));
+        std::fs::create_dir(&directory)?;
+        let destination = directory.join("settings.json");
+        std::fs::write(&destination, b"original")?;
+
+        let result = atomic_write_checked_with_writer(
+            &destination,
+            b"replacement",
+            AtomicWriteOptions::create_or_replace(),
+            |_| Ok(()),
+            |file, _| {
+                file.write_all(b"partial")?;
+                Err(std::io::Error::other("injected write failure"))
+            },
+        );
+
+        assert_eq!(result.map_err(|error| error.kind()), Err(std::io::ErrorKind::Other));
+        assert_eq!(std::fs::read(&destination)?, b"original");
+        assert_eq!(std::fs::read_dir(&directory)?.count(), 1);
+        std::fs::remove_dir_all(directory)?;
+        Ok(())
+    }
+
+    #[test]
+    fn atomic_staging_cleanup_closes_the_file_before_removing_it() {
+        use super::drop_staged_file_before_cleanup;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        struct DropMarker(Arc<AtomicBool>);
+
+        impl Drop for DropMarker {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+
+        let file_closed = Arc::new(AtomicBool::new(false));
+        let cleanup_saw_closed_file = Arc::new(AtomicBool::new(false));
+        let cleanup_flag = Arc::clone(&cleanup_saw_closed_file);
+        let closed_flag = Arc::clone(&file_closed);
+
+        drop_staged_file_before_cleanup(Some(DropMarker(Arc::clone(&file_closed))), move || {
+            cleanup_flag.store(closed_flag.load(Ordering::SeqCst), Ordering::SeqCst)
+        });
+
+        assert!(cleanup_saw_closed_file.load(Ordering::SeqCst));
     }
 }
