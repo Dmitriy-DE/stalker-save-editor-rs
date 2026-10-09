@@ -66,21 +66,57 @@ pub fn t_in<'a>(language: &str, key: &'a str) -> &'a str {
 /// Translates a key and formats positional placeholders without loading runtime JSON catalogs.
 #[must_use]
 pub fn tr_in(code: Option<&str>, key: &str, args: &[&dyn std::fmt::Display]) -> String {
-    let pattern = t_in(code.unwrap_or("ru"), key);
-    let mut result = pattern.to_owned();
-    for (index, arg) in args.iter().enumerate() {
-        let value = arg.to_string();
-        result = result.replace(&format!("{{{index}}}"), &value);
-        let prefix = format!("{{{index}:");
-        while let Some(start) = result.find(&prefix) {
-            let Some(end_offset) = result.get(start..).and_then(|text| text.find('}')) else {
-                break;
-            };
-            let end = start.saturating_add(end_offset);
-            result.replace_range(start..=end, &value);
+    format_placeholders(t_in(code.unwrap_or("ru"), key), args)
+}
+
+/// Replaces `{N}` and `{N:spec}` in one pass. Inserted text is never scanned again, so an argument
+/// that itself looks like a placeholder is printed verbatim. Unknown or out-of-range indices stay literal.
+#[must_use]
+pub fn format_placeholders(pattern: &str, args: &[&dyn std::fmt::Display]) -> String {
+    let mut out = String::with_capacity(pattern.len());
+    let mut rest = pattern;
+    while let Some(open) = rest.find('{') {
+        out.push_str(rest.get(..open).unwrap_or(""));
+        let tail = rest.get(open..).unwrap_or("");
+        match placeholder(tail, args.len()) {
+            Some((index, consumed)) => {
+                if let Some(arg) = args.get(index) {
+                    out.push_str(&arg.to_string());
+                }
+                rest = tail.get(consumed..).unwrap_or("");
+            }
+            None => {
+                out.push('{');
+                rest = tail.get(1..).unwrap_or("");
+            }
         }
     }
-    result
+    out.push_str(rest);
+    out
+}
+
+/// Parses a placeholder at the start of `tail` (which begins with `{`): returns the argument index and
+/// the number of bytes it occupies.
+fn placeholder(tail: &str, count: usize) -> Option<(usize, usize)> {
+    let inner = tail.get(1..)?;
+    let digits = inner.bytes().take_while(u8::is_ascii_digit).count();
+    if digits == 0 {
+        return None;
+    }
+    let index: usize = inner.get(..digits)?.parse().ok()?;
+    if index >= count {
+        return None;
+    }
+    let after = inner.get(digits..)?;
+    let close = match after.as_bytes().first() {
+        Some(b'}') => 0,
+        Some(b':') => after.find('}')?,
+        _ => return None,
+    };
+    Some((
+        index,
+        1_usize.saturating_add(digits).saturating_add(close).saturating_add(1),
+    ))
 }
 type Row = (&'static str, [&'static str; 15]);
 static STRINGS: &[Row] = &[
@@ -3006,6 +3042,27 @@ mod tests {
             assert_eq!(values.first().copied(), Some(*key));
         }
     }
+    #[test]
+    fn argument_that_looks_like_a_placeholder_is_printed_verbatim() {
+        let file = "{0:x}.sav";
+        assert_eq!(tr_in(Some("en"), "Checking {0}", &[&file]), "Checking {0:x}.sav");
+        assert_eq!(format_placeholders("{0}", &[&"{0:}"]), "{0:}");
+    }
+
+    #[test]
+    fn argument_is_not_substituted_into_a_later_argument() {
+        let first = "{1}";
+        let second = "second";
+        assert_eq!(format_placeholders("A {0} B {1}", &[&first, &second]), "A {1} B second");
+    }
+
+    #[test]
+    fn unknown_or_unterminated_placeholders_stay_literal() {
+        assert_eq!(format_placeholders("x {2} y", &[&"a"]), "x {2} y");
+        assert_eq!(format_placeholders("open {0:X", &[&"a"]), "open {0:X");
+        assert_eq!(format_placeholders("{{}} {0}", &[&"a"]), "{{}} a");
+    }
+
     #[test]
     fn translated_placeholders_are_formatted() {
         assert_eq!(
