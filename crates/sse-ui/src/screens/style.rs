@@ -171,6 +171,7 @@ pub fn button(tree: &mut Tree, parent: WidgetId, text: &str, role: Button) -> Re
     let style = Style {
         min: Size::new(min_width, theme::BUTTON_HEIGHT),
         padding,
+        shrink: 0.0,
         ..Style::default()
     };
     let colors = theme::current().colors;
