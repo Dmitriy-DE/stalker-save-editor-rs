@@ -82,16 +82,18 @@ fn main() -> std::process::ExitCode {
 
 fn screenshot(args: &[String]) -> Result<()> {
     let path = args.get(1).ok_or_else(|| {
-        Error::Refused("usage: --screenshot OUT.png [WxH] [NAV] [--open SAVE] [--add-item]".to_owned())
+        Error::Refused("usage: --screenshot OUT.png [WxH] [NAV] [--open SAVE] [--add-item] [--discover]".to_owned())
     })?;
     let mut size: Option<(u32, u32)> = None;
     let mut nav: Option<usize> = None;
     let mut open_save = None;
     let mut add_item = false;
+    let mut discover = false;
     let mut index = 2;
     while index < args.len() {
         match args.get(index).map(String::as_str) {
             Some("--add-item") => add_item = true,
+            Some("--discover") => discover = true,
             Some("--open") => {
                 index = index.saturating_add(1);
                 open_save = Some(
@@ -121,6 +123,7 @@ fn screenshot(args: &[String]) -> Result<()> {
     let (width, height) = size.unwrap_or((1280, 800));
     let mut tree = Tree::new(Fonts::bundled()?, rgb(BG_BASE));
     let mut shell = Shell::build(&mut tree, None)?;
+    let mut loader: Option<std::sync::mpsc::Receiver<Message<AppMessage>>> = None;
     if let Some(save_path) = open_save {
         let (proxy, receiver) = channel_pair::<AppMessage>();
         shell.set_proxy(proxy);
@@ -147,9 +150,35 @@ fn screenshot(args: &[String]) -> Result<()> {
                 break;
             }
         }
+        loader = Some(receiver);
     }
     if let Some(id) = nav.and_then(|i| ScreenId::ALL.get(i)) {
         shell.open(&mut tree, *id)?;
+    }
+    if discover {
+        // Background search (a save is open) is awaited: the result comes back to the screen as a message.
+        if !shell.start_game_discovery(&mut tree)? {
+            return Err(Error::Refused("the screen has no game search button".to_owned()));
+        }
+        if let Some(receiver) = loader.as_ref() {
+            let deadline = Instant::now()
+                .checked_add(Duration::from_secs(60))
+                .ok_or_else(|| Error::System("invalid screenshot search deadline".to_owned()))?;
+            loop {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    return Err(Error::System("timed out waiting for the game search".to_owned()));
+                }
+                let message = receiver
+                    .recv_timeout(remaining)
+                    .map_err(|error| Error::System(format!("game search failed: {error}")))?;
+                let finished = matches!(&message, Message::User(AppMessage::ToScreen(ScreenId::Games, _)));
+                shell.message(&mut tree, &message, None);
+                if finished {
+                    break;
+                }
+            }
+        }
     }
     shell.resize_window(&mut tree, width, height)?;
     if add_item && !shell.open_add_item(&mut tree)? {

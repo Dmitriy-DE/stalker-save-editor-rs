@@ -2239,8 +2239,26 @@ impl Shell {
         self.library_workspace.library_snapshot().0
     }
 
+    /// Starts the search for game installations the way the "Найти установки" button does. Returns `false` when the
+    /// current screen has no such button.
+    ///
+    /// Only for sse-ui-dev (screenshots); not part of the screen API.
+    #[doc(hidden)]
+    pub fn start_game_discovery(&mut self, tree: &mut Tree) -> Result<bool> {
+        let label = crate::strings::t("Найти установки").to_lowercase();
+        let Some(button) = find_button_with_text(tree, self.content, &label) else {
+            return Ok(false);
+        };
+        let pointer = Message::Window(crate::event_loop::WindowEvent::PointerLeft);
+        self.handle(tree, &pointer, Some(button))?;
+        Ok(true)
+    }
+
     /// Opens the inventory's add-item panel the way a click on its button does. Returns `false` when the current
-    /// screen has no such button. Used by the developer screenshot tool and by tests.
+    /// screen has no such button.
+    ///
+    /// Only for sse-ui-dev (screenshots); not part of the screen API.
+    #[doc(hidden)]
     pub fn open_add_item(&mut self, tree: &mut Tree) -> Result<bool> {
         let label = crate::strings::t("+ Добавить предмет").to_lowercase();
         let Some(button) = find_button_with_text(tree, self.content, &label) else {
@@ -4269,11 +4287,12 @@ impl App<AppMessage> for Shell {
     }
 }
 
-/// First visible widget under `root` whose text contains `needle` (lower case, ignoring case of the text).
+/// First visible widget under `root` whose text is `needle`, ignoring case (a button's label is its whole text).
+/// Only for sse-ui-dev (through `Shell::open_add_item`).
 fn find_button_with_text(tree: &Tree, root: WidgetId, needle: &str) -> Option<WidgetId> {
     let mut stack = vec![root];
     while let Some(id) = stack.pop() {
-        if tree.is_visible(id) && tree.text(id).is_ok_and(|text| text.to_lowercase().contains(needle)) {
+        if tree.is_visible(id) && tree.text(id).is_ok_and(|text| text.to_lowercase() == needle) {
             return Some(id);
         }
         stack.extend(tree.children(id));
@@ -5702,9 +5721,8 @@ mod tests {
         shell: &Shell,
         width: u32,
         height: u32,
-        add_open: bool,
+        state: &str,
     ) -> sse_core::Result<()> {
-        let state = if add_open { "add-item open" } else { "inventory" };
         let bottom = |tree: &Tree, id: WidgetId| -> sse_core::Result<i64> {
             let rect = tree.rect(id)?;
             Ok(i64::from(rect.y).saturating_add(i64::from(rect.height)))
@@ -5809,8 +5827,63 @@ mod tests {
                     for _ in 0..3 {
                         tree.paint(&mut frame, stride)?;
                     }
-                    check_bottoms_on_library_edge(&tree, &shell, width, height, add_open)?;
+                    check_bottoms_on_library_edge(
+                        &tree,
+                        &shell,
+                        width,
+                        height,
+                        if add_open { "add-item open" } else { "inventory" },
+                    )?;
                 }
+                Ok(())
+            })();
+            let _ = std::fs::remove_dir_all(&directory);
+            result?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn games_columns_end_on_the_library_bottom_edge() -> sse_core::Result<()> {
+        // The library, the screen host and both columns of the games overview end on one edge, inside the window.
+        use crate::event_loop::App as _;
+        for (width, height) in [(1366_u32, 768_u32), (1920, 1080)] {
+            let nonce = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| sse_core::Error::System(error.to_string()))?
+                .as_nanos();
+            let directory = std::env::temp_dir().join(format!("sse-shell-bottom-{}-{nonce}", std::process::id()));
+            std::fs::create_dir(&directory)?;
+            let result = (|| -> sse_core::Result<()> {
+                let paths = fixture_save_copies(&directory, 1)?;
+                let (proxy, receiver) = channel_pair::<super::super::AppMessage>();
+                let mut tree = Tree::new(Fonts::bundled()?, crate::screens::style::rgb(crate::theme::BG_BASE));
+                let mut shell = Shell::build_for_test(&mut tree, None)?;
+                shell.set_proxy(proxy);
+                let path = paths.first().ok_or_else(|| sse_core::Error::damaged("no save copy"))?;
+                assert!(shell.open_save(&mut tree, path)?);
+                loop {
+                    let message = receiver
+                        .recv_timeout(std::time::Duration::from_secs(60))
+                        .map_err(|error| sse_core::Error::System(error.to_string()))?;
+                    let finished = matches!(
+                        &message,
+                        Message::User(super::super::AppMessage::ToScreen(ScreenId::Overview, _))
+                    );
+                    let _ = shell.message(&mut tree, &message, None);
+                    if finished {
+                        break;
+                    }
+                }
+                shell.open(&mut tree, ScreenId::Games)?;
+                shell.resize_window(&mut tree, width, height)?;
+                shell.load_art_now(&mut tree, &directory.join("art"))?;
+                let stride = usize::try_from(width).unwrap_or(0);
+                let mut frame = vec![0_u32; stride.saturating_mul(usize::try_from(height).unwrap_or(0))];
+                for _ in 0..3 {
+                    tree.paint(&mut frame, stride)?;
+                }
+                check_bottoms_on_library_edge(&tree, &shell, width, height, "games overview")?;
                 Ok(())
             })();
             let _ = std::fs::remove_dir_all(&directory);
