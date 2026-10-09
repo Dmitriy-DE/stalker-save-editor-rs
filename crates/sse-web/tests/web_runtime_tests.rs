@@ -1,7 +1,7 @@
 //! Browser runtime rendering and input contracts.
 
 use sse_ui::event_loop::WindowEvent;
-use sse_web::{decode_event, frame_len, WebEvent, WebRuntime};
+use sse_web::{browser_file_size_is_supported, decode_event, frame_len, WebEvent, WebRuntime, MAX_BROWSER_SAVE_BYTES};
 
 #[test]
 fn first_frame_paints_the_shell_into_a_bounded_argb_buffer() -> Result<(), Box<dyn std::error::Error>> {
@@ -58,6 +58,30 @@ fn browser_event_decoder_rejects_bad_codes_and_preserves_keyboard_modifiers() {
             shift: true,
         })
     );
+}
+
+#[test]
+fn browser_import_opens_valid_save_bytes_in_the_shared_editor() -> Result<(), Box<dyn std::error::Error>> {
+    let source = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-cop-source.sav");
+    let mut runtime = WebRuntime::new()?;
+    let before = runtime.frame(960, 640)?.to_vec();
+
+    runtime.open_browser_file("quicksave.sav", source.to_vec(), 1_700_000_000_000)?;
+
+    assert_ne!(runtime.frame(960, 640)?, before);
+    assert_eq!(
+        source,
+        include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-cop-source.sav")
+    );
+    Ok(())
+}
+
+#[test]
+fn browser_import_enforces_the_documented_256_mib_limit() {
+    assert!(browser_file_size_is_supported(1));
+    assert!(browser_file_size_is_supported(MAX_BROWSER_SAVE_BYTES));
+    assert!(!browser_file_size_is_supported(0));
+    assert!(!browser_file_size_is_supported(MAX_BROWSER_SAVE_BYTES + 1));
 }
 
 #[test]

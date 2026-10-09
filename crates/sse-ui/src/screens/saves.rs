@@ -1,7 +1,7 @@
 //! S2 save screens: discovery, overview, inventory, factions, stashes and transitions.
 
 use super::style::{self, Button, Text};
-use super::{AppMessage, Context, EditorAction, Screen, ScreenId};
+use super::{AppMessage, BrowserDownload, BrowserFileBridge, Context, EditorAction, Screen, ScreenId};
 use crate::edit::{Clipboard, EditConfig, FieldMode, InputFilter, Key, Modifiers};
 use crate::event_loop::{Message, WindowEvent};
 use crate::glyphs::{Face, TextStyle};
@@ -68,6 +68,8 @@ const INVENTORY_PAGE_SIZE: usize = 8;
 const ADD_ITEM_PAGE_SIZE: usize = 8;
 const MAXIMUM_STASH_ROWS: usize = 10;
 const MAXIMUM_UPGRADE_ROWS: usize = 16;
+const MAX_BROWSER_SAVE_BYTES: u64 = 256 * 1024 * 1024;
+const MAX_BROWSER_FILENAME_BYTES: usize = 240;
 const S2_LEGACY_EDIT_REFUSAL: &str = "This save was written by game version 1.0.x. It can be read, but its layout is not supported for editing; load it in the current game and save again.";
 const INVENTORY_CATEGORIES: [&str; 8] = [
     "ВСЕ",
@@ -174,6 +176,7 @@ pub(crate) struct Workspace {
     backup_directory: Arc<Mutex<PathBuf>>,
     session: sse_app::SaveSession,
     draft_write_lock: Arc<Mutex<()>>,
+    browser_file_bridge: Option<BrowserFileBridge>,
 }
 
 impl Default for Workspace {
@@ -205,7 +208,33 @@ impl Workspace {
             backup_directory: Arc::new(Mutex::new(backup_directory)),
             session: sse_app::SaveSession::new(),
             draft_write_lock: Arc::new(Mutex::new(())),
+            browser_file_bridge: None,
         }
+    }
+
+    pub(crate) fn with_browser_file_bridge(backup_directory: PathBuf, bridge: BrowserFileBridge) -> Self {
+        let mut workspace = Self::with_paths(default_draft_directory(), backup_directory);
+        workspace.browser_file_bridge = Some(bridge);
+        workspace
+    }
+
+    pub(crate) fn is_browser_file_mode(&self) -> bool {
+        self.browser_file_bridge.is_some()
+    }
+
+    pub(crate) fn request_browser_file_open(&self) -> bool {
+        let Some(bridge) = self.browser_file_bridge.as_ref() else {
+            return false;
+        };
+        bridge.request_open_file();
+        true
+    }
+
+    fn queue_browser_download(&self, download: BrowserDownload) -> Result<()> {
+        let Some(bridge) = self.browser_file_bridge.as_ref() else {
+            return Err(Error::Refused("browser file transfer is unavailable".to_owned()));
+        };
+        bridge.queue_download(download)
     }
 
     pub(crate) fn backup_directory(&self) -> PathBuf {
@@ -1865,6 +1894,68 @@ impl Screen for Overview {
             return Ok(false);
         }
         start_load_path(&self.workspace, path, cx);
+        Ok(true)
+    }
+
+    fn open_browser_file(
+        &mut self,
+        cx: &mut Context<'_>,
+        file_name: &str,
+        bytes: Vec<u8>,
+        last_modified_ms: u64,
+    ) -> Result<bool> {
+        if bytes.is_empty() || u64::try_from(bytes.len()).unwrap_or(u64::MAX) > MAX_BROWSER_SAVE_BYTES {
+            return Err(Error::Refused(
+                "browser save file size is outside the supported range".to_owned(),
+            ));
+        }
+        if self.workspace.session.is_busy() {
+            return Err(Error::Refused("a save operation is already active".to_owned()));
+        }
+        let file_name = validate_browser_file_name(file_name)?;
+        let slot = SaveSlot {
+            path: PathBuf::from(format!("browser://{file_name}")),
+            candidate_game_id: "unknown".to_owned(),
+            candidate_release_id: "unknown".to_owned(),
+            size: u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+            last_write_time_utc: std::time::UNIX_EPOCH
+                .checked_add(std::time::Duration::from_millis(last_modified_ms))
+                .unwrap_or(std::time::UNIX_EPOCH),
+            format_id: None,
+            game_id: None,
+            detection_error: None,
+        };
+        let loaded = Arc::new(LoadedSave::from_buffer(slot, SaveBuffer::from_vec(bytes))?);
+        let journal = DraftJournal::new(vec![DraftPlan::empty(&loaded.source_sha256)?], 0)?;
+        {
+            let mut state = self.workspace.lock();
+            state.load_request = state.load_request.saturating_add(1);
+            state.loading = false;
+            state.load_error = None;
+            state.selected = Some(Arc::clone(&loaded));
+            state.pending_money = None;
+            state.pending_stacks.clear();
+            state.pending_durability.clear();
+            state.pending_placements.clear();
+            state.pending_upgrades.clear();
+            state.pending_removed.clear();
+            state.pending_adds.clear();
+            state.pending_stash_moves.clear();
+            state.pending_xray_stash_takes.clear();
+            state.pending_xray_stash_puts.clear();
+            state.pending_faction_relations.clear();
+            state.pending_relocation = None;
+            state.external_change = false;
+        }
+        cx.app
+            .set_current_save_identity(loaded.slot.path.clone(), loaded.source_sha256.clone());
+        cx.app.set_selected_game(loaded.slot.game_id.clone());
+        let legacy_s2 = matches!(&loaded.data, SaveData::Stalker2 { save, .. } if save.index().is_legacy());
+        cx.app.set_current_save_format(loaded.slot.format_id.clone(), legacy_s2);
+        cx.app.set_draft_journal(journal.clone());
+        set_workspace_draft(&self.workspace, &journal);
+        self.render(cx)?;
+        cx.status = Some(crate::strings::t("Файл обрабатывается только в этом браузере.").to_owned());
         Ok(true)
     }
 
@@ -3843,14 +3934,72 @@ impl Inventory {
             cx.status = Some(text.to_owned());
             return Ok(());
         }
-        self.start_save_process_check(
-            cx,
-            PendingSaveRequest {
-                selected,
-                edits,
-                stash_moves,
-            },
-        )
+        let request = PendingSaveRequest {
+            selected,
+            edits,
+            stash_moves,
+        };
+        if self.workspace.is_browser_file_mode() {
+            return self.save_browser_copy(cx, request);
+        }
+        self.start_save_process_check(cx, request)
+    }
+
+    fn save_browser_copy(&mut self, cx: &mut Context<'_>, request: PendingSaveRequest) -> Result<()> {
+        let source_sha256 = request.selected.source_sha256.clone();
+        let (reloaded, download) = match prepare_browser_save(&request.selected, &request.edits, &request.stash_moves) {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                let message = format!("Не удалось сохранить копию в браузере: {error}");
+                if let Some(status) = self.status {
+                    cx.tree.set_text(status, &message)?;
+                }
+                cx.status = Some(message);
+                return Ok(());
+            }
+        };
+        if let Err(error) = self.workspace.queue_browser_download(download) {
+            let message = format!("Не удалось начать скачивание копии: {error}");
+            if let Some(status) = self.status {
+                cx.tree.set_text(status, &message)?;
+            }
+            cx.status = Some(message);
+            return Ok(());
+        }
+        let new_source_sha256 = reloaded.source_sha256.clone();
+        let journal = DraftJournal::new(vec![DraftPlan::empty(&new_source_sha256)?], 0)?;
+        {
+            let mut state = self.workspace.lock();
+            state.selected = Some(Arc::clone(&reloaded));
+            state.pending_money = None;
+            state.pending_stacks.clear();
+            state.pending_durability.clear();
+            state.pending_placements.clear();
+            state.pending_upgrades.clear();
+            state.pending_removed.clear();
+            state.pending_adds.clear();
+            state.pending_stash_moves.clear();
+            state.pending_xray_stash_takes.clear();
+            state.pending_xray_stash_puts.clear();
+            state.pending_faction_relations.clear();
+            state.pending_relocation = None;
+            state.external_change = false;
+        }
+        cx.app.discard_draft(&source_sha256);
+        cx.app
+            .set_current_save_identity(reloaded.slot.path.clone(), new_source_sha256.clone());
+        let legacy_s2 = matches!(&reloaded.data, SaveData::Stalker2 { save, .. } if save.index().is_legacy());
+        cx.app.set_selected_game(reloaded.slot.game_id.clone());
+        cx.app
+            .set_current_save_format(reloaded.slot.format_id.clone(), legacy_s2);
+        cx.app.set_draft_journal(journal.clone());
+        set_workspace_draft(&self.workspace, &journal);
+        let message = crate::strings::t("Копия подготовлена для скачивания; исходный файл не изменён.").to_owned();
+        if let Some(status) = self.status {
+            cx.tree.set_text(status, &message)?;
+        }
+        cx.status = Some(message);
+        self.render(cx)
     }
 
     fn start_save_process_check(&mut self, cx: &mut Context<'_>, request: PendingSaveRequest) -> Result<()> {
@@ -4104,6 +4253,75 @@ fn commit_save_edits_to(
         save_message.push_str(&tr(" Ротация старых копий не завершена: {0}", &[&warning]));
     }
     Ok((Arc::new(reloaded), save_message))
+}
+
+fn prepare_browser_save(
+    selected: &LoadedSave,
+    edits: &PendingInventoryEdits,
+    stash_moves: &BTreeSet<u32>,
+) -> Result<(Arc<LoadedSave>, BrowserDownload)> {
+    let (packed, _) = prepare_save_edits(selected, edits, stash_moves)?;
+    if u64::try_from(packed.len()).unwrap_or(u64::MAX) > MAX_BROWSER_SAVE_BYTES {
+        return Err(Error::Refused(
+            "edited save exceeds the browser download limit".to_owned(),
+        ));
+    }
+    let mut reloaded = LoadedSave::from_buffer(selected.slot.clone(), packed.clone())?;
+    verify_requested_values(selected, &reloaded, edits, stash_moves)?;
+    reloaded.slot.size = u64::try_from(packed.len()).unwrap_or(u64::MAX);
+    reloaded.info = save_info(&reloaded.slot);
+    let (crc_status, format) = match &reloaded.data {
+        SaveData::Xray { save, .. } => ("не подтверждается отдельным полем", save.format().id()),
+        SaveData::Stalker2 { save, .. } => (
+            if save.container().stored_crc32() == save.container().computed_crc32() {
+                "OK (CRC32)"
+            } else {
+                "ошибка"
+            },
+            "S2",
+        ),
+    };
+    reloaded.integrity = save_integrity(
+        &reloaded.slot,
+        &reloaded.source_sha256,
+        packed.len(),
+        crc_status,
+        format,
+    );
+    let file_name = browser_download_filename(&selected.slot.path);
+    Ok((
+        Arc::new(reloaded),
+        BrowserDownload {
+            file_name,
+            bytes: packed,
+        },
+    ))
+}
+
+fn validate_browser_file_name(name: &str) -> Result<String> {
+    if name.trim().is_empty()
+        || name.len() > MAX_BROWSER_FILENAME_BYTES
+        || name == "."
+        || name == ".."
+        || name
+            .chars()
+            .any(|character| character.is_control() || matches!(character, '/' | '\\' | ':'))
+    {
+        return Err(Error::Refused("browser save filename is invalid".to_owned()));
+    }
+    Ok(name.to_owned())
+}
+
+fn browser_download_filename(source: &Path) -> String {
+    let stem = source
+        .file_stem()
+        .and_then(std::ffi::OsStr::to_str)
+        .filter(|stem| !stem.is_empty())
+        .unwrap_or("save");
+    match source.extension().and_then(std::ffi::OsStr::to_str) {
+        Some(extension) if !extension.is_empty() => format!("{stem}_edited.{extension}"),
+        _ => format!("{stem}_edited.sav"),
+    }
 }
 
 #[cfg(test)]
@@ -6962,8 +7180,8 @@ pub(super) fn short_text(text: &str, limit: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        add_external_file_banner, commit_save_edits_to, prepare_save_edits, prepare_xray_edits, AddRequest,
-        DraftJournal, DraftPlan, DraftStore, Inventory, ItemHandle, LoadFinished, LoadedSave, Overview,
+        add_external_file_banner, commit_save_edits_to, prepare_browser_save, prepare_save_edits, prepare_xray_edits,
+        AddRequest, DraftJournal, DraftPlan, DraftStore, Inventory, ItemHandle, LoadFinished, LoadedSave, Overview,
         PendingInventoryEdits, S2Save, SaveBuffer, SaveSlot, StartupBackupCheck, Workspace,
     };
     use crate::event_loop::{channel_pair, Message, WindowEvent};
@@ -7166,6 +7384,27 @@ mod tests {
 
         assert_eq!(output.as_slice(), expected);
         assert_eq!(summary.money, Some(new_money));
+        Ok(())
+    }
+
+    #[test]
+    fn browser_save_queues_a_verified_edited_copy_without_changing_the_source() -> sse_core::Result<()> {
+        let source = include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-source.sav");
+        let expected = include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-expected.sav");
+        let loaded = load_xray(source, "quicksave.sav", "stalker-cop", "cop")?;
+        let source_money = Save::read(source)?.money()?;
+        let new_money = Save::read(expected)?.money()?;
+        let edits = PendingInventoryEdits {
+            money: Some(new_money),
+            ..PendingInventoryEdits::default()
+        };
+
+        let (reloaded, download) = prepare_browser_save(&loaded, &edits, &BTreeSet::new())?;
+
+        assert_eq!(download.file_name, "quicksave_edited.sav");
+        assert_eq!(download.bytes.as_slice(), expected);
+        assert_eq!(Save::read(source)?.money()?, source_money);
+        assert_eq!(reloaded.source_sha256, sse_codecs::sha256::sha256_hex(expected));
         Ok(())
     }
 
