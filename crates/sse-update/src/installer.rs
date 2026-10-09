@@ -66,21 +66,6 @@ impl ProcessRunner for SystemProcessRunner {
     }
 }
 
-/// Mock process runner for unit tests.
-#[derive(Clone, Debug, Default)]
-pub struct MockProcessRunner {
-    /// Exit code to return.
-    pub exit_code: i32,
-    /// Recorded program call.
-    pub last_program: Option<String>,
-    /// Recorded arguments.
-    pub last_args: Vec<String>,
-    /// Number of executions.
-    pub call_count: usize,
-    /// Explicit list of supported commands if mocked.
-    pub available_commands: Option<Vec<String>>,
-}
-
 struct StagedArtifact {
     path: PathBuf,
     directory: PathBuf,
@@ -125,36 +110,6 @@ fn clean_stale_install_stages(root: &Path, current_stage: &Path) -> Result<()> {
         }
     }
     Ok(())
-}
-
-impl MockProcessRunner {
-    /// Creates a mock runner with the given exit code.
-    #[must_use]
-    pub fn new(exit_code: i32) -> Self {
-        Self {
-            exit_code,
-            last_program: None,
-            last_args: Vec::new(),
-            call_count: 0,
-            available_commands: None,
-        }
-    }
-}
-
-impl ProcessRunner for MockProcessRunner {
-    fn run(&mut self, program: &str, args: &[&str]) -> Result<i32> {
-        self.call_count = self.call_count.saturating_add(1);
-        self.last_program = Some(program.to_string());
-        self.last_args = args.iter().map(|s| (*s).to_string()).collect();
-        Ok(self.exit_code)
-    }
-
-    fn has_command(&self, program: &str) -> bool {
-        match &self.available_commands {
-            Some(cmds) => cmds.iter().any(|c| c == program),
-            None => true,
-        }
-    }
 }
 
 /// Creates or validates a private update directory.

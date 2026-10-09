@@ -45,7 +45,7 @@ jobs:
 
       - name: UI performance budgets
         if: matrix.os == 'ubuntu-24.04'
-        run: cargo run --release -p sse-ui --bin sse-shell -- --ci-budget
+        run: cargo run --release -p sse-ui --bin sse-ui-dev -- --ci-budget
 
       - name: Translation button layout report
         if: matrix.os == 'ubuntu-24.04'
@@ -53,7 +53,7 @@ jobs:
         run: |
           mkdir -p target/i18n-qa
           set -o pipefail
-          cargo run --release -p sse-ui --bin sse-shell -- --ci-i18n-buttons | tee target/i18n-qa/buttons.txt
+          cargo run --release -p sse-ui --bin sse-ui-dev -- --ci-i18n-buttons | tee target/i18n-qa/buttons.txt
 
       - name: Upload translation layout report
         if: always() && matrix.os == 'ubuntu-24.04'
@@ -78,10 +78,10 @@ jobs:
         shell: bash
         run: |
           mkdir -p target/acceptance-screenshots
-          cargo run --release -p sse-ui --bin sse-shell -- --screenshot target/acceptance-screenshots/overview-940x600.png 940x600 0
-          cargo run --release -p sse-ui --bin sse-shell -- --screenshot target/acceptance-screenshots/capabilities-940x600.png 940x600 17
-          cargo run --release -p sse-ui --bin sse-shell -- --screenshot target/acceptance-screenshots/overview-1280x860.png 1280x860 0
-          cargo run --release -p sse-ui --bin sse-shell -- --screenshot target/acceptance-screenshots/capabilities-1280x860.png 1280x860 17
+          cargo run --release -p sse-ui --bin sse-ui-dev -- --screenshot target/acceptance-screenshots/overview-940x600.png 940x600 0
+          cargo run --release -p sse-ui --bin sse-ui-dev -- --screenshot target/acceptance-screenshots/capabilities-940x600.png 940x600 17
+          cargo run --release -p sse-ui --bin sse-ui-dev -- --screenshot target/acceptance-screenshots/overview-1280x860.png 1280x860 0
+          cargo run --release -p sse-ui --bin sse-ui-dev -- --screenshot target/acceptance-screenshots/capabilities-1280x860.png 1280x860 17
       - name: Upload acceptance screenshots
         if: matrix.os == 'ubuntu-24.04'
         uses: actions/upload-artifact@v4

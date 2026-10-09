@@ -3,8 +3,8 @@
 use sse_core::{Error, Result};
 use std::sync::OnceLock;
 
-use crate::embedded_json::{self, JsonAssetCache};
 use crate::value::{parse_json, JsonValue};
+use sse_codecs::embedded_json::{self, JsonAssetCache};
 
 const EMBEDDED_NAMES_RAW: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/data_catalog_names.json.deflate"));
 

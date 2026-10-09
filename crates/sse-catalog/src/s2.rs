@@ -4,8 +4,8 @@ use sse_core::{Error, Result};
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use crate::embedded_json::{self, JsonAssetCache};
 use crate::value::{parse_json, JsonValue};
+use sse_codecs::embedded_json::{self, JsonAssetCache};
 
 const EMBEDDED_S2_ITEMS_RAW: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/data_s2_items.json.deflate"));
 const EMBEDDED_S2_UPGRADES_RAW: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/data_s2_upgrades.json.deflate"));

@@ -20,6 +20,11 @@ name = "sse-shell"
 path = "src/bin/sse-shell.rs"
 required-features = ["native-ui"]
 
+[[bin]]
+name = "sse-ui-dev"
+path = "src/bin/sse-ui-dev.rs"
+required-features = ["native-ui"]
+
 [dependencies]
 sse-core = { path = "../sse-core" }
 sse-codecs = { path = "../sse-codecs" }

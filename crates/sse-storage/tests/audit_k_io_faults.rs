@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, missing_docs)]
 use sse_core::{Error, Result};
-use sse_storage::transaction::{replace_transaction, replace_with_file_system, FileSystem, StdFileSystem};
+use sse_storage::transaction::{replace_transaction, FileSystem, ReplacementRequest, StdFileSystem};
 use std::{
     cell::Cell,
     fs,
@@ -72,10 +72,16 @@ fn each_io_failure_preserves_source_and_allows_retry() {
             step: Cell::new(0),
             fail: step,
         };
-        let result = replace_with_file_system(&injector, &source, &hash, NEW, &backups);
+        let request = ReplacementRequest::new(&source, &hash, NEW, &backups);
+        let result = replace_transaction(&injector, request, |_, _| Ok(()), |_| Ok(()));
         assert!(result.is_err(), "step {step} unexpectedly succeeded");
         assert_eq!(fs::read(&source).unwrap(), OLD, "source changed at failed step {step}");
-        let retry = replace_transaction(&source, &hash, NEW, &backups);
+        let retry = replace_transaction(
+            &StdFileSystem,
+            ReplacementRequest::new(&source, &hash, NEW, &backups),
+            |_, _| Ok(()),
+            |_| Ok(()),
+        );
         assert!(retry.is_ok(), "retry failed after step {step}: {retry:?}");
         assert_eq!(fs::read(&source).unwrap(), NEW);
         fs::remove_dir_all(root).unwrap();

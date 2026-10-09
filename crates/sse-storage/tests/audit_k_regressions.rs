@@ -29,6 +29,71 @@ impl Drop for Temp {
         let _ = fs::remove_dir_all(&self.0);
     }
 }
+
+fn replace_transaction(
+    source: &Path,
+    expected_sha256: &str,
+    replacement: &[u8],
+    backups: &Path,
+) -> Result<ReplacementReceipt> {
+    let (receipt, (), ()) = sse_storage::transaction::replace_transaction(
+        &StdFileSystem,
+        ReplacementRequest::new(source, expected_sha256, replacement, backups),
+        |_, _| Ok(()),
+        |_| Ok(()),
+    )?;
+    Ok(receipt)
+}
+
+fn replace_transaction_with_verifier<T>(
+    source: &Path,
+    expected_sha256: &str,
+    replacement: &[u8],
+    backups: &Path,
+    verify_readback: impl FnOnce(&[u8]) -> Result<T>,
+) -> Result<(ReplacementReceipt, T)> {
+    let (receipt, (), verified) = sse_storage::transaction::replace_transaction(
+        &StdFileSystem,
+        ReplacementRequest::new(source, expected_sha256, replacement, backups),
+        |_, _| Ok(()),
+        verify_readback,
+    )?;
+    Ok((receipt, verified))
+}
+
+fn replace_with_file_system(
+    files: &impl FileSystem,
+    source: &Path,
+    expected_sha256: &str,
+    replacement: &[u8],
+    backups: &Path,
+) -> Result<ReplacementReceipt> {
+    let (receipt, (), ()) = sse_storage::transaction::replace_transaction(
+        files,
+        ReplacementRequest::new(source, expected_sha256, replacement, backups),
+        |_, _| Ok(()),
+        |_| Ok(()),
+    )?;
+    Ok(receipt)
+}
+
+fn replace_with_file_system_and_verifier<T>(
+    files: &impl FileSystem,
+    source: &Path,
+    expected_sha256: &str,
+    replacement: &[u8],
+    backups: &Path,
+    verify_readback: impl FnOnce(&[u8]) -> Result<T>,
+) -> Result<(ReplacementReceipt, T)> {
+    let (receipt, (), verified) = sse_storage::transaction::replace_transaction(
+        files,
+        ReplacementRequest::new(source, expected_sha256, replacement, backups),
+        |_, _| Ok(()),
+        verify_readback,
+    )?;
+    Ok((receipt, verified))
+}
+
 #[test]
 fn rollback_must_preserve_a_new_external_save() {
     let t = Temp::new();

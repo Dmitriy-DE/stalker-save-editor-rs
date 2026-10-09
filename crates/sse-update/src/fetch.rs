@@ -2,53 +2,12 @@
 
 use crate::manifest::UpdateArtifact;
 use sse_core::{Error, Result};
-use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 pub use sse_codecs::sha256::Sha256 as Sha256Hasher;
-pub use sse_sys::fetch::ContentRange;
-
-/// HTTP response status and headers.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Response {
-    /// HTTP status code (200, 206, 301, etc.).
-    pub status_code: u16,
-    /// Content length in bytes, if reported.
-    pub content_length: Option<u64>,
-    /// Byte interval returned by a partial response.
-    pub content_range: Option<ContentRange>,
-    /// Location header for HTTP redirects.
-    pub location: Option<String>,
-}
-
-/// Abstract fetch interface for OS-level or mock streaming HTTP downloads.
-pub trait Fetch {
-    /// Performs an HTTP GET request, streaming response payload chunks into `sink`.
-    ///
-    /// If `sink` returns `false`, reading is cancelled early.
-    ///
-    /// # Errors
-    /// Returns an error on transport failure or invalid URL.
-    fn get(&mut self, url: &str, range_from: u64, sink: &mut dyn FnMut(&[u8]) -> bool) -> Result<Response>;
-
-    /// Performs a GET while exposing final response headers before the first body byte.
-    ///
-    /// Implementations that cannot guarantee this order fail closed. The updater uses this
-    /// callback to validate range metadata before appending bytes to a retained partial file.
-    fn get_with_response(
-        &mut self,
-        _url: &str,
-        _range_from: u64,
-        _on_response: &mut dyn FnMut(&Response) -> bool,
-        _sink: &mut dyn FnMut(&[u8]) -> bool,
-    ) -> Result<Response> {
-        Err(Error::Refused(
-            "fetcher does not support pre-body response inspection".to_owned(),
-        ))
-    }
-}
+pub use sse_sys::fetch::{ContentRange, Fetch, Response};
 
 struct DownloadStream {
     file: File,
@@ -149,180 +108,6 @@ fn verify_open_file(file: &mut File, artifact: &UpdateArtifact) -> Result<()> {
     }
 }
 
-/// In-memory mock fetcher for tests and unit verification.
-#[derive(Clone, Debug, Default)]
-pub struct MemoryFetch {
-    routes: HashMap<String, Vec<u8>>,
-    redirects: HashMap<String, String>,
-}
-
-impl MemoryFetch {
-    /// Creates an empty in-memory fetcher.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Registers a response payload for a specific URL.
-    pub fn register(&mut self, url: impl Into<String>, payload: Vec<u8>) {
-        self.routes.insert(url.into(), payload);
-    }
-}
-
-impl Fetch for MemoryFetch {
-    fn get(&mut self, url: &str, range_from: u64, sink: &mut dyn FnMut(&[u8]) -> bool) -> Result<Response> {
-        self.get_with_response(url, range_from, &mut |_| true, sink)
-    }
-
-    fn get_with_response(
-        &mut self,
-        url: &str,
-        range_from: u64,
-        on_response: &mut dyn FnMut(&Response) -> bool,
-        sink: &mut dyn FnMut(&[u8]) -> bool,
-    ) -> Result<Response> {
-        if let Some(target) = self.redirects.get(url) {
-            let response = Response {
-                status_code: 302,
-                content_length: None,
-                content_range: None,
-                location: Some(target.clone()),
-            };
-            if !on_response(&response) {
-                return Err(Error::Refused("response rejected by caller".to_owned()));
-            }
-            return Ok(response);
-        }
-
-        let body = self
-            .routes
-            .get(url)
-            .ok_or_else(|| Error::Refused(format!("404 Not Found: {url}")))?;
-
-        let body_len = u64::try_from(body.len()).map_err(|_| Error::Refused("response too large".to_owned()))?;
-        let start = usize::try_from(range_from).unwrap_or(body.len());
-        let status_code = if range_from == 0 {
-            200
-        } else if start < body.len() {
-            206
-        } else {
-            416
-        };
-        let slice = if status_code == 416 {
-            &[][..]
-        } else {
-            body.get(start..).unwrap_or(&[])
-        };
-        let content_range = (status_code == 206).then_some(ContentRange {
-            start: range_from,
-            end: body_len.saturating_sub(1),
-            total: body_len,
-        });
-        let response = Response {
-            status_code,
-            content_length: Some(
-                u64::try_from(slice.len()).map_err(|_| Error::Refused("response too large".to_owned()))?,
-            ),
-            content_range,
-            location: None,
-        };
-        if !on_response(&response) {
-            return Err(Error::Refused("response rejected by caller".to_owned()));
-        }
-        if status_code == 416 {
-            return Ok(response);
-        }
-
-        // Stream in 64 KiB chunks
-        let chunk_size = 64 * 1024;
-        let mut offset = 0_usize;
-        while offset < slice.len() {
-            let end = offset.saturating_add(chunk_size).min(slice.len());
-            if let Some(chunk) = slice.get(offset..end) {
-                if !sink(chunk) {
-                    break;
-                }
-            }
-            offset = end;
-        }
-
-        Ok(response)
-    }
-}
-
-/// Local file-backed fetcher streaming `file://` URLs.
-#[derive(Clone, Debug, Default)]
-pub struct FileFetch;
-
-impl Fetch for FileFetch {
-    fn get(&mut self, url: &str, range_from: u64, sink: &mut dyn FnMut(&[u8]) -> bool) -> Result<Response> {
-        self.get_with_response(url, range_from, &mut |_| true, sink)
-    }
-
-    fn get_with_response(
-        &mut self,
-        url: &str,
-        range_from: u64,
-        on_response: &mut dyn FnMut(&Response) -> bool,
-        sink: &mut dyn FnMut(&[u8]) -> bool,
-    ) -> Result<Response> {
-        let path_str = url.strip_prefix("file://").unwrap_or(url);
-        let path = Path::new(path_str);
-        let mut file = File::open(path).map_err(Error::from)?;
-
-        if range_from > 0 {
-            use std::io::Seek;
-            file.seek(std::io::SeekFrom::Start(range_from)).map_err(Error::from)?;
-        }
-
-        let metadata = file.metadata().map_err(Error::from)?;
-        let file_len = metadata.len();
-        let status_code = if range_from == 0 {
-            200
-        } else if range_from < file_len {
-            206
-        } else {
-            416
-        };
-        let remaining = if status_code == 416 {
-            0
-        } else {
-            file_len.saturating_sub(range_from)
-        };
-        let response = Response {
-            status_code,
-            content_length: Some(remaining),
-            content_range: (status_code == 206).then_some(ContentRange {
-                start: range_from,
-                end: file_len.saturating_sub(1),
-                total: file_len,
-            }),
-            location: None,
-        };
-        if !on_response(&response) {
-            return Err(Error::Refused("response rejected by caller".to_owned()));
-        }
-        if status_code == 416 {
-            return Ok(response);
-        }
-
-        let mut buffer = [0_u8; 64 * 1024];
-        loop {
-            let read = file.read(&mut buffer).map_err(Error::from)?;
-            if read == 0 {
-                break;
-            }
-            if let Some(chunk) = buffer.get(..read) {
-                if !sink(chunk) {
-                    break;
-                }
-            }
-        }
-
-        Ok(response)
-    }
-}
-
 /// Live update fetcher restricted to the official HTTPS update origin.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct DefaultFetch;
@@ -364,19 +149,11 @@ impl Fetch for DefaultFetch {
             max_bytes: crate::manifest::MAXIMUM_ARTIFACT_BYTES,
             ..sse_sys::fetch::SystemFetch::default()
         };
-        let mut final_response = None;
-        let mut checked_response = |response: &sse_sys::fetch::Response| {
+        let mut checked_response = |response: &Response| {
             if !official_https_url(&response.final_url) {
                 return false;
             }
-            let mapped = Response {
-                status_code: response.status,
-                content_length: response.content_length,
-                content_range: response.content_range,
-                location: None,
-            };
-            final_response = Some(mapped.clone());
-            on_response(&mapped)
+            on_response(response)
         };
         let response =
             sse_sys::fetch::Fetch::get_with_response(&mut fetch, url, range_from, &mut checked_response, sink)?;
@@ -385,7 +162,7 @@ impl Fetch for DefaultFetch {
                 "Update redirect left the official HTTPS host".to_owned(),
             ));
         }
-        final_response.ok_or_else(|| Error::damaged("update response headers were not inspected"))
+        Ok(response)
     }
 }
 
@@ -507,7 +284,7 @@ pub fn download_artifact(
         requested_from,
         &mut |headers| {
             let mut stream = stream.borrow_mut();
-            let body_length = match headers.status_code {
+            let body_length = match headers.status {
                 200 => {
                     if headers.content_length.is_some_and(|length| length != artifact.size) {
                         stream.response_problem = Some("HTTP 200 Content-Length mismatch with the artifact".to_owned());
@@ -546,7 +323,7 @@ pub fn download_artifact(
                 }
             };
 
-            if headers.status_code == 200 && requested_from != 0 {
+            if headers.status == 200 && requested_from != 0 {
                 if let Err(error) = stream
                     .file
                     .set_len(0)
@@ -620,7 +397,7 @@ pub fn download_artifact(
     let Some(headers) = stream.response_headers.take() else {
         return Err(Error::damaged("fetcher returned without exposing response headers"));
     };
-    if resp.status_code != headers.status_code || resp.content_range != headers.content_range {
+    if resp.status != headers.status || resp.content_range != headers.content_range {
         return Err(Error::damaged("fetcher response metadata changed after body delivery"));
     }
     if stream.size_exceeded {

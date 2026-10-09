@@ -3876,32 +3876,35 @@ fn commit_save_edits_to(
     let (packed, summary) = prepare_save_edits(selected, edits, stash_moves)?;
     // SaveBuffer clones share their Arc<[u8]>; move the one preflight handle into the reloaded save.
     let preflight_image = packed.clone();
-    let (receipt, mut reloaded, (size, modified)) =
-        transaction::replace_transaction_with_summary_preflight_and_verifier(
-            &selected.slot.path,
-            &selected.source_sha256,
-            packed.as_slice(),
-            backup_directory,
-            summary,
-            move |_, replacement| {
-                if replacement != preflight_image.as_slice() {
-                    return Err(Error::damaged("prepared save bytes changed before semantic preflight"));
-                }
-                let reloaded = LoadedSave::from_buffer(selected.slot.clone(), preflight_image)?;
-                verify_requested_values(selected, &reloaded, edits, stash_moves)?;
-                Ok(reloaded)
-            },
-            |read_back| {
-                if read_back != packed.as_slice() {
-                    return Err(Error::damaged("save bytes differ after durable read-back"));
-                }
-                let metadata = std::fs::metadata(&selected.slot.path)?;
-                Ok((
-                    metadata.len(),
-                    metadata.modified().unwrap_or(selected.slot.last_write_time_utc),
-                ))
-            },
-        )?;
+    let request = transaction::ReplacementRequest::new(
+        &selected.slot.path,
+        &selected.source_sha256,
+        packed.as_slice(),
+        backup_directory,
+    )
+    .with_summary(summary);
+    let (receipt, mut reloaded, (size, modified)) = transaction::replace_transaction(
+        &transaction::StdFileSystem,
+        request,
+        move |_, replacement| {
+            if replacement != preflight_image.as_slice() {
+                return Err(Error::damaged("prepared save bytes changed before semantic preflight"));
+            }
+            let reloaded = LoadedSave::from_buffer(selected.slot.clone(), preflight_image)?;
+            verify_requested_values(selected, &reloaded, edits, stash_moves)?;
+            Ok(reloaded)
+        },
+        |read_back| {
+            if read_back != packed.as_slice() {
+                return Err(Error::damaged("save bytes differ after durable read-back"));
+            }
+            let metadata = std::fs::metadata(&selected.slot.path)?;
+            Ok((
+                metadata.len(),
+                metadata.modified().unwrap_or(selected.slot.last_write_time_utc),
+            ))
+        },
+    )?;
     reloaded.slot.size = size;
     reloaded.slot.last_write_time_utc = modified;
     reloaded.info = save_info(&reloaded.slot);
@@ -7962,11 +7965,16 @@ mod tests {
         let original = include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-soc-source.sav");
         let replacement = include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-soc-expected.sav");
         fs::write(&source, original)?;
-        let receipt = sse_storage::transaction::replace_transaction(
-            &source,
-            &sse_codecs::sha256::sha256_hex(original),
-            replacement,
-            &backups,
+        let (receipt, (), ()) = sse_storage::transaction::replace_transaction(
+            &sse_storage::transaction::StdFileSystem,
+            sse_storage::transaction::ReplacementRequest::new(
+                &source,
+                &sse_codecs::sha256::sha256_hex(original),
+                replacement,
+                &backups,
+            ),
+            |_, _| Ok(()),
+            |_| Ok(()),
         )?;
         let verified = fs::read_to_string(&receipt.journal_path)?;
         fs::write(

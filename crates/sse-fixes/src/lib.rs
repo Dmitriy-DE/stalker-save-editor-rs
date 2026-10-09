@@ -2,8 +2,6 @@
 //!
 //! Owner: Gemini (G3).
 
-mod embedded_json;
-
 pub mod all_spawn;
 pub mod catalog;
 pub mod engine;

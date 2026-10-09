@@ -7,12 +7,12 @@ use sse_core::{Error, Result};
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use crate::embedded_json::{self, JsonAssetCache};
 use crate::models::{
     CatalogBundle, FactionCatalog, FactionDefinition, FactionRelation, ItemCatalog, ItemDefinition, UpgradeCatalog,
     UpgradeDefinition,
 };
 use crate::value::{parse_json, JsonValue};
+use sse_codecs::embedded_json::{self, JsonAssetCache};
 
 const EMBEDDED_CATALOGS_RAW: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/data_catalogs.json.deflate"));
 

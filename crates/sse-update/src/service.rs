@@ -113,10 +113,10 @@ impl UpdateService {
             )));
         }
 
-        if resp.status_code != 200 {
+        if resp.status != 200 {
             return Err(CheckFailure::Unavailable(Error::Refused(format!(
                 "Manifest server returned HTTP {}",
-                resp.status_code
+                resp.status
             ))));
         }
 
@@ -147,10 +147,10 @@ impl UpdateService {
             )));
         }
 
-        if sig_resp.status_code != 200 {
+        if sig_resp.status != 200 {
             return Err(CheckFailure::Unavailable(Error::Refused(format!(
                 "Signature server returned HTTP {}",
-                sig_resp.status_code
+                sig_resp.status
             ))));
         }
 
@@ -218,9 +218,9 @@ fn failed_check(state: UpdateState, error: Error) -> UpdateCheckResult {
 mod tests {
     use super::{UpdateService, DEFAULT_MANIFEST_URL};
     use crate::detector::UpdateInstallation;
-    use crate::fetch::MemoryFetch;
     use crate::manifest::{UpdateState, MAXIMUM_MANIFEST_BYTES};
     use crate::signature::MAXIMUM_SIGNATURE_BYTES;
+    use crate::test_support::MemoryFetch;
     use std::path::PathBuf;
 
     fn service() -> UpdateService {
