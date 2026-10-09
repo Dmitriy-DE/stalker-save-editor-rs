@@ -3,10 +3,13 @@ const status = document.querySelector("#status");
 const context = canvas.getContext("2d", { alpha: false });
 const MAX_PIXELS = 8_294_400;
 const MAX_EDGE = 8192;
+const MAX_BROWSER_SAVE_BYTES = 256 * 1024 * 1024;
+const MAX_BROWSER_NAME_BYTES = 1024;
 
 let api;
 let image = null;
 let pendingFrame = false;
+let pendingDownloadUrl = null;
 let closed = false;
 let width = 1;
 let height = 1;
@@ -23,6 +26,164 @@ function send(code, a = 0, b = 0, c = 0, d = 0, e = 0) {
     return;
   }
   scheduleFrame();
+  maybeOpenFilePicker();
+  maybeDownload();
+}
+
+function rejectBrowserFile(code) {
+  if (typeof api?.sse_web_file_rejected === "function") {
+    api.sse_web_file_rejected(code);
+    scheduleFrame();
+  }
+}
+
+function copyToWasm(bytes) {
+  const pointer = api.sse_web_alloc(bytes.byteLength) >>> 0;
+  if (!pointer) return 0;
+  try {
+    new Uint8Array(api.memory.buffer, pointer, bytes.byteLength).set(bytes);
+    return pointer;
+  } catch (error) {
+    api.sse_web_free(pointer, bytes.byteLength);
+    throw error;
+  }
+}
+
+function maybeOpenFilePicker() {
+  if (typeof api?.sse_web_take_open_request !== "function" || !api.sse_web_take_open_request()) return;
+
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = ".sav,.scop,.scs";
+  input.style.position = "fixed";
+  input.style.left = "-10000px";
+  document.body.append(input);
+  let settled = false;
+  const cancel = () => {
+    if (settled) return;
+    settled = true;
+    api.sse_web_file_cancelled();
+    input.remove();
+    scheduleFrame();
+  };
+
+  input.addEventListener("cancel", cancel, { once: true });
+  input.addEventListener("change", async () => {
+    if (settled) return;
+    const file = input.files?.[0];
+    if (!file) {
+      cancel();
+      return;
+    }
+    settled = true;
+    let namePointer = 0;
+    let bytesPointer = 0;
+    let transferred = false;
+    let rejectionCode = 4;
+    let nameByteLength = 0;
+    try {
+      if (file.size === 0) {
+        rejectionCode = 1;
+        throw new Error("empty file");
+      }
+      if (file.size > MAX_BROWSER_SAVE_BYTES) {
+        rejectionCode = 2;
+        throw new Error("file exceeds the browser limit");
+      }
+      const name = new TextEncoder().encode(file.name);
+      nameByteLength = name.byteLength;
+      if (nameByteLength === 0 || nameByteLength > MAX_BROWSER_NAME_BYTES) {
+        throw new Error("filename is outside the supported range");
+      }
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      if (bytes.byteLength !== file.size) throw new Error("file read was incomplete");
+
+      namePointer = copyToWasm(name);
+      if (!namePointer) {
+        rejectionCode = 3;
+        throw new Error("could not allocate filename buffer");
+      }
+      bytesPointer = copyToWasm(bytes);
+      if (!bytesPointer) {
+        rejectionCode = 3;
+        throw new Error("could not allocate save buffer");
+      }
+      transferred = true;
+      const result = api.sse_web_file_selected(
+        namePointer,
+        name.byteLength,
+        bytesPointer,
+        bytes.byteLength,
+        Number.isSafeInteger(file.lastModified) && file.lastModified >= 0 ? BigInt(file.lastModified) : 0n,
+      );
+      if (result !== 0 && result !== 4) rejectBrowserFile(4);
+    } catch (error) {
+      console.error("Could not import browser save", error);
+      if (!transferred) rejectBrowserFile(rejectionCode);
+    } finally {
+      if (!transferred) {
+        if (namePointer) api.sse_web_free(namePointer, nameByteLength);
+        if (bytesPointer) api.sse_web_free(bytesPointer, file.size);
+      }
+      input.remove();
+      scheduleFrame();
+    }
+  }, { once: true });
+
+  try {
+    input.click();
+  } catch (error) {
+    console.error("Could not open browser file picker", error);
+    cancel();
+  }
+}
+
+function maybeDownload() {
+  if (typeof api?.sse_web_download_pending !== "function" || !api.sse_web_download_pending()) return;
+
+  try {
+    const namePointer = api.sse_web_download_file_name_ptr() >>> 0;
+    const nameLength = api.sse_web_download_file_name_len() >>> 0;
+    const bytesPointer = api.sse_web_download_bytes_ptr() >>> 0;
+    const bytesLength = api.sse_web_download_bytes_len() >>> 0;
+    if (!namePointer || !nameLength || !bytesPointer || !bytesLength) {
+      throw new Error("pending browser download is incomplete");
+    }
+    const fileName = new TextDecoder().decode(
+      new Uint8Array(api.memory.buffer, namePointer, nameLength).slice(),
+    );
+    const bytes = new Uint8Array(api.memory.buffer, bytesPointer, bytesLength).slice();
+    const url = URL.createObjectURL(new Blob([bytes], { type: "application/octet-stream" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    link.style.display = "none";
+    document.body.append(link);
+    link.click();
+    link.remove();
+    if (pendingDownloadUrl) URL.revokeObjectURL(pendingDownloadUrl);
+    pendingDownloadUrl = url;
+    const fallback = document.createElement("a");
+    fallback.href = url;
+    fallback.download = fileName;
+    fallback.textContent = "download it here";
+    fallback.setAttribute("aria-label", `Download ${fileName}`);
+    fallback.addEventListener("click", () => {
+      status.textContent = "Download requested.";
+    }, { once: true });
+    status.replaceChildren(
+      document.createTextNode("The edited copy is ready. If the download did not start, "),
+      fallback,
+      document.createTextNode("."),
+    );
+    status.hidden = false;
+  } catch (error) {
+    console.error("Could not download edited browser save", error);
+    status.hidden = false;
+    status.textContent = "The edited copy could not be downloaded.";
+  } finally {
+    api.sse_web_clear_download();
+  }
 }
 
 function scheduleFrame() {
@@ -88,10 +249,14 @@ function pointerPosition(event) {
 function keyCode(event) {
   const named = {
     Escape: 0xff1b,
+    Home: 0xff50,
     ArrowUp: 0xff52,
     ArrowDown: 0xff54,
     ArrowLeft: 0xff51,
     ArrowRight: 0xff53,
+    PageUp: 0xff55,
+    PageDown: 0xff56,
+    End: 0xff57,
     Enter: 0xff0d,
     Tab: 0xff09,
     Backspace: 0xff08,
@@ -127,7 +292,7 @@ canvas.addEventListener("wheel", (event) => {
 }, { passive: false });
 canvas.addEventListener("keydown", (event) => {
   const [keysym, text] = keyCode(event);
-  if (keysym === 0xff1b || keysym === 0xff52 || keysym === 0xff54) event.preventDefault();
+  if ([0xff1b, 0xff50, 0xff52, 0xff54, 0xff55, 0xff56, 0xff57].includes(keysym)) event.preventDefault();
   send(5, 1, keysym, text, Number(event.ctrlKey), Number(event.shiftKey));
 });
 canvas.addEventListener("keyup", (event) => {
@@ -137,7 +302,10 @@ canvas.addEventListener("keyup", (event) => {
 canvas.addEventListener("focus", () => send(6, 1));
 canvas.addEventListener("blur", () => send(6, 0));
 window.addEventListener("resize", resize);
-window.addEventListener("pagehide", () => send(7));
+window.addEventListener("pagehide", () => {
+  send(7);
+  if (pendingDownloadUrl) URL.revokeObjectURL(pendingDownloadUrl);
+});
 
 try {
   const response = await fetch("./sse_web.wasm");

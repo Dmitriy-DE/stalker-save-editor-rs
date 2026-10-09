@@ -21,8 +21,12 @@ use std::time::{Duration, Instant, SystemTime};
 const KEY_ESCAPE: u32 = 0xff1b;
 const KEY_TAB: u32 = 0xff09;
 const KEY_RETURN: u32 = 0xff0d;
+const KEY_HOME: u32 = 0xff50;
 const KEY_UP: u32 = 0xff52;
 const KEY_DOWN: u32 = 0xff54;
+const KEY_PAGE_UP: u32 = 0xff55;
+const KEY_PAGE_DOWN: u32 = 0xff56;
+const KEY_END: u32 = 0xff57;
 const SAVE_LIBRARY_PAGE_SIZE: usize = 8;
 const LIBRARY_PREVIEW_WIDTH: u32 = 96;
 const LIBRARY_PREVIEW_HEIGHT: u32 = 54;
@@ -50,6 +54,18 @@ fn open_path_edit_config() -> EditConfig {
         max_graphemes: 32_768,
         history_limit: 64,
         filter: InputFilter::Any,
+    }
+}
+
+fn keyboard_scroll_target(keysym: u32, current: f32, max_offset: f32, page_height: f32) -> Option<f32> {
+    let current = current.clamp(0.0, max_offset);
+    let page_height = page_height.max(1.0);
+    match keysym {
+        KEY_HOME => Some(0.0),
+        KEY_END => Some(max_offset),
+        KEY_PAGE_UP => Some((current - page_height).max(0.0)),
+        KEY_PAGE_DOWN => Some((current + page_height).min(max_offset)),
+        _ => None,
     }
 }
 
@@ -1214,6 +1230,23 @@ impl Shell {
         proxy: Option<Proxy<AppMessage>>,
         settings: sse_app::AppSettings,
     ) -> Result<Self> {
+        Self::build_with_settings_and_browser(tree, proxy, settings, None)
+    }
+
+    /// Builds the shared shell with browser file transfer enabled.
+    ///
+    /// # Errors
+    /// Returns an error from the widget tree or bundled resources.
+    pub fn build_for_browser(tree: &mut Tree, bridge: super::BrowserFileBridge) -> Result<Self> {
+        Self::build_with_settings_and_browser(tree, None, sse_app::AppSettings::default(), Some(bridge))
+    }
+
+    fn build_with_settings_and_browser(
+        tree: &mut Tree,
+        proxy: Option<Proxy<AppMessage>>,
+        settings: sse_app::AppSettings,
+        browser_bridge: Option<super::BrowserFileBridge>,
+    ) -> Result<Self> {
         let interactive = proxy.is_some();
         let open_path_input = TextInput::new("", open_path_edit_config())?;
         let root_style = Style {
@@ -1326,8 +1359,11 @@ impl Shell {
                 ..Look::default()
             },
         )?;
-        let library_workspace =
-            super::saves::Workspace::with_backup_directory(sse_app::paths::backup_directory(&settings));
+        let backup_directory = sse_app::paths::backup_directory(&settings);
+        let library_workspace = match browser_bridge.as_ref() {
+            Some(bridge) => super::saves::Workspace::with_browser_file_bridge(backup_directory.clone(), bridge.clone()),
+            None => super::saves::Workspace::with_backup_directory(backup_directory),
+        };
         let screens = super::registry_with_save_workspace(library_workspace.clone());
         let section_last = Group::ALL.map(|group| {
             screens
@@ -1805,7 +1841,11 @@ impl Shell {
                 ..Look::default()
             },
         )?;
-        let wizard = super::wizard::Wizard::build(tree, content)?;
+        let wizard = if browser_bridge.is_some() {
+            super::wizard::Wizard::build_for_browser(tree, content)?
+        } else {
+            super::wizard::Wizard::build(tree, content)?
+        };
         let status_bar = tree.add(
             Some(main),
             NodeKind::Row,
@@ -2390,6 +2430,57 @@ impl Shell {
         self.open_save_inner(tree, path)
     }
 
+    /// Opens an in-memory save selected by the browser and keeps its source bytes out of the local filesystem.
+    ///
+    /// # Errors
+    /// Returns an error when the imported save is invalid or the shell cannot update its screens.
+    pub fn open_browser_file(
+        &mut self,
+        tree: &mut Tree,
+        file_name: &str,
+        bytes: Vec<u8>,
+        last_modified_ms: u64,
+    ) -> Result<bool> {
+        if !self.library_workspace.is_browser_file_mode() {
+            return Ok(false);
+        }
+        self.open(tree, ScreenId::Overview)?;
+        let Some(index) = self.screens.iter().position(|screen| screen.id() == ScreenId::Overview) else {
+            return Ok(false);
+        };
+        let mut cx = Context {
+            tree,
+            proxy: self.proxy.as_ref(),
+            status: None,
+            app: &mut self.app,
+        };
+        let opened = self
+            .screens
+            .get_mut(index)
+            .map(|screen| screen.open_browser_file(&mut cx, file_name, bytes, last_modified_ms))
+            .transpose()?
+            .unwrap_or(false);
+        if let Some(status) = cx.status.take() {
+            cx.tree
+                .set_text(self.status, &crate::status::localize_writer_status(&status))?;
+        }
+        drop(cx);
+        if let Some(opened) = opened.then(|| self.hosts.get(index).copied().flatten()).flatten() {
+            self.wizard.sync(tree, &self.app, ScreenId::Overview, Some(opened))?;
+        }
+        self.sync_draft_controls(tree)?;
+        self.sync_saving_overlay(tree)?;
+        Ok(opened)
+    }
+
+    /// Shows a browser file-transfer status in the shared shell.
+    ///
+    /// # Errors
+    /// Returns an error if the status widget cannot be updated.
+    pub fn show_browser_file_status(&mut self, tree: &mut Tree, message: &str) -> Result<()> {
+        tree.set_text(self.status, message)
+    }
+
     fn open_save_inner(&mut self, tree: &mut Tree, path: &Path) -> Result<bool> {
         if self.library_workspace.is_saving() || self.library_workspace.is_restoring() {
             return Ok(false);
@@ -2717,6 +2808,13 @@ impl Shell {
             || self.open_files_queue.is_some()
             || self.native_file_picker_request.is_some()
         {
+            return Ok(());
+        }
+        if self.library_workspace.request_browser_file_open() {
+            tree.set_text(
+                self.status,
+                crate::strings::t("Файл обрабатывается только в этом браузере."),
+            )?;
             return Ok(());
         }
         #[cfg(not(test))]
@@ -3778,6 +3876,22 @@ impl Shell {
         }) = message
         {
             if !tree.dialog_open() && !tree.focused_is_input() {
+                if matches!(*keysym, KEY_HOME | KEY_END | KEY_PAGE_UP | KEY_PAGE_DOWN) {
+                    let content_height = tree.content_height(self.content)?;
+                    let viewport_height = tree.rect(self.content)?.height as f32;
+                    self.scroll.set_extent(content_height, viewport_height);
+                    if let Some(target) = keyboard_scroll_target(
+                        *keysym,
+                        self.scroll.offset_y(),
+                        self.scroll.max_offset(),
+                        viewport_height,
+                    ) {
+                        self.scroll.scroll_to(target);
+                    }
+                    tree.set_scroll_y(self.content, to_px(self.scroll.offset_y().round()))?;
+                    tree.set_visible(self.scroll_bar, self.scroll.thumb().is_some())?;
+                    return Ok(Flow::Continue);
+                }
                 let count = self.screens.len();
                 match *keysym {
                     KEY_UP => self.select(tree, self.selected.checked_sub(1).unwrap_or(count.saturating_sub(1)))?,
@@ -4171,8 +4285,8 @@ fn find_button_with_text(tree: &Tree, root: WidgetId, needle: &str) -> Option<Wi
 mod tests {
     use super::ArtSlot;
     use super::{
-        save_eligibility, spawn_native_file_picker, wait_for_save_io, NativeFilePickerFinished, OpenFilesQueue,
-        ScreenId, Shell,
+        keyboard_scroll_target, save_eligibility, spawn_native_file_picker, wait_for_save_io, NativeFilePickerFinished,
+        OpenFilesQueue, ScreenId, Shell, KEY_END, KEY_HOME, KEY_PAGE_DOWN, KEY_PAGE_UP,
     };
     use crate::event_loop::{channel_pair, Flow, Message, WindowEvent};
     use crate::glyphs::Fonts;
@@ -4185,6 +4299,40 @@ mod tests {
 
     fn close_task_test_guard() -> std::sync::MutexGuard<'static, ()> {
         crate::screens::task_registry_test_guard()
+    }
+
+    #[test]
+    fn keyboard_scroll_keys_move_by_a_page_and_clamp_to_content_edges() {
+        assert_eq!(keyboard_scroll_target(KEY_HOME, 120.0, 800.0, 300.0), Some(0.0));
+        assert_eq!(keyboard_scroll_target(KEY_END, 120.0, 800.0, 300.0), Some(800.0));
+        assert_eq!(keyboard_scroll_target(KEY_PAGE_UP, 120.0, 800.0, 300.0), Some(0.0));
+        assert_eq!(keyboard_scroll_target(KEY_PAGE_DOWN, 700.0, 800.0, 300.0), Some(800.0));
+        assert_eq!(keyboard_scroll_target(KEY_PAGE_DOWN, 120.0, 800.0, 300.0), Some(420.0));
+        assert_eq!(keyboard_scroll_target(0xff52, 120.0, 800.0, 300.0), None);
+    }
+
+    #[test]
+    fn browser_import_hides_first_run_wizard_and_shows_the_loaded_overview() -> sse_core::Result<()> {
+        let _guard = close_task_test_guard();
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut shell = Shell::build_for_browser(&mut tree, crate::screens::BrowserFileBridge::new())?;
+        let source = include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-source.sav");
+
+        assert!(shell.open_browser_file(&mut tree, "quicksave.sav", source.to_vec(), 1_700_000_000_000)?);
+        assert!(!shell.wizard.is_showing(&tree));
+        let overview_index = shell
+            .screens
+            .iter()
+            .position(|screen| screen.id() == ScreenId::Overview)
+            .ok_or_else(|| sse_core::Error::Refused("overview screen was not built".to_owned()))?;
+        let overview_host = shell
+            .hosts
+            .get(overview_index)
+            .copied()
+            .flatten()
+            .ok_or_else(|| sse_core::Error::Refused("overview host was not built".to_owned()))?;
+        assert!(tree.is_visible(overview_host));
+        Ok(())
     }
 
     #[test]

@@ -5,12 +5,20 @@ use sse_ui::event_loop::{self, Flow, Message, WindowEvent};
 use sse_ui::glyphs::Fonts;
 use sse_ui::screens::shell::Shell;
 use sse_ui::screens::style::rgb;
-use sse_ui::screens::AppMessage;
+use sse_ui::screens::{AppMessage, BrowserDownload, BrowserFileBridge};
 use sse_ui::theme::BG_BASE;
 use sse_ui::widget::Tree;
 
 const MAX_FRAME_PIXELS: u64 = 8_294_400;
 const MAX_FRAME_EDGE: u32 = 8192;
+/// Largest save the browser host will read or download.
+pub const MAX_BROWSER_SAVE_BYTES: u64 = 256 * 1024 * 1024;
+
+/// Returns whether a browser file size fits the documented save limit.
+#[must_use]
+pub const fn browser_file_size_is_supported(bytes: u64) -> bool {
+    bytes > 0 && bytes <= MAX_BROWSER_SAVE_BYTES
+}
 
 /// Browser input normalized to the portable shell event model.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -113,6 +121,8 @@ pub struct WebRuntime {
     tree: Tree,
     shell: Shell,
     frame: Vec<u32>,
+    file_bridge: BrowserFileBridge,
+    pending_download: Option<BrowserDownload>,
 }
 
 impl WebRuntime {
@@ -122,12 +132,69 @@ impl WebRuntime {
     /// Returns an error if a bundled font or the shell tree cannot be initialized.
     pub fn new() -> Result<Self> {
         let mut tree = Tree::new(Fonts::bundled()?, rgb(BG_BASE));
-        let shell = Shell::build(&mut tree, None)?;
+        let file_bridge = BrowserFileBridge::new();
+        let shell = Shell::build_for_browser(&mut tree, file_bridge.clone())?;
         Ok(Self {
             tree,
             shell,
             frame: Vec::new(),
+            file_bridge,
+            pending_download: None,
         })
+    }
+
+    /// Opens a selected file directly from browser memory.
+    ///
+    /// # Errors
+    /// Rejects empty or oversized input and files that are not supported saves.
+    pub fn open_browser_file(&mut self, file_name: &str, bytes: Vec<u8>, last_modified_ms: u64) -> Result<()> {
+        if !browser_file_size_is_supported(u64::try_from(bytes.len()).unwrap_or(u64::MAX)) {
+            return Err(Error::Refused(
+                "browser save file size is outside the supported range".to_owned(),
+            ));
+        }
+        if !self
+            .shell
+            .open_browser_file(&mut self.tree, file_name, bytes, last_modified_ms)?
+        {
+            return Err(Error::Refused("browser file import is unavailable".to_owned()));
+        }
+        Ok(())
+    }
+
+    /// Records that browser file selection ended without a file.
+    pub fn cancel_browser_file_selection(&mut self) {
+        self.shell
+            .show_browser_file_status(&mut self.tree, sse_ui::strings::t("Выбор файла отменён."))
+            .ok();
+    }
+
+    /// Shows a localized browser file input error.
+    pub fn reject_browser_file_selection(&mut self, reason: &str) {
+        let message = format!(
+            "{}: {reason}",
+            sse_ui::strings::t("Не удалось открыть файл в браузере.")
+        );
+        self.shell.show_browser_file_status(&mut self.tree, &message).ok();
+    }
+
+    fn take_open_file_request(&self) -> bool {
+        self.file_bridge.take_open_request()
+    }
+
+    fn capture_download(&mut self) {
+        if self.pending_download.is_none() {
+            self.pending_download = self.file_bridge.take_download();
+        }
+    }
+
+    fn pending_download(&mut self) -> Option<&BrowserDownload> {
+        self.capture_download();
+        self.pending_download.as_ref()
+    }
+
+    fn clear_download(&mut self) {
+        self.pending_download = None;
     }
 
     /// Dispatches browser input through the same event path as native windows.
@@ -209,6 +276,7 @@ mod wasm_abi {
     const EXIT: u32 = 1;
     const INVALID_EVENT: u32 = 2;
     const RUNTIME_UNAVAILABLE: u32 = 3;
+    const FILE_REJECTED: u32 = 4;
 
     thread_local! {
         static RUNTIME: RefCell<Option<WebRuntime>> = const { RefCell::new(None) };
@@ -262,6 +330,141 @@ mod wasm_abi {
             u32::try_from(frame.as_ptr() as usize).unwrap_or(0)
         })
     }
+
+    pub(super) fn file_selected(file_name: String, bytes: Vec<u8>, last_modified_ms: u64) -> u32 {
+        RUNTIME.with(|runtime| {
+            let Ok(mut runtime) = runtime.try_borrow_mut() else {
+                return RUNTIME_UNAVAILABLE;
+            };
+            let Some(runtime) = runtime.as_mut() else {
+                return RUNTIME_UNAVAILABLE;
+            };
+            match runtime.open_browser_file(&file_name, bytes, last_modified_ms) {
+                Ok(()) => CONTINUE,
+                Err(error) => {
+                    runtime.reject_browser_file_selection(&format!("{file_name}: {error}"));
+                    FILE_REJECTED
+                }
+            }
+        })
+    }
+
+    pub(super) fn file_cancelled() -> u32 {
+        RUNTIME.with(|runtime| {
+            let Ok(mut runtime) = runtime.try_borrow_mut() else {
+                return RUNTIME_UNAVAILABLE;
+            };
+            let Some(runtime) = runtime.as_mut() else {
+                return RUNTIME_UNAVAILABLE;
+            };
+            runtime.cancel_browser_file_selection();
+            CONTINUE
+        })
+    }
+
+    pub(super) fn file_rejected(code: u32) -> u32 {
+        RUNTIME.with(|runtime| {
+            let Ok(mut runtime) = runtime.try_borrow_mut() else {
+                return RUNTIME_UNAVAILABLE;
+            };
+            let Some(runtime) = runtime.as_mut() else {
+                return RUNTIME_UNAVAILABLE;
+            };
+            let reason = match code {
+                1 => "file is empty",
+                2 => "file exceeds the 256 MiB browser limit",
+                3 => "browser memory allocation failed",
+                _ => "file could not be read",
+            };
+            runtime.reject_browser_file_selection(reason);
+            FILE_REJECTED
+        })
+    }
+
+    pub(super) fn take_open_file_request() -> u32 {
+        RUNTIME.with(|runtime| {
+            let Ok(mut runtime) = runtime.try_borrow_mut() else {
+                return RUNTIME_UNAVAILABLE;
+            };
+            let Some(runtime) = runtime.as_mut() else {
+                return RUNTIME_UNAVAILABLE;
+            };
+            u32::from(runtime.take_open_file_request())
+        })
+    }
+
+    pub(super) fn download_pending() -> u32 {
+        RUNTIME.with(|runtime| {
+            let Ok(mut runtime) = runtime.try_borrow_mut() else {
+                return 0;
+            };
+            runtime
+                .as_mut()
+                .map_or(0, |runtime| u32::from(runtime.pending_download().is_some()))
+        })
+    }
+
+    pub(super) fn download_file_name_ptr() -> u32 {
+        RUNTIME.with(|runtime| {
+            let Ok(mut runtime) = runtime.try_borrow_mut() else {
+                return 0;
+            };
+            runtime
+                .as_mut()
+                .and_then(WebRuntime::pending_download)
+                .and_then(|download| u32::try_from(download.file_name.as_ptr() as usize).ok())
+                .unwrap_or(0)
+        })
+    }
+
+    pub(super) fn download_file_name_len() -> u32 {
+        RUNTIME.with(|runtime| {
+            let Ok(mut runtime) = runtime.try_borrow_mut() else {
+                return 0;
+            };
+            runtime
+                .as_mut()
+                .and_then(WebRuntime::pending_download)
+                .and_then(|download| u32::try_from(download.file_name.len()).ok())
+                .unwrap_or(0)
+        })
+    }
+
+    pub(super) fn download_bytes_ptr() -> u32 {
+        RUNTIME.with(|runtime| {
+            let Ok(mut runtime) = runtime.try_borrow_mut() else {
+                return 0;
+            };
+            runtime
+                .as_mut()
+                .and_then(WebRuntime::pending_download)
+                .and_then(|download| u32::try_from(download.bytes.as_slice().as_ptr() as usize).ok())
+                .unwrap_or(0)
+        })
+    }
+
+    pub(super) fn download_bytes_len() -> u32 {
+        RUNTIME.with(|runtime| {
+            let Ok(mut runtime) = runtime.try_borrow_mut() else {
+                return 0;
+            };
+            runtime
+                .as_mut()
+                .and_then(WebRuntime::pending_download)
+                .and_then(|download| u32::try_from(download.bytes.len()).ok())
+                .unwrap_or(0)
+        })
+    }
+
+    pub(super) fn clear_download() {
+        RUNTIME.with(|runtime| {
+            if let Ok(mut runtime) = runtime.try_borrow_mut() {
+                if let Some(runtime) = runtime.as_mut() {
+                    runtime.clear_download();
+                }
+            }
+        });
+    }
 }
 
 /// Registers the browser runtime callbacks that `sse-sys` exposes to JavaScript.
@@ -270,5 +473,15 @@ pub fn register_browser_callbacks() {
         init: wasm_abi::init,
         event: wasm_abi::event,
         render: wasm_abi::render,
+        file_selected: wasm_abi::file_selected,
+        file_cancelled: wasm_abi::file_cancelled,
+        file_rejected: wasm_abi::file_rejected,
+        take_open_request: wasm_abi::take_open_file_request,
+        download_pending: wasm_abi::download_pending,
+        download_file_name_ptr: wasm_abi::download_file_name_ptr,
+        download_file_name_len: wasm_abi::download_file_name_len,
+        download_bytes_ptr: wasm_abi::download_bytes_ptr,
+        download_bytes_len: wasm_abi::download_bytes_len,
+        clear_download: wasm_abi::clear_download,
     });
 }

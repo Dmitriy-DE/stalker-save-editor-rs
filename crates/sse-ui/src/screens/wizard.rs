@@ -102,10 +102,20 @@ pub struct Wizard {
 impl Wizard {
     /// Builds the hidden wizard once.
     pub fn build(tree: &mut Tree, parent: WidgetId) -> Result<Self> {
-        Self::build_for_language(tree, parent, crate::strings::current_language())
+        Self::build_for_mode(tree, parent, crate::strings::current_language(), false)
     }
 
+    /// Builds the first-run panel for a browser host, where files are opened from browser memory.
+    pub fn build_for_browser(tree: &mut Tree, parent: WidgetId) -> Result<Self> {
+        Self::build_for_mode(tree, parent, crate::strings::current_language(), true)
+    }
+
+    #[cfg(test)]
     fn build_for_language(tree: &mut Tree, parent: WidgetId, language: &str) -> Result<Self> {
+        Self::build_for_mode(tree, parent, language, false)
+    }
+
+    fn build_for_mode(tree: &mut Tree, parent: WidgetId, language: &str, browser_mode: bool) -> Result<Self> {
         let host = style::card(tree, parent)?;
         style::label(
             tree,
@@ -113,6 +123,18 @@ impl Wizard {
             crate::strings::t_in(language, "МАСТЕР ПЕРВОГО ЗАПУСКА"),
             Text::Heading,
         )?;
+        let intro_text = if browser_mode {
+            format!(
+                "{}{}",
+                crate::strings::t_in(language, "Откройте файл сохранения кнопкой «Открыть…» вверху.\n"),
+                crate::strings::t_in(
+                    language,
+                    "Файл не покидает браузер: он разбирается и изменяется здесь, а после «Сохранить» скачивается обратно."
+                )
+            )
+        } else {
+            crate::strings::t_in(language, "Сохранения S.T.A.L.K.E.R. не были найдены в стандартных каталогах.\nУкажите папку с файлами сохранений (savedgames или SaveGames) или запустите автоматический поиск на диске.").to_owned()
+        };
         let _intro = tree.add(
             Some(host),
             NodeKind::Leaf,
@@ -123,10 +145,13 @@ impl Wizard {
                 ..Style::default()
             },
             Content::Paragraph {
-                text: crate::strings::t_in(language, "Сохранения S.T.A.L.K.E.R. не были найдены в стандартных каталогах.\nУкажите папку с файлами сохранений (savedgames или SaveGames) или запустите автоматический поиск на диске.").to_owned(),
+                text: intro_text,
                 style: Text::Body.style(),
             },
-            Look { text: Text::Body.color(), ..Look::default() },
+            Look {
+                text: Text::Body.color(),
+                ..Look::default()
+            },
         )?;
         let auto = style::button(
             tree,
@@ -134,7 +159,7 @@ impl Wizard {
             crate::strings::t_in(language, "АВТОПОИСК ПАПОК НА ДИСКЕ"),
             Button::Primary,
         )?;
-        style::label(
+        let manual_path = style::label(
             tree,
             host,
             crate::strings::t_in(language, "— ИЛИ УКАЗАТЬ ПУТЬ ВРУЧНУЮ —"),
@@ -191,6 +216,11 @@ impl Wizard {
             crate::strings::t_in(language, "Пропустить"),
             Button::Secondary,
         )?;
+        if browser_mode {
+            for control in [auto, manual_path, path_input, actions, browse, add, settings] {
+                tree.set_visible(control, false)?;
+            }
+        }
         tree.set_visible(host, false)?;
         Ok(Self {
             host,
@@ -484,6 +514,36 @@ mod tests {
             Ok(())
         })();
         result
+    }
+
+    #[test]
+    fn browser_wizard_explains_local_processing_and_hides_filesystem_setup() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let root = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let wizard = Wizard::build_for_browser(&mut tree, root)?;
+        tree.set_visible(wizard.host, true)?;
+
+        let expected = format!(
+            "{}{}",
+            crate::strings::t_in("ru", "Откройте файл сохранения кнопкой «Открыть…» вверху.\n"),
+            crate::strings::t_in(
+                "ru",
+                "Файл не покидает браузер: он разбирается и изменяется здесь, а после «Сохранить» скачивается обратно."
+            )
+        );
+        assert_eq!(tree.text(wizard.intro)?, expected);
+        assert!(!tree.is_visible(wizard.auto));
+        assert!(!tree.is_visible(wizard.browse));
+        assert!(!tree.is_visible(wizard.add));
+        assert!(!tree.is_visible(wizard.settings));
+        assert!(tree.is_visible(wizard.skip));
+        Ok(())
     }
 
     #[test]

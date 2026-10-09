@@ -6,9 +6,96 @@
 
 use crate::event_loop::Message;
 use crate::widget::{Tree, WidgetId};
-use sse_core::Result;
+use sse_core::{Error, Result, SaveBuffer};
 use sse_storage::discovery::SaveDirectoryDiscoveryOptions;
 use std::any::Any;
+use std::sync::{Arc, Mutex};
+
+/// A save copy prepared for download by the browser host.
+pub struct BrowserDownload {
+    /// Safe filename suggested to the browser.
+    pub file_name: String,
+    /// Verified save bytes.
+    pub bytes: SaveBuffer,
+}
+
+#[derive(Default)]
+struct BrowserFileState {
+    open_requested: bool,
+    download: Option<BrowserDownload>,
+}
+
+/// Transfers file-picker requests and edited save copies between the shared shell and browser host.
+#[derive(Clone, Default)]
+pub struct BrowserFileBridge {
+    state: Arc<Mutex<BrowserFileState>>,
+}
+
+impl BrowserFileBridge {
+    /// Creates an idle browser file-transfer bridge.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub(crate) fn request_open_file(&self) {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .open_requested = true;
+    }
+
+    /// Takes a pending request to show the browser's file picker.
+    pub fn take_open_request(&self) -> bool {
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        std::mem::take(&mut state.open_requested)
+    }
+
+    pub(crate) fn queue_download(&self, download: BrowserDownload) -> Result<()> {
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if state.download.is_some() {
+            return Err(Error::Refused("a browser download is already pending".to_owned()));
+        }
+        state.download = Some(download);
+        Ok(())
+    }
+
+    /// Takes the next edited save copy that the browser should download.
+    pub fn take_download(&self) -> Option<BrowserDownload> {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .download
+            .take()
+    }
+}
+
+#[cfg(test)]
+mod browser_file_bridge_tests {
+    use super::{BrowserDownload, BrowserFileBridge};
+    use sse_core::SaveBuffer;
+
+    #[test]
+    fn file_picker_requests_and_downloads_are_taken_once() -> sse_core::Result<()> {
+        let bridge = BrowserFileBridge::new();
+        assert!(!bridge.take_open_request());
+        bridge.request_open_file();
+        assert!(bridge.take_open_request());
+        assert!(!bridge.take_open_request());
+
+        bridge.queue_download(BrowserDownload {
+            file_name: "copy.sav".to_owned(),
+            bytes: SaveBuffer::from_vec(vec![1, 2, 3]),
+        })?;
+        let download = bridge
+            .take_download()
+            .ok_or_else(|| sse_core::Error::Refused("browser download was not queued".to_owned()))?;
+        assert_eq!(download.file_name, "copy.sav");
+        assert_eq!(download.bytes.as_slice(), [1, 2, 3]);
+        assert!(bridge.take_download().is_none());
+        Ok(())
+    }
+}
 
 pub mod app;
 #[cfg(feature = "native-ui")]
@@ -357,6 +444,20 @@ pub trait Screen {
     /// # Errors
     /// Returns an error when the requested file cannot be read or parsed.
     fn open_save(&mut self, _cx: &mut Context<'_>, _path: &std::path::Path) -> Result<bool> {
+        Ok(false)
+    }
+
+    /// Opens a save selected by the browser without writing it to a local path.
+    ///
+    /// # Errors
+    /// Returns an error when the imported bytes are rejected or cannot be parsed.
+    fn open_browser_file(
+        &mut self,
+        _cx: &mut Context<'_>,
+        _file_name: &str,
+        _bytes: Vec<u8>,
+        _last_modified_ms: u64,
+    ) -> Result<bool> {
         Ok(false)
     }
 
