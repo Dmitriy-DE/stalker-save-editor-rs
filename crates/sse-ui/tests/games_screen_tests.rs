@@ -4,7 +4,9 @@ use sse_ui::event_loop::Message;
 use sse_ui::glyphs::Fonts;
 use sse_ui::layout::{NodeKind, Style};
 use sse_ui::raster::Color;
-use sse_ui::screens::games::{screens, DiscoveredInstallation, DiscoveredResult, GameInstallSource, GameTarget};
+use sse_ui::screens::games::{
+    screens, DiscoveredInstallation, DiscoveredResult, DiscoveryStatus, GameInstallSource, GameTarget,
+};
 use sse_ui::screens::{AppMessage, Context, ScreenId};
 use sse_ui::widget::{Content, Look, Tree};
 use std::fs;
@@ -102,7 +104,7 @@ fn games_overview_handles_synthetic_installation_state() -> sse_core::Result<()>
 
     let result = DiscoveredResult {
         installations: vec![synth_install],
-        status: "Найдено 1".to_string(),
+        status: DiscoveryStatus::Found(1),
     };
 
     // Simulate worker message delivered to the screen
