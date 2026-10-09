@@ -1998,12 +1998,11 @@ fn repair_quest_save(
         return Err("НЕТ ПОДТВЕРЖДЁННЫХ СЛОМАННЫХ КВЕСТОВ.".to_owned());
     };
     let preflight_image = prepared.clone();
-    let (receipt, (), ()) = transaction::replace_transaction_with_summary_preflight_and_verifier(
-        path,
-        expected_source_sha256,
-        prepared.as_slice(),
-        backup_directory,
-        transaction::EditSummary::default(),
+    let request =
+        transaction::ReplacementRequest::new(path, expected_source_sha256, prepared.as_slice(), backup_directory);
+    let (receipt, (), ()) = transaction::replace_transaction(
+        &transaction::StdFileSystem,
+        request,
         move |_, replacement| {
             if replacement != preflight_image.as_slice() {
                 return Err(Error::damaged(

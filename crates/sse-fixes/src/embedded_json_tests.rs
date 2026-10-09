@@ -1,4 +1,4 @@
-use crate::embedded_json::decode_json_asset;
+use sse_codecs::embedded_json::decode_json_asset;
 use std::fs;
 use std::io;
 use std::path::Path;

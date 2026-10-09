@@ -19,6 +19,8 @@ pub mod base64;
 pub mod crc32;
 /// Raw DEFLATE compressor.
 pub mod deflate;
+/// Bounded raw-DEFLATE decoding and caching for built-in JSON assets.
+pub mod embedded_json;
 /// Safe OpenType/TrueType parsing and glyph coverage rasterisation.
 pub mod font;
 /// Zlib/DEFLATE decoder used by PNG and package tooling.
@@ -87,5 +89,31 @@ mod allocation_guard_tests {
     #[test]
     fn ordinary_compression_ratio_is_accepted() {
         assert!(validate_declared_output_size(1024, 1024 * 1024, "test").is_ok());
+    }
+}
+
+#[cfg(test)]
+mod embedded_json_tests {
+    use super::embedded_json::decode_json_asset;
+
+    #[test]
+    fn empty_json_asset_inflates_from_its_size_header() {
+        let mut asset = 0_u32.to_le_bytes().to_vec();
+        asset.extend_from_slice(&[0x03, 0x00]);
+
+        assert_eq!(decode_json_asset(&asset).unwrap_or_default(), b"");
+    }
+
+    #[test]
+    fn embedded_json_rejects_truncated_size_header() {
+        assert!(decode_json_asset(&[1, 2, 3]).is_err());
+    }
+
+    #[test]
+    fn embedded_json_rejects_declared_size_mismatch() {
+        let mut asset = 1_u32.to_le_bytes().to_vec();
+        asset.extend_from_slice(&[0x03, 0x00]);
+
+        assert!(decode_json_asset(&asset).is_err());
     }
 }

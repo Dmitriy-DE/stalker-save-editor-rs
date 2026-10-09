@@ -424,12 +424,17 @@ fn publish_cli_write(
         in_place,
     } = publication;
     if in_place {
-        let (receipt, ()) = sse_storage::transaction::replace_transaction_with_summary_and_verifier(
+        let request = sse_storage::transaction::ReplacementRequest::new(
             source_path,
             expected_source_sha256,
             replacement,
             backup_directory,
-            summary,
+        )
+        .with_summary(summary);
+        let (receipt, (), ()) = sse_storage::transaction::replace_transaction(
+            &sse_storage::transaction::StdFileSystem,
+            request,
+            |_, _| Ok(()),
             verify_readback,
         )?;
         return Ok(PublishedWrite {

@@ -71,6 +71,11 @@ pub trait FileSystem {
     fn sync_directory(&self, _directory: &Path) -> Result<()> {
         Ok(())
     }
+    /// Prunes old verified backup sets. The default is a no-op for in-memory filesystems; persistent
+    /// implementations should override it if they manage the backup directory.
+    fn prune_verified_backups(&self, _directory: &Path) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// Standard-library filesystem operations for save transactions.
@@ -167,6 +172,10 @@ impl FileSystem for StdFileSystem {
 
     fn sync_directory(&self, directory: &Path) -> Result<()> {
         sync_directory(Some(directory))
+    }
+
+    fn prune_verified_backups(&self, directory: &Path) -> Result<()> {
+        rotate_verified_backups(directory)
     }
 }
 
@@ -888,10 +897,7 @@ pub fn restore_in_place(journal_path: &Path) -> Result<RestoreReceipt> {
     let restore_from = entry.backup_path.clone();
     let (receipt, ()) = replace_with_file_system_and_verifier_operation(
         &StdFileSystem,
-        &source_path,
-        &metadata.output_sha256,
-        &restore_bytes,
-        directory,
+        ReplacementRequest::new(&source_path, &metadata.output_sha256, &restore_bytes, directory),
         JournalOperation::Restore(&restore_from),
         |read_back| {
             if read_back == restore_bytes && sha256::sha256_hex(read_back) == entry.source_sha256 {
@@ -1055,177 +1061,84 @@ fn remove_matching_temp(path: &Path, expected_sha256: &str) -> Result<bool> {
     Ok(true)
 }
 
-/// Replaces a save only when its fresh SHA-256 still matches the prepared source hash.
-pub fn replace_transaction(
-    source_path: &Path,
-    expected_source_sha256: &str,
-    replacement: &[u8],
-    backup_directory: &Path,
-) -> Result<ReplacementReceipt> {
-    replace_transaction_with_verifier(
-        source_path,
-        expected_source_sha256,
-        replacement,
-        backup_directory,
-        |_| Ok(()),
-    )
-    .map(|(receipt, ())| receipt)
+/// All inputs required to replace a save in one transaction.
+#[derive(Clone, Copy)]
+pub struct ReplacementRequest<'a> {
+    /// Save path to replace.
+    pub source_path: &'a Path,
+    /// SHA-256 captured when the edit began.
+    pub expected_source_sha256: &'a str,
+    /// Complete replacement save bytes.
+    pub replacement: &'a [u8],
+    /// Directory that stores verified backups and transaction journals.
+    pub backup_directory: &'a Path,
+    /// Summary recorded in the transaction journal.
+    pub summary: EditSummary,
 }
 
-/// Replaces a save and runs a format-aware check against durable read-back bytes before commit.
-pub fn replace_transaction_with_verifier<T>(
-    source_path: &Path,
-    expected_source_sha256: &str,
-    replacement: &[u8],
-    backup_directory: &Path,
-    verify_readback: impl FnOnce(&[u8]) -> Result<T>,
-) -> Result<(ReplacementReceipt, T)> {
-    replace_transaction_with_summary_and_verifier(
-        source_path,
-        expected_source_sha256,
-        replacement,
-        backup_directory,
-        EditSummary::default(),
-        verify_readback,
-    )
-}
-
-/// Replaces a save, records money and stack edits, and verifies durable read-back bytes before commit.
-pub fn replace_transaction_with_summary_and_verifier<T>(
-    source_path: &Path,
-    expected_source_sha256: &str,
-    replacement: &[u8],
-    backup_directory: &Path,
-    summary: EditSummary,
-    verify_readback: impl FnOnce(&[u8]) -> Result<T>,
-) -> Result<(ReplacementReceipt, T)> {
-    replace_transaction_with_summary_preflight_and_verifier(
-        source_path,
-        expected_source_sha256,
-        replacement,
-        backup_directory,
-        summary,
-        |_, _| Ok(()),
-        verify_readback,
-    )
-    .map(|(receipt, (), verified)| (receipt, verified))
-}
-
-/// Runs semantic validation after the fresh source hash check and before transaction files are created.
-/// The returned preflight value is paired with the durable read-back result after commit.
-pub fn replace_transaction_with_summary_preflight_and_verifier<P, V>(
-    source_path: &Path,
-    expected_source_sha256: &str,
-    replacement: &[u8],
-    backup_directory: &Path,
-    summary: EditSummary,
-    preflight: impl FnOnce(&[u8], &[u8]) -> Result<P>,
-    verify_readback: impl FnOnce(&[u8]) -> Result<V>,
-) -> Result<(ReplacementReceipt, P, V)> {
-    let (mut receipt, preflight, verified) = replace_with_file_system_and_operation_and_checks(
-        &StdFileSystem,
-        ReplacementRequest {
+impl<'a> ReplacementRequest<'a> {
+    /// Creates a replacement request with an empty edit summary.
+    #[must_use]
+    pub fn new(
+        source_path: &'a Path,
+        expected_source_sha256: &'a str,
+        replacement: &'a [u8],
+        backup_directory: &'a Path,
+    ) -> Self {
+        Self {
             source_path,
             expected_source_sha256,
             replacement,
             backup_directory,
-            operation: JournalOperation::Replace(summary),
-        },
+            summary: EditSummary::default(),
+        }
+    }
+
+    /// Adds the edit summary written to the transaction journal.
+    #[must_use]
+    pub fn with_summary(mut self, summary: EditSummary) -> Self {
+        self.summary = summary;
+        self
+    }
+}
+
+/// Replaces a save after fresh-hash validation, semantic preflight and durable read-back verification.
+///
+/// The same request and checks are used by production callers and injected filesystem tests.
+pub fn replace_transaction<P, V>(
+    files: &impl FileSystem,
+    request: ReplacementRequest<'_>,
+    preflight: impl FnOnce(&[u8], &[u8]) -> Result<P>,
+    verify_readback: impl FnOnce(&[u8]) -> Result<V>,
+) -> Result<(ReplacementReceipt, P, V)> {
+    let (mut receipt, preflight, verified) = replace_with_file_system_and_operation_and_checks(
+        files,
+        request,
+        JournalOperation::Replace(request.summary),
         preflight,
         verify_readback,
     )?;
-    receipt.maintenance_warning = rotate_verified_backups(backup_directory)
+    receipt.maintenance_warning = files
+        .prune_verified_backups(request.backup_directory)
         .err()
         .map(|error| error.to_string());
     Ok((receipt, preflight, verified))
 }
 
-/// Testable version of [`replace_transaction`].
-pub fn replace_with_file_system(
-    files: &impl FileSystem,
-    source_path: &Path,
-    expected_source_sha256: &str,
-    replacement: &[u8],
-    backup_directory: &Path,
-) -> Result<ReplacementReceipt> {
-    replace_with_file_system_and_verifier(
-        files,
-        source_path,
-        expected_source_sha256,
-        replacement,
-        backup_directory,
-        |_| Ok(()),
-    )
-    .map(|(receipt, ())| receipt)
-}
-
-/// Testable replacement with a read-back verifier whose output is returned after commit.
-pub fn replace_with_file_system_and_verifier<T>(
-    files: &impl FileSystem,
-    source_path: &Path,
-    expected_source_sha256: &str,
-    replacement: &[u8],
-    backup_directory: &Path,
-    verify_readback: impl FnOnce(&[u8]) -> Result<T>,
-) -> Result<(ReplacementReceipt, T)> {
-    replace_with_file_system_and_summary_and_verifier(
-        files,
-        source_path,
-        expected_source_sha256,
-        replacement,
-        backup_directory,
-        EditSummary::default(),
-        verify_readback,
-    )
-}
-
-fn replace_with_file_system_and_summary_and_verifier<T>(
-    files: &impl FileSystem,
-    source_path: &Path,
-    expected_source_sha256: &str,
-    replacement: &[u8],
-    backup_directory: &Path,
-    summary: EditSummary,
-    verify_readback: impl FnOnce(&[u8]) -> Result<T>,
-) -> Result<(ReplacementReceipt, T)> {
-    replace_with_file_system_and_verifier_operation(
-        files,
-        source_path,
-        expected_source_sha256,
-        replacement,
-        backup_directory,
-        JournalOperation::Replace(summary),
-        verify_readback,
-    )
-}
-
 fn replace_with_file_system_and_verifier_operation<T>(
     files: &impl FileSystem,
-    source_path: &Path,
-    expected_source_sha256: &str,
-    replacement: &[u8],
-    backup_directory: &Path,
+    request: ReplacementRequest<'_>,
     operation: JournalOperation<'_>,
     verify_readback: impl FnOnce(&[u8]) -> Result<T>,
 ) -> Result<(ReplacementReceipt, T)> {
-    replace_with_file_system_and_operation_and_checks(
-        files,
-        ReplacementRequest {
-            source_path,
-            expected_source_sha256,
-            replacement,
-            backup_directory,
-            operation,
-        },
-        |_, _| Ok(()),
-        verify_readback,
-    )
-    .map(|(receipt, (), verified)| (receipt, verified))
+    replace_with_file_system_and_operation_and_checks(files, request, operation, |_, _| Ok(()), verify_readback)
+        .map(|(receipt, (), verified)| (receipt, verified))
 }
 
 fn replace_with_file_system_and_operation_and_checks<P, V>(
     files: &impl FileSystem,
     request: ReplacementRequest<'_>,
+    operation: JournalOperation<'_>,
     preflight: impl FnOnce(&[u8], &[u8]) -> Result<P>,
     verify_readback: impl FnOnce(&[u8]) -> Result<V>,
 ) -> Result<(ReplacementReceipt, P, V)> {
@@ -1234,7 +1147,7 @@ fn replace_with_file_system_and_operation_and_checks<P, V>(
         expected_source_sha256,
         replacement,
         backup_directory,
-        operation,
+        summary: _,
     } = request;
     if replacement.is_empty() {
         return Err(Error::Refused("replacement save is empty".to_owned()));
@@ -1628,14 +1541,6 @@ enum JournalOperation<'a> {
     Replace(EditSummary),
     Restore(&'a Path),
     SteamCloud,
-}
-
-struct ReplacementRequest<'a> {
-    source_path: &'a Path,
-    expected_source_sha256: &'a str,
-    replacement: &'a [u8],
-    backup_directory: &'a Path,
-    operation: JournalOperation<'a>,
 }
 
 struct ExportJournal<'a> {
@@ -2513,13 +2418,67 @@ fn sync_directory(directory: Option<&Path>) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{replace_with_file_system, restore_backup_with_file_system, FileSystem, StdFileSystem};
+    use super::{restore_backup_with_file_system, FileSystem, ReplacementReceipt, ReplacementRequest, StdFileSystem};
     use sse_core::{Error, Result};
     use std::cell::{Cell, RefCell};
     use std::collections::HashMap;
     use std::path::{Path, PathBuf};
 
     type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
+
+    fn replace_with_file_system(
+        files: &impl FileSystem,
+        source: &Path,
+        expected_sha256: &str,
+        replacement: &[u8],
+        backups: &Path,
+    ) -> Result<ReplacementReceipt> {
+        replace_with_file_system_and_verifier(files, source, expected_sha256, replacement, backups, |_| Ok(()))
+            .map(|(receipt, ())| receipt)
+    }
+
+    fn replace_with_file_system_and_verifier<T>(
+        files: &impl FileSystem,
+        source: &Path,
+        expected_sha256: &str,
+        replacement: &[u8],
+        backups: &Path,
+        verify_readback: impl FnOnce(&[u8]) -> Result<T>,
+    ) -> Result<(ReplacementReceipt, T)> {
+        let (receipt, (), verified) = super::replace_transaction(
+            files,
+            ReplacementRequest::new(source, expected_sha256, replacement, backups),
+            |_, _| Ok(()),
+            verify_readback,
+        )?;
+        Ok((receipt, verified))
+    }
+
+    fn replace_transaction_with_verifier<T>(
+        source: &Path,
+        expected_sha256: &str,
+        replacement: &[u8],
+        backups: &Path,
+        verify_readback: impl FnOnce(&[u8]) -> Result<T>,
+    ) -> Result<(ReplacementReceipt, T)> {
+        replace_with_file_system_and_verifier(
+            &StdFileSystem,
+            source,
+            expected_sha256,
+            replacement,
+            backups,
+            verify_readback,
+        )
+    }
+
+    fn replace_std_transaction(
+        source: &Path,
+        expected_sha256: &str,
+        replacement: &[u8],
+        backups: &Path,
+    ) -> Result<ReplacementReceipt> {
+        replace_with_file_system(&StdFileSystem, source, expected_sha256, replacement, backups)
+    }
 
     #[cfg(unix)]
     #[test]
@@ -2584,8 +2543,10 @@ mod tests {
 
         let receipt = replace_with_file_system(&fs, &source, &source_hash, output_bytes, &backup_directory)?;
 
+        assert!(receipt.maintenance_warning.is_none());
         assert_eq!(fs.bytes(&source).as_deref(), Some(output_bytes.as_slice()));
         assert_eq!(fs.bytes(&receipt.backup_path).as_deref(), Some(source_bytes.as_slice()));
+        assert_eq!(fs.backup_prune_calls(), 1);
         let journal = fs
             .bytes(&receipt.journal_path)
             .ok_or_else(|| std::io::Error::other("journal should exist"))?;
@@ -2661,18 +2622,14 @@ mod tests {
         let fs = MemoryFs::new(&source, source_bytes, None);
         let readback_called = Cell::new(false);
 
-        let result = super::replace_with_file_system_and_operation_and_checks(
+        let request = super::ReplacementRequest::new(&source, &source_hash, replacement, &backup_directory)
+            .with_summary(super::EditSummary {
+                money: Some(123_456),
+                ..super::EditSummary::default()
+            });
+        let result = super::replace_transaction(
             &fs,
-            super::ReplacementRequest {
-                source_path: &source,
-                expected_source_sha256: &source_hash,
-                replacement,
-                backup_directory: &backup_directory,
-                operation: super::JournalOperation::Replace(super::EditSummary {
-                    money: Some(123_456),
-                    ..super::EditSummary::default()
-                }),
-            },
+            request,
             |original, prepared| {
                 assert_eq!(original, source_bytes);
                 assert_eq!(prepared, replacement);
@@ -2713,15 +2670,9 @@ mod tests {
             player_faction: true,
         };
 
-        let (receipt, (), ()) = super::replace_with_file_system_and_operation_and_checks(
+        let (receipt, (), ()) = super::replace_transaction(
             &fs,
-            super::ReplacementRequest {
-                source_path: &source,
-                expected_source_sha256: &source_hash,
-                replacement,
-                backup_directory: &backup_directory,
-                operation: super::JournalOperation::Replace(summary),
-            },
+            super::ReplacementRequest::new(&source, &source_hash, replacement, &backup_directory).with_summary(summary),
             |_, _| Ok(()),
             |_| Ok(()),
         )?;
@@ -2756,7 +2707,7 @@ mod tests {
         let (source, backup_directory) = fake_paths();
         let fs = MemoryFs::new(&source, source_bytes, None);
 
-        let result = super::replace_with_file_system_and_verifier(
+        let result = replace_with_file_system_and_verifier(
             &fs,
             &source,
             &source_hash,
@@ -2795,7 +2746,7 @@ mod tests {
         let source_gid = source_metadata.gid();
         let source_hash = sse_codecs::sha256::sha256_hex(source_bytes);
 
-        let failed = super::replace_transaction_with_verifier(&source, &source_hash, replacement, &backups, |_| {
+        let failed = replace_transaction_with_verifier(&source, &source_hash, replacement, &backups, |_| {
             Err::<(), Error>(Error::damaged("injected semantic verification failure"))
         });
         assert!(failed.is_err());
@@ -2808,7 +2759,7 @@ mod tests {
         assert!(std::fs::read_dir(&backups)?.next().is_none());
         assert!(std::fs::read_dir(&saves)?.all(|entry| { entry.is_ok_and(|entry| entry.file_name() == "save.sav") }));
 
-        let receipt = super::replace_transaction(&source, &source_hash, replacement, &backups)?;
+        let receipt = replace_std_transaction(&source, &source_hash, replacement, &backups)?;
 
         let mode = std::fs::metadata(&source)?.permissions().mode() & 0o777;
         assert_eq!(mode, 0o640);
@@ -2895,7 +2846,7 @@ mod tests {
         let original = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-source.sav");
         let edited = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-expected.sav");
         std::fs::write(&source, original)?;
-        let receipt = super::replace_transaction(&source, &sse_codecs::sha256::sha256_hex(original), edited, &backups)?;
+        let receipt = replace_std_transaction(&source, &sse_codecs::sha256::sha256_hex(original), edited, &backups)?;
 
         let result = super::restore_backup_with_file_system(&FailDirectorySync, &receipt.journal_path, &output);
 
@@ -2976,7 +2927,7 @@ mod tests {
         let original = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-source.sav");
         let edited = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-expected.sav");
         std::fs::write(&source, original)?;
-        let receipt = super::replace_transaction(&source, &sse_codecs::sha256::sha256_hex(original), edited, &backups)?;
+        let receipt = replace_std_transaction(&source, &sse_codecs::sha256::sha256_hex(original), edited, &backups)?;
         let files = RestoreOutputChangesAfterReadback {
             output: output.clone(),
             readback_seen: Cell::new(false),
@@ -3008,7 +2959,7 @@ mod tests {
         let original = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-source.sav");
         let edited = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-expected.sav");
         std::fs::write(&source, original)?;
-        let receipt = super::replace_transaction(&source, &sse_codecs::sha256::sha256_hex(original), edited, &backups)?;
+        let receipt = replace_std_transaction(&source, &sse_codecs::sha256::sha256_hex(original), edited, &backups)?;
 
         let restored = super::restore_in_place(&receipt.journal_path)?;
 
@@ -3086,7 +3037,7 @@ mod tests {
         let original = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-source.sav");
         let edited = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-expected.sav");
         std::fs::write(&source, original)?;
-        let receipt = super::replace_transaction(&source, &sse_codecs::sha256::sha256_hex(original), edited, &backups)?;
+        let receipt = replace_std_transaction(&source, &sse_codecs::sha256::sha256_hex(original), edited, &backups)?;
         std::fs::write(&source, b"changed after save")?;
         let Err(error) = super::restore_in_place(&receipt.journal_path) else {
             return Err("changed source must be refused".into());
@@ -3124,7 +3075,7 @@ mod tests {
         std::os::unix::fs::symlink(&target, &link)?;
         let source_hash = sse_codecs::sha256::sha256_hex(source_bytes);
 
-        let result = super::replace_transaction(&link, &source_hash, replacement, &backups);
+        let result = replace_std_transaction(&link, &source_hash, replacement, &backups);
 
         assert!(result.is_err());
         assert_eq!(std::fs::read(&target)?, source_bytes);
@@ -3154,7 +3105,7 @@ mod tests {
         std::fs::write(&source, source_bytes)?;
         let source_hash = sse_codecs::sha256::sha256_hex(source_bytes);
 
-        let result = super::replace_transaction(&source, &source_hash, replacement, &alias.join("saves/backups"));
+        let result = replace_std_transaction(&source, &source_hash, replacement, &alias.join("saves/backups"));
 
         assert!(result.is_err());
         assert_eq!(std::fs::read(&source)?, source_bytes);
@@ -3196,7 +3147,7 @@ mod tests {
         std::fs::write(&source, source_bytes)?;
         let source_hash = sse_codecs::sha256::sha256_hex(source_bytes);
 
-        let result = super::replace_transaction(&source, &source_hash, replacement, &root.join("saves/backups"));
+        let result = replace_std_transaction(&source, &source_hash, replacement, &root.join("saves/backups"));
 
         assert!(result.is_err());
         assert_eq!(std::fs::read(&source)?, source_bytes);
@@ -3216,6 +3167,7 @@ mod tests {
         fail_at: Option<usize>,
         failed: Cell<bool>,
         readonly: Cell<bool>,
+        backup_prune_calls: Cell<usize>,
     }
 
     impl MemoryFs {
@@ -3226,6 +3178,7 @@ mod tests {
                 fail_at,
                 failed: Cell::new(false),
                 readonly: Cell::new(false),
+                backup_prune_calls: Cell::new(0),
             }
         }
 
@@ -3235,6 +3188,10 @@ mod tests {
 
         fn operation_count(&self) -> usize {
             self.operations.get()
+        }
+
+        fn backup_prune_calls(&self) -> usize {
+            self.backup_prune_calls.get()
         }
 
         fn tick(&self) -> Result<()> {
@@ -3318,6 +3275,12 @@ mod tests {
 
         fn is_readonly(&self, _path: &Path) -> Result<bool> {
             Ok(self.readonly.get())
+        }
+
+        fn prune_verified_backups(&self, _directory: &Path) -> Result<()> {
+            self.backup_prune_calls
+                .set(self.backup_prune_calls.get().saturating_add(1));
+            Ok(())
         }
     }
 }

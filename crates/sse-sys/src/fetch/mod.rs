@@ -8,10 +8,9 @@ use std::time::Instant;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod curl;
 mod local;
+use local::FileFetch;
 #[cfg(target_os = "windows")]
 mod windows;
-
-pub use local::{FileFetch, MemoryFetch};
 
 /// Default maximum body size accepted by the system fetcher.
 pub const DEFAULT_MAX_BYTES: u64 = 64 * 1024 * 1024;

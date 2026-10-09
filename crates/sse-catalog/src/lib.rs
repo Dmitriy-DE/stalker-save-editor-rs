@@ -2,8 +2,6 @@
 //!
 //! Owner: Gemini (G2).
 
-mod embedded_json;
-
 pub mod builder;
 pub mod bundle;
 pub mod i18n;

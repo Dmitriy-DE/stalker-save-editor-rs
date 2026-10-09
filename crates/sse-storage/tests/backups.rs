@@ -3,7 +3,8 @@
 #![allow(clippy::arithmetic_side_effects, clippy::expect_used, clippy::indexing_slicing)]
 
 use sse_storage::transaction::{
-    export_transaction, list_backups, replace_transaction, restore_backup, restore_in_place, BackupStatus, EditSummary,
+    export_transaction, list_backups, restore_backup, restore_in_place, BackupStatus, EditSummary, ReplacementReceipt,
+    ReplacementRequest, StdFileSystem,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -26,6 +27,21 @@ impl Drop for TemporaryDirectory {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
     }
+}
+
+fn replace_transaction(
+    source: &std::path::Path,
+    expected_sha256: &str,
+    replacement: &[u8],
+    backup_directory: &std::path::Path,
+) -> sse_core::Result<ReplacementReceipt> {
+    let (receipt, (), ()) = sse_storage::transaction::replace_transaction(
+        &StdFileSystem,
+        ReplacementRequest::new(source, expected_sha256, replacement, backup_directory),
+        |_, _| Ok(()),
+        |_| Ok(()),
+    )?;
+    Ok(receipt)
 }
 
 fn export_fixture(root: &std::path::Path) -> (Vec<u8>, Vec<u8>, std::path::PathBuf, std::path::PathBuf) {

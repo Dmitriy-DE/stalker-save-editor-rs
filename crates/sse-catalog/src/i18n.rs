@@ -1,7 +1,7 @@
 //! Interface translations, pluralization, reverse lookup, and completeness validation.
 
-use crate::embedded_json::{self, JsonAssetCache};
 use crate::value::JsonValue;
+use sse_codecs::embedded_json::{self, JsonAssetCache};
 use sse_core::{Error, Result};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};

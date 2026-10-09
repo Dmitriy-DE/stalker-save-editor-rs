@@ -1,7 +1,8 @@
 use super::{Fetch, Response, DEFAULT_MAX_BYTES};
 use sse_core::{Error, Result};
+#[cfg(test)]
+use std::collections::BTreeMap;
 use std::{
-    collections::BTreeMap,
     fs::File,
     io::{Read, Seek, SeekFrom},
     path::PathBuf,
@@ -9,9 +10,9 @@ use std::{
 
 /// Local `file://` streaming fetcher, useful for offline sources and tests.
 #[derive(Clone, Debug)]
-pub struct FileFetch {
+pub(super) struct FileFetch {
     /// Maximum accepted body bytes.
-    pub max_bytes: u64,
+    pub(super) max_bytes: u64,
 }
 
 impl Default for FileFetch {
@@ -93,12 +94,14 @@ impl Fetch for FileFetch {
 
 /// Deterministic in-memory fetcher for unit tests.
 #[derive(Clone, Debug)]
-pub struct MemoryFetch {
+#[cfg(test)]
+struct MemoryFetch {
     entries: BTreeMap<String, Vec<u8>>,
     /// Maximum accepted body bytes.
-    pub max_bytes: u64,
+    max_bytes: u64,
 }
 
+#[cfg(test)]
 impl Default for MemoryFetch {
     fn default() -> Self {
         Self {
@@ -108,6 +111,7 @@ impl Default for MemoryFetch {
     }
 }
 
+#[cfg(test)]
 impl MemoryFetch {
     /// Inserts or replaces a URL body.
     pub fn insert(&mut self, url: impl Into<String>, body: Vec<u8>) {
@@ -115,6 +119,7 @@ impl MemoryFetch {
     }
 }
 
+#[cfg(test)]
 impl Fetch for MemoryFetch {
     fn get(&mut self, url: &str, range_from: u64, sink: &mut dyn FnMut(&[u8]) -> bool) -> Result<Response> {
         self.get_with_response(url, range_from, &mut |_| true, sink)

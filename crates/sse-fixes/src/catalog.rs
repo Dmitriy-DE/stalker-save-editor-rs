@@ -6,8 +6,8 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use crate::embedded_json::{self, JsonAssetCache};
 use sse_catalog::{parse_json, JsonValue};
+use sse_codecs::embedded_json::{self, JsonAssetCache};
 use sse_core::{Error, Result};
 
 use crate::models::{

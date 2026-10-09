@@ -4,11 +4,26 @@
 
 use sse_update::{
     compare_versions, download_artifact, install_artifact, verify_existing_file, verify_signature, ContentRange, Fetch,
-    MemoryFetch, MockProcessRunner, PrereleasePart, Response, SemVer, UpdateArtifact, UpdateInstallState,
-    UpdateInstallation, UpdateInstallationDetector, UpdateManifest, UpdateService, UpdateState,
+    PrereleasePart, Response, SemVer, UpdateArtifact, UpdateInstallState, UpdateInstallation,
+    UpdateInstallationDetector, UpdateManifest, UpdateService, UpdateState,
 };
+mod common;
+use common::{MemoryFetch, MockProcessRunner};
 use std::fs;
 use std::path::{Path, PathBuf};
+
+#[test]
+fn response_contract_uses_the_shared_system_fetch_type() {
+    let response = Response {
+        status: 200,
+        content_length: Some(3),
+        content_range: None,
+        final_url: "https://updates.test/archive".to_owned(),
+    };
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.final_url, "https://updates.test/archive");
+}
 
 struct TempDir {
     path: PathBuf,
@@ -368,14 +383,14 @@ impl Fetch for InterruptOnceFetch {
         let start = usize::try_from(range_from).unwrap();
         let remaining = self.body.get(start..).unwrap();
         let response = Response {
-            status_code: if range_from == 0 { 200 } else { 206 },
+            status: if range_from == 0 { 200 } else { 206 },
             content_length: Some(u64::try_from(remaining.len()).unwrap()),
             content_range: (range_from != 0).then_some(ContentRange {
                 start: range_from,
                 end: u64::try_from(self.body.len().saturating_sub(1)).unwrap(),
                 total: u64::try_from(self.body.len()).unwrap(),
             }),
-            location: None,
+            final_url: "https://updates.test/archive".to_owned(),
         };
         if !on_response(&response) {
             return Err(sse_core::Error::Refused("test response rejected".to_string()));
@@ -482,10 +497,10 @@ impl Fetch for ReplacePartWithSymlinkFetch {
         use std::os::unix::fs::symlink;
 
         let response = Response {
-            status_code: 200,
+            status: 200,
             content_length: Some(u64::try_from(self.body.len()).unwrap()),
             content_range: None,
-            location: None,
+            final_url: "https://updates.test/archive".to_owned(),
         };
         if !on_response(&response) || !sink(&self.body) {
             return Err(sse_core::Error::Refused("fetch cancelled".to_string()));
@@ -547,10 +562,10 @@ impl Fetch for IgnoreRangeFetch {
     ) -> sse_core::Result<Response> {
         self.requested_ranges.push(range_from);
         let response = Response {
-            status_code: 200,
+            status: 200,
             content_length: Some(u64::try_from(self.body.len()).unwrap()),
             content_range: None,
-            location: None,
+            final_url: "https://updates.test/archive".to_owned(),
         };
         if !on_response(&response) {
             return Err(sse_core::Error::Refused("response rejected before body".to_owned()));
@@ -608,14 +623,14 @@ impl Fetch for InvalidRangeFetch {
         sink: &mut dyn FnMut(&[u8]) -> bool,
     ) -> sse_core::Result<Response> {
         let response = Response {
-            status_code: 206,
+            status: 206,
             content_length: Some(u64::try_from(self.body.len()).unwrap()),
             content_range: Some(ContentRange {
                 start: range_from.saturating_add(1),
                 end: u64::try_from(self.body.len().saturating_sub(1)).unwrap(),
                 total: u64::try_from(self.body.len()).unwrap(),
             }),
-            location: None,
+            final_url: "https://updates.test/archive".to_owned(),
         };
         if !on_response(&response) {
             return Err(sse_core::Error::Refused(
