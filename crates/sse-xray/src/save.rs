@@ -1266,7 +1266,11 @@ fn read_condition_fields(raw: &[u8], record: &ObjectRecord) -> Option<(f32, usiz
     let mut reader = Cursor::new(state);
     skip_dynamic_visual(&mut reader, record.version).ok()?;
     let offset = record.state_offset.checked_add(reader.position())?;
-    let bytes = raw.get(offset..offset.checked_add(4)?)?;
+    let condition_end = offset.checked_add(4)?;
+    if condition_end > state_end {
+        return None;
+    }
+    let bytes = raw.get(offset..condition_end)?;
     let condition = f32::from_le_bytes(<[u8; 4]>::try_from(bytes).ok()?);
     if !condition.is_finite() || !(0.0..=1.0).contains(&condition) {
         return None;
@@ -1664,6 +1668,23 @@ mod tests {
         trailing_only[update_offset.saturating_add(3)] = 0;
         let matches = super::read_condition_fields(&trailing_only, &record).map(|fields| fields.2);
         assert_eq!(matches, Some(None));
+    }
+
+    #[test]
+    fn condition_is_never_read_from_bytes_after_the_state() {
+        let state = synthetic_dynamic_visual_state(b"", true);
+        let state_length = state.len();
+        let mut raw = state;
+        // The next record's bytes: a valid condition value that must not be taken as this object's condition.
+        raw.extend_from_slice(&0.75_f32.to_le_bytes());
+        let update_offset = raw.len();
+        raw.extend_from_slice(&[0_u8; 16]);
+        let mut record = synthetic_creature_record(state_length);
+        record.name = "wpn_test".to_owned();
+        record.update_offset = update_offset;
+        record.update_length = 16;
+
+        assert_eq!(super::read_condition_fields(&raw, &record), None);
     }
 
     #[test]
