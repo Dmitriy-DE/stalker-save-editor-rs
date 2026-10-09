@@ -150,6 +150,12 @@ struct ArtLayers {
     header: WidgetId,
     header_scrim: WidgetId,
     topbar_scrim: WidgetId,
+    window_frame: WidgetId,
+    sidebar_box: WidgetId,
+    header_frame: WidgetId,
+    header_box: WidgetId,
+    topbar_frame: WidgetId,
+    topbar_box: WidgetId,
     sources: [Option<ImageData>; 3],
     scaled: [Option<((u32, u32), ImageData)>; 3],
     menu_width: f32,
@@ -158,55 +164,27 @@ struct ArtLayers {
 
 impl ArtLayers {
     fn build(tree: &mut Tree, root: WidgetId) -> Result<Self> {
-        let window = tree.add(
-            Some(root),
-            NodeKind::Leaf,
-            Style::default(),
-            Content::Image(None),
-            Look::default(),
-        )?;
-        let window_scrim = tree.add(
-            Some(root),
-            NodeKind::Leaf,
-            Style::default(),
-            Content::Panel,
-            Look::default(),
-        )?;
-        let sidebar = tree.add(
-            Some(root),
-            NodeKind::Leaf,
-            Style::default(),
-            Content::Image(None),
-            Look::default(),
-        )?;
-        let sidebar_scrim = tree.add(
-            Some(root),
-            NodeKind::Leaf,
-            Style::default(),
-            Content::Panel,
-            Look::default(),
-        )?;
-        let header = tree.add(
-            Some(root),
-            NodeKind::Leaf,
-            Style::default(),
-            Content::Image(None),
-            Look::default(),
-        )?;
-        let header_scrim = tree.add(
-            Some(root),
-            NodeKind::Leaf,
-            Style::default(),
-            Content::Panel,
-            Look::default(),
-        )?;
-        let topbar_scrim = tree.add(
-            Some(root),
-            NodeKind::Leaf,
-            Style::default(),
-            Content::Panel,
-            Look::default(),
-        )?;
+        let stretch = Style {
+            align_self: Some(Align::Stretch),
+            ..Style::default()
+        };
+        let layer = |tree: &mut Tree, parent: WidgetId, kind: NodeKind, content: Content| {
+            tree.add(Some(parent), kind, stretch, content, Look::default())
+        };
+        let window_frame = tree.add(Some(root), NodeKind::Stack, stretch, Content::Panel, Look::default())?;
+        let window = layer(tree, window_frame, NodeKind::Leaf, Content::Image(None))?;
+        let window_scrim = layer(tree, window_frame, NodeKind::Leaf, Content::Panel)?;
+        let sidebar_frame = layer(tree, root, NodeKind::Row, Content::Panel)?;
+        let sidebar_box = layer(tree, sidebar_frame, NodeKind::Stack, Content::Panel)?;
+        let sidebar = layer(tree, sidebar_box, NodeKind::Leaf, Content::Image(None))?;
+        let sidebar_scrim = layer(tree, sidebar_box, NodeKind::Leaf, Content::Panel)?;
+        let header_frame = layer(tree, root, NodeKind::Column, Content::Panel)?;
+        let header_box = layer(tree, header_frame, NodeKind::Stack, Content::Panel)?;
+        let header = layer(tree, header_box, NodeKind::Leaf, Content::Image(None))?;
+        let header_scrim = layer(tree, header_box, NodeKind::Leaf, Content::Panel)?;
+        let topbar_frame = layer(tree, root, NodeKind::Column, Content::Panel)?;
+        let topbar_box = layer(tree, topbar_frame, NodeKind::Stack, Content::Panel)?;
+        let topbar_scrim = layer(tree, topbar_box, NodeKind::Leaf, Content::Panel)?;
         let mut layers = Self {
             window,
             window_scrim,
@@ -215,6 +193,12 @@ impl ArtLayers {
             header,
             header_scrim,
             topbar_scrim,
+            window_frame,
+            sidebar_box,
+            header_frame,
+            header_box,
+            topbar_frame,
+            topbar_box,
             sources: [None, None, None],
             scaled: [None, None, None],
             menu_width: 0.0,
@@ -233,44 +217,65 @@ impl ArtLayers {
     }
 
     fn restyle(&mut self, tree: &mut Tree, menu_width: f32, header_height: f32) -> Result<()> {
-        let offset = Edges {
+        let right_of_menu = Edges {
             left: menu_width,
             top: 0.0,
             right: 0.0,
             bottom: 0.0,
         };
-        let full = Style {
-            grow: 1.0,
+        let stretch = Style {
             align_self: Some(Align::Stretch),
-            margin: offset,
             ..Style::default()
         };
-        let menu = Style {
-            min: Size::new(menu_width, 0.0),
-            preferred: Size::new(menu_width, 0.0),
-            align_self: Some(Align::Stretch),
-            shrink: 0.0,
-            ..Style::default()
-        };
-        let header = Style {
-            min: Size::new(0.0, header_height),
-            align_self: Some(Align::Stretch),
-            margin: offset,
-            ..Style::default()
-        };
-        let topbar = Style {
-            min: Size::new(0.0, ART_TOPBAR_HEIGHT),
-            align_self: Some(Align::Stretch),
-            margin: offset,
-            ..Style::default()
-        };
-        tree.set_style(self.window, full)?;
-        tree.set_style(self.window_scrim, full)?;
-        tree.set_style(self.sidebar, menu)?;
-        tree.set_style(self.sidebar_scrim, menu)?;
-        tree.set_style(self.header, header)?;
-        tree.set_style(self.header_scrim, header)?;
-        tree.set_style(self.topbar_scrim, topbar)?;
+        tree.set_style(
+            self.window_frame,
+            Style {
+                grow: 1.0,
+                margin: right_of_menu,
+                ..stretch
+            },
+        )?;
+        tree.set_style(
+            self.sidebar_box,
+            Style {
+                min: Size::new(menu_width, 0.0),
+                preferred: Size::new(menu_width, 0.0),
+                shrink: 0.0,
+                ..stretch
+            },
+        )?;
+        tree.set_style(
+            self.header_frame,
+            Style {
+                margin: right_of_menu,
+                ..stretch
+            },
+        )?;
+        tree.set_style(
+            self.header_box,
+            Style {
+                min: Size::new(0.0, header_height),
+                preferred: Size::new(0.0, header_height),
+                shrink: 0.0,
+                ..stretch
+            },
+        )?;
+        tree.set_style(
+            self.topbar_frame,
+            Style {
+                margin: right_of_menu,
+                ..stretch
+            },
+        )?;
+        tree.set_style(
+            self.topbar_box,
+            Style {
+                min: Size::new(0.0, ART_TOPBAR_HEIGHT),
+                preferred: Size::new(0.0, ART_TOPBAR_HEIGHT),
+                shrink: 0.0,
+                ..stretch
+            },
+        )?;
         self.menu_width = menu_width;
         self.header_height = header_height;
         Ok(())
@@ -4924,6 +4929,49 @@ mod tests {
             "picture is not drawn: {before:08x} -> {after:08x}"
         );
         assert!(red_after < 200, "scrim does not dim the picture: {after:08x}");
+        Ok(())
+    }
+
+    fn solid_picture(r: u8, g: u8, b: u8) -> ImageData {
+        ImageData {
+            width: 64,
+            height: 64,
+            pixels: vec![u32::from_be_bytes([0xFF, r, g, b]); 64 * 64].into(),
+        }
+    }
+
+    #[test]
+    fn art_layers_show_their_pictures_in_their_regions() -> sse_core::Result<()> {
+        let mut tree = Tree::new(crate::glyphs::Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let mut shell = Shell::build_for_test(&mut tree, None)?;
+        tree.resize(1600, 900);
+        tree.update_layout()?;
+        for (slot, image) in [
+            (ArtSlot::Window, solid_picture(120, 70, 30)),
+            (ArtSlot::Sidebar, solid_picture(30, 200, 60)),
+            (ArtSlot::Header, solid_picture(30, 60, 200)),
+        ] {
+            shell.art.apply(&mut tree, shell.sidebar, &ArtLoaded { slot, image })?;
+        }
+        let mut frame = vec![0_u32; 1600 * 900];
+        tree.damage_all();
+        tree.paint(&mut frame, 1600)?;
+        let channels = |x: usize, y: usize| {
+            let [_, r, g, b] = frame.get(y * 1600 + x).copied().unwrap_or_default().to_be_bytes();
+            (i32::from(r), i32::from(g), i32::from(b))
+        };
+        let (hr, hg, hb) = channels(1000, 130);
+        assert!(
+            hb > hr + 60 && hb > hg + 60,
+            "header centre is not blue: {hr} {hg} {hb}"
+        );
+        let (cr, cg, cb) = channels(1000, 600);
+        assert!(
+            cr > cg && cg > cb && cr > 20,
+            "content below the header is not brown: {cr} {cg} {cb}"
+        );
+        let (mr, mg, mb) = channels(220, 600);
+        assert!(mg > mr + 30 && mg > mb + 30, "menu centre is not green: {mr} {mg} {mb}");
         Ok(())
     }
 }
