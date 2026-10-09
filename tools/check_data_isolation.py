@@ -128,6 +128,10 @@ def main() -> int:
             isolated_data.mkdir()
             environment = os.environ.copy()
             environment["STALKER_SAVE_EDITOR_DATA"] = str(isolated_data)
+            if os.name == "nt":
+                environment["LOCALAPPDATA"] = str(Path(temporary) / "local-app-data")
+            else:
+                environment["XDG_DATA_HOME"] = str(Path(temporary) / "xdg-data")
             environment["PYTHONDONTWRITEBYTECODE"] = "1"
             try:
                 status = subprocess.run(command, env=environment, check=False).returncode
@@ -141,7 +145,7 @@ def main() -> int:
     after = snapshot_roots(protected_roots)
     changed = sorted(name for name in before.keys() | after.keys() if before.get(name) != after.get(name))
     if changed:
-        print("FAIL: the command changed files under a real app-data directory:", file=sys.stderr)
+        print("FAIL: real app-data changed while the guarded command ran:", file=sys.stderr)
         for label, name in changed:
             print(f"  {label}/{name}", file=sys.stderr)
         return 1

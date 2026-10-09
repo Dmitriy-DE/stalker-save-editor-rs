@@ -3129,7 +3129,7 @@
    "part": "Stock"
   },
   "GunFora230_Upgrade_Attachment_Laser": {
-   "effect": "MaxSpread",
+   "effect": "AimingSpeed",
    "part": "Body"
   },
   "GunFora230_Upgrade_Attachment_Laser_HP": {

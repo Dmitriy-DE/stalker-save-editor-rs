@@ -259,6 +259,26 @@ fn reads_csharp_snake_case_settings_snapshot() {
     assert_eq!(settings.last_report_utc.as_deref(), Some("2026-10-05T18:30:00Z"));
 }
 
+#[cfg(unix)]
+#[test]
+fn serialization_refuses_non_utf8_paths_instead_of_replacing_bytes() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    let non_utf8_path = PathBuf::from(OsString::from_vec(b"/tmp/saves-\xff".to_vec()));
+    let save_directories = AppSettings {
+        save_directories: Some(vec![non_utf8_path.clone()]),
+        ..AppSettings::default()
+    };
+    let backup_directory = AppSettings {
+        backup_directory: Some(non_utf8_path),
+        ..AppSettings::default()
+    };
+
+    assert!(save_directories.to_json_bytes().is_err());
+    assert!(backup_directory.to_json_bytes().is_err());
+}
+
 #[test]
 fn integration_test_process_isolates_settings_and_logs_without_environment_override() {
     const CHILD_MARKER: &str = "SSE_TEST_DATA_ISOLATION_CHILD";

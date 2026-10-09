@@ -196,7 +196,7 @@ impl AppSettings {
         if let Some(dirs) = &self.save_directories {
             writer.array_start()?;
             for dir in dirs {
-                writer.string(&dir.to_string_lossy())?;
+                writer.string(path_to_json_string(dir)?)?;
             }
             writer.array_end()?;
         } else {
@@ -205,7 +205,7 @@ impl AppSettings {
 
         writer.key("backup_directory")?;
         if let Some(dir) = &self.backup_directory {
-            writer.string(&dir.to_string_lossy())?;
+            writer.string(path_to_json_string(dir)?)?;
         } else {
             writer.null()?;
         }
@@ -305,6 +305,11 @@ impl AppSettings {
         sync_directory(parent);
         Ok(())
     }
+}
+
+fn path_to_json_string(path: &Path) -> Result<&str> {
+    path.to_str()
+        .ok_or_else(|| Error::Refused("settings path is not valid UTF-8".to_owned()))
 }
 
 fn parse_optional_string(reader: &mut Reader<'_>) -> Result<Option<String>> {

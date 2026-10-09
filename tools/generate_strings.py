@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate crates/sse-ui/src/strings.rs from C# 1.3.1 i18n/*.json."""
+"""Generate the static UI localization table from C# and checked-in Rust catalogs."""
 from __future__ import annotations
 import json
 import pathlib
@@ -30,7 +30,9 @@ def main() -> int:
         return 2
     root = pathlib.Path(sys.argv[1])
     source = root / "i18n" if (root / "i18n").is_dir() else root
+    fallback_source = pathlib.Path(__file__).resolve().parents[1] / "crates/sse-catalog/i18n"
     catalogs = {}
+    fallback_catalogs = {}
     keys = set()
     for lang in LANGS:
         path = source / f"{lang}.json"
@@ -40,6 +42,13 @@ def main() -> int:
             raise ValueError(f"{path}: expected object")
         catalogs[lang] = catalog
         keys.update(catalog)
+        fallback_path = fallback_source / f"{lang}.json"
+        with fallback_path.open("r", encoding="utf-8") as handle:
+            fallback_catalog = json.load(handle)
+        if not isinstance(fallback_catalog, dict):
+            raise ValueError(f"{fallback_path}: expected object")
+        fallback_catalogs[lang] = fallback_catalog
+        keys.update(fallback_catalog)
     extras_path = pathlib.Path(__file__).with_name("i18n-extra.json")
     extras = json.loads(extras_path.read_text(encoding="utf-8")) if extras_path.exists() else {}
     if not isinstance(extras, dict):
@@ -54,14 +63,18 @@ def main() -> int:
             if not isinstance(value, str) or not value:
                 value = key if lang == "ru" else catalogs[lang].get(key)
             if not isinstance(value, str) or not value:
+                value = fallback_catalogs[lang].get(key)
+            if not isinstance(value, str) or not value:
                 value = catalogs["en"].get(key) if lang != "en" else None
+            if not isinstance(value, str) or not value:
+                value = fallback_catalogs["en"].get(key) if lang != "en" else None
             if not isinstance(value, str) or not value:
                 value = key
             values.append(value)
         if key in extras and any(not isinstance(extras[key].get(lang), str) or not extras[key].get(lang) for lang in LANGS):
             raise ValueError(f"{extras_path}: Rust-only key {key!r} must provide all 15 translations")
         rows.append(f"    ({q(key)}, [" + ", ".join(q(v) for v in values) + "]),")
-    header = """//! Generated from C# 1.3.1 localization. Do not edit by hand.
+    header = """//! Generated from C# and checked-in Rust localization catalogs. Do not edit by hand.
 use std::sync::atomic::{AtomicU8, Ordering};
 /// Interface languages, Russian first (it is the key language).
 pub const LANGUAGES: [&str; 15] = [\"ru\",\"uk\",\"en\",\"de\",\"fr\",\"it\",\"es\",\"pl\",\"cs\",\"pt-BR\",\"tr\",\"ja\",\"ko\",\"zh-CN\",\"zh-TW\"];
