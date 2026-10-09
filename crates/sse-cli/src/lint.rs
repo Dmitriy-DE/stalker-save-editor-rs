@@ -9,6 +9,17 @@ use sse_core::ExitCode;
 use sse_lint::{LintEngine, LintOptions, LintSeverity};
 
 const USAGE: &str = "Usage: stalker-save lint <game-folder> [--check <checker>] [--config <subdir>] [--json]";
+/// Checker names accepted by `--check`; any other name would run nothing and report success.
+const CHECKERS: [&str; 8] = [
+    "check_condfuncs",
+    "check_condlists",
+    "check_dialogs",
+    "check_infos",
+    "check_logic_refs",
+    "check_module_calls",
+    "check_trade_items",
+    "lua_globals",
+];
 
 /// Entry point for `stalker-save lint`.
 #[must_use]
@@ -63,6 +74,12 @@ pub fn run_lint(args: &[String]) -> ExitCode {
         eprintln!("{USAGE}");
         return ExitCode::Usage;
     };
+    if let Some(name) = check_filter.as_deref() {
+        if !CHECKERS.contains(&name) {
+            eprintln!("Unknown checker: {name}. Known checkers: {}", CHECKERS.join(", "));
+            return ExitCode::Usage;
+        }
+    }
 
     if !folder.exists() {
         eprintln!("Game directory does not exist: {}", folder.display());
@@ -199,8 +216,12 @@ fn load_tree_for_lint(folder: &Path) -> sse_core::Result<GameFileTree> {
     for p in paths {
         if let Ok(rel) = p.strip_prefix(folder) {
             let rel_str = rel.to_string_lossy().replace('\\', "/");
-            let game_file = GameFile::from_path(rel_str.clone(), "loose", p);
-            files.insert(rel_str, game_file);
+            // Archive trees key files relative to `gamedata/`; the checkers look them up by that key.
+            let key = rel_str
+                .strip_prefix("gamedata/")
+                .map_or_else(|| rel_str.clone(), str::to_owned);
+            let game_file = GameFile::from_path(key.clone(), "loose", p);
+            files.insert(key, game_file);
         }
     }
 
@@ -289,6 +310,30 @@ mod tests {
 
         assert!(tree.files.contains_key("configs/system.ltx"));
         assert!(!tree.files.contains_key("config_alias/system.ltx"));
+    }
+
+    #[test]
+    fn unknown_checker_name_is_a_usage_error_not_a_clean_run() {
+        let root = TempDir::new();
+        let args = [
+            root.0.to_string_lossy().into_owned(),
+            "--check".to_owned(),
+            "check_condlist".to_owned(),
+        ];
+        assert_eq!(run_lint(&args), ExitCode::Usage);
+    }
+
+    #[test]
+    fn loose_lint_fallback_keys_gamedata_files_like_archive_trees() {
+        let root = TempDir::new();
+        let scripts = root.0.join("gamedata/scripts");
+        fs::create_dir_all(&scripts).unwrap();
+        fs::write(scripts.join("xr_conditions.script"), b"function has_x() end\n").unwrap();
+
+        let tree = load_tree_for_lint(&root.0).unwrap();
+
+        assert!(tree.files.contains_key("scripts/xr_conditions.script"));
+        assert!(!tree.files.contains_key("gamedata/scripts/xr_conditions.script"));
     }
 
     #[cfg(unix)]
