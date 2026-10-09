@@ -2454,23 +2454,6 @@ mod tests {
         Ok((receipt, verified))
     }
 
-    fn replace_transaction_with_verifier<T>(
-        source: &Path,
-        expected_sha256: &str,
-        replacement: &[u8],
-        backups: &Path,
-        verify_readback: impl FnOnce(&[u8]) -> Result<T>,
-    ) -> Result<(ReplacementReceipt, T)> {
-        replace_with_file_system_and_verifier(
-            &StdFileSystem,
-            source,
-            expected_sha256,
-            replacement,
-            backups,
-            verify_readback,
-        )
-    }
-
     fn replace_std_transaction(
         source: &Path,
         expected_sha256: &str,
@@ -2746,9 +2729,10 @@ mod tests {
         let source_gid = source_metadata.gid();
         let source_hash = sse_codecs::sha256::sha256_hex(source_bytes);
 
-        let failed = replace_transaction_with_verifier(&source, &source_hash, replacement, &backups, |_| {
-            Err::<(), Error>(Error::damaged("injected semantic verification failure"))
-        });
+        let failed =
+            replace_with_file_system_and_verifier(&StdFileSystem, &source, &source_hash, replacement, &backups, |_| {
+                Err::<(), Error>(Error::damaged("injected semantic verification failure"))
+            });
         assert!(failed.is_err());
         assert_eq!(std::fs::read(&source)?, source_bytes);
         let original_mode = std::fs::metadata(&source)?.permissions().mode() & 0o777;
