@@ -108,7 +108,7 @@ pub fn row(tree: &mut Tree, parent: WidgetId) -> Result<WidgetId> {
 /// Returns an error from the widget tree.
 pub fn label(tree: &mut Tree, parent: WidgetId, text: &str, role: Text) -> Result<WidgetId> {
     let content = Content::Label {
-        text: text.to_owned(),
+        text: localized_static_text(crate::strings::current_language(), text),
         style: role.style(),
     };
     let look = Look {
@@ -163,7 +163,8 @@ pub fn button(tree: &mut Tree, parent: WidgetId, text: &str, role: Button) -> Re
         right: 16.0,
         bottom: 0.0,
     };
-    let label = text_upper(text);
+    let translated = localized_static_text(crate::strings::current_language(), text);
+    let label = text_upper(&translated);
     let label_style = TextStyle::new(Face::Heading, 14.0);
     let min_width = (tree.measure_text(&label, label_style) + padding.left + padding.right)
         .ceil()
@@ -213,6 +214,10 @@ pub fn nav(selected: bool) -> Look {
 
 fn text_upper(text: &str) -> String {
     text.chars().flat_map(char::to_uppercase).collect()
+}
+
+fn localized_static_text(language: &str, text: &str) -> String {
+    sse_catalog::I18nService::instance().tr_in(Some(language), text, &[])
 }
 
 /// Builders of the redesigned controls. Numbers come from [`theme::d2`]; icons are `Icon::D2*`.
@@ -758,5 +763,16 @@ pub mod d2 {
             tree.paint(&mut frame, 960)?;
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod localization_tests {
+    use super::localized_static_text;
+
+    #[test]
+    fn shared_labels_resolve_catalog_text_for_each_language() {
+        assert_eq!(localized_static_text("en", "СОХРАНЕНИЯ"), "SAVES");
+        assert_eq!(localized_static_text("uk", "СОХРАНЕНИЯ"), "ЗБЕРЕЖЕННЯ");
     }
 }

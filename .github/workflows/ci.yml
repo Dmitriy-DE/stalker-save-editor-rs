@@ -58,6 +58,8 @@ jobs:
       - name: Rust UI source localization guard
         if: matrix.os == 'ubuntu-24.04'
         run: |
+          python3 -m unittest discover -s tools -p check_ui_i18n.py
+          python3 tools/check_ui_i18n.py
           PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tools/tests
           python3 tools/check_i18n_source.py
 
