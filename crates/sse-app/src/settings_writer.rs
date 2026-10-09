@@ -67,33 +67,56 @@ fn run_writer(path: PathBuf, rx: mpsc::Receiver<Request>) {
     };
 
     while let Ok(request) = rx.recv() {
+        let unreadable = current.is_none();
         let next = match request.patch {
             SettingsPatch::Replace(settings) => Ok(settings),
-            patch => match current.as_ref() {
-                Some(settings) => {
-                    let mut updated = settings.clone();
-                    apply_patch(&mut updated, patch);
-                    Ok(updated)
-                }
-                None => Err(Error::Refused(
-                    "settings file is unreadable; an explicit replacement is required before applying patches"
-                        .to_owned(),
-                )),
-            },
+            patch => {
+                let mut updated = current.clone().unwrap_or_default();
+                apply_patch(&mut updated, patch);
+                Ok(updated)
+            }
         };
 
         let result = match next {
-            Ok(updated) => match updated.save(&path) {
-                Ok(()) => {
-                    current = Some(updated);
+            Ok(updated) => {
+                let kept = if unreadable {
+                    preserve_unreadable_copy(&path).map(|_| ())
+                } else {
                     Ok(())
-                }
-                Err(error) => Err(error),
-            },
+                };
+                kept.and_then(|()| updated.save(&path).map(|()| updated))
+                    .map(|saved| current = Some(saved))
+            }
             Err(error) => Err(error),
         };
         let _ = request.done.send(result);
     }
+}
+
+const BROKEN_PREFIX: &str = "settings.json.broken-";
+
+/// Keeps a copy of an unreadable settings file before the first write replaces it.
+/// One copy is kept per broken content: an identical earlier copy is reused.
+fn preserve_unreadable_copy(path: &std::path::Path) -> Result<PathBuf> {
+    let bytes = std::fs::read(path)?;
+    let directory = path
+        .parent()
+        .ok_or_else(|| Error::Refused("settings path has no directory".to_owned()))?;
+    for entry in std::fs::read_dir(directory)?.flatten() {
+        let name = entry.file_name();
+        if name.to_string_lossy().starts_with(BROKEN_PREFIX) && std::fs::read(entry.path())? == bytes {
+            return Ok(entry.path());
+        }
+    }
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| Error::Refused(format!("clock before 1970: {error}")))?
+        .as_millis();
+    let copy = directory.join(format!("{BROKEN_PREFIX}{stamp}"));
+    let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&copy)?;
+    std::io::Write::write_all(&mut file, &bytes)?;
+    file.sync_all()?;
+    Ok(copy)
 }
 
 fn apply_patch(settings: &mut AppSettings, patch: SettingsPatch) {
@@ -192,11 +215,11 @@ mod tests {
     }
 
     #[test]
-    fn corrupt_settings_are_preserved_until_explicit_replacement() {
+    fn unreadable_settings_are_copied_before_the_first_write() {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |duration| duration.as_nanos());
-        let directory = std::env::temp_dir().join(format!("sse_settings_writer_{unique}"));
+        let directory = std::env::temp_dir().join(format!("sse_settings_broken_{unique}"));
         fs::create_dir_all(&directory).expect("create test directory");
         let path = directory.join("settings.json");
         let original = b"{ damaged settings";
@@ -205,34 +228,28 @@ mod tests {
         let (tx, rx) = mpsc::channel();
         let worker_path = path.clone();
         let worker = std::thread::spawn(move || run_writer(worker_path, rx));
-
-        let (done_tx, done_rx) = mpsc::channel();
-        tx.send(Request {
-            patch: SettingsPatch::Theme("new-theme".to_owned()),
-            done: done_tx,
-        })
-        .expect("send incremental patch");
-        assert!(done_rx.recv().expect("receive patch result").is_err());
-        assert_eq!(fs::read(&path).expect("read damaged settings"), original);
-
-        let replacement = AppSettings {
-            theme_id: "replacement".to_owned(),
-            ..AppSettings::default()
+        let send = |patch: SettingsPatch| {
+            let (done_tx, done_rx) = mpsc::channel();
+            tx.send(Request { patch, done: done_tx }).expect("send patch");
+            done_rx.recv().expect("receive result")
         };
-        let (done_tx, done_rx) = mpsc::channel();
-        tx.send(Request {
-            patch: SettingsPatch::Replace(replacement.clone()),
-            done: done_tx,
-        })
-        .expect("send explicit replacement");
-        done_rx
-            .recv()
-            .expect("receive replacement result")
-            .expect("explicit replacement writes settings");
-
+        send(SettingsPatch::Theme("new-theme".to_owned())).expect("patch writes settings");
+        send(SettingsPatch::Language(Some("en".to_owned()))).expect("second patch writes settings");
         drop(tx);
         worker.join().expect("settings writer thread exits");
-        assert_eq!(AppSettings::load(&path).expect("load replacement"), replacement);
+
+        let copies: Vec<PathBuf> = fs::read_dir(&directory)
+            .expect("list test directory")
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|candidate| candidate.to_string_lossy().contains("settings.json.broken-"))
+            .collect();
+        assert_eq!(copies.len(), 1, "one copy per broken file");
+        let copy = copies.first().expect("copy exists");
+        assert_eq!(fs::read(copy).expect("read copy"), original);
+        let saved = AppSettings::load(&path).expect("settings file is valid after the write");
+        assert_eq!(saved.theme_id, "new-theme");
+        assert_eq!(saved.language.as_deref(), Some("en"));
         let _ = fs::remove_dir_all(directory);
     }
 }

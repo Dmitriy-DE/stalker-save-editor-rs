@@ -488,13 +488,12 @@ fn load_settings() -> (sse_app::AppSettings, Option<String>) {
         Ok(settings) => (settings, None),
         Err(error) => {
             sse_app::diagnostics::warn(&format!("settings file could not be loaded: {error}"));
-            let detail = format!("settings.json is unchanged: {error}");
             (
                 sse_app::AppSettings::default(),
                 Some(crate::strings::tr_in(
                     Some(crate::strings::current_language()),
-                    "Настройки не сохранены: {0}",
-                    &[&detail],
+                    "Файл настроек не прочитан: {0}. При следующей записи он будет сохранён копией рядом.",
+                    &[&error],
                 )),
             )
         }
