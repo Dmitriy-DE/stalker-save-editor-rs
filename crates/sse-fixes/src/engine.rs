@@ -905,11 +905,21 @@ impl GameFixEngine {
                     }
                 }
                 Err(err) => {
-                    // Rollback all newly installed fixes in reverse order
+                    // Roll back all newly installed fixes in reverse order. A failed rollback must be reported,
+                    // otherwise the user cannot tell which fixes of the preset are still installed.
+                    let mut still_installed = Vec::new();
                     for rollback_fix in newly_installed.iter().rev() {
-                        let _ = self.uninstall(&rollback_fix.id, game_dir);
+                        if let Err(rollback_err) = self.uninstall(&rollback_fix.id, game_dir) {
+                            still_installed.push(format!("{} ({rollback_err})", rollback_fix.id));
+                        }
                     }
-                    return Err(err);
+                    if still_installed.is_empty() {
+                        return Err(err);
+                    }
+                    return Err(Error::System(format!(
+                        "Preset install failed: {err}; rollback incomplete, still installed: {}",
+                        still_installed.join("; ")
+                    )));
                 }
             }
         }

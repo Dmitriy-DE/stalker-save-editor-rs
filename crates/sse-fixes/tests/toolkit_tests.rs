@@ -542,6 +542,24 @@ fn user_ltx_refuses_to_rewrite_file_when_text_is_not_cp1251() {
     );
 }
 
+#[test]
+fn cleanup_orphans_keeps_suffix_named_user_file_recoverable() {
+    let fixture = ToolkitTestFixture::new(GameTarget::ClearSky, "11450472");
+    let engine = GameFixEngine::with_synthetic(true);
+    fixture.write_file("gamedata/textures/texture.dds.sse-orig", b"user copy");
+
+    let audit = ToolkitInstallAudit::audit_installation(&fixture.root, GameTarget::ClearSky, &engine).unwrap();
+    assert_eq!(audit.orphaned_count, 1);
+    let cleaned = ToolkitInstallAudit::cleanup_orphans(&fixture.root, &audit).unwrap();
+    assert_eq!(cleaned, 1);
+
+    assert!(!fixture.root.join("gamedata/textures/texture.dds.sse-orig").exists());
+    let kept = fixture
+        .root
+        .join(".save-editor-quarantine/gamedata/textures/texture.dds.sse-orig");
+    assert_eq!(fs::read(kept).unwrap(), b"user copy");
+}
+
 #[cfg(unix)]
 #[test]
 fn install_audit_does_not_follow_symlink_cycles_in_gamedata() {

@@ -207,14 +207,16 @@ impl ToolkitInstallAudit {
         })
     }
 
-    /// Safely cleans up orphaned toolkit-owned backup and temporary files.
+    /// Moves orphaned toolkit-owned backup and temporary files into a quarantine folder.
     ///
+    /// Ownership is decided by file name only, so files are moved (never deleted) under
+    /// `.save-editor-quarantine/` and can be restored by hand.
     /// Never touches custom user mods or actively managed files.
     ///
     /// # Errors
-    /// Returns an error if removing an orphaned file fails.
+    /// Returns an error if a file cannot be moved or its quarantine path is already taken.
     pub fn cleanup_orphans(game_directory: &Path, audit_report: &ToolkitAuditReport) -> Result<usize> {
-        let mut removed_count: usize = 0;
+        let mut moved_count: usize = 0;
         for item in &audit_report.items {
             if matches!(
                 item.classification,
@@ -222,14 +224,27 @@ impl ToolkitInstallAudit {
             ) {
                 let full_path = game_directory.join(&item.relative_path);
                 if full_path.is_file() {
-                    fs::remove_file(&full_path).map_err(Error::from)?;
-                    removed_count = removed_count.saturating_add(1);
+                    let target = game_directory.join(QUARANTINE_DIRECTORY).join(&item.relative_path);
+                    if target.exists() {
+                        return Err(Error::damaged(format!(
+                            "Quarantine target already exists: {}",
+                            target.display()
+                        )));
+                    }
+                    if let Some(parent) = target.parent() {
+                        fs::create_dir_all(parent).map_err(Error::from)?;
+                    }
+                    fs::rename(&full_path, &target).map_err(Error::from)?;
+                    moved_count = moved_count.saturating_add(1);
                 }
             }
         }
-        Ok(removed_count)
+        Ok(moved_count)
     }
 }
+
+/// Quarantine folder for orphaned files, relative to the game directory (outside the fix state folder, which audits strictly).
+const QUARANTINE_DIRECTORY: &str = ".save-editor-quarantine";
 
 fn collect_files_recursive(dir: &Path) -> Result<Vec<PathBuf>> {
     let mut files = Vec::new();
