@@ -308,6 +308,7 @@ fn streaming_download_reuses_verified_file_and_rejects_corrupted() {
         size: payload.len() as u64,
         sha256: payload_sha256,
         url: "https://updates.test/stalker-save-editor_amd64.deb".to_string(),
+        release_version: String::new(),
     };
 
     let temp = TempDir::new("download-test");
@@ -348,6 +349,7 @@ fn failed_download_keeps_an_existing_destination_unchanged() {
         size: u64::try_from(expected.len()).unwrap(),
         sha256: sse_codecs::sha256::sha256_hex(expected),
         url: "https://updates.test/SaveEditor-linux-x86_64.tar.gz".to_string(),
+        release_version: String::new(),
     };
     let temp = TempDir::new("preserve-destination-test");
     let destination = temp.path.join(&artifact.file);
@@ -419,6 +421,7 @@ fn interrupted_download_resumes_from_the_retained_partial_length() {
         size: u64::try_from(payload.len()).unwrap(),
         sha256: sse_codecs::sha256::sha256_hex(&payload),
         url: "https://updates.test/SaveEditor-linux-x86_64.tar.gz".to_string(),
+        release_version: String::new(),
     };
     let temp = TempDir::new("resume-download-test");
     let destination = temp.path.join(&artifact.file);
@@ -453,6 +456,7 @@ fn download_refuses_a_symlink_at_the_partial_path() {
         size: u64::try_from(payload.len()).unwrap(),
         sha256: sse_codecs::sha256::sha256_hex(&payload),
         url: "https://updates.test/SaveEditor-linux-x86_64.tar.gz".to_string(),
+        release_version: String::new(),
     };
     let temp = TempDir::new("symlink-part-test");
     let destination = temp.path.join(&artifact.file);
@@ -523,6 +527,7 @@ fn download_rejects_a_partial_path_swapped_to_a_symlink_before_promotion() {
         size: u64::try_from(payload.len()).unwrap(),
         sha256: sse_codecs::sha256::sha256_hex(&payload),
         url: "https://updates.test/SaveEditor-linux-x86_64.tar.gz".to_string(),
+        release_version: String::new(),
     };
     let temp = TempDir::new("promotion-symlink-test");
     let destination = temp.path.join(&artifact.file);
@@ -586,6 +591,7 @@ fn ignored_range_restarts_from_a_full_response_without_appending_to_the_partial(
         size: u64::try_from(payload.len()).unwrap(),
         sha256: sse_codecs::sha256::sha256_hex(&payload),
         url: "https://updates.test/SaveEditor-linux-x86_64.tar.gz".to_string(),
+        release_version: String::new(),
     };
     let temp = TempDir::new("ignored-range-test");
     let destination = temp.path.join(&artifact.file);
@@ -654,6 +660,7 @@ fn invalid_content_range_is_rejected_before_appending_and_keeps_both_files() {
         size: u64::try_from(payload.len()).unwrap(),
         sha256: sse_codecs::sha256::sha256_hex(&payload),
         url: "https://updates.test/SaveEditor-linux-x86_64.tar.gz".to_string(),
+        release_version: String::new(),
     };
     let temp = TempDir::new("invalid-range-test");
     let destination = temp.path.join(&artifact.file);
@@ -684,6 +691,7 @@ fn download_rejects_payload_larger_than_manifest_size() {
         size: 3, // Smaller than actual 5 bytes
         sha256: sse_codecs::sha256::sha256_hex(&payload),
         url: "https://updates.test/SaveEditor-windows-x86_64.zip".to_string(),
+        release_version: String::new(),
     };
 
     let temp = TempDir::new("download-size-test");
@@ -709,6 +717,7 @@ fn installer_handoff_pkexec_cancelled_code_no_silent_quit() {
         size: archive_bytes.len() as u64,
         sha256: sha,
         url: "https://updates.test/stalker-save-editor_amd64.deb".to_string(),
+        release_version: String::new(),
     };
 
     let temp = TempDir::new("install-test");
@@ -745,6 +754,7 @@ fn installer_handoff_reports_xdg_open_failure() {
         size: u64::try_from(archive_bytes.len()).unwrap(),
         sha256: sse_codecs::sha256::sha256_hex(&archive_bytes),
         url: "https://updates.test/stalker-save-editor_amd64.deb".to_string(),
+        release_version: String::new(),
     };
     let temp = TempDir::new("xdg-open-failure");
     let archive_path = temp.path.join(&artifact.file);
@@ -779,6 +789,7 @@ fn installer_handoff_keeps_verified_stage_after_external_open() {
         size: u64::try_from(archive_bytes.len()).unwrap(),
         sha256: sse_codecs::sha256::sha256_hex(&archive_bytes),
         url: "https://updates.test/stalker-save-editor_amd64.deb".to_string(),
+        release_version: String::new(),
     };
     let temp = TempDir::new("xdg-open-success");
     let archive_path = temp.path.join(&artifact.file);
@@ -837,6 +848,7 @@ fn portable_update_reports_verified_archive_and_manual_steps_without_staging() {
         size: u64::try_from(archive_bytes.len()).unwrap(),
         sha256: sse_codecs::sha256::sha256_hex(&archive_bytes),
         url: "https://updates.test/SaveEditor-windows-x86_64.zip".to_string(),
+        release_version: String::new(),
     };
     let temp = TempDir::new("portable-update-manual-steps");
     let archive_path = temp.path.join(&artifact.file);
@@ -877,6 +889,7 @@ fn installer_handoff_refuses_tampered_local_file() {
         size: archive_bytes.len() as u64,
         sha256: sha,
         url: "https://updates.test/stalker-save-editor_amd64.deb".to_string(),
+        release_version: String::new(),
     };
 
     let temp = TempDir::new("tampered-test");
