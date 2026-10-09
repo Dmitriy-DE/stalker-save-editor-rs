@@ -420,6 +420,7 @@ pub fn decode(code: &[u8]) -> Result<Vec<u8>> {
     if text_size > MAXIMUM_OUTPUT {
         return Err(Error::damaged("LZ-Huffman output exceeds the size limit"));
     }
+    crate::validate_declared_output_size(code.len(), text_size, "LZ-Huffman")?;
     let mut decoder = Decoder::new(code)?;
     let mut output = vec![0_u8; text_size];
     let buffer_len = WINDOW_SIZE
@@ -629,6 +630,16 @@ mod tests {
     fn refuses_oversize_before_allocation() {
         let bytes = (64_u32 * 1024 * 1024 + 1).to_le_bytes();
         assert!(matches!(decode(&bytes), Err(Error::Damaged(_))));
+    }
+
+    #[test]
+    fn tiny_stream_cannot_claim_a_large_output() {
+        // A 4-byte stream declaring 16 MiB must be refused before the output buffer is allocated.
+        let bytes = (16_u32 * 1024 * 1024).to_le_bytes();
+        match decode(&bytes) {
+            Err(Error::Damaged(message)) => assert!(message.contains("disproportionate"), "{message}"),
+            other => panic!("expected a disproportionate-size error, got {other:?}"),
+        }
     }
 
     #[test]
