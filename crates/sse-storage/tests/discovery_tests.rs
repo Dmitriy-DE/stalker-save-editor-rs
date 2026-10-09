@@ -950,3 +950,58 @@ fn real_system_discovery_verifies_g4b_fixes_if_present() {
         "LibraryIndex should have no duplicates (not 2x)"
     );
 }
+
+#[test]
+fn foreign_sav_with_nonzero_fifth_byte_is_not_identified_as_stalker2() {
+    let temp = TempDir::new("foreign-sav");
+    let saves = temp.path.join("saves");
+    fs::create_dir_all(&saves).expect("create saves dir");
+    // A plausible unpacked size, a non-zero fifth byte, and no container trailer that matches.
+    let mut bytes = vec![0x10, 0x00, 0x00, 0x00, 0x01];
+    bytes.extend_from_slice(&[0x5a; 59]);
+    fs::write(saves.join("foreign.sav"), &bytes).expect("write foreign save");
+
+    let candidates = vec![SaveDirectoryCandidate::new("stalker2", "stalker2", &saves)];
+    let result = SaveSlotDiscovery::discover(&candidates);
+
+    assert_eq!(result.slots.len(), 1);
+    assert!(result.slots[0].format_id.is_none(), "{:?}", result.slots[0].format_id);
+    assert!(result.slots[0].game_id.is_none());
+}
+
+#[test]
+fn every_stalker2_fixture_is_identified_by_its_container() {
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/synthetic");
+    let mut sources = Vec::new();
+    let mut pending = vec![fixtures];
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(&directory).expect("read fixtures") {
+            let path = entry.expect("fixture entry").path();
+            if path.is_dir() {
+                pending.push(path);
+            } else if path.extension().is_some_and(|extension| extension == "sav")
+                && path
+                    .file_name()
+                    .is_some_and(|name| name.to_string_lossy().contains("s2"))
+            {
+                sources.push(path);
+            }
+        }
+    }
+    assert!(!sources.is_empty(), "the repository should carry S2 fixtures");
+
+    let temp = TempDir::new("s2-fixtures");
+    let saves = temp.path.join("saves");
+    fs::create_dir_all(&saves).expect("create saves dir");
+    for source in &sources {
+        let name = source.file_name().expect("fixture name");
+        fs::copy(source, saves.join(name)).expect("copy fixture");
+    }
+    let candidates = vec![SaveDirectoryCandidate::new("stalker2", "stalker2", &saves)];
+    let result = SaveSlotDiscovery::discover(&candidates);
+
+    assert_eq!(result.slots.len(), sources.len());
+    for slot in &result.slots {
+        assert_eq!(slot.format_id.as_deref(), Some("stalker2"), "{}", slot.path.display());
+    }
+}
