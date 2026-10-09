@@ -2359,6 +2359,46 @@ fn add_candidates(selected: &LoadedSave, removed: &BTreeSet<u32>) -> Vec<AddCand
     candidates
 }
 
+/// Style of the right-hand column. While the add panel is open the column has no gaps: the hidden inspector would
+/// otherwise keep a gap above the panel, and the panel gives its bottom margin instead.
+fn side_column_style(compact: bool, add_open: bool) -> Style {
+    let width = side_column_width(compact);
+    Style {
+        preferred: Size::new(width, 0.0),
+        min: Size::new(width, 0.0),
+        max: Size::new(width, f32::INFINITY),
+        shrink: 0.0,
+        gap: Size::new(0.0, if add_open { 0.0 } else { crate::theme::CONTROL_GAP }),
+        align_items: crate::layout::Align::Stretch,
+        ..Style::default()
+    }
+}
+
+/// Style of the add panel: it grows into the side column above the pinned action panel.
+fn add_panel_style(bottom_margin: f32) -> Style {
+    Style {
+        grow: 1.0,
+        shrink: 1.0,
+        min: crate::layout::Size::new(0.0, 0.0),
+        padding: crate::layout::Edges::all(crate::theme::d2::PANEL_PADDING.0),
+        margin: crate::layout::Edges {
+            bottom: bottom_margin,
+            ..crate::layout::Edges::default()
+        },
+        gap: Size::new(0.0, ADD_PANEL_GAP),
+        align_items: crate::layout::Align::Stretch,
+        ..Style::default()
+    }
+}
+
+/// Gap between the children of the add panel.
+const ADD_PANEL_GAP: f32 = 10.0;
+
+/// A whole pixel count as a float, for layout arithmetic. Values beyond the range of the window are clamped.
+fn px_i64(value: i64) -> f32 {
+    f32::from(i16::try_from(value).unwrap_or(i16::MAX))
+}
+
 /// Width of the inspector's column: the right-hand column of the inventory.
 fn side_column_width(compact: bool) -> f32 {
     if compact {
@@ -2414,6 +2454,8 @@ struct Inventory {
     add_selected_name: Option<WidgetId>,
     add_selected_key_label: Option<WidgetId>,
     add_note: Option<WidgetId>,
+    add_scroll: Option<WidgetId>,
+    add_filler: Option<WidgetId>,
     add_draft_note: Option<WidgetId>,
     add_page: usize,
     add_panel_open: bool,
@@ -2690,6 +2732,8 @@ impl Inventory {
             add_selected_name: None,
             add_selected_key_label: None,
             add_note: None,
+            add_scroll: None,
+            add_filler: None,
             add_draft_note: None,
             add_page: 0,
             add_panel_open: false,
@@ -2752,6 +2796,7 @@ impl Inventory {
         if window_width > 0 {
             self.compact = window_width < 1600;
         }
+        self.sync_add_list_cap(cx)?;
         // A wrapped note measures its lines at its minimum width, so the width it is drawn in is given here.
         let note_width = side_column_width(self.compact) - 2.0 * crate::theme::d2::PANEL_PADDING.0;
         for note in [self.add_note, self.add_draft_note].into_iter().flatten() {
@@ -2831,6 +2876,9 @@ impl Inventory {
             if let Some(inspector) = self.inspector_panel {
                 cx.tree.set_visible(inspector, true)?;
             }
+            if let Some(side) = self.side_column {
+                cx.tree.set_style(side, side_column_style(self.compact, false))?;
+            }
             if let Some(id) = self.money_label {
                 cx.tree.set_text(id, t("Сначала выберите сейв на экране «Обзор»."))?;
             }
@@ -2851,6 +2899,9 @@ impl Inventory {
             }
             if let Some(inspector) = self.inspector_panel {
                 cx.tree.set_visible(inspector, true)?;
+            }
+            if let Some(side) = self.side_column {
+                cx.tree.set_style(side, side_column_style(self.compact, false))?;
             }
         }
         let selected_for_inspector = Arc::clone(selected);
@@ -3860,7 +3911,11 @@ impl Inventory {
         if let Some(inspector) = self.inspector_panel {
             cx.tree.set_visible(inspector, false)?;
         }
+        if let Some(side) = self.side_column {
+            cx.tree.set_style(side, side_column_style(self.compact, true))?;
+        }
         if let Some(panel) = self.add_panel {
+            cx.tree.set_style(panel, add_panel_style(crate::theme::CONTROL_GAP))?;
             cx.tree.set_visible(panel, true)?;
         }
         self.add_panel_open = true;
@@ -3884,6 +3939,9 @@ impl Inventory {
         }
         if let Some(inspector) = self.inspector_panel {
             cx.tree.set_visible(inspector, true)?;
+        }
+        if let Some(side) = self.side_column {
+            cx.tree.set_style(side, side_column_style(self.compact, false))?;
         }
         if let Some(search) = self.add_search.as_mut() {
             search.focus(false, 0);
@@ -3982,12 +4040,60 @@ impl Inventory {
         if let Some(confirm) = self.add_confirm {
             cx.tree.set_enabled(confirm, has_template)?;
         }
+        self.sync_add_list_cap(cx)?;
         if let (Some(widget), Some(quantity)) = (self.add_quantity_widget, self.add_quantity.as_ref()) {
             if !quantity.focused() {
                 cx.tree.set_text(widget, &quantity.text())?;
             }
         }
         Ok(())
+    }
+
+    /// Caps the candidate list at the room the add panel has in the side column, so the list scrolls instead of
+    /// pushing the panels below the window. The room comes from the window and from the other side-column children;
+    /// the fixed rows of the panel are measured from their rectangles, which do not depend on the list.
+    fn sync_add_list_cap(&self, cx: &mut Context<'_>) -> Result<()> {
+        let (Some(scroll), Some(panel), Some(side)) = (self.add_scroll, self.add_panel, self.side_column) else {
+            return Ok(());
+        };
+        if !cx.tree.is_visible(panel) {
+            return Ok(());
+        }
+        // The fixed rows are measured from the current layout; the list's cap does not change them.
+        cx.tree.update_layout()?;
+        let window_height = px_i64(i64::from(cx.tree.size().1));
+        let side_top = px_i64(i64::from(cx.tree.rect(side)?.y));
+        // Everything in the side column but the panel (the hidden inspector included) takes room from the window.
+        let mut others = 0.0_f32;
+        for child in &cx.tree.children(side) {
+            if *child != panel {
+                others += px_i64(i64::from(cx.tree.rect(*child)?.height));
+            }
+        }
+        // The shell keeps 12 px below the content and a 30 px status bar under the window; the panel's bottom
+        // margin (the column has no gaps while the panel is open) sits above the action panel.
+        let side_room = window_height - side_top - 42.0 - others - crate::theme::CONTROL_GAP;
+        let inner = side_room - 2.0 * crate::theme::d2::PANEL_PADDING.0;
+        let children = cx.tree.children(panel);
+        let mut fixed = 0.0_f32;
+        for child in &children {
+            if *child == scroll || Some(*child) == self.add_filler {
+                continue;
+            }
+            fixed += px_i64(i64::from(cx.tree.rect(*child)?.height));
+        }
+        let gaps = px_i64(i64::try_from(children.len().saturating_sub(1)).unwrap_or(0)) * ADD_PANEL_GAP;
+        let cap = (inner - fixed - gaps).max(0.0);
+        cx.tree.set_style(
+            scroll,
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: crate::layout::Size::new(0.0, 0.0),
+                max: crate::layout::Size::new(f32::INFINITY, cap),
+                ..Style::default()
+            },
+        )
     }
 
     fn stage_add_key(&self, cx: &mut Context<'_>, item_key: &str, quantity: u32) -> Result<()> {
@@ -5580,18 +5686,7 @@ impl Screen for Inventory {
         }
         let panel = style::d2::panel(cx.tree, side)?;
         // The add panel takes the inspector's room: it grows into the side column above the pinned action panel.
-        cx.tree.set_style(
-            panel,
-            Style {
-                grow: 1.0,
-                shrink: 1.0,
-                min: crate::layout::Size::new(0.0, 0.0),
-                padding: crate::layout::Edges::all(crate::theme::d2::PANEL_PADDING.0),
-                gap: Size::new(0.0, 10.0),
-                align_items: crate::layout::Align::Stretch,
-                ..Style::default()
-            },
-        )?;
+        cx.tree.set_style(panel, add_panel_style(0.0))?;
         cx.tree.set_clip_children(panel, true)?;
         self.add_panel = Some(panel);
         style::d2::panel_title(cx.tree, panel, t("ДОБАВИТЬ ПРЕДМЕТ"))?;
@@ -5633,13 +5728,29 @@ impl Screen for Inventory {
         self.add_search = Some(TextInput::new("", inventory_search_config())?);
         // The candidate list is the only part that shrinks: it scrolls out of sight in a short panel, while the fixed
         // rows below keep their height.
-        let add_list = cx.tree.add(
+        let add_scroll = cx.tree.add(
             Some(panel),
-            NodeKind::Column,
+            NodeKind::Scroll {
+                horizontal: false,
+                vertical: true,
+                offset_x: 0.0,
+                offset_y: 0.0,
+            },
             Style {
                 grow: 1.0,
                 shrink: 1.0,
                 min: crate::layout::Size::new(0.0, 0.0),
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        cx.tree.set_clip_children(add_scroll, true)?;
+        self.add_scroll = Some(add_scroll);
+        let add_list = cx.tree.add(
+            Some(add_scroll),
+            NodeKind::Column,
+            Style {
                 gap: Size::new(0.0, 2.0),
                 align_items: crate::layout::Align::Stretch,
                 ..Style::default()
@@ -5647,7 +5758,6 @@ impl Screen for Inventory {
             Content::Panel,
             Look::default(),
         )?;
-        cx.tree.set_clip_children(add_list, true)?;
         let add_empty = style::label(cx.tree, add_list, "Предметы не найдены.", Text::Note)?;
         self.add_empty = Some(add_empty);
         cx.tree.set_visible(add_empty, false)?;
@@ -5656,9 +5766,23 @@ impl Screen for Inventory {
             cx.tree.set_visible(widget, false)?;
             self.add_candidate_rows.push((widget, None));
         }
-        let add_pages = style::row(cx.tree, add_list)?;
-        self.add_previous = Some(style::button(cx.tree, add_pages, "Назад", Button::Secondary)?);
-        self.add_next = Some(style::button(cx.tree, add_pages, "Дальше", Button::Secondary)?);
+        // The paging row stays under the candidate list, outside its scroll, so it is always in reach.
+        let add_pages = style::row(cx.tree, panel)?;
+        keep_height_row(cx.tree, add_pages)?;
+        self.add_previous = Some(style::d2::button(
+            cx.tree,
+            add_pages,
+            t("Назад"),
+            style::d2::ButtonKind::Secondary,
+            style::d2::ButtonSize::Normal,
+        )?);
+        self.add_next = Some(style::d2::button(
+            cx.tree,
+            add_pages,
+            t("Дальше"),
+            style::d2::ButtonKind::Secondary,
+            style::d2::ButtonSize::Normal,
+        )?);
         // The chosen candidate: its name and key, shown above the quantity.
         let selected_name = style::label(cx.tree, panel, "", Text::Heading)?;
         let selected_key = style::label(cx.tree, panel, "", Text::Note)?;
@@ -5706,7 +5830,7 @@ impl Screen for Inventory {
         )?;
         keep_height(cx.tree, draft_note)?;
         self.add_draft_note = Some(draft_note);
-        cx.tree.add(
+        let filler = cx.tree.add(
             Some(panel),
             NodeKind::Leaf,
             Style {
@@ -5716,6 +5840,7 @@ impl Screen for Inventory {
             Content::Panel,
             Look::default(),
         )?;
+        self.add_filler = Some(filler);
         let add_actions = style::row(cx.tree, panel)?;
         keep_height_row(cx.tree, add_actions)?;
         cx.tree.add(
@@ -5833,19 +5958,8 @@ impl Screen for Inventory {
         if let Message::Window(crate::event_loop::WindowEvent::Resized { width, .. }) = message {
             self.compact = *width < 1600;
             if let Some(side) = self.side_column {
-                let side_width = side_column_width(self.compact);
-                cx.tree.set_style(
-                    side,
-                    Style {
-                        preferred: Size::new(side_width, 0.0),
-                        min: Size::new(side_width, 0.0),
-                        max: Size::new(side_width, f32::INFINITY),
-                        shrink: 0.0,
-                        gap: Size::new(0.0, crate::theme::CONTROL_GAP),
-                        align_items: crate::layout::Align::Stretch,
-                        ..Style::default()
-                    },
-                )?;
+                cx.tree
+                    .set_style(side, side_column_style(self.compact, self.add_panel_open))?;
             }
             self.render(cx)?;
         }

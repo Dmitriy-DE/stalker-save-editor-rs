@@ -81,15 +81,17 @@ fn main() -> std::process::ExitCode {
 }
 
 fn screenshot(args: &[String]) -> Result<()> {
-    let path = args
-        .get(1)
-        .ok_or_else(|| Error::Refused("usage: --screenshot OUT.png [WxH] [NAV] [--open SAVE]".to_owned()))?;
+    let path = args.get(1).ok_or_else(|| {
+        Error::Refused("usage: --screenshot OUT.png [WxH] [NAV] [--open SAVE] [--add-item]".to_owned())
+    })?;
     let mut size: Option<(u32, u32)> = None;
     let mut nav: Option<usize> = None;
     let mut open_save = None;
+    let mut add_item = false;
     let mut index = 2;
     while index < args.len() {
         match args.get(index).map(String::as_str) {
+            Some("--add-item") => add_item = true,
             Some("--open") => {
                 index = index.saturating_add(1);
                 open_save = Some(
@@ -150,6 +152,9 @@ fn screenshot(args: &[String]) -> Result<()> {
         shell.open(&mut tree, *id)?;
     }
     shell.resize_window(&mut tree, width, height)?;
+    if add_item && !shell.open_add_item(&mut tree)? {
+        return Err(Error::Refused("the screen has no add-item button".to_owned()));
+    }
     shell.load_art_now(&mut tree, &sse_app::paths::default_data_directory().join("art"))?;
     let stride = usize::try_from(width).unwrap_or(0);
     let mut frame = vec![0_u32; stride.saturating_mul(usize::try_from(height).unwrap_or(0))];

@@ -2199,6 +2199,18 @@ impl Shell {
         self.library_workspace.library_snapshot().0
     }
 
+    /// Opens the inventory's add-item panel the way a click on its button does. Returns `false` when the current
+    /// screen has no such button. Used by the developer screenshot tool and by tests.
+    pub fn open_add_item(&mut self, tree: &mut Tree) -> Result<bool> {
+        let label = crate::strings::t("+ Добавить предмет").to_lowercase();
+        let Some(button) = find_button_with_text(tree, self.content, &label) else {
+            return Ok(false);
+        };
+        let wheel = Message::Window(crate::event_loop::WindowEvent::PointerLeft);
+        self.handle(tree, &wheel, Some(button))?;
+        Ok(true)
+    }
+
     /// Loads the background pictures from `directory` on the calling thread; for headless snapshots and budgets.
     pub fn load_art_now(&mut self, tree: &mut Tree, directory: &Path) -> Result<()> {
         self.art.directory = Some(directory.to_path_buf());
@@ -4143,6 +4155,18 @@ impl App<AppMessage> for Shell {
     }
 }
 
+/// First visible widget under `root` whose text contains `needle` (lower case, ignoring case of the text).
+fn find_button_with_text(tree: &Tree, root: WidgetId, needle: &str) -> Option<WidgetId> {
+    let mut stack = vec![root];
+    while let Some(id) = stack.pop() {
+        if tree.is_visible(id) && tree.text(id).is_ok_and(|text| text.to_lowercase().contains(needle)) {
+            return Some(id);
+        }
+        stack.extend(tree.children(id));
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::ArtSlot;
@@ -5524,6 +5548,70 @@ mod tests {
         result
     }
 
+    /// Checks that the library, the screen host, every inventory column and the pinned action panel end on one edge.
+    fn check_bottoms_on_library_edge(
+        tree: &Tree,
+        shell: &Shell,
+        width: u32,
+        height: u32,
+        add_open: bool,
+    ) -> sse_core::Result<()> {
+        let state = if add_open { "add-item open" } else { "inventory" };
+        let bottom = |tree: &Tree, id: WidgetId| -> sse_core::Result<i64> {
+            let rect = tree.rect(id)?;
+            Ok(i64::from(rect.y).saturating_add(i64::from(rect.height)))
+        };
+        let library_bottom = bottom(tree, shell.library)?;
+        let mut checked = vec![("library", library_bottom)];
+        for content_child in tree.children(shell.content) {
+            if !tree.is_visible(content_child) {
+                continue;
+            }
+            checked.push(("screen host", bottom(tree, content_child)?));
+            for screen_root in tree.children(content_child) {
+                if !tree.is_visible(screen_root) {
+                    continue;
+                }
+                let columns: Vec<WidgetId> = tree
+                    .children(screen_root)
+                    .into_iter()
+                    .filter(|column| tree.is_visible(*column))
+                    .collect();
+                for column in &columns {
+                    checked.push(("inventory column", bottom(tree, *column)?));
+                }
+                // The side column (the rightmost one) ends with the pinned action panel.
+                let mut side = None;
+                for column in &columns {
+                    let x = tree.rect(*column)?.x;
+                    if side.is_none_or(|(best, _)| x > best) {
+                        side = Some((x, *column));
+                    }
+                }
+                if let Some((_, side)) = side {
+                    let last = tree
+                        .children(side)
+                        .into_iter()
+                        .rev()
+                        .find(|child| tree.is_visible(*child));
+                    let last = last.ok_or_else(|| sse_core::Error::damaged("the side column is empty"))?;
+                    checked.push(("action panel", bottom(tree, last)?));
+                }
+            }
+        }
+        assert!(
+            checked.len() >= 5,
+            "the inventory columns were not found at {width}x{height}"
+        );
+        for (name, edge) in checked {
+            assert_eq!(
+                edge, library_bottom,
+                "{name} ends at {edge}, the library at {library_bottom} ({width}x{height}, {state})"
+            );
+        }
+        Ok(())
+    }
+
     #[test]
     fn inventory_columns_end_on_the_library_bottom_edge() -> sse_core::Result<()> {
         // The library, the screen host, every inventory column and the pinned action panel must share one bottom
@@ -5563,60 +5651,17 @@ mod tests {
                 shell.load_art_now(&mut tree, &directory.join("art"))?;
                 let stride = usize::try_from(width).unwrap_or(0);
                 let mut frame = vec![0_u32; stride.saturating_mul(usize::try_from(height).unwrap_or(0))];
-                for _ in 0..3 {
-                    tree.paint(&mut frame, stride)?;
-                }
-                let bottom = |tree: &Tree, id: WidgetId| -> sse_core::Result<i64> {
-                    let rect = tree.rect(id)?;
-                    Ok(i64::from(rect.y) + i64::from(rect.height))
-                };
-                let library_bottom = bottom(&tree, shell.library)?;
-                let mut checked = vec![("library", library_bottom)];
-                for content_child in tree.children(shell.content) {
-                    if !tree.is_visible(content_child) {
-                        continue;
+                for add_open in [false, true] {
+                    if add_open {
+                        assert!(
+                            shell.open_add_item(&mut tree)?,
+                            "the inventory has no add-item button at {width}x{height}"
+                        );
                     }
-                    checked.push(("screen host", bottom(&tree, content_child)?));
-                    for screen_root in tree.children(content_child) {
-                        if !tree.is_visible(screen_root) {
-                            continue;
-                        }
-                        let columns: Vec<WidgetId> = tree
-                            .children(screen_root)
-                            .into_iter()
-                            .filter(|column| tree.is_visible(*column))
-                            .collect();
-                        for column in &columns {
-                            checked.push(("inventory column", bottom(&tree, *column)?));
-                        }
-                        // The side column (the rightmost one) ends with the pinned action panel.
-                        let mut side = None;
-                        for column in &columns {
-                            let x = tree.rect(*column)?.x;
-                            if side.is_none_or(|(best, _)| x > best) {
-                                side = Some((x, *column));
-                            }
-                        }
-                        if let Some((_, side)) = side {
-                            let last = tree
-                                .children(side)
-                                .into_iter()
-                                .rev()
-                                .find(|child| tree.is_visible(*child));
-                            let last = last.ok_or_else(|| sse_core::Error::damaged("the side column is empty"))?;
-                            checked.push(("action panel", bottom(&tree, last)?));
-                        }
+                    for _ in 0..3 {
+                        tree.paint(&mut frame, stride)?;
                     }
-                }
-                assert!(
-                    checked.len() >= 5,
-                    "the inventory columns were not found at {width}x{height}"
-                );
-                for (name, edge) in checked {
-                    assert_eq!(
-                        edge, library_bottom,
-                        "{name} ends at {edge}, the library at {library_bottom} ({width}x{height})"
-                    );
+                    check_bottoms_on_library_edge(&tree, &shell, width, height, add_open)?;
                 }
                 Ok(())
             })();
