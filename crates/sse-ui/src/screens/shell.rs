@@ -414,18 +414,21 @@ fn padded(left: f32, top: f32, right: f32, bottom: f32) -> Edges {
 
 fn top_button(tree: &mut Tree, parent: WidgetId, text: &str, primary: bool) -> Result<WidgetId> {
     let colors = crate::theme::current().colors;
+    let label = text.to_uppercase();
+    let label_style = TextStyle::new(Face::Heading, 11.0);
+    let min_width = (tree.measure_text(&label, label_style) + 16.0).ceil().max(58.0);
     tree.add(
         Some(parent),
         NodeKind::Leaf,
         Style {
-            min: Size::new(58.0, 32.0),
+            min: Size::new(min_width, 32.0),
             padding: padded(8.0, 0.0, 8.0, 0.0),
-            shrink: 1.0,
+            shrink: 0.0,
             ..Style::default()
         },
         Content::Button {
-            text: text.to_uppercase(),
-            style: TextStyle::new(Face::Heading, 11.0),
+            text: label,
+            style: label_style,
         },
         Look {
             fill: primary.then(|| rgb(colors.accent[0])),
@@ -445,18 +448,21 @@ fn top_button(tree: &mut Tree, parent: WidgetId, text: &str, primary: bool) -> R
 
 fn compact_library_button(tree: &mut Tree, parent: WidgetId, text: &str) -> Result<WidgetId> {
     let colors = crate::theme::current().colors;
+    let label = text.to_uppercase();
+    let label_style = TextStyle::new(Face::Heading, 10.0);
+    let min_width = (tree.measure_text(&label, label_style) + 10.0).ceil().max(64.0);
     tree.add(
         Some(parent),
         NodeKind::Leaf,
         Style {
-            min: Size::new(64.0, 30.0),
+            min: Size::new(min_width, 30.0),
             padding: padded(5.0, 0.0, 5.0, 0.0),
             shrink: 1.0,
             ..Style::default()
         },
         Content::Button {
-            text: text.to_uppercase(),
-            style: TextStyle::new(Face::Heading, 10.0),
+            text: label,
+            style: label_style,
         },
         Look {
             fill: Some(rgb(colors.background[2])),
@@ -770,7 +776,7 @@ impl Shell {
             Style {
                 grow: 1.0,
                 shrink: 1.0,
-                min: Size::new(190.0, 0.0),
+                min: Size::new(120.0, 0.0),
                 ..Style::default()
             },
             Content::Label {

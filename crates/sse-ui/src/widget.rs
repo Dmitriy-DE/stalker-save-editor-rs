@@ -577,6 +577,12 @@ impl Tree {
         Ok(labels)
     }
 
+    /// Width of one line of text in pixels, for sizing controls to their labels.
+    #[must_use]
+    pub fn measure_text(&self, text: &str, style: TextStyle) -> f32 {
+        self.fonts.measure(text, style)
+    }
+
     /// Replaces an input widget's value and records it as changed.
     ///
     /// # Errors

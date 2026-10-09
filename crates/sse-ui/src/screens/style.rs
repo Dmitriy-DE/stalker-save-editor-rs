@@ -157,14 +157,20 @@ pub fn input(tree: &mut Tree, parent: WidgetId, value: &str) -> Result<WidgetId>
 /// # Errors
 /// Returns an error from the widget tree.
 pub fn button(tree: &mut Tree, parent: WidgetId, text: &str, role: Button) -> Result<WidgetId> {
+    let padding = Edges {
+        left: 16.0,
+        top: 0.0,
+        right: 16.0,
+        bottom: 0.0,
+    };
+    let label = text_upper(text);
+    let label_style = TextStyle::new(Face::Heading, 14.0);
+    let min_width = (tree.measure_text(&label, label_style) + padding.left + padding.right)
+        .ceil()
+        .max(96.0);
     let style = Style {
-        min: Size::new(96.0, theme::BUTTON_HEIGHT),
-        padding: Edges {
-            left: 16.0,
-            top: 0.0,
-            right: 16.0,
-            bottom: 0.0,
-        },
+        min: Size::new(min_width, theme::BUTTON_HEIGHT),
+        padding,
         ..Style::default()
     };
     let colors = theme::current().colors;
@@ -183,8 +189,8 @@ pub fn button(tree: &mut Tree, parent: WidgetId, text: &str, role: Button) -> Re
         ..Look::default()
     };
     let content = Content::Button {
-        text: text_upper(text),
-        style: TextStyle::new(Face::Heading, 14.0),
+        text: label,
+        style: label_style,
     };
     tree.add(Some(parent), NodeKind::Leaf, style, content, look)
 }
