@@ -3,9 +3,9 @@
 //! Preserves comments, ordering, line breaks, and CP1251 encoding.
 //! All operations take the game installation path explicitly with no global state.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use crate::fs_util::AtomicFileWriter;
 use sse_core::{Error, Result};
@@ -231,8 +231,12 @@ impl ManagedUserLtxSettings {
                 continue;
             }
             if let Some((k, v)) = split_key_value(trimmed) {
-                if is_managed_key(k) {
-                    results.insert(k.to_string(), v.to_string());
+                if let Some(canonical_key) = canonical_managed_key(k) {
+                    if results.insert(canonical_key.to_string(), v.to_string()).is_some() {
+                        return Err(Error::Refused(format!(
+                            "The user.ltx contains more than one {canonical_key} command; no change was made."
+                        )));
+                    }
                 }
             }
         }
@@ -265,7 +269,20 @@ impl ManagedUserLtxSettings {
         };
 
         let mut applied_count: usize = 0;
-        let mut keys_remaining: BTreeMap<String, String> = settings_to_update.clone();
+        let mut keys_remaining = BTreeMap::new();
+        for (key, value) in settings_to_update {
+            let canonical_key = canonical_managed_key(key)
+                .ok_or_else(|| Error::Refused(format!("Setting '{key}' is not in the managed allow-list")))?;
+            if keys_remaining
+                .insert(canonical_key.to_string(), value.clone())
+                .is_some()
+            {
+                return Err(Error::Refused(format!(
+                    "Setting '{canonical_key}' was provided more than once with different casing"
+                )));
+            }
+        }
+        let mut seen_keys = BTreeSet::new();
 
         for line in &mut lines {
             let trimmed = line.trim();
@@ -273,12 +290,19 @@ impl ManagedUserLtxSettings {
                 continue;
             }
             if let Some((k, _)) = split_key_value(trimmed) {
-                if let Some(new_val) = keys_remaining.remove(k) {
-                    // Reconstruct line keeping prefix indentation
-                    let indent_len = line.len().saturating_sub(line.trim_start().len());
-                    let indent = line.get(..indent_len).unwrap_or("");
-                    *line = format!("{indent}{k} {new_val}");
-                    applied_count = applied_count.saturating_add(1);
+                if let Some(canonical_key) = canonical_managed_key(k) {
+                    if !seen_keys.insert(canonical_key) {
+                        return Err(Error::Refused(format!(
+                            "The user.ltx contains more than one {canonical_key} command; no change was made."
+                        )));
+                    }
+                    if let Some(new_val) = keys_remaining.remove(canonical_key) {
+                        // Reconstruct line keeping prefix indentation
+                        let indent_len = line.len().saturating_sub(line.trim_start().len());
+                        let indent = line.get(..indent_len).unwrap_or("");
+                        *line = format!("{indent}{k} {new_val}");
+                        applied_count = applied_count.saturating_add(1);
+                    }
                 }
             }
         }
@@ -314,7 +338,8 @@ impl ManagedUserLtxSettings {
         let mut missing = Vec::new();
 
         for (k, expected_v) in baseline {
-            match current.get(k) {
+            let current_key = canonical_managed_key(k).unwrap_or(k);
+            match current.get(current_key) {
                 Some(actual_v) => {
                     if !values_match(k, actual_v, expected_v) {
                         drifted.insert(k.clone(), (actual_v.clone(), expected_v.clone()));
@@ -334,8 +359,11 @@ impl ManagedUserLtxSettings {
     }
 }
 
-fn is_managed_key(key: &str) -> bool {
-    MANAGED_SETTINGS.iter().any(|s| s.key.eq_ignore_ascii_case(key))
+fn canonical_managed_key(key: &str) -> Option<&'static str> {
+    MANAGED_SETTINGS
+        .iter()
+        .find(|setting| setting.key.eq_ignore_ascii_case(key))
+        .map(|setting| setting.key)
 }
 
 fn split_key_value(line: &str) -> Option<(&str, &str)> {
@@ -346,9 +374,11 @@ fn split_key_value(line: &str) -> Option<(&str, &str)> {
 }
 
 fn validate_setting_value(key: &str, val: &str) -> Result<()> {
+    let canonical_key = canonical_managed_key(key)
+        .ok_or_else(|| Error::Refused(format!("Setting '{key}' is not in the managed allow-list")))?;
     let def = MANAGED_SETTINGS
         .iter()
-        .find(|s| s.key.eq_ignore_ascii_case(key))
+        .find(|setting| setting.key == canonical_key)
         .ok_or_else(|| Error::Refused(format!("Setting '{key}' is not in the managed allow-list")))?;
 
     match &def.setting_type {
@@ -387,7 +417,10 @@ fn validate_setting_value(key: &str, val: &str) -> Result<()> {
 }
 
 fn values_match(key: &str, val_a: &str, val_b: &str) -> bool {
-    let def = MANAGED_SETTINGS.iter().find(|s| s.key.eq_ignore_ascii_case(key));
+    let canonical_key = canonical_managed_key(key);
+    let def = MANAGED_SETTINGS
+        .iter()
+        .find(|setting| Some(setting.key) == canonical_key);
 
     match def.map(|d| &d.setting_type) {
         Some(UserLtxSettingType::Boolean) => {
@@ -408,15 +441,40 @@ fn values_match(key: &str, val_a: &str, val_b: &str) -> bool {
 }
 
 fn parse_fsgame_appdata(content: &str, game_directory: &Path) -> Option<PathBuf> {
+    let game_root = game_directory.canonicalize().ok()?;
     for line in content.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with('$') && trimmed.contains("$app_data_root$") {
-            let parts: Vec<&str> = trimmed.split('|').collect();
-            if parts.len() >= 4 {
-                let rel = parts.get(3)?.trim().trim_matches('\\').trim_matches('/');
-                return Some(game_directory.join(rel));
-            }
+        let Some((key, definition)) = trimmed.split_once('=') else {
+            continue;
+        };
+        if !key.trim().eq_ignore_ascii_case("$app_data_root$") {
+            continue;
         }
+
+        let parts: Vec<&str> = definition.split('|').collect();
+        let rel = parts.get(3)?.trim().trim_end_matches(['\\', '/']);
+        let normalized = rel.replace('\\', "/");
+        let relative = Path::new(&normalized);
+        let bytes = normalized.as_bytes();
+        let has_drive_prefix = bytes.first().is_some_and(u8::is_ascii_alphabetic) && bytes.get(1) == Some(&b':');
+        if relative.is_absolute()
+            || has_drive_prefix
+            || relative.components().any(|component| {
+                matches!(
+                    component,
+                    Component::ParentDir | Component::RootDir | Component::Prefix(_)
+                )
+            })
+        {
+            return None;
+        }
+
+        let candidate = game_root.join(relative);
+        let canonical_candidate = candidate.canonicalize().ok()?;
+        if !canonical_candidate.starts_with(&game_root) {
+            return None;
+        }
+        return Some(canonical_candidate);
     }
     None
 }
