@@ -2350,10 +2350,12 @@ fn add_candidates(selected: &LoadedSave, removed: &BTreeSet<u32>) -> Vec<AddCand
                 .any(|candidate| candidate.section == item.key && !removed.contains(&u32::from(candidate.handle))),
         })
         .collect::<Vec<_>>();
+    // Candidates that can be added (with a template in the save) come first, then by name.
     candidates.sort_by(|left, right| {
-        left.display_name
-            .to_lowercase()
-            .cmp(&right.display_name.to_lowercase())
+        right
+            .template_available
+            .cmp(&left.template_available)
+            .then_with(|| left.display_name.to_lowercase().cmp(&right.display_name.to_lowercase()))
             .then_with(|| left.key.cmp(&right.key))
     });
     candidates
@@ -2391,14 +2393,13 @@ fn add_panel_style(bottom_margin: f32) -> Style {
     }
 }
 
-/// Width a candidate's name may take: the side column less the panel padding and the button's own padding.
-fn add_candidate_name_width(compact: bool) -> f32 {
-    side_column_width(compact) - 2.0 * crate::theme::d2::PANEL_PADDING.0 - 20.0
+/// Width a candidate's text may take: the side column less the panel padding and the button's 16 px insets.
+fn add_candidate_text_width(compact: bool) -> f32 {
+    side_column_width(compact) - 2.0 * crate::theme::d2::PANEL_PADDING.0 - 32.0
 }
 
 /// `text`, shortened with an ellipsis at its end until it fits in `max_width` pixels.
-fn fit_text(tree: &crate::widget::Tree, text: &str, max_width: f32) -> String {
-    let style = Text::Body.style();
+fn fit_text(tree: &crate::widget::Tree, text: &str, style: TextStyle, max_width: f32) -> String {
     if tree.measure_text(text, style) <= max_width {
         return text.to_owned();
     }
@@ -2468,6 +2469,7 @@ struct Inventory {
     add_candidate_rows: Vec<(WidgetId, Option<String>)>,
     /// Per candidate row: its column and the wrapped note under the name (key and reason).
     add_candidate_slots: Vec<(WidgetId, WidgetId)>,
+    add_page_range: Option<WidgetId>,
     add_empty: Option<WidgetId>,
     add_previous: Option<WidgetId>,
     add_next: Option<WidgetId>,
@@ -2747,6 +2749,7 @@ impl Inventory {
             add_quantity: None,
             add_candidate_rows: Vec::new(),
             add_candidate_slots: Vec::new(),
+            add_page_range: None,
             add_empty: None,
             add_previous: None,
             add_next: None,
@@ -2824,12 +2827,7 @@ impl Inventory {
         self.sync_add_list_cap(cx)?;
         // A wrapped note measures its lines at its minimum width, so the width it is drawn in is given here.
         let note_width = side_column_width(self.compact) - 2.0 * crate::theme::d2::PANEL_PADDING.0;
-        let candidate_notes = self.add_candidate_slots.iter().map(|(_, note)| *note);
-        for note in [self.add_note, self.add_draft_note]
-            .into_iter()
-            .flatten()
-            .chain(candidate_notes)
-        {
+        for note in [self.add_note, self.add_draft_note].into_iter().flatten() {
             cx.tree.set_style(
                 note,
                 Style {
@@ -2909,6 +2907,9 @@ impl Inventory {
             if let Some(side) = self.side_column {
                 cx.tree.set_style(side, side_column_style(self.compact, false))?;
             }
+            if let Some(actions) = self.actions_panel {
+                cx.tree.set_visible(actions, true)?;
+            }
             if let Some(id) = self.money_label {
                 cx.tree.set_text(id, t("Сначала выберите сейв на экране «Обзор»."))?;
             }
@@ -2932,6 +2933,9 @@ impl Inventory {
             }
             if let Some(side) = self.side_column {
                 cx.tree.set_style(side, side_column_style(self.compact, false))?;
+            }
+            if let Some(actions) = self.actions_panel {
+                cx.tree.set_visible(actions, true)?;
             }
         }
         let selected_for_inspector = Arc::clone(selected);
@@ -3944,8 +3948,12 @@ impl Inventory {
         if let Some(side) = self.side_column {
             cx.tree.set_style(side, side_column_style(self.compact, true))?;
         }
+        // The frame's add branch has no remove/add-item bar: the panel takes its place too.
+        if let Some(actions) = self.actions_panel {
+            cx.tree.set_visible(actions, false)?;
+        }
         if let Some(panel) = self.add_panel {
-            cx.tree.set_style(panel, add_panel_style(crate::theme::CONTROL_GAP))?;
+            cx.tree.set_style(panel, add_panel_style(0.0))?;
             cx.tree.set_visible(panel, true)?;
         }
         self.add_panel_open = true;
@@ -3972,6 +3980,9 @@ impl Inventory {
         }
         if let Some(side) = self.side_column {
             cx.tree.set_style(side, side_column_style(self.compact, false))?;
+        }
+        if let Some(actions) = self.actions_panel {
+            cx.tree.set_visible(actions, true)?;
         }
         if let Some(search) = self.add_search.as_mut() {
             search.focus(false, 0);
@@ -4029,9 +4040,16 @@ impl Inventory {
                     t(" · нет подтверждённого шаблона в сейве").to_owned()
                 };
                 // The name is shortened to the button's width; the key and reason wrap under it.
-                let name = fit_text(cx.tree, &candidate.display_name, add_candidate_name_width(self.compact));
+                let width = add_candidate_text_width(self.compact);
+                let name = fit_text(cx.tree, &candidate.display_name, Text::Body.style(), width);
                 cx.tree.set_text(*widget, &name)?;
-                cx.tree.set_text(note, &format!("{}{suffix}", candidate.key))?;
+                let key_line = fit_text(
+                    cx.tree,
+                    &format!("{}{suffix}", candidate.key),
+                    Text::Note.style(),
+                    width,
+                );
+                cx.tree.set_text(note, &key_line)?;
                 cx.tree.set_visible(column, true)?;
                 cx.tree.set_enabled(*widget, candidate.template_available)?;
                 cx.tree.set_look(
@@ -4060,11 +4078,23 @@ impl Inventory {
             }
         }
         if let Some(previous) = self.add_previous {
-            cx.tree.set_visible(previous, pages > 1 && self.add_page > 0)?;
+            cx.tree.set_enabled(previous, self.add_page > 0)?;
         }
         if let Some(next) = self.add_next {
-            cx.tree
-                .set_visible(next, pages > 1 && self.add_page.saturating_add(1) < pages)?;
+            cx.tree.set_enabled(next, self.add_page.saturating_add(1) < pages)?;
+        }
+        if let Some(range) = self.add_page_range {
+            let text = if matching.is_empty() {
+                String::new()
+            } else {
+                let last = start.saturating_add(ADD_ITEM_PAGE_SIZE).min(matching.len());
+                crate::strings::tr_in(
+                    Some(crate::strings::current_language()),
+                    "{0}–{1} из {2}",
+                    &[&start.saturating_add(1), &last, &matching.len()],
+                )
+            };
+            cx.tree.set_text(range, &text)?;
         }
         let has_template = self.add_selected_key.as_ref().is_some_and(|key| {
             matching
@@ -4104,9 +4134,8 @@ impl Inventory {
                 others += px_i64(i64::from(cx.tree.rect(*child)?.height));
             }
         }
-        // The shell keeps 12 px below the content and a 30 px status bar under the window; the panel's bottom
-        // margin (the column has no gaps while the panel is open) sits above the action panel.
-        let side_room = window_height - side_top - 42.0 - others - crate::theme::CONTROL_GAP;
+        // The shell keeps 12 px below the content and a 30 px status bar under the window.
+        let side_room = window_height - side_top - 42.0 - others;
         let inner = side_room - 2.0 * crate::theme::d2::PANEL_PADDING.0;
         let children = cx.tree.children(panel);
         let mut fixed = 0.0_f32;
@@ -5809,8 +5838,21 @@ impl Screen for Inventory {
                 Look::default(),
             )?;
             let widget = style::button(cx.tree, slot, "", Button::Secondary)?;
-            let note = paragraph(cx.tree, slot, "", Text::Note)?;
-            keep_height(cx.tree, note)?;
+            // One line, shortened with an ellipsis; its inset matches the button's text so both start together.
+            let note = style::label(cx.tree, slot, "", Text::Note)?;
+            cx.tree.set_style(
+                note,
+                Style {
+                    shrink: 0.0,
+                    padding: crate::layout::Edges {
+                        left: 16.0,
+                        top: 0.0,
+                        right: 16.0,
+                        bottom: 0.0,
+                    },
+                    ..Style::default()
+                },
+            )?;
             cx.tree.set_visible(slot, false)?;
             self.add_candidate_rows.push((widget, None));
             self.add_candidate_slots.push((slot, note));
@@ -5818,23 +5860,25 @@ impl Screen for Inventory {
         // The paging row stays under the candidate list, outside its scroll, so it is always in reach.
         let add_pages = style::row(cx.tree, panel)?;
         keep_height_row(cx.tree, add_pages)?;
-        self.add_previous = Some(style::d2::button(
-            cx.tree,
-            add_pages,
-            t("Назад"),
-            style::d2::ButtonKind::Secondary,
-            style::d2::ButtonSize::Normal,
-        )?);
-        self.add_next = Some(style::d2::button(
-            cx.tree,
-            add_pages,
-            t("Дальше"),
-            style::d2::ButtonKind::Secondary,
-            style::d2::ButtonSize::Normal,
-        )?);
-        // The chosen candidate: its name and key, shown above the quantity.
-        let selected_name = style::label(cx.tree, panel, "", Text::Heading)?;
-        let selected_key = style::label(cx.tree, panel, "", Text::Note)?;
+        // The same pager as the inventory table: arrows and the range of the rows shown.
+        self.add_previous = Some(library_icon_button(cx.tree, add_pages, Icon::D2ArrowLeft)?);
+        self.add_page_range = Some(style::label(cx.tree, add_pages, "", Text::Note)?);
+        self.add_next = Some(library_icon_button(cx.tree, add_pages, Icon::D2ArrowRight)?);
+        // The chosen candidate (its name and key) and the quantity form one group without a gap of its own: a hidden
+        // label keeps no room, and the visible ones take their spacing from their margins.
+        let selected_group = cx.tree.add(
+            Some(panel),
+            NodeKind::Column,
+            Style {
+                shrink: 0.0,
+                align_items: crate::layout::Align::Stretch,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        let selected_name = style::label(cx.tree, selected_group, "", Text::Heading)?;
+        let selected_key = style::label(cx.tree, selected_group, "", Text::Note)?;
         // The chosen candidate starts 12 px below the list, as the blocks of the frame do.
         cx.tree.set_style(
             selected_name,
@@ -5847,12 +5891,22 @@ impl Screen for Inventory {
                 ..Style::default()
             },
         )?;
-        keep_height(cx.tree, selected_key)?;
+        cx.tree.set_style(
+            selected_key,
+            Style {
+                shrink: 0.0,
+                margin: crate::layout::Edges {
+                    bottom: 10.0,
+                    ..crate::layout::Edges::default()
+                },
+                ..Style::default()
+            },
+        )?;
         cx.tree.set_visible(selected_name, false)?;
         cx.tree.set_visible(selected_key, false)?;
         self.add_selected_name = Some(selected_name);
         self.add_selected_key_label = Some(selected_key);
-        let quantity_row = style::row(cx.tree, panel)?;
+        let quantity_row = style::row(cx.tree, selected_group)?;
         keep_height_row(cx.tree, quantity_row)?;
         style::label(cx.tree, quantity_row, "Количество:", Text::Body)?;
         let quantity = cx.tree.add(
@@ -5903,16 +5957,6 @@ impl Screen for Inventory {
         self.add_filler = Some(filler);
         let add_actions = style::row(cx.tree, panel)?;
         keep_height_row(cx.tree, add_actions)?;
-        cx.tree.add(
-            Some(add_actions),
-            NodeKind::Leaf,
-            Style {
-                grow: 1.0,
-                ..Style::default()
-            },
-            Content::Panel,
-            Look::default(),
-        )?;
         self.add_cancel = Some(style::d2::button(
             cx.tree,
             add_actions,
@@ -5927,6 +5971,24 @@ impl Screen for Inventory {
             style::d2::ButtonKind::Primary,
             style::d2::ButtonSize::Normal,
         )?);
+        // Two equal buttons share the panel's content width.
+        for id in [self.add_cancel, self.add_confirm].into_iter().flatten() {
+            cx.tree.set_style(
+                id,
+                Style {
+                    grow: 1.0,
+                    shrink: 1.0,
+                    min: crate::layout::Size::new(0.0, crate::theme::d2::CONTROL_HEIGHT.0),
+                    padding: crate::layout::Edges {
+                        left: 8.0,
+                        top: 0.0,
+                        right: 8.0,
+                        bottom: 0.0,
+                    },
+                    ..Style::default()
+                },
+            )?;
+        }
         cx.tree.set_visible(panel, false)?;
         let actions = style::d2::panel(cx.tree, side)?;
         cx.tree.set_style(
