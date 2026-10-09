@@ -542,3 +542,19 @@ fn save_does_not_overwrite_a_corrupt_existing_draft() {
     assert!(store.save(journal).is_err());
     assert_eq!(fs::read(path).expect("original must remain"), original);
 }
+
+#[test]
+fn draft_plans_refuse_detach_and_stack_handles_outside_the_item_range() {
+    let source = "0".repeat(63) + "1";
+    let mut detach = DraftPlan::empty(&source).expect("plan");
+    detach.detach_handles = vec![0];
+    assert!(DraftJournal::new(vec![detach], 0).is_err());
+
+    let mut max_detach = DraftPlan::empty(&source).expect("plan");
+    max_detach.detach_handles = vec![u16::MAX];
+    assert!(DraftJournal::new(vec![max_detach], 0).is_err());
+
+    let mut stack = DraftPlan::empty(&source).expect("plan");
+    stack.stack_counts.insert(0, 2);
+    assert!(DraftJournal::new(vec![stack], 0).is_err());
+}

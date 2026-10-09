@@ -254,6 +254,64 @@ fn in_place_backup_rotation_keeps_the_one_hundred_newest_verified_sets() {
 }
 
 #[test]
+fn rotation_skips_a_set_with_an_unverified_recovery_copy_and_still_removes_the_next_one() {
+    let directory = TemporaryDirectory::new();
+    let save_directory = directory.0.join("saves");
+    let backup_directory = directory.0.join("backups");
+    fs::create_dir_all(&save_directory).expect("save directory should be created");
+    let source = save_directory.join("source.sav");
+    let original = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-source.sav");
+    let edited = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-expected.sav");
+    fs::write(&source, original).expect("source should be written");
+    let edit = |source: &PathBuf| {
+        let current = fs::read(source).expect("current source should be readable");
+        let (expected, replacement) = if current == original {
+            (original.as_slice(), edited.as_slice())
+        } else {
+            (edited.as_slice(), original.as_slice())
+        };
+        replace_transaction(
+            source,
+            &sse_codecs::sha256::sha256_hex(expected),
+            replacement,
+            &backup_directory,
+        )
+        .expect("in-place save should create a verified backup");
+    };
+    let recoveries = || {
+        let mut paths = fs::read_dir(&backup_directory)
+            .expect("backup directory should be readable")
+            .map(|entry| entry.expect("backup entry").path())
+            .filter(|path| path.to_string_lossy().ends_with("_EDITED.sav"))
+            .collect::<Vec<_>>();
+        paths.sort();
+        paths
+    };
+    for _ in 0..100 {
+        edit(&source);
+    }
+
+    // Set A is the oldest. It is protected while its recovery copy is wrong.
+    let set_a = recoveries()[0].clone();
+    let set_a_bytes = fs::read(&set_a).expect("recovery copy should be readable");
+    fs::write(&set_a, b"tampered recovery copy").expect("recovery copy should be overwritten");
+    edit(&source);
+
+    // A is repaired, and set B, the next oldest, is damaged. The rotation meets B first.
+    fs::write(&set_a, &set_a_bytes).expect("recovery copy should be restored");
+    let set_b = recoveries()[1].clone();
+    fs::write(&set_b, b"tampered recovery copy").expect("recovery copy should be overwritten");
+    edit(&source);
+
+    let entries = list_backups(&backup_directory).expect("backup listing should succeed");
+    assert_eq!(
+        entries.len(),
+        101,
+        "the damaged set B stays, and the rotation still removes the valid set A"
+    );
+}
+
+#[test]
 fn missing_and_corrupt_backup_journals_are_listed_but_never_restored() {
     let directory = TemporaryDirectory::new();
     let (_, _, _, backup_directory) = export_fixture(&directory.0);

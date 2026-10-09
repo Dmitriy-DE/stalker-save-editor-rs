@@ -643,6 +643,7 @@ fn rotate_verified_backups(directory: &Path) -> Result<()> {
     }
 
     let mut removed_any = false;
+    let mut kept_unverified = 0_usize;
     for (_, entry, fields) in verified.into_iter().skip(MAXIMUM_VERIFIED_BACKUP_SETS) {
         if entry.journal_path.parent() != Some(directory.as_path())
             || entry.backup_path.parent() != Some(directory.as_path())
@@ -664,9 +665,9 @@ fn rotate_verified_backups(directory: &Path) -> Result<()> {
             }
             let output_sha256 = field_string(&fields, "output_sha256")?;
             if !valid_sha256(&output_sha256) || cached_file_sha256(recovery_path)? != output_sha256 {
-                return Err(Error::Refused(
-                    "refusing to rotate a backup with an unverified recovery copy".to_owned(),
-                ));
+                // Keep this set and move on, so the older sets are still removed.
+                kept_unverified = kept_unverified.saturating_add(1);
+                continue;
             }
         }
 
@@ -704,6 +705,11 @@ fn rotate_verified_backups(directory: &Path) -> Result<()> {
     }
     if removed_any {
         sync_directory(Some(&directory))?;
+    }
+    if kept_unverified > 0 {
+        return Err(Error::Refused(format!(
+            "kept {kept_unverified} backup set(s) whose recovery copy does not match its journal"
+        )));
     }
     Ok(())
 }
