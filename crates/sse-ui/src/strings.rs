@@ -1,34 +1,17 @@
 //! Generated from C# 1.3.1 localization. Do not edit by hand.
 use std::sync::atomic::{AtomicU8, Ordering};
 /// Interface languages, Russian first (it is the key language).
-pub const LANGUAGES: [&str; 15] = [
-    "ru", "uk", "en", "de", "fr", "it", "es", "pl", "cs", "pt-BR", "tr", "ja", "ko", "zh-CN", "zh-TW",
-];
+pub const LANGUAGES: [&str; 15] = ["ru","uk","en","de","fr","it","es","pl","cs","pt-BR","tr","ja","ko","zh-CN","zh-TW"];
 static CURRENT_LANGUAGE: AtomicU8 = AtomicU8::new(0);
 /// Index of a language code in [`LANGUAGES`]; unknown codes fall back to Russian.
 #[must_use]
 pub fn language_index(code: &str) -> usize {
     let clean = code.trim().replace('_', "-");
     let lower = clean.to_ascii_lowercase();
-    if lower.starts_with("zh") {
-        return if lower.contains("tw") || lower.contains("hk") || lower.contains("hant") {
-            14
-        } else {
-            13
-        };
-    }
-    if lower.starts_with("pt") {
-        return 9;
-    }
-    LANGUAGES
-        .iter()
-        .position(|v| v.eq_ignore_ascii_case(&clean))
-        .or_else(|| {
-            lower
-                .split('-')
-                .next()
-                .and_then(|base| LANGUAGES.iter().position(|v| v.eq_ignore_ascii_case(base)))
-        })
+    if lower.starts_with("zh") { return if lower.contains("tw") || lower.contains("hk") || lower.contains("hant") { 14 } else { 13 }; }
+    if lower.starts_with("pt") { return 9; }
+    LANGUAGES.iter().position(|v| v.eq_ignore_ascii_case(&clean))
+        .or_else(|| lower.split('-').next().and_then(|base| LANGUAGES.iter().position(|v| v.eq_ignore_ascii_case(base))))
         .unwrap_or(0)
 }
 /// Sets the interface language (`None` = Russian).
@@ -39,27 +22,17 @@ pub fn set_language(code: Option<&str>) {
 /// Current interface language code.
 #[must_use]
 pub fn current_language() -> &'static str {
-    LANGUAGES
-        .get(usize::from(CURRENT_LANGUAGE.load(Ordering::Relaxed)))
-        .copied()
-        .unwrap_or("ru")
+    LANGUAGES.get(usize::from(CURRENT_LANGUAGE.load(Ordering::Relaxed))).copied().unwrap_or("ru")
 }
 /// Translation of a Russian key into the current language; unknown keys are returned as is.
 #[must_use]
-pub fn t(key: &str) -> &str {
-    t_in(current_language(), key)
-}
+pub fn t(key: &str) -> &str { t_in(current_language(), key) }
 /// Translation of a Russian key into `language`.
 #[must_use]
 pub fn t_in<'a>(language: &str, key: &'a str) -> &'a str {
     let lang = language_index(language);
     match STRINGS.binary_search_by(|entry| entry.0.cmp(key)) {
-        Ok(index) => STRINGS
-            .get(index)
-            .and_then(|entry| entry.1.get(lang))
-            .copied()
-            .filter(|v| !v.is_empty())
-            .unwrap_or(key),
+        Ok(index) => STRINGS.get(index).and_then(|entry| entry.1.get(lang)).copied().filter(|v| !v.is_empty()).unwrap_or(key),
         Err(_) => key,
     }
 }
@@ -1080,6 +1053,7 @@ static STRINGS: &[Row] = &[
     ("Не удалось запустить установку.", ["Не удалось запустить установку.", "Не вдалося запустити встановлення.", "Could not start the installer.", "Die Installation konnte nicht gestartet werden.", "Impossible de lancer l’installation.", "Impossibile avviare l’installazione.", "No se pudo iniciar la instalación.", "Nie udało się uruchomić instalacji.", "Instalaci se nepodařilo spustit.", "Não foi possível iniciar a instalação.", "Kurulum başlatılamadı.", "インストーラーを起動できませんでした。", "설치를 시작하지 못했습니다.", "无法启动安装。", "無法啟動安裝。"]),
     ("Не удалось изменить настройку: {0}", ["Не удалось изменить настройку: {0}", "Неможливо змінити налаштування: {0}", "Failed to change setting: {0}", "Einstellung konnte nicht geändert werden: {0}", "Échec de la modification du paramètre\u{a0}: {0}", "Impossibile modificare l'impostazione: {0}", "No se pudo cambiar la configuración: {0}", "Nie udało się zmienić ustawienia: {0}", "Nepodařilo se změnit nastavení: {0}", "Falha ao alterar a configuração: {0}", "Ayar değiştirilemedi: {0}", "設定の変更に失敗しました: {0}", "설정 변경 실패: {0}", "更改设置失败：{0}", "更改設定失敗：{0}"]),
     ("Не удалось найти компонент обновления.", ["Не удалось найти компонент обновления.", "Не вдалося знайти компонент оновлення.", "Could not find the update component.", "Die Update-Komponente wurde nicht gefunden.", "Composant de mise à jour introuvable.", "Impossibile trovare il componente di aggiornamento.", "No se encontró el componente de actualización.", "Nie znaleziono komponentu aktualizacji.", "Komponentu aktualizace se nepodařilo najít.", "Não foi possível encontrar o componente de atualização.", "Güncelleme bileşeni bulunamadı.", "アップデートのコンポーネントが見つかりません。", "업데이트 구성 요소를 찾지 못했습니다.", "找不到更新组件。", "找不到更新元件。"]),
+    ("Не удалось найти папки с сохранениями", ["Не удалось найти папки с сохранениями", "Не вдалося знайти папки зі збереженнями", "Could not find save folders", "Spielstandordner konnten nicht gefunden werden", "Impossible de trouver les dossiers de sauvegarde", "Impossibile trovare le cartelle dei salvataggi", "No se pudieron encontrar las carpetas de partidas guardadas", "Nie udało się znaleźć folderów z zapisami", "Nepodařilo se najít složky s uloženými pozicemi", "Não foi possível encontrar as pastas de salvamento", "Kayıt klasörleri bulunamadı", "セーブフォルダーが見つかりませんでした", "세이브 폴더를 찾을 수 없습니다", "无法找到存档文件夹", "找不到存檔資料夾"]),
     ("Не удалось найти установки. Укажите папку игры вручную в Докторе игры.", ["Не удалось найти установки. Укажите папку игры вручную в Докторе игры.", "Не вдалося знайти встановлення. Укажіть папку гри вручну в Докторі гри.", "Could not find installations. Choose the game folder manually in Game Doctor.", "Installationen konnten nicht gefunden werden. Wählen Sie den Spielordner manuell im Spieldoktor aus.", "Impossible de trouver les installations. Choisissez manuellement le dossier du jeu dans le Docteur du jeu.", "Impossibile trovare installazioni. Seleziona manualmente la cartella del gioco in Game Doctor.", "No se pudieron encontrar instalaciones. Selecciona manualmente la carpeta del juego en Game Doctor.", "Nie udało się znaleźć instalacji. Wskaż folder gry ręcznie w Game Doctor.", "Instalace se nepodařilo najít. Vyberte složku hry ručně v Game Doctor.", "Não foi possível encontrar instalações. Escolha manualmente a pasta do jogo no Game Doctor.", "Kurulumlar bulunamadı. Oyun Doktoru'nda oyun klasörünü elle seçin.", "インストールが見つかりません。ゲームドクターでゲームフォルダーを手動で選択してください。", "설치를 찾을 수 없습니다. 게임 닥터에서 게임 폴더를 직접 선택하세요.", "未能找到安装位置。请在游戏医生中手动选择游戏文件夹。", "找不到安裝位置。請在遊戲醫生中手動選擇遊戲資料夾。"]),
     ("Не удалось найти эту группировку.", ["Не удалось найти эту группировку.", "Не вдалося знайти це угруповання.", "Could not find this faction.", "Diese Fraktion wurde nicht gefunden.", "Faction introuvable.", "Impossibile trovare questa fazione.", "No se encontró esta facción.", "Nie znaleziono tej frakcji.", "Tuto frakci se nepodařilo najít.", "Não foi possível encontrar esta facção.", "Bu fraksiyon bulunamadı.", "この勢力が見つかりません。", "이 세력을 찾지 못했습니다.", "找不到该阵营。", "找不到該陣營。"]),
     ("Не удалось обновить список сохранений", ["Не удалось обновить список сохранений", "Не вдалося оновити список збережень", "Could not refresh the save list", "Die Spielstandliste konnte nicht aktualisiert werden", "Impossible d’actualiser la liste des sauvegardes", "Impossibile aggiornare l’elenco dei salvataggi", "No se pudo actualizar la lista de partidas", "Nie udało się odświeżyć listy zapisów", "Seznam uložených pozic se nepodařilo obnovit", "Não foi possível atualizar a lista de saves", "Kayıt listesi yenilenemedi", "セーブ一覧を更新できませんでした", "세이브 목록을 새로 고치지 못했습니다", "无法刷新存档列表", "無法重新整理存檔清單"]),
@@ -1087,6 +1061,7 @@ static STRINGS: &[Row] = &[
     ("Не удалось определить тип установки", ["Не удалось определить тип установки", "Не вдалося визначити тип встановлення", "Could not determine the installation type", "Der Installationstyp konnte nicht bestimmt werden", "Impossible de déterminer le type d’installation", "Impossibile determinare il tipo di installazione", "No se pudo determinar el tipo de instalación", "Nie udało się ustalić typu instalacji", "Typ instalace se nepodařilo určit", "Não foi possível determinar o tipo de instalação", "Kurulum türü belirlenemedi", "インストールの種類を判別できませんでした", "설치 유형을 확인하지 못했습니다", "无法确定安装类型", "無法確定安裝類型"]),
     ("Не удалось отключить горячие клавиши: {0}", ["Не удалось отключить горячие клавиши: {0}", "Не вдалося вимкнути гарячі клавіші: {0}", "Could not turn hotkeys off: {0}", "Tastenkürzel konnten nicht deaktiviert werden: {0}", "Impossible de désactiver les raccourcis : {0}", "Impossibile disattivare le scorciatoie: {0}", "No se pudieron desactivar los atajos: {0}", "Nie udało się wyłączyć skrótów: {0}", "Zkratky se nepodařilo vypnout: {0}", "Não foi possível desativar os atalhos: {0}", "Kısayollar kapatılamadı: {0}", "ホットキーを無効にできませんでした: {0}", "단축키를 끌 수 없습니다: {0}", "无法禁用快捷键：{0}", "無法停用快速鍵：{0}"]),
     ("Не удалось открыть «{0}»: {1}", ["Не удалось открыть «{0}»: {1}", "Не вдалося відкрити «{0}»: {1}", "Could not open \"{0}\": {1}", "„{0}“ konnte nicht geöffnet werden: {1}", "Impossible d'ouvrir « {0} » : {1}", "Impossibile aprire \"{0}\": {1}", "No se pudo abrir «{0}»: {1}", "Nie udało się otworzyć „{0}”: {1}", "„{0}“ nelze otevřít: {1}", "Não foi possível abrir \"{0}\": {1}", "\"{0}\" açılamadı: {1}", "「{0}」を開けませんでした: {1}", "\"{0}\"을(를) 열 수 없습니다: {1}", "无法打开“{0}”：{1}", "無法開啟「{0}」：{1}"]),
+    ("Не удалось открыть выбор папки", ["Не удалось открыть выбор папки", "Не вдалося відкрити вибір папки", "Could not open folder picker", "Ordnerauswahl konnte nicht geöffnet werden", "Impossible d’ouvrir le sélecteur de dossier", "Impossibile aprire la selezione della cartella", "No se pudo abrir el selector de carpetas", "Nie udało się otworzyć okna wyboru folderu", "Nepodařilo se otevřít výběr složky", "Não foi possível abrir o seletor de pastas", "Klasör seçici açılamadı", "フォルダー選択を開けませんでした", "폴더 선택 창을 열 수 없습니다", "无法打开文件夹选择器", "無法開啟資料夾選擇器"]),
     ("Не удалось открыть журнал приложения: {0}", ["Не удалось открыть журнал приложения: {0}", "Не вдалося відкрити журнал застосунку: {0}", "Could not open the app log: {0}", "Das App-Protokoll konnte nicht geöffnet werden: {0}", "Impossible d’ouvrir le journal de l’application : {0}", "Impossibile aprire il registro dell’app: {0}", "No se pudo abrir el registro de la aplicación: {0}", "Nie udało się otworzyć dziennika aplikacji: {0}", "Protokol aplikace se nepodařilo otevřít: {0}", "Não foi possível abrir o log do app: {0}", "Uygulama günlüğü açılamadı: {0}", "アプリのログを開けませんでした: {0}", "앱 로그를 열지 못했습니다: {0}", "无法打开应用日志：{0}", "無法開啟應用程式記錄：{0}"]),
     ("Не удалось открыть образ обновления.", ["Не удалось открыть образ обновления.", "Не вдалося відкрити образ оновлення.", "Could not open the update disk image.", "Das Update-Image konnte nicht geöffnet werden.", "Impossible d’ouvrir l’image disque de la mise à jour.", "Impossibile aprire l’immagine disco dell’aggiornamento.", "No se pudo abrir la imagen de disco de la actualización.", "Nie udało się otworzyć obrazu dysku aktualizacji.", "Obraz aktualizace se nepodařilo otevřít.", "Não foi possível abrir a imagem de disco da atualização.", "Güncelleme disk görüntüsü açılamadı.", "更新用ディスクイメージを開けませんでした。", "업데이트 디스크 이미지를 열지 못했습니다.", "无法打开更新磁盘映像。", "無法開啟更新磁碟映像。"]),
     ("Не удалось открыть папку резервных копий: {0}", ["Не удалось открыть папку резервных копий: {0}", "Не вдалося відкрити теку резервних копій: {0}", "Could not open the backup folder: {0}", "Der Sicherungsordner konnte nicht geöffnet werden: {0}", "Impossible d’ouvrir le dossier des copies de sécurité : {0}", "Impossibile aprire la cartella dei backup: {0}", "No se pudo abrir la carpeta de copias de seguridad: {0}", "Nie udało się otworzyć folderu kopii zapasowych: {0}", "Složku záloh se nepodařilo otevřít: {0}", "Não foi possível abrir a pasta de backups: {0}", "Yedek klasörü açılamadı: {0}", "バックアップフォルダーを開けませんでした: {0}", "백업 폴더를 열지 못했습니다: {0}", "无法打开备份文件夹：{0}", "無法開啟備份資料夾：{0}"]),
@@ -2280,6 +2255,7 @@ static STRINGS: &[Row] = &[
     ("добавить × {0}", ["добавить × {0}", "додати × {0}", "add × {0}", "hinzufügen × {0}", "ajouter × {0}", "aggiungi × {0}", "añadir × {0}", "dodaj × {0}", "přidat × {0}", "adicionar × {0}", "ekle × {0}", "追加 × {0}", "추가 × {0}", "添加 × {0}", "新增 × {0}"]),
     ("дождь", ["дождь", "дощ", "rain", "Regen", "pluie", "pioggia", "lluvia", "deszcz", "déšť", "chuva", "yağmur", "雨", "비", "雨", "雨"]),
     ("дробовик", ["дробовик", "дробовик", "shotgun", "Schrotflinte", "fusil à pompe", "fucile a pompa", "escopeta", "strzelba", "brokovnice", "espingarda", "av tüfeği", "ショットガン", "샷건", "霰弹枪", "霰彈槍"]),
+    ("задача мастера завершилась аварийно", ["задача мастера завершилась аварийно", "завдання майстра аварійно завершилося", "wizard task terminated unexpectedly", "Der Assistent wurde unerwartet beendet", "La tâche de l’assistant s’est terminée de façon inattendue", "L’attività della procedura guidata è terminata in modo imprevisto", "La tarea del asistente terminó inesperadamente", "Zadanie kreatora zakończyło się nieoczekiwanie", "Úloha průvodce skončila neočekávaně", "A tarefa do assistente foi encerrada inesperadamente", "Sihirbaz görevi beklenmedik şekilde sonlandı", "ウィザードのタスクが予期せず終了しました", "마법사 작업이 예기치 않게 종료되었습니다", "向导任务意外终止", "精靈工作意外終止"]),
     ("игра не найдена", ["игра не найдена", "гру не знайдено", "game not found", "Spiel nicht gefunden", "jeu introuvable", "gioco non trovato", "juego no encontrado", "nie znaleziono gry", "hra nenalezena", "jogo não encontrado", "oyun bulunamadı", "ゲームが見つかりません", "게임을 찾을 수 없음", "未找到游戏", "找不到遊戲"]),
     ("игра: {0}", ["игра: {0}", "гра: {0}", "game: {0}", "Spiel: {0}", "jeu : {0}", "gioco: {0}", "juego: {0}", "gra: {0}", "hra: {0}", "jogo: {0}", "oyun: {0}", "ゲーム: {0}", "게임: {0}", "游戏：{0}", "遊戲：{0}"]),
     ("из каталога", ["из каталога", "з каталогу", "from catalog", "aus dem Katalog", "du catalogue", "dal catalogo", "del catálogo", "z katalogu", "z katalogu", "do catálogo", "katalogdan", "カタログから", "카탈로그에서", "来自目录", "來自目錄"]),
@@ -2411,16 +2387,11 @@ mod tests {
         for (key, values) in STRINGS {
             assert!(!key.is_empty());
             assert_eq!(values.len(), 15);
-            assert!(
-                values.iter().all(|value| !value.is_empty()),
-                "empty translation for {key}"
-            );
+            assert!(values.iter().all(|value| !value.is_empty()), "empty translation for {key}");
         }
     }
     #[test]
     fn russian_is_source() {
-        for (key, values) in STRINGS {
-            assert_eq!(values.first().copied(), Some(*key));
-        }
+        for (key, values) in STRINGS { assert_eq!(values.first().copied(), Some(*key)); }
     }
 }

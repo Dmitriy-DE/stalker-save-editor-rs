@@ -35,11 +35,18 @@ pub(super) enum WizardTaskKind {
 }
 
 impl WizardTaskKind {
-    pub(super) const fn failure_prefix(self) -> &'static str {
-        match self {
-            Self::AutoSearch => "Не удалось найти папки с сохранениями",
-            Self::Browse => "Не удалось открыть выбор папки",
-        }
+    pub(super) fn failure_prefix(self) -> &'static str {
+        self.failure_prefix_in(crate::strings::current_language())
+    }
+
+    fn failure_prefix_in(self, language: &str) -> &'static str {
+        crate::strings::t_in(
+            language,
+            match self {
+                Self::AutoSearch => "Не удалось найти папки с сохранениями",
+                Self::Browse => "Не удалось открыть выбор папки",
+            },
+        )
     }
 }
 
@@ -68,7 +75,7 @@ where
         .name("sse-wizard-discovery".to_owned())
         .spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(work))
-                .map_err(|_| "задача мастера завершилась аварийно".to_owned())
+                .map_err(|_| crate::strings::t("задача мастера завершилась аварийно").to_owned())
                 .and_then(|result| result);
             let _ = proxy.send(super::AppMessage::ToScreen(
                 ScreenId::Overview,
@@ -422,6 +429,18 @@ mod tests {
     use crate::raster::Color;
     use crate::screens::AppMessage;
     use crate::widget::{Content, Look, Tree};
+
+    #[test]
+    fn wizard_task_failure_prefix_uses_the_selected_language() {
+        assert_eq!(
+            WizardTaskKind::AutoSearch.failure_prefix_in("en"),
+            "Could not find save folders"
+        );
+        assert_eq!(
+            WizardTaskKind::Browse.failure_prefix_in("uk"),
+            crate::strings::t_in("uk", "Не удалось открыть выбор папки")
+        );
+    }
 
     #[test]
     fn wizard_intro_reserves_height_for_its_narrowest_layout() -> sse_core::Result<()> {

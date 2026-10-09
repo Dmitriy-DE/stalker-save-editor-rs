@@ -2361,10 +2361,7 @@ impl Shell {
         if let Err(error) = super::wizard::spawn_wizard_task(proxy, request, kind, work) {
             self.wizard_task_request = None;
             self.wizard.set_busy(tree, false)?;
-            tree.set_text(
-                self.status,
-                &format!("{}: {error}", crate::strings::t(kind.failure_prefix())),
-            )?;
+            tree.set_text(self.status, &format!("{}: {error}", kind.failure_prefix()))?;
         }
         Ok(())
     }
@@ -2432,10 +2429,7 @@ impl Shell {
                 tree.set_text(self.status, crate::strings::t("Выбор папки отменён."))?;
             }
             Err(error) => {
-                tree.set_text(
-                    self.status,
-                    &format!("{}: {error}", crate::strings::t(finished.kind.failure_prefix())),
-                )?;
+                tree.set_text(self.status, &format!("{}: {error}", finished.kind.failure_prefix()))?;
             }
         }
         Ok(Flow::Continue)
