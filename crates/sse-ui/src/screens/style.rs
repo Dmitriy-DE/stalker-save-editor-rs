@@ -224,7 +224,7 @@ pub mod d2 {
     use crate::raster::Color;
     use crate::theme::d2::{self as tokens, StateLook, TextSpec};
     use crate::widget::{Content, DisabledLook, Look, TextAlign, Tree, WidgetId};
-    use sse_core::{Error, Result};
+    use sse_core::Result;
 
     /// Visual role of a button.
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -664,6 +664,7 @@ pub mod d2 {
         use super::*;
         use crate::glyphs::Fonts;
         use crate::widget::Tree;
+        use sse_core::Error;
 
         #[test]
         fn showcase_paints_every_control_in_every_state() -> Result<()> {
