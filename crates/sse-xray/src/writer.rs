@@ -3131,6 +3131,70 @@ mod tests {
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 
+    fn next_fuzz_state(state: &mut u64) -> u64 {
+        *state ^= state.wrapping_shl(13);
+        *state ^= state.wrapping_shr(7);
+        *state ^= state.wrapping_shl(17);
+        *state
+    }
+
+    #[test]
+    fn unpacked_image_mutation_repack_read_and_write_fuzz_smoke() -> TestResult {
+        let source_bytes = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-source.sav");
+        let source = Save::read(source_bytes)?;
+        let mut random = 0x0058_425a_9151_d001_u64;
+        let mut repacked_count = 0_usize;
+        let mut parsed_count = 0_usize;
+        let mut writer_count = 0_usize;
+        let mut written_count = 0_usize;
+
+        for case in 0..512_usize {
+            let mut raw = source.raw_image().to_vec();
+            if case.checked_rem(2).unwrap_or_default() == 0 {
+                let money = u32::try_from(next_fuzz_state(&mut random) % 2_000_000_001_u64).unwrap_or_default();
+                let start = source.money_offset();
+                let end = start.checked_add(4).ok_or("money range overflow")?;
+                raw.get_mut(start..end)
+                    .ok_or("money range should fit the unpacked fixture")?
+                    .copy_from_slice(&money.to_le_bytes());
+            } else if !raw.is_empty() {
+                let length = u64::try_from(raw.len()).unwrap_or(u64::MAX);
+                let offset = usize::try_from(next_fuzz_state(&mut random) % length).unwrap_or_default();
+                let shift = u32::try_from(next_fuzz_state(&mut random) % 8).unwrap_or_default();
+                if let Some(byte) = raw.get_mut(offset) {
+                    *byte ^= 1_u8.checked_shl(shift).unwrap_or(1);
+                }
+            }
+
+            let repacked = source.repack(&raw)?;
+            repacked_count = repacked_count.saturating_add(1);
+            let Ok(parsed) = Save::read(repacked.as_slice()) else {
+                continue;
+            };
+            parsed_count = parsed_count.saturating_add(1);
+            let old_value = parsed.money()?;
+            let new_value = if old_value == 1 { 2 } else { 1 };
+            let changes = ChangeSet::new(vec![Change::SetMoney {
+                target_object: parsed.actor_id(),
+                old_value,
+                new_value,
+            }]);
+            let Ok(written) = apply(&parsed, &changes) else {
+                continue;
+            };
+            written_count = written_count.saturating_add(1);
+            let verified = Save::read(written.as_slice())?;
+            assert_eq!(verified.money()?, new_value);
+            writer_count = writer_count.saturating_add(1);
+        }
+
+        assert_eq!(repacked_count, 512);
+        assert!(parsed_count > 0, "mutated unpacked images should reach the reader");
+        assert!(written_count > 0, "at least one fuzz case should reach the writer");
+        assert_eq!(writer_count, written_count);
+        Ok(())
+    }
+
     #[test]
     fn read_back_rejects_new_story_id_duplicates_but_allows_existing_ones() -> TestResult {
         let original = [Some(73), Some(73), Some(u32::MAX), None];
