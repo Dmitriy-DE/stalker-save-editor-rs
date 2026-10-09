@@ -6,6 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use sse_content::{GameFile, GameFileTree};
+use sse_core::Error;
 use sse_lint::condfuncs::{check_condfuncs_line, extract_lua_function_defs};
 use sse_lint::condlists::{check_condlist_line, check_condlists_text};
 use sse_lint::dialogs::check_dialogs_xml;
@@ -301,6 +302,52 @@ fn test_lint_engine_speed_under_two_seconds() {
         elapsed
     );
     println!("Checked 500 files in {:?}", elapsed);
+}
+
+#[test]
+fn lint_engine_reports_read_failures_as_incomplete_analysis() {
+    let mut files = HashMap::new();
+    files.insert(
+        "configs/oversized.ltx".to_string(),
+        GameFile::new("configs/oversized.ltx", "test", || {
+            Err(Error::Refused("File exceeds the 67108864-byte read limit".to_string()))
+        }),
+    );
+    let tree = GameFileTree {
+        files,
+        fingerprint: "read-failure".to_string(),
+        has_loose_overlay: true,
+        config_prefix: "configs/".to_string(),
+        data_directory: None,
+        issues: Vec::new(),
+    };
+
+    let report = LintEngine::new(LintOptions::default()).lint_tree(&tree);
+
+    assert_eq!(report.files_checked, 0);
+    assert!(report.has_errors(), "an incomplete lint scan must be non-success");
+    let finding = report.findings.first().expect("read failure finding");
+    assert_eq!(finding.file, "configs/oversized.ltx");
+    assert!(finding.message.contains("incomplete"));
+}
+
+#[test]
+fn lint_engine_reports_file_tree_issues_as_incomplete_analysis() {
+    let tree = GameFileTree {
+        files: HashMap::new(),
+        fingerprint: "tree-issue".to_string(),
+        has_loose_overlay: false,
+        config_prefix: "configs/".to_string(),
+        data_directory: None,
+        issues: vec!["Could not read fsgame.ltx: File exceeds the read limit".to_string()],
+    };
+
+    let report = LintEngine::new(LintOptions::default()).lint_tree(&tree);
+
+    assert!(report.has_errors(), "tree discovery issues must be non-success");
+    let finding = report.findings.first().expect("tree issue finding");
+    assert_eq!(finding.file, "fsgame.ltx");
+    assert!(finding.message.contains("incomplete"));
 }
 
 #[test]

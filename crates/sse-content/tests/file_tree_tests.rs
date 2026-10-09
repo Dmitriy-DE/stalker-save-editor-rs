@@ -11,6 +11,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use sse_codecs::crc32::crc32;
+use sse_content::collect_files_recursive;
 use sse_content::file_tree::{CompanionArchiveLocator, CompanionGame, GameFileTree};
 
 struct TempDir {
@@ -149,6 +150,42 @@ fn loose_scan_does_not_follow_directory_symlinks() {
     assert!(!tree.files.contains_key("config_alias/system.ltx"));
 }
 
+#[cfg(unix)]
+#[test]
+fn recursive_scan_terminates_on_self_and_ancestor_directory_symlinks() {
+    use std::os::unix::fs::symlink;
+
+    let temp = TempDir::new("file-tree-symlink-cycles");
+    let nested = temp.path.join("nested");
+    fs::create_dir_all(&nested).unwrap();
+    let expected_file = nested.join("content.ltx");
+    fs::write(&expected_file, b"[system]\n").unwrap();
+    symlink(&nested, nested.join("self-link")).unwrap();
+    symlink(&temp.path, nested.join("ancestor-link")).unwrap();
+
+    let files = collect_files_recursive(&temp.path);
+
+    assert_eq!(files.iter().filter(|path| *path == &expected_file).count(), 1);
+    assert_eq!(files.len(), 1, "directory symlinks must not add aliased paths");
+}
+
+#[cfg(unix)]
+#[test]
+fn recursive_scan_keeps_symlinks_to_regular_files() {
+    use std::os::unix::fs::symlink;
+
+    let temp = TempDir::new("file-tree-file-symlink");
+    let source = temp.path.join("source.ltx");
+    let alias = temp.path.join("alias.ltx");
+    fs::write(&source, b"[system]\n").unwrap();
+    symlink(&source, &alias).unwrap();
+
+    let files = collect_files_recursive(&temp.path);
+
+    assert!(files.contains(&source));
+    assert!(files.contains(&alias));
+}
+
 #[test]
 fn oversized_loose_file_is_refused_before_reading_its_contents() {
     let temp = TempDir::new("file-tree-oversized");
@@ -177,7 +214,10 @@ fn oversized_loose_file_is_refused_before_reading_its_contents() {
     .unwrap();
     let file = tree.files.get("configs/large.ltx").unwrap();
 
-    assert!(file.read().is_err(), "oversized loose content must be refused");
+    assert!(
+        matches!(file.read(), Err(sse_core::Error::Refused(_))),
+        "oversized loose content must be refused"
+    );
 }
 
 #[test]

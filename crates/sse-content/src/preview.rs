@@ -340,8 +340,17 @@ mod tests {
 
         let result = crate::file_tree::read_bounded_bytes(&mut reader, 8);
 
-        assert!(result.is_err());
+        assert!(matches!(result, Err(sse_core::Error::Refused(_))));
         assert_eq!(reader.bytes_read, 9);
+    }
+
+    #[test]
+    fn bounded_reader_accepts_input_at_the_exact_limit() {
+        let input = b"12345678";
+
+        let result = crate::file_tree::read_bounded_bytes(input.as_slice(), input.len() as u64);
+
+        assert_eq!(result.as_deref(), Ok(input.as_slice()));
     }
 
     #[test]
@@ -358,7 +367,25 @@ mod tests {
         let result = read_bounded_file(&path, 8);
         let removed = std::fs::remove_file(path);
 
-        assert!(result.is_err());
+        assert!(matches!(result, Err(sse_core::Error::Refused(_))));
+        assert!(removed.is_ok(), "could not remove preview fixture");
+    }
+
+    #[test]
+    fn bounded_file_accepts_input_at_the_exact_limit() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        let path = std::env::temp_dir().join(format!("sse-preview-exact-bound-{unique}.sav"));
+        assert!(
+            std::fs::write(&path, b"12345678").is_ok(),
+            "could not create preview fixture"
+        );
+
+        let result = read_bounded_file(&path, 8);
+        let removed = std::fs::remove_file(path);
+
+        assert_eq!(result.as_deref(), Ok(b"12345678".as_slice()));
         assert!(removed.is_ok(), "could not remove preview fixture");
     }
 }

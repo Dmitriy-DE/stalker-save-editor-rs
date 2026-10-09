@@ -15,7 +15,10 @@ use sse_core::{Error, Result};
 use crate::archive::{EntryDecoder, HeaderDecoder, XRayArchive, XRayArchiveEntry};
 use sse_codecs::sha256::sha256_hex;
 
-/// Maximum size of a loose game-data file read on demand.
+/// Maximum size of a loose game-data file read on demand (64 MiB).
+///
+/// This bound caps memory use for files read from the filesystem. Archive-backed readers keep
+/// their own format-specific limits.
 const MAX_LOOSE_FILE_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_FSGAME_FILE_BYTES: u64 = 1024 * 1024;
 
@@ -61,7 +64,10 @@ impl GameFile {
         Self::new(relative_path, origin, move || Ok(bytes.clone()))
     }
 
-    /// Creates a game file that is opened and read on demand with a fixed size limit.
+    /// Creates a game file that is opened and read on demand with a 64 MiB size limit.
+    ///
+    /// The limit bounds memory use for loose filesystem inputs. Archive-backed [`GameFile`]s
+    /// use the archive reader's separate format-specific limit.
     #[must_use]
     pub fn from_path(relative_path: impl Into<String>, origin: impl Into<String>, path: impl Into<PathBuf>) -> Self {
         let path = path.into();
@@ -70,7 +76,7 @@ impl GameFile {
         })
     }
 
-    /// Reads file bytes.
+    /// Reads file bytes. Files created by [`GameFile::from_path`] are limited to 64 MiB.
     ///
     /// # Errors
     /// Returns [`Error::Damaged`], [`Error::Refused`] or [`Error::System`] on failure.

@@ -250,7 +250,8 @@ fn print_json_report(report: &sse_lint::LintReport) {
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
 
-    use super::load_tree_for_lint;
+    use super::{load_tree_for_lint, run_lint};
+    use sse_core::ExitCode;
     use std::fs;
     use std::path::PathBuf;
 
@@ -301,5 +302,31 @@ mod tests {
         let tree = load_tree_for_lint(&install_link).unwrap();
 
         assert!(tree.files.contains_key("configs/system.ltx"));
+    }
+
+    #[test]
+    fn lint_refuses_to_report_success_when_loose_file_exceeds_read_limit() {
+        let root = TempDir::new();
+        let config_dir = root.0.join("configs");
+        fs::create_dir_all(&config_dir).unwrap();
+        fs::File::create(config_dir.join("oversized.ltx"))
+            .unwrap()
+            .set_len(64 * 1024 * 1024 + 1)
+            .unwrap();
+
+        let args = [root.0.to_string_lossy().into_owned()];
+        assert_eq!(run_lint(&args), ExitCode::Refused);
+    }
+
+    #[test]
+    fn lint_refuses_to_report_success_when_fsgame_exceeds_read_limit() {
+        let root = TempDir::new();
+        fs::File::create(root.0.join("fsgame.ltx"))
+            .unwrap()
+            .set_len(1024 * 1024 + 1)
+            .unwrap();
+
+        let args = [root.0.to_string_lossy().into_owned()];
+        assert_eq!(run_lint(&args), ExitCode::Refused);
     }
 }
