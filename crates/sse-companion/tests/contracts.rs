@@ -646,3 +646,27 @@ fn s2_installer_places_owned_mod_in_ue4ss_folder_and_uninstalls_it() -> Result<(
     let _ = fs::remove_dir_all(root);
     Ok(())
 }
+
+#[test]
+fn saving_over_an_unreadable_hotkey_layout_keeps_its_bytes_beside_it() -> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("sse-companion-hotkey-damaged");
+    let path = root.join("hotkeys.txt");
+    let damaged = b"heal=Ctrl+H\nheal=Ctrl+J\n";
+    fs::write(&path, damaged)?;
+
+    HotkeyLayout::default().save(&path)?;
+
+    let copies: Vec<_> = fs::read_dir(&root)?
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with("hotkeys.txt.damaged-"))
+        .collect();
+    assert_eq!(copies.len(), 1, "one copy of the damaged layout must be kept");
+    let copy = copies.first().ok_or("damaged copy is missing")?;
+    assert_eq!(fs::read(copy.path())?, damaged);
+    assert_eq!(
+        HotkeyLayout::parse(&fs::read_to_string(&path)?)?,
+        HotkeyLayout::default()
+    );
+    let _ = fs::remove_dir_all(root);
+    Ok(())
+}

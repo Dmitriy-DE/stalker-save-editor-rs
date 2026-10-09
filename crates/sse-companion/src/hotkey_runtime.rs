@@ -85,18 +85,20 @@ impl HotkeyRuntime {
             let modifiers = u8::from(gesture.modifiers.control)
                 | u8::from(gesture.modifiers.alt).wrapping_shl(1)
                 | u8::from(gesture.modifiers.shift).wrapping_shl(2);
-            writeln!(input, "bind {id} {modifiers} {}", gesture.key)
-                .map_err(|error| HotkeyError::new(error.to_string()))?;
+            if let Err(error) = writeln!(input, "bind {id} {modifiers} {}", gesture.key) {
+                return Err(fail_start(&mut child, &exchange_directory, error));
+            }
             by_id.push((id, action));
         }
-        writeln!(input, "start").map_err(|error| HotkeyError::new(error.to_string()))?;
-        input.flush().map_err(|error| HotkeyError::new(error.to_string()))?;
+        if let Err(error) = writeln!(input, "start").and_then(|()| input.flush()) {
+            return Err(fail_start(&mut child, &exchange_directory, error));
+        }
 
         let mut output = BufReader::new(output);
         let mut answer = String::new();
-        output
-            .read_line(&mut answer)
-            .map_err(|error| HotkeyError::new(error.to_string()))?;
+        if let Err(error) = output.read_line(&mut answer) {
+            return Err(fail_start(&mut child, &exchange_directory, error));
+        }
         let answer = answer.trim_end();
         if answer != "ready" {
             let reason = answer.strip_prefix("error ").unwrap_or(if answer.is_empty() {
@@ -236,6 +238,14 @@ impl Drop for HotkeyRuntime {
     fn drop(&mut self) {
         let _ = self.stop();
     }
+}
+
+/// Stops a helper that failed during start-up and turns game-side polling back off.
+fn fail_start(child: &mut Child, directory: &std::path::Path, error: std::io::Error) -> HotkeyError {
+    let _ = child.kill();
+    let _ = child.wait();
+    disable_polling(directory);
+    HotkeyError::new(error.to_string())
 }
 
 fn disable_polling(directory: &std::path::Path) {
