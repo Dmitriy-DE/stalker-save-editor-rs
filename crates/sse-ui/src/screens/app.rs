@@ -843,18 +843,18 @@ impl Screen for Settings {
 
         let updates = style::card(cx.tree, content)?;
         style::label(cx.tree, updates, crate::strings::t("ОБНОВЛЕНИЯ"), Text::Heading)?;
-        let line = style::row(cx.tree, updates)?;
+        let _line = style::row(cx.tree, updates)?;
         #[cfg(feature = "native-ui")]
         {
             self.open_updates_button = Some(style::button(
                 cx.tree,
-                line,
+                _line,
                 crate::strings::t("Открыть обновления"),
                 Button::Primary,
             )?);
             style::label(
                 cx.tree,
-                line,
+                _line,
                 crate::strings::t("Проверка и установка доступны на экране обновлений."),
                 Text::Note,
             )?;
