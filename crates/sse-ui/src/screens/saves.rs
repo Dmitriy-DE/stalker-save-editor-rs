@@ -68,6 +68,22 @@ macro_rules! tr {
 const INVENTORY_MAX_PAGE_SIZE: usize = 12;
 const INVENTORY_ROW_HEIGHT: u32 = 44;
 const INVENTORY_ROW_GAP: u32 = 4;
+
+/// Style of one item row. The gap between rows is a bottom margin, not the list's gap: a hidden child still
+/// reserves the list's gap, and the rows beyond the page are hidden.
+fn inventory_row_style(shown: bool) -> Style {
+    Style {
+        min: crate::layout::Size::new(0.0, INVENTORY_ROW_HEIGHT as f32),
+        preferred: crate::layout::Size::new(0.0, INVENTORY_ROW_HEIGHT as f32),
+        shrink: 0.0,
+        margin: crate::layout::Edges {
+            bottom: if shown { INVENTORY_ROW_GAP as f32 } else { 0.0 },
+            ..crate::layout::Edges::default()
+        },
+        align_items: crate::layout::Align::Stretch,
+        ..Style::default()
+    }
+}
 const INVENTORY_PLACE_WIDTH: f32 = 76.0;
 const INVENTORY_CONDITION_WIDTH: f32 = 84.0;
 const INVENTORY_COUNT_WIDTH: f32 = 76.0;
@@ -2636,34 +2652,21 @@ impl Inventory {
             self.compact = window_width < 1600;
         }
         cx.tree.update_layout()?;
-        if let (Some(side), Some(inspector), Some(actions)) =
-            (self.side_column, self.inspector_panel, self.actions_panel)
-        {
-            // The inspector takes exactly the room the pinned action panel leaves in the side column.
-            let side_height = u16::try_from(cx.tree.rect(side)?.height).map_or(0.0, f32::from);
-            let actions_height = u16::try_from(cx.tree.rect(actions)?.height).map_or(0.0, f32::from);
-            if side_height > 0.0 {
-                // A preferred height is the content box: the panel padding is added on top of it.
-                let room = (side_height
-                    - actions_height
-                    - crate::theme::CONTROL_GAP
-                    - 2.0 * crate::theme::d2::PANEL_PADDING.0)
-                    .max(0.0);
-                cx.tree.set_style(
-                    inspector,
-                    Style {
-                        grow: 1.0,
-                        shrink: 1.0,
-                        preferred: crate::layout::Size::new(0.0, room),
-                        min: crate::layout::Size::new(0.0, 0.0),
-                        max: crate::layout::Size::new(f32::INFINITY, room),
-                        padding: crate::layout::Edges::all(crate::theme::d2::PANEL_PADDING.0),
-                        gap: Size::new(0.0, crate::theme::CONTROL_GAP),
-                        align_items: crate::layout::Align::Stretch,
-                        ..Style::default()
-                    },
-                )?;
-            }
+        if let Some(inspector) = self.inspector_panel {
+            // The inspector takes the room the pinned action panel leaves in the side column. It grows into that room
+            // and shrinks with it; a measured height would feed back into the next layout and push the panels down.
+            cx.tree.set_style(
+                inspector,
+                Style {
+                    grow: 1.0,
+                    shrink: 1.0,
+                    min: crate::layout::Size::new(0.0, 0.0),
+                    padding: crate::layout::Edges::all(crate::theme::d2::PANEL_PADDING.0),
+                    gap: Size::new(0.0, crate::theme::CONTROL_GAP),
+                    align_items: crate::layout::Align::Stretch,
+                    ..Style::default()
+                },
+            )?;
         }
         if let (Some(list), Some(spacer)) = (self.item_list, self.item_spacer) {
             // The list shows the rows that fit in the space it shares with the spacer below the paging row.
@@ -2690,7 +2693,6 @@ impl Inventory {
                     preferred: crate::layout::Size::new(0.0, list_height),
                     min: crate::layout::Size::new(0.0, 0.0),
                     shrink: 1.0,
-                    gap: Size::new(0.0, INVENTORY_ROW_GAP as f32),
                     align_items: crate::layout::Align::Stretch,
                     ..Style::default()
                 },
@@ -2807,6 +2809,7 @@ impl Inventory {
                             continue;
                         };
                         cx.tree.set_visible(row.row, true)?;
+                        cx.tree.set_style(row.row, inventory_row_style(true))?;
                         let count = item.count.map_or_else(
                             || group.len().to_string(),
                             |original| {
@@ -5226,7 +5229,6 @@ impl Screen for Inventory {
                 grow: 0.0,
                 shrink: 0.0,
                 min: crate::layout::Size::new(0.0, 0.0),
-                gap: Size::new(0.0, INVENTORY_ROW_GAP as f32),
                 align_items: crate::layout::Align::Stretch,
                 ..Style::default()
             },
@@ -5257,13 +5259,7 @@ impl Screen for Inventory {
             let stack = cx.tree.add(
                 Some(item_rows),
                 NodeKind::Stack,
-                Style {
-                    min: crate::layout::Size::new(0.0, INVENTORY_ROW_HEIGHT as f32),
-                    preferred: crate::layout::Size::new(0.0, INVENTORY_ROW_HEIGHT as f32),
-                    shrink: 0.0,
-                    align_items: crate::layout::Align::Stretch,
-                    ..Style::default()
-                },
+                inventory_row_style(false),
                 Content::Panel,
                 Look::default(),
             )?;

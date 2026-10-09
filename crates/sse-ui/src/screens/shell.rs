@@ -1775,7 +1775,7 @@ impl Shell {
         tree.set_visible(library, true)?;
         let content_style = Style {
             grow: 1.0,
-            margin: padded(0.0, 0.0, 12.0, 20.0),
+            margin: padded(0.0, 0.0, 12.0, 0.0),
             align_items: Align::Stretch,
             ..Style::default()
         };
@@ -3362,7 +3362,7 @@ impl Shell {
                 Style {
                     grow: 1.0,
                     align_items: Align::Stretch,
-                    padding: padded(margin, 0.0, margin, 0.0),
+                    padding: padded(margin, 0.0, margin, 12.0),
                     ..Style::default()
                 },
             )?;
@@ -5522,6 +5522,108 @@ mod tests {
         })();
         let _ = std::fs::remove_dir_all(&directory);
         result
+    }
+
+    #[test]
+    fn inventory_columns_end_on_the_library_bottom_edge() -> sse_core::Result<()> {
+        // The library, the screen host, every inventory column and the pinned action panel must share one bottom
+        // edge, and the layout must stay put on repeated frames (a size fed back from one frame to the next moved
+        // the panels down). The shell is built with test settings, so the machine's own settings are never read.
+        use crate::event_loop::App as _;
+        for (width, height) in [(1366_u32, 768_u32), (1920, 1080)] {
+            let nonce = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| sse_core::Error::System(error.to_string()))?
+                .as_nanos();
+            let directory = std::env::temp_dir().join(format!("sse-shell-bottom-{}-{nonce}", std::process::id()));
+            std::fs::create_dir(&directory)?;
+            let result = (|| -> sse_core::Result<()> {
+                let paths = fixture_save_copies(&directory, 1)?;
+                let (proxy, receiver) = channel_pair::<super::super::AppMessage>();
+                let mut tree = Tree::new(Fonts::bundled()?, crate::screens::style::rgb(crate::theme::BG_BASE));
+                let mut shell = Shell::build_for_test(&mut tree, None)?;
+                shell.set_proxy(proxy);
+                let path = paths.first().ok_or_else(|| sse_core::Error::damaged("no save copy"))?;
+                assert!(shell.open_save(&mut tree, path)?);
+                loop {
+                    let message = receiver
+                        .recv_timeout(std::time::Duration::from_secs(60))
+                        .map_err(|error| sse_core::Error::System(error.to_string()))?;
+                    let finished = matches!(
+                        &message,
+                        Message::User(super::super::AppMessage::ToScreen(ScreenId::Overview, _))
+                    );
+                    let _ = shell.message(&mut tree, &message, None);
+                    if finished {
+                        break;
+                    }
+                }
+                shell.open(&mut tree, ScreenId::Inventory)?;
+                shell.resize_window(&mut tree, width, height)?;
+                shell.load_art_now(&mut tree, &directory.join("art"))?;
+                let stride = usize::try_from(width).unwrap_or(0);
+                let mut frame = vec![0_u32; stride.saturating_mul(usize::try_from(height).unwrap_or(0))];
+                for _ in 0..3 {
+                    tree.paint(&mut frame, stride)?;
+                }
+                let bottom = |tree: &Tree, id: WidgetId| -> sse_core::Result<i64> {
+                    let rect = tree.rect(id)?;
+                    Ok(i64::from(rect.y) + i64::from(rect.height))
+                };
+                let library_bottom = bottom(&tree, shell.library)?;
+                let mut checked = vec![("library", library_bottom)];
+                for content_child in tree.children(shell.content) {
+                    if !tree.is_visible(content_child) {
+                        continue;
+                    }
+                    checked.push(("screen host", bottom(&tree, content_child)?));
+                    for screen_root in tree.children(content_child) {
+                        if !tree.is_visible(screen_root) {
+                            continue;
+                        }
+                        let columns: Vec<WidgetId> = tree
+                            .children(screen_root)
+                            .into_iter()
+                            .filter(|column| tree.is_visible(*column))
+                            .collect();
+                        for column in &columns {
+                            checked.push(("inventory column", bottom(&tree, *column)?));
+                        }
+                        // The side column (the rightmost one) ends with the pinned action panel.
+                        let mut side = None;
+                        for column in &columns {
+                            let x = tree.rect(*column)?.x;
+                            if side.is_none_or(|(best, _)| x > best) {
+                                side = Some((x, *column));
+                            }
+                        }
+                        if let Some((_, side)) = side {
+                            let last = tree
+                                .children(side)
+                                .into_iter()
+                                .rev()
+                                .find(|child| tree.is_visible(*child));
+                            let last = last.ok_or_else(|| sse_core::Error::damaged("the side column is empty"))?;
+                            checked.push(("action panel", bottom(&tree, last)?));
+                        }
+                    }
+                }
+                assert!(
+                    checked.len() >= 5,
+                    "the inventory columns were not found at {width}x{height}"
+                );
+                for (name, edge) in checked {
+                    assert_eq!(
+                        edge, library_bottom,
+                        "{name} ends at {edge}, the library at {library_bottom} ({width}x{height})"
+                    );
+                }
+                Ok(())
+            })();
+            let _ = std::fs::remove_dir_all(&directory);
+            result?;
+        }
+        Ok(())
     }
 
     #[test]
