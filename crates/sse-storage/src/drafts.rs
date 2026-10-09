@@ -184,8 +184,19 @@ impl DraftPlan {
     fn validate(&self) -> Result<()> {
         validate_source_sha256(&self.source_sha256)?;
         let mut detach = HashSet::new();
-        if self.detach_handles.iter().any(|handle| !detach.insert(*handle)) {
-            return Err(Error::Refused("draft detach handles must be unique".to_owned()));
+        if self
+            .detach_handles
+            .iter()
+            .any(|handle| *handle == 0 || *handle == u16::MAX || !detach.insert(*handle))
+        {
+            return Err(Error::Refused(
+                "draft detach handles must be unique and in 1..=65534".to_owned(),
+            ));
+        }
+        if self.stack_counts.keys().any(|handle| !valid_draft_handle(*handle)) {
+            return Err(Error::Refused(
+                "draft stack handles must be in 1..=4294967294".to_owned(),
+            ));
         }
         if self
             .durability

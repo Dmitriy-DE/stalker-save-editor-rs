@@ -1005,3 +1005,34 @@ fn every_stalker2_fixture_is_identified_by_its_container() {
         assert_eq!(slot.format_id.as_deref(), Some("stalker2"), "{}", slot.path.display());
     }
 }
+
+#[test]
+fn library_index_forgets_entries_for_files_that_no_longer_exist() {
+    let temp = TempDir::new("index-prune");
+    let saves = temp.path.join("saves");
+    fs::create_dir_all(&saves).expect("create saves dir");
+    fs::write(saves.join("kept.sav"), b"kept fake save").expect("write kept save");
+    let gone = saves.join("gone.sav");
+    let candidates = vec![SaveDirectoryCandidate::new("stalker2", "stalker2", &saves)];
+
+    let mut index = LibraryIndex::new();
+    let _ = index.scan_with_index(&candidates);
+    index.insert(LibraryIndexEntry {
+        path: gone.clone(),
+        candidate_game_id: "stalker2".to_owned(),
+        candidate_release_id: "stalker2".to_owned(),
+        size: 1,
+        mtime_secs: 0,
+        mtime_nanos: 0,
+        header_hash: 0,
+        format_id: None,
+        game_id: None,
+        detection_error: None,
+    });
+    assert_eq!(index.len(), 2);
+
+    let slots = index.scan_with_index(&candidates);
+
+    assert_eq!(slots.len(), 1);
+    assert_eq!(index.len(), 1, "an entry for a deleted save must not survive the scan");
+}

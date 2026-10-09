@@ -307,6 +307,9 @@ impl LibraryIndex {
             }
         }
 
+        // Entries for saves that were deleted or moved must not be written back into the index file.
+        self.entries.retain(|path, _| seen.contains(path));
+
         let mut slots = Vec::with_capacity(found_files.len());
         let mut cold_targets = Vec::new();
 
