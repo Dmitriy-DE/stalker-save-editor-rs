@@ -5,8 +5,13 @@
 use super::style::{self, Button, Text};
 use super::{AppMessage, Context, Screen, ScreenId};
 use crate::event_loop::{Message, WindowEvent};
+use crate::glyphs::{Face, TextStyle};
+use crate::layout::{NodeKind, Style};
+use crate::path::Icon;
 use crate::text::{self, Metrics};
+use crate::theme;
 use crate::widget::WidgetId;
+use crate::widget::{Content, Look, Tree};
 use sse_core::Result;
 use sse_storage::discovery::{normalize_full_path, resolve_links, SaveDirectoryLocator};
 use std::collections::HashSet;
@@ -218,21 +223,6 @@ fn discovery_status_text(language: &str, status: &DiscoveryStatus) -> String {
     }
 }
 
-fn installation_row_text(
-    language: &str,
-    prefix: &str,
-    title: &str,
-    source: &str,
-    save_count: usize,
-    path: &str,
-) -> String {
-    tr(
-        language,
-        "{0}{1} [{2}] · сейвов: {3}\n   {4}",
-        &[&prefix, &title, &source, &save_count, &path],
-    )
-}
-
 /// Discovered installation of a S.T.A.L.K.E.R. game.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DiscoveredInstallation {
@@ -278,21 +268,107 @@ pub struct DiscoveredResult {
     pub status: DiscoveryStatus,
 }
 
+/// Installation rows the list shows at once; more installations are found but not listed.
 const MAX_INSTALLATION_ROWS: usize = 6;
+
+/// One row of the installation list: a card with its cover plate and texts, and a select button over it.
+#[derive(Clone, Copy)]
+struct InstallRow {
+    stack: WidgetId,
+    card: WidgetId,
+    plate: WidgetId,
+    select: WidgetId,
+    name: WidgetId,
+    path: WidgetId,
+    source: WidgetId,
+}
+
+/// Cover plate size in the list: 128×72, or 96×54 in the compact layout.
+fn cover_size(compact: bool) -> (f32, f32) {
+    if compact {
+        (96.0, 54.0)
+    } else {
+        (128.0, 72.0)
+    }
+}
+
+/// Width of the selected game's cover, which keeps 16:9.
+fn hero_cover_width(compact: bool) -> f32 {
+    if compact {
+        240.0
+    } else {
+        400.0
+    }
+}
+
+/// Width of the installation list card.
+fn list_width(compact: bool) -> f32 {
+    if compact {
+        340.0
+    } else {
+        440.0
+    }
+}
+
+/// A cover plate: raised panel, subtle border, and the radiation sign in the metal colour (no cover art exists).
+fn cover_plate(tree: &mut Tree, parent: WidgetId, style: Style) -> Result<WidgetId> {
+    let plate = tree.add(
+        Some(parent),
+        NodeKind::Leaf,
+        style,
+        Content::IconButton {
+            icon: Icon::D2Radiation,
+            text: String::new(),
+            style: TextStyle::new(Face::Body, 12.0),
+        },
+        Look {
+            fill: Some(style::d2::argb(theme::d2::PANEL_RAISED)),
+            border: Some((style::d2::argb(theme::d2::BORDER_SUBTLE), 1.0)),
+            radius: 2.0,
+            text: style::d2::argb(theme::d2::BORDER_METAL),
+            ..Look::default()
+        },
+    )?;
+    // The plate is a picture, not a control: it does nothing when pressed.
+    tree.set_enabled(plate, false)?;
+    Ok(plate)
+}
+
+/// Secondary action button of a card, growing with the card and never shorter than the control height.
+fn fill_action_button(tree: &mut Tree, id: WidgetId) -> Result<()> {
+    tree.set_style(
+        id,
+        Style {
+            grow: 1.0,
+            shrink: 1.0,
+            min: crate::layout::Size::new(0.0, theme::d2::CONTROL_HEIGHT.0),
+            padding: crate::layout::Edges {
+                left: 8.0,
+                top: 0.0,
+                right: 8.0,
+                bottom: 0.0,
+            },
+            ..Style::default()
+        },
+    )
+}
 
 /// Installed games overview screen (ScreenId::Games).
 pub struct GamesOverview {
     workspace: Workspace,
-    // Left card: "МОИ ИГРЫ" / "НАЙДЕННЫЕ УСТАНОВКИ"
+    compact: bool,
+
+    // Left card: НАЙДЕННЫЕ УСТАНОВКИ
     discover_button: Option<WidgetId>,
     installations_count: Option<WidgetId>,
     discovery_status: Option<WidgetId>,
-    rows: Vec<WidgetId>,
+    rows: Vec<InstallRow>,
     empty_panel: Option<WidgetId>,
     empty_search_hint: Option<WidgetId>,
     empty_doctor_button: Option<WidgetId>,
+    footer_doctor_button: Option<WidgetId>,
 
-    // Right card: "ВЫБРАННАЯ ИГРА"
+    // Right: ВЫБРАННАЯ ИГРА
     target_prev_button: Option<WidgetId>,
     target_next_button: Option<WidgetId>,
     target_title: Option<WidgetId>,
@@ -303,20 +379,25 @@ pub struct GamesOverview {
     saves_value: Option<WidgetId>,
     open_folder_button: Option<WidgetId>,
 
-    // Bottom card: "БЫСТРЫЕ ДЕЙСТВИЯ"
+    // Right: БЫСТРЫЕ ДЕЙСТВИЯ
     action_fixes: Option<WidgetId>,
     action_doctor: Option<WidgetId>,
     action_environment: Option<WidgetId>,
     action_encyclopedia: Option<WidgetId>,
 
-    // Mod notice button
+    // Right: МОДЫ
     mods_button: Option<WidgetId>,
+    mods_note: Option<WidgetId>,
+    right_card: Option<WidgetId>,
+    left_card: Option<WidgetId>,
+    hero_plate: Option<WidgetId>,
 }
 
 impl GamesOverview {
     fn new(workspace: Workspace) -> Self {
         Self {
             workspace,
+            compact: false,
             discover_button: None,
             installations_count: None,
             discovery_status: None,
@@ -324,6 +405,7 @@ impl GamesOverview {
             empty_panel: None,
             empty_search_hint: None,
             empty_doctor_button: None,
+            footer_doctor_button: None,
 
             target_prev_button: None,
             target_next_button: None,
@@ -341,6 +423,10 @@ impl GamesOverview {
             action_encyclopedia: None,
 
             mods_button: None,
+            mods_note: None,
+            right_card: None,
+            left_card: None,
+            hero_plate: None,
         }
     }
 
@@ -356,6 +442,79 @@ impl GamesOverview {
                 state.status_message.clone(),
             )
         };
+        let window_width = cx.tree.size().0;
+        if window_width > 0 {
+            self.compact = window_width < 1600;
+        }
+        // Sizes that depend on the window: the list card, the list covers and the hero cover.
+        let (cover_width, cover_height) = cover_size(self.compact);
+        if let Some(card) = self.left_card {
+            let width = list_width(self.compact);
+            cx.tree.set_style(
+                card,
+                crate::layout::Style {
+                    preferred: crate::layout::Size::new(width, 0.0),
+                    min: crate::layout::Size::new(width, 0.0),
+                    max: crate::layout::Size::new(width, f32::INFINITY),
+                    shrink: 0.0,
+                    align_items: crate::layout::Align::Stretch,
+                    ..crate::layout::Style::default()
+                },
+            )?;
+        }
+        for row in &self.rows {
+            cx.tree.set_style(
+                row.plate,
+                crate::layout::Style {
+                    min: crate::layout::Size::new(cover_width, cover_height),
+                    preferred: crate::layout::Size::new(cover_width, cover_height),
+                    shrink: 0.0,
+                    ..crate::layout::Style::default()
+                },
+            )?;
+        }
+        if let Some(plate) = self.hero_plate {
+            let cover_w = hero_cover_width(self.compact);
+            cx.tree.set_style(
+                plate,
+                crate::layout::Style {
+                    min: crate::layout::Size::new(cover_w, cover_w * 9.0 / 16.0),
+                    preferred: crate::layout::Size::new(cover_w, cover_w * 9.0 / 16.0),
+                    shrink: 0.0,
+                    ..crate::layout::Style::default()
+                },
+            )?;
+        }
+        // Texts that wrap take the width they are drawn in, which is known only after a layout pass.
+        cx.tree.update_layout()?;
+        let right_width = self
+            .right_card
+            .map(|id| cx.tree.rect(id).map(|rect| rect.width as f32))
+            .transpose()?
+            .unwrap_or(0.0);
+        // Until the window has its size, the note keeps its natural width.
+        let left_width = list_width(self.compact) - 2.0 * 16.0;
+        if let Some(hint) = self.empty_search_hint {
+            cx.tree.set_style(
+                hint,
+                crate::layout::Style {
+                    min: crate::layout::Size::new(left_width, 0.0),
+                    shrink: 0.0,
+                    ..crate::layout::Style::default()
+                },
+            )?;
+        }
+        if let (Some(note), true) = (self.mods_note, right_width > 0.0) {
+            let note_width = right_width - 2.0 * theme::d2::PANEL_PADDING.0 - 16.0 - 220.0;
+            cx.tree.set_style(
+                note,
+                crate::layout::Style {
+                    min: crate::layout::Size::new(note_width.max(1.0), 0.0),
+                    shrink: 0.0,
+                    ..crate::layout::Style::default()
+                },
+            )?;
+        }
 
         // Update count label
         if let Some(id) = self.installations_count {
@@ -386,28 +545,35 @@ impl GamesOverview {
             cx.tree.set_visible(empty, !has_installations)?;
         }
 
-        // Update installation rows
-        for i in 0..MAX_INSTALLATION_ROWS {
-            if let Some(row_id) = self.rows.get(i).copied() {
-                if let Some(install) = installations.get(i) {
-                    cx.tree.set_visible(row_id, true)?;
-                    let is_selected = selected_installation.as_ref() == Some(&install.directory);
-                    let prefix = if is_selected { "> " } else { "  " };
-                    let path_str = install.directory.to_string_lossy();
-                    let shortened = text::ellipsize_middle(&path_str, 420.0, &PathMetrics);
-                    let language = crate::strings::current_language();
-                    let row_text = installation_row_text(
-                        language,
-                        prefix,
-                        install.target.title_in(language),
-                        install.source.display_in(language),
-                        install.save_count,
-                        &shortened,
-                    );
-                    cx.tree.set_text(row_id, &row_text)?;
+        // Installation rows: the card shows the cover plate, the name, the path and the source
+        let (cover_width, _) = cover_size(self.compact);
+        let path_width = list_width(self.compact) - 2.0 * 16.0 - 2.0 * 8.0 - cover_width - 12.0 - 2.0;
+        for (i, row) in self.rows.iter().enumerate() {
+            if let Some(install) = installations.get(i) {
+                cx.tree.set_visible(row.stack, true)?;
+                let language = crate::strings::current_language();
+                let selected = selected_installation.as_ref() == Some(&install.directory);
+                cx.tree.set_text(row.name, install.target.title_in(language))?;
+                let path_str = install.directory.to_string_lossy();
+                let shortened = text::ellipsize_middle(&path_str, path_width, &PathMetrics);
+                cx.tree.set_text(row.path, &shortened)?;
+                cx.tree.set_text(row.source, install.source.display_in(language))?;
+                let (fill, border) = if selected {
+                    (theme::d2::ACCENT_TINT, theme::d2::ACCENT)
                 } else {
-                    cx.tree.set_visible(row_id, false)?;
-                }
+                    (theme::d2::PANEL_RAISED, theme::d2::BORDER_SUBTLE)
+                };
+                cx.tree.set_look(
+                    row.card,
+                    Look {
+                        fill: Some(style::d2::argb(fill)),
+                        border: Some((style::d2::argb(border), 1.0)),
+                        radius: 3.0,
+                        ..Look::default()
+                    },
+                )?;
+            } else {
+                cx.tree.set_visible(row.stack, false)?;
             }
         }
 
@@ -422,6 +588,14 @@ impl GamesOverview {
                 install.target.title_in(language).to_owned()
             } else {
                 selected_target.title_in(language).to_owned()
+            };
+            // The title shares the hero's row with the cover: it is shortened with an ellipsis to the room it has.
+            let room = right_width - 2.0 * theme::d2::PANEL_PADDING.0 - hero_cover_width(self.compact) - 16.0;
+            let title = if right_width > 0.0 {
+                let metrics = cx.tree.fonts().metrics(Text::Title.style());
+                text::ellipsize_end(&title, room.max(1.0), &metrics)
+            } else {
+                title
             };
             cx.tree.set_text(id, &title)?;
         }
@@ -468,57 +642,25 @@ impl Screen for GamesOverview {
     }
 
     fn subtitle(&self) -> &str {
-        crate::strings::t("Найденные установки, версии и быстрые действия для каждой игры")
+        crate::strings::t("ИГРЫ И ИНСТРУМЕНТЫ")
     }
 
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
-        // Main two-column or stacked layout:
-        // Left: НАЙДЕННЫЕ УСТАНОВКИ (card)
-        // Right: ВЫБРАННАЯ ИГРА (card)
-        let main_row_style = crate::layout::Style {
-            gap: crate::layout::Size::new(12.0, 12.0),
-            align_items: crate::layout::Align::Stretch,
-            ..crate::layout::Style::default()
-        };
+        // Two columns as in the frame: the installation list on the left, the selected game, its actions and the
+        // mods note on the right.
+        let window_width = cx.tree.size().0;
+        if window_width > 0 {
+            self.compact = window_width < 1600;
+        }
+        let gap = if self.compact { 12.0 } else { 16.0 };
         let main_row = cx.tree.add(
             Some(host),
             crate::layout::NodeKind::Row,
-            main_row_style,
-            crate::widget::Content::Panel,
-            crate::widget::Look::default(),
-        )?;
-
-        // --- LEFT CARD: НАЙДЕННЫЕ УСТАНОВКИ ---
-        let left_card = style::card(cx.tree, main_row)?;
-        let heading_row = style::row(cx.tree, left_card)?;
-        style::label(
-            cx.tree,
-            heading_row,
-            crate::strings::t("НАЙДЕННЫЕ УСТАНОВКИ"),
-            Text::Heading,
-        )?;
-        let initial_count = installation_count_text(crate::strings::current_language(), 0);
-        self.installations_count = Some(style::label(cx.tree, heading_row, &initial_count, Text::Note)?);
-        self.discover_button = Some(style::button(
-            cx.tree,
-            heading_row,
-            crate::strings::t("Найти установки"),
-            Button::Primary,
-        )?);
-
-        self.discovery_status = Some(style::label(
-            cx.tree,
-            left_card,
-            crate::strings::t("Поиск установок ещё не выполнялся."),
-            Text::Note,
-        )?);
-
-        // Installation rows container
-        let list_container = cx.tree.add(
-            Some(left_card),
-            crate::layout::NodeKind::Column,
             crate::layout::Style {
-                gap: crate::layout::Size::new(0.0, 4.0),
+                grow: 1.0,
+                shrink: 1.0,
+                min: crate::layout::Size::new(0.0, 0.0),
+                gap: crate::layout::Size::new(gap, 0.0),
                 align_items: crate::layout::Align::Stretch,
                 ..crate::layout::Style::default()
             },
@@ -526,150 +668,530 @@ impl Screen for GamesOverview {
             crate::widget::Look::default(),
         )?;
 
-        for _ in 0..MAX_INSTALLATION_ROWS {
-            let row_button = style::button(cx.tree, list_container, "", Button::Secondary)?;
-            cx.tree.set_visible(row_button, false)?;
-            self.rows.push(row_button);
+        // --- LEFT CARD: НАЙДЕННЫЕ УСТАНОВКИ ---
+        let left_width = list_width(self.compact);
+        let left_card = style::d2::panel(cx.tree, main_row)?;
+        cx.tree.set_style(
+            left_card,
+            crate::layout::Style {
+                preferred: crate::layout::Size::new(left_width, 0.0),
+                min: crate::layout::Size::new(left_width, 0.0),
+                max: crate::layout::Size::new(left_width, f32::INFINITY),
+                shrink: 0.0,
+                padding: crate::layout::Edges::default(),
+                gap: crate::layout::Size::new(0.0, 0.0),
+                align_items: crate::layout::Align::Stretch,
+                ..crate::layout::Style::default()
+            },
+        )?;
+        cx.tree.set_clip_children(left_card, true)?;
+        self.left_card = Some(left_card);
+        let heading_row = cx.tree.add(
+            Some(left_card),
+            crate::layout::NodeKind::Row,
+            crate::layout::Style {
+                min: crate::layout::Size::new(0.0, 52.0),
+                padding: crate::layout::Edges {
+                    left: 16.0,
+                    top: 0.0,
+                    right: 12.0,
+                    bottom: 0.0,
+                },
+                gap: crate::layout::Size::new(10.0, 0.0),
+                align_items: crate::layout::Align::Center,
+                shrink: 0.0,
+                ..crate::layout::Style::default()
+            },
+            crate::widget::Content::Panel,
+            crate::widget::Look::default(),
+        )?;
+        let heading = style::d2::panel_title(cx.tree, heading_row, crate::strings::t("НАЙДЕННЫЕ УСТАНОВКИ"))?;
+        cx.tree.set_style(
+            heading,
+            crate::layout::Style {
+                grow: 1.0,
+                shrink: 0.0,
+                ..crate::layout::Style::default()
+            },
+        )?;
+        let find_row = cx.tree.add(
+            Some(left_card),
+            crate::layout::NodeKind::Row,
+            crate::layout::Style {
+                padding: crate::layout::Edges {
+                    left: 16.0,
+                    top: 8.0,
+                    right: 16.0,
+                    bottom: 0.0,
+                },
+                shrink: 0.0,
+                align_items: crate::layout::Align::Stretch,
+                ..crate::layout::Style::default()
+            },
+            crate::widget::Content::Panel,
+            crate::widget::Look::default(),
+        )?;
+        self.discover_button = Some(style::d2::button(
+            cx.tree,
+            find_row,
+            crate::strings::t("Найти установки"),
+            style::d2::ButtonKind::Secondary,
+            style::d2::ButtonSize::Small,
+        )?);
+        if let Some(button) = self.discover_button {
+            cx.tree.set_style(
+                button,
+                crate::layout::Style {
+                    grow: 1.0,
+                    shrink: 1.0,
+                    min: crate::layout::Size::new(0.0, theme::d2::CONTROL_HEIGHT.1),
+                    ..crate::layout::Style::default()
+                },
+            )?;
         }
 
-        // Empty state pane (shown when no installations)
+        let status_row = cx.tree.add(
+            Some(left_card),
+            crate::layout::NodeKind::Row,
+            crate::layout::Style {
+                padding: crate::layout::Edges {
+                    left: 16.0,
+                    top: 10.0,
+                    right: 16.0,
+                    bottom: 2.0,
+                },
+                gap: crate::layout::Size::new(10.0, 0.0),
+                align_items: crate::layout::Align::Center,
+                shrink: 0.0,
+                ..crate::layout::Style::default()
+            },
+            crate::widget::Content::Panel,
+            crate::widget::Look::default(),
+        )?;
+        self.discovery_status = Some(style::label(
+            cx.tree,
+            status_row,
+            crate::strings::t("Поиск установок ещё не выполнялся."),
+            Text::Value,
+        )?);
+        let initial_count = installation_count_text(crate::strings::current_language(), 0);
+        self.installations_count = Some(style::label(cx.tree, status_row, &initial_count, Text::Note)?);
+
+        // Empty state (shown when no installations)
         let empty_card = cx.tree.add(
             Some(left_card),
             crate::layout::NodeKind::Column,
             crate::layout::Style {
-                padding: crate::layout::Edges::all(14.0),
-                gap: crate::layout::Size::new(0.0, 6.0),
-                align_items: crate::layout::Align::Center,
+                padding: crate::layout::Edges::all(16.0),
+                gap: crate::layout::Size::new(0.0, 8.0),
+                align_items: crate::layout::Align::Stretch,
+                shrink: 0.0,
                 ..crate::layout::Style::default()
             },
             crate::widget::Content::Panel,
             crate::widget::Look::default(),
         )?;
         self.empty_panel = Some(empty_card);
-
         style::label(
             cx.tree,
             empty_card,
             crate::strings::t("Установки не выбраны"),
             Text::Heading,
         )?;
-        self.empty_search_hint = Some(style::label(
-            cx.tree,
-            empty_card,
-            crate::strings::t("Нажмите «Найти установки», чтобы проверить поддерживаемые игры на этом компьютере."),
-            Text::Note,
-        )?);
-        self.empty_doctor_button = Some(style::button(
+        self.empty_search_hint = Some(
+            cx.tree.add(
+                Some(empty_card),
+                NodeKind::Leaf,
+                Style {
+                    shrink: 0.0,
+                    ..Style::default()
+                },
+                Content::Paragraph {
+                    text: crate::strings::t(
+                        "Нажмите «Найти установки», чтобы проверить поддерживаемые игры на этом компьютере.",
+                    )
+                    .to_owned(),
+                    style: Text::Note.style(),
+                },
+                Look {
+                    text: Text::Note.color(),
+                    ..Look::default()
+                },
+            )?,
+        );
+        self.empty_doctor_button = Some(style::d2::button(
             cx.tree,
             empty_card,
             crate::strings::t("Открыть Доктор игры"),
-            Button::Secondary,
+            style::d2::ButtonKind::Secondary,
+            style::d2::ButtonSize::Normal,
         )?);
 
-        // --- RIGHT CARD: ВЫБРАННАЯ ИГРА ---
-        let right_card = style::card(cx.tree, main_row)?;
-        let right_header = style::row(cx.tree, right_card)?;
-        style::label(
+        // Installation rows container
+        let list_container = cx.tree.add(
+            Some(left_card),
+            crate::layout::NodeKind::Column,
+            crate::layout::Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: crate::layout::Size::new(0.0, 0.0),
+                padding: crate::layout::Edges::all(8.0),
+                gap: crate::layout::Size::new(0.0, 4.0),
+                align_items: crate::layout::Align::Stretch,
+                ..crate::layout::Style::default()
+            },
+            crate::widget::Content::Panel,
+            crate::widget::Look::default(),
+        )?;
+        cx.tree.set_clip_children(list_container, true)?;
+        let (cover_width, cover_height) = cover_size(self.compact);
+        for _ in 0..MAX_INSTALLATION_ROWS {
+            let stack = cx.tree.add(
+                Some(list_container),
+                crate::layout::NodeKind::Stack,
+                crate::layout::Style {
+                    shrink: 0.0,
+                    align_items: crate::layout::Align::Stretch,
+                    ..crate::layout::Style::default()
+                },
+                crate::widget::Content::Panel,
+                crate::widget::Look::default(),
+            )?;
+            let card = cx.tree.add(
+                Some(stack),
+                crate::layout::NodeKind::Row,
+                crate::layout::Style {
+                    padding: crate::layout::Edges::all(8.0),
+                    gap: crate::layout::Size::new(12.0, 0.0),
+                    align_items: crate::layout::Align::Center,
+                    min: crate::layout::Size::new(0.0, cover_height + 16.0),
+                    shrink: 0.0,
+                    ..crate::layout::Style::default()
+                },
+                crate::widget::Content::Panel,
+                crate::widget::Look::default(),
+            )?;
+            let plate = cover_plate(
+                cx.tree,
+                card,
+                crate::layout::Style {
+                    min: crate::layout::Size::new(cover_width, cover_height),
+                    preferred: crate::layout::Size::new(cover_width, cover_height),
+                    shrink: 0.0,
+                    ..crate::layout::Style::default()
+                },
+            )?;
+            let info = cx.tree.add(
+                Some(card),
+                crate::layout::NodeKind::Column,
+                crate::layout::Style {
+                    grow: 1.0,
+                    shrink: 1.0,
+                    min: crate::layout::Size::new(0.0, 0.0),
+                    gap: crate::layout::Size::new(0.0, 4.0),
+                    align_items: crate::layout::Align::Stretch,
+                    ..crate::layout::Style::default()
+                },
+                crate::widget::Content::Panel,
+                crate::widget::Look::default(),
+            )?;
+            let name = style::label(cx.tree, info, "", Text::Heading)?;
+            let path = style::label(cx.tree, info, "", Text::Note)?;
+            let source = style::label(cx.tree, info, "", Text::Value)?;
+            cx.tree.set_style(
+                source,
+                crate::layout::Style {
+                    shrink: 0.0,
+                    align_self: Some(crate::layout::Align::Start),
+                    padding: crate::layout::Edges {
+                        left: 7.0,
+                        top: 0.0,
+                        right: 7.0,
+                        bottom: 0.0,
+                    },
+                    ..crate::layout::Style::default()
+                },
+            )?;
+            cx.tree.set_look(
+                source,
+                Look {
+                    text: style::d2::argb(theme::d2::TEXT_MUTED),
+                    border: Some((style::d2::argb(theme::d2::BORDER_METAL), 1.0)),
+                    ..Look::default()
+                },
+            )?;
+            // The select button is the last child, so it covers the card and takes the clicks.
+            let select = style::button(cx.tree, stack, "", Button::Secondary)?;
+            cx.tree.set_look(select, Look::default())?;
+            cx.tree.set_style(
+                select,
+                crate::layout::Style {
+                    min: crate::layout::Size::new(0.0, cover_height + 16.0),
+                    shrink: 0.0,
+                    ..crate::layout::Style::default()
+                },
+            )?;
+            cx.tree.set_visible(stack, false)?;
+            self.rows.push(InstallRow {
+                stack,
+                card,
+                plate,
+                select,
+                name,
+                path,
+                source,
+            });
+        }
+
+        // Footer of the list: the doctor for the selected installation.
+        let footer = cx.tree.add(
+            Some(left_card),
+            crate::layout::NodeKind::Column,
+            crate::layout::Style {
+                padding: crate::layout::Edges {
+                    left: 16.0,
+                    top: 12.0,
+                    right: 16.0,
+                    bottom: 12.0,
+                },
+                shrink: 0.0,
+                align_items: crate::layout::Align::Stretch,
+                ..crate::layout::Style::default()
+            },
+            crate::widget::Content::Panel,
+            crate::widget::Look::default(),
+        )?;
+        self.footer_doctor_button = Some(style::d2::button(
             cx.tree,
-            right_header,
-            crate::strings::t("ВЫБРАННАЯ ИГРА"),
-            Text::Heading,
+            footer,
+            crate::strings::t("Открыть Доктор игры"),
+            style::d2::ButtonKind::Secondary,
+            style::d2::ButtonSize::Normal,
+        )?);
+
+        // --- RIGHT COLUMN ---
+        let right = cx.tree.add(
+            Some(main_row),
+            crate::layout::NodeKind::Column,
+            crate::layout::Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: crate::layout::Size::new(0.0, 0.0),
+                gap: crate::layout::Size::new(0.0, gap),
+                align_items: crate::layout::Align::Stretch,
+                ..crate::layout::Style::default()
+            },
+            crate::widget::Content::Panel,
+            crate::widget::Look::default(),
         )?;
 
-        self.target_prev_button = Some(style::button(cx.tree, right_header, "<", Button::Secondary)?);
-        self.target_next_button = Some(style::button(cx.tree, right_header, ">", Button::Secondary)?);
-
+        // Hero: ВЫБРАННАЯ ИГРА
+        let hero = style::d2::panel(cx.tree, right)?;
+        cx.tree.set_style(
+            hero,
+            crate::layout::Style {
+                shrink: 0.0,
+                padding: crate::layout::Edges::all(16.0),
+                gap: crate::layout::Size::new(0.0, 0.0),
+                align_items: crate::layout::Align::Stretch,
+                ..crate::layout::Style::default()
+            },
+        )?;
+        self.right_card = Some(hero);
+        let hero_row = cx.tree.add(
+            Some(hero),
+            crate::layout::NodeKind::Row,
+            crate::layout::Style {
+                gap: crate::layout::Size::new(16.0, 0.0),
+                align_items: crate::layout::Align::Start,
+                shrink: 0.0,
+                ..crate::layout::Style::default()
+            },
+            crate::widget::Content::Panel,
+            crate::widget::Look::default(),
+        )?;
+        let cover_w = hero_cover_width(self.compact);
+        self.hero_plate = Some(cover_plate(
+            cx.tree,
+            hero_row,
+            crate::layout::Style {
+                min: crate::layout::Size::new(cover_w, cover_w * 9.0 / 16.0),
+                preferred: crate::layout::Size::new(cover_w, cover_w * 9.0 / 16.0),
+                shrink: 0.0,
+                ..crate::layout::Style::default()
+            },
+        )?);
+        let details = cx.tree.add(
+            Some(hero_row),
+            crate::layout::NodeKind::Column,
+            crate::layout::Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: crate::layout::Size::new(0.0, 0.0),
+                gap: crate::layout::Size::new(0.0, 8.0),
+                align_items: crate::layout::Align::Stretch,
+                ..crate::layout::Style::default()
+            },
+            crate::widget::Content::Panel,
+            crate::widget::Look::default(),
+        )?;
+        let hero_header = style::row(cx.tree, details)?;
+        let hero_title = style::d2::panel_title(cx.tree, hero_header, crate::strings::t("ВЫБРАННАЯ ИГРА"))?;
+        cx.tree.set_style(
+            hero_title,
+            crate::layout::Style {
+                grow: 1.0,
+                shrink: 0.0,
+                ..crate::layout::Style::default()
+            },
+        )?;
+        self.target_prev_button = Some(super::shell::library_icon_button(
+            cx.tree,
+            hero_header,
+            crate::path::Icon::D2ArrowLeft,
+        )?);
+        self.target_next_button = Some(super::shell::library_icon_button(
+            cx.tree,
+            hero_header,
+            crate::path::Icon::D2ArrowRight,
+        )?);
         self.target_title = Some(style::label(
             cx.tree,
-            right_card,
+            details,
             GameTarget::ShadowOfChernobyl.title(),
             Text::Title,
         )?);
 
-        let details_table = style::card(cx.tree, right_card)?;
+        let value_of = |tree: &Tree, row: WidgetId| -> Result<WidgetId> {
+            tree.children(row)
+                .get(1)
+                .copied()
+                .ok_or_else(|| sse_core::Error::damaged("key-value row without a value"))
+        };
+        let status_row = style::d2::key_value_row(cx.tree, details, crate::strings::t("Статус:        "), "")?;
+        self.status_value = Some(value_of(cx.tree, status_row)?);
+        let platform_row = style::d2::key_value_row(cx.tree, details, crate::strings::t("Платформа:     "), "")?;
+        self.platform_value = Some(value_of(cx.tree, platform_row)?);
+        let build_row = style::d2::key_value_row(cx.tree, details, crate::strings::t("Номер сборки:  "), "")?;
+        self.build_value = Some(value_of(cx.tree, build_row)?);
+        let folder_row = style::d2::key_value_row(cx.tree, details, crate::strings::t("Папка игры:    "), "")?;
+        self.folder_value = Some(value_of(cx.tree, folder_row)?);
+        let saves_row = style::d2::key_value_row(cx.tree, details, crate::strings::t("Число сейвов:  "), "")?;
+        self.saves_value = Some(value_of(cx.tree, saves_row)?);
 
-        let row1 = style::row(cx.tree, details_table)?;
-        style::label(cx.tree, row1, crate::strings::t("Статус:        "), Text::Note)?;
-        self.status_value = Some(style::label(
+        self.open_folder_button = Some(style::d2::button(
             cx.tree,
-            row1,
-            crate::strings::t("Не выбрана"),
-            Text::Value,
-        )?);
-
-        let row2 = style::row(cx.tree, details_table)?;
-        style::label(cx.tree, row2, crate::strings::t("Платформа:     "), Text::Note)?;
-        self.platform_value = Some(style::label(cx.tree, row2, "—", Text::Value)?);
-
-        let row3 = style::row(cx.tree, details_table)?;
-        style::label(cx.tree, row3, crate::strings::t("Номер сборки:  "), Text::Note)?;
-        self.build_value = Some(style::label(cx.tree, row3, "—", Text::Value)?);
-
-        let row4 = style::row(cx.tree, details_table)?;
-        style::label(cx.tree, row4, crate::strings::t("Папка игры:    "), Text::Note)?;
-        self.folder_value = Some(style::label(cx.tree, row4, "—", Text::Value)?);
-
-        let row5 = style::row(cx.tree, details_table)?;
-        style::label(cx.tree, row5, crate::strings::t("Число сейвов:  "), Text::Note)?;
-        self.saves_value = Some(style::label(cx.tree, row5, "—", Text::Value)?);
-
-        self.open_folder_button = Some(style::button(
-            cx.tree,
-            right_card,
+            hero,
             crate::strings::t("Открыть папку"),
-            Button::Secondary,
+            style::d2::ButtonKind::Secondary,
+            style::d2::ButtonSize::Normal,
         )?);
 
-        // --- BOTTOM ACTIONS: БЫСТРЫЕ ДЕЙСТВИЯ ---
-        let bottom_card = style::card(cx.tree, host)?;
-        style::label(
-            cx.tree,
-            bottom_card,
-            crate::strings::t("БЫСТРЫЕ ДЕЙСТВИЯ"),
-            Text::Heading,
+        // Quick actions: БЫСТРЫЕ ДЕЙСТВИЯ
+        let actions = style::d2::panel(cx.tree, right)?;
+        cx.tree.set_style(
+            actions,
+            crate::layout::Style {
+                shrink: 0.0,
+                padding: crate::layout::Edges::all(16.0),
+                gap: crate::layout::Size::new(0.0, 12.0),
+                align_items: crate::layout::Align::Stretch,
+                ..crate::layout::Style::default()
+            },
         )?;
-        let actions_row = style::row(cx.tree, bottom_card)?;
+        style::d2::panel_title(cx.tree, actions, crate::strings::t("БЫСТРЫЕ ДЕЙСТВИЯ"))?;
+        let actions_row = style::row(cx.tree, actions)?;
+        cx.tree.set_style(
+            actions_row,
+            crate::layout::Style {
+                shrink: 0.0,
+                gap: crate::layout::Size::new(8.0, 0.0),
+                align_items: crate::layout::Align::Stretch,
+                ..crate::layout::Style::default()
+            },
+        )?;
+        let action = |tree: &mut Tree, row: WidgetId, text: &str| -> Result<WidgetId> {
+            let id = style::d2::button(
+                tree,
+                row,
+                text,
+                style::d2::ButtonKind::Secondary,
+                style::d2::ButtonSize::Normal,
+            )?;
+            fill_action_button(tree, id)?;
+            Ok(id)
+        };
+        self.action_fixes = Some(action(cx.tree, actions_row, crate::strings::t("Исправления"))?);
+        self.action_doctor = Some(action(cx.tree, actions_row, crate::strings::t("Доктор игры"))?);
+        self.action_environment = Some(action(cx.tree, actions_row, crate::strings::t("Среда игры"))?);
+        self.action_encyclopedia = Some(action(cx.tree, actions_row, crate::strings::t("Энциклопедия"))?);
 
-        self.action_fixes = Some(style::button(
-            cx.tree,
-            actions_row,
-            crate::strings::t("Исправления"),
-            Button::Secondary,
-        )?);
-        self.action_doctor = Some(style::button(
-            cx.tree,
-            actions_row,
-            crate::strings::t("Доктор игры"),
-            Button::Secondary,
-        )?);
-        self.action_environment = Some(style::button(
-            cx.tree,
-            actions_row,
-            crate::strings::t("Среда игры"),
-            Button::Secondary,
-        )?);
-        self.action_encyclopedia = Some(style::button(
-            cx.tree,
-            actions_row,
-            crate::strings::t("Энциклопедия"),
-            Button::Secondary,
-        )?);
-
-        // --- MODS NOTICE: МОДЫ ---
-        let mods_card = style::card(cx.tree, host)?;
-        let mods_row = style::row(cx.tree, mods_card)?;
-        self.mods_button = Some(style::button(
+        // Mods note: МОДЫ, with the mods button on the right
+        let mods = style::d2::panel(cx.tree, right)?;
+        cx.tree.set_style(
+            mods,
+            crate::layout::Style {
+                grow: 1.0,
+                shrink: 0.0,
+                padding: crate::layout::Edges::all(16.0),
+                gap: crate::layout::Size::new(0.0, 0.0),
+                align_items: crate::layout::Align::Stretch,
+                ..crate::layout::Style::default()
+            },
+        )?;
+        let mods_row = style::row(cx.tree, mods)?;
+        cx.tree.set_style(
+            mods_row,
+            crate::layout::Style {
+                shrink: 0.0,
+                gap: crate::layout::Size::new(16.0, 0.0),
+                align_items: crate::layout::Align::Center,
+                ..crate::layout::Style::default()
+            },
+        )?;
+        let mods_text = cx.tree.add(
+            Some(mods_row),
+            crate::layout::NodeKind::Column,
+            crate::layout::Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: crate::layout::Size::new(0.0, 0.0),
+                gap: crate::layout::Size::new(0.0, 6.0),
+                align_items: crate::layout::Align::Stretch,
+                ..crate::layout::Style::default()
+            },
+            crate::widget::Content::Panel,
+            crate::widget::Look::default(),
+        )?;
+        style::d2::panel_title(cx.tree, mods_text, crate::strings::t("Моды"))?;
+        self.mods_note = Some(
+            cx.tree.add(
+                Some(mods_text),
+                crate::layout::NodeKind::Leaf,
+                crate::layout::Style {
+                    shrink: 0.0,
+                    ..crate::layout::Style::default()
+                },
+                crate::widget::Content::Paragraph {
+                    text: crate::strings::t(
+                        "Отдельный менеджер модов отсутствует; используйте профили в разделе «Среда игры».",
+                    )
+                    .to_owned(),
+                    style: Text::Note.style(),
+                },
+                crate::widget::Look {
+                    text: Text::Note.color(),
+                    ..crate::widget::Look::default()
+                },
+            )?,
+        );
+        self.mods_button = Some(style::d2::button(
             cx.tree,
             mods_row,
             crate::strings::t("Моды"),
-            Button::Secondary,
+            style::d2::ButtonKind::Secondary,
+            style::d2::ButtonSize::Normal,
         )?);
-        style::label(
-            cx.tree,
-            mods_row,
-            crate::strings::t("Отдельный менеджер модов отсутствует; используйте профили в разделе «Среда игры»."),
-            Text::Note,
-        )?;
 
         Ok(())
     }
@@ -698,6 +1220,10 @@ impl Screen for GamesOverview {
         message: &Message<AppMessage>,
         clicked: Option<WidgetId>,
     ) -> Result<()> {
+        // The widths of the wrapped texts and of the title follow the window.
+        if let Message::Window(WindowEvent::Resized { .. }) = message {
+            return self.render(cx);
+        }
         // 1. Check if user clicked "Найти установки"
         if clicked.is_some() && clicked == self.discover_button {
             start_background_discovery(&self.workspace, cx);
@@ -705,7 +1231,11 @@ impl Screen for GamesOverview {
         }
 
         // 2. Check if user clicked "Открыть Доктор игры"
-        if clicked.is_some() && (clicked == self.empty_doctor_button || clicked == self.action_doctor) {
+        if clicked.is_some()
+            && (clicked == self.empty_doctor_button
+                || clicked == self.footer_doctor_button
+                || clicked == self.action_doctor)
+        {
             cx.status = Some(crate::strings::t("Переход в раздел «Доктор игры»").to_owned());
             return Ok(());
         }
@@ -766,8 +1296,8 @@ impl Screen for GamesOverview {
         }
 
         // 5. Click on an installation row
-        for (i, row_id) in self.rows.iter().enumerate() {
-            if clicked.is_some() && clicked == Some(*row_id) {
+        for (i, row) in self.rows.iter().enumerate() {
+            if clicked.is_some() && clicked == Some(row.select) {
                 let mut state = self.workspace.lock();
                 if let Some((target, directory)) = state
                     .installations
@@ -4118,10 +4648,7 @@ mod steam_manifest_warning_tests {
 
 #[cfg(test)]
 mod game_target_localization_tests {
-    use super::{
-        discovery_status_text, installation_count_text, installation_row_text, tr, DiscoveryStatus, GameInstallSource,
-        GameTarget,
-    };
+    use super::{discovery_status_text, installation_count_text, tr, DiscoveryStatus, GameInstallSource, GameTarget};
 
     #[test]
     fn game_titles_and_selected_install_source_follow_the_interface_language() {
@@ -4158,10 +4685,6 @@ mod game_target_localization_tests {
         assert_eq!(crate::strings::t_in("en", "НАЙДЕННЫЕ УСТАНОВКИ"), "FOUND INSTALLATIONS");
         assert_eq!(installation_count_text("en", 4), "Found: 4");
         assert_eq!(discovery_status_text("en", &DiscoveryStatus::Found(2)), "●  FOUND 2");
-        assert_eq!(
-            installation_row_text("en", "> ", "Shadow of Chornobyl", "Steam", 1, "/game"),
-            "> Shadow of Chornobyl [Steam] · saves: 1\n   /game"
-        );
     }
 
     #[test]
