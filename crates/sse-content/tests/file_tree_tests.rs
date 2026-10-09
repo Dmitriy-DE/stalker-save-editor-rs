@@ -11,6 +11,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use sse_codecs::crc32::crc32;
+#[cfg(unix)]
 use sse_content::collect_files_recursive;
 use sse_content::file_tree::{CompanionArchiveLocator, CompanionGame, GameFileTree};
 
