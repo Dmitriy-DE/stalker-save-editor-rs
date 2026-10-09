@@ -271,7 +271,7 @@ fn fsgame_appdata_root_accepts_an_in_game_custom_directory() {
 
     assert_eq!(
         ManagedUserLtxSettings::resolve_path(&game),
-        Some(appdata.join("user.ltx"))
+        Some(fs::canonicalize(appdata.join("user.ltx")).unwrap())
     );
     assert_eq!(
         ManagedUserLtxSettings::read_managed_settings(&game)
