@@ -2,7 +2,7 @@
 //!
 //! Channel-backed platforms block on the receiver while idle. A platform with a main-thread native event pump may
 //! override [`Present::wait_for_message`]; workers wake it through a [`Proxy`] callback. Every wake drains queued
-//! messages, lets the app react, lays out and repaints only the damaged rectangles, then presents them.
+//! messages, refreshes layout before pointer hit-testing, lets the app react, then repaints damaged rectangles.
 
 use crate::raster::Rect;
 use crate::widget::Tree;
@@ -234,6 +234,12 @@ pub fn run<U, A: App<U>, P: Present>(
         stats.wakes = stats.wakes.saturating_add(1);
         let mut next = Some(first);
         while let Some(message) = next {
+            if matches!(
+                &message,
+                Message::Window(WindowEvent::PointerMoved { .. } | WindowEvent::Button { button: 1, .. })
+            ) {
+                tree.update_layout()?;
+            }
             if handle(tree, app, &message) == Flow::Exit {
                 return Ok(stats);
             }
@@ -314,10 +320,12 @@ fn handle<U, A: App<U>>(tree: &mut Tree, app: &mut A, message: &Message<U>) -> F
 
 #[cfg(test)]
 mod tests {
-    use super::{channel_pair, App, Flow, Message, WindowEvent};
+    use super::{channel_pair, App, Flow, Message, Present, WindowEvent};
     use crate::glyphs::Fonts;
+    use crate::layout::{NodeKind, Style};
     use crate::raster::Color;
-    use crate::widget::Tree;
+    use crate::screens::style::{self, Button};
+    use crate::widget::{Content, Look, Tree, WidgetId};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
@@ -360,6 +368,91 @@ mod tests {
             super::handle(&mut tree, &mut app, &Message::Window(WindowEvent::CloseRequested)),
             Flow::Continue
         );
+        Ok(())
+    }
+
+    #[test]
+    fn first_click_is_hit_tested_before_the_first_painted_frame() -> sse_core::Result<()> {
+        struct Presenter;
+
+        impl Present for Presenter {
+            fn present(
+                &mut self,
+                _frame: &[u32],
+                _stride: usize,
+                _width: u32,
+                _height: u32,
+                _rects: &[crate::raster::Rect],
+            ) -> sse_core::Result<()> {
+                Ok(())
+            }
+        }
+
+        struct ClickApp {
+            target: WidgetId,
+            clicked: bool,
+        }
+
+        impl App<()> for ClickApp {
+            fn message(&mut self, _tree: &mut Tree, _message: &Message<()>, clicked: Option<WidgetId>) -> Flow {
+                if clicked == Some(self.target) {
+                    self.clicked = true;
+                    Flow::Exit
+                } else {
+                    Flow::Continue
+                }
+            }
+        }
+
+        fn button_tree() -> sse_core::Result<(Tree, WidgetId)> {
+            let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+            let root = tree.add(
+                None,
+                NodeKind::Column,
+                Style::default(),
+                Content::Panel,
+                Look::default(),
+            )?;
+            let button = style::button(&mut tree, root, "Open", Button::Primary)?;
+            tree.resize(200, 100);
+            Ok((tree, button))
+        }
+
+        let (mut layout_tree, layout_button) = button_tree()?;
+        layout_tree.update_layout()?;
+        let rect = layout_tree.rect(layout_button)?;
+        assert!(rect.width > 0 && rect.height > 0, "fixture button must be visible");
+        let x = rect.x.saturating_add(i32::try_from(rect.width / 2).unwrap_or_default());
+        let y = rect
+            .y
+            .saturating_add(i32::try_from(rect.height / 2).unwrap_or_default());
+
+        let (mut tree, target) = button_tree()?;
+        assert_eq!(target, layout_button);
+        let (proxy, receiver) = channel_pair::<()>();
+        for event in [
+            WindowEvent::Exposed(crate::raster::Rect::new(0, 0, 200, 100)),
+            WindowEvent::Button {
+                button: 1,
+                pressed: true,
+                x,
+                y,
+            },
+            WindowEvent::Button {
+                button: 1,
+                pressed: false,
+                x,
+                y,
+            },
+            WindowEvent::CloseRequested,
+        ] {
+            assert!(proxy.window(event));
+        }
+
+        let mut app = ClickApp { target, clicked: false };
+        super::run(&receiver, &mut tree, &mut app, &mut Presenter)?;
+
+        assert!(app.clicked, "the first queued click must reach its visible button");
         Ok(())
     }
 }

@@ -113,12 +113,12 @@ impl Group {
 
     /// Sidebar caption.
     #[must_use]
-    pub const fn caption(self) -> &'static str {
+    pub fn caption(self) -> &'static str {
         match self {
-            Self::Saves => "СОХРАНЕНИЯ",
-            Self::Games => "ИГРЫ",
-            Self::Encyclopedia => "ЭНЦИКЛОПЕДИЯ",
-            Self::Settings => "НАСТРОЙКИ",
+            Self::Saves => crate::strings::t("СОХРАНЕНИЯ"),
+            Self::Games => crate::strings::t("ИГРЫ"),
+            Self::Encyclopedia => crate::strings::t("ЭНЦИКЛОПЕДИЯ"),
+            Self::Settings => crate::strings::t("НАСТРОЙКИ"),
         }
     }
 }
@@ -167,28 +167,28 @@ impl ScreenId {
 
     /// Sidebar and header title.
     #[must_use]
-    pub const fn title(self) -> &'static str {
+    pub fn title(self) -> &'static str {
         match self {
-            Self::Overview => "ОБЗОР",
-            Self::Inventory => "ИНВЕНТАРЬ",
-            Self::Factions => "ФРАКЦИИ",
-            Self::Stashes => "ТАЙНИКИ",
-            Self::Transitions => "ПЕРЕХОДЫ",
-            Self::Backups => "БЭКАПЫ",
-            Self::Compare => "СРАВНЕНИЕ",
-            Self::Timeline => "ИСТОРИЯ СОХРАНЕНИЙ",
-            Self::SaveDoctor => "ДОКТОР СОХРАНЕНИЯ",
-            Self::Games => "ОБЗОР ИГР",
-            Self::GameFixes => "ИСПРАВЛЕНИЯ ИГРЫ",
-            Self::GameDoctor => "ДОКТОР ИГРЫ",
-            Self::Environment => "СРЕДА ИГРЫ",
-            Self::Companion => "КОМПАНЬОН",
-            Self::Achievements => "ДОСТИЖЕНИЯ",
-            Self::Cloud => "ОБЛАКО",
-            Self::Encyclopedia => "ЭНЦИКЛОПЕДИЯ",
-            Self::Capabilities => "ВОЗМОЖНОСТИ",
-            Self::Updates => "ОБНОВЛЕНИЯ",
-            Self::Settings => "НАСТРОЙКИ",
+            Self::Overview => crate::strings::t("ОБЗОР"),
+            Self::Inventory => crate::strings::t("ИНВЕНТАРЬ"),
+            Self::Factions => crate::strings::t("ФРАКЦИИ"),
+            Self::Stashes => crate::strings::t("ТАЙНИКИ"),
+            Self::Transitions => crate::strings::t("ПЕРЕХОДЫ"),
+            Self::Backups => crate::strings::t("БЭКАПЫ"),
+            Self::Compare => crate::strings::t("СРАВНЕНИЕ"),
+            Self::Timeline => crate::strings::t("ИСТОРИЯ СОХРАНЕНИЙ"),
+            Self::SaveDoctor => crate::strings::t("ДОКТОР СОХРАНЕНИЯ"),
+            Self::Games => crate::strings::t("ОБЗОР ИГР"),
+            Self::GameFixes => crate::strings::t("ИСПРАВЛЕНИЯ ИГРЫ"),
+            Self::GameDoctor => crate::strings::t("ДОКТОР ИГРЫ"),
+            Self::Environment => crate::strings::t("СРЕДА ИГРЫ"),
+            Self::Companion => crate::strings::t("КОМПАНЬОН"),
+            Self::Achievements => crate::strings::t("ДОСТИЖЕНИЯ"),
+            Self::Cloud => crate::strings::t("ОБЛАКО"),
+            Self::Encyclopedia => crate::strings::t("ЭНЦИКЛОПЕДИЯ"),
+            Self::Capabilities => crate::strings::t("ВОЗМОЖНОСТИ"),
+            Self::Updates => crate::strings::t("ОБНОВЛЕНИЯ"),
+            Self::Settings => crate::strings::t("НАСТРОЙКИ"),
         }
     }
 
@@ -447,7 +447,11 @@ impl Screen for Placeholder {
         style::label(
             cx.tree,
             card,
-            &format!("Экран в работе ({})", self.id.package()),
+            &crate::strings::tr_in(
+                Some(crate::strings::current_language()),
+                "Экран в работе ({0})",
+                &[&self.id.package()],
+            ),
             style::Text::Body,
         )?;
         Ok(())

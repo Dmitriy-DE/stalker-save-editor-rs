@@ -27,10 +27,21 @@ const SAVE_LIBRARY_PAGE_SIZE: usize = 8;
 const LIBRARY_PREVIEW_WIDTH: u32 = 96;
 const LIBRARY_PREVIEW_HEIGHT: u32 = 54;
 const LIBRARY_PREVIEW_CACHE_ENTRIES: usize = 32;
-const DRAFT_CLOSE_WARNING: &str = "Последняя правка не сохранена в черновик.";
-const FORCE_CLOSE_DEFAULT_MESSAGE: &str =
-    "Фоновая операция ещё записывает файлы. Принудительное закрытие может оставить операцию незавершённой.";
 const MAX_OPENED_SAVE_FILES: usize = 512;
+
+fn tr(key: &str, args: &[&dyn std::fmt::Display]) -> String {
+    crate::strings::tr_in(Some(crate::strings::current_language()), key, args)
+}
+
+fn draft_close_warning() -> &'static str {
+    crate::strings::t("Последняя правка не сохранена в черновик.")
+}
+
+fn force_close_default_message() -> &'static str {
+    crate::strings::t(
+        "Фоновая операция ещё записывает файлы. Принудительное закрытие может оставить операцию незавершённой.",
+    )
+}
 
 fn open_path_edit_config() -> EditConfig {
     EditConfig {
@@ -740,15 +751,15 @@ fn format_s2_preview_detail(meta: Option<Stalker2SlotMeta>) -> Option<String> {
     } else {
         format!("{:.1}", meta.play_hours)
     };
-    Some(format!("{} · {hours} ч", meta.region_slug()))
+    Some(tr("{0} · {1} ч", &[&meta.region_slug(), &hours]))
 }
 
 fn format_open_error(path: &Path, error: &str, io_error: bool) -> String {
     let name = path.file_name().unwrap_or(path.as_os_str()).to_string_lossy();
     if io_error {
-        format!("Не удалось открыть «{name}»: {error}")
+        tr("Не удалось открыть «{0}»: {1}", &[&name, &error])
     } else {
-        format!("«{name}» — не сохранение S.T.A.L.K.E.R. или файл повреждён.")
+        tr("«{0}» — не сохранение S.T.A.L.K.E.R. или файл повреждён.", &[&name])
     }
 }
 
@@ -764,28 +775,38 @@ enum SaveReason {
 
 impl SaveReason {
     fn localized(self, language: &str) -> String {
-        let i18n = sse_catalog::I18nService::instance();
-        let key = match self {
-            Self::SelectSave => "Выберите сохранение для редактирования.",
-            Self::UnmappedDraft => {
-                "В черновике есть правки из другой версии редактора, которые эта версия не понимает. Сбросьте черновик, чтобы продолжить (он сохранится рядом)."
+        match self {
+            Self::SelectSave => crate::strings::t_in(language, "Выберите сохранение для редактирования.").to_owned(),
+            Self::UnmappedDraft => crate::strings::t_in(
+                language,
+                "В черновике есть правки из другой версии редактора, которые эта версия не понимает. Сбросьте черновик, чтобы продолжить (он сохранится рядом).",
+            )
+            .to_owned(),
+            Self::UnsupportedFormat(format_name) => {
+                let format_name = crate::strings::t_in(language, format_name);
+                crate::strings::tr_in(
+                    Some(language),
+                    "Эта правка для формата {0} не поддерживается (см. «Возможности»).",
+                    &[&format_name],
+                )
             }
-            Self::UnsupportedFormat(_) => "Эта правка для формата {0} не поддерживается (см. «Возможности»).",
-            Self::NoChanges => "Нет несохранённых изменений.",
-            Self::InvalidNumbers => "Введены некорректные значения (проверьте введённые числа).",
-            Self::CanSave => "Сохранить изменения в файл сейва (с созданием резервной копии).",
-        };
-        if let Self::UnsupportedFormat(format_name) = self {
-            let format_name = i18n.tr_in(Some(language), format_name, &[]);
-            i18n.tr_in(Some(language), key, &[&format_name])
-        } else {
-            i18n.tr_in(Some(language), key, &[])
+            Self::NoChanges => crate::strings::t_in(language, "Нет несохранённых изменений.").to_owned(),
+            Self::InvalidNumbers => crate::strings::t_in(
+                language,
+                "Введены некорректные значения (проверьте введённые числа).",
+            )
+            .to_owned(),
+            Self::CanSave => crate::strings::t_in(
+                language,
+                "Сохранить изменения в файл сейва (с созданием резервной копии).",
+            )
+            .to_owned(),
         }
     }
 }
 
 fn draft_badge_text(language: &str, count: usize) -> String {
-    sse_catalog::I18nService::instance().tr_in(Some(language), "Черновик: {0} действ.", &[&count])
+    crate::strings::tr_in(Some(language), "Черновик: {0} действ.", &[&count])
 }
 
 struct SaveEligibility {
@@ -827,7 +848,7 @@ fn save_eligibility(
     let reason = if has_unmapped {
         SaveReason::UnmappedDraft
     } else if unsupported {
-        SaveReason::UnsupportedFormat(display_format_name(format_id.unwrap_or("неизвестный формат")))
+        SaveReason::UnsupportedFormat(display_format_name(format_id.unwrap_or("unknown")))
     } else if !has_changes {
         SaveReason::NoChanges
     } else if invalid_numbers {
@@ -884,14 +905,14 @@ fn has_unsupported_edit(format_id: Option<&str>, legacy_s2: bool, plan: &sse_sto
 
 fn display_format_name(format_id: &str) -> &'static str {
     match format_id {
-        "stalker-soc" | "soc" => "Тень Чернобыля",
-        "stalker-cs" | "clear_sky" => "Чистое Небо",
-        "stalker-cop" | "cop" => "Зов Припяти",
-        "stalker-soc-ee" => "Тень Чернобыля EE",
-        "stalker-cs-ee" => "Чистое Небо EE",
-        "stalker-cop-ee" => "Зов Припяти EE",
-        "stalker2" | "s2" => "S.T.A.L.K.E.R. 2",
-        _ => "Неизвестный формат",
+        "stalker-soc" | "soc" => crate::strings::t("Тень Чернобыля"),
+        "stalker-cs" | "clear_sky" => crate::strings::t("Чистое Небо"),
+        "stalker-cop" | "cop" => crate::strings::t("Зов Припяти"),
+        "stalker-soc-ee" => crate::strings::t("Тень Чернобыля EE"),
+        "stalker-cs-ee" => crate::strings::t("Чистое Небо EE"),
+        "stalker-cop-ee" => crate::strings::t("Зов Припяти EE"),
+        "stalker2" | "s2" => crate::strings::t("S.T.A.L.K.E.R. 2"),
+        _ => crate::strings::t("Неизвестный формат"),
     }
 }
 
@@ -1028,7 +1049,7 @@ fn top_button(tree: &mut Tree, parent: WidgetId, text: &str, primary: bool) -> R
 
 fn compact_library_button(tree: &mut Tree, parent: WidgetId, text: &str) -> Result<WidgetId> {
     let colors = crate::theme::current().colors;
-    let label = text.to_uppercase();
+    let label = crate::strings::t(text).to_uppercase();
     let label_style = TextStyle::new(Face::Heading, 10.0);
     let min_width = (tree.measure_text(&label, label_style) + 10.0).ceil().max(64.0);
     tree.add(
@@ -1057,7 +1078,7 @@ fn compact_library_button(tree: &mut Tree, parent: WidgetId, text: &str) -> Resu
 }
 
 fn report_text(key: &str) -> String {
-    sse_catalog::I18nService::instance().tr_in(Some(crate::strings::current_language()), key, &[])
+    crate::strings::tr_in(Some(crate::strings::current_language()), key, &[])
 }
 
 fn startup_language(settings: &sse_app::AppSettings) -> String {
@@ -1100,10 +1121,12 @@ impl Shell {
                 (sse_app::AppSettings::default(), Some(error.to_string()))
             }
         };
+        let language = startup_language(&settings);
+        crate::strings::set_language(Some(&language));
         let shell = Self::build_with_settings(tree, proxy, settings)?;
         if let Some(error) = warning {
             let detail = format!("settings.json is unchanged: {error}");
-            let warning = sse_catalog::I18nService::instance().tr_in(
+            let warning = crate::strings::tr_in(
                 Some(crate::strings::current_language()),
                 "Настройки не сохранены: {0}",
                 &[&detail],
@@ -1121,6 +1144,7 @@ impl Shell {
         let mut settings = sse_app::AppSettings::new();
         settings.reports_notice_shown = true;
         settings.send_reports = false;
+        crate::strings::set_language(Some("ru"));
         let directory_id = NEXT_TEST_BACKUP_DIRECTORY.fetch_add(1, Ordering::Relaxed);
         settings.backup_directory =
             Some(std::env::temp_dir().join(format!("sse-shell-test-backups-{}-{directory_id}", std::process::id())));
@@ -1135,8 +1159,6 @@ impl Shell {
         settings: sse_app::AppSettings,
     ) -> Result<Self> {
         let interactive = proxy.is_some();
-        let language = startup_language(&settings);
-        crate::strings::set_language(Some(&language));
         let open_path_input = TextInput::new("", open_path_edit_config())?;
         let root_style = Style {
             align_items: Align::Stretch,
@@ -1485,7 +1507,7 @@ impl Shell {
             Content::Panel,
             Look::default(),
         )?;
-        for line in ["БИБЛИОТЕКА", "СОХРАНЕНИЙ"] {
+        for line in [crate::strings::t("БИБЛИОТЕКА"), crate::strings::t("СОХРАНЕНИЙ")] {
             tree.add(
                 Some(library_heading),
                 NodeKind::Leaf,
@@ -1589,7 +1611,7 @@ impl Shell {
                     ..Style::default()
                 },
                 Content::Button {
-                    text: "нет снимка".to_owned(),
+                    text: crate::strings::t("нет снимка").to_owned(),
                     style: TextStyle::new(Face::Body, 12.0),
                 },
                 Look {
@@ -1695,7 +1717,7 @@ impl Shell {
                 ..Style::default()
             },
             Content::Label {
-                text: "Готово".to_owned(),
+                text: crate::strings::t("Готово").to_owned(),
                 style: Text::Note.style(),
             },
             Look {
@@ -1812,7 +1834,7 @@ impl Shell {
         tree.set_visible(saving_dialog, false)?;
         let force_close_dialog = style::card(tree, overlay_host)?;
         style::label(tree, force_close_dialog, "ЗАКРЫТЬ, НЕ ДОЖИДАЯСЬ?", Text::Heading)?;
-        let force_close_message = style::label(tree, force_close_dialog, FORCE_CLOSE_DEFAULT_MESSAGE, Text::Body)?;
+        let force_close_message = style::label(tree, force_close_dialog, force_close_default_message(), Text::Body)?;
         let force_close_actions = style::row(tree, force_close_dialog)?;
         let force_close_yes = style::button(tree, force_close_actions, "ЗАКРЫТЬ", style::Button::Danger)?;
         let force_close_no = style::button(tree, force_close_actions, "ПОДОЖДАТЬ", style::Button::Secondary)?;
@@ -2259,7 +2281,10 @@ impl Shell {
             return Ok(false);
         }
         if paths.len() > MAX_OPENED_SAVE_FILES {
-            tree.set_text(self.status, "Выберите не более 512 файлов за один раз.")?;
+            tree.set_text(
+                self.status,
+                crate::strings::t("Выберите не более 512 файлов за один раз."),
+            )?;
             return Ok(false);
         }
         if self.proxy.is_none()
@@ -2313,7 +2338,7 @@ impl Shell {
                 .library_workspace
                 .library_snapshot()
                 .1
-                .unwrap_or_else(|| "Не удалось запустить фоновое чтение сейва.".to_owned());
+                .unwrap_or_else(|| crate::strings::t("Не удалось запустить фоновое чтение сейва.").to_owned());
             let message = format_open_error(&path, &detail, true);
             if let Some(queue) = self.open_files_queue.as_mut() {
                 queue.completed = queue.completed.saturating_add(1);
@@ -2335,9 +2360,11 @@ impl Shell {
             return Ok(());
         };
         let status = match queue.last_error {
-            Some(error) if queue.opened > 0 => format!("Открыто {} из {} файлов. {error}", queue.opened, queue.total),
+            Some(error) if queue.opened > 0 => {
+                tr("Открыто {0} из {1} файлов. {2}", &[&queue.opened, &queue.total, &error])
+            }
             Some(error) => error,
-            None => format!("Открыто {} файлов.", queue.opened),
+            None => tr("Открыто {0} файлов.", &[&queue.opened]),
         };
         tree.set_text(self.status, &status)?;
         tree.set_enabled(
@@ -2391,10 +2418,9 @@ impl Shell {
         }
         if let Some(queue) = self.open_files_queue.as_ref() {
             let status = queue.last_error.clone().unwrap_or_else(|| {
-                format!(
-                    "Открываю файл {} из {}…",
-                    queue.completed.saturating_add(1),
-                    queue.total
+                tr(
+                    "Открываю файл {0} из {1}…",
+                    &[&queue.completed.saturating_add(1), &queue.total],
                 )
             });
             tree.set_text(self.status, &status)?;
@@ -2469,7 +2495,7 @@ impl Shell {
         if let Err(error) = super::wizard::spawn_wizard_task(proxy, request, kind, work) {
             self.wizard_task_request = None;
             self.wizard.set_busy(tree, false)?;
-            tree.set_text(self.status, &format!("{}: {error}", kind.failure_prefix()))?;
+            tree.set_text(self.status, &tr("{0}: {1}", &[&kind.failure_prefix(), &error]))?;
         }
         Ok(())
     }
@@ -2537,7 +2563,7 @@ impl Shell {
                 tree.set_text(self.status, crate::strings::t("Выбор папки отменён."))?;
             }
             Err(error) => {
-                tree.set_text(self.status, &format!("{}: {error}", finished.kind.failure_prefix()))?;
+                tree.set_text(self.status, &tr("{0}: {1}", &[&finished.kind.failure_prefix(), &error]))?;
             }
         }
         Ok(Flow::Continue)
@@ -2562,7 +2588,7 @@ impl Shell {
                     }
                     Ok(Some(_) | None) => return Ok(()),
                     Err(error) => {
-                        tree.set_text(self.status, &format!("Системный диалог недоступен: {error}"))?;
+                        tree.set_text(self.status, &tr("Системный диалог недоступен: {0}", &[&error]))?;
                     }
                 }
             } else {
@@ -2575,7 +2601,7 @@ impl Shell {
                 };
                 if let Err(error) = spawn_native_file_picker(proxy, request, sse_sys::file_dialog::open_files) {
                     self.native_file_picker_request = None;
-                    tree.set_text(self.status, &format!("Системный диалог не запущен: {error}"))?;
+                    tree.set_text(self.status, &tr("Системный диалог не запущен: {0}", &[&error]))?;
                     self.sync_saving_overlay(tree)?;
                 }
                 return Ok(());
@@ -2875,7 +2901,7 @@ impl Shell {
         if action == EditorAction::Save && self.library_workspace.is_restoring() {
             tree.set_text(
                 self.status,
-                "Сохранение недоступно: дождитесь завершения восстановления сейва.",
+                crate::strings::t("Сохранение недоступно: дождитесь завершения восстановления сейва."),
             )?;
             return Ok(());
         }
@@ -2923,7 +2949,7 @@ impl Shell {
     }
 
     fn show_draft_close_prompt(&mut self, tree: &mut Tree) -> Result<()> {
-        tree.set_text(self.force_close_message, crate::strings::t(DRAFT_CLOSE_WARNING))?;
+        tree.set_text(self.force_close_message, draft_close_warning())?;
         tree.set_visible(self.force_close_yes, false)?;
         if tree.dialog() != Some(self.force_close_dialog) {
             if tree.dialog_open() {
@@ -2931,13 +2957,13 @@ impl Shell {
             }
             tree.open_dialog(self.force_close_dialog)?;
         }
-        tree.set_text(self.status, crate::strings::t(DRAFT_CLOSE_WARNING))?;
+        tree.set_text(self.status, draft_close_warning())?;
         self.draft_close_prompted = true;
         Ok(())
     }
 
     fn restore_game_close_prompt(&mut self, tree: &mut Tree) -> Result<()> {
-        tree.set_text(self.force_close_message, crate::strings::t(FORCE_CLOSE_DEFAULT_MESSAGE))?;
+        tree.set_text(self.force_close_message, force_close_default_message())?;
         tree.set_visible(self.force_close_yes, true)?;
         Ok(())
     }
@@ -2987,7 +3013,7 @@ impl Shell {
             if write_active {
                 tree.set_text(
                     self.status,
-                    "Дождитесь завершения фоновой операции с игрой, чтобы закрыть окно.",
+                    crate::strings::t("Дождитесь завершения фоновой операции с игрой, чтобы закрыть окно."),
                 )?;
                 self.sync_saving_overlay(tree)?;
                 return Ok(Flow::Continue);
@@ -3026,9 +3052,9 @@ impl Shell {
             Message::Window(WindowEvent::CloseRequested) => {
                 if save_session.request_close() == sse_app::CloseDecision::Deferred {
                     let text = if save_session.is_restoring() {
-                        "Дождитесь завершения восстановления, чтобы закрыть окно."
+                        crate::strings::t("Дождитесь завершения восстановления, чтобы закрыть окно.")
                     } else {
-                        "Дождитесь завершения сохранения, чтобы закрыть окно."
+                        crate::strings::t("Дождитесь завершения сохранения, чтобы закрыть окно.")
                     };
                     tree.set_text(self.status, text)?;
                     self.sync_saving_overlay(tree)?;
@@ -3041,7 +3067,7 @@ impl Shell {
                         self.close_waiting = true;
                         tree.set_text(
                             self.status,
-                            "Дождитесь завершения записи в игру/компаньон, чтобы закрыть окно.",
+                            crate::strings::t("Дождитесь завершения записи в игру/компаньон, чтобы закрыть окно."),
                         )?;
                     }
                     return Ok(Flow::Continue);
@@ -3050,7 +3076,7 @@ impl Shell {
                     self.close_waiting = true;
                     tree.set_text(
                         self.status,
-                        "Закройте системный диалог выбора файла, чтобы закрыть окно.",
+                        crate::strings::t("Закройте системный диалог выбора файла, чтобы закрыть окно."),
                     )?;
                     return Ok(Flow::Continue);
                 }
@@ -3089,10 +3115,16 @@ impl Shell {
                 self.draft_close_started = Some(Instant::now());
                 self.draft_close_prompted = false;
                 self.draft_close_idle_seen = false;
-                tree.set_text(self.status, "Ожидаю сохранения последней правки в черновик…")?;
+                tree.set_text(
+                    self.status,
+                    crate::strings::t("Ожидаю сохранения последней правки в черновик…"),
+                )?;
             } else {
                 self.restore_game_close_prompt(tree)?;
-                tree.set_text(self.status, "Ожидаю завершения записи в игру/компаньон…")?;
+                tree.set_text(
+                    self.status,
+                    crate::strings::t("Ожидаю завершения записи в игру/компаньон…"),
+                )?;
             }
             return Ok(Flow::Continue);
         }
@@ -3126,7 +3158,7 @@ impl Shell {
                         }
                         Err(error) => {
                             self.open_return_screen = None;
-                            tree.set_text(self.status, &format!("Системный диалог недоступен: {error}"))?;
+                            tree.set_text(self.status, &tr("Системный диалог недоступен: {0}", &[&error]))?;
                             self.sync_saving_overlay(tree)?;
                         }
                     }
@@ -3688,10 +3720,12 @@ impl Shell {
         let text = if scanning {
             format!("{} · …", slots.len())
         } else if let Some(error) = error.as_deref() {
-            format!(
-                "{} · ошибка: {}",
-                slots.len(),
-                super::saves::short_text(&crate::status::localize_writer_status(error), 24)
+            tr(
+                "{0} · ошибка: {1}",
+                &[
+                    &slots.len(),
+                    &super::saves::short_text(&crate::status::localize_writer_status(error), 24),
+                ],
             )
         } else {
             slots.len().to_string()
@@ -3708,7 +3742,7 @@ impl Shell {
                     .path
                     .file_name()
                     .map(|name| name.to_string_lossy())
-                    .unwrap_or_else(|| "без имени".into());
+                    .unwrap_or_else(|| crate::strings::t("без имени").into());
                 let game =
                     super::saves::format_display_name(slot.format_id.as_deref().unwrap_or(&slot.candidate_release_id));
                 let displayed_filename = super::saves::short_text(&filename, 24);
@@ -3724,7 +3758,7 @@ impl Shell {
                 } else if preview.as_ref().is_some_and(|entry| entry.s2_jpeg_available) {
                     format!("JPEG · {displayed_filename}")
                 } else {
-                    format!("нет снимка · {displayed_filename}")
+                    tr("нет снимка · {0}", &[&displayed_filename])
                 };
                 tree.set_text(*select, &selection_label)?;
                 tree.set_enabled(*select, slot.detection_error.is_none())?;
@@ -3765,11 +3799,11 @@ impl Shell {
             }
         }
         let status = if scanning {
-            "Поиск сейвов…".to_owned()
+            crate::strings::t("Поиск сейвов…").to_owned()
         } else if let Some(error) = error.as_deref() {
             super::saves::short_text(&crate::status::localize_writer_status(error), 20)
         } else if slots.is_empty() {
-            "Сейвы не найдены".to_owned()
+            crate::strings::t("Сейвы не найдены").to_owned()
         } else {
             String::new()
         };
@@ -3961,7 +3995,8 @@ impl App<AppMessage> for Shell {
         match self.handle(tree, message, clicked) {
             Ok(flow) => flow,
             Err(error) => {
-                let text = crate::status::localize_writer_status(&format!("Ошибка: {error}"));
+                let detail = crate::status::localize_writer_status(&error.to_string());
+                let text = tr("Ошибка: {0}", &[&detail]);
                 let _ = tree.set_text(self.status, &text);
                 self.capture_error_report(tree, &error.to_string());
                 Flow::Continue
@@ -4002,6 +4037,15 @@ mod tests {
         shell.open_report_consent_dialog(&mut tree)?;
 
         assert_eq!(tree.focused(), Some(shell.reports_off));
+        Ok(())
+    }
+
+    #[test]
+    fn test_shell_uses_a_deterministic_language() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let _shell = Shell::build_for_test(&mut tree, None)?;
+
+        assert_eq!(crate::strings::t("СОХРАНЕНИЯ"), "СОХРАНЕНИЯ");
         Ok(())
     }
 
@@ -5446,7 +5490,7 @@ mod tests {
             let _ = read_rx.recv();
         });
         let mut read_tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
-        let mut read_shell = Shell::build(&mut read_tree, None)?;
+        let mut read_shell = Shell::build_for_test(&mut read_tree, None)?;
         assert_eq!(read_shell.handle(&mut read_tree, &close, None)?, Flow::Exit);
         let _ = read_tx.send(());
 
@@ -5455,7 +5499,7 @@ mod tests {
             let _ = write_rx.recv();
         });
         let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
-        let mut shell = Shell::build(&mut tree, None)?;
+        let mut shell = Shell::build_for_test(&mut tree, None)?;
         assert_eq!(shell.handle(&mut tree, &close, None)?, Flow::Continue);
         assert!(!tree.dialog_open());
         assert_eq!(shell.handle(&mut tree, &close, None)?, Flow::Continue);
@@ -5508,10 +5552,10 @@ mod tests {
             hb > hr + 60 && hb > hg + 60,
             "header centre is not blue: {hr} {hg} {hb}"
         );
-        let (cr, cg, cb) = channels(1000, 600);
+        let (cr, cg, cb) = channels(1590, 700);
         assert!(
             cr > cg && cg > cb && cr > 20,
-            "content below the header is not brown: {cr} {cg} {cb}"
+            "window background beside the content card is not brown: {cr} {cg} {cb}"
         );
         let (mr, mg, mb) = channels(220, 600);
         assert!(mg > mr + 30 && mg > mb + 30, "menu centre is not green: {mr} {mg} {mb}");

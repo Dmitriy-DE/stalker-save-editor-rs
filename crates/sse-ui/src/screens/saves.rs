@@ -21,6 +21,50 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
+fn t(key: &str) -> &str {
+    crate::strings::t(key)
+}
+
+fn tr_in(language: &str, key: &str, args: &[&dyn std::fmt::Display]) -> String {
+    crate::strings::tr_in(Some(language), key, args)
+}
+
+fn tr(key: &str, args: &[&dyn std::fmt::Display]) -> String {
+    tr_in(crate::strings::current_language(), key, args)
+}
+
+fn tr_named_in(language: &str, key: &str, args: &[(&str, &dyn std::fmt::Display)]) -> String {
+    let mut translated = tr_in(language, key, &[]);
+    for (name, value) in args {
+        replace_named_placeholder(&mut translated, name, &value.to_string());
+    }
+    translated
+}
+
+fn replace_named_placeholder(text: &mut String, name: &str, value: &str) {
+    let simple = format!("{{{name}}}");
+    *text = text.replace(&simple, value);
+
+    let formatted = format!("{{{name}:");
+    while let Some(start) = text.find(&formatted) {
+        let Some(end_offset) = text.get(start..).and_then(|tail| tail.find('}')) else {
+            break;
+        };
+        let end = start.saturating_add(end_offset);
+        text.replace_range(start..=end, value);
+    }
+}
+
+macro_rules! tr {
+    ($key:literal, $($name:ident = $value:expr),+ $(,)?) => {{
+        tr_named_in(
+            crate::strings::current_language(),
+            $key,
+            &[$((stringify!($name), &$value as &dyn std::fmt::Display)),+],
+        )
+    }};
+}
+
 const SAVE_PAGE_SIZE: usize = 10;
 const INVENTORY_PAGE_SIZE: usize = 8;
 const ADD_ITEM_PAGE_SIZE: usize = 8;
@@ -88,7 +132,7 @@ fn paragraph(tree: &mut crate::widget::Tree, parent: WidgetId, text: &str, role:
         NodeKind::Leaf,
         Style::default(),
         Content::Paragraph {
-            text: text.to_owned(),
+            text: crate::strings::t(text).to_owned(),
             style: role.style(),
         },
         Look {
@@ -260,7 +304,7 @@ impl Workspace {
 
     fn reset_draft(&self, journal: DraftJournal, preserve_unmapped: bool, cx: &mut Context<'_>) {
         let Some(proxy) = cx.proxy.cloned() else {
-            cx.status = Some("Черновик сброшен в памяти; фоновый канал недоступен.".to_owned());
+            cx.status = Some(t("Черновик сброшен в памяти; фоновый канал недоступен.").to_owned());
             return;
         };
         let Some(source_sha256) = journal.current().map(|plan| plan.source_sha256.clone()) else {
@@ -273,19 +317,19 @@ impl Workspace {
             .filter(|selected| selected.source_sha256 == source_sha256)
             .cloned()
         else {
-            cx.status = Some("Не удалось определить путь сейва для черновика.".to_owned());
+            cx.status = Some(t("Не удалось определить путь сейва для черновика.").to_owned());
             return;
         };
         let store = DraftStore::for_source(self.draft_directory.as_path(), &selected.slot.path);
         let identity = match store.identity_key(&source_sha256) {
             Ok(identity) => identity,
             Err(error) => {
-                cx.status = Some(format!("Не удалось определить черновик: {error}"));
+                cx.status = Some(tr("Не удалось определить черновик: {0}", &[&error]));
                 return;
             }
         };
         let Some(generation) = self.session.next_draft_generation(&identity) else {
-            cx.status = Some("Не удалось назначить поколение черновика.".to_owned());
+            cx.status = Some(t("Не удалось назначить поколение черновика.").to_owned());
             return;
         };
         let session = self.session.clone();
@@ -312,17 +356,17 @@ impl Workspace {
                 Box::new(DraftPersisted(result)),
             ));
         }) {
-            cx.status = Some(format!("Не удалось запустить сохранение черновика: {error}"));
+            cx.status = Some(tr("Не удалось запустить сохранение черновика: {0}", &[&error]));
         }
     }
 
     fn persist_drafts(&self, journals: Vec<DraftJournal>, cx: &mut Context<'_>) {
         let Some(proxy) = cx.proxy.cloned() else {
-            cx.status = Some("Черновик изменён только в памяти: фоновой канал недоступен.".to_owned());
+            cx.status = Some(t("Черновик изменён только в памяти: фоновый канал недоступен.").to_owned());
             return;
         };
         let Some(selected) = self.lock().selected.clone() else {
-            cx.status = Some("Не удалось определить путь сейва для черновика.".to_owned());
+            cx.status = Some(t("Не удалось определить путь сейва для черновика.").to_owned());
             return;
         };
         let store = DraftStore::for_source(self.draft_directory.as_path(), &selected.slot.path);
@@ -334,7 +378,7 @@ impl Workspace {
         let hashes = match hashes {
             Ok(hashes) => hashes,
             Err(error) => {
-                cx.status = Some(format!("Не удалось определить черновик: {error}"));
+                cx.status = Some(tr("Не удалось определить черновик: {0}", &[&error]));
                 return;
             }
         };
@@ -342,7 +386,7 @@ impl Workspace {
             .session
             .next_draft_generation_for(hashes.iter().map(String::as_str))
         else {
-            cx.status = Some("Не удалось назначить поколение черновика.".to_owned());
+            cx.status = Some(t("Не удалось назначить поколение черновика.").to_owned());
             return;
         };
         let session = self.session.clone();
@@ -369,7 +413,7 @@ impl Workspace {
                 Box::new(DraftPersisted(result)),
             ));
         }) {
-            cx.status = Some(format!("Не удалось запустить сохранение черновика: {error}"));
+            cx.status = Some(tr("Не удалось запустить сохранение черновика: {0}", &[&error]));
         }
     }
 }
@@ -469,10 +513,13 @@ struct SaveProcessCheckFinished {
 fn process_check_prompt(result: &std::result::Result<bool, String>) -> Option<(String, &'static str)> {
     match result {
         Ok(false) => None,
-        Ok(true) => Some((SAVE_WHILE_GAME_RUNNING_WARNING.to_owned(), "Всё равно сохранить")),
+        Ok(true) => Some((t(SAVE_WHILE_GAME_RUNNING_WARNING).to_owned(), t("Всё равно сохранить"))),
         Err(error) => Some((
-            format!("Не удалось проверить запущенную игру: {error}. Сохранение не проверено."),
-            "Сохранить всё равно",
+            tr(
+                "Не удалось проверить запущенную игру: {0}. Сохранение не проверено.",
+                &[&error],
+            ),
+            t("Сохранить всё равно"),
         )),
     }
 }
@@ -540,16 +587,17 @@ impl LoadedSave {
         slot.candidate_release_id = format.to_owned();
         slot.format_id = Some(format.to_owned());
         let info = save_info(&slot);
-        let parameters = format!(
-            "Деньги: {money} RU · Предметов: {} · Тайников: —\nИгровое время: {} · Персонаж: — · Здоровье: —\nРанг: — · Репутация: — · Задания: — · Убито: — · Погода: —",
-            inventory.len(),
-            save.game_time()
+        let item_count = inventory.len();
+        let game_time = save.game_time();
+        let parameters = tr(
+            "Деньги: {0} RU · Предметов: {1} · Тайников: —\nИгровое время: {2} · Персонаж: — · Здоровье: —\nРанг: — · Репутация: — · Задания: — · Убито: — · Погода: —",
+            &[&money, &item_count, &game_time],
         );
         let integrity = save_integrity(
             &slot,
             &source_sha256,
             packed.len(),
-            "не подтверждается отдельным полем",
+            t("не подтверждается отдельным полем"),
             format,
         );
         Ok(Self {
@@ -575,12 +623,15 @@ impl LoadedSave {
         slot.candidate_release_id = "stalker2".to_owned();
         slot.format_id = Some("stalker2".to_owned());
         let info = save_info(&slot);
-        let parameters = format!(
-            "Деньги: {} RU · Предметов: {} · Тайников: {}\nИгровое время · Персонаж · Здоровье · Ранг · Репутация · Задания · Убито · Погода: —\nНеопознанных ссылок: {}",
-            save.money(),
-            inventory.len(),
-            stash.as_ref().map_or_else(|| "—".to_owned(), |items| items.live_handles().len().to_string()),
-            save.unresolved_handles().len()
+        let money = save.money();
+        let item_count = inventory.len();
+        let stash_count = stash
+            .as_ref()
+            .map_or_else(|| "—".to_owned(), |items| items.live_handles().len().to_string());
+        let unresolved_count = save.unresolved_handles().len();
+        let parameters = tr(
+            "Деньги: {0} RU · Предметов: {1} · Тайников: {2}\nИгровое время · Персонаж · Здоровье · Ранг · Репутация · Задания · Убито · Погода: —\nНеопознанных ссылок: {3}",
+            &[&money, &item_count, &stash_count, &unresolved_count],
         );
         let integrity = save_integrity(
             &slot,
@@ -589,7 +640,7 @@ impl LoadedSave {
             if save.container().stored_crc32() == save.container().computed_crc32() {
                 "OK (CRC32)"
             } else {
-                "ошибка"
+                t("ошибка")
             },
             "S2",
         );
@@ -617,31 +668,31 @@ fn save_info(slot: &SaveSlot) -> String {
         .path
         .file_name()
         .map(|name| name.to_string_lossy())
-        .unwrap_or_else(|| "без имени".into());
-    format!(
-        "Игра: {}\nИмя файла: {filename}\nПуть: {}",
-        format_display_name(game),
-        slot.path.display()
+        .unwrap_or_else(|| t("без имени").into());
+    let path = slot.path.display().to_string();
+    tr(
+        "Игра: {0}\nИмя файла: {1}\nПуть: {2}",
+        &[&format_display_name(game), &filename, &path],
     )
 }
 
 fn save_integrity(slot: &SaveSlot, source_sha256: &str, bytes_read: usize, crc_status: &str, format: &str) -> String {
-    format!(
-        "Размер файла: {} байт · Изменён: {} UTC\nSHA-256: {source_sha256}\nCRC: {crc_status} · Формат: {format} · Сборка игры: —",
-        bytes_read,
-        display_file_time(slot.last_write_time_utc, false, true)
+    let modified = display_file_time(slot.last_write_time_utc, false, true);
+    tr(
+        "Размер файла: {0} байт · Изменён: {1} UTC\nSHA-256: {2}\nCRC: {3} · Формат: {4} · Сборка игры: —",
+        &[&bytes_read, &modified, &source_sha256, &crc_status, &format],
     )
 }
 
 pub(super) fn format_display_name(format: &str) -> &'static str {
     match format {
-        "stalker-soc-ee" => "Тень Чернобыля (Enhanced Edition)",
-        "stalker-soc" | "soc" => "Тень Чернобыля",
-        "stalker-cs-ee" => "Чистое Небо (Enhanced Edition)",
-        "stalker-cs" | "clear_sky" => "Чистое Небо",
-        "stalker-cop-ee" => "Зов Припяти (Enhanced Edition)",
-        "stalker-cop" | "cop" => "Зов Припяти",
-        "stalker2" | "s2" => "S.T.A.L.K.E.R. 2: Сердце Чернобыля",
+        "stalker-soc-ee" => t("Тень Чернобыля (Enhanced Edition)"),
+        "stalker-soc" | "soc" => t("Тень Чернобыля"),
+        "stalker-cs-ee" => t("Чистое Небо (Enhanced Edition)"),
+        "stalker-cs" | "clear_sky" => t("Чистое Небо"),
+        "stalker-cop-ee" => t("Зов Припяти (Enhanced Edition)"),
+        "stalker-cop" | "cop" => t("Зов Припяти"),
+        "stalker2" | "s2" => t("S.T.A.L.K.E.R. 2: Сердце Чернобыля"),
         _ => "S.T.A.L.K.E.R.",
     }
 }
@@ -690,17 +741,17 @@ pub(super) fn display_file_time(time: std::time::SystemTime, short_year: bool, s
 
 pub(super) fn display_size(bytes: u64) -> String {
     if bytes >= 1_048_576 {
-        format!("{:.1} МБ", bytes as f64 / 1_048_576.0)
+        format!("{:.1} MB", bytes as f64 / 1_048_576.0)
     } else if bytes >= 1_024 {
-        format!("{:.0} КБ", bytes as f64 / 1_024.0)
+        format!("{:.0} KB", bytes as f64 / 1_024.0)
     } else {
-        format!("{bytes} Б")
+        format!("{bytes} B")
     }
 }
 
 fn start_discovery(workspace: &Workspace, cx: &mut Context<'_>) {
     let Some(proxy) = cx.proxy.cloned() else {
-        cx.status = Some("Поиск сейвов начнётся в работающем окне редактора.".to_owned());
+        cx.status = Some(t("Поиск сейвов начнётся в работающем окне редактора.").to_owned());
         return;
     };
     {
@@ -730,9 +781,9 @@ fn start_discovery(workspace: &Workspace, cx: &mut Context<'_>) {
         let _ = proxy.send(AppMessage::ToScreen(ScreenId::Overview, Box::new(())));
     }) {
         workspace.lock().scanning = false;
-        cx.status = Some(format!("Не удалось запустить поиск сейвов: {error}"));
+        cx.status = Some(tr("Не удалось запустить поиск сейвов: {0}", &[&error]));
     } else {
-        cx.status = Some("Ищу сейвы в обнаруженных каталогах…".to_owned());
+        cx.status = Some(t("Ищу сейвы в обнаруженных каталогах…").to_owned());
     }
 }
 
@@ -757,14 +808,14 @@ fn start_load_from<F>(
     F: FnOnce() -> Result<SaveSlot> + Send + 'static,
 {
     let Some(proxy) = cx.proxy.cloned() else {
-        cx.status = Some("Загрузка сейва доступна в работающем окне редактора.".to_owned());
+        cx.status = Some(t("Загрузка сейва доступна в работающем окне редактора.").to_owned());
         return;
     };
     if workspace.session.is_busy() {
         let text = if workspace.session.is_restoring() {
-            "Нельзя сменить сейв, пока выполняется восстановление."
+            t("Нельзя сменить сейв, пока выполняется восстановление.")
         } else {
-            "Нельзя сменить сейв, пока выполняется запись."
+            t("Нельзя сменить сейв, пока выполняется запись.")
         };
         cx.status = Some(text.to_owned());
         return;
@@ -848,9 +899,9 @@ fn start_load_from<F>(
             state.loading = false;
             state.load_error = Some(error.to_string());
         }
-        cx.status = Some(format!("Не удалось запустить чтение сейва: {error}"));
+        cx.status = Some(tr("Не удалось запустить чтение сейва: {0}", &[&error]));
     } else {
-        cx.status = Some("Загружаю и проверяю выбранный сейв…".to_owned());
+        cx.status = Some(t("Загружаю и проверяю выбранный сейв…").to_owned());
     }
 }
 
@@ -905,20 +956,20 @@ fn schedule_file_check(workspace: &Workspace, cx: &mut Context<'_>, seconds: u64
             let _ = proxy.send(AppMessage::ToScreen(ScreenId::Inventory, Box::new(finished)));
         }
     }) {
-        cx.status = Some(format!("Не удалось запустить проверку файла: {error}"));
+        cx.status = Some(tr("Не удалось запустить проверку файла: {0}", &[&error]));
     }
 }
 
 fn start_reload_selected(workspace: &Workspace, cx: &mut Context<'_>) -> Result<()> {
     let Some(proxy) = cx.proxy.cloned() else {
-        cx.status = Some("Повторное чтение доступно в работающем окне редактора.".to_owned());
+        cx.status = Some(t("Повторное чтение доступно в работающем окне редактора.").to_owned());
         return Ok(());
     };
     if workspace.session.is_busy() {
         let text = if workspace.session.is_restoring() {
-            "Нельзя перечитать сейв, пока выполняется восстановление."
+            t("Нельзя перечитать сейв, пока выполняется восстановление.")
         } else {
-            "Нельзя перечитать сейв, пока выполняется запись."
+            t("Нельзя перечитать сейв, пока выполняется запись.")
         };
         cx.status = Some(text.to_owned());
         return Ok(());
@@ -931,7 +982,7 @@ fn start_reload_selected(workspace: &Workspace, cx: &mut Context<'_>) -> Result<
     let draft_store = DraftStore::for_source(workspace.draft_directory.as_path(), &path);
     let draft_identity = draft_store.identity_key(&old_sha256)?;
     let Some(generation) = workspace.session.next_draft_generation(&draft_identity) else {
-        cx.status = Some("Не удалось назначить поколение черновика.".to_owned());
+        cx.status = Some(t("Не удалось назначить поколение черновика.").to_owned());
         return Ok(());
     };
     let empty_journal = DraftJournal::new(vec![DraftPlan::empty(&old_sha256)?], 0)?;
@@ -1027,9 +1078,9 @@ fn start_reload_selected(workspace: &Workspace, cx: &mut Context<'_>) -> Result<
             state.loading = false;
             state.load_error = Some(error.to_string());
         }
-        cx.status = Some(format!("Не удалось запустить повторное чтение: {error}"));
+        cx.status = Some(tr("Не удалось запустить повторное чтение: {0}", &[&error]));
     } else {
-        cx.status = Some("Сбрасываю черновик и перечитываю сейв с диска…".to_owned());
+        cx.status = Some(t("Сбрасываю черновик и перечитываю сейв с диска…").to_owned());
     }
     Ok(())
 }
@@ -1310,7 +1361,7 @@ fn render_external_file_banner(
         if changed {
             cx.tree.set_text(
                 label,
-                "Файл сейва изменился после открытия (игра или другая программа). Несохранённые правки относятся к старой версии.",
+                t("Файл сейва изменился после открытия (игра или другая программа). Несохранённые правки относятся к старой версии."),
             )?;
         }
     }
@@ -1441,7 +1492,7 @@ impl Overview {
                 Box::new(StartupBackupCheck(result)),
             ));
         }) {
-            cx.status = Some(format!("Не удалось проверить резервные копии после запуска: {error}"));
+            cx.status = Some(tr("Не удалось проверить резервные копии после запуска: {0}", &[&error]));
         }
         Ok(())
     }
@@ -1476,12 +1527,12 @@ impl Overview {
             40.0,
             vec![
                 Header {
-                    label: "Игра".to_owned(),
+                    label: t("Игра").to_owned(),
                     sortable: true,
                     direction: None,
                 },
                 Header {
-                    label: "Дата".to_owned(),
+                    label: t("Дата").to_owned(),
                     sortable: true,
                     direction: None,
                 },
@@ -1510,20 +1561,19 @@ impl Overview {
         let start = self.page.saturating_mul(SAVE_PAGE_SIZE);
         if let Some(status) = self.list_status {
             let text = if state.scanning {
-                "Ищу сейвы…".to_owned()
+                t("Ищу сейвы…").to_owned()
             } else if let Some(error) = state.load_error.as_deref() {
-                format!("Ошибка чтения: {error}")
+                tr("Ошибка чтения: {0}", &[&error])
             } else if state.loading {
-                "Проверяю выбранный сейв…".to_owned()
+                t("Проверяю выбранный сейв…").to_owned()
             } else if slot_count == 0 {
-                "Сейвы ещё не искали или не найдены. Нажмите «Найти сейвы».".to_owned()
+                t("Сейвы ещё не искали или не найдены. Нажмите «Найти сейвы».").to_owned()
             } else {
-                format!(
-                    "{} сейвов · каталогов проверено: {} · страница {} из {}",
-                    slot_count,
-                    state.discovery.as_ref().map_or(0, |result| result.searched_paths.len()),
-                    self.page.saturating_add(1),
-                    pages
+                let searched = state.discovery.as_ref().map_or(0, |result| result.searched_paths.len());
+                let current_page = self.page.saturating_add(1);
+                tr(
+                    "{0} сейвов · каталогов проверено: {1} · страница {2} из {3}",
+                    &[&slot_count, &searched, &current_page, &pages],
                 )
             };
             cx.tree.set_text(status, &text)?;
@@ -1532,7 +1582,7 @@ impl Overview {
             cx.tree.set_text(
                 id,
                 if self.search_query.is_empty() {
-                    "Поиск по имени файла…"
+                    t("Поиск по имени файла…")
                 } else {
                     &self.search_query
                 },
@@ -1549,13 +1599,13 @@ impl Overview {
                     .path
                     .file_name()
                     .map(|name| name.to_string_lossy())
-                    .unwrap_or_else(|| "без имени".into());
+                    .unwrap_or_else(|| t("без имени").into());
                 let shortened = short_text(&file_name, 26);
                 let game = slot
                     .format_id
                     .as_deref()
                     .or(Some(slot.candidate_release_id.as_str()))
-                    .unwrap_or("неизвестный формат");
+                    .unwrap_or(t("неизвестный формат"));
                 cx.tree.set_text(
                     *id,
                     &format!(
@@ -1618,22 +1668,11 @@ impl Overview {
         if let Some(header) = self.header_panel {
             cx.tree.set_visible(header, has_save)?;
         }
+        let (game, name, path) = info_header_values(&info_pairs);
         if let Some(id) = self.header_name {
-            let name = info_pairs
-                .iter()
-                .find(|(key, _)| key == "Имя файла")
-                .map_or("", |(_, value)| value.as_str());
             cx.tree.set_text(id, name)?;
         }
         if let Some(id) = self.header_path {
-            let game = info_pairs
-                .iter()
-                .find(|(key, _)| key == "Игра")
-                .map_or("", |(_, value)| value.as_str());
-            let path = info_pairs
-                .iter()
-                .find(|(key, _)| key == "Путь")
-                .map_or("", |(_, value)| value.as_str());
             cx.tree.set_text(id, &format!("{game} · {path}"))?;
         }
         if let Some(panel) = self.parameters_panel {
@@ -1679,7 +1718,7 @@ struct DetailSet {
 fn build_detail_set(tree: &mut crate::widget::Tree, parent: WidgetId) -> Result<DetailSet> {
     let info_panel = style::d2::panel(tree, parent)?;
     tree.set_style(info_panel, detail_panel_style())?;
-    style::d2::panel_title(tree, info_panel, "ИНФОРМАЦИЯ О СОХРАНЕНИИ")?;
+    style::d2::panel_title(tree, info_panel, crate::strings::t("ИНФОРМАЦИЯ О СОХРАНЕНИИ"))?;
     let info_empty = paragraph(tree, info_panel, "Выберите сохранение для просмотра.", Text::Body)?;
     let mut info_rows = Vec::with_capacity(DETAIL_INFO_SLOTS);
     for _ in 0..DETAIL_INFO_SLOTS {
@@ -1689,7 +1728,7 @@ fn build_detail_set(tree: &mut crate::widget::Tree, parent: WidgetId) -> Result<
     }
     let integrity_panel = style::d2::panel(tree, parent)?;
     tree.set_style(integrity_panel, detail_panel_style())?;
-    style::d2::panel_title(tree, integrity_panel, "ЦЕЛОСТНОСТЬ И МЕТАДАННЫЕ")?;
+    style::d2::panel_title(tree, integrity_panel, crate::strings::t("ЦЕЛОСТНОСТЬ И МЕТАДАННЫЕ"))?;
     let mut integrity_rows = Vec::with_capacity(DETAIL_INTEGRITY_SLOTS);
     for _ in 0..DETAIL_INTEGRITY_SLOTS {
         let row = style::d2::key_value_row(tree, integrity_panel, "", "")?;
@@ -1776,13 +1815,21 @@ fn detail_pairs(text: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+fn info_header_values(pairs: &[(String, String)]) -> (&str, &str, &str) {
+    (
+        pairs.first().map_or("", |(_, value)| value.as_str()),
+        pairs.get(1).map_or("", |(_, value)| value.as_str()),
+        pairs.get(2).map_or("", |(_, value)| value.as_str()),
+    )
+}
+
 impl Screen for Overview {
     fn id(&self) -> ScreenId {
         ScreenId::Overview
     }
 
     fn subtitle(&self) -> &str {
-        "Список сохранений и сведения о выбранном файле"
+        t("Список сохранений и сведения о выбранном файле")
     }
 
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
@@ -1840,7 +1887,7 @@ impl Screen for Overview {
                 ..Style::default()
             },
             Content::Input {
-                text: "Поиск по имени файла…".to_owned(),
+                text: t("Поиск по имени файла…").to_owned(),
                 style: Text::Body.style(),
             },
             Look {
@@ -1940,7 +1987,7 @@ impl Screen for Overview {
                 ..Style::default()
             },
             Content::Label {
-                text: "нет снимка".to_owned(),
+                text: crate::strings::t("нет снимка").to_owned(),
                 style: Text::Note.style(),
             },
             Look {
@@ -1993,7 +2040,7 @@ impl Screen for Overview {
         let parameters = style::d2::panel(cx.tree, column)?;
         self.parameters_panel = Some(parameters);
         grow_panel(cx.tree, parameters)?;
-        style::d2::panel_title(cx.tree, parameters, "ПАРАМЕТРЫ СТАЛКЕРА")?;
+        style::d2::panel_title(cx.tree, parameters, crate::strings::t("ПАРАМЕТРЫ СТАЛКЕРА"))?;
         let grid = cx.tree.add(
             Some(parameters),
             NodeKind::Wrap,
@@ -2050,7 +2097,7 @@ impl Screen for Overview {
 
     fn open_save(&mut self, cx: &mut Context<'_>, path: &Path) -> Result<bool> {
         if cx.proxy.is_none() {
-            cx.status = Some("Открытие сейва требует фонового канала приложения.".to_owned());
+            cx.status = Some(t("Открытие сейва требует фонового канала приложения.").to_owned());
             return Ok(false);
         }
         self.page = 0;
@@ -2224,13 +2271,13 @@ impl Screen for Overview {
                     cx.tree.set_visible(button, found)?;
                 }
                 if found {
-                    cx.status = Some(format!(
-                        "Обнаружена прерванная запись сейва ({}). Откройте восстановление, чтобы проверить копию и продолжить.",
-                        interrupted_count
+                    cx.status = Some(tr(
+                        "Обнаружена прерванная запись сейва ({0}). Откройте восстановление, чтобы проверить копию и продолжить.",
+                        &[interrupted_count],
                     ));
                 }
             } else if let Some(StartupBackupCheck(Err(error))) = payload.downcast_ref::<StartupBackupCheck>() {
-                cx.status = Some(format!("Не удалось проверить резервные копии после запуска: {error}"));
+                cx.status = Some(tr("Не удалось проверить резервные копии после запуска: {0}", &[&error]));
             }
             if let Some(refresh) = payload.downcast_ref::<RefreshOverview>() {
                 start_discovery(&self.workspace, cx);
@@ -2298,12 +2345,15 @@ impl Screen for Overview {
                             .unwrap_or(requested_path.as_os_str())
                             .to_string_lossy();
                         cx.status = Some(if *io_error {
-                            format!("Не удалось открыть «{name}»: {error}")
+                            tr!("Не удалось открыть «{name}»: {error}", name = &name, error = error)
                         } else {
-                            format!("«{name}» — не сохранение S.T.A.L.K.E.R. или файл повреждён.")
+                            tr!(
+                                "«{name}» — не сохранение S.T.A.L.K.E.R. или файл повреждён.",
+                                name = &name
+                            )
                         });
                     } else {
-                        cx.status = Some("Сейв прочитан и проверен.".to_owned());
+                        cx.status = Some(t("Сейв прочитан и проверен.").to_owned());
                     }
                 }
             }
@@ -2692,11 +2742,11 @@ impl Inventory {
                 cx.tree.set_visible(card, true)?;
             }
             if let Some(id) = self.money_label {
-                cx.tree.set_text(id, "Сначала выберите сейв на экране «Обзор».")?;
+                cx.tree.set_text(id, t("Сначала выберите сейв на экране «Обзор»."))?;
             }
             self.set_edit_controls(cx, false)?;
             if let Some(status) = self.status {
-                cx.tree.set_text(status, "Выберите сейв для просмотра и правки.")?;
+                cx.tree.set_text(status, t("Выберите сейв для просмотра и правки."))?;
             }
             return Ok(());
         };
@@ -2721,15 +2771,17 @@ impl Inventory {
                     writer::capability(save.format(), writer::ChangeKind::EditMoney) == writer::Capability::Verified;
                 let pending_money = state.pending_money.unwrap_or(money);
                 if let Some(id) = self.money_label {
+                    let disabled_reason = if money_editable {
+                        ""
+                    } else {
+                        t(" · запись отключена для этого формата")
+                    };
                     cx.tree.set_text(
                         id,
-                        &format!(
-                            "Деньги: {pending_money}{}",
-                            if money_editable {
-                                ""
-                            } else {
-                                " · запись отключена для этого формата"
-                            }
+                        &tr!(
+                            "Деньги: {pending_money}{disabled_reason}",
+                            pending_money = pending_money,
+                            disabled_reason = disabled_reason
                         ),
                     )?;
                 }
@@ -2800,7 +2852,7 @@ impl Inventory {
                             &format!(
                                 "◇ {} · {} · {condition} · × {count}",
                                 short_text(&name, 20),
-                                item.category,
+                                t(&item.category),
                             ),
                         )?;
                         let condition_ratio = state
@@ -2827,9 +2879,9 @@ impl Inventory {
                         cx.tree.set_text(
                             row.select,
                             if self.selected_item == Some(ItemHandle::Xray(item.handle)) {
-                                "Выбрано"
+                                t("Выбрано")
                             } else {
-                                "Осмотреть"
+                                t("Осмотреть")
                             },
                         )?;
                         cx.tree.set_look(
@@ -2888,7 +2940,7 @@ impl Inventory {
                 if let Some(id) = self.status {
                     cx.tree.set_text(
                         id,
-                        "Изменения подготовлены. Сохранение создаст бэкап, запишет файл и повторно его прочитает.",
+                        t("Изменения подготовлены. Сохранение создаст бэкап, запишет файл и повторно его прочитает."),
                     )?;
                 }
             }
@@ -2897,7 +2949,8 @@ impl Inventory {
                 let money = save.money();
                 let pending_money = state.pending_money.unwrap_or(money);
                 if let Some(id) = self.money_label {
-                    cx.tree.set_text(id, &format!("Деньги: {pending_money}"))?;
+                    cx.tree
+                        .set_text(id, &tr!("Деньги: {pending_money}", pending_money = pending_money))?;
                 }
                 for (id, _) in &self.money_buttons {
                     cx.tree.set_visible(*id, true)?;
@@ -2938,7 +2991,7 @@ impl Inventory {
                             continue;
                         };
                         cx.tree.set_visible(row.row, true)?;
-                        let name = item.display_name.as_deref().unwrap_or("Неизвестный предмет");
+                        let name = item.display_name.as_deref().map(t).unwrap_or(t("Неизвестный предмет"));
                         let count = if item.editable_count {
                             state
                                 .pending_stacks
@@ -2956,14 +3009,19 @@ impl Inventory {
                             "{:02x}{:02x}{:02x}",
                             item.type_key[0], item.type_key[1], item.type_key[2]
                         );
-                        let category = s2_inventory_category(item.kind_code, item.display_name.as_deref());
+                        let category = t(s2_inventory_category(item.kind_code, item.display_name.as_deref()));
+                        let condition = item
+                            .condition
+                            .map_or_else(|| "—".to_owned(), |value| format!("{value:.0}%"));
                         cx.tree.set_text(
                             row.label,
-                            &format!(
-                                "◇ {} · {category} · {} · × {count} · {key}",
-                                short_text(name, 18),
-                                item.condition
-                                    .map_or_else(|| "—".to_owned(), |value| format!("{:.0}%", value * 100.0))
+                            &tr!(
+                                "◇ {name} · {category} · {condition} · × {count} · {key}",
+                                name = short_text(name, 18),
+                                category = category,
+                                condition = condition,
+                                count = count,
+                                key = key
                             ),
                         )?;
                         cx.tree.set_visible(row.label, true)?;
@@ -2972,9 +3030,9 @@ impl Inventory {
                         cx.tree.set_text(
                             row.select,
                             if self.selected_item == Some(ItemHandle::Stalker2(item.handle)) {
-                                "Выбрано"
+                                t("Выбрано")
                             } else {
-                                "Осмотреть"
+                                t("Осмотреть")
                             },
                         )?;
                         cx.tree.set_look(
@@ -3024,15 +3082,15 @@ impl Inventory {
                 if let Some(id) = self.export {
                     cx.tree
                         .set_visible(id, writable && has_changes && !blocked_stash_draft)?;
-                    cx.tree.set_text(id, "Сохранить")?;
+                    cx.tree.set_text(id, t("Сохранить"))?;
                 }
                 if let Some(id) = self.status {
                     cx.tree.set_text(
                         id,
                         if blocked_stash_draft {
-                            "Черновик содержит перенос S2 из тайника, отключённый до проверки в игре. Сбросьте этот черновик, чтобы продолжить."
+                            t("Черновик содержит перенос S2 из тайника, отключённый до проверки в игре. Сбросьте этот черновик, чтобы продолжить.")
                         } else if writable {
-                            "Изменения сохраняются с резервной копией и проверкой повторным чтением."
+                            t("Изменения сохраняются с резервной копией и проверкой повторным чтением.")
                         } else {
                             S2_LEGACY_EDIT_REFUSAL
                         },
@@ -3057,20 +3115,20 @@ impl Inventory {
                 cx.tree.set_visible(id, true)?;
                 cx.tree.set_text(
                     id,
-                    "Предмет не выбран\nВыберите предмет для редактирования характеристик.",
+                    t("Предмет не выбран\nВыберите предмет для редактирования характеристик."),
                 )?;
             }
             if let Some(id) = self.inspector_condition {
                 cx.tree.set_visible(id, true)?;
-                cx.tree.set_text(id, "Прочность: —")?;
+                cx.tree.set_text(id, t("Прочность: —"))?;
             }
             if let Some(id) = self.inspector_placement {
                 cx.tree.set_visible(id, true)?;
-                cx.tree.set_text(id, "Размещение: —")?;
+                cx.tree.set_text(id, t("Размещение: —"))?;
             }
             if let Some(id) = self.inspector_upgrades {
                 cx.tree.set_visible(id, true)?;
-                cx.tree.set_text(id, "Модификации: —")?;
+                cx.tree.set_text(id, t("Модификации: —"))?;
             }
             for (id, _) in &self.condition_buttons {
                 cx.tree.set_visible(*id, false)?;
@@ -3110,15 +3168,23 @@ impl Inventory {
                     .map(|values| values.join(", "))
                     .unwrap_or_else(|_| "—".to_owned());
                 (
-                    format!(
-                        "{}\nКлюч: {}\nКоличество в пачке: {count}",
-                        sse_catalog::SaveNaming::item_name(save.format().id(), &item.section, None),
-                        item.section
+                    tr(
+                        "{0}\nКлюч: {1}\nКоличество в пачке: {2}",
+                        &[
+                            &t(&sse_catalog::SaveNaming::item_name(
+                                save.format().id(),
+                                &item.section,
+                                None,
+                            )),
+                            &item.section,
+                            &count,
+                        ],
                     ),
                     item.condition,
                     item.placement
                         .clone()
-                        .unwrap_or_else(|| "Размещение не прочитано".to_owned()),
+                        .map(|placement| t(&placement).to_owned())
+                        .unwrap_or_else(|| t("Размещение не прочитано").to_owned()),
                     upgrades,
                     item.durability_editable
                         && writer::capability(save.format(), writer::ChangeKind::EditDurability)
@@ -3137,17 +3203,20 @@ impl Inventory {
                     return Ok(());
                 };
                 let placement = match (item.x, item.y) {
-                    (Some(x), Some(y)) => format!("Рюкзак: столбец {x}, строка {y}"),
-                    _ => "Размещение не прочитано".to_owned(),
+                    (Some(x), Some(y)) => tr("Рюкзак: столбец {0}, строка {1}", &[&x, &y]),
+                    _ => t("Размещение не прочитано").to_owned(),
                 };
                 (
-                    format!(
-                        "{}\nКлюч: {:02x}{:02x}{:02x}\nКоличество в пачке: {}",
-                        item.display_name.as_deref().unwrap_or("Неизвестный предмет"),
-                        item.type_key[0],
-                        item.type_key[1],
-                        item.type_key[2],
-                        state.pending_stacks.get(&handle).copied().unwrap_or(item.count)
+                    tr(
+                        "{0}\nКлюч: {1}\nКоличество в пачке: {2}",
+                        &[
+                            &t(item.display_name.as_deref().unwrap_or("Неизвестный предмет")),
+                            &format!(
+                                "{:02x}{:02x}{:02x}",
+                                item.type_key[0], item.type_key[1], item.type_key[2]
+                            ),
+                            &state.pending_stacks.get(&handle).copied().unwrap_or(item.count),
+                        ],
                     ),
                     item.condition,
                     placement,
@@ -3160,7 +3229,8 @@ impl Inventory {
             }
             _ => {
                 if let Some(id) = self.inspector_summary {
-                    cx.tree.set_text(id, "Выбранный предмет отсутствует в текущем сейве.")?;
+                    cx.tree
+                        .set_text(id, t("Выбранный предмет отсутствует в текущем сейве."))?;
                 }
                 for (id, _) in &self.condition_buttons {
                     cx.tree.set_visible(*id, false)?;
@@ -3182,19 +3252,21 @@ impl Inventory {
                         .get(&handle)
                         .map_or_else(|| format!("{:.0}%", value * 100.0), |pending| format!("{pending}%"))
                 })
-                .unwrap_or_else(|| "нет шкалы состояния / износа".to_owned());
-            cx.tree.set_text(id, &format!("Состояние / прочность: {shown}"))?;
+                .unwrap_or_else(|| t("нет шкалы состояния / износа").to_owned());
+            cx.tree
+                .set_text(id, &tr!("Состояние / прочность: {shown}", shown = shown))?;
         }
         if let Some(id) = self.inspector_placement {
             cx.tree.set_visible(id, true)?;
             if let Some(pending) = state.pending_placements.get(&handle) {
                 placement = match pending {
-                    DraftPlacement::Ruck => "ruck".to_owned(),
-                    DraftPlacement::Belt => "belt".to_owned(),
-                    DraftPlacement::Slot(slot) => format!("slot {slot}"),
+                    DraftPlacement::Ruck => t("Рюкзак").to_owned(),
+                    DraftPlacement::Belt => t("Пояс").to_owned(),
+                    DraftPlacement::Slot(slot) => tr("Слот {0}", &[slot]),
                 };
             }
-            cx.tree.set_text(id, &format!("Размещение: {placement}"))?;
+            cx.tree
+                .set_text(id, &tr!("Размещение: {placement}", placement = placement))?;
         }
         let upgrades = state
             .pending_upgrades
@@ -3205,7 +3277,10 @@ impl Inventory {
             cx.tree.set_visible(id, true)?;
             cx.tree.set_text(
                 id,
-                &format!("Модификации: {}", if upgrades.is_empty() { "—" } else { &upgrades }),
+                &tr!(
+                    "Модификации: {upgrades}",
+                    upgrades = if upgrades.is_empty() { "—" } else { &upgrades }
+                ),
             )?;
         }
         for (id, _) in &self.condition_buttons {
@@ -3230,7 +3305,7 @@ impl Inventory {
                 _ => false,
             };
             cx.tree.set_enabled(id, add_enabled)?;
-            cx.tree.set_text(id, "+ Добавить предмет")?;
+            cx.tree.set_text(id, t("+ Добавить предмет"))?;
         }
         let (upgrade_options, selected_upgrades, upgrades_editable) = match (&selected.data, handle) {
             (SaveData::Xray { save, inventory }, ItemHandle::Xray(item_handle)) => {
@@ -3355,7 +3430,7 @@ impl Inventory {
 
     fn update_inventory_filters(&self, cx: &mut Context<'_>, count: usize) -> Result<()> {
         if let Some(id) = self.search_count {
-            cx.tree.set_text(id, &format!("Найдено: {count}"))?;
+            cx.tree.set_text(id, &tr!("Найдено: {count}", count = count))?;
         }
         if let Some(id) = self.clear_search {
             cx.tree.set_enabled(id, !self.search_query.is_empty())?;
@@ -3407,11 +3482,14 @@ impl Inventory {
         let plan = cx.app.draft(source_sha256);
         let current = if let Some(input) = self.money_input.as_ref() {
             let typed = input.text();
-            let Ok(value) = typed.parse::<u32>() else { return Ok(()) };
-            if value > 2_000_000_000 {
-                return Ok(());
+            match typed.parse::<u32>() {
+                Ok(value) if value <= 2_000_000_000 => value,
+                _ => {
+                    cx.app.set_invalid_numeric_input(true);
+                    cx.status = Some(t("Введены некорректные значения (проверьте введённые числа).").to_owned());
+                    return Ok(());
+                }
             }
-            value
         } else {
             pending_money
                 .or_else(|| plan.and_then(|plan| plan.money))
@@ -3433,7 +3511,7 @@ impl Inventory {
     fn stage_money_value(&self, cx: &mut Context<'_>, value: u32) -> Result<()> {
         cx.app.set_invalid_numeric_input(false);
         if value > 2_000_000_000 {
-            cx.status = Some("Введены некорректные значения (проверьте введённые числа).".to_owned());
+            cx.status = Some(t("Введены некорректные значения (проверьте введённые числа).").to_owned());
             return Ok(());
         }
         let selected = self.workspace.lock().selected.clone();
@@ -3701,7 +3779,7 @@ impl Inventory {
         }
         self.add_panel_open = true;
         if let Some(widget) = self.add_search_widget {
-            cx.tree.set_text(widget, "")?;
+            cx.tree.set_text(widget, t(""))?;
             cx.tree.set_focus(Some(widget))?;
             if let Some(search) = self.add_search.as_mut() {
                 search.focus(true, 0);
@@ -3770,7 +3848,7 @@ impl Inventory {
                 let suffix = if candidate.template_available {
                     String::new()
                 } else {
-                    " · нет подтверждённого шаблона в сейве".to_owned()
+                    t(" · нет подтверждённого шаблона в сейве").to_owned()
                 };
                 cx.tree.set_text(
                     *widget,
@@ -3789,7 +3867,7 @@ impl Inventory {
         }
         if let Some(empty) = self.add_empty {
             cx.tree.set_visible(empty, matching.is_empty())?;
-            cx.tree.set_text(empty, "Предметы не найдены.")?;
+            cx.tree.set_text(empty, t("Предметы не найдены."))?;
         }
         if let Some(previous) = self.add_previous {
             cx.tree.set_visible(previous, pages > 1 && self.add_page > 0)?;
@@ -3820,7 +3898,7 @@ impl Inventory {
             return Ok(());
         };
         let SaveData::Xray { save, inventory } = &selected.data else {
-            cx.status = Some("Добавление доступно только для подтверждённых X-Ray форматов.".to_owned());
+            cx.status = Some(t("Добавление доступно только для подтверждённых X-Ray форматов.").to_owned());
             return Ok(());
         };
         if writer::capability(save.format(), writer::ChangeKind::AddItems) == writer::Capability::Unsupported
@@ -3830,7 +3908,7 @@ impl Inventory {
                 .is_none()
             || !inventory.iter().any(|item| item.section == item_key)
         {
-            cx.status = Some("Для этого предмета или формата нет подтверждённого шаблона добавления.".to_owned());
+            cx.status = Some(t("Для этого предмета или формата нет подтверждённого шаблона добавления.").to_owned());
             return Ok(());
         }
         let source_sha256 = selected.source_sha256.as_str();
@@ -3848,8 +3926,10 @@ impl Inventory {
             .ok_or_else(|| Error::Refused("draft journal disappeared after editing".to_owned()))?;
         set_workspace_draft(&self.workspace, &journal);
         self.workspace.persist_draft(journal, cx);
-        cx.status = Some(format!(
-            "Предмет {item_key} ({quantity} шт.) добавлен в очередь на запись."
+        cx.status = Some(tr!(
+            "Предмет {item_key} ({quantity} шт.) добавлен в очередь на запись.",
+            item_key = item_key,
+            quantity = quantity
         ));
         Ok(())
     }
@@ -3918,7 +3998,7 @@ impl Inventory {
 
     fn save(&mut self, cx: &mut Context<'_>) -> Result<()> {
         if self.pending_save_request.is_some() {
-            cx.status = Some("Проверка запущенной игры уже выполняется.".to_owned());
+            cx.status = Some(t("Проверка запущенной игры уже выполняется.").to_owned());
             return Ok(());
         }
         let (selected, edits, stash_moves) = {
@@ -3942,11 +4022,11 @@ impl Inventory {
             )
         };
         let Some(selected) = selected else {
-            cx.status = Some("Сначала выберите сейв.".to_owned());
+            cx.status = Some(t("Сначала выберите сейв.").to_owned());
             return Ok(());
         };
         if !S2_STASH_MOVE_ENABLED && !stash_moves.is_empty() {
-            let text = "Черновик содержит перенос S2 из тайника, отключённый до проверки в игре. Сбросьте этот черновик, чтобы продолжить.";
+            let text = t("Черновик содержит перенос S2 из тайника, отключённый до проверки в игре. Сбросьте этот черновик, чтобы продолжить.");
             if let Some(status) = self.status {
                 cx.tree.set_text(status, text)?;
             }
@@ -3954,25 +4034,24 @@ impl Inventory {
             return Ok(());
         }
         if cx.app.has_invalid_numeric_input() {
-            cx.status = Some("Введены некорректные значения (проверьте введённые числа).".to_owned());
+            cx.status = Some(t("Введены некорректные значения (проверьте введённые числа).").to_owned());
             return Ok(());
         }
         if !cx.app.has_draft(&selected.source_sha256) && !edits.has_changes() && stash_moves.is_empty() {
-            cx.status = Some("Нет несохранённых изменений.".to_owned());
+            cx.status = Some(t("Нет несохранённых изменений.").to_owned());
             return Ok(());
         }
         if let Some(plan) = cx.app.draft(&selected.source_sha256) {
             if plan.unmapped_legacy_plan.is_some() {
-                cx.status =
-                    Some("В черновике есть правки из другой версии редактора, которые эта версия не понимает. Сбросьте черновик, чтобы продолжить (он сохранится рядом).".to_owned());
+                cx.status = Some(t("В черновике есть правки из другой версии редактора, которые эта версия не понимает. Сбросьте черновик, чтобы продолжить (он сохранится рядом).").to_owned());
                 return Ok(());
             }
         }
         if self.workspace.is_saving() || self.workspace.is_restoring() {
             let text = if self.workspace.is_restoring() {
-                "Дождитесь завершения восстановления сейва."
+                t("Дождитесь завершения восстановления сейва.")
             } else {
-                "Сохранение уже выполняется."
+                t("Сохранение уже выполняется.")
             };
             if let Some(status) = self.status {
                 cx.tree.set_text(status, text)?;
@@ -3992,15 +4071,15 @@ impl Inventory {
 
     fn start_save_process_check(&mut self, cx: &mut Context<'_>, request: PendingSaveRequest) -> Result<()> {
         let Some(proxy) = cx.proxy.cloned() else {
-            cx.status = Some("Сохранение доступно в работающем окне редактора.".to_owned());
+            cx.status = Some(t("Сохранение доступно в работающем окне редактора.").to_owned());
             return Ok(());
         };
         let Some(format_id) = request.selected.slot.format_id.clone() else {
-            cx.status = Some("Не удалось определить формат сейва для проверки запущенной игры.".to_owned());
+            cx.status = Some(t("Не удалось определить формат сейва для проверки запущенной игры.").to_owned());
             return Ok(());
         };
         let Some(request_id) = self.next_process_check_id.checked_add(1) else {
-            cx.status = Some("Исчерпан номер проверки запущенной игры.".to_owned());
+            cx.status = Some(t("Исчерпан номер проверки запущенной игры.").to_owned());
             return Ok(());
         };
         self.next_process_check_id = request_id;
@@ -4012,15 +4091,15 @@ impl Inventory {
             self.process_continue,
         ) {
             cx.tree
-                .set_text(description, "Проверяю, запущена ли игра для выбранного сейва…")?;
-            cx.tree.set_text(continue_button, "Проверка…")?;
+                .set_text(description, t("Проверяю, запущена ли игра для выбранного сейва…"))?;
+            cx.tree.set_text(continue_button, t("Проверка…"))?;
             cx.tree.set_enabled(continue_button, false)?;
             cx.tree.open_dialog(dialog)?;
         }
         if let Some(status) = self.status {
-            cx.tree.set_text(status, "Проверяю запущенную игру…")?;
+            cx.tree.set_text(status, t("Проверяю запущенную игру…"))?;
         }
-        cx.status = Some("Проверяю запущенную игру…".to_owned());
+        cx.status = Some(t("Проверяю запущенную игру…").to_owned());
         if let Err(error) = self.workspace.spawn("save-process-check", move |context| {
             let result = if context.is_cancelled() {
                 Err("process check was cancelled".to_owned())
@@ -4035,7 +4114,7 @@ impl Inventory {
             self.pending_save_request = None;
             self.process_check_complete = false;
             let _ = cx.tree.close_dialog()?;
-            let text = format!("Не удалось начать проверку запущенной игры: {error}");
+            let text = tr!("Не удалось начать проверку запущенной игры: {error}", error = error);
             if let Some(status) = self.status {
                 cx.tree.set_text(status, &text)?;
             }
@@ -4046,7 +4125,7 @@ impl Inventory {
 
     fn start_save_write(&self, cx: &mut Context<'_>, request: PendingSaveRequest) -> Result<()> {
         let Some(proxy) = cx.proxy.cloned() else {
-            cx.status = Some("Сохранение доступно в работающем окне редактора.".to_owned());
+            cx.status = Some(t("Сохранение доступно в работающем окне редактора.").to_owned());
             return Ok(());
         };
         let PendingSaveRequest {
@@ -4058,9 +4137,9 @@ impl Inventory {
         let session = self.workspace.session();
         let Some(operation_guard) = session.begin_save(&selected.slot.path) else {
             let text = if session.is_restoring() {
-                "Дождитесь завершения восстановления сейва."
+                t("Дождитесь завершения восстановления сейва.")
             } else {
-                "Сохранение уже выполняется."
+                t("Сохранение уже выполняется.")
             };
             if let Some(status) = self.status {
                 cx.tree.set_text(status, text)?;
@@ -4075,20 +4154,20 @@ impl Inventory {
             .draft_generation(&draft_identity)
             .or_else(|| session.next_draft_generation(&draft_identity));
         let Some(draft_generation) = draft_generation else {
-            cx.status = Some("Не удалось назначить поколение черновика.".to_owned());
+            cx.status = Some(t("Не удалось назначить поколение черновика.").to_owned());
             return Ok(());
         };
         let source_path = selected.slot.path.clone();
         let log_path = source_path.clone();
         let backup_directory = self.workspace.backup_directory();
         if let Some(status) = self.status {
-            cx.tree.set_text(status, "Сохранение…")?;
+            cx.tree.set_text(status, t("Сохранение…"))?;
         }
         if let Err(error) = self.workspace.spawn("save-write", move |context| {
             let save_guard = operation_guard;
             let result = if context.is_cancelled() {
                 sse_app::diagnostics::save_write_cancelled(&source_path);
-                Err("Сохранение отменено.".to_owned())
+                Err(t("Сохранение отменено.").to_owned())
             } else {
                 let result = commit_save_edits(&selected, &edits, &stash_moves, &backup_directory)
                     .map_err(|error| error.to_string());
@@ -4112,7 +4191,7 @@ impl Inventory {
             ));
         }) {
             sse_app::diagnostics::save_write_failed(&log_path, &error.to_string());
-            let text = format!("Не удалось начать сохранение: {error}");
+            let text = tr!("Не удалось начать сохранение: {error}", error = error);
             if let Some(status) = self.status {
                 cx.tree.set_text(status, &text)?;
             }
@@ -4126,7 +4205,7 @@ impl Inventory {
             return self.save(cx);
         }
         let Some(source_sha256) = cx.app.current_save_sha256().map(str::to_owned) else {
-            cx.status = Some("Выберите сохранение для редактирования.".to_owned());
+            cx.status = Some(t("Выберите сохранение для редактирования.").to_owned());
             return Ok(());
         };
         match action {
@@ -4142,7 +4221,7 @@ impl Inventory {
                 cx.app.set_draft_journal(empty.clone());
                 set_workspace_draft(&self.workspace, &empty);
                 self.workspace.reset_draft(empty, preserve_unmapped, cx);
-                cx.status = Some("Черновик сброшен.".to_owned());
+                cx.status = Some(t("Черновик сброшен.").to_owned());
                 return self.render(cx);
             }
             EditorAction::Save => return self.save(cx),
@@ -4215,12 +4294,12 @@ fn commit_save_edits_to(
     reloaded.slot.last_write_time_utc = modified;
     reloaded.info = save_info(&reloaded.slot);
     let (crc_status, format) = match &reloaded.data {
-        SaveData::Xray { save, .. } => ("не подтверждается отдельным полем", save.format().id()),
+        SaveData::Xray { save, .. } => (t("не подтверждается отдельным полем"), save.format().id()),
         SaveData::Stalker2 { save, .. } => (
             if save.container().stored_crc32() == save.container().computed_crc32() {
                 "OK (CRC32)"
             } else {
-                "ошибка"
+                t("ошибка")
             },
             "S2",
         ),
@@ -4236,9 +4315,9 @@ fn commit_save_edits_to(
         || receipt.backup_path.display().to_string(),
         |name| name.to_string_lossy().into_owned(),
     );
-    let mut save_message = format!("Сохранено успешно. Backup: {backup_name}");
+    let mut save_message = tr("Сохранено успешно. Резервная копия: {0}", &[&backup_name]);
     if let Some(warning) = receipt.maintenance_warning.as_deref() {
-        save_message.push_str(&format!(" Ротация старых копий не завершена: {warning}"));
+        save_message.push_str(&tr(" Ротация старых копий не завершена: {0}", &[&warning]));
     }
     Ok((Arc::new(reloaded), save_message))
 }
@@ -4950,7 +5029,7 @@ impl Screen for Inventory {
     }
 
     fn subtitle(&self) -> &str {
-        "Состав рюкзака и подтверждённые изменения X-Ray / S2"
+        t("Состав рюкзака и подтверждённые изменения X-Ray / S2")
     }
 
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
@@ -5016,7 +5095,7 @@ impl Screen for Inventory {
                 ..Style::default()
             },
             Content::Input {
-                text: "Поиск предметов…".to_owned(),
+                text: t("Поиск предметов…").to_owned(),
                 style: Text::Body.style(),
             },
             Look {
@@ -5183,7 +5262,7 @@ impl Screen for Inventory {
                 ..Style::default()
             },
             Content::Input {
-                text: "Поиск по названию или ключу секции…".to_owned(),
+                text: t("Поиск по названию или ключу секции…").to_owned(),
                 style: Text::Body.style(),
             },
             Look {
@@ -5325,9 +5404,9 @@ impl Screen for Inventory {
                 self.process_check_complete = false;
                 let _ = cx.tree.close_dialog()?;
                 if let Some(status) = self.status {
-                    cx.tree.set_text(status, "Сохранение отменено.")?;
+                    cx.tree.set_text(status, t("Сохранение отменено."))?;
                 }
-                cx.status = Some("Сохранение отменено.".to_owned());
+                cx.status = Some(t("Сохранение отменено.").to_owned());
                 return self.render(cx);
             }
             if clicked.is_some_and(|id| Some(id) == self.process_continue) && self.process_check_complete {
@@ -5475,11 +5554,11 @@ impl Screen for Inventory {
                 .unwrap_or(1)
                 .max(1);
             if quantity > u32::from(u16::MAX) {
-                cx.status = Some("Количество должно быть от 1 до 65535 для этого формата.".to_owned());
+                cx.status = Some(t("Количество должно быть от 1 до 65535 для этого формата.").to_owned());
                 return Ok(());
             }
             let Some(key) = self.add_selected_key.clone() else {
-                cx.status = Some("Выберите предмет с подтверждённым шаблоном добавления.".to_owned());
+                cx.status = Some(t("Выберите предмет с подтверждённым шаблоном добавления.").to_owned());
                 return Ok(());
             };
             self.stage_add_key(cx, &key, quantity)?;
@@ -5696,7 +5775,7 @@ impl Screen for Inventory {
                             _ => {
                                 cx.app.set_invalid_numeric_input(true);
                                 cx.status =
-                                    Some("Введены некорректные значения (проверьте введённые числа).".to_owned())
+                                    Some(t("Введены некорректные значения (проверьте введённые числа).").to_owned())
                             }
                         }
                     } else {
@@ -5877,9 +5956,9 @@ impl Screen for Inventory {
                     }
                     Err(error) => {
                         let text = if is_windows_file_busy_error_text(error) {
-                            SAVE_WHILE_GAME_RUNNING_WARNING.to_owned()
+                            t(SAVE_WHILE_GAME_RUNNING_WARNING).to_owned()
                         } else {
-                            format!("Не удалось сохранить: {error}")
+                            tr!("Не удалось сохранить: {error}", error = error)
                         };
                         if let Some(id) = self.status {
                             cx.tree.set_text(id, &text)?;
@@ -5890,8 +5969,8 @@ impl Screen for Inventory {
             }
             if let Some(DraftPersisted(result)) = payload.downcast_ref::<DraftPersisted>() {
                 match result {
-                    Ok(()) => cx.status = Some("Черновик сохранён.".to_owned()),
-                    Err(error) => cx.status = Some(format!("Не удалось сохранить черновик: {error}")),
+                    Ok(()) => cx.status = Some(t("Черновик сохранён.").to_owned()),
+                    Err(error) => cx.status = Some(tr!("Не удалось сохранить черновик: {error}", error = error)),
                 }
             }
             self.render(cx)?;
@@ -5995,17 +6074,18 @@ impl Factions {
         let value = pending.get(key).copied().or(current);
         let label = faction.display_name.as_deref().unwrap_or(&faction.key);
         let source = if pending.contains_key(key) {
-            "черновик"
+            t("черновик")
         } else {
-            "сейв"
+            t("сейв")
         };
+        let index = self.index.saturating_add(1);
+        let faction_count = self.faction_keys.len();
+        let relation = value.map_or_else(|| t("нет записи").to_owned(), |value| value.to_string());
         self.set_text(
             cx,
-            &format!(
-                "{} из {} · {label} ({key}) · отношение: {} · значение из {source}.\nИзменение отношений экспериментальное. После выбора примените черновик кнопкой «Сохранить» в «Инвентаре»; проверка в игре не выполнена.",
-                self.index.saturating_add(1),
-                self.faction_keys.len(),
-                value.map_or_else(|| "нет записи".to_owned(), |value| value.to_string())
+            &tr(
+                "{0} из {1} · {2} ({3}) · отношение: {4} · значение из {5}.\nИзменение отношений экспериментальное. После выбора примените черновик кнопкой «Сохранить» в «Инвентаре»; проверка в игре не выполнена.",
+                &[&index, &faction_count, &t(label), key, &relation, &source],
             ),
         )?;
         let can_edit = !self.workspace.is_saving() && !self.workspace.is_restoring();
@@ -6017,7 +6097,7 @@ impl Factions {
 
     fn set_text(&self, cx: &mut Context<'_>, text: &str) -> Result<()> {
         if let Some(id) = self.text {
-            cx.tree.set_text(id, text)?;
+            cx.tree.set_text(id, t(text))?;
         }
         Ok(())
     }
@@ -6031,7 +6111,7 @@ impl Factions {
 
     fn stage_relation(&mut self, cx: &mut Context<'_>, delta: i32) -> Result<()> {
         if self.workspace.is_saving() || self.workspace.is_restoring() {
-            cx.status = Some("Отношения недоступны во время записи или восстановления.".to_owned());
+            cx.status = Some(t("Отношения недоступны во время записи или восстановления.").to_owned());
             return Ok(());
         }
         let Some(key) = self.faction_keys.get(self.index).cloned() else {
@@ -6046,11 +6126,11 @@ impl Factions {
                 return Ok(());
             };
             if !xray_change_supported(save, writer::ChangeKind::EditRelations) {
-                cx.status = Some("Редактирование отношений фракций не поддерживается данным форматом.".to_owned());
+                cx.status = Some(t("Редактирование отношений фракций не поддерживается данным форматом.").to_owned());
                 return Ok(());
             }
             if save.actor_relations().is_none() {
-                cx.status = Some("Отношения актёра не подтверждены индексом сохранения.".to_owned());
+                cx.status = Some(t("Отношения актёра не подтверждены индексом сохранения.").to_owned());
                 return Ok(());
             }
             let bundle = sse_catalog::CatalogBundleReader::load_embedded().get(save.format().id());
@@ -6068,7 +6148,7 @@ impl Factions {
         };
         let bundle = sse_catalog::CatalogBundleReader::load_embedded().get(&format_id);
         let Some(catalog) = bundle.and_then(|bundle| bundle.factions.as_ref()) else {
-            cx.status = Some("Каталог фракций недоступен для выбранного сейва.".to_owned());
+            cx.status = Some(t("Каталог фракций недоступен для выбранного сейва.").to_owned());
             return Ok(());
         };
         let next = current.unwrap_or(0).saturating_add(delta);
@@ -6086,7 +6166,7 @@ impl Factions {
                 return Ok(());
             };
             let Some(community_id) = catalog.resolve(&key).ok().and_then(|faction| faction.numeric_id) else {
-                cx.status = Some("У этой фракции не задан числовой id.".to_owned());
+                cx.status = Some(t("У этой фракции не задан числовой id.").to_owned());
                 return Ok(());
             };
             save.actor_relations().and_then(|relations| {
@@ -6109,7 +6189,11 @@ impl Factions {
             .ok_or_else(|| Error::Refused("draft journal disappeared after faction edit".to_owned()))?;
         set_workspace_draft(&self.workspace, &journal);
         self.workspace.persist_draft(journal, cx);
-        cx.status = Some(format!("Отношение {key} изменено в черновике: {next}."));
+        cx.status = Some(tr!(
+            "Отношение {key} изменено в черновике: {next}.",
+            key = key,
+            next = next
+        ));
         self.render(cx)
     }
 }
@@ -6120,7 +6204,7 @@ impl Screen for Factions {
     }
 
     fn subtitle(&self) -> &str {
-        "Только сведения, подтверждённые индексатором сейва"
+        t("Только сведения, подтверждённые индексатором сейва")
     }
 
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
@@ -6256,7 +6340,7 @@ impl Stashes {
         let items = match stash_items {
             Some(Ok(items)) => items,
             Some(Err(error)) => {
-                self.set_text(cx, &format!("Подтверждённые данные тайника недоступны: {error}"))?;
+                self.set_text(cx, &tr("Подтверждённые данные тайника недоступны: {0}", &[&error]))?;
                 return Ok(());
             }
             None => {
@@ -6273,53 +6357,66 @@ impl Stashes {
             let start = self.page.saturating_mul(self.rows.len());
             self.set_text(
                 cx,
-                &format!(
-                    "S2: {} предметов в подтверждённом тайнике · страница {} из {}. {}",
-                    items.len(),
-                    self.page.saturating_add(1),
-                    pages,
-                    if can_move {
-                        "Отметьте перенос и сохраните его в «Инвентаре»."
-                    } else {
-                        "Перенос в рюкзак отключён до проверки сохранения в игре."
-                    }
+                &tr(
+                    "S2: {0} предметов в подтверждённом тайнике · страница {1} из {2}. {3}",
+                    &[
+                        &items.len(),
+                        &self.page.saturating_add(1),
+                        &pages,
+                        &t(if can_move {
+                            "Отметьте перенос и сохраните его в «Инвентаре»."
+                        } else {
+                            "Перенос в рюкзак отключён до проверки сохранения в игре."
+                        }),
+                    ],
                 ),
             )?;
             for (offset, row) in self.rows.iter_mut().enumerate() {
                 let Some(item) = items.get(start.saturating_add(offset)) else {
                     continue;
                 };
-                let name = item.display_name.as_deref().map(str::to_owned).unwrap_or_else(|| {
-                    format!(
-                        "Предмет · ключ {:02X}{:02X}{:02X}",
-                        item.type_key[0], item.type_key[1], item.type_key[2]
-                    )
-                });
+                let name = item
+                    .display_name
+                    .as_deref()
+                    .map(|name| t(name).to_owned())
+                    .unwrap_or_else(|| {
+                        tr(
+                            "Предмет · ключ {0}",
+                            &[&format!(
+                                "{:02X}{:02X}{:02X}",
+                                item.type_key[0], item.type_key[1], item.type_key[2]
+                            )],
+                        )
+                    });
                 let weight = if item.total_weight.is_finite() {
                     format!("{:.1}", item.total_weight)
                 } else {
-                    "неизвестен".to_owned()
+                    t("неизвестен").to_owned()
                 };
                 cx.tree.set_text(
                     row.label,
-                    &format!(
-                        "{name} · кол-во {} · вес {weight} · ячейки {} · {}×{} от {},{} · 0x{:08X}",
-                        item.count,
-                        item.cells.len(),
-                        item.width,
-                        item.height,
-                        item.x,
-                        item.y,
-                        item.handle
+                    &tr(
+                        "{0} · кол-во {1} · вес {2} · ячейки {3} · {4}×{5} от {6},{7} · 0x{8}",
+                        &[
+                            &name,
+                            &item.count,
+                            &weight,
+                            &item.cells.len(),
+                            &item.width,
+                            &item.height,
+                            &item.x,
+                            &item.y,
+                            &format!("{:08X}", item.handle),
+                        ],
                     ),
                 )?;
                 cx.tree.set_visible(row.row, true)?;
                 cx.tree.set_text(
                     row.move_button,
                     if pending_moves.contains(&item.handle) {
-                        "Отменить перенос"
+                        t("Отменить перенос")
                     } else {
-                        "В рюкзак"
+                        t("В рюкзак")
                     },
                 )?;
                 cx.tree.set_visible(row.move_button, can_move)?;
@@ -6349,9 +6446,9 @@ impl Stashes {
             } else {
                 self.set_status(
                     cx,
-                    &format!(
-                        "{} предмет(ов) будет перенесено при сохранении из «Инвентаря».",
-                        pending_moves.len()
+                    &tr(
+                        "{0} предмет(ов) будет перенесено при сохранении из «Инвентаря».",
+                        &[&pending_moves.len()],
                     ),
                 )?;
             }
@@ -6398,9 +6495,9 @@ impl Stashes {
                 let name = item.display_name.as_deref().unwrap_or(&item.key);
                 let staged = pending_takes.contains(&object.object_id);
                 entries.push((
-                    format!(
-                        "{name} · тайник {} · 0x{:04X}",
-                        box_object.name_replace, object.object_id
+                    tr(
+                        "{0} · тайник {1} · 0x{2}",
+                        &[&t(name), &box_object.name_replace, &format!("{:04X}", object.object_id)],
                     ),
                     StashAction::XrayTake(object.object_id),
                     staged,
@@ -6416,12 +6513,12 @@ impl Stashes {
                 let Some(definition) = catalog.items.resolve(&item.section) else {
                     continue;
                 };
-                let name = definition.display_name.as_deref().unwrap_or(&definition.key);
+                let name = t(definition.display_name.as_deref().unwrap_or(&definition.key));
                 let staged = pending_puts.get(&item.handle) == Some(&box_id);
                 entries.push((
-                    format!(
-                        "{name} · в тайник {} · 0x{:04X}",
-                        destination_box.name_replace, item.handle
+                    tr(
+                        "{0} · в тайник {1} · 0x{2}",
+                        &[&name, &destination_box.name_replace, &format!("{:04X}", item.handle)],
                     ),
                     StashAction::XrayPut {
                         object_id: item.handle,
@@ -6444,12 +6541,9 @@ impl Stashes {
         let move_count = pending_takes.len().saturating_add(pending_puts.len());
         self.set_text(
             cx,
-            &format!(
-                "X-Ray: {} тайник(ов), {} предмет(ов) для переноса · страница {} из {}. Перенос рюкзак↔первый тайник подтверждён writer-ом и сохранится из «Инвентаря».",
-                boxes.len(),
-                entries.len(),
-                self.page.saturating_add(1),
-                pages
+            &tr(
+                "X-Ray: {0} тайник(ов), {1} предмет(ов) для переноса · страница {2} из {3}. Перенос рюкзак↔первый тайник подтверждён writer-ом и сохранится из «Инвентаря».",
+                &[&boxes.len(), &entries.len(), &self.page.saturating_add(1), &pages],
             ),
         )?;
         for (offset, row) in self.rows.iter_mut().enumerate() {
@@ -6461,9 +6555,9 @@ impl Stashes {
             cx.tree.set_text(
                 row.move_button,
                 if *staged {
-                    "Отменить"
+                    t("Отменить")
                 } else {
-                    "Перенести"
+                    t("Перенести")
                 },
             )?;
             cx.tree.set_visible(row.move_button, true)?;
@@ -6481,11 +6575,14 @@ impl Stashes {
             cx.tree.set_visible(id, pages > 1)?;
         }
         let status = if !xray_change_supported(save, writer::ChangeKind::MoveItems) {
-            "Перемещение из тайников не поддерживается данным форматом.".to_owned()
+            t("Перемещение из тайников не поддерживается данным форматом.").to_owned()
         } else if self.workspace.is_saving() || self.workspace.is_restoring() {
-            "Перемещение временно недоступно во время записи или восстановления.".to_owned()
+            t("Перемещение временно недоступно во время записи или восстановления.").to_owned()
         } else {
-            format!("{move_count} перенос(ов) в черновике; проверьте результат после записи.")
+            tr(
+                "{0} перенос(ов) в черновике; проверьте результат после записи.",
+                &[&move_count],
+            )
         };
         self.set_status(cx, &status)?;
         Ok(())
@@ -6493,24 +6590,24 @@ impl Stashes {
 
     fn stage_xray_move(&mut self, cx: &mut Context<'_>, action: StashAction) -> Result<()> {
         if self.workspace.is_saving() || self.workspace.is_restoring() {
-            cx.status = Some("Перенос недоступен во время записи или восстановления.".to_owned());
+            cx.status = Some(t("Перенос недоступен во время записи или восстановления.").to_owned());
             return Ok(());
         }
         let source_sha256 = {
             let state = self.workspace.lock();
             let Some(selected) = state.selected.as_ref() else {
-                cx.status = Some("Сначала выберите сейв.".to_owned());
+                cx.status = Some(t("Сначала выберите сейв.").to_owned());
                 return Ok(());
             };
             if !matches!(selected.data, SaveData::Xray { .. }) {
-                cx.status = Some("X-Ray тайники доступны только для X-Ray сейвов.".to_owned());
+                cx.status = Some(t("X-Ray тайники доступны только для X-Ray сейвов.").to_owned());
                 return Ok(());
             }
             let SaveData::Xray { save, .. } = &selected.data else {
                 return Ok(());
             };
             if !xray_change_supported(save, writer::ChangeKind::MoveItems) {
-                cx.status = Some("Перемещение из тайников не поддерживается данным форматом.".to_owned());
+                cx.status = Some(t("Перемещение из тайников не поддерживается данным форматом.").to_owned());
                 return Ok(());
             }
             selected.source_sha256.clone()
@@ -6525,10 +6622,13 @@ impl Stashes {
                 plan.stash_puts.retain(|put| put.object_id != handle);
                 if let Some(index) = plan.stash_takes.iter().position(|candidate| *candidate == handle) {
                     plan.stash_takes.remove(index);
-                    format!("Перенос 0x{handle:04X} из тайника отменён.")
+                    tr("Перенос 0x{0} из тайника отменён.", &[&format!("{handle:04X}")])
                 } else {
                     plan.stash_takes.push(handle);
-                    format!("Предмет 0x{handle:04X} будет перенесён в рюкзак при сохранении.")
+                    tr(
+                        "Предмет 0x{0} будет перенесён в рюкзак при сохранении.",
+                        &[&format!("{handle:04X}")],
+                    )
                 }
             }
             StashAction::XrayPut { object_id, box_id } => {
@@ -6537,16 +6637,22 @@ impl Stashes {
                     let same_destination = plan.stash_puts.get(index).is_some_and(|put| put.box_id == box_id);
                     plan.stash_puts.remove(index);
                     if same_destination {
-                        format!("Перенос 0x{object_id:04X} в тайник отменён.")
+                        tr("Перенос 0x{0} в тайник отменён.", &[&format!("{object_id:04X}")])
                     } else {
                         plan.stash_puts
                             .push(sse_storage::drafts::StashPut::new(object_id, box_id)?);
-                        format!("Предмет 0x{object_id:04X} назначен другому тайнику.")
+                        tr(
+                            "Предмет 0x{0} назначен другому тайнику.",
+                            &[&format!("{object_id:04X}")],
+                        )
                     }
                 } else {
                     plan.stash_puts
                         .push(sse_storage::drafts::StashPut::new(object_id, box_id)?);
-                    format!("Предмет 0x{object_id:04X} будет перенесён в тайник при сохранении.")
+                    tr(
+                        "Предмет 0x{0} будет перенесён в тайник при сохранении.",
+                        &[&format!("{object_id:04X}")],
+                    )
                 }
             }
             StashAction::Stalker2Take(_) => {
@@ -6570,15 +6676,17 @@ impl Stashes {
 
     fn set_text(&self, cx: &mut Context<'_>, text: &str) -> Result<()> {
         if let Some(id) = self.text {
-            cx.tree.set_text(id, text)?;
+            cx.tree.set_text(id, t(text))?;
         }
         Ok(())
     }
 
     fn set_status(&self, cx: &mut Context<'_>, text: &str) -> Result<()> {
+        let translated = t(text);
         if let Some(id) = self.status {
-            cx.tree.set_text(id, text)?;
+            cx.tree.set_text(id, translated)?;
         }
+        cx.status = Some(translated.to_owned());
         Ok(())
     }
 
@@ -6586,44 +6694,44 @@ impl Stashes {
         let status = {
             let mut state = self.workspace.lock();
             let Some(selected) = state.selected.as_ref() else {
-                cx.status = Some("Сначала выберите сейв.".to_owned());
+                cx.status = Some(t("Сначала выберите сейв.").to_owned());
                 return Ok(());
             };
             let SaveData::Stalker2 { save, stash_items, .. } = &selected.data else {
-                cx.status = Some("Перенос тайника поддерживается только для S2.".to_owned());
+                cx.status = Some(t("Перенос тайника поддерживается только для S2.").to_owned());
                 return Ok(());
             };
             if !S2_STASH_MOVE_ENABLED {
-                cx.status = Some("Перенос из тайника S2 отключён до проверки сохранения в игре.".to_owned());
+                cx.status = Some(t("Перенос из тайника S2 отключён до проверки сохранения в игре.").to_owned());
                 return Ok(());
             }
             if save.index().is_legacy() || !save.unresolved_handles().is_empty() {
-                cx.status = Some("Перенос недоступен для этого S2-сейва.".to_owned());
+                cx.status = Some(t("Перенос недоступен для этого S2-сейва.").to_owned());
                 return Ok(());
             }
             if !state.pending_stash_moves.is_empty() && !state.pending_stash_moves.contains(&handle) {
                 cx.status =
-                    Some("За один раз можно перенести только один предмет. Отмените предыдущий перенос.".to_owned());
+                    Some(t("За один раз можно перенести только один предмет. Отмените предыдущий перенос.").to_owned());
                 return Ok(());
             }
             let Some(items) = stash_items.as_ref().and_then(|items| items.as_ref().ok()) else {
-                cx.status = Some("Содержимое тайника не подтверждено индексом.".to_owned());
+                cx.status = Some(t("Содержимое тайника не подтверждено индексом.").to_owned());
                 return Ok(());
             };
             let Some(item) = items.iter().find(|item| item.handle == handle) else {
-                cx.status = Some("Предмет больше не найден в выбранном сейве.".to_owned());
+                cx.status = Some(t("Предмет больше не найден в выбранном сейве.").to_owned());
                 return Ok(());
             };
             let name = item
                 .display_name
                 .as_deref()
-                .map(str::to_owned)
-                .unwrap_or_else(|| format!("предмет 0x{:08X}", item.handle));
+                .map(|name| t(name).to_owned())
+                .unwrap_or_else(|| tr("предмет 0x{0}", &[&format!("{:08X}", item.handle)]));
             if state.pending_stash_moves.remove(&handle) {
-                format!("Перенос {name} отменён.")
+                tr("Перенос {0} отменён.", &[&name])
             } else {
                 state.pending_stash_moves.insert(handle);
-                format!("{name} будет перенесён в рюкзак при сохранении.")
+                tr("{0} будет перенесён в рюкзак при сохранении.", &[&name])
             }
         };
         let (source_sha256, pending_moves) = {
@@ -6663,7 +6771,7 @@ impl Screen for Stashes {
     }
 
     fn subtitle(&self) -> &str {
-        "Подтверждённые тайники и их предметы"
+        t("Подтверждённые тайники и их предметы")
     }
 
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
@@ -6810,41 +6918,47 @@ impl Transitions {
         let destinations = match save.level_changer_destinations() {
             Ok(destinations) => destinations,
             Err(error) => {
-                self.set_text(cx, &format!("Не удалось проверить переходы: {error}"))?;
+                self.set_text(cx, &tr("Не удалось проверить переходы: {0}", &[&error]))?;
                 return Ok(());
             }
         };
         let can_relocate = xray_change_supported(save, writer::ChangeKind::RelocateActor)
             && !self.workspace.is_saving()
             && !self.workspace.is_restoring();
+        let destination_count = destinations.len();
+        let availability = t(if can_relocate {
+            "Выберите точку назначения; изменение попадёт в черновик и запишется с бэкапом после нажатия «Сохранить» в «Инвентаре»."
+        } else {
+            "Перенос персонажа не поддерживается этим форматом или временно занят."
+        });
         self.set_text(
             cx,
-            &format!(
-                "{} подтверждённых переходов. {}",
-                destinations.len(),
-                if can_relocate {
-                    "Выберите точку назначения; изменение попадёт в черновик и запишется с бэкапом после нажатия «Сохранить» в «Инвентаре»."
-                } else {
-                    "Перенос персонажа не поддерживается этим форматом или временно занят."
-                }
+            &tr(
+                "{0} подтверждённых переходов. {1}",
+                &[&destination_count, &availability],
             ),
         )?;
         for (row, (handle, destination)) in self.rows.iter_mut().zip(destinations.iter()) {
             let position = destination.dest_position.map_or_else(
-                || "позиция неизвестна".to_owned(),
+                || t("позиция неизвестна").to_owned(),
                 |point| format!("x {:.1}, y {:.1}, z {:.1}", point.x, point.y, point.z),
             );
+            let staged_suffix = t(if pending == Some(*handle) {
+                " · в черновике"
+            } else {
+                ""
+            });
             cx.tree.set_text(
                 row.label,
-                &format!(
-                    "{} → {} · {position} · id 0x{handle:04X}{}",
-                    destination.dest_level_name,
-                    destination.dest_level_point_name,
-                    if pending == Some(*handle) {
-                        " · в черновике"
-                    } else {
-                        ""
-                    }
+                &tr(
+                    "{0} → {1} · {2} · id 0x{3}{4}",
+                    &[
+                        &t(&destination.dest_level_name),
+                        &t(&destination.dest_level_point_name),
+                        &position,
+                        &format!("{handle:04X}"),
+                        &staged_suffix,
+                    ],
                 ),
             )?;
             cx.tree.set_visible(row.row, true)?;
@@ -6860,9 +6974,9 @@ impl Transitions {
                 if let Some(id) = self.confirmation {
                     cx.tree.set_text(
                         id,
-                        &format!(
-                            "Подтвердить перенос в {} → {}? Затем отдельно нажмите «Сохранить» в «Инвентаре».",
-                            destination.dest_level_name, destination.dest_level_point_name
+                        &tr(
+                            "Подтвердить перенос в {0} → {1}? Затем отдельно нажмите «Сохранить» в «Инвентаре».",
+                            &[&t(&destination.dest_level_name), &t(&destination.dest_level_point_name)],
                         ),
                     )?;
                     cx.tree.set_visible(id, true)?;
@@ -6883,13 +6997,13 @@ impl Transitions {
         self.set_status(
             cx,
             &if !xray_change_supported(save, writer::ChangeKind::RelocateActor) {
-                "Перенос персонажа не поддерживается данным форматом.".to_owned()
+                t("Перенос персонажа не поддерживается данным форматом.").to_owned()
             } else if self.workspace.is_saving() || self.workspace.is_restoring() {
-                "Перенос временно недоступен во время записи или восстановления.".to_owned()
+                t("Перенос временно недоступен во время записи или восстановления.").to_owned()
             } else {
                 pending.map_or_else(
-                    || "Персонаж не перемещён. Выберите подтверждённый переход.".to_owned(),
-                    |handle| format!("Перенос 0x{handle:04X} находится в черновике."),
+                    || t("Персонаж не перемещён. Выберите подтверждённый переход.").to_owned(),
+                    |handle| tr("Перенос 0x{0} находится в черновике.", &[&format!("{handle:04X}")]),
                 )
             },
         )?;
@@ -6898,21 +7012,23 @@ impl Transitions {
 
     fn set_text(&self, cx: &mut Context<'_>, text: &str) -> Result<()> {
         if let Some(id) = self.text {
-            cx.tree.set_text(id, text)?;
+            cx.tree.set_text(id, t(text))?;
         }
         Ok(())
     }
 
     fn set_status(&self, cx: &mut Context<'_>, text: &str) -> Result<()> {
+        let translated = t(text);
         if let Some(id) = self.status {
-            cx.tree.set_text(id, text)?;
+            cx.tree.set_text(id, translated)?;
         }
+        cx.status = Some(translated.to_owned());
         Ok(())
     }
 
     fn confirm_relocation(&mut self, cx: &mut Context<'_>) -> Result<()> {
         if self.workspace.is_saving() || self.workspace.is_restoring() {
-            cx.status = Some("Перенос недоступен во время записи или восстановления.".to_owned());
+            cx.status = Some(t("Перенос недоступен во время записи или восстановления.").to_owned());
             return Ok(());
         }
         let Some(handle) = self.pending_confirmation else {
@@ -6927,7 +7043,7 @@ impl Transitions {
                 return Ok(());
             };
             if !xray_change_supported(save, writer::ChangeKind::RelocateActor) {
-                cx.status = Some("Перенос персонажа не поддерживается данным форматом.".to_owned());
+                cx.status = Some(t("Перенос персонажа не поддерживается данным форматом.").to_owned());
                 self.pending_confirmation = None;
                 self.set_status(cx, "Перенос персонажа не поддерживается данным форматом.")?;
                 for id in [self.confirmation, self.confirmation_actions, self.confirm, self.cancel]
@@ -6949,7 +7065,7 @@ impl Transitions {
             return Ok(());
         };
         if !destination_is_valid {
-            cx.status = Some("Выбранный переход больше не подтверждается сейвом.".to_owned());
+            cx.status = Some(t("Выбранный переход больше не подтверждается сейвом.").to_owned());
             self.pending_confirmation = None;
             return self.render(cx);
         }
@@ -6968,7 +7084,10 @@ impl Transitions {
         set_workspace_draft(&self.workspace, &journal);
         self.workspace.persist_draft(journal, cx);
         self.pending_confirmation = None;
-        cx.status = Some(format!("Перенос 0x{handle:04X} подтверждён и добавлен в черновик."));
+        cx.status = Some(tr(
+            "Перенос 0x{0} подтверждён и добавлен в черновик.",
+            &[&format!("{handle:04X}")],
+        ));
         self.render(cx)
     }
 }
@@ -6979,7 +7098,7 @@ impl Screen for Transitions {
     }
 
     fn subtitle(&self) -> &str {
-        "Переходы из индексированных объектов level_changer"
+        t("Переходы из индексированных объектов level_changer")
     }
 
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
@@ -7077,6 +7196,18 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
+
+    #[test]
+    fn named_translation_arguments_preserve_translated_placeholder_positions() {
+        assert_eq!(
+            super::tr_named_in(
+                "en",
+                "Не удалось открыть «{name}»: {error}",
+                &[("name", &"slot.sav"), ("error", &"permission denied")],
+            ),
+            "Could not open “slot.sav”: permission denied"
+        );
+    }
     use std::time::UNIX_EPOCH;
 
     static NEXT_TEMP_DIRECTORY: AtomicU64 = AtomicU64::new(1);
@@ -8497,6 +8628,68 @@ mod tests {
     }
 
     #[test]
+    fn money_increment_reports_invalid_input_instead_of_silent_noop() -> sse_core::Result<()> {
+        let temp = TempDirectory::new();
+        let source = include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-source.sav");
+        let loaded = load_xray(source, "fixture.sav", "stalker-cop", "cop")?;
+        let source_sha256 = loaded.source_sha256.clone();
+        let workspace = Workspace::with_draft_directory(temp.0.join("drafts"));
+        workspace.lock().selected = Some(Arc::new(loaded));
+        let mut app = sse_app::state::AppState::new();
+        app.set_current_save_identity(PathBuf::from("fixture.sav"), source_sha256.clone());
+        app.set_draft_journal(DraftJournal::new(vec![DraftPlan::empty(&source_sha256)?], 0)?);
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let mut inventory = Inventory::new(workspace);
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: None,
+            status: None,
+            app: &mut app,
+        };
+        inventory.build(&mut cx, host)?;
+        let button = inventory
+            .money_buttons
+            .first()
+            .map(|(id, _)| *id)
+            .ok_or_else(|| Error::damaged("money increment button is missing"))?;
+
+        for invalid in ["x", "2000000001"] {
+            inventory.money_input = Some(super::TextInput::new(invalid, super::money_input_config())?);
+            cx.app.set_invalid_numeric_input(false);
+            cx.status = None;
+
+            inventory.message(
+                &mut cx,
+                &Message::Window(WindowEvent::Button {
+                    button: 1,
+                    pressed: false,
+                    x: 0,
+                    y: 0,
+                }),
+                Some(button),
+            )?;
+
+            assert_eq!(
+                cx.status.as_deref(),
+                Some(super::t("Введены некорректные значения (проверьте введённые числа)."))
+            );
+            assert!(cx.app.has_invalid_numeric_input());
+            assert_eq!(
+                inventory.money_input.as_ref().map(super::TextInput::text).as_deref(),
+                Some(invalid)
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn inventory_category_filters_cover_reference_groups() {
         assert_eq!(super::xray_inventory_category("Оружие", "wpn_ak74"), "ОРУЖИЕ");
         assert_eq!(
@@ -8581,5 +8774,16 @@ mod tests {
             ]
         );
         assert!(super::detail_pairs("").is_empty());
+    }
+
+    #[test]
+    fn overview_header_uses_values_without_assuming_localized_field_names() {
+        let pairs =
+            super::detail_pairs("Game: Shadow of Chernobyl\nFile name: quicksave.sav\nPath: browser:/quicksave.sav");
+
+        assert_eq!(
+            super::info_header_values(&pairs),
+            ("Shadow of Chernobyl", "quicksave.sav", "browser:/quicksave.sav")
+        );
     }
 }
