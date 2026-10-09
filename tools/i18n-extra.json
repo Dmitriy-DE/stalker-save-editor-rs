@@ -644,5 +644,22 @@
     "ko": "{0}–{1} / {2}",
     "zh-CN": "{0}–{1} / {2}",
     "zh-TW": "{0}–{1} / {2}"
+  },
+  "Место": {
+    "ru": "Место",
+    "uk": "Місце",
+    "en": "Place",
+    "de": "Platz",
+    "fr": "Emplacement",
+    "it": "Posizione",
+    "es": "Lugar",
+    "pl": "Miejsce",
+    "cs": "Místo",
+    "pt-BR": "Local",
+    "tr": "Yer",
+    "ja": "場所",
+    "ko": "위치",
+    "zh-CN": "位置",
+    "zh-TW": "位置"
   }
 }
