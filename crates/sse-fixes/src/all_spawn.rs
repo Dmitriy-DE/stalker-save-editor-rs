@@ -336,7 +336,7 @@ fn patrol_point(data: &[u8], edit: &SpawnEditOperation) -> Result<Splice> {
         ));
     }
 
-    let mut new_bytes: Vec<u8> = new_name.chars().map(|c| u8::try_from(c).unwrap_or(b'?')).collect();
+    let mut new_bytes = encode_spawn_text(new_name)?;
     new_bytes.push(0);
     new_bytes.extend_from_slice(&tail);
 
@@ -350,6 +350,18 @@ fn patrol_point(data: &[u8], edit: &SpawnEditOperation) -> Result<Splice> {
         bytes: new_bytes,
         sizes,
     })
+}
+
+/// Encodes a spawn text field as Latin-1 bytes.
+///
+/// Characters outside Latin-1 are refused, never replaced, so a name cannot be silently changed in `all.spawn`.
+fn encode_spawn_text(text: &str) -> Result<Vec<u8>> {
+    text.chars()
+        .map(|c| {
+            u8::try_from(c)
+                .map_err(|_| Error::Refused(format!("Character '{c}' cannot be written to all.spawn (Latin-1 only)")))
+        })
+        .collect()
 }
 
 fn custom_data(data: &[u8], edit: &SpawnEditOperation) -> Result<Splice> {
@@ -397,7 +409,7 @@ fn custom_data(data: &[u8], edit: &SpawnEditOperation) -> Result<Splice> {
                 )));
             }
 
-            let new_bytes: Vec<u8> = replacement.chars().map(|c| u8::try_from(c).unwrap_or(b'?')).collect();
+            let new_bytes = encode_spawn_text(replacement)?;
             found = Some(Splice {
                 start,
                 length,

@@ -507,3 +507,49 @@ fn install_audit_classifies_and_cleans_up_orphaned_files() {
     assert_eq!(post_audit.custom_mod_count, 1);
     assert!(post_audit.is_clean());
 }
+
+#[test]
+fn user_ltx_refuses_non_finite_float_values() {
+    let fixture = ToolkitTestFixture::new(GameTarget::ClearSky, "11450472");
+    fixture.write_file("_appdata_/user.ltx", b"g_fov 70.0\r\n");
+
+    for bad in ["NaN", "nan", "inf", "-inf"] {
+        let mut updates = BTreeMap::new();
+        updates.insert("g_fov".to_string(), bad.to_string());
+        assert!(
+            ManagedUserLtxSettings::update_managed_settings(&fixture.root, &updates).is_err(),
+            "value {bad} must be refused"
+        );
+    }
+    assert_eq!(
+        fs::read(fixture.root.join("_appdata_/user.ltx")).unwrap(),
+        b"g_fov 70.0\r\n"
+    );
+}
+
+#[test]
+fn user_ltx_refuses_to_rewrite_file_when_text_is_not_cp1251() {
+    let fixture = ToolkitTestFixture::new(GameTarget::ClearSky, "11450472");
+    let original = "; note \u{1F600}\r\ng_fov 70.0\r\n";
+    fixture.write_file("_appdata_/user.ltx", original.as_bytes());
+
+    let mut updates = BTreeMap::new();
+    updates.insert("g_fov".to_string(), "80.0".to_string());
+    assert!(ManagedUserLtxSettings::update_managed_settings(&fixture.root, &updates).is_err());
+    assert_eq!(
+        fs::read(fixture.root.join("_appdata_/user.ltx")).unwrap(),
+        original.as_bytes()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn install_audit_does_not_follow_symlink_cycles_in_gamedata() {
+    let fixture = ToolkitTestFixture::new(GameTarget::ClearSky, "11450472");
+    let engine = GameFixEngine::with_synthetic(true);
+    fixture.write_file("gamedata/scripts/custom_mod.script", b"custom mod logic");
+    std::os::unix::fs::symlink("..", fixture.root.join("gamedata/scripts/loop")).unwrap();
+
+    let audit = ToolkitInstallAudit::audit_installation(&fixture.root, GameTarget::ClearSky, &engine).unwrap();
+    assert_eq!(audit.custom_mod_count, 1);
+}
