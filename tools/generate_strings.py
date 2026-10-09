@@ -99,6 +99,23 @@ pub fn t_in<'a>(language: &str, key: &'a str) -> &'a str {
         Err(_) => key,
     }
 }
+/// Translates a key and formats positional placeholders without loading runtime JSON catalogs.
+#[must_use]
+pub fn tr_in(code: Option<&str>, key: &str, args: &[&dyn std::fmt::Display]) -> String {
+    let pattern = t_in(code.unwrap_or("ru"), key);
+    let mut result = pattern.to_owned();
+    for (index, arg) in args.iter().enumerate() {
+        let value = arg.to_string();
+        result = result.replace(&format!("{{{index}}}"), &value);
+        let prefix = format!("{{{index}:");
+        while let Some(start) = result.find(&prefix) {
+            let Some(end_offset) = result.get(start..).and_then(|text| text.find('}')) else { break };
+            let end = start.saturating_add(end_offset);
+            result.replace_range(start..=end, &value);
+        }
+    }
+    result
+}
 type Row = (&'static str, [&'static str; 15]);
 static STRINGS: &[Row] = &[
 """
@@ -120,6 +137,47 @@ mod tests {
     #[test]
     fn russian_is_source() {
         for (key, values) in STRINGS { assert_eq!(values.first().copied(), Some(*key)); }
+    }
+    #[test]
+    fn translated_placeholders_are_formatted() {
+        assert_eq!(
+            tr_in(Some("en"), "Настройки не сохранены: {0}", &[&"bad input"]),
+            "Settings not saved: bad input"
+        );
+        assert_eq!(tr_in(Some("en"), "Unknown {0}", &[&"value"]), "Unknown value");
+    }
+    #[test]
+    fn translated_placeholders_with_format_specifiers_are_formatted() {
+        assert_eq!(tr_in(Some("en"), "Value {0:X4}", &[&17]), "Value 17");
+    }
+    #[test]
+    fn shell_translations_match_runtime_catalogs_for_all_languages() {
+        let catalogs = sse_catalog::I18nService::new();
+        let detail = "settings.json is unchanged: invalid path";
+        let detail_args: [&dyn std::fmt::Display; 1] = [&detail];
+        let count = 3_usize;
+        let count_args: [&dyn std::fmt::Display; 1] = [&count];
+        for language in LANGUAGES {
+            for key in [
+                "Выберите сохранение для редактирования.",
+                "Нет несохранённых изменений.",
+                "Отправлять анонимные отчёты об ошибках?",
+            ] {
+                assert_eq!(tr_in(Some(language), key, &[]), catalogs.tr_in(Some(language), key, &[]));
+            }
+            let warning = "Настройки не сохранены: {0}";
+            assert_eq!(
+                tr_in(Some(language), warning, &detail_args),
+                catalogs.tr_in(Some(language), warning, &detail_args),
+                "settings warning in {language}"
+            );
+            let draft = "Черновик: {0} действ.";
+            assert_eq!(
+                tr_in(Some(language), draft, &count_args),
+                catalogs.tr_in(Some(language), draft, &count_args),
+                "draft badge in {language}"
+            );
+        }
     }
 }
 """

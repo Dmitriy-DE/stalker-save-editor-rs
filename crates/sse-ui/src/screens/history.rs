@@ -29,10 +29,16 @@ pub fn screens() -> Vec<Box<dyn Screen>> {
 
 pub(crate) fn screens_with_workspace(workspace: Workspace) -> Vec<Box<dyn Screen>> {
     [
-        (ScreenId::Backups, "Резервные копии и восстановление"),
-        (ScreenId::Compare, "Сравнение двух сохранений"),
-        (ScreenId::Timeline, "История экспортов и резервных копий"),
-        (ScreenId::SaveDoctor, "Проверка структуры и целостности"),
+        (ScreenId::Backups, crate::strings::t("Резервные копии и восстановление")),
+        (ScreenId::Compare, crate::strings::t("Сравнение двух сохранений")),
+        (
+            ScreenId::Timeline,
+            crate::strings::t("История экспортов и резервных копий"),
+        ),
+        (
+            ScreenId::SaveDoctor,
+            crate::strings::t("Проверка структуры и целостности"),
+        ),
     ]
     .into_iter()
     .map(|(id, subtitle)| Box::new(HistoryScreen::new(id, subtitle, workspace.clone())) as Box<dyn Screen>)
@@ -273,7 +279,7 @@ impl HistoryScreen {
             self.diagnosed_selection = None;
             self.diagnosis_running = false;
             self.clear_results(tree)?;
-            self.set_summary(tree, "Путь изменён. Нажмите «ПРОВЕРИТЬ СОХРАНЕНИЕ».")?;
+            self.set_summary(tree, crate::strings::t("Путь изменён. Нажмите «ПРОВЕРИТЬ СОХРАНЕНИЕ»."))?;
         }
         tree.set_input_text(widget, value)?;
         if let Some(check) = self.doctor_check {
@@ -336,7 +342,10 @@ impl HistoryScreen {
             self.diagnosed_selection = None;
             self.diagnosis_running = false;
             self.clear_results(cx.tree)?;
-            self.set_summary(cx.tree, "Путь изменён. Нажмите «ПРОВЕРИТЬ СОХРАНЕНИЕ».")?;
+            self.set_summary(
+                cx.tree,
+                crate::strings::t("Путь изменён. Нажмите «ПРОВЕРИТЬ СОХРАНЕНИЕ»."),
+            )?;
             self.sync_doctor_check(cx.tree)?;
         }
         Ok(())
@@ -345,14 +354,16 @@ impl HistoryScreen {
     fn check_doctor_path(&mut self, cx: &mut Context<'_>) -> Result<()> {
         let value = self.doctor_path.as_ref().map_or_else(String::new, TextInput::text);
         let Some(path) = manual_save_path(&value) else {
-            self.set_summary(cx.tree, "Укажите путь к файлу сохранения.")?;
+            self.set_summary(cx.tree, crate::strings::t("Укажите путь к файлу сохранения."))?;
             self.sync_doctor_check(cx.tree)?;
             return Ok(());
         };
         if self.diagnosis_running {
             return Ok(());
         }
-        self.set_summary(cx.tree, &format!("Проверяю {}…", display_name(&path)))?;
+        let file = display_name(&path);
+        let summary = crate::strings::tr_in(Some(crate::strings::current_language()), "Проверяю {0}…", &[&file]);
+        self.set_summary(cx.tree, &summary)?;
         if self.start_diagnosis(path, None, cx.proxy.cloned())? {
             self.diagnosis_running = true;
             self.sync_doctor_check(cx.tree)?;
@@ -446,7 +457,7 @@ impl HistoryScreen {
         let id = self.id;
         self.workspace.spawn("quest-repair", move |context| {
             let result = if context.is_cancelled() {
-                Err("Операция ремонта отменена.".to_owned())
+                Err(crate::strings::t("Операция ремонта отменена.").to_owned())
             } else {
                 repair_quest_save(&path, &expected_sha256, &backup_directory).map(
                     |(backup_path, maintenance_warning)| {
@@ -515,7 +526,7 @@ impl HistoryScreen {
             return Ok(false);
         };
         let Some(request_id) = self.next_process_check_id.checked_add(1) else {
-            self.set_summary(cx.tree, "Исчерпан номер проверки запущенной игры.")?;
+            self.set_summary(cx.tree, crate::strings::t("Исчерпан номер проверки запущенной игры."))?;
             return Ok(false);
         };
         self.next_process_check_id = request_id;
@@ -530,7 +541,7 @@ impl HistoryScreen {
                 self.pending_guarded_operation.as_ref().map(|(_, operation)| operation),
                 Some(GuardedHistoryOperation::QuestRepair { .. })
             ) {
-                cx.tree.set_text(title, "ПРОВЕРКА ЗАПУЩЕННОЙ ИГРЫ")?;
+                cx.tree.set_text(title, crate::strings::t("ПРОВЕРКА ЗАПУЩЕННОЙ ИГРЫ"))?;
             }
         }
         if let (Some(dialog), Some(description), Some(continue_button)) = (
@@ -538,15 +549,17 @@ impl HistoryScreen {
             self.restore_description,
             self.confirm_restore,
         ) {
-            cx.tree
-                .set_text(description, "Проверяю, запущена ли игра для выбранного сейва…")?;
-            cx.tree.set_text(continue_button, "Проверка…")?;
+            cx.tree.set_text(
+                description,
+                crate::strings::t("Проверяю, запущена ли игра для выбранного сейва…"),
+            )?;
+            cx.tree.set_text(continue_button, crate::strings::t("Проверка…"))?;
             cx.tree.set_enabled(continue_button, false)?;
             if cx.tree.dialog() != Some(dialog) {
                 cx.tree.open_dialog(dialog)?;
             }
         }
-        self.set_summary(cx.tree, "Проверяю запущенную игру…")?;
+        self.set_summary(cx.tree, crate::strings::t("Проверяю запущенную игру…"))?;
         let id = self.id;
         if let Err(error) = self.workspace.spawn("save-process-check", move |context| {
             let result = if context.is_cancelled() {
@@ -567,7 +580,12 @@ impl HistoryScreen {
             self.pending_guarded_operation = None;
             self.process_check_complete = false;
             let _ = cx.tree.close_dialog()?;
-            self.set_summary(cx.tree, &format!("Не удалось начать проверку запущенной игры: {error}"))?;
+            let summary = crate::strings::tr_in(
+                Some(crate::strings::current_language()),
+                "Не удалось начать проверку запущенной игры: {0}",
+                &[&error],
+            );
+            self.set_summary(cx.tree, &summary)?;
             return Ok(false);
         }
         Ok(true)
@@ -607,16 +625,16 @@ impl HistoryScreen {
                 description,
                 match mode {
                     RestoreMode::Copy => {
-                        "Создать отдельный файл из проверенной копии? Исходный сейв останется без изменений."
+                        crate::strings::t("Создать отдельный файл из проверенной копии? Исходный сейв останется без изменений.")
                     }
                     RestoreMode::InPlace => {
-                        "Заменить исходный сейв? Текущий файл сверяется с журналом, перед записью создаётся страховочный бэкап."
+                        crate::strings::t("Заменить исходный сейв? Текущий файл сверяется с журналом, перед записью создаётся страховочный бэкап.")
                     }
                 },
             )?;
             cx.tree.open_dialog(dialog)?;
         }
-        self.set_summary(cx.tree, "Подтвердите восстановление.")?;
+        self.set_summary(cx.tree, crate::strings::t("Подтвердите восстановление."))?;
         Ok(())
     }
 
@@ -663,20 +681,20 @@ impl HistoryScreen {
         };
         self.clear_results(cx.tree)?;
         self.update_page_controls(cx.tree, pages)?;
-        self.set_summary(
-            cx.tree,
-            &format!(
-                "Записей: {total} · восстановимо: {restorable} · страница {} из {pages}",
-                self.page.saturating_add(1)
-            ),
-        )?;
+        let current_page = self.page.saturating_add(1);
+        let summary = crate::strings::tr_in(
+            Some(crate::strings::current_language()),
+            "Записей: {0} · восстановимо: {1} · страница {2} из {3}",
+            &[&total, &restorable, &current_page, &pages],
+        );
+        self.set_summary(cx.tree, &summary)?;
         for (row_index, entry) in visible.into_iter().enumerate() {
             let file = display_name(&entry.source_path);
             let status = match entry.status {
-                BackupStatus::Verified => "проверен",
-                BackupStatus::Missing => "файл отсутствует",
-                BackupStatus::Interrupted => "прервано, копия проверена",
-                BackupStatus::Corrupt => "ошибка проверки",
+                BackupStatus::Verified => crate::strings::t("проверен"),
+                BackupStatus::Missing => crate::strings::t("файл отсутствует"),
+                BackupStatus::Interrupted => crate::strings::t("прервано, копия проверена"),
+                BackupStatus::Corrupt => crate::strings::t("ошибка проверки"),
             };
             let Some(slot) = self.rows.get(row_index).copied() else {
                 break;
@@ -689,7 +707,7 @@ impl HistoryScreen {
                 && self.id == ScreenId::Backups
             {
                 cx.tree.set_visible(slot.button, true)?;
-                cx.tree.set_text(slot.button, "В копию…")?;
+                cx.tree.set_text(slot.button, crate::strings::t("В копию…"))?;
                 self.actions.push(ActionButton {
                     widget: slot.button,
                     action: Action::Restore {
@@ -700,7 +718,8 @@ impl HistoryScreen {
                 });
                 if matches!(entry.operation_mode.as_deref(), Some("replace" | "restore")) {
                     cx.tree.set_visible(slot.secondary_button, true)?;
-                    cx.tree.set_text(slot.secondary_button, "На место…")?;
+                    cx.tree
+                        .set_text(slot.secondary_button, crate::strings::t("На место…"))?;
                     self.actions.push(ActionButton {
                         widget: slot.secondary_button,
                         action: Action::RestoreInPlace {
@@ -712,8 +731,13 @@ impl HistoryScreen {
                 }
             }
             if let Some(error) = entry.error {
-                cx.tree
-                    .set_text(slot.label, &format!("{file} · {status}: {}", truncate(&error, 80)))?;
+                let error = truncate(&error, 80);
+                let detail = crate::strings::tr_in(
+                    Some(crate::strings::current_language()),
+                    "{0} · {1}: {2}",
+                    &[&file, &status, &error],
+                );
+                cx.tree.set_text(slot.label, &detail)?;
             }
         }
         Ok(())
@@ -774,15 +798,15 @@ impl HistoryScreen {
         self.clear_results(cx.tree)?;
         self.update_page_controls(cx.tree, pages)?;
         if self.id == ScreenId::Compare && total == 0 {
-            self.set_summary(cx.tree, "Нет других сейвов этой игры для сравнения.")?;
+            self.set_summary(cx.tree, crate::strings::t("Нет других сейвов этой игры для сравнения."))?;
         } else {
-            self.set_summary(
-                cx.tree,
-                &format!(
-                    "Найдено файлов: {total} · страница {} из {pages}",
-                    self.page.saturating_add(1),
-                ),
-            )?;
+            let current_page = self.page.saturating_add(1);
+            let summary = crate::strings::tr_in(
+                Some(crate::strings::current_language()),
+                "Найдено файлов: {0} · страница {1} из {2}",
+                &[&total, &current_page, &pages],
+            );
+            self.set_summary(cx.tree, &summary)?;
         }
         for (row_index, save_slot) in visible.into_iter().enumerate() {
             let Some(row) = self.rows.get(row_index).copied() else {
@@ -791,12 +815,15 @@ impl HistoryScreen {
             cx.tree.set_visible(row.row, true)?;
             cx.tree.set_visible(row.button, true)?;
             let filename = display_name(&save_slot.path);
-            let format = save_slot.format_id.as_deref().unwrap_or("не распознано");
+            let format = save_slot
+                .format_id
+                .as_deref()
+                .unwrap_or(crate::strings::t("не распознано"));
             cx.tree.set_text(row.label, &format!("{filename} · {format}"))?;
             let button_text = if self.id == ScreenId::Compare {
-                "Выбрать"
+                crate::strings::t("Выбрать")
             } else {
-                "Проверить"
+                crate::strings::t("Проверить")
             };
             if self.id == ScreenId::SaveDoctor && save_slot.format_id.is_none() {
                 cx.tree.set_visible(row.button, false)?;
@@ -855,13 +882,13 @@ impl HistoryScreen {
             .collect::<Vec<_>>();
         self.clear_results(cx.tree)?;
         self.update_page_controls(cx.tree, pages)?;
-        self.set_summary(
-            cx.tree,
-            &format!(
-                "Сохранений: {total} · порядок: игра, от старых к новым · страница {} из {pages}",
-                self.page.saturating_add(1)
-            ),
-        )?;
+        let current_page = self.page.saturating_add(1);
+        let summary = crate::strings::tr_in(
+            Some(crate::strings::current_language()),
+            "Сохранений: {0} · порядок: игра, от старых к новым · страница {1} из {2}",
+            &[&total, &current_page, &pages],
+        );
+        self.set_summary(cx.tree, &summary)?;
         for (row_index, save) in visible.into_iter().enumerate() {
             let Some(row) = self.rows.get(row_index).copied() else {
                 break;
@@ -871,11 +898,15 @@ impl HistoryScreen {
             let game = save.game_id.as_deref().unwrap_or(&save.candidate_game_id);
             cx.tree.set_text(
                 row.label,
-                &format!(
-                    "{game} · {} · {} · {} байт",
-                    display_name(&save.path),
-                    format_system_time(save.last_write_time_utc),
-                    save.size
+                &crate::strings::tr_in(
+                    Some(crate::strings::current_language()),
+                    "{0} · {1} · {2} · {3} байт",
+                    &[
+                        &game,
+                        &display_name(&save.path),
+                        &format_system_time(save.last_write_time_utc),
+                        &save.size,
+                    ],
                 ),
             )?;
         }
@@ -886,22 +917,20 @@ impl HistoryScreen {
         self.clear_results(cx.tree)?;
         self.update_page_controls(cx.tree, 0)?;
         let count = report.differences.len();
-        self.set_summary(
-            cx.tree,
-            &format!(
-                "Различий: {count} · добавлено: {} · удалено: {} · изменено: {} · {} → {}",
-                report.added,
-                report.removed,
-                report.changed,
-                display_name(&report.first),
-                display_name(&report.second)
-            ),
-        )?;
+        let first = display_name(&report.first);
+        let second = display_name(&report.second);
+        let summary = crate::strings::tr_in(
+            Some(crate::strings::current_language()),
+            "Различий: {0} · добавлено: {1} · удалено: {2} · изменено: {3} · {4} → {5}",
+            &[&count, &report.added, &report.removed, &report.changed, &first, &second],
+        );
+        self.set_summary(cx.tree, &summary)?;
         if count == 0 {
             if let Some(row) = self.rows.first().copied() {
                 cx.tree.set_visible(row.row, true)?;
                 cx.tree.set_visible(row.button, false)?;
-                cx.tree.set_text(row.label, "Различий в деньгах и предметах нет.")?;
+                cx.tree
+                    .set_text(row.label, crate::strings::t("Различий в деньгах и предметах нет."))?;
             }
         }
         for (row_index, difference) in report.differences.iter().take(MAXIMUM_VISIBLE_ENTRIES).enumerate() {
@@ -910,24 +939,30 @@ impl HistoryScreen {
             };
             cx.tree.set_visible(row.row, true)?;
             cx.tree.set_visible(row.button, false)?;
+            let kind = crate::strings::t(difference_kind_text(difference.kind));
+            let label = crate::strings::t(&difference.label);
+            let category = crate::strings::t(difference.category);
+            let language = crate::strings::current_language();
+            let value_a = localized_comparison_value(&difference.value_a, language);
+            let value_b = localized_comparison_value(&difference.value_b, language);
             cx.tree.set_text(
                 row.label,
-                &format!(
-                    "{} · {} · {} → {} · {}",
-                    difference_kind_text(difference.kind),
-                    difference.label,
-                    difference.value_a,
-                    difference.value_b,
-                    difference.category
-                ),
+                &format!("{} · {} · {} → {} · {}", kind, label, value_a, value_b, category),
             )?;
         }
         if count > MAXIMUM_VISIBLE_ENTRIES {
             self.set_summary(
                 cx.tree,
-                &format!(
-                    "Различий: {count} · добавлено: {} · удалено: {} · изменено: {} · показаны первые {}",
-                    report.added, report.removed, report.changed, MAXIMUM_VISIBLE_ENTRIES
+                &crate::strings::tr_in(
+                    Some(crate::strings::current_language()),
+                    "Различий: {0} · добавлено: {1} · удалено: {2} · изменено: {3} · показаны первые {4}",
+                    &[
+                        &count,
+                        &report.added,
+                        &report.removed,
+                        &report.changed,
+                        &MAXIMUM_VISIBLE_ENTRIES,
+                    ],
                 ),
             )?;
         }
@@ -950,7 +985,7 @@ impl HistoryScreen {
             cx.tree.set_visible(row.button, false)?;
             cx.tree.set_visible(row.secondary_button, false)?;
             if report.can_repair_quests && !repair_button_added && state.status == sse_doctor::QuestTaskStatus::Broken {
-                cx.tree.set_text(row.button, "ИСПРАВИТЬ КВЕСТЫ")?;
+                cx.tree.set_text(row.button, crate::strings::t("ИСПРАВИТЬ КВЕСТЫ"))?;
                 cx.tree.set_visible(row.button, true)?;
                 self.actions.push(ActionButton {
                     widget: row.button,
@@ -966,7 +1001,8 @@ impl HistoryScreen {
             if state.status == sse_doctor::QuestTaskStatus::Broken && state.needs_preventing_fix {
                 if let Some(fix_id) = state.preventing_fix_id {
                     if let Some(definition) = sse_fixes::GameFixCatalog::try_get(fix_id) {
-                        cx.tree.set_text(row.secondary_button, "УСТАНОВИТЬ ИСПРАВЛЕНИЕ ИГРЫ")?;
+                        cx.tree
+                            .set_text(row.secondary_button, crate::strings::t("УСТАНОВИТЬ ИСПРАВЛЕНИЕ ИГРЫ"))?;
                         cx.tree.set_visible(row.secondary_button, true)?;
                         self.actions.push(ActionButton {
                             widget: row.secondary_button,
@@ -984,7 +1020,7 @@ impl HistoryScreen {
 
     fn render_diagnosis_error(&mut self, tree: &mut crate::widget::Tree, error: &str) -> Result<()> {
         self.clear_results(tree)?;
-        self.set_summary(tree, "Ошибка")?;
+        self.set_summary(tree, crate::strings::t("Ошибка"))?;
         if let Some(row) = self.rows.first().copied() {
             tree.set_visible(row.row, true)?;
             tree.set_text(row.label, &doctor_error_detail(error))?;
@@ -1008,18 +1044,28 @@ impl HistoryScreen {
         let mut status = match report {
             Ok(report) => {
                 self.render_diagnosis(cx, &path, report)?;
-                format!("КВЕСТЫ ИСПРАВЛЕНЫ. Backup: {backup_name}")
+                crate::strings::tr_in(
+                    Some(crate::strings::current_language()),
+                    "КВЕСТЫ ИСПРАВЛЕНЫ. Резервная копия: {0}",
+                    &[&backup_name],
+                )
             }
             Err(error) => {
                 self.clear_results(cx.tree)?;
-                format!(
-                    "КВЕСТЫ ИСПРАВЛЕНЫ. Backup: {backup_name} · повторная проверка: {}",
-                    truncate(&error, 120)
+                let error = truncate(&error, 120);
+                crate::strings::tr_in(
+                    Some(crate::strings::current_language()),
+                    "КВЕСТЫ ИСПРАВЛЕНЫ. Резервная копия: {0} · повторная проверка: {1}",
+                    &[&backup_name, &error],
                 )
             }
         };
         if let Some(warning) = maintenance_warning {
-            status.push_str(&format!(" · ротация старых копий не завершена: {warning}"));
+            status.push_str(&crate::strings::tr_in(
+                Some(crate::strings::current_language()),
+                " · ротация старых копий не завершена: {0}",
+                &[&warning],
+            ));
         }
         self.set_summary(cx.tree, &status)?;
         Ok(())
@@ -1055,7 +1101,10 @@ impl Screen for HistoryScreen {
                 if let Some((path, source_sha256)) = selected {
                     let format_id = cx.app.current_save_format().map(str::to_owned);
                     self.set_doctor_path(cx.tree, &path.to_string_lossy())?;
-                    self.set_summary(cx.tree, &format!("Проверяю {}…", display_name(&path)))?;
+                    let file = display_name(&path);
+                    let summary =
+                        crate::strings::tr_in(Some(crate::strings::current_language()), "Проверяю {0}…", &[&file]);
+                    self.set_summary(cx.tree, &summary)?;
                     if self.start_diagnosis(path.clone(), format_id, cx.proxy.cloned())? {
                         self.diagnosed_selection = Some((path, source_sha256));
                     }
@@ -1065,7 +1114,7 @@ impl Screen for HistoryScreen {
                     self.diagnosed_selection = None;
                     self.diagnosis_running = false;
                     self.clear_results(cx.tree)?;
-                    self.set_summary(cx.tree, "ВЫБЕРИТЕ ФАЙЛ СОХРАНЕНИЯ ДЛЯ ПРОВЕРКИ.")?;
+                    self.set_summary(cx.tree, crate::strings::t("ВЫБЕРИТЕ ФАЙЛ СОХРАНЕНИЯ ДЛЯ ПРОВЕРКИ."))?;
                     self.sync_doctor_check(cx.tree)?;
                 }
             }
@@ -1076,17 +1125,17 @@ impl Screen for HistoryScreen {
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
         let card = style::card(cx.tree, host)?;
         let title = match self.id {
-            ScreenId::Backups => "БЭКАПЫ И ВОССТАНОВЛЕНИЕ",
-            ScreenId::Compare => "СРАВНЕНИЕ СОХРАНЕНИЙ",
-            ScreenId::Timeline => "ИСТОРИЯ СОХРАНЕНИЙ",
+            ScreenId::Backups => crate::strings::t("БЭКАПЫ И ВОССТАНОВЛЕНИЕ"),
+            ScreenId::Compare => crate::strings::t("СРАВНЕНИЕ СОХРАНЕНИЙ"),
+            ScreenId::Timeline => crate::strings::t("ИСТОРИЯ СОХРАНЕНИЙ"),
             ScreenId::SaveDoctor => doctor_title(),
-            _ => "ИСТОРИЯ",
+            _ => crate::strings::t("ИСТОРИЯ"),
         };
         style::label(cx.tree, card, title, Text::Heading)?;
         if self.id == ScreenId::SaveDoctor {
             style::label(cx.tree, card, doctor_description(), Text::Note)?;
             let path_row = style::row(cx.tree, card)?;
-            style::label(cx.tree, path_row, "Файл", Text::Note)?;
+            style::label(cx.tree, path_row, crate::strings::t("Файл"), Text::Note)?;
             let colors = crate::theme::current().colors;
             let path_input = cx.tree.add(
                 Some(path_row),
@@ -1134,14 +1183,24 @@ impl Screen for HistoryScreen {
         }
         let row = style::row(cx.tree, card)?;
         let action = match self.id {
-            ScreenId::Compare => "Найти сейвы",
-            ScreenId::SaveDoctor => "Список сейвов",
-            ScreenId::Timeline => "Обновить историю",
-            _ => "Обновить",
+            ScreenId::Compare => crate::strings::t("Найти сейвы"),
+            ScreenId::SaveDoctor => crate::strings::t("Список сейвов"),
+            ScreenId::Timeline => crate::strings::t("Обновить историю"),
+            _ => crate::strings::t("Обновить"),
         };
         self.refresh = Some(style::button(cx.tree, row, action, Button::Primary)?);
-        self.previous_page = Some(style::button(cx.tree, row, "Назад", Button::Secondary)?);
-        self.next_page = Some(style::button(cx.tree, row, "Дальше", Button::Secondary)?);
+        self.previous_page = Some(style::button(
+            cx.tree,
+            row,
+            crate::strings::t("Назад"),
+            Button::Secondary,
+        )?);
+        self.next_page = Some(style::button(
+            cx.tree,
+            row,
+            crate::strings::t("Дальше"),
+            Button::Secondary,
+        )?);
         if let Some(previous) = self.previous_page {
             cx.tree.set_visible(previous, false)?;
         }
@@ -1151,7 +1210,7 @@ impl Screen for HistoryScreen {
         self.summary = Some(style::label(
             cx.tree,
             row,
-            "Нажмите кнопку, чтобы прочитать локальные данные.",
+            crate::strings::t("Нажмите кнопку, чтобы прочитать локальные данные."),
             Text::Note,
         )?);
         self.results = Some(style::card(cx.tree, host)?);
@@ -1160,10 +1219,10 @@ impl Screen for HistoryScreen {
             cx.tree,
             results,
             match self.id {
-                ScreenId::Backups => "Журнал резервных копий сверяется с файлами и SHA-256; восстановление идёт в отдельный файл после подтверждения.",
-                ScreenId::Compare => "Показываются только различия в читаемых значениях денег и предметов.",
-                ScreenId::Timeline => "Временная последовательность строится по времени изменения файлов сейвов.",
-                ScreenId::SaveDoctor => "Ремонт доступен только для доказанно сломанного квеста и записывается с бэкапом и обратным чтением.",
+                ScreenId::Backups => crate::strings::t("Журнал резервных копий сверяется с файлами и SHA-256; восстановление идёт в отдельный файл после подтверждения."),
+                ScreenId::Compare => crate::strings::t("Показываются только различия в читаемых значениях денег и предметов."),
+                ScreenId::Timeline => crate::strings::t("Временная последовательность строится по времени изменения файлов сейвов."),
+                ScreenId::SaveDoctor => crate::strings::t("Ремонт доступен только для доказанно сломанного квеста и записывается с бэкапом и обратным чтением."),
                 _ => "",
             },
             Text::Note,
@@ -1171,8 +1230,8 @@ impl Screen for HistoryScreen {
         for _ in 0..MAXIMUM_VISIBLE_ENTRIES {
             let row = style::row(cx.tree, results)?;
             let label = style::label(cx.tree, row, "", Text::Body)?;
-            let button = style::button(cx.tree, row, "Действие", Button::Secondary)?;
-            let secondary_button = style::button(cx.tree, row, "Восстановить", Button::Danger)?;
+            let button = style::button(cx.tree, row, crate::strings::t("Действие"), Button::Secondary)?;
+            let secondary_button = style::button(cx.tree, row, crate::strings::t("Восстановить"), Button::Danger)?;
             cx.tree.set_visible(row, false)?;
             self.rows.push(ResultRow {
                 row,
@@ -1187,23 +1246,30 @@ impl Screen for HistoryScreen {
         self.restore_confirmation_title = Some(style::label(
             cx.tree,
             confirmation,
-            "ВОССТАНОВИТЬ РЕЗЕРВНУЮ КОПИЮ",
+            crate::strings::t("ВОССТАНОВИТЬ РЕЗЕРВНУЮ КОПИЮ"),
             Text::Heading,
         )?);
         self.restore_description = Some(style::label(
             cx.tree,
             confirmation,
-            "Подтвердите создание отдельного файла из проверенной копии. Исходный сейв останется без изменений.",
+            crate::strings::t(
+                "Подтвердите создание отдельного файла из проверенной копии. Исходный сейв останется без изменений.",
+            ),
             Text::Body,
         )?);
         let confirm_row = style::row(cx.tree, confirmation)?;
         self.confirm_restore = Some(style::button(
             cx.tree,
             confirm_row,
-            "Подтвердить восстановление",
+            crate::strings::t("Подтвердить восстановление"),
             Button::Primary,
         )?);
-        self.cancel_restore = Some(style::button(cx.tree, confirm_row, "Отмена", Button::Secondary)?);
+        self.cancel_restore = Some(style::button(
+            cx.tree,
+            confirm_row,
+            crate::strings::t("Отмена"),
+            Button::Secondary,
+        )?);
         cx.tree.set_visible(confirmation, false)?;
         Ok(())
     }
@@ -1234,11 +1300,11 @@ impl Screen for HistoryScreen {
                                 let _ = cx.tree.close_dialog()?;
                                 if !self.start_guarded_operation_write(operation, cx.proxy.cloned())? {
                                     let status = if self.workspace.is_saving() {
-                                        "Дождитесь завершения записи сейва."
+                                        crate::strings::t("Дождитесь завершения записи сейва.")
                                     } else if self.workspace.is_restoring() {
-                                        "Восстановление сейва уже выполняется."
+                                        crate::strings::t("Восстановление сейва уже выполняется.")
                                     } else {
-                                        "Не удалось начать операцию с сейвом."
+                                        crate::strings::t("Не удалось начать операцию с сейвом.")
                                     };
                                     self.set_summary(cx.tree, status)?;
                                 }
@@ -1249,7 +1315,8 @@ impl Screen for HistoryScreen {
                                     cx.tree.set_text(description, SAVE_WHILE_GAME_RUNNING_WARNING)?;
                                 }
                                 if let Some(continue_button) = self.confirm_restore {
-                                    cx.tree.set_text(continue_button, "Всё равно сохранить")?;
+                                    cx.tree
+                                        .set_text(continue_button, crate::strings::t("Всё равно сохранить"))?;
                                     cx.tree.set_enabled(continue_button, true)?;
                                 }
                                 self.set_summary(cx.tree, SAVE_WHILE_GAME_RUNNING_WARNING)?;
@@ -1258,10 +1325,12 @@ impl Screen for HistoryScreen {
                                 self.pending_guarded_operation = None;
                                 self.process_check_complete = false;
                                 let _ = cx.tree.close_dialog()?;
-                                self.set_summary(
-                                    cx.tree,
-                                    &format!("Не удалось проверить запущенную игру; операция отменена: {error}"),
-                                )?;
+                                let summary = crate::strings::tr_in(
+                                    Some(crate::strings::current_language()),
+                                    "Не удалось проверить запущенную игру; операция отменена: {0}",
+                                    &[error],
+                                );
+                                self.set_summary(cx.tree, &summary)?;
                             }
                         }
                     }
@@ -1284,7 +1353,7 @@ impl Screen for HistoryScreen {
                 if !escape {
                     let _ = cx.tree.close_dialog()?;
                 }
-                self.set_summary(cx.tree, "Операция отменена.")?;
+                self.set_summary(cx.tree, crate::strings::t("Операция отменена."))?;
                 return Ok(());
             }
             if clicked.is_some_and(|id| Some(id) == self.confirm_restore) && self.process_check_complete {
@@ -1295,11 +1364,11 @@ impl Screen for HistoryScreen {
                 let _ = cx.tree.close_dialog()?;
                 if !self.start_guarded_operation_write(operation, cx.proxy.cloned())? {
                     let status = if self.workspace.is_saving() {
-                        "Дождитесь завершения записи сейва."
+                        crate::strings::t("Дождитесь завершения записи сейва.")
                     } else if self.workspace.is_restoring() {
-                        "Восстановление сейва уже выполняется."
+                        crate::strings::t("Восстановление сейва уже выполняется.")
                     } else {
-                        "Не удалось начать операцию с сейвом."
+                        crate::strings::t("Не удалось начать операцию с сейвом.")
                     };
                     self.set_summary(cx.tree, status)?;
                 }
@@ -1347,9 +1416,12 @@ impl Screen for HistoryScreen {
                     let _ = proxy.send(AppMessage::OpenSavePicker {
                         return_to: ScreenId::SaveDoctor,
                     });
-                    self.set_summary(cx.tree, "Открываю выбор файла сохранения…")?;
+                    self.set_summary(cx.tree, crate::strings::t("Открываю выбор файла сохранения…"))?;
                 } else {
-                    self.set_summary(cx.tree, "Выбор файла доступен только в рабочем окне.")?;
+                    self.set_summary(
+                        cx.tree,
+                        crate::strings::t("Выбор файла доступен только в рабочем окне."),
+                    )?;
                 }
                 return Ok(());
             }
@@ -1365,13 +1437,13 @@ impl Screen for HistoryScreen {
             );
             if escape {
                 self.pending_restore = None;
-                self.set_summary(cx.tree, "Восстановление отменено.")?;
+                self.set_summary(cx.tree, crate::strings::t("Восстановление отменено."))?;
                 return Ok(());
             }
             if clicked.is_some_and(|id| Some(id) == self.cancel_restore) {
                 self.pending_restore = None;
                 let _ = cx.tree.close_dialog()?;
-                self.set_summary(cx.tree, "Восстановление отменено.")?;
+                self.set_summary(cx.tree, crate::strings::t("Восстановление отменено."))?;
                 return Ok(());
             }
             if clicked.is_some_and(|id| Some(id) == self.confirm_restore) {
@@ -1384,7 +1456,7 @@ impl Screen for HistoryScreen {
                     };
                     if !self.start_process_check(cx, operation)? {
                         let _ = cx.tree.close_dialog()?;
-                        self.set_summary(cx.tree, "Не удалось проверить запущенную игру.")?;
+                        self.set_summary(cx.tree, crate::strings::t("Не удалось проверить запущенную игру."))?;
                     }
                 }
                 return Ok(());
@@ -1393,9 +1465,12 @@ impl Screen for HistoryScreen {
         }
         if clicked.is_some() && clicked == self.refresh {
             if cx.proxy.is_none() {
-                self.set_summary(cx.tree, "В режиме headless screenshot диски не сканируются.")?;
+                self.set_summary(
+                    cx.tree,
+                    crate::strings::t("В режиме headless screenshot диски не сканируются."),
+                )?;
             } else {
-                self.set_summary(cx.tree, "Загрузка…")?;
+                self.set_summary(cx.tree, crate::strings::t("Загрузка…"))?;
                 self.request_refresh(cx.proxy.cloned())?;
             }
         }
@@ -1439,10 +1514,13 @@ impl Screen for HistoryScreen {
                     if self.workspace.is_saving() {
                         self.set_summary(
                             cx.tree,
-                            "Дождитесь завершения сохранения, чтобы восстановить сейв на место.",
+                            crate::strings::t("Дождитесь завершения сохранения, чтобы восстановить сейв на место."),
                         )?;
                     } else if has_pending_edits_for_selected_source(cx.app, &source) {
-                        self.set_summary(cx.tree, "Сначала сохраните или сбросьте черновик выбранного сейва.")?;
+                        self.set_summary(
+                            cx.tree,
+                            crate::strings::t("Сначала сохраните или сбросьте черновик выбранного сейва."),
+                        )?;
                     } else {
                         self.open_restore_confirmation(cx, journal, source, backup, RestoreMode::InPlace)?;
                     }
@@ -1450,16 +1528,16 @@ impl Screen for HistoryScreen {
                 Action::Compare(path) => {
                     if let Some(current) = cx.app.current_save().map(Path::to_path_buf) {
                         if current == path {
-                            self.set_summary(cx.tree, "Выберите другой сейв этой игры.")?;
+                            self.set_summary(cx.tree, crate::strings::t("Выберите другой сейв этой игры."))?;
                         } else {
                             self.compare_selection = vec![current.clone(), path.clone()];
-                            self.set_summary(cx.tree, "Сравниваю…")?;
+                            self.set_summary(cx.tree, crate::strings::t("Сравниваю…"))?;
                             self.start_compare(current, path, cx.proxy.cloned())?;
                         }
                     } else {
                         match self.compare_selection.first().cloned() {
                             Some(first) if first == path => {
-                                self.set_summary(cx.tree, "Выберите другой сейв этой игры.")?;
+                                self.set_summary(cx.tree, crate::strings::t("Выберите другой сейв этой игры."))?;
                             }
                             Some(first) => {
                                 let entries = self.save_entries.as_deref().unwrap_or_default();
@@ -1467,24 +1545,27 @@ impl Screen for HistoryScreen {
                                 let second_family = entries.iter().find(|entry| entry.path == path).map(game_family);
                                 if first_family.is_some() && first_family == second_family {
                                     self.compare_selection = vec![first.clone(), path.clone()];
-                                    self.set_summary(cx.tree, "Сравниваю…")?;
+                                    self.set_summary(cx.tree, crate::strings::t("Сравниваю…"))?;
                                     self.start_compare(first, path, cx.proxy.cloned())?;
                                 } else {
-                                    self.set_summary(cx.tree, "Это сейвы разных игр.")?;
+                                    self.set_summary(cx.tree, crate::strings::t("Это сейвы разных игр."))?;
                                 }
                             }
                             None => {
                                 self.compare_selection.push(path);
                                 self.page = 0;
                                 self.render_saves_page(cx)?;
-                                self.set_summary(cx.tree, "Выберите второй сейв этой игры.")?;
+                                self.set_summary(cx.tree, crate::strings::t("Выберите второй сейв этой игры."))?;
                             }
                         }
                     }
                 }
                 Action::Diagnose { path, format_id } => {
                     self.set_doctor_path(cx.tree, &path.to_string_lossy())?;
-                    self.set_summary(cx.tree, &format!("Проверяю {}…", display_name(&path)))?;
+                    let file = display_name(&path);
+                    let summary =
+                        crate::strings::tr_in(Some(crate::strings::current_language()), "Проверяю {0}…", &[&file]);
+                    self.set_summary(cx.tree, &summary)?;
                     self.start_diagnosis(path, format_id, cx.proxy.cloned())?;
                     self.sync_doctor_check(cx.tree)?;
                 }
@@ -1495,9 +1576,12 @@ impl Screen for HistoryScreen {
                             game_id: game_id.clone(),
                             fix_id: fix_id.clone(),
                         });
-                        self.set_summary(cx.tree, "Открываю связанное исправление игры…")?;
+                        self.set_summary(cx.tree, crate::strings::t("Открываю связанное исправление игры…"))?;
                     } else {
-                        self.set_summary(cx.tree, "Исправление игры можно открыть только в рабочем окне.")?;
+                        self.set_summary(
+                            cx.tree,
+                            crate::strings::t("Исправление игры можно открыть только в рабочем окне."),
+                        )?;
                     }
                 }
                 Action::RepairQuests {
@@ -1508,7 +1592,7 @@ impl Screen for HistoryScreen {
                     let Some(format_id) = format_id else {
                         self.set_summary(
                             cx.tree,
-                            "Не удалось определить формат сейва для проверки запущенной игры.",
+                            crate::strings::t("Не удалось определить формат сейва для проверки запущенной игры."),
                         )?;
                         return Ok(());
                     };
@@ -1521,13 +1605,13 @@ impl Screen for HistoryScreen {
                         },
                     )? {
                         let status = if cx.proxy.is_none() {
-                            "Ремонт доступен только в работающем окне."
+                            crate::strings::t("Ремонт доступен только в работающем окне.")
                         } else if self.workspace.is_restoring() {
-                            "Дождитесь завершения восстановления сейва."
+                            crate::strings::t("Дождитесь завершения восстановления сейва.")
                         } else if self.workspace.is_saving() {
-                            "Запись сейва уже выполняется."
+                            crate::strings::t("Запись сейва уже выполняется.")
                         } else {
-                            "Не удалось проверить запущенную игру."
+                            crate::strings::t("Не удалось проверить запущенную игру.")
                         };
                         self.set_summary(cx.tree, status)?;
                     }
@@ -1543,15 +1627,38 @@ impl Screen for HistoryScreen {
                     match payload {
                         HistoryResult::Backups(Ok(entries)) => self.render_backups(cx, entries.clone())?,
                         HistoryResult::Backups(Err(error)) => {
-                            self.set_summary(cx.tree, &format!("Ошибка: {}", truncate(error, 160)))?
+                            let error = truncate(error, 160);
+                            let summary = crate::strings::tr_in(
+                                Some(crate::strings::current_language()),
+                                "Ошибка: {0}",
+                                &[&error],
+                            );
+                            self.set_summary(cx.tree, &summary)?
                         }
                         HistoryResult::Saves(Ok(slots)) => self.render_saves(cx, slots.clone())?,
                         HistoryResult::Saves(Err(error)) => {
-                            self.set_summary(cx.tree, &format!("Ошибка: {}", truncate(error, 160)))?
+                            let error = truncate(error, 160);
+                            let summary = crate::strings::tr_in(
+                                Some(crate::strings::current_language()),
+                                "Ошибка: {0}",
+                                &[&error],
+                            );
+                            self.set_summary(cx.tree, &summary)?
                         }
                         HistoryResult::Compare(Ok(report)) => self.render_compare(cx, clone_report(report))?,
                         HistoryResult::Compare(Err(error)) => {
-                            self.set_summary(cx.tree, &format!("Ошибка сравнения: {}", truncate(error, 160)))?
+                            let error = if error == crate::strings::t_in("ru", "Это сейвы разных игр.")
+                            {
+                                crate::strings::t(error).to_owned()
+                            } else {
+                                truncate(error, 160)
+                            };
+                            let summary = crate::strings::tr_in(
+                                Some(crate::strings::current_language()),
+                                "Ошибка сравнения: {0}",
+                                &[&error],
+                            );
+                            self.set_summary(cx.tree, &summary)?
                         }
                         HistoryResult::Diagnosis { request_id, result } if *request_id == self.diagnosis_request_id => {
                             self.diagnosis_running = false;
@@ -1589,7 +1696,11 @@ impl Screen for HistoryScreen {
                                     } else {
                                         self.set_summary(
                                             cx.tree,
-                                            &format!("Не удалось сохранить: {}", truncate(error, 160)),
+                                            &crate::strings::tr_in(
+                                                Some(crate::strings::current_language()),
+                                                "Не удалось сохранить: {0}",
+                                                &[&truncate(error, 160)],
+                                            ),
                                         )?;
                                     }
                                 }
@@ -1601,7 +1712,13 @@ impl Screen for HistoryScreen {
                             }
                             match result {
                                 Ok(RestoredSave::Copy(path)) => {
-                                    self.set_summary(cx.tree, &format!("Копия восстановлена в {}", path.display()))?;
+                                    let path = path.display().to_string();
+                                    let summary = crate::strings::tr_in(
+                                        Some(crate::strings::current_language()),
+                                        "Копия восстановлена в {0}",
+                                        &[&path],
+                                    );
+                                    self.set_summary(cx.tree, &summary)?;
                                     self.request_refresh(cx.proxy.cloned())?;
                                     if let Some(proxy) = cx.proxy.as_ref() {
                                         let _ = proxy.send(AppMessage::ToScreen(
@@ -1612,12 +1729,26 @@ impl Screen for HistoryScreen {
                                 }
                                 Ok(RestoredSave::InPlace(receipt)) => {
                                     let backup = receipt.safety_backup_path.as_ref().map_or_else(
-                                        || "без страховочного бэкапа (исходного файла не было)".to_owned(),
-                                        |path| format!("страховочный бэкап: {}", path.display()),
+                                        || {
+                                            crate::strings::t("без страховочного бэкапа (исходного файла не было)")
+                                                .to_owned()
+                                        },
+                                        |path| {
+                                            crate::strings::tr_in(
+                                                Some(crate::strings::current_language()),
+                                                "страховочный бэкап: {0}",
+                                                &[&path.display()],
+                                            )
+                                        },
                                     );
+                                    let save_path = receipt.save_path.display().to_string();
                                     self.set_summary(
                                         cx.tree,
-                                        &format!("Восстановлено на место: {} · {backup}", receipt.save_path.display()),
+                                        &crate::strings::tr_in(
+                                            Some(crate::strings::current_language()),
+                                            "Восстановлено на место: {0} · {1}",
+                                            &[&save_path, &backup],
+                                        ),
                                     )?;
                                     self.request_refresh(cx.proxy.cloned())?;
                                     if let Some(proxy) = cx.proxy.as_ref() {
@@ -1633,7 +1764,11 @@ impl Screen for HistoryScreen {
                                     let text = if is_windows_file_busy_error_text(error) {
                                         SAVE_WHILE_GAME_RUNNING_WARNING.to_owned()
                                     } else {
-                                        format!("Не восстановлено: {}", truncate(error, 160))
+                                        crate::strings::tr_in(
+                                            Some(crate::strings::current_language()),
+                                            "Не восстановлено: {0}",
+                                            &[&truncate(error, 160)],
+                                        )
                                     };
                                     self.set_summary(cx.tree, &text)?;
                                 }
@@ -1701,16 +1836,16 @@ fn timeline_order(left: &SaveSlot, right: &SaveSlot) -> std::cmp::Ordering {
 
 pub(super) fn format_system_time(value: SystemTime) -> String {
     let Ok(duration) = value.duration_since(UNIX_EPOCH) else {
-        return "дата неизвестна".to_owned();
+        return crate::strings::t("дата неизвестна").to_owned();
     };
     let seconds = duration.as_secs();
     let days = seconds / 86_400;
     let seconds_of_day = seconds % 86_400;
     let Ok(days) = i64::try_from(days) else {
-        return "дата вне диапазона".to_owned();
+        return crate::strings::t("дата вне диапазона").to_owned();
     };
     let Some(serial_day) = days.checked_add(719_468) else {
-        return "дата вне диапазона".to_owned();
+        return crate::strings::t("дата вне диапазона").to_owned();
     };
     let era = if serial_day >= 0 {
         serial_day
@@ -1770,17 +1905,17 @@ fn compare_packed(
     let first_snapshot = semantic_snapshot(first)?;
     let second_snapshot = semantic_snapshot(second)?;
     if first_snapshot.game != second_snapshot.game {
-        return Err("Это сейвы разных игр.".to_owned());
+        return Err(crate::strings::t_in("ru", "Это сейвы разных игр.").to_owned());
     }
 
     let mut differences = Vec::new();
     if first_snapshot.money != second_snapshot.money {
         differences.push(SemanticDifference {
             kind: DifferenceKind::Changed,
-            label: "Деньги".to_owned(),
+            label: crate::strings::t_in("ru", "Деньги").to_owned(),
             value_a: first_snapshot.money.to_string(),
             value_b: second_snapshot.money.to_string(),
-            category: "Персонаж",
+            category: crate::strings::t_in("ru", "Персонаж"),
         });
     }
 
@@ -1806,9 +1941,9 @@ fn compare_packed(
         differences.push(SemanticDifference {
             kind,
             label,
-            value_a: old.map_or_else(|| "нет".to_owned(), item_quantity_text),
-            value_b: new.map_or_else(|| "нет".to_owned(), item_quantity_text),
-            category: "Предметы",
+            value_a: old.map_or_else(|| crate::strings::t_in("ru", "нет").to_owned(), item_quantity_text),
+            value_b: new.map_or_else(|| crate::strings::t_in("ru", "нет").to_owned(), item_quantity_text),
+            category: crate::strings::t_in("ru", "Предметы"),
         });
     }
 
@@ -1846,7 +1981,9 @@ fn semantic_snapshot(packed: &[u8]) -> std::result::Result<SemanticSnapshot, Str
                 "{:02x}{:02x}{:02x}",
                 item.type_key[0], item.type_key[1], item.type_key[2]
             );
-            let label = item.display_name.unwrap_or_else(|| format!("Предмет {}", key));
+            let label = item
+                .display_name
+                .unwrap_or_else(|| crate::strings::tr_in(Some("ru"), "Предмет {0}", &[&key]));
             add_item(&mut snapshot, key, label, Some(item.count));
         }
         return Ok(snapshot);
@@ -1898,19 +2035,34 @@ fn item_quantity_changed(first: &ItemQuantity, second: &ItemQuantity) -> bool {
     }
 }
 
+fn localized_comparison_value(value: &str, language: &str) -> String {
+    if value == crate::strings::t_in("ru", "нет") {
+        return crate::strings::t_in(language, value).to_owned();
+    }
+    if let Some(count) = value.strip_suffix(crate::strings::t_in("ru", " объектов · количество неизвестно"))
+    {
+        return crate::strings::tr_in(Some(language), "{0} объектов · количество неизвестно", &[&count]);
+    }
+    value.to_owned()
+}
+
 fn item_quantity_text(item: &ItemQuantity) -> String {
     if item.all_counts_known {
         format!("×{}", item.count)
     } else {
-        format!("{} объектов · количество неизвестно", item.object_count)
+        crate::strings::tr_in(
+            Some("ru"),
+            "{0} объектов · количество неизвестно",
+            &[&item.object_count],
+        )
     }
 }
 
 fn difference_kind_text(kind: DifferenceKind) -> &'static str {
     match kind {
-        DifferenceKind::Added => "Добавлено",
-        DifferenceKind::Removed => "Удалено",
-        DifferenceKind::Changed => "Изменено",
+        DifferenceKind::Added => crate::strings::t_in("ru", "Добавлено"),
+        DifferenceKind::Removed => crate::strings::t_in("ru", "Удалено"),
+        DifferenceKind::Changed => crate::strings::t_in("ru", "Изменено"),
     }
 }
 
@@ -1926,18 +2078,33 @@ fn diagnose_packed(packed: &[u8], format_id: Option<&str>) -> std::result::Resul
             Ok(save) => {
                 let container = save.container();
                 let items = save.items();
+                let stored_crc = format!("{:08X}", container.stored_crc32());
+                let computed_crc = format!("{:08X}", container.computed_crc32());
+                let money = save.money().to_string();
+                let item_count = items.len();
+                let stash = crate::strings::t(if save.stash().is_ok() {
+                    "найден"
+                } else {
+                    "не найден"
+                });
+                let warning_count = save.warnings().len();
+                let unresolved_count = save.unresolved_handles().len();
+                let summary = crate::strings::tr_in(
+                    Some(crate::strings::current_language()),
+                    "S2: {0} байт · CRC {1}/{2} · деньги {3} · предметов {4} · тайник {5} · предупреждений {6} · неразрешённых ссылок {7}. Правила Quest Doctor для S2 недоступны.",
+                    &[
+                        &packed.len(),
+                        &stored_crc,
+                        &computed_crc,
+                        &money,
+                        &item_count,
+                        &stash,
+                        &warning_count,
+                        &unresolved_count,
+                    ],
+                );
                 return Ok(DiagnosisReport {
-                    summary: format!(
-                        "S2: {} байт · CRC {:08X}/{:08X} · деньги {} · предметов {} · тайник {} · предупреждений {} · неразрешённых ссылок {}. Правила Quest Doctor для S2 недоступны.",
-                        packed.len(),
-                        container.stored_crc32(),
-                        container.computed_crc32(),
-                        save.money(),
-                        items.len(),
-                        if save.stash().is_ok() { "найден" } else { "не найден" },
-                        save.warnings().len(),
-                        save.unresolved_handles().len(),
-                    ),
+                    summary,
                     source_sha256,
                     format_id: Some("stalker2".to_owned()),
                     quest_states: Vec::new(),
@@ -1959,17 +2126,37 @@ fn diagnose_packed(packed: &[u8], format_id: Option<&str>) -> std::result::Resul
                     .filter(|state| state.status == sse_doctor::QuestTaskStatus::Broken)
                     .count();
                 let quest_summary = if !quests.quest_states_available {
-                    "Нет проверенных правил квестов для этого формата.".to_owned()
+                    crate::strings::t("Нет проверенных правил квестов для этого формата.").to_owned()
                 } else if broken > 0 {
-                    format!("Подтверждённо сломанных квестов: {broken}; доступен ремонт.")
+                    crate::strings::tr_in(
+                        Some(crate::strings::current_language()),
+                        "Подтверждённо сломанных квестов: {0}; доступен ремонт.",
+                        &[&broken],
+                    )
                 } else {
-                    "Подтверждённых сломанных квестов не найдено.".to_owned()
+                    crate::strings::t("Подтверждённых сломанных квестов не найдено.").to_owned()
                 };
+                let format_id = save.format().id();
+                let packed_bytes = packed.len();
+                let registry_count = save.registry_objects().len();
+                let inventory_count = inventory.len();
+                let money = save.money().map_err(|error| error.to_string())?;
+                let game_time = save.game_time();
+                let summary = crate::strings::tr_in(
+                    Some(crate::strings::current_language()),
+                    "X-Ray {0}: упакованный файл {1} байт · реестр {2} · предметов инвентаря {3} · деньги {4} · игровой тик {5}. Структура прочитана. {6}",
+                    &[
+                        &format_id,
+                        &packed_bytes,
+                        &registry_count,
+                        &inventory_count,
+                        &money,
+                        &game_time,
+                        &quest_summary,
+                    ],
+                );
                 return Ok(DiagnosisReport {
-                    summary: format!(
-                        "X-Ray {}: упакованный файл {} байт · реестр {} · предметов инвентаря {} · деньги {} · игровой тик {}. Структура прочитана. {quest_summary}",
-                        save.format().id(), packed.len(), save.registry_objects().len(), inventory.len(), save.money().map_err(|error| error.to_string())?, save.game_time(),
-                    ),
+                    summary,
                     source_sha256,
                     format_id: Some(save.format().id().to_owned()),
                     quest_states: quests.states,
@@ -1980,7 +2167,7 @@ fn diagnose_packed(packed: &[u8], format_id: Option<&str>) -> std::result::Resul
             Err(_) => {}
         }
     }
-    Err("формат не распознан; структурная проверка не запускалась".to_owned())
+    Err(crate::strings::t("формат не распознан; структурная проверка не запускалась").to_owned())
 }
 
 fn repair_quest_save(
@@ -1991,11 +2178,11 @@ fn repair_quest_save(
     let original = SaveBuffer::read(path).map_err(|error| error.to_string())?;
     let actual_sha256 = sse_codecs::sha256::sha256_hex(original.as_slice());
     if actual_sha256 != expected_source_sha256 {
-        return Err("Файл изменился после проверки. Проверьте его ещё раз.".to_owned());
+        return Err(crate::strings::t("Файл изменился после проверки. Проверьте его ещё раз.").to_owned());
     }
     let Some(prepared) = sse_doctor::prepare_quest_repair(original.as_slice()).map_err(|error| error.to_string())?
     else {
-        return Err("НЕТ ПОДТВЕРЖДЁННЫХ СЛОМАННЫХ КВЕСТОВ.".to_owned());
+        return Err(crate::strings::t("НЕТ ПОДТВЕРЖДЁННЫХ СЛОМАННЫХ КВЕСТОВ.").to_owned());
     };
     let preflight_image = prepared.clone();
     let request =
@@ -2019,36 +2206,48 @@ fn repair_quest_save(
 
 fn quest_title(id: &str) -> &'static str {
     match id {
-        "cs.wild-napr-dead" => "КВЕСТ: ЗАДАНИЯ НАПРА НА БАРАХОЛКЕ ПОСЛЕ ЕГО СМЕРТИ",
-        "cs.wolf-dead" => "КВЕСТ: ЗАДАНИЯ ВОЛКА ПОСЛЕ ЕГО СМЕРТИ",
-        "cs.hog-dead" => "КВЕСТ: СЮЖЕТ НА АРМЕЙСКИХ СКЛАДАХ ПОСЛЕ СМЕРТИ КАБАНА",
-        "soc.mole-dead" => "КВЕСТ: ВСТРЕЧА С КРОТОМ НА АГРОПРОМЕ ПОСЛЕ ЕГО СМЕРТИ",
-        "soc.prisoner-dead" => "КВЕСТ: ПЛЕННЫЙ ДОЛГОВЕЦ В ТЁМНОЙ ДОЛИНЕ ПОСЛЕ ЕГО СМЕРТИ",
-        "soc.courier-dead" => "КВЕСТ: КУРЬЕР СВОБОДЫ ПОСЛЕ ЕГО СМЕРТИ",
-        "soc.informer-dead" => "КВЕСТ: ИНФОРМАТОР СВОБОДЫ ПОСЛЕ ЕГО СМЕРТИ",
-        _ => "КВЕСТ",
+        "cs.wild-napr-dead" => crate::strings::t("КВЕСТ: ЗАДАНИЯ НАПРА НА БАРАХОЛКЕ ПОСЛЕ ЕГО СМЕРТИ"),
+        "cs.wolf-dead" => crate::strings::t("КВЕСТ: ЗАДАНИЯ ВОЛКА ПОСЛЕ ЕГО СМЕРТИ"),
+        "cs.hog-dead" => crate::strings::t("КВЕСТ: СЮЖЕТ НА АРМЕЙСКИХ СКЛАДАХ ПОСЛЕ СМЕРТИ КАБАНА"),
+        "soc.mole-dead" => crate::strings::t("КВЕСТ: ВСТРЕЧА С КРОТОМ НА АГРОПРОМЕ ПОСЛЕ ЕГО СМЕРТИ"),
+        "soc.prisoner-dead" => crate::strings::t("КВЕСТ: ПЛЕННЫЙ ДОЛГОВЕЦ В ТЁМНОЙ ДОЛИНЕ ПОСЛЕ ЕГО СМЕРТИ"),
+        "soc.courier-dead" => crate::strings::t("КВЕСТ: КУРЬЕР СВОБОДЫ ПОСЛЕ ЕГО СМЕРТИ"),
+        "soc.informer-dead" => crate::strings::t("КВЕСТ: ИНФОРМАТОР СВОБОДЫ ПОСЛЕ ЕГО СМЕРТИ"),
+        _ => crate::strings::t("КВЕСТ"),
     }
 }
 
 fn quest_detail(state: &sse_doctor::QuestTaskState) -> String {
+    let language = crate::strings::current_language();
     let detail = match (state.status, state.reason) {
-        (sse_doctor::QuestTaskStatus::Ok, "alive") => "✓ NPC ЖИВ.".to_owned(),
-        (sse_doctor::QuestTaskStatus::Ok, _) => "✓ ФЛАГ УЖЕ ВЫДАН.".to_owned(),
-        (sse_doctor::QuestTaskStatus::Broken, _) => format!(
-            "⚠ NPC МЁРТВ, НО ФЛАГ {} НЕ ВЫДАН: ЗАДАНИЕ ЗАВИСНЕТ.",
-            state.missing_info.unwrap_or("неизвестный")
-        ),
-        (sse_doctor::QuestTaskStatus::Unknown, "too-late") => {
-            "× NPC МЁРТВ БЕЗ ФЛАГА, НО СЮЖЕТ УЖЕ ПОШЁЛ ДАЛЬШЕ: ДОБАВЛЕНИЕ ФЛАГА НЕ ПОМОЖЕТ. НУЖЕН БОЛЕЕ РАННИЙ СЕЙВ."
-                .to_owned()
+        (sse_doctor::QuestTaskStatus::Ok, "alive") => crate::strings::t_in(language, "✓ NPC ЖИВ.").to_owned(),
+        (sse_doctor::QuestTaskStatus::Ok, _) => crate::strings::t_in(language, "✓ ФЛАГ УЖЕ ВЫДАН.").to_owned(),
+        (sse_doctor::QuestTaskStatus::Broken, _) => {
+            let missing_info = state
+                .missing_info
+                .unwrap_or(crate::strings::t_in(language, "неизвестный"));
+            crate::strings::tr_in(
+                Some(language),
+                "⚠ NPC МЁРТВ, НО ФЛАГ {0} НЕ ВЫДАН: ЗАДАНИЕ ЗАВИСНЕТ.",
+                &[&missing_info],
+            )
         }
+        (sse_doctor::QuestTaskStatus::Unknown, "too-late") => crate::strings::t_in(
+            language,
+            "× NPC МЁРТВ БЕЗ ФЛАГА, НО СЮЖЕТ УЖЕ ПОШЁЛ ДАЛЬШЕ: ДОБАВЛЕНИЕ ФЛАГА НЕ ПОМОЖЕТ. НУЖЕН БОЛЕЕ РАННИЙ СЕЙВ.",
+        )
+        .to_owned(),
         (sse_doctor::QuestTaskStatus::Unknown, _) => {
-            "? NPC НЕ НАЙДЕН ИЛИ НЕ ЧИТАЕТСЯ; СОСТОЯНИЕ НЕИЗВЕСТНО.".to_owned()
+            crate::strings::t_in(language, "? NPC НЕ НАЙДЕН ИЛИ НЕ ЧИТАЕТСЯ; СОСТОЯНИЕ НЕИЗВЕСТНО.").to_owned()
         }
     };
     if state.needs_preventing_fix {
         if let Some(fix_id) = state.preventing_fix_id {
-            return format!("{detail} ЧТОБЫ ИГРА УВИДЕЛА ФЛАГ, УСТАНОВИТЕ ИСПРАВЛЕНИЕ ИГРЫ {fix_id}.");
+            return crate::strings::tr_in(
+                Some(language),
+                "{0} ЧТОБЫ ИГРА УВИДЕЛА ФЛАГ, УСТАНОВИТЕ ИСПРАВЛЕНИЕ ИГРЫ {1}.",
+                &[&detail, &fix_id],
+            );
         }
     }
     detail
@@ -2092,21 +2291,27 @@ fn truncate(value: &str, maximum: usize) -> String {
 }
 
 fn doctor_title() -> &'static str {
-    "ДОКТОР СОХРАНЕНИЯ"
+    crate::strings::t("ДОКТОР СОХРАНЕНИЯ")
 }
 
 fn doctor_description() -> &'static str {
-    "ПРОВЕРКА ЧИТАЕМОСТИ ФОРМАТА. СЕМАНТИЧЕСКИЕ ПРАВИЛА И РЕМОНТ ДОСТУПНЫ ТОЛЬКО ПРИ НАЛИЧИИ ПРОВЕРЕННЫХ ДАННЫХ.\nИСПРАВИТЬ КВЕСТЫ использует общий путь записи с бэкапом и обратным чтением."
+    crate::strings::t(
+        "ПРОВЕРКА ЧИТАЕМОСТИ ФОРМАТА. СЕМАНТИЧЕСКИЕ ПРАВИЛА И РЕМОНТ ДОСТУПНЫ ТОЛЬКО ПРИ НАЛИЧИИ ПРОВЕРЕННЫХ ДАННЫХ.\nИСПРАВИТЬ КВЕСТЫ использует общий путь записи с бэкапом и обратным чтением.",
+    )
 }
 
 fn doctor_error_detail(error: &str) -> String {
-    if let Some(detail) = error.strip_prefix("формат не распознан;") {
-        format!(
-            "× СТРУКТУРНАЯ ПРОВЕРКА — ФАЙЛ НЕ РАСПОЗНАН ИЛИ ПОВРЕЖДЁН: {}",
-            truncate(detail.trim(), 120)
+    let language = crate::strings::current_language();
+    if let Some(detail) = error.strip_prefix(crate::strings::t_in(language, "формат не распознан;")) {
+        let detail = truncate(detail.trim(), 120);
+        crate::strings::tr_in(
+            Some(language),
+            "× СТРУКТУРНАЯ ПРОВЕРКА — ФАЙЛ НЕ РАСПОЗНАН ИЛИ ПОВРЕЖДЁН: {0}",
+            &[&detail],
         )
     } else {
-        format!("× СТРУКТУРНАЯ ПРОВЕРКА — {}", truncate(error, 160))
+        let detail = truncate(error, 160);
+        crate::strings::tr_in(Some(language), "× СТРУКТУРНАЯ ПРОВЕРКА — {0}", &[&detail])
     }
 }
 
@@ -2164,6 +2369,201 @@ mod tests {
 
     static NEXT_TEMP_DIRECTORY: AtomicU64 = AtomicU64::new(1);
 
+    #[test]
+    fn history_screen_titles_have_english_and_ukrainian_translations() {
+        let titles = [
+            (
+                "Резервные копии и восстановление",
+                "Backups and recovery",
+                "Резервні копії та відновлення",
+            ),
+            (
+                "Сравнение двух сохранений",
+                "Compare two saves",
+                "Порівняння двох збережень",
+            ),
+            (
+                "История экспортов и резервных копий",
+                "Export and backup history",
+                "Історія експорту й резервних копій",
+            ),
+            (
+                "Проверка структуры и целостности",
+                "Structure and integrity check",
+                "Перевірка структури та цілісності",
+            ),
+        ];
+
+        for (key, english, ukrainian) in titles {
+            assert_eq!(crate::strings::t_in("en", key), english, "English: {key}");
+            assert_eq!(crate::strings::t_in("uk", key), ukrainian, "Ukrainian: {key}");
+        }
+    }
+
+    #[test]
+    fn backup_page_summary_translates_each_count_and_page_number() {
+        let service = sse_catalog::I18nService::instance();
+        let args: [&dyn std::fmt::Display; 4] = [&7, &5, &1, &2];
+
+        assert_eq!(
+            service.tr_in(
+                Some("en"),
+                "Записей: {0} · восстановимо: {1} · страница {2} из {3}",
+                &args,
+            ),
+            "Entries: 7 · restorable: 5 · page 1 of 2"
+        );
+        assert_eq!(
+            service.tr_in(
+                Some("uk"),
+                "Записей: {0} · восстановимо: {1} · страница {2} из {3}",
+                &args,
+            ),
+            "Записів: 7 · можна відновити: 5 · сторінка 1 з 2"
+        );
+    }
+
+    #[test]
+    fn history_screen_controls_have_english_and_ukrainian_translations() {
+        let labels = [
+            (
+                "БЭКАПЫ И ВОССТАНОВЛЕНИЕ",
+                "BACKUPS AND RECOVERY",
+                "РЕЗЕРВНІ КОПІЇ ТА ВІДНОВЛЕННЯ",
+            ),
+            ("СРАВНЕНИЕ СОХРАНЕНИЙ", "SAVE COMPARISON", "ПОРІВНЯННЯ ЗБЕРЕЖЕНЬ"),
+            ("ИСТОРИЯ СОХРАНЕНИЙ", "SAVE HISTORY", "ІСТОРІЯ ЗБЕРЕЖЕНЬ"),
+            ("ДОКТОР СОХРАНЕНИЯ", "SAVE DOCTOR", "ДІАГНОСТИКА ЗБЕРЕЖЕННЯ"),
+            ("Файл", "File", "Файл"),
+            ("Найти сейвы", "Find saves", "Знайти збереження"),
+            ("Список сейвов", "Save list", "Список збережень"),
+            ("Обновить историю", "Refresh history", "Оновити історію"),
+            (
+                "Нажмите кнопку, чтобы прочитать локальные данные.",
+                "Click the button to read local data.",
+                "Натисніть кнопку, щоб прочитати локальні дані.",
+            ),
+            ("Назад", "Back", "Назад"),
+            ("Дальше", "Next", "Далі"),
+        ];
+
+        for (key, english, ukrainian) in labels {
+            assert_eq!(crate::strings::t_in("en", key), english, "English: {key}");
+            assert_eq!(crate::strings::t_in("uk", key), ukrainian, "Ukrainian: {key}");
+        }
+    }
+
+    #[test]
+    fn history_operation_statuses_and_errors_are_translated() {
+        let statuses = [
+            ("Операция отменена.", "Operation cancelled.", "Операцію скасовано."),
+            (
+                "Восстановление отменено.",
+                "Restore cancelled.",
+                "Відновлення скасовано.",
+            ),
+            ("Загрузка…", "Loading…", "Завантаження…"),
+            (
+                "Не удалось проверить запущенную игру.",
+                "Could not check whether the game is running.",
+                "Не вдалося перевірити, чи запущена гра.",
+            ),
+        ];
+        for (key, english, ukrainian) in statuses {
+            assert_eq!(crate::strings::t_in("en", key), english, "English: {key}");
+            assert_eq!(crate::strings::t_in("uk", key), ukrainian, "Ukrainian: {key}");
+        }
+
+        let service = sse_catalog::I18nService::instance();
+        let detail = "permission denied";
+        assert_eq!(
+            service.tr_in(Some("en"), "Ошибка: {0}", &[&detail]),
+            "Error: permission denied"
+        );
+        assert_eq!(
+            service.tr_in(Some("uk"), "Ошибка: {0}", &[&detail]),
+            "Помилка: permission denied"
+        );
+    }
+
+    #[test]
+    fn quest_repair_status_keeps_the_backup_name_when_translated() {
+        let service = sse_catalog::I18nService::instance();
+        let backup_name = "slot.sav.bak";
+        assert_eq!(
+            service.tr_in(Some("en"), "КВЕСТЫ ИСПРАВЛЕНЫ. Резервная копия: {0}", &[&backup_name],),
+            "QUESTS REPAIRED. Backup: slot.sav.bak"
+        );
+        assert_eq!(
+            service.tr_in(Some("uk"), "КВЕСТЫ ИСПРАВЛЕНЫ. Резервная копия: {0}", &[&backup_name],),
+            "КВЕСТИ ВІДНОВЛЕНО. Резервна копія: slot.sav.bak"
+        );
+    }
+
+    #[test]
+    fn diagnostic_templates_translate_statuses_and_preserve_values() {
+        for (key, english, ukrainian) in [
+            ("дата неизвестна", "date unknown", "дату не визначено"),
+            ("дата вне диапазона", "date out of range", "дата поза діапазоном"),
+            (
+                "Нет проверенных правил квестов для этого формата.",
+                "No verified quest rules are available for this format.",
+                "Для цього формату немає перевірених правил квестів.",
+            ),
+            (
+                "Подтверждённых сломанных квестов не найдено.",
+                "No confirmed broken quests were found.",
+                "Підтверджених зламаних квестів не знайдено.",
+            ),
+        ] {
+            assert_eq!(crate::strings::t_in("en", key), english, "English: {key}");
+            assert_eq!(crate::strings::t_in("uk", key), ukrainian, "Ukrainian: {key}");
+        }
+
+        let service = sse_catalog::I18nService::instance();
+        let args: [&dyn std::fmt::Display; 8] = [&12, &"000000AB", &"000000CD", &500, &9, &"found", &2, &1];
+        assert_eq!(
+            service.tr_in(
+                Some("en"),
+                "S2: {0} байт · CRC {1}/{2} · деньги {3} · предметов {4} · тайник {5} · предупреждений {6} · неразрешённых ссылок {7}. Правила Quest Doctor для S2 недоступны.",
+                &args,
+            ),
+            "S2: 12 bytes · CRC 000000AB/000000CD · money 500 · items 9 · stash found · warnings 2 · unresolved links 1. Quest Doctor rules for S2 are unavailable."
+        );
+
+        let flag = "esc_wolf_dead";
+        assert_eq!(
+            service.tr_in(
+                Some("en"),
+                "⚠ NPC МЁРТВ, НО ФЛАГ {0} НЕ ВЫДАН: ЗАДАНИЕ ЗАВИСНЕТ.",
+                &[&flag],
+            ),
+            "⚠ NPC IS DEAD, BUT FLAG esc_wolf_dead WAS NOT SET: THE QUEST WILL STALL."
+        );
+        assert_eq!(
+            service.tr_in(
+                Some("uk"),
+                "⚠ NPC МЁРТВ, НО ФЛАГ {0} НЕ ВЫДАН: ЗАДАНИЕ ЗАВИСНЕТ.",
+                &[&flag],
+            ),
+            "⚠ NPC МЕРТВИЙ, АЛЕ ПРАПОРЕЦЬ esc_wolf_dead НЕ ВСТАНОВЛЕНО: КВЕСТ ЗАВИСНЕ."
+        );
+    }
+
+    #[test]
+    fn comparison_values_are_localized_without_changing_report_data() {
+        assert_eq!(super::localized_comparison_value("нет", "en"), "none");
+        assert_eq!(super::localized_comparison_value("нет", "uk"), "немає");
+        assert_eq!(
+            super::localized_comparison_value("3 объектов · количество неизвестно", "en"),
+            "3 objects · quantity unknown"
+        );
+        assert_eq!(
+            super::localized_comparison_value("3 объектов · количество неизвестно", "uk"),
+            "3 об’єктів · кількість невідома"
+        );
+    }
+
     struct TempDirectory(PathBuf);
 
     impl TempDirectory {
@@ -2202,9 +2602,14 @@ mod tests {
 
     #[test]
     fn doctor_screen_uses_acceptance_heading_and_describes_repair() {
-        assert_eq!(super::doctor_title(), "ДОКТОР СОХРАНЕНИЯ");
-        assert!(super::doctor_description().contains("ИСПРАВИТЬ КВЕСТЫ"));
-        assert!(super::doctor_description().contains("обратным чтением"));
+        let language = crate::strings::current_language();
+        assert_eq!(
+            super::doctor_title(),
+            crate::strings::t_in(language, "ДОКТОР СОХРАНЕНИЯ")
+        );
+        let description = super::doctor_description();
+        assert!(description.contains(crate::strings::t_in(language, "ИСПРАВИТЬ КВЕСТЫ")));
+        assert!(description.contains('\n'));
     }
 
     #[test]
@@ -2244,13 +2649,19 @@ mod tests {
 
     #[test]
     fn doctor_error_uses_acceptance_structure_row() {
-        assert_eq!(
-            super::doctor_error_detail("file not found"),
-            "× СТРУКТУРНАЯ ПРОВЕРКА — file not found"
+        let language = crate::strings::current_language();
+        let plain = super::doctor_error_detail("file not found");
+        assert!(plain.starts_with('×'));
+        assert!(plain.ends_with("file not found"));
+        let unrecognized = sse_catalog::I18nService::instance().tr_in(
+            Some(language),
+            "формат не распознан; структурная проверка не запускалась",
+            &[],
         );
-        assert_eq!(
-            super::doctor_error_detail("формат не распознан; структурная проверка не запускалась"),
-            "× СТРУКТУРНАЯ ПРОВЕРКА — ФАЙЛ НЕ РАСПОЗНАН ИЛИ ПОВРЕЖДЁН: структурная проверка не запускалась"
+        let detail = super::doctor_error_detail(&unrecognized);
+        assert!(detail.starts_with('×'));
+        assert!(
+            detail.contains("structural check was not run") || detail.contains("структурная проверка не запускалась")
         );
         assert!(super::doctor_error_detail(&"x".repeat(200)).chars().count() <= 190);
     }
@@ -2277,8 +2688,7 @@ mod tests {
             detail: "NPC is dead, but the flag is absent.",
             references: &[],
         };
-        assert!(quest_detail(&state)
-            .contains("ЧТОБЫ ИГРА УВИДЕЛА ФЛАГ, УСТАНОВИТЕ ИСПРАВЛЕНИЕ ИГРЫ cs.quest.wolf-offline-cancellation."));
+        assert!(quest_detail(&state).ends_with("cs.quest.wolf-offline-cancellation."));
     }
 
     #[test]
@@ -2444,7 +2854,9 @@ mod tests {
         let report = diagnose_packed(SYNTHETIC_XRAY_SAVE, None)
             .unwrap_or_else(|error| panic!("diagnose X-Ray fixture: {error}"));
         assert!(report.summary.starts_with("X-Ray stalker-soc-ee:"));
-        assert!(report.summary.contains("Структура прочитана"));
+        assert!(
+            report.summary.contains("Structure read successfully") || report.summary.contains("Структура прочитана")
+        );
         assert!(!report.can_repair_quests);
         assert!(report.quest_states.is_empty());
     }
@@ -2460,7 +2872,8 @@ mod tests {
             diagnose_packed(SYNTHETIC_S2_SAVE, None).unwrap_or_else(|error| panic!("diagnose S2 fixture: {error}"));
         assert!(report.summary.starts_with("S2:"));
         assert!(report.summary.contains("CRC"));
-        assert!(report.summary.contains("Quest Doctor для S2 недоступны"));
+        assert!(report.summary.contains("Quest Doctor"));
+        assert!(report.summary.contains("S2"));
         assert!(!report.can_repair_quests);
         assert!(report.quest_states.is_empty());
     }

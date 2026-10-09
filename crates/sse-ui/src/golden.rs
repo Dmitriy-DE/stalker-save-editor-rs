@@ -155,26 +155,26 @@ mod tests {
         }
 
         const EXPECTED: [&str; 20] = [
-            "3babca064594d4bf9a8444e7740956a0ead25b5b45140c561d3423a4fd8bf4d6",
-            "a28b58284fcb5750cca207c58a970d46bc4dfd3c7a0a90736654e75b11c7aff2",
-            "218a7cf25f7809f0dd9375d8973a6bd49e4081275a866dc8548553166e90d7df",
-            "f9d018963f1ce6065482d1286a0c244e7431bf561d5a4be604db053ad17eb02a",
-            "e6fe60cbbb217c578f777e4f11dbbef954bc6d961f6212995fb05c7231955a6b",
-            "89e58f1f29403e387f3a7a3ac94758a0795856a759ab7bbd3d7478e7d2539e53",
-            "110253ba8a6b245b02f354ffeb8ff0b1d0e7927f6a72cfff867d8d8e9d3e42f6",
-            "dd0debe8bb93598f61aea0a4781ae5769db1c8a686a8063c807d6dce8a4efa4d",
-            "1348d45a1915e9cc79d5f269e13761266c735c6e28c0df2c4d0f0398ff4a62de",
-            "63621758683ecad58b12abaf157415074615ee0e56cbc69c03b16a57efc25650",
-            "605906ee0e3602f466535da4a8666e54cb52689fc96c8751eb05d0ea39abc203",
-            "f5578e4c47f9781e336ea3155f8d60cd9213c54b522e0d9e7ccc80701e5188c0",
-            "4b81860531136a400ab7696c5f0b7e77e5f9b71abeb1662ecc47031d7f1573ae",
-            "1edc232853a140ffd2334c4657d30ac19a70bdb52c20d050cba87eb66a2e12a4",
-            "7bc72da366bd599ae3f02a17e3aabafbb3f40e2087a4ffc99527d402a00af4f2",
-            "0cafebe9d58c64932d70315a4f76dfe78d65603fe5be8ebf40e042e9d8b275da",
-            "0beeecbea95161c6e937c34ee03728e70673fbe7ecb79d6f7a791dcdeabd6072",
-            "b47b29ba6c2e22d7b544c67e4ed3b13131c499cafe19c02150c574f873f95c36",
-            "22702d491994ad31d9b6c7706b42db0a832c1117bb537a1e75ee7bb94deae76c",
-            "53e4a48573f7e6d1887a56b102cbafd0bda25a387de19188cd51109f13a31f65",
+            "d7719843ecc4cdc2aa42ed20ed99d6c1626b1e59f1e2875b16b5181d933ad045",
+            "4dc15133ee1bab57c0cdabc2c50fe26482315a9915ba6bafa392028a6744c601",
+            "4347173f5fe8a5283fd5cf6dbbee352548ba5e048336890d49e389d5c9414553",
+            "cf24aef5f0582bc7238c6de172ca343ac6b774417881a06dd6e12db03c82907f",
+            "21cc76db240d7c630dd75639e2ecb2ca3d5cd6ce1297df4fe10ba78874f8c3bb",
+            "947030eb6000a4ee2a22a241a770d54a5a2f4b68881a80e5e257d2af1153fe9f",
+            "706611fdecf6d15f7241d11d14fec3ba64a506dd6a05143589f8d6fc8459a5b7",
+            "36592e7bf2d6d57777cb2802102e6967bc70293a1db6584ac68832d764158696",
+            "9614fdffa33bd3ffcfaea1078049b94737c4a0e3afcf4e3d05edcce4598e5f05",
+            "52b5490a5bc07b31176343f36137ac2056cdb3639ce936b71cfb75578426f98f",
+            "d1c719b248a8263a6e0c191a7eddfa22a718c208c3dfebd9ec96d9922c05398c",
+            "f06eceb60381868f434adb346b1fccd1a3d5f455cad23e97993328e4e1faf06a",
+            "d88d9774c4633c571c0d6ddd8a5b13a68074c2c91178d5feccaedd5dec080cc7",
+            "a01d4048b8c946e46f59c05d4522d842a60e7e534139eb6fdab14a73eed0ad0b",
+            "e37626b4efac613753d28424d555b6fcd4b5fdc00c0ddf7fa42f7e1d467bc8e3",
+            "762acf171a5f08a6706fac7577e11d4c6cb64e73cc6035c1c544d5cf24709cc8",
+            "50f7a1b4cea5d33224f0d090f5ce63ee726da26c3b22f9a450e41b2150d9932e",
+            "9b13e47c554c20a663cf1d3134dec318deb5d618dad1f13bf83afc9c92cefa70",
+            "6224c23d09d59ba30084e9a7d6409995a205a0114e609e72abc5cf8179561fd0",
+            "796cdb8a06f9d9372752900dc6ce2d6af2a87de48e6310c5901a45011e9e3ed7",
         ];
         assert_eq!(
             ScreenId::ALL.len(),
@@ -184,7 +184,7 @@ mod tests {
         let mut actual = Vec::with_capacity(ScreenId::ALL.len());
         let mut tree = Tree::new(Fonts::bundled()?, crate::screens::style::rgb(BG_BASE));
         let mut shell = Shell::build_for_test(&mut tree, None)?;
-        shell.resize_window(&mut tree, 1280, 800)?;
+        tree.resize(1280, 800);
         for id in &ScreenId::ALL {
             shell.open(&mut tree, *id)?;
             let mut frame = vec![0_u32; 1280 * 800];

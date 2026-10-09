@@ -1,5 +1,6 @@
 //! S5: companion, achievements, Steam Cloud, and editor updates.
 
+use super::games::GameTarget;
 use super::saves::Workspace;
 use super::style::{self, Button, Text};
 use super::{AppMessage, Context, Screen, ScreenId};
@@ -15,6 +16,22 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const ROWS: usize = 8;
+
+fn t_in<'a>(language: &str, key: &'a str) -> &'a str {
+    crate::strings::t_in(language, key)
+}
+
+fn t(key: &str) -> &str {
+    t_in(crate::strings::current_language(), key)
+}
+
+fn tr_in(language: &str, key: &str, args: &[&dyn std::fmt::Display]) -> String {
+    crate::strings::tr_in(Some(language), key, args)
+}
+
+fn tr(key: &str, args: &[&dyn std::fmt::Display]) -> String {
+    tr_in(crate::strings::current_language(), key, args)
+}
 
 /// Screens implemented by the S5 services package.
 #[must_use]
@@ -38,6 +55,19 @@ fn app_id(game: &str) -> Option<u32> {
         "s2" | "stalker2" => Some(sse_steam::discovery::STALKER_2_APP_ID),
         _ => None,
     }
+}
+
+fn hotkey_label(language: &str, action: sse_companion::hotkeys::HotkeyAction) -> &'static str {
+    t_in(
+        language,
+        match action {
+            sse_companion::hotkeys::HotkeyAction::Heal => "Лечение",
+            sse_companion::hotkeys::HotkeyAction::RepairEquipped => "Ремонт экипировки",
+            sse_companion::hotkeys::HotkeyAction::Mark => "Сохранить отметку",
+            sse_companion::hotkeys::HotkeyAction::JumpLast => "Перейти к последней отметке",
+            sse_companion::hotkeys::HotkeyAction::QuickSave => "Быстрое сохранение",
+        },
+    )
 }
 
 fn xray_game(game: &str) -> Option<sse_companion::bundled::Game> {
@@ -64,9 +94,9 @@ fn companion_root(game: &str, root: &Path) -> std::result::Result<PathBuf, Strin
                 return Ok(path);
             }
         }
-        return Err("Не найдена папка UE4SS Mods для S.T.A.L.K.E.R. 2".to_owned());
+        return Err(t("Не найдена папка UE4SS Mods для S.T.A.L.K.E.R. 2").to_owned());
     }
-    Err("Компаньон для выбранного издания не поддерживается".to_owned())
+    Err(t("Компаньон для выбранного издания не поддерживается").to_owned())
 }
 
 fn installed_version(root: &Path) -> Option<String> {
@@ -127,10 +157,10 @@ fn format_epoch_timestamp(timestamp: Option<i64>) -> String {
         .filter(|timestamp| *timestamp > 0)
         .and_then(|timestamp| u64::try_from(timestamp).ok())
     else {
-        return "дата неизвестна".to_owned();
+        return t("дата неизвестна").to_owned();
     };
     let Some(value) = UNIX_EPOCH.checked_add(Duration::from_secs(seconds)) else {
-        return "дата вне диапазона".to_owned();
+        return t("дата вне диапазона").to_owned();
     };
     super::history::format_system_time(value)
 }
@@ -189,12 +219,12 @@ impl Companion {
             .app
             .selected_game()
             .map(str::to_owned)
-            .ok_or_else(|| "Игра не выбрана".to_owned())?;
+            .ok_or_else(|| t("Игра не выбрана").to_owned())?;
         let directory = self
             .manual_directory
             .clone()
             .or_else(|| cx.app.game_dir().map(Path::to_path_buf))
-            .ok_or_else(|| "Папка игры не выбрана".to_owned())?;
+            .ok_or_else(|| t("Папка игры не выбрана").to_owned())?;
         Ok((game, directory))
     }
     fn exchange_directory(game: &str, directory: &Path) -> std::result::Result<PathBuf, String> {
@@ -203,9 +233,9 @@ impl Companion {
                 return std::env::var_os("LOCALAPPDATA")
                     .map(PathBuf::from)
                     .map(|root| root.join("Stalker2").join("Saved"))
-                    .ok_or_else(|| "LOCALAPPDATA не задан; папка протокола S.T.A.L.K.E.R. 2 не найдена".to_owned());
+                    .ok_or_else(|| t("LOCALAPPDATA не задан; папка протокола S.T.A.L.K.E.R. 2 не найдена").to_owned());
             }
-            return Err("Для выбранной игры протокол Companion не поддерживается.".to_owned());
+            return Err(t("Для выбранной игры протокол Companion не поддерживается.").to_owned());
         }
         for relative in ["_appdata_", "appdata", "userdata"] {
             let candidate = directory.join(relative);
@@ -213,7 +243,7 @@ impl Companion {
                 return Ok(candidate);
             }
         }
-        Err("появится после протокола компаньона".to_owned())
+        Err(t("появится после протокола компаньона").to_owned())
     }
     fn refresh(&self, cx: &mut Context<'_>) {
         let Some(proxy) = cx.proxy.cloned() else { return };
@@ -236,9 +266,10 @@ impl Companion {
                     let client = sse_companion::protocol::CompanionClient::new(directory);
                     let timeout = Duration::from_secs(3);
                     let result = match (command, argument) {
-                        ("ping", _) => client
-                            .ping(timeout)
-                            .map(|(latency, _)| format!("{:.0} мс", latency.as_secs_f64() * 1000.0)),
+                        ("ping", _) => client.ping(timeout).map(|(latency, _)| {
+                            let milliseconds = format!("{:.0}", latency.as_secs_f64() * 1000.0);
+                            tr("{0} мс", &[&milliseconds])
+                        }),
                         ("info", _) => client.info(timeout),
                         ("list_inventory", _) => client.list_inventory(timeout),
                         ("god", Some("on")) => client.s2_god(true, timeout),
@@ -297,110 +328,117 @@ impl Screen for Companion {
         ScreenId::Companion
     }
     fn subtitle(&self) -> &str {
-        "Мод-компаньон, версия и горячие клавиши"
+        t("Мод-компаньон, версия и горячие клавиши")
     }
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
+        let language = crate::strings::current_language();
         let card = style::card(cx.tree, host)?;
-        style::label(cx.tree, card, "МОД-КОМПАНЬОН", Text::Heading)?;
+        style::label(cx.tree, card, t("МОД-КОМПАНЬОН"), Text::Heading)?;
         style::label(
             cx.tree,
             card,
-            "Меню в игре: Esc → F1 или КПК компаньона. Хук создаёт распакованный скрипт в gamedata/scripts; установка через приложение ниже.",
+            t("Меню в игре: Esc → F1 или КПК компаньона. Хук создаёт распакованный скрипт в gamedata/scripts; установка через приложение ниже."),
             Text::Note,
         )?;
-        style::label(cx.tree, card, "Целевая игра: выбранная в «Обзоре игр»", Text::Body)?;
-        style::label(cx.tree, card, "СТАТУС И СВЯЗЬ", Text::Heading)?;
-        self.status = Some(style::label(cx.tree, card, "НЕ УСТАНОВЛЕН", Text::Value)?);
-        self.version = Some(style::label(cx.tree, card, "Версия мода: —", Text::Note)?);
-        self.latency = Some(style::label(cx.tree, card, "Связь / Задержка: Нет ответа", Text::Note)?);
-        self.path = Some(style::label(cx.tree, card, "Путь установки: —", Text::Note)?);
+        style::label(cx.tree, card, t("Целевая игра: выбранная в «Обзоре игр»"), Text::Body)?;
+        style::label(cx.tree, card, t("СТАТУС И СВЯЗЬ"), Text::Heading)?;
+        self.status = Some(style::label(cx.tree, card, t("НЕ УСТАНОВЛЕН"), Text::Value)?);
+        self.version = Some(style::label(cx.tree, card, t("Версия мода: —"), Text::Note)?);
+        self.latency = Some(style::label(
+            cx.tree,
+            card,
+            t("Связь / Задержка: Нет ответа"),
+            Text::Note,
+        )?);
+        self.path = Some(style::label(cx.tree, card, t("Путь установки: —"), Text::Note)?);
         let row = style::row(cx.tree, card)?;
-        self.install = Some(style::button(cx.tree, row, "УСТАНОВИТЬ", Button::Primary)?);
-        self.remove = Some(style::button(cx.tree, row, "УДАЛИТЬ", Button::Secondary)?);
-        self.ping = Some(style::button(cx.tree, row, "ПРОВЕРИТЬ СВЯЗЬ", Button::Secondary)?);
-        self.refresh_button = Some(style::button(cx.tree, row, "ОБНОВИТЬ СТАТУС", Button::Secondary)?);
+        self.install = Some(style::button(cx.tree, row, t("УСТАНОВИТЬ"), Button::Primary)?);
+        self.remove = Some(style::button(cx.tree, row, t("УДАЛИТЬ"), Button::Secondary)?);
+        self.ping = Some(style::button(cx.tree, row, t("ПРОВЕРИТЬ СВЯЗЬ"), Button::Secondary)?);
+        self.refresh_button = Some(style::button(cx.tree, row, t("ОБНОВИТЬ СТАТУС"), Button::Secondary)?);
         let live = style::card(cx.tree, host)?;
-        style::label(cx.tree, live, "ЖИВОЙ ИНСПЕКТОР", Text::Heading)?;
+        style::label(cx.tree, live, t("ЖИВОЙ ИНСПЕКТОР"), Text::Heading)?;
         style::label(
             cx.tree,
             live,
-            "Показываются только ответы протокола Companion: info и list_inventory.",
+            t("Показываются только ответы протокола Companion: info и list_inventory."),
             Text::Note,
         )?;
-        self.inspect = Some(style::button(cx.tree, live, "ПОЛУЧИТЬ ДАННЫЕ", Button::Secondary)?);
-        self.info = Some(style::label(cx.tree, live, "Информация игрока: —", Text::Body)?);
-        self.inventory = Some(style::label(cx.tree, live, "Инвентарь игрока: —", Text::Body)?);
+        self.inspect = Some(style::button(cx.tree, live, t("ПОЛУЧИТЬ ДАННЫЕ"), Button::Secondary)?);
+        self.info = Some(style::label(cx.tree, live, t("Информация игрока: —"), Text::Body)?);
+        self.inventory = Some(style::label(cx.tree, live, t("Инвентарь игрока: —"), Text::Body)?);
         style::label(
             cx.tree,
             live,
-            "Для живой проверки нужен установленный Companion-протокол.",
+            t("Для живой проверки нужен установленный Companion-протокол."),
             Text::Note,
         )?;
         let s2 = style::card(cx.tree, host)?;
         style::label(
             cx.tree,
             s2,
-            "S.T.A.L.K.E.R. 2 — команды игры (экспериментально)",
+            t("S.T.A.L.K.E.R. 2 — команды игры (экспериментально)"),
             Text::Heading,
         )?;
-        style::label(cx.tree,s2,"Нужны S2 на ПК, UE4SS и установленный мод. Команды выполняет сама игра (XSetGodMode, XSetNoClipGSC, XSetTimeSpeed).",Text::Note)?;
-        for (label, command, argument) in [
-            ("Бессмертие: вкл", "god", "on"),
-            ("Бессмертие: выкл", "god", "off"),
-            ("Полёт: вкл", "noclip", "on"),
-            ("Полёт: выкл", "noclip", "off"),
-            ("Время ×5", "timespeed", "5"),
-            ("Время: норма", "timespeed", "0"),
+        style::label(cx.tree,s2,t("Нужны S2 на ПК, UE4SS и установленный мод. Команды выполняет сама игра (XSetGodMode, XSetNoClipGSC, XSetTimeSpeed)."),Text::Note)?;
+        for (command, argument) in [
+            ("god", "on"),
+            ("god", "off"),
+            ("noclip", "on"),
+            ("noclip", "off"),
+            ("timespeed", "5"),
+            ("timespeed", "0"),
         ] {
+            let label = match (command, argument) {
+                ("god", "on") => t("Бессмертие: вкл"),
+                ("god", "off") => t("Бессмертие: выкл"),
+                ("noclip", "on") => t("Полёт: вкл"),
+                ("noclip", "off") => t("Полёт: выкл"),
+                ("timespeed", "5") => t("Время ×5"),
+                _ => t("Время: норма"),
+            };
             let id = style::button(cx.tree, s2, label, Button::Secondary)?;
             self.s2_commands.push((id, command, argument));
         }
         style::label(
             cx.tree,
             s2,
-            "Команды отправляются через протокол Companion в Stalker2\\Saved.",
+            t("Команды отправляются через протокол Companion в Stalker2\\Saved."),
             Text::Note,
         )?;
         let all = style::card(cx.tree, host)?;
-        style::label(cx.tree, all, "ВСЕ ИГРЫ", Text::Heading)?;
-        for game in [
-            "S.T.A.L.K.E.R. Зов Припяти",
-            "S.T.A.L.K.E.R. Чистое Небо",
-            "S.T.A.L.K.E.R. Тень Чернобыля",
-            "Зов Припяти (Enhanced Edition)",
-            "Чистое Небо (Enhanced Edition)",
-            "Тень Чернобыля (Enhanced Edition)",
-            "S.T.A.L.K.E.R. 2 (экспериментально, нужен UE4SS)",
-        ] {
-            style::label(cx.tree, all, &format!("[ ] {game} · игра не найдена"), Text::Body)?;
+        style::label(cx.tree, all, t("ВСЕ ИГРЫ"), Text::Heading)?;
+        for target in GameTarget::ALL {
+            let game = target.title_in(language);
+            style::label(cx.tree, all, &tr("[ ] {0} · игра не найдена", &[&game]), Text::Body)?;
         }
         let all_install = style::button(
             cx.tree,
             all,
-            "УСТАНОВИТЬ / ОБНОВИТЬ ВО ВСЕ ОТМЕЧЕННЫЕ",
+            t("УСТАНОВИТЬ / ОБНОВИТЬ ВО ВСЕ ОТМЕЧЕННЫЕ"),
             Button::Secondary,
         )?;
         cx.tree.set_enabled(all_install, false)?;
         style::label(
             cx.tree,
             all,
-            "Выбор нескольких установок появится после общего API обнаружения игр.",
+            t("Выбор нескольких установок появится после общего API обнаружения игр."),
             Text::Note,
         )?;
         let manual = style::card(cx.tree, host)?;
-        style::label(cx.tree, manual, "ПАПКА ИГРЫ (РУЧНОЙ ВЫБОР)", Text::Heading)?;
+        style::label(cx.tree, manual, t("ПАПКА ИГРЫ (РУЧНОЙ ВЫБОР)"), Text::Heading)?;
         style::label(
             cx.tree,
             manual,
-            "Оставьте пустым для автоматического поиска через Steam. Укажите путь вручную, если папка нестандартная.",
+            t("Оставьте пустым для автоматического поиска через Steam. Укажите путь вручную, если папка нестандартная."),
             Text::Note,
         )?;
         let manual_row = style::row(cx.tree, manual)?;
         self.manual_path = Some(style::input(cx.tree, manual_row, "")?);
-        self.apply_manual = Some(style::button(cx.tree, manual_row, "ПРИМЕНИТЬ", Button::Secondary)?);
+        self.apply_manual = Some(style::button(cx.tree, manual_row, t("ПРИМЕНИТЬ"), Button::Secondary)?);
         let hot = style::card(cx.tree, host)?;
-        style::label(cx.tree, hot, "ГОРЯЧИЕ КЛАВИШИ", Text::Heading)?;
-        style::label(cx.tree,hot,"Приложение перехватывает сочетание и отправляет команду моду через файл-протокол. Игра должна быть запущена с установленным модом.",Text::Note)?;
+        style::label(cx.tree, hot, t("ГОРЯЧИЕ КЛАВИШИ"), Text::Heading)?;
+        style::label(cx.tree,hot,t("Приложение перехватывает сочетание и отправляет команду моду через файл-протокол. Игра должна быть запущена с установленным модом."),Text::Note)?;
         for action in [
             sse_companion::hotkeys::HotkeyAction::Heal,
             sse_companion::hotkeys::HotkeyAction::RepairEquipped,
@@ -409,17 +447,22 @@ impl Screen for Companion {
             sse_companion::hotkeys::HotkeyAction::QuickSave,
         ] {
             let row = style::row(cx.tree, hot)?;
-            style::label(cx.tree, row, action.name(), Text::Body)?;
+            style::label(cx.tree, row, hotkey_label(language, action), Text::Body)?;
             let input = style::input(cx.tree, row, "")?;
             self.hotkey_inputs.push((action, input));
         }
         let hot_row = style::row(cx.tree, hot)?;
-        self.save_hotkeys = Some(style::button(cx.tree, hot_row, "СОХРАНИТЬ КЛАВИШИ", Button::Primary)?);
-        self.default_hotkeys = Some(style::button(cx.tree, hot_row, "ПО УМОЛЧАНИЮ", Button::Secondary)?);
+        self.save_hotkeys = Some(style::button(
+            cx.tree,
+            hot_row,
+            t("СОХРАНИТЬ КЛАВИШИ"),
+            Button::Primary,
+        )?);
+        self.default_hotkeys = Some(style::button(cx.tree, hot_row, t("ПО УМОЛЧАНИЮ"), Button::Secondary)?);
         self.toggle_hotkeys = Some(style::button(
             cx.tree,
             hot_row,
-            "ВКЛЮЧИТЬ ГОРЯЧИЕ КЛАВИШИ",
+            t("ВКЛЮЧИТЬ ГОРЯЧИЕ КЛАВИШИ"),
             Button::Secondary,
         )?);
         if let Some(reason) = sse_companion::hotkeys::unavailable_reason() {
@@ -430,16 +473,16 @@ impl Screen for Companion {
         }
         let confirm = style::card(cx.tree, host)?;
         self.confirm_card = Some(confirm);
-        style::label(cx.tree, confirm, "ПОДТВЕРЖДЕНИЕ ИЗМЕНЕНИЯ ИГРЫ", Text::Heading)?;
+        style::label(cx.tree, confirm, t("ПОДТВЕРЖДЕНИЕ ИЗМЕНЕНИЯ ИГРЫ"), Text::Heading)?;
         style::label(
             cx.tree,
             confirm,
-            "Будут изменены файлы выбранной игры. Проверьте игру и папку перед продолжением.",
+            t("Будут изменены файлы выбранной игры. Проверьте игру и папку перед продолжением."),
             Text::Note,
         )?;
         let confirm_row = style::row(cx.tree, confirm)?;
-        self.confirm_write = Some(style::button(cx.tree, confirm_row, "ПОДТВЕРДИТЬ", Button::Primary)?);
-        self.confirm_cancel = Some(style::button(cx.tree, confirm_row, "ОТМЕНА", Button::Secondary)?);
+        self.confirm_write = Some(style::button(cx.tree, confirm_row, t("ПОДТВЕРДИТЬ"), Button::Primary)?);
+        self.confirm_cancel = Some(style::button(cx.tree, confirm_row, t("ОТМЕНА"), Button::Secondary)?);
         cx.tree.set_visible(confirm, false)?;
         Ok(())
     }
@@ -454,9 +497,9 @@ impl Screen for Companion {
             cx.tree.set_text(
                 button,
                 if active {
-                    "ВЫКЛЮЧИТЬ ГОРЯЧИЕ КЛАВИШИ"
+                    t("ВЫКЛЮЧИТЬ ГОРЯЧИЕ КЛАВИШИ")
                 } else {
-                    "ВКЛЮЧИТЬ ГОРЯЧИЕ КЛАВИШИ"
+                    t("ВКЛЮЧИТЬ ГОРЯЧИЕ КЛАВИШИ")
                 },
             )?;
         }
@@ -481,18 +524,18 @@ impl Screen for Companion {
             return Ok(());
         }
         if clicked.is_some() && clicked == self.ping {
-            cx.status = Some("Проверка связи с модом…".to_owned());
+            cx.status = Some(t("Проверка связи с модом…").to_owned());
             self.protocol(cx, "ping");
             return Ok(());
         }
         if clicked.is_some() && clicked == self.inspect {
-            cx.status = Some("Чтение ответов Companion…".to_owned());
+            cx.status = Some(t("Чтение ответов Companion…").to_owned());
             self.protocol(cx, "info");
             self.protocol(cx, "list_inventory");
             return Ok(());
         }
         if let Some((_, command, argument)) = self.s2_commands.iter().find(|(id, _, _)| clicked == Some(*id)) {
-            cx.status = Some("Команда отправляется в S.T.A.L.K.E.R. 2…".to_owned());
+            cx.status = Some(t("Команда отправляется в S.T.A.L.K.E.R. 2…").to_owned());
             self.protocol_args(cx, command, Some(argument));
             return Ok(());
         }
@@ -505,14 +548,14 @@ impl Screen for Companion {
                 .to_owned();
             if text.is_empty() {
                 self.manual_directory = None;
-                cx.status = Some("Папка очищена, используется автообнаружение.".to_owned());
+                cx.status = Some(t("Папка очищена, используется автообнаружение.").to_owned());
             } else {
                 let path = PathBuf::from(&text);
                 if path.is_dir() {
                     self.manual_directory = Some(path.clone());
-                    cx.status = Some(format!("Папка задана: {}", path.display()));
+                    cx.status = Some(tr("Папка задана: {0}", &[&path.display()]));
                 } else {
-                    cx.status = Some(format!("Папка не найдена: {text}"));
+                    cx.status = Some(tr("Папка не найдена: {0}", &[&text]));
                 }
             }
             self.intent = None;
@@ -531,7 +574,7 @@ impl Screen for Companion {
                 sse_app::tasks::spawn_named_detached("companion-hotkeys-stop", move || {
                     let result = runtime
                         .map_or(Ok(()), |mut runtime| runtime.stop())
-                        .map(|()| "Горячие клавиши выключены.".to_owned())
+                        .map(|()| t("Горячие клавиши выключены.").to_owned())
                         .map_err(|error| error.to_string());
                     proxy.send(AppMessage::ToScreen(
                         ScreenId::Companion,
@@ -541,7 +584,7 @@ impl Screen for Companion {
             } else {
                 let selected = self.selected(cx).and_then(|(game, directory)| {
                     if xray_game(&game).is_none() {
-                        return Err("Горячие клавиши поддерживаются только для игр X-Ray.".to_owned());
+                        return Err(t("Горячие клавиши поддерживаются только для игр X-Ray.").to_owned());
                     }
                     Self::exchange_directory(&game, &directory)
                 });
@@ -564,7 +607,7 @@ impl Screen for Companion {
                     proxy.send(AppMessage::ToScreen(
                         ScreenId::Companion,
                         Box::new(CompanionReply::Hotkeys(
-                            result.map(|()| "Горячие клавиши включены.".to_owned()),
+                            result.map(|()| t("Горячие клавиши включены.").to_owned()),
                         )),
                     ));
                 });
@@ -602,7 +645,7 @@ impl Screen for Companion {
                             .map_err(|_| "hotkey runtime lock was poisoned".to_owned())?;
                         *slot = Some(restarted);
                     }
-                    Ok(format!("Клавиши сохранены: {}.", path.display()))
+                    Ok(tr("Клавиши сохранены: {0}.", &[&path.display()]))
                 })();
                 proxy.send(AppMessage::ToScreen(
                     ScreenId::Companion,
@@ -645,7 +688,7 @@ impl Screen for Companion {
                 if self.confirm_card.is_some() {
                     cx.tree.close_dialog()?;
                 }
-                cx.status = Some("Выбор игры изменился; подтверждение отменено.".to_owned());
+                cx.status = Some(t("Выбор игры изменился; подтверждение отменено.").to_owned());
                 return Ok(());
             }
             if self.confirm_card.is_some() {
@@ -661,7 +704,7 @@ impl Screen for Companion {
                         } else {
                             sse_companion::installer::install_stalker2(&root).map_err(|e| e.to_string())?;
                         }
-                        Ok("Компаньон успешно установлен!".to_owned())
+                        Ok(t("Компаньон успешно установлен!").to_owned())
                     } else {
                         let id = if matches!(intent.game.as_str(), "s2" | "stalker2") {
                             "s2"
@@ -674,9 +717,9 @@ impl Screen for Companion {
                         };
                         let removed = sse_companion::installer::uninstall(&root, id).map_err(|e| e.to_string())?;
                         Ok(if removed {
-                            "Компаньон удалён."
+                            t("Компаньон удалён.")
                         } else {
-                            "Не удалось удалить компаньон."
+                            t("Не удалось удалить компаньон.")
                         }
                         .to_owned())
                     }
@@ -696,71 +739,71 @@ impl Screen for Companion {
                             cx.tree.set_text(
                                 id,
                                 if version.is_some() {
-                                    "УСТАНОВЛЕН (ОЖИДАНИЕ ИГРЫ)"
+                                    t("УСТАНОВЛЕН (ОЖИДАНИЕ ИГРЫ)")
                                 } else {
-                                    "НЕ УСТАНОВЛЕН"
+                                    t("НЕ УСТАНОВЛЕН")
                                 },
                             )?;
                         }
                         if let Some(id) = self.version {
                             cx.tree
-                                .set_text(id, &format!("Версия мода: {}", version.as_deref().unwrap_or("—")))?;
+                                .set_text(id, &tr("Версия мода: {0}", &[&version.as_deref().unwrap_or("—")]))?;
                         }
                         if let Some(id) = self.install {
                             cx.tree.set_text(
                                 id,
                                 if version.is_some() {
-                                    "ОБНОВИТЬ"
+                                    t("ОБНОВИТЬ")
                                 } else {
-                                    "УСТАНОВИТЬ"
+                                    t("УСТАНОВИТЬ")
                                 },
                             )?;
                         }
                         if let (Some(id), Ok((_, dir))) = (self.path, self.selected(cx)) {
-                            cx.tree.set_text(id, &format!("Путь установки: {}", dir.display()))?;
+                            cx.tree.set_text(id, &tr("Путь установки: {0}", &[&dir.display()]))?;
                         }
                     }
                     CompanionReply::Status(Err(e)) => {
                         if let Some(id) = self.status {
-                            cx.tree.set_text(id, "ОШИБКА")?;
+                            cx.tree.set_text(id, t("ОШИБКА"))?;
                         }
-                        cx.status = Some(format!("Ошибка обновления статуса: {e}"));
+                        cx.status = Some(tr("Ошибка обновления статуса: {0}", &[e]));
                     }
                     CompanionReply::Protocol(command, Ok(text)) => match *command {
                         "ping" => {
                             if let Some(id) = self.status {
-                                cx.tree.set_text(id, "РАБОТАЕТ (ПОДКЛЮЧЁН)")?;
+                                cx.tree.set_text(id, t("РАБОТАЕТ (ПОДКЛЮЧЁН)"))?;
                             }
                             if let Some(id) = self.latency {
-                                cx.tree.set_text(id, &format!("Связь / Задержка: {text}"))?;
+                                cx.tree.set_text(id, &tr("Связь / Задержка: {0}", &[text]))?;
                             }
-                            cx.status = Some(format!("Мод отвечает. Задержка: {text}"));
+                            cx.status = Some(tr("Мод отвечает. Задержка: {0}", &[text]));
                         }
                         "info" => {
                             if let Some(id) = self.info {
-                                cx.tree.set_text(id, &format!("Информация игрока: {text}"))?;
+                                cx.tree.set_text(id, &tr("Информация игрока: {0}", &[text]))?;
                             }
                         }
                         "list_inventory" => {
                             if let Some(id) = self.inventory {
-                                cx.tree.set_text(id, &format!("Инвентарь игрока: {text}"))?;
+                                cx.tree.set_text(id, &tr("Инвентарь игрока: {0}", &[text]))?;
                             }
                         }
                         "god" | "noclip" | "timespeed" => {
-                            cx.status = Some(format!("Игра выполнила: {text}"));
+                            cx.status = Some(tr("Игра выполнила: {0}", &[text]));
                         }
                         _ => cx.status = Some(format!("Companion: {text}")),
                     },
                     CompanionReply::Protocol(command, Err(e)) => {
                         if let Some(id) = self.latency {
-                            cx.tree.set_text(id, "Связь / Задержка: Нет ответа")?;
+                            cx.tree.set_text(id, t("Связь / Задержка: Нет ответа"))?;
                         }
                         cx.status = Some(if *command == "ping" {
-                            format!("Ошибка пинга: {e}")
+                            tr("Ошибка пинга: {0}", &[e])
                         } else if matches!(*command, "god" | "noclip" | "timespeed") {
-                            format!("Не выполнено: {e}")
+                            tr("Не выполнено: {0}", &[e])
                         } else {
-                            format!("Не удалось получить данные Companion: {e}")
+                            tr("Не удалось получить данные Companion: {0}", &[e])
                         });
                     }
                     CompanionReply::Changed(Ok(text)) | CompanionReply::Hotkeys(Ok(text)) => {
@@ -770,16 +813,20 @@ impl Screen for Companion {
                             cx.tree.set_text(
                                 button,
                                 if active {
-                                    "ВЫКЛЮЧИТЬ ГОРЯЧИЕ КЛАВИШИ"
+                                    t("ВЫКЛЮЧИТЬ ГОРЯЧИЕ КЛАВИШИ")
                                 } else {
-                                    "ВКЛЮЧИТЬ ГОРЯЧИЕ КЛАВИШИ"
+                                    t("ВКЛЮЧИТЬ ГОРЯЧИЕ КЛАВИШИ")
                                 },
                             )?;
                         }
                         self.refresh(cx);
                     }
-                    CompanionReply::Changed(Err(e)) => cx.status = Some(format!("Ошибка установки: {e}")),
-                    CompanionReply::Hotkeys(Err(e)) => cx.status = Some(format!("Клавиши не сохранены: {e}")),
+                    CompanionReply::Changed(Err(e)) => {
+                        cx.status = Some(tr("Ошибка установки: {0}", &[e]));
+                    }
+                    CompanionReply::Hotkeys(Err(e)) => {
+                        cx.status = Some(tr("Клавиши не сохранены: {0}", &[e]));
+                    }
                 }
             }
         }
@@ -821,7 +868,7 @@ impl Achievements {
         let id = cx.app.selected_game().and_then(app_id);
         sse_app::tasks::spawn_named_detached("companion-read", move || {
             let result = id
-                .ok_or_else(|| "Для выбранной игры нет Steam App ID".to_owned())
+                .ok_or_else(|| t("Для выбранной игры нет Steam App ID").to_owned())
                 .and_then(achievement_list);
             proxy.send(AppMessage::ToScreen(
                 ScreenId::Achievements,
@@ -842,8 +889,8 @@ impl Achievements {
             }
         }
         if let Some(id) = self.status {
-            cx.tree
-                .set_text(id, &format!("Загружено {} достижений.", self.items.len()))?;
+            let count = self.items.len();
+            cx.tree.set_text(id, &tr("Загружено {0} достижений.", &[&count]))?;
         }
         if let Some(id) = self.progress {
             let got = self.items.iter().filter(|item| item.achieved).count();
@@ -852,8 +899,10 @@ impl Achievements {
             } else {
                 (got as f64 * 100.0) / self.items.len() as f64
             };
+            let total = self.items.len();
+            let percent = format!("{percent:.0}");
             cx.tree
-                .set_text(id, &format!("{got} из {} получено ({percent:.0}%)", self.items.len()))?;
+                .set_text(id, &tr("{0} из {1} получено ({2}%)", &[&got, &total, &percent]))?;
         }
         Ok(())
     }
@@ -864,27 +913,27 @@ impl Screen for Achievements {
         ScreenId::Achievements
     }
     fn subtitle(&self) -> &str {
-        "Достижения выбранной игры и прогресс Steam"
+        t("Достижения выбранной игры и прогресс Steam")
     }
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
         let card = style::card(cx.tree, host)?;
-        style::label(cx.tree, card, "ДОСТИЖЕНИЯ STEAM", Text::Heading)?;
+        style::label(cx.tree, card, t("ДОСТИЖЕНИЯ STEAM"), Text::Heading)?;
         style::label(
             cx.tree,
             card,
-            "Steam доступен / недоступен определяется рабочим процессом Steam.",
+            t("Steam доступен / недоступен определяется рабочим процессом Steam."),
             Text::Note,
         )?;
-        self.status = Some(style::label(cx.tree, card, "Запрос достижений...", Text::Note)?);
-        self.progress = Some(style::label(cx.tree, card, "0 из 0 получено (0%)", Text::Value)?);
-        self.refresh = Some(style::button(cx.tree, card, "ОБНОВИТЬ", Button::Secondary)?);
+        self.status = Some(style::label(cx.tree, card, t("Запрос достижений..."), Text::Note)?);
+        self.progress = Some(style::label(cx.tree, card, t("0 из 0 получено (0%)"), Text::Value)?);
+        self.refresh = Some(style::button(cx.tree, card, t("ОБНОВИТЬ"), Button::Secondary)?);
         for _ in 0..ROWS {
             let r = style::button(cx.tree, card, "", Button::Secondary)?;
             cx.tree.set_visible(r, false)?;
             self.rows.push(r);
         }
         let row = style::row(cx.tree, card)?;
-        self.set = Some(style::button(cx.tree, row, "ПОЛУЧИТЬ", Button::Primary)?);
+        self.set = Some(style::button(cx.tree, row, t("ПОЛУЧИТЬ"), Button::Primary)?);
         self.clear = Some(style::button(
             cx.tree,
             row,
@@ -893,16 +942,16 @@ impl Screen for Achievements {
         )?);
         let confirm = style::card(cx.tree, host)?;
         self.confirm_card = Some(confirm);
-        style::label(cx.tree, confirm, "ПОДТВЕРЖДЕНИЕ ДОСТИЖЕНИЯ", Text::Heading)?;
+        style::label(cx.tree, confirm, t("ПОДТВЕРЖДЕНИЕ ДОСТИЖЕНИЯ"), Text::Heading)?;
         style::label(
             cx.tree,
             confirm,
-            "Изменение будет отправлено в Steam для выбранной игры и достижения.",
+            t("Изменение будет отправлено в Steam для выбранной игры и достижения."),
             Text::Note,
         )?;
         let actions = style::row(cx.tree, confirm)?;
-        self.confirm_write = Some(style::button(cx.tree, actions, "ПОДТВЕРДИТЬ", Button::Primary)?);
-        self.confirm_cancel = Some(style::button(cx.tree, actions, "ОТМЕНА", Button::Secondary)?);
+        self.confirm_write = Some(style::button(cx.tree, actions, t("ПОДТВЕРДИТЬ"), Button::Primary)?);
+        self.confirm_cancel = Some(style::button(cx.tree, actions, t("ОТМЕНА"), Button::Secondary)?);
         cx.tree.set_visible(confirm, false)?;
         Ok(())
     }
@@ -941,12 +990,12 @@ impl Screen for Achievements {
         };
         if let Some(set) = change {
             let Some(selected_id) = self.selected.as_deref() else {
-                cx.status = Some("Сначала выберите достижение".to_owned());
+                cx.status = Some(t("Сначала выберите достижение").to_owned());
                 return Ok(());
             };
             let Some(item) = self.items.iter().find(|item| item.name == selected_id) else {
                 self.selected = None;
-                cx.status = Some("Выбранное достижение исчезло после обновления списка".to_owned());
+                cx.status = Some(t("Выбранное достижение исчезло после обновления списка").to_owned());
                 return Ok(());
             };
             let Some(app_id) = cx.app.selected_game().and_then(app_id) else {
@@ -973,7 +1022,7 @@ impl Screen for Achievements {
             };
             if cx.app.selected_game().and_then(app_id) != Some(intent.app_id) {
                 let _ = cx.tree.close_dialog()?;
-                cx.status = Some("Выбранная игра изменилась; подтверждение отменено.".to_owned());
+                cx.status = Some(t("Выбранная игра изменилась; подтверждение отменено.").to_owned());
                 return Ok(());
             }
             self.pending_set = Some(intent.set);
@@ -1011,9 +1060,9 @@ impl Screen for Achievements {
                             if let Some(item) = self.items.iter_mut().find(|item| item.name == selected_id) {
                                 item.achieved = self.pending_set.take().unwrap_or(item.achieved);
                                 cx.status = Some(if item.achieved {
-                                    format!("Достижение «{}» получено в Steam.", item.display_name)
+                                    tr("Достижение «{0}» получено в Steam.", &[&item.display_name])
                                 } else {
-                                    format!("Достижение «{}» снято в Steam.", item.display_name)
+                                    tr("Достижение «{0}» снято в Steam.", &[&item.display_name])
                                 });
                             }
                         }
@@ -1095,7 +1144,7 @@ impl Cloud {
         let id = cx.app.selected_game().and_then(app_id);
         sse_app::tasks::spawn_named_detached("companion-read", move || {
             let result = id
-                .ok_or_else(|| "Для выбранной игры нет Steam App ID".to_owned())
+                .ok_or_else(|| t("Для выбранной игры нет Steam App ID").to_owned())
                 .and_then(cloud_files);
             proxy.send(AppMessage::ToScreen(
                 ScreenId::Cloud,
@@ -1115,24 +1164,24 @@ impl Cloud {
             }
         }
         if let Some(id) = self.status {
-            cx.tree.set_text(id, &format!("Файлов: {}", self.items.len()))?;
+            cx.tree.set_text(id, &tr("Файлов: {0}", &[&self.items.len()]))?;
         }
         Ok(())
     }
 
     fn prepare_upload(&self, cx: &mut Context<'_>) {
         let Some(selected_id) = self.selected.as_deref() else {
-            cx.status = Some("Сначала выберите файл Steam Cloud".to_owned());
+            cx.status = Some(t("Сначала выберите файл Steam Cloud").to_owned());
             return;
         };
         let Some(item) = self.items.iter().find(|item| item.name == selected_id) else {
-            cx.status = Some("Выбранный облачный файл исчез после обновления списка".to_owned());
+            cx.status = Some(t("Выбранный облачный файл исчез после обновления списка").to_owned());
             return;
         };
         let Some(game) = cx.app.selected_game() else { return };
         let Some(app_id) = app_id(game) else { return };
         if app_id == sse_steam::discovery::STALKER_2_APP_ID {
-            cx.status = Some("Запись S.T.A.L.K.E.R. 2 в Steam Cloud запрещена.".to_owned());
+            cx.status = Some(t("Запись S.T.A.L.K.E.R. 2 в Steam Cloud запрещена.").to_owned());
             return;
         }
         let remote = item.name.clone();
@@ -1154,37 +1203,38 @@ impl Cloud {
                 .is_some_and(|name| name.eq_ignore_ascii_case(remote_name))
         });
         let Some(local) = matching.next() else {
-            cx.status = Some("Для выбранного облачного файла не найден локальный сейв с тем же именем.".to_owned());
+            cx.status = Some(t("Для выбранного облачного файла не найден локальный сейв с тем же именем.").to_owned());
             return;
         };
         if matching.next().is_some() {
             cx.status =
-                Some("Найдено несколько локальных сейвов с тем же именем; запись в облако отменена.".to_owned());
+                Some(t("Найдено несколько локальных сейвов с тем же именем; запись в облако отменена.").to_owned());
             return;
         };
 
         let Some(proxy) = cx.proxy.cloned() else { return };
         let backup_directory = self.backup_workspace.backup_directory();
-        cx.status = Some("Сверяю облачную и локальную версии перед подтверждением…".to_owned());
+        cx.status = Some(t("Сверяю облачную и локальную версии перед подтверждением…").to_owned());
         sse_app::tasks::spawn_named_detached("companion-read", move || {
             let result = (|| {
                 let metadata_before =
-                    std::fs::metadata(&local).map_err(|error| format!("Ошибка локального сейва: {error}"))?;
+                    std::fs::metadata(&local).map_err(|error| tr("Ошибка локального сейва: {0}", &[&error]))?;
                 if metadata_before.len() == 0
                     || metadata_before.len() > u64::try_from(sse_steam::cloud::MAX_CLOUD_FILE_BYTES).unwrap_or(u64::MAX)
                 {
-                    return Err("Размер локального сейва вне поддерживаемого диапазона для Steam Cloud".to_owned());
+                    return Err(t("Размер локального сейва вне поддерживаемого диапазона для Steam Cloud").to_owned());
                 }
-                let local_bytes = std::fs::read(&local).map_err(|error| format!("Ошибка локального сейва: {error}"))?;
+                let local_bytes =
+                    std::fs::read(&local).map_err(|error| tr("Ошибка локального сейва: {0}", &[&error]))?;
                 let metadata_after =
-                    std::fs::metadata(&local).map_err(|error| format!("Ошибка локального сейва: {error}"))?;
+                    std::fs::metadata(&local).map_err(|error| tr("Ошибка локального сейва: {0}", &[&error]))?;
                 let local_size = u64::try_from(local_bytes.len())
-                    .map_err(|_| "Размер локального сейва превышает диапазон метаданных".to_owned())?;
+                    .map_err(|_| t("Размер локального сейва превышает диапазон метаданных").to_owned())?;
                 if metadata_before.len() != local_size
                     || metadata_after.len() != local_size
                     || metadata_before.modified().ok() != metadata_after.modified().ok()
                 {
-                    return Err("Локальный сейв изменился во время подготовки; повторите попытку".to_owned());
+                    return Err(t("Локальный сейв изменился во время подготовки; повторите попытку").to_owned());
                 }
 
                 let mut api = steam_api(app_id)?;
@@ -1192,27 +1242,27 @@ impl Cloud {
                 let current = listed_before
                     .iter()
                     .find(|file| file.name == remote)
-                    .ok_or_else(|| "Облачный файл исчез; обновите список".to_owned())?;
+                    .ok_or_else(|| t("Облачный файл исчез; обновите список").to_owned())?;
                 if current != &selected_file {
-                    return Err("Облачная версия изменилась после загрузки списка; обновите список".to_owned());
+                    return Err(t("Облачная версия изменилась после загрузки списка; обновите список").to_owned());
                 }
                 if !current.exists || !current.persisted {
-                    return Err("Steam не подтвердил сохранённую облачную версию; запись отменена".to_owned());
+                    return Err(t("Steam не подтвердил сохранённую облачную версию; запись отменена").to_owned());
                 }
                 if current.size == 0
                     || current.size > u64::try_from(sse_steam::cloud::MAX_CLOUD_FILE_BYTES).unwrap_or(u64::MAX)
                 {
-                    return Err("Размер облачного сейва вне поддерживаемого диапазона".to_owned());
+                    return Err(t("Размер облачного сейва вне поддерживаемого диапазона").to_owned());
                 }
                 let cloud_bytes = api.read_file(&remote).map_err(|error| error.message)?;
                 let cloud_size = u64::try_from(cloud_bytes.len())
-                    .map_err(|_| "Размер облачного сейва превышает диапазон метаданных".to_owned())?;
+                    .map_err(|_| t("Размер облачного сейва превышает диапазон метаданных").to_owned())?;
                 if cloud_size != current.size {
-                    return Err("Размер облачного файла изменился во время чтения; обновите список".to_owned());
+                    return Err(t("Размер облачного файла изменился во время чтения; обновите список").to_owned());
                 }
                 let listed_after = api.list_files().map_err(|error| error.message)?;
                 if listed_after.iter().find(|file| file.name == remote) != Some(current) {
-                    return Err("Облачная версия изменилась во время чтения; обновите список".to_owned());
+                    return Err(t("Облачная версия изменилась во время чтения; обновите список").to_owned());
                 }
 
                 Ok(CloudIntent {
@@ -1239,9 +1289,11 @@ impl Cloud {
         let Some(proxy) = cx.proxy.cloned() else { return };
         sse_app::tasks::spawn_named_detached("companion-write", move || {
             let result = (|| {
-                let output = std::fs::read(&intent.local).map_err(|error| format!("Ошибка записи: {error}"))?;
+                let output = std::fs::read(&intent.local).map_err(|error| tr("Ошибка записи: {0}", &[&error]))?;
                 if sse_codecs::sha256::sha256(&output) != intent.local_sha256 {
-                    return Ok("Локальный файл изменился после запроса записи; подтвердите запись ещё раз.".to_owned());
+                    return Ok(
+                        t("Локальный файл изменился после запроса записи; подтвердите запись ещё раз").to_owned(),
+                    );
                 }
                 let mut api = steam_api(intent.app_id)?;
                 let prepared = PreparedEdit::from_source_sha256(intent.cloud_sha256, output);
@@ -1257,18 +1309,25 @@ impl Cloud {
                 )
                 .map_err(|error| error.message)?;
                 let artifact_paths = format!(
-                    "Копия облачной версии: {}; копия отправки: {}; журнал: {}",
-                    receipt.backup_path.display(),
-                    receipt.recovery_path.display(),
-                    receipt.journal_path.display()
+                    "{}; {}; {}",
+                    tr("Копия облачной версии: {0}", &[&receipt.backup_path.display()]),
+                    tr("Копия отправки: {0}", &[&receipt.recovery_path.display()]),
+                    tr("Журнал: {0}", &[&receipt.journal_path.display()]),
                 );
                 match receipt.status {
-                    WriteStatus::Verified => Ok(format!("Записано и проверено: {}. {artifact_paths}", intent.remote)),
-                    WriteStatus::Uncertain => Ok(format!(
-                        "Результат записи не подтверждён (повтор не выполняется): {}{}. {artifact_paths}",
-                        intent.remote,
-                        receipt.reason.map(|reason| format!(" — {reason}")).unwrap_or_default()
-                    )),
+                    WriteStatus::Verified => {
+                        Ok(tr("Записано и проверено: {0}. {1}", &[&intent.remote, &artifact_paths]))
+                    }
+                    WriteStatus::Uncertain => {
+                        let reason = receipt
+                            .reason
+                            .map(|reason| tr(" — {0}", &[&reason]))
+                            .unwrap_or_default();
+                        Ok(tr(
+                            "Результат записи не подтверждён (повтор не выполняется): {0}{1}. {2}",
+                            &[&intent.remote, &reason, &artifact_paths],
+                        ))
+                    }
                 }
             })();
             proxy.send(AppMessage::ToScreen(
@@ -1285,21 +1344,31 @@ impl Screen for Cloud {
     }
 
     fn subtitle(&self) -> &str {
-        "Steam Cloud: список, локальная копия и защищённая запись"
+        t("Steam Cloud: список, локальная копия и защищённая запись")
     }
 
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
         let card = style::card(cx.tree, host)?;
-        style::label(cx.tree, card, "STEAM CLOUD", Text::Heading)?;
+        style::label(cx.tree, card, t("STEAM CLOUD"), Text::Heading)?;
         self.status = Some(style::label(
             cx.tree,
             card,
-            "Список не загружен. Нажмите «ОБНОВИТЬ СПИСОК».",
+            t("Список не загружен. Нажмите «ОБНОВИТЬ СПИСОК»."),
             Text::Note,
         )?);
-        let refresh = style::button(cx.tree, card, "ОБНОВИТЬ СПИСОК", Button::Secondary)?;
-        self.download = Some(style::button(cx.tree, card, "СКАЧАТЬ В ЛОКАЛЬНЫЕ", Button::Secondary)?);
-        self.upload = Some(style::button(cx.tree, card, "ЗАПИСАТЬ В ОБЛАКО...", Button::Primary)?);
+        let refresh = style::button(cx.tree, card, t("ОБНОВИТЬ СПИСОК"), Button::Secondary)?;
+        self.download = Some(style::button(
+            cx.tree,
+            card,
+            t("СКАЧАТЬ В ЛОКАЛЬНЫЕ"),
+            Button::Secondary,
+        )?);
+        self.upload = Some(style::button(
+            cx.tree,
+            card,
+            t("ЗАПИСАТЬ В ОБЛАКО..."),
+            Button::Primary,
+        )?);
         self.rows.push(refresh);
         for _ in 0..ROWS {
             let row = style::button(cx.tree, card, "", Button::Secondary)?;
@@ -1310,25 +1379,30 @@ impl Screen for Cloud {
         let overlay = cx.tree.overlay_host().unwrap_or(host);
         let confirm = style::card(cx.tree, overlay)?;
         self.confirm_card = Some(confirm);
-        style::label(cx.tree, confirm, "ПОДТВЕРЖДЕНИЕ ЗАПИСИ", Text::Heading)?;
+        style::label(cx.tree, confirm, t("ПОДТВЕРЖДЕНИЕ ЗАПИСИ"), Text::Heading)?;
         style::label(
             cx.tree,
             confirm,
-            "Внимание: локальный файл будет отправлен в Steam Cloud и перезапишет облачное сохранение. Резервная копия будет сохранена в бэкапы.",
+            t("Внимание: локальный файл будет отправлен в Steam Cloud и перезапишет облачное сохранение. Резервная копия будет сохранена в бэкапы."),
             Text::Body,
         )?;
-        self.confirm_cloud_version = Some(style::label(cx.tree, confirm, "Облако Steam: —", Text::Note)?);
-        self.confirm_local_version = Some(style::label(cx.tree, confirm, "Локальный сейв: —", Text::Note)?);
-        self.confirm_backup_directory = Some(style::label(cx.tree, confirm, "Папка резервных копий: —", Text::Note)?);
+        self.confirm_cloud_version = Some(style::label(cx.tree, confirm, t("Облако Steam: —"), Text::Note)?);
+        self.confirm_local_version = Some(style::label(cx.tree, confirm, t("Локальный сейв: —"), Text::Note)?);
+        self.confirm_backup_directory = Some(style::label(
+            cx.tree,
+            confirm,
+            t("Папка резервных копий: —"),
+            Text::Note,
+        )?);
         self.confirm_check = Some(style::button(
             cx.tree,
             confirm,
-            "[ ] Я подтверждаю перезапись",
+            t("[ ] Я подтверждаю перезапись"),
             Button::Secondary,
         )?);
         let actions = style::row(cx.tree, confirm)?;
-        self.confirm_write = Some(style::button(cx.tree, actions, "ЗАПИСАТЬ", Button::Primary)?);
-        self.confirm_cancel = Some(style::button(cx.tree, actions, "ОТМЕНА", Button::Secondary)?);
+        self.confirm_write = Some(style::button(cx.tree, actions, t("ЗАПИСАТЬ"), Button::Primary)?);
+        self.confirm_cancel = Some(style::button(cx.tree, actions, t("ОТМЕНА"), Button::Secondary)?);
         cx.tree.set_visible(confirm, false)?;
         Ok(())
     }
@@ -1358,7 +1432,7 @@ impl Screen for Cloud {
         ) && self.confirm_card.is_some_and(|card| cx.tree.dialog() == Some(card))
         {
             self.clear_intent(cx)?;
-            cx.status = Some("Запись отменена пользователем.".to_owned());
+            cx.status = Some(t("Запись отменена пользователем.").to_owned());
             return Ok(());
         }
         if clicked.is_some() && self.rows.first().copied() == clicked {
@@ -1372,7 +1446,7 @@ impl Screen for Cloud {
         if let Some(row_index) = selected_row.filter(|index| self.items.get(*index).is_some()) {
             self.clear_intent(cx)?;
             self.selected = self.items.get(row_index).map(|file| file.name.clone());
-            cx.status = self.items.get(row_index).map(|file| format!("Выбран {}", file.name));
+            cx.status = self.items.get(row_index).map(|file| tr("Выбран {0}", &[&file.name]));
         }
 
         if clicked.is_some() && clicked == self.upload {
@@ -1386,9 +1460,9 @@ impl Screen for Cloud {
                 cx.tree.set_text(
                     check,
                     if self.overwrite_confirmed {
-                        "[✓] Я подтверждаю перезапись"
+                        t("[✓] Я подтверждаю перезапись")
                     } else {
-                        "[ ] Я подтверждаю перезапись"
+                        t("[ ] Я подтверждаю перезапись")
                     },
                 )?;
             }
@@ -1396,12 +1470,12 @@ impl Screen for Cloud {
 
         if clicked.is_some() && clicked == self.confirm_cancel {
             self.clear_intent(cx)?;
-            cx.status = Some("Запись отменена пользователем.".to_owned());
+            cx.status = Some(t("Запись отменена пользователем.").to_owned());
         }
 
         if clicked.is_some() && clicked == self.confirm_write {
             if !self.overwrite_confirmed {
-                cx.status = Some("Установите флажок «Я подтверждаю перезапись».".to_owned());
+                cx.status = Some(t("Установите флажок «Я подтверждаю перезапись».").to_owned());
             } else if let Some(intent) = self.intent.take() {
                 self.overwrite_confirmed = false;
                 if let Some(card) = self.confirm_card {
@@ -1411,19 +1485,19 @@ impl Screen for Cloud {
                         cx.tree.set_visible(card, false)?;
                     }
                 }
-                cx.status = Some(format!("Запись {} в Steam Cloud (RemoteStorage)...", intent.remote));
+                cx.status = Some(tr("Запись {0} в Steam Cloud (RemoteStorage)...", &[&intent.remote]));
                 self.upload(cx, intent);
             }
         }
 
         if clicked.is_some() && clicked == self.download {
             let Some(selected_id) = self.selected.as_deref() else {
-                cx.status = Some("Сначала выберите файл Steam Cloud".to_owned());
+                cx.status = Some(t("Сначала выберите файл Steam Cloud").to_owned());
                 return Ok(());
             };
             let Some(item) = self.items.iter().find(|item| item.name == selected_id) else {
                 self.selected = None;
-                cx.status = Some("Выбранный облачный файл исчез после обновления списка".to_owned());
+                cx.status = Some(t("Выбранный облачный файл исчез после обновления списка").to_owned());
                 return Ok(());
             };
             let Some(app_id) = cx.app.selected_game().and_then(app_id) else {
@@ -1440,7 +1514,7 @@ impl Screen for Cloud {
                     let source = cloud_read(app_id, &remote)?;
                     let name = std::path::Path::new(&remote)
                         .file_name()
-                        .ok_or_else(|| "Облачный файл без имени".to_owned())?;
+                        .ok_or_else(|| t("Облачный файл без имени").to_owned())?;
                     std::fs::create_dir_all(&downloads).map_err(|error| error.to_string())?;
                     let target = downloads.join(name);
                     let temp = downloads.join(format!(".{}.download.tmp", name.to_string_lossy()));
@@ -1452,7 +1526,7 @@ impl Screen for Cloud {
                         if target.exists() {
                             return Err(std::io::Error::new(
                                 std::io::ErrorKind::AlreadyExists,
-                                format!("{} уже есть", target.display()),
+                                tr("{0} уже есть", &[&target.display()]),
                             ));
                         }
                         std::fs::rename(&temp, &target)
@@ -1461,9 +1535,9 @@ impl Screen for Cloud {
                         let _ = std::fs::remove_file(&temp);
                         return Err(error.to_string());
                     }
-                    Ok(format!(
-                        "Файл скачан отдельно, открытый сейв не тронут: {}",
-                        target.display()
+                    Ok(tr(
+                        "Файл скачан отдельно, открытый сейв не тронут: {0}",
+                        &[&target.display()],
                     ))
                 })();
                 proxy.send(AppMessage::ToScreen(
@@ -1490,40 +1564,38 @@ impl Screen for Cloud {
                     }
                     CloudReply::List(Err(error)) => {
                         if let Some(status) = self.status {
-                            cx.tree.set_text(status, &format!("Ошибка загрузки списка: {error}"))?;
+                            cx.tree.set_text(status, &tr("Ошибка загрузки списка: {0}", &[error]))?;
                         }
                     }
                     CloudReply::Prepared(Ok(intent)) => {
                         if let Some(label) = self.confirm_cloud_version {
                             cx.tree.set_text(
                                 label,
-                                &format!(
-                                    "Облако Steam: {} Б · {}",
-                                    intent.cloud_size,
-                                    format_epoch_timestamp(intent.cloud_timestamp)
+                                &tr(
+                                    "Облако Steam: {0} Б · {1}",
+                                    &[&intent.cloud_size, &format_epoch_timestamp(intent.cloud_timestamp)],
                                 ),
                             )?;
                         }
                         if let Some(label) = self.confirm_local_version {
                             cx.tree.set_text(
                                 label,
-                                &format!(
-                                    "Локальный сейв: {} Б · {}",
-                                    intent.local_size,
-                                    format_epoch_timestamp(intent.local_timestamp)
+                                &tr(
+                                    "Локальный сейв: {0} Б · {1}",
+                                    &[&intent.local_size, &format_epoch_timestamp(intent.local_timestamp)],
                                 ),
                             )?;
                         }
                         if let Some(label) = self.confirm_backup_directory {
                             cx.tree.set_text(
                                 label,
-                                &format!("Папка резервных копий: {}", intent.backup_directory.display()),
+                                &tr("Папка резервных копий: {0}", &[&intent.backup_directory.display()]),
                             )?;
                         }
                         self.intent = Some(intent.clone());
                         self.overwrite_confirmed = false;
                         if let Some(check) = self.confirm_check {
-                            cx.tree.set_text(check, "[ ] Я подтверждаю перезапись")?;
+                            cx.tree.set_text(check, t("[ ] Я подтверждаю перезапись"))?;
                         }
                         if self.upload.is_some_and(|upload| cx.tree.is_visible(upload)) {
                             if let Some(card) = self.confirm_card {
@@ -1558,16 +1630,16 @@ enum UpdateReply {
 
 fn update_install_status(result: &sse_update::UpdateInstallResult) -> String {
     match result.state {
-        sse_update::UpdateInstallState::ManualInstructions => format!(
-            "Портативное обновление проверено: {}. Закройте редактор, распакуйте архив в папку установки и запустите sse-shell из этой папки.",
-            result.message
+        sse_update::UpdateInstallState::ManualInstructions => tr(
+            "Портативное обновление проверено: {0}. Закройте редактор, распакуйте архив в папку установки и запустите sse-shell из этой папки.",
+            &[&result.message],
         ),
-        sse_update::UpdateInstallState::Succeeded => "Обновление установлено.".to_owned(),
+        sse_update::UpdateInstallState::Succeeded => t("Обновление установлено.").to_owned(),
         sse_update::UpdateInstallState::OpenedExternally => {
-            "Открыт проверенный установщик. Завершите установку в его окне.".to_owned()
+            t("Открыт проверенный установщик. Завершите установку в его окне.").to_owned()
         }
-        sse_update::UpdateInstallState::Cancelled => "Установка обновления отменена.".to_owned(),
-        sse_update::UpdateInstallState::Failed => format!("Не удалось установить обновление: {}", result.message),
+        sse_update::UpdateInstallState::Cancelled => t("Установка обновления отменена.").to_owned(),
+        sse_update::UpdateInstallState::Failed => tr("Не удалось установить обновление: {0}", &[&result.message]),
     }
 }
 
@@ -1591,7 +1663,7 @@ impl Updates {
         }
         self.busy = true;
         if let Some(id) = self.status {
-            let _ = cx.tree.set_text(id, "Проверка наличия обновлений...");
+            let _ = cx.tree.set_text(id, t("Проверка наличия обновлений..."));
         }
         let Some(proxy) = cx.proxy.cloned() else {
             self.busy = false;
@@ -1625,12 +1697,12 @@ impl Updates {
             return;
         }
         let Some(artifact) = self.artifact.clone() else {
-            cx.status = Some("Нет пакета для этой установки".to_owned());
+            cx.status = Some(t("Нет пакета для этой установки").to_owned());
             return;
         };
         self.busy = true;
         if let Some(id) = self.status {
-            let _ = cx.tree.set_text(id, "Скачивание пакета обновления...");
+            let _ = cx.tree.set_text(id, t("Скачивание пакета обновления..."));
         }
         let Some(proxy) = cx.proxy.cloned() else {
             self.busy = false;
@@ -1669,12 +1741,12 @@ impl Updates {
             return;
         }
         let (Some(artifact), Some(path)) = (self.artifact.clone(), self.downloaded.clone()) else {
-            cx.status = Some("Сначала скачайте обновление.".to_owned());
+            cx.status = Some(t("Сначала скачайте обновление.").to_owned());
             return;
         };
         self.busy = true;
         if let Some(id) = self.status {
-            let _ = cx.tree.set_text(id, "Установка обновления...");
+            let _ = cx.tree.set_text(id, t("Установка обновления..."));
         }
         let Some(proxy) = cx.proxy.cloned() else {
             self.busy = false;
@@ -1704,25 +1776,35 @@ impl Screen for Updates {
         ScreenId::Updates
     }
     fn subtitle(&self) -> &str {
-        "Проверка, загрузка и установка новой версии приложения"
+        t("Проверка, загрузка и установка новой версии приложения")
     }
 
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
         let card = style::card(cx.tree, host)?;
-        style::label(cx.tree, card, "ОБНОВЛЕНИЕ ПРИЛОЖЕНИЯ", Text::Heading)?;
+        style::label(cx.tree, card, t("ОБНОВЛЕНИЕ ПРИЛОЖЕНИЯ"), Text::Heading)?;
         style::label(
             cx.tree,
             card,
-            &format!("ТЕКУЩАЯ ВЕРСИЯ: {}", env!("CARGO_PKG_VERSION")),
+            &tr("ТЕКУЩАЯ ВЕРСИЯ: {0}", &[&env!("CARGO_PKG_VERSION")]),
             Text::Value,
         )?;
-        self.latest = Some(style::label(cx.tree, card, "ПОСЛЕДНЯЯ ВЕРСИЯ: —", Text::Value)?);
-        self.badge = Some(style::label(cx.tree, card, "Статус неизвестен", Text::Body)?);
+        self.latest = Some(style::label(cx.tree, card, t("ПОСЛЕДНЯЯ ВЕРСИЯ: —"), Text::Value)?);
+        self.badge = Some(style::label(cx.tree, card, t("Статус неизвестен"), Text::Body)?);
         self.status = Some(style::label(cx.tree, card, "", Text::Note)?);
         let row = style::row(cx.tree, card)?;
-        self.check = Some(style::button(cx.tree, row, "ПРОВЕРИТЬ ОБНОВЛЕНИЯ", Button::Secondary)?);
-        self.download = Some(style::button(cx.tree, row, "СКАЧАТЬ ОБНОВЛЕНИЕ", Button::Secondary)?);
-        self.install = Some(style::button(cx.tree, row, "УСТАНОВИТЬ ОБНОВЛЕНИЕ", Button::Primary)?);
+        self.check = Some(style::button(
+            cx.tree,
+            row,
+            t("ПРОВЕРИТЬ ОБНОВЛЕНИЯ"),
+            Button::Secondary,
+        )?);
+        self.download = Some(style::button(cx.tree, row, t("СКАЧАТЬ ОБНОВЛЕНИЕ"), Button::Secondary)?);
+        self.install = Some(style::button(
+            cx.tree,
+            row,
+            t("УСТАНОВИТЬ ОБНОВЛЕНИЕ"),
+            Button::Primary,
+        )?);
         Ok(())
     }
 
@@ -1753,7 +1835,7 @@ impl Screen for Updates {
                         };
                         if let Some(id) = self.status {
                             cx.tree
-                                .set_text(id, &format!("Скачивание пакета обновления... {percent}%"))?;
+                                .set_text(id, &tr("Скачивание пакета обновления... {0}%", &[&percent]))?;
                         }
                     }
                     return Ok(());
@@ -1765,25 +1847,24 @@ impl Screen for Updates {
                         self.artifact.clone_from(artifact);
                         self.downloaded = None;
                         if let Some(id) = self.latest {
-                            cx.tree.set_text(
-                                id,
-                                &format!("ПОСЛЕДНЯЯ ВЕРСИЯ: {}", if version.is_empty() { "—" } else { version }),
-                            )?;
+                            let version = if version.is_empty() { "—" } else { version };
+                            cx.tree.set_text(id, &tr("ПОСЛЕДНЯЯ ВЕРСИЯ: {0}", &[&version]))?;
                         }
                         let (badge, status) = match state {
                             sse_update::UpdateState::Current => (
-                                "У вас актуальная версия",
-                                "Установлена последняя версия приложения.".to_owned(),
+                                t("У вас актуальная версия"),
+                                t("Установлена последняя версия приложения.").to_owned(),
                             ),
                             sse_update::UpdateState::Available => {
-                                ("Доступно обновление", format!("Доступна новая версия {version}!"))
+                                (t("Доступно обновление"), tr("Доступна новая версия {0}!", &[version]))
                             }
-                            sse_update::UpdateState::Unavailable => {
-                                ("Обновление недоступно", "Не удалось проверить обновления.".to_owned())
-                            }
+                            sse_update::UpdateState::Unavailable => (
+                                t("Обновление недоступно"),
+                                t("Не удалось проверить обновления.").to_owned(),
+                            ),
                             sse_update::UpdateState::Invalid | sse_update::UpdateState::DowngradeRefused => (
-                                "Ошибка проверки манифеста",
-                                "Проверка завершилась с ошибкой.".to_owned(),
+                                t("Ошибка проверки манифеста"),
+                                t("Проверка завершилась с ошибкой.").to_owned(),
                             ),
                         };
                         if let Some(id) = self.badge {
@@ -1797,17 +1878,17 @@ impl Screen for Updates {
                     UpdateReply::Checked(Err(error)) => {
                         self.artifact = None;
                         if let Some(id) = self.badge {
-                            cx.tree.set_text(id, "Обновление недоступно")?;
+                            cx.tree.set_text(id, t("Обновление недоступно"))?;
                         }
                         if let Some(id) = self.status {
-                            cx.tree.set_text(id, error)?;
+                            cx.tree.set_text(id, &tr("Ошибка сервера обновлений: {0}", &[error]))?;
                         }
-                        cx.status = Some("Ошибка подключения к серверу обновлений.".to_owned());
+                        cx.status = Some(t("Ошибка подключения к серверу обновлений.").to_owned());
                     }
                     UpdateReply::Downloaded(Ok((artifact, path))) => {
                         self.artifact = Some(artifact.clone());
                         self.downloaded = Some(path.clone());
-                        let text = format!("Пакет обновления скачан: {}", path.display());
+                        let text = tr("Пакет обновления скачан: {0}", &[&path.display()]);
                         if let Some(id) = self.status {
                             cx.tree.set_text(id, &text)?;
                         }
@@ -1815,9 +1896,9 @@ impl Screen for Updates {
                     }
                     UpdateReply::Downloaded(Err(error)) => {
                         if let Some(id) = self.status {
-                            cx.tree.set_text(id, &format!("Ошибка скачивания: {error}"))?;
+                            cx.tree.set_text(id, &tr("Ошибка скачивания: {0}", &[error]))?;
                         }
-                        cx.status = Some("Не удалось завершить скачивание.".to_owned());
+                        cx.status = Some(t("Не удалось завершить скачивание.").to_owned());
                     }
                     UpdateReply::Installed(Ok(result)) => {
                         let text = update_install_status(result);
@@ -1828,14 +1909,35 @@ impl Screen for Updates {
                     }
                     UpdateReply::Installed(Err(error)) => {
                         if let Some(id) = self.status {
-                            cx.tree.set_text(id, &format!("Ошибка запуска установки: {error}"))?;
+                            cx.tree.set_text(id, &tr("Ошибка запуска установки: {0}", &[error]))?;
                         }
-                        cx.status = Some("Не удалось запустить установку.".to_owned());
+                        cx.status = Some(t("Не удалось запустить установку.").to_owned());
                     }
                 }
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod service_localization_tests {
+    use super::{hotkey_label, t_in, tr_in};
+
+    #[test]
+    fn steam_and_companion_labels_keep_dynamic_values_when_translated() {
+        assert_eq!(hotkey_label("en", sse_companion::hotkeys::HotkeyAction::Heal), "Heal");
+        assert_eq!(
+            t_in("en", "Для выбранной игры нет Steam App ID"),
+            "The selected game has no Steam App ID"
+        );
+
+        let size = 2_048_u64;
+        let date = t_in("en", "дата неизвестна");
+        assert_eq!(
+            tr_in("en", "Облако Steam: {0} Б · {1}", &[&size, &date]),
+            "Steam Cloud: 2048 B · date unknown"
+        );
     }
 }
 
@@ -1852,9 +1954,6 @@ mod update_tests {
     #[test]
     fn portable_install_status_shows_path_and_manual_steps() -> sse_core::Result<()> {
         let path = r"C:\Users\Player\Downloads\SaveEditor.zip";
-        let instructions = format!(
-            "Portable update verified at {path}. Close the editor, extract the archive into its install folder, then launch sse-shell from that folder."
-        );
         let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
         let host = tree.add(
             None,
@@ -1887,11 +1986,14 @@ mod update_tests {
         screen.message(&mut context, &message, None)?;
 
         let displayed = context.tree.text(status)?;
+        let expected = super::tr_in(
+            crate::strings::current_language(),
+            "Портативное обновление проверено: {0}. Закройте редактор, распакуйте архив в папку установки и запустите sse-shell из этой папки.",
+            &[&path],
+        );
         assert!(displayed.contains(path));
-        assert!(displayed.contains("распакуйте архив"));
         assert!(displayed.contains("sse-shell"));
-        assert!(!displayed.contains("Ошибка запуска установки"));
-        assert!(!displayed.contains(&instructions));
+        assert_eq!(displayed, expected);
         assert_eq!(context.status.as_deref(), Some(displayed));
         Ok(())
     }
