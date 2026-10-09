@@ -1781,7 +1781,7 @@ enum FixReply {
         result: std::result::Result<Vec<FixRow>, String>,
     },
     Changed(std::result::Result<String, String>),
-    Compatibility(std::result::Result<(String, String, PathBuf, String), String>),
+    Compatibility(std::result::Result<(String, String, PathBuf, Option<String>), String>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1803,7 +1803,7 @@ struct FixIntent {
 struct FixCompatibility {
     game: String,
     directory: PathBuf,
-    build: String,
+    build: Option<String>,
 }
 
 #[derive(Default)]
@@ -1866,9 +1866,14 @@ fn matching_game_installation(
 fn load_fix_rows(target: sse_fixes::GameTarget, directory: Option<&Path>) -> std::result::Result<Vec<FixRow>, String> {
     let engine = sse_fixes::GameFixEngine::new();
     let installed = match directory {
-        Some(directory) => engine
-            .list_installed(directory, None)
-            .map_err(|error| error.to_string())?,
+        Some(directory) => {
+            engine
+                .recover_interrupted(directory)
+                .map_err(|error| error.to_string())?;
+            engine
+                .list_installed(directory, None)
+                .map_err(|error| error.to_string())?
+        }
         None => Vec::new(),
     };
 
@@ -2220,10 +2225,14 @@ impl Screen for GameFixes {
                     if !matches {
                         return Err("ПАПКА НЕ ПОХОЖА НА ВЫБРАННУЮ УСТАНОВКУ ИГРЫ.".to_owned());
                     }
-                    let build = build.ok_or_else(|| {
-                        "ВЕРСИЯ STEAM НЕ ОПРЕДЕЛЕНА; УСТАНОВКА ИСПРАВЛЕНИЙ С ЗАЩИТОЙ ПО СБОРКЕ НЕДОСТУПНА.".to_owned()
-                    })?;
-                    Ok((format!("НАЙДЕНА СБОРКА STEAM: {build}."), game, directory, build))
+                    let text = match build.as_deref() {
+                        Some(build) => crate::strings::t("НАЙДЕНА СБОРКА STEAM: {0}.").replace("{0}", build),
+                        None => crate::strings::t(
+                            "STEAM BUILD ID НЕ НАЙДЕН. ПРИ УСТАНОВКЕ ИСХОДНЫЕ ФАЙЛЫ ПРОВЕРЯТСЯ ПО SHA-256.",
+                        )
+                        .to_owned(),
+                    };
+                    Ok((text, game, directory, build))
                 })();
                 proxy.send(AppMessage::ToScreen(
                     ScreenId::GameFixes,
@@ -2257,21 +2266,20 @@ impl Screen for GameFixes {
                 return Ok(());
             }
             let target = fix_target(&game).ok_or_else(|| sse_core::Error::damaged("Игра не поддерживается"))?;
-            let build = self
-                .verified
-                .as_ref()
-                .map(|state| state.build.as_str())
-                .unwrap_or_default();
+            let build = self.verified.as_ref().and_then(|state| state.build.as_deref());
             if sse_fixes::GameFixCatalog::for_preset(target, preset)
                 .iter()
-                .any(|definition| {
-                    !definition
-                        .supported_steam_build_ids
-                        .iter()
-                        .any(|id| id.as_str() == build)
-                })
+                .any(|definition| !definition.supports_detected_build_or_hashes(build))
             {
-                cx.status = Some(format!("СБОРКА STEAM {build} НЕ ПОДДЕРЖИВАЕТ ВЫБРАННЫЙ ПРЕСЕТ."));
+                cx.status = Some(match build {
+                    Some(build) => {
+                        crate::strings::t("СБОРКА STEAM {0} НЕ ПОДДЕРЖИВАЕТ ВЫБРАННЫЙ ПРЕСЕТ.").replace("{0}", build)
+                    }
+                    None => crate::strings::t(
+                        "НЕТ STEAM BUILD ID; У ОДНОГО ИЗ ВЫБРАННЫХ ИСПРАВЛЕНИЙ НЕТ ПОЛНЫХ SHA-256 ЯКОРЕЙ.",
+                    )
+                    .to_owned(),
+                });
                 return Ok(());
             }
             self.intent = Some(FixIntent {
@@ -2318,11 +2326,17 @@ impl Screen for GameFixes {
                     cx.status = Some("СНАЧАЛА ПРОВЕРЬТЕ УСТАНОВКУ И ВЕРСИЮ.".to_owned());
                     return Ok(());
                 };
-                if !item.builds.split(", ").any(|id| id == verified.build.as_str()) {
-                    cx.status = Some(format!(
-                        "СБОРКА STEAM {} НЕ ПОДДЕРЖИВАЕТ ВЫБРАННОЕ ИСПРАВЛЕНИЕ.",
-                        verified.build
-                    ));
+                let compatible = sse_fixes::GameFixCatalog::try_get(&item.id)
+                    .is_some_and(|definition| definition.supports_detected_build_or_hashes(verified.build.as_deref()));
+                if !compatible {
+                    cx.status = Some(match verified.build.as_deref() {
+                        Some(build) => crate::strings::t("СБОРКА STEAM {0} НЕ ПОДДЕРЖИВАЕТ ВЫБРАННОЕ ИСПРАВЛЕНИЕ.")
+                            .replace("{0}", build),
+                        None => {
+                            crate::strings::t("НЕТ STEAM BUILD ID; ЭТО ИСПРАВЛЕНИЕ НЕ ИМЕЕТ ПОЛНЫХ SHA-256 ЯКОРЕЙ.")
+                                .to_owned()
+                        }
+                    });
                     return Ok(());
                 }
             }
@@ -3216,8 +3230,8 @@ impl Screen for Encyclopedia {
 #[cfg(test)]
 mod game_fixes_tests {
     use super::{
-        AppMessage, Context, DiscoveredInstallation, FixReply, FixRow, GameFixes, GameInstallSource, GameTarget,
-        Screen, ScreenId,
+        load_fix_rows, AppMessage, Context, DiscoveredInstallation, FixReply, FixRow, GameFixes, GameInstallSource,
+        GameTarget, Screen, ScreenId,
     };
     use crate::event_loop::Message;
     use crate::glyphs::Fonts;
@@ -3246,6 +3260,45 @@ mod game_fixes_tests {
                 .saturating_add(definition.overlays.len())
                 .saturating_add(definition.spawn_edits.len()),
         })
+    }
+
+    #[test]
+    fn loading_game_fixes_recovers_an_interrupted_install_before_listing() -> sse_core::Result<()> {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| sse_core::Error::System(error.to_string()))?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("sse-game-fixes-recovery-{unique}"));
+        let target = root.join("gamedata/configs/a.ltx");
+        let state = root.join(".save-editor-game-fixes/test.ui-recovery");
+        let backup = state.join("backups/file-0000.before");
+        let original = b"value=before\n";
+        let after = b"value=partial\n";
+        let before_sha = sse_codecs::sha256::sha256_hex(original);
+        let after_sha = sse_codecs::sha256::sha256_hex(after);
+
+        let target_parent = target
+            .parent()
+            .ok_or_else(|| sse_core::Error::damaged("Missing fixture parent"))?;
+        let backup_parent = backup
+            .parent()
+            .ok_or_else(|| sse_core::Error::damaged("Missing backup parent"))?;
+        std::fs::create_dir_all(target_parent)?;
+        std::fs::create_dir_all(backup_parent)?;
+        std::fs::write(root.join("fsgame.ltx"), b"$game_data$=true|true|$fs_root$|gamedata\\")?;
+        std::fs::write(&target, after)?;
+        std::fs::write(&backup, original)?;
+        let journal = format!(
+            "{{\n  \"schemaVersion\": 1,\n  \"kind\": \"install\",\n  \"freshState\": true,\n  \"files\": [{{\n    \"relativePath\": \"gamedata/configs/a.ltx\",\n    \"beforeSha256\": \"{before_sha}\",\n    \"afterSha256\": \"{after_sha}\",\n    \"backupPath\": \"backups/file-0000.before\",\n    \"targetExistedBefore\": true\n  }}]\n}}"
+        );
+        std::fs::write(state.join("transaction.json"), journal)?;
+
+        load_fix_rows(sse_fixes::GameTarget::ShadowOfChernobyl, Some(&root)).map_err(sse_core::Error::System)?;
+
+        assert_eq!(std::fs::read(&target)?, original);
+        assert!(!state.exists(), "recovered transaction state should be cleaned up");
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
     }
 
     #[test]

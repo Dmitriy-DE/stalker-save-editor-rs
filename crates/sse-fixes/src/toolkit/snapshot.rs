@@ -11,6 +11,7 @@ use crate::catalog::GameFixCatalog;
 use crate::engine::GameFixEngine;
 use crate::fs_util::{check_no_links, AtomicFileWriter};
 use crate::models::GameTarget;
+use crate::toolkit::profile::json_escape;
 use crate::toolkit::s2_mods::{ModToggleStatus, Stalker2ModToggle};
 use crate::toolkit::user_ltx::ManagedUserLtxSettings;
 use sse_core::{Error, Result};
@@ -309,8 +310,8 @@ fn game_target_name(target: GameTarget) -> &'static str {
 fn serialize_snapshot(snapshot: &ToolkitSnapshot) -> String {
     let mut out = String::with_capacity(1024);
     out.push_str("{\n");
-    out.push_str(&format!("  \"id\": \"{}\",\n", snapshot.id));
-    out.push_str(&format!("  \"label\": \"{}\",\n", snapshot.label));
+    out.push_str(&format!("  \"id\": \"{}\",\n", json_escape(&snapshot.id)));
+    out.push_str(&format!("  \"label\": \"{}\",\n", json_escape(&snapshot.label)));
     out.push_str(&format!("  \"timestamp_epoch\": {},\n", snapshot.timestamp_epoch));
     out.push_str(&format!("  \"game\": \"{}\",\n", game_target_name(snapshot.game)));
     out.push_str("  \"installed_fixes\": [\n");
@@ -322,7 +323,9 @@ fn serialize_snapshot(snapshot: &ToolkitSnapshot) -> String {
         };
         out.push_str(&format!(
             "    {{\"fix_id\": \"{}\", \"version\": \"{}\"}}{}\n",
-            f.fix_id, f.version, comma
+            json_escape(&f.fix_id),
+            json_escape(&f.version),
+            comma
         ));
     }
     out.push_str("  ],\n");
@@ -335,11 +338,16 @@ fn serialize_snapshot(snapshot: &ToolkitSnapshot) -> String {
         } else {
             ","
         };
-        out.push_str(&format!("    \"{}\": \"{}\"{}\n", k, v, comma));
+        out.push_str(&format!(
+            "    \"{}\": \"{}\"{}\n",
+            json_escape(k),
+            json_escape(v),
+            comma
+        ));
     }
     out.push_str("  },\n");
     if let Some(ref s2) = snapshot.s2_mods_state {
-        out.push_str(&format!("  \"s2_mods_state\": \"{}\",\n", s2));
+        out.push_str(&format!("  \"s2_mods_state\": \"{}\",\n", json_escape(s2)));
     }
     out.push_str(&format!(
         "  \"companion_installed\": {}\n",
@@ -419,4 +427,37 @@ fn deserialize_snapshot(bytes: &[u8]) -> Result<ToolkitSnapshot> {
         s2_mods_state,
         companion_installed,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{deserialize_snapshot, serialize_snapshot, InstalledFixSnapshot, ToolkitSnapshot};
+    use crate::models::GameTarget;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn snapshot_json_round_trips_quotes_backslashes_and_control_characters() {
+        let mut managed_user_ltx = BTreeMap::new();
+        managed_user_ltx.insert(
+            "key\"with\\slash".to_string(),
+            "value\nwith\tcontrols\u{0001}".to_string(),
+        );
+        let snapshot = ToolkitSnapshot {
+            id: "id\"with\\slash\n".to_string(),
+            label: "label \"quoted\"\\line\nnext\tcolumn\u{0001}".to_string(),
+            timestamp_epoch: 123,
+            game: GameTarget::ClearSky,
+            installed_fixes: vec![InstalledFixSnapshot {
+                fix_id: "fix\"id".to_string(),
+                version: "version\\line\nnext".to_string(),
+            }],
+            managed_user_ltx,
+            s2_mods_state: Some("state\"\\\n".to_string()),
+            companion_installed: false,
+        };
+
+        let json = serialize_snapshot(&snapshot);
+
+        assert_eq!(deserialize_snapshot(json.as_bytes()).ok().as_ref(), Some(&snapshot));
+    }
 }

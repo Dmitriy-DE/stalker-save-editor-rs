@@ -2343,6 +2343,13 @@ mod tests {
     const WRITER_S2_STASH_PACKED_SOURCE: &[u8] =
         include_bytes!("../../../fixtures/synthetic/writer-s2-stash/s2-stash-source.sav");
 
+    fn next_fuzz_state(state: &mut u64) -> u64 {
+        *state ^= state.wrapping_shl(13);
+        *state ^= state.wrapping_shr(7);
+        *state ^= state.wrapping_shl(17);
+        *state
+    }
+
     #[test]
     fn owned_handle_validation_accepts_one_to_three_game_handles() {
         for count in 1..=3_u32 {
@@ -2354,6 +2361,59 @@ mod tests {
                 "{count} correctly shaped player handles should not be rejected"
             );
         }
+    }
+
+    #[test]
+    fn unpacked_image_mutation_repack_read_and_write_fuzz_smoke() {
+        let Ok(source) = S2Save::from_bytes(WRITER_S2_MONEY_SOURCE) else {
+            panic!("S2 money writer fixture should parse");
+        };
+        let mut random = 0x0053_329c_e42a_7401_u64;
+        let mut repacked_count = 0_usize;
+        let mut parsed_count = 0_usize;
+        let mut written_count = 0_usize;
+
+        for case in 0..512_usize {
+            let mut raw = source.container().image().to_vec();
+            if case.checked_rem(2).unwrap_or_default() == 0 {
+                let money = u32::try_from(next_fuzz_state(&mut random) % 2_000_000_001_u64).unwrap_or_default();
+                let start = source.index().money_offset();
+                let end = start.saturating_add(4);
+                let Some(range) = raw.get_mut(start..end) else {
+                    panic!("money range should fit the unpacked fixture");
+                };
+                range.copy_from_slice(&money.to_le_bytes());
+            } else if !raw.is_empty() {
+                let length = u64::try_from(raw.len()).unwrap_or(u64::MAX);
+                let offset = usize::try_from(next_fuzz_state(&mut random) % length).unwrap_or_default();
+                let shift = u32::try_from(next_fuzz_state(&mut random) % 8).unwrap_or_default();
+                if let Some(byte) = raw.get_mut(offset) {
+                    *byte ^= 1_u8.checked_shl(shift).unwrap_or(1);
+                }
+            }
+
+            let stream = sse_codecs::kraken_encode::compress(&raw);
+            let packed = pack_kraken_stream(&raw, &stream);
+            repacked_count = repacked_count.saturating_add(1);
+            let Ok(parsed) = S2Save::from_bytes(&packed) else {
+                continue;
+            };
+            parsed_count = parsed_count.saturating_add(1);
+            let old_value = parsed.money();
+            let new_value = if old_value == 1 { 2 } else { 1 };
+            let Ok(written) = parsed.write_changes(&[S2Change::SetMoney(new_value)]) else {
+                continue;
+            };
+            let verified = S2Save::from_bytes(&written);
+            assert!(verified.is_ok(), "writer output should parse");
+            let Ok(verified) = verified else { continue };
+            assert_eq!(verified.money(), new_value);
+            written_count = written_count.saturating_add(1);
+        }
+
+        assert_eq!(repacked_count, 512);
+        assert!(parsed_count > 0, "mutated unpacked images should reach the reader");
+        assert!(written_count > 0, "at least one fuzz case should reach the writer");
     }
 
     #[test]

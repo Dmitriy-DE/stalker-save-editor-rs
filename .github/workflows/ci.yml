@@ -67,6 +67,12 @@ jobs:
         if: matrix.os == 'ubuntu-24.04'
         run: cargo test -p sse-fuzz-smoke --release -- --nocapture
 
+      - name: Fuzz smoke unpacked X-Ray and S2 writer paths
+        if: matrix.os == 'ubuntu-24.04'
+        run: |
+          cargo test --locked -p sse-xray --release unpacked_image_mutation_repack_read_and_write_fuzz_smoke
+          cargo test --locked -p sse-s2 --release unpacked_image_mutation_repack_read_and_write_fuzz_smoke
+
       - name: Render acceptance screenshots
         if: matrix.os == 'ubuntu-24.04'
         shell: bash

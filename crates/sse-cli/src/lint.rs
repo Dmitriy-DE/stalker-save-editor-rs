@@ -1,11 +1,10 @@
 //! `stalker-save lint` command: runs static checks on game files.
 
 use std::collections::HashMap;
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use sse_content::{CompanionGame, EntryDecoder, GameFile, GameFileTree, HeaderDecoder};
+use sse_content::{collect_files_recursive, CompanionGame, EntryDecoder, GameFile, GameFileTree, HeaderDecoder};
 use sse_core::ExitCode;
 use sse_lint::{LintEngine, LintOptions, LintSeverity};
 
@@ -195,16 +194,12 @@ fn load_tree_for_lint(folder: &Path) -> sse_core::Result<GameFileTree> {
 
     // Fallback: loose directory walk (mod folders, CI fixture trees, etc.)
     let mut files: HashMap<String, GameFile> = HashMap::new();
-    let mut paths = Vec::new();
-    collect_files_recursive(folder, &mut paths);
+    let paths = collect_files_recursive(folder);
 
     for p in paths {
         if let Ok(rel) = p.strip_prefix(folder) {
             let rel_str = rel.to_string_lossy().replace('\\', "/");
-            let file_path = p.clone();
-            let game_file = GameFile::new(rel_str.clone(), "loose", move || {
-                fs::read(&file_path).map_err(|e| sse_core::Error::System(e.to_string()))
-            });
+            let game_file = GameFile::from_path(rel_str.clone(), "loose", p);
             files.insert(rel_str, game_file);
         }
     }
@@ -217,20 +212,6 @@ fn load_tree_for_lint(folder: &Path) -> sse_core::Result<GameFileTree> {
         data_directory: Some(folder.to_path_buf()),
         issues: Vec::new(),
     })
-}
-
-fn collect_files_recursive(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            collect_files_recursive(&path, out);
-        } else if path.is_file() {
-            out.push(path);
-        }
-    }
 }
 
 fn print_json_report(report: &sse_lint::LintReport) {
@@ -263,4 +244,91 @@ fn print_json_report(report: &sse_lint::LintReport) {
     }
     println!("  ]");
     println!("}}");
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
+
+    #[cfg(unix)]
+    use super::load_tree_for_lint;
+    use super::run_lint;
+    use sse_core::ExitCode;
+    use std::fs;
+    use std::path::PathBuf;
+
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new() -> Self {
+            let unique = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |duration| duration.as_nanos());
+            let path = std::env::temp_dir().join(format!("sse-lint-content-{unique}"));
+            fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn loose_lint_fallback_does_not_follow_directory_symlinks() {
+        let root = TempDir::new();
+        let config_dir = root.0.join("configs");
+        fs::create_dir_all(&config_dir).unwrap();
+        fs::write(config_dir.join("system.ltx"), b"[system]\n").unwrap();
+        std::os::unix::fs::symlink(&config_dir, root.0.join("config_alias")).unwrap();
+
+        let tree = load_tree_for_lint(&root.0).unwrap();
+
+        assert!(tree.files.contains_key("configs/system.ltx"));
+        assert!(!tree.files.contains_key("config_alias/system.ltx"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn loose_lint_fallback_keeps_paths_relative_to_a_symlink_root() {
+        let root = TempDir::new();
+        let install_dir = root.0.join("install");
+        fs::create_dir_all(install_dir.join("configs")).unwrap();
+        fs::write(install_dir.join("configs/system.ltx"), b"[system]\n").unwrap();
+        let install_link = root.0.join("install-link");
+        std::os::unix::fs::symlink(&install_dir, &install_link).unwrap();
+
+        let tree = load_tree_for_lint(&install_link).unwrap();
+
+        assert!(tree.files.contains_key("configs/system.ltx"));
+    }
+
+    #[test]
+    fn lint_refuses_to_report_success_when_loose_file_exceeds_read_limit() {
+        let root = TempDir::new();
+        let config_dir = root.0.join("configs");
+        fs::create_dir_all(&config_dir).unwrap();
+        fs::File::create(config_dir.join("oversized.ltx"))
+            .unwrap()
+            .set_len(64 * 1024 * 1024 + 1)
+            .unwrap();
+
+        let args = [root.0.to_string_lossy().into_owned()];
+        assert_eq!(run_lint(&args), ExitCode::Refused);
+    }
+
+    #[test]
+    fn lint_refuses_to_report_success_when_fsgame_exceeds_read_limit() {
+        let root = TempDir::new();
+        fs::File::create(root.0.join("fsgame.ltx"))
+            .unwrap()
+            .set_len(1024 * 1024 + 1)
+            .unwrap();
+
+        let args = [root.0.to_string_lossy().into_owned()];
+        assert_eq!(run_lint(&args), ExitCode::Refused);
+    }
 }

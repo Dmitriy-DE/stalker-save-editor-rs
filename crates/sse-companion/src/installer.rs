@@ -1,10 +1,9 @@
 //! Explicit, manifest-backed companion install and exact removal.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Write};
+use std::fs::{self, File};
+use std::io::Read;
 use std::path::{Component, Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use sse_content::{CompanionArchiveLocator, CompanionGame, EntryDecoder, GameFileTree, HeaderDecoder};
@@ -19,7 +18,6 @@ const MANIFEST_FILE: &str = "manifest.json";
 const JOURNAL_FILE: &str = "transaction.log";
 const TRANSACTION_DIRECTORY: &str = "transaction";
 const MANIFEST_LIMIT: usize = 8 * 1024 * 1024;
-static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
 
 /// One relative game file in the bundled companion payload.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1275,40 +1273,16 @@ fn write_atomic(root: &Path, path: &Path, bytes: &[u8]) -> Result<(), InstallErr
         .parent()
         .ok_or_else(|| InstallError::new("atomic write path has no parent"))?;
     create_directories_checked(root, parent)?;
-    validate_atomic_target(root, path)?;
-    let sequence = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
-    let name = path
-        .file_name()
-        .ok_or_else(|| InstallError::new("atomic write path has no file name"))?
-        .to_string_lossy();
-    let temporary = parent.join(format!(".{name}.pending-{}-{sequence}", std::process::id()));
-    validate_atomic_target(root, &temporary)?;
-    let mut file = OpenOptions::new().write(true).create_new(true).open(&temporary)?;
-    if let Err(error) = file.write_all(bytes).and_then(|()| file.sync_all()) {
-        drop(file);
-        let _ = remove_file_checked(root, &temporary);
-        return Err(InstallError::from(error));
-    }
-    drop(file);
-    validate_atomic_target(root, path)?;
-    validate_atomic_target(root, &temporary)?;
-    let replacement = match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_file() => sse_sys::secure_fs::replace_existing(&temporary, path),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => sse_sys::secure_fs::publish_new(&temporary, path),
-        Ok(_) => {
-            let _ = remove_file_checked(root, &temporary);
-            return Err(InstallError::new("companion target is not a regular file"));
-        }
-        Err(error) => {
-            let _ = remove_file_checked(root, &temporary);
-            return Err(InstallError::from(error));
-        }
-    };
-    if let Err(error) = replacement {
-        let _ = remove_file_checked(root, &temporary);
-        return Err(InstallError::from(error));
-    }
-    sync_parent_directory(parent)
+    sse_sys::secure_fs::atomic_write_checked(
+        path,
+        bytes,
+        sse_sys::secure_fs::AtomicWriteOptions::create_or_replace(),
+        |candidate| {
+            validate_atomic_target(root, candidate)
+                .map_err(|error| std::io::Error::new(std::io::ErrorKind::PermissionDenied, error.to_string()))
+        },
+    )
+    .map_err(InstallError::from)
 }
 
 fn read_limited(path: &Path) -> Result<Vec<u8>, InstallError> {

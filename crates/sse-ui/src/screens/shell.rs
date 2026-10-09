@@ -1105,8 +1105,8 @@ impl Shell {
             },
         )?;
         let reports_actions = style::row(tree, reports_banner)?;
-        let reports_ok = style::button(tree, reports_actions, &report_text("Да"), style::Button::Primary)?;
-        let reports_off = style::button(tree, reports_actions, &report_text("Нет"), style::Button::Secondary)?;
+        let reports_ok = style::button(tree, reports_actions, &report_text("Да"), style::Button::Secondary)?;
+        let reports_off = style::button(tree, reports_actions, &report_text("Нет"), style::Button::Primary)?;
         tree.set_visible(reports_banner, false)?;
 
         let report_dialog = style::card(tree, overlay_host)?;
@@ -1304,11 +1304,16 @@ impl Shell {
         shell.render_library(tree)?;
         shell.sync_draft_controls(tree)?;
         if interactive && !settings.reports_notice_shown {
-            tree.open_dialog(shell.reports_banner)?;
+            shell.open_report_consent_dialog(tree)?;
         } else if interactive && settings.send_reports {
             shell.open_pending_report_dialog(tree)?;
         }
         Ok(shell)
+    }
+
+    fn open_report_consent_dialog(&self, tree: &mut Tree) -> Result<()> {
+        tree.open_dialog(self.reports_banner)?;
+        tree.set_focus(Some(self.reports_off))
     }
 
     fn open_pending_report_dialog(&mut self, tree: &mut Tree) -> Result<()> {
@@ -3169,6 +3174,17 @@ mod tests {
 
     fn close_task_test_guard() -> std::sync::MutexGuard<'static, ()> {
         crate::screens::task_registry_test_guard()
+    }
+
+    #[test]
+    fn report_consent_dialog_defaults_to_no() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let shell = Shell::build_for_test(&mut tree, None)?;
+
+        shell.open_report_consent_dialog(&mut tree)?;
+
+        assert_eq!(tree.focused(), Some(shell.reports_off));
+        Ok(())
     }
 
     #[test]

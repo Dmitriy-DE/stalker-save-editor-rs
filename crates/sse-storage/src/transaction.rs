@@ -4,10 +4,10 @@ use sse_codecs::sha256;
 use sse_core::{Error, Result};
 use std::collections::{HashMap, HashSet};
 use std::ffi::{OsStr, OsString};
+use std::fs;
 #[cfg(unix)]
 use std::fs::File;
-use std::fs::{self, OpenOptions};
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -95,28 +95,20 @@ impl FileSystem for StdFileSystem {
     }
 
     fn write_new(&self, path: &Path, bytes: &[u8]) -> Result<()> {
-        let mut created = false;
-        let result = (|| {
-            let mut options = OpenOptions::new();
-            options.write(true).create_new(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt;
-                options.mode(0o600);
+        sse_sys::secure_fs::atomic_write(
+            path,
+            bytes,
+            sse_sys::secure_fs::AtomicWriteOptions::create_new()
+                .with_unix_mode(0o600)
+                .without_parent_sync(),
+        )?;
+        if let Some(parent) = path.parent() {
+            if let Err(error) = sync_directory(Some(parent)) {
+                let _ = fs::remove_file(path);
+                return Err(error);
             }
-            let mut file = options.open(path)?;
-            created = true;
-            file.write_all(bytes)?;
-            file.sync_all()?;
-            if let Some(parent) = path.parent() {
-                sync_directory(Some(parent))?;
-            }
-            Ok(())
-        })();
-        if result.is_err() && created {
-            let _ = fs::remove_file(path);
         }
-        result
+        Ok(())
     }
 
     fn copy_permissions(&self, source: &Path, destination: &Path) -> Result<()> {

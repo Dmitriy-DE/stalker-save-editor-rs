@@ -4,9 +4,8 @@
 //! and thumbnail data, with an LRU bounded memory cache.
 
 use crate::dds::{DdsImage, RgbaImage};
+use crate::file_tree::read_bounded_file;
 use std::collections::{HashMap, VecDeque};
-use std::fs::{self, File};
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -57,15 +56,7 @@ impl SavePreviewReader {
     #[must_use]
     pub fn preview_xray(save_path: &Path) -> Option<RgbaImage> {
         let dds_path = save_path.with_extension("dds");
-        let metadata = fs::metadata(&dds_path).ok()?;
-        if metadata.len() > MAX_DDS_BYTES {
-            return None;
-        }
-
-        let mut file = File::open(&dds_path).ok()?;
-        let mut buffer = Vec::new();
-        file.read_to_end(&mut buffer).ok()?;
-
+        let buffer = read_bounded_file(&dds_path, MAX_DDS_BYTES).ok()?;
         DdsImage::decode(&buffer).ok()
     }
 
@@ -77,12 +68,7 @@ impl SavePreviewReader {
         let guid = slot_guid(save_path);
         let thumb_path = root.join("Thumbnails").join(format!("{guid}.sav"));
 
-        let metadata = fs::metadata(&thumb_path).ok()?;
-        if metadata.len() > MAX_THUMBNAIL_BYTES {
-            return None;
-        }
-
-        let bytes = fs::read(&thumb_path).ok()?;
+        let bytes = read_bounded_file(&thumb_path, MAX_THUMBNAIL_BYTES).ok()?;
         extract_jpeg_from_s2_data(&bytes)
     }
 
@@ -93,12 +79,7 @@ impl SavePreviewReader {
         let root = parent.parent()?;
         let index_path = root.join("CampaignsSave.sav");
 
-        let metadata = fs::metadata(&index_path).ok()?;
-        if metadata.len() > MAX_CAMPAIGN_BYTES {
-            return None;
-        }
-
-        let bytes = fs::read(&index_path).ok()?;
+        let bytes = read_bounded_file(&index_path, MAX_CAMPAIGN_BYTES).ok()?;
         let slots = parse_campaigns(&bytes);
         let guid = slot_guid(save_path);
         slots.get(&guid).cloned()
@@ -325,5 +306,86 @@ impl PreviewCache {
         self.entries.clear();
         self.order.clear();
         self.current_bytes = 0;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::read_bounded_file;
+    use std::io::{self, Read};
+
+    struct CountingReader {
+        remaining: usize,
+        bytes_read: usize,
+    }
+
+    impl Read for CountingReader {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            let count = buffer.len().min(self.remaining);
+            for byte in buffer.iter_mut().take(count) {
+                *byte = b'x';
+            }
+            self.remaining = self.remaining.saturating_sub(count);
+            self.bytes_read = self.bytes_read.saturating_add(count);
+            Ok(count)
+        }
+    }
+
+    #[test]
+    fn bounded_preview_reader_stops_after_one_byte_over_the_limit() {
+        let mut reader = CountingReader {
+            remaining: 100,
+            bytes_read: 0,
+        };
+
+        let result = crate::file_tree::read_bounded_bytes(&mut reader, 8);
+
+        assert!(matches!(result, Err(sse_core::Error::Refused(_))));
+        assert_eq!(reader.bytes_read, 9);
+    }
+
+    #[test]
+    fn bounded_reader_accepts_input_at_the_exact_limit() {
+        let input = b"12345678";
+
+        let result = crate::file_tree::read_bounded_bytes(input.as_slice(), input.len() as u64);
+
+        assert_eq!(result.as_deref(), Ok(input.as_slice()));
+    }
+
+    #[test]
+    fn bounded_preview_file_rejects_an_oversized_open_file() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        let path = std::env::temp_dir().join(format!("sse-preview-bound-{unique}.sav"));
+        assert!(
+            std::fs::write(&path, b"123456789").is_ok(),
+            "could not create preview fixture"
+        );
+
+        let result = read_bounded_file(&path, 8);
+        let removed = std::fs::remove_file(path);
+
+        assert!(matches!(result, Err(sse_core::Error::Refused(_))));
+        assert!(removed.is_ok(), "could not remove preview fixture");
+    }
+
+    #[test]
+    fn bounded_file_accepts_input_at_the_exact_limit() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        let path = std::env::temp_dir().join(format!("sse-preview-exact-bound-{unique}.sav"));
+        assert!(
+            std::fs::write(&path, b"12345678").is_ok(),
+            "could not create preview fixture"
+        );
+
+        let result = read_bounded_file(&path, 8);
+        let removed = std::fs::remove_file(path);
+
+        assert_eq!(result.as_deref(), Ok(b"12345678".as_slice()));
+        assert!(removed.is_ok(), "could not remove preview fixture");
     }
 }

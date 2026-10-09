@@ -9,6 +9,7 @@ rust-version.workspace = true
 sse-core = { path = "../sse-core" }
 sse-content = { path = "../sse-content" }
 sse-codecs = { path = "../sse-codecs" }
+sse-sys = { path = "../sse-sys" }
 
 [build-dependencies]
 sse-codecs = { path = "../sse-codecs" }

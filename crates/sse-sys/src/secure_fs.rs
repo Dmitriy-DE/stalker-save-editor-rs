@@ -1,11 +1,14 @@
 //! Secure filesystem primitives for files that may be executed by privileged helpers.
 
 use sse_core::{Error, Result};
+use std::ffi::OsString;
 use std::fs::File;
-#[cfg(unix)]
 use std::fs::OpenOptions;
-use std::io;
+use std::io::{self, Write};
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT_ATOMIC_TEMP_ID: AtomicU64 = AtomicU64::new(1);
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const LINUX_O_NOFOLLOW: Option<i32> = Some(0o400_000);
@@ -112,6 +115,174 @@ pub fn replace_existing(source: &Path, destination: &Path) -> io::Result<()> {
     {
         std::fs::rename(source, destination)
     }
+}
+
+/// How an atomic write publishes its destination.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AtomicWriteMode {
+    /// Create the destination only if it does not exist.
+    CreateNew,
+    /// Replace an existing destination, or create it without replacement if it is absent.
+    CreateOrReplace,
+}
+
+/// Options for [`atomic_write`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AtomicWriteOptions {
+    mode: AtomicWriteMode,
+    unix_mode: Option<u32>,
+    sync_parent: bool,
+}
+
+impl AtomicWriteOptions {
+    /// Creates a new destination and refuses to replace any existing path.
+    #[must_use]
+    pub const fn create_new() -> Self {
+        Self {
+            mode: AtomicWriteMode::CreateNew,
+            unix_mode: None,
+            sync_parent: true,
+        }
+    }
+
+    /// Replaces an existing destination, or creates it if it is absent without replacing a path raced into place.
+    #[must_use]
+    pub const fn create_or_replace() -> Self {
+        Self {
+            mode: AtomicWriteMode::CreateOrReplace,
+            unix_mode: None,
+            sync_parent: true,
+        }
+    }
+
+    /// Sets the permissions applied when creating the staged file on Unix.
+    #[must_use]
+    pub const fn with_unix_mode(mut self, mode: u32) -> Self {
+        self.unix_mode = Some(mode);
+        self
+    }
+
+    /// Leaves parent-directory synchronization to the caller after publication.
+    #[must_use]
+    pub const fn without_parent_sync(mut self) -> Self {
+        self.sync_parent = false;
+        self
+    }
+}
+
+/// Writes and flushes a sibling temporary file, then atomically publishes it.
+///
+/// The destination's parent directory must already exist. On Unix the parent is synchronized after
+/// publication unless [`AtomicWriteOptions::without_parent_sync`] is selected; on Windows the
+/// underlying move uses `MOVEFILE_WRITE_THROUGH`.
+///
+/// # Errors
+/// Returns the original filesystem error. If parent synchronization fails after publication, the error
+/// states that the new file is already visible at the destination.
+pub fn atomic_write(path: &Path, bytes: &[u8], options: AtomicWriteOptions) -> io::Result<()> {
+    atomic_write_checked(path, bytes, options, |_| Ok(()))
+}
+
+/// Checked variant of [`atomic_write`] that validates the destination and staged path around publication.
+///
+/// The validator runs once before staging and again immediately before publication for both paths.
+pub fn atomic_write_checked(
+    path: &Path,
+    bytes: &[u8],
+    options: AtomicWriteOptions,
+    mut validate_path: impl FnMut(&Path) -> io::Result<()>,
+) -> io::Result<()> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "atomic write destination has no file name"))?;
+    validate_path(path)?;
+
+    let mut staged = None;
+    for _ in 0..128 {
+        let id = NEXT_ATOMIC_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+        let mut temporary_name = OsString::from(".");
+        temporary_name.push(file_name);
+        temporary_name.push(format!(".sse-tmp-{}-{id}", std::process::id()));
+        let temporary = parent.join(temporary_name);
+        validate_path(&temporary)?;
+
+        let mut open_options = OpenOptions::new();
+        open_options.write(true).create_new(true);
+        #[cfg(unix)]
+        if let Some(mode) = options.unix_mode {
+            use std::os::unix::fs::OpenOptionsExt;
+            open_options.mode(mode);
+        }
+
+        match open_options.open(&temporary) {
+            Ok(file) => {
+                #[cfg(unix)]
+                if let Some(mode) = options.unix_mode {
+                    use std::os::unix::fs::PermissionsExt;
+                    if let Err(error) = file.set_permissions(std::fs::Permissions::from_mode(mode)) {
+                        drop(file);
+                        let _ = std::fs::remove_file(&temporary);
+                        return Err(error);
+                    }
+                }
+                staged = Some((temporary, file));
+                break;
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error),
+        }
+    }
+    let Some((temporary, mut file)) = staged else {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "could not allocate a unique atomic-write temporary file",
+        ));
+    };
+
+    let result = (|| {
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        drop(file);
+
+        validate_path(path)?;
+        validate_path(&temporary)?;
+        let publish_result = match options.mode {
+            AtomicWriteMode::CreateNew => publish_new(&temporary, path),
+            AtomicWriteMode::CreateOrReplace => match std::fs::symlink_metadata(path) {
+                Ok(_) => replace_existing(&temporary, path),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => publish_new(&temporary, path),
+                Err(error) => Err(error),
+            },
+        };
+        publish_result?;
+
+        if options.sync_parent {
+            if let Err(error) = sync_atomic_write_parent(parent) {
+                return Err(io::Error::new(
+                    error.kind(),
+                    format!("atomic write was published, but syncing its parent directory failed: {error}"),
+                ));
+            }
+        }
+        Ok(())
+    })();
+
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    result
+}
+
+fn sync_atomic_write_parent(parent: &Path) -> io::Result<()> {
+    #[cfg(unix)]
+    File::open(parent)?.sync_all()?;
+    #[cfg(not(unix))]
+    let _ = parent;
+    Ok(())
 }
 
 #[cfg(target_os = "linux")]
@@ -465,7 +636,7 @@ fn current_effective_uid() -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::publish_new;
+    use super::{atomic_write, publish_new, AtomicWriteOptions};
     #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
     use super::{open_owned_regular, LINUX_O_NOFOLLOW};
 
@@ -524,6 +695,191 @@ mod tests {
         assert!(publish_new(&source, &destination).is_err());
         assert_eq!(std::fs::read(&source)?, b"replacement bytes");
         assert_eq!(std::fs::read(&destination)?, b"staged bytes");
+        std::fs::remove_dir_all(directory)?;
+        Ok(())
+    }
+
+    #[test]
+    fn atomic_write_create_new_never_replaces_an_existing_destination() -> std::io::Result<()> {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        let directory = std::env::temp_dir().join(format!("sse-atomic-write-{}-{unique}", std::process::id()));
+        std::fs::create_dir(&directory)?;
+        let destination = directory.join("state.json");
+        std::fs::write(&destination, b"existing")?;
+
+        let result = atomic_write(&destination, b"replacement", AtomicWriteOptions::create_new());
+        assert_eq!(
+            result.map_err(|error| error.kind()),
+            Err(std::io::ErrorKind::AlreadyExists)
+        );
+        assert_eq!(std::fs::read(&destination)?, b"existing");
+
+        std::fs::remove_dir_all(directory)?;
+        Ok(())
+    }
+
+    #[test]
+    fn atomic_write_creates_or_replaces_the_destination() -> std::io::Result<()> {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        let directory = std::env::temp_dir().join(format!("sse-atomic-replace-{}-{unique}", std::process::id()));
+        std::fs::create_dir(&directory)?;
+        let destination = directory.join("settings.json");
+        std::fs::write(&destination, b"old")?;
+
+        atomic_write(&destination, b"new", AtomicWriteOptions::create_or_replace())?;
+        assert_eq!(std::fs::read(&destination)?, b"new");
+        assert_eq!(
+            std::fs::read_dir(&directory)?.count(),
+            1,
+            "staging file should be removed"
+        );
+
+        let new_destination = directory.join("first-run.json");
+        atomic_write(&new_destination, b"created", AtomicWriteOptions::create_or_replace())?;
+        assert_eq!(std::fs::read(&new_destination)?, b"created");
+
+        std::fs::remove_dir_all(directory)?;
+        Ok(())
+    }
+
+    #[test]
+    fn atomic_write_can_leave_parent_synchronization_to_the_caller() -> std::io::Result<()> {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        let directory = std::env::temp_dir().join(format!("sse-atomic-no-parent-sync-{}-{unique}", std::process::id()));
+        std::fs::create_dir(&directory)?;
+        let destination = directory.join("state.json");
+
+        atomic_write(
+            &destination,
+            b"state",
+            AtomicWriteOptions::create_new().without_parent_sync(),
+        )?;
+        assert_eq!(std::fs::read(&destination)?, b"state");
+        assert_eq!(std::fs::read_dir(&directory)?.count(), 1);
+
+        std::fs::remove_dir_all(directory)?;
+        Ok(())
+    }
+
+    #[test]
+    fn concurrent_create_new_writers_have_one_winner() -> std::io::Result<()> {
+        use std::sync::{Arc, Barrier};
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        let directory = std::env::temp_dir().join(format!("sse-atomic-race-{}-{unique}", std::process::id()));
+        std::fs::create_dir(&directory)?;
+        let destination = directory.join("first-run.json");
+        let barrier = Arc::new(Barrier::new(3));
+        let mut writers = Vec::new();
+        for bytes in [b"writer-a".as_slice(), b"writer-b".as_slice()] {
+            let destination = destination.clone();
+            let barrier = Arc::clone(&barrier);
+            writers.push(std::thread::spawn(move || {
+                barrier.wait();
+                atomic_write(&destination, bytes, AtomicWriteOptions::create_new())
+            }));
+        }
+        barrier.wait();
+        let results = writers
+            .into_iter()
+            .map(|writer| {
+                writer
+                    .join()
+                    .unwrap_or_else(|_| Err(std::io::Error::other("writer thread panicked")))
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        assert_eq!(results.iter().filter(|result| result.is_err()).count(), 1);
+        let final_bytes = std::fs::read(&destination)?;
+        assert!(final_bytes == b"writer-a" || final_bytes == b"writer-b");
+
+        std::fs::remove_dir_all(directory)?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_applies_requested_unix_permissions() -> std::io::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        let directory = std::env::temp_dir().join(format!("sse-atomic-mode-{}-{unique}", std::process::id()));
+        std::fs::create_dir(&directory)?;
+        let destination = directory.join("private.json");
+
+        atomic_write(
+            &destination,
+            b"private",
+            AtomicWriteOptions::create_new().with_unix_mode(0o600),
+        )?;
+        assert_eq!(std::fs::metadata(&destination)?.permissions().mode() & 0o777, 0o600);
+
+        std::fs::remove_dir_all(directory)?;
+        Ok(())
+    }
+
+    #[test]
+    fn checked_atomic_write_removes_staging_file_when_validation_fails() -> std::io::Result<()> {
+        use super::atomic_write_checked;
+        use std::cell::Cell;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        let directory = std::env::temp_dir().join(format!("sse-atomic-checked-{}-{unique}", std::process::id()));
+        std::fs::create_dir(&directory)?;
+        let destination = directory.join("managed.txt");
+        std::fs::write(&destination, b"original")?;
+        let validations = Cell::new(0_usize);
+
+        let result = atomic_write_checked(
+            &destination,
+            b"replacement",
+            AtomicWriteOptions::create_or_replace(),
+            |_| {
+                let count = validations.get().saturating_add(1);
+                validations.set(count);
+                if count == 4 {
+                    Err(std::io::Error::new(
+                        std::io::ErrorKind::PermissionDenied,
+                        "injected validation failure",
+                    ))
+                } else {
+                    Ok(())
+                }
+            },
+        );
+        assert_eq!(
+            result.map_err(|error| error.kind()),
+            Err(std::io::ErrorKind::PermissionDenied)
+        );
+        assert_eq!(std::fs::read(&destination)?, b"original");
+        assert_eq!(
+            std::fs::read_dir(&directory)?.count(),
+            1,
+            "failed staging file should be removed"
+        );
+
         std::fs::remove_dir_all(directory)?;
         Ok(())
     }

@@ -7,14 +7,10 @@
 
 use sse_codecs::json::{Event, NumberExt, Reader, Writer};
 use sse_core::{Error, Result};
+use std::fs;
 #[cfg(unix)]
 use std::fs::File;
-use std::fs::{self, OpenOptions};
-use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
-
-static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(1);
 
 /// User preferences matching `src/StalkerSaveEditor.Desktop/Services/AppSettings.cs`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -264,8 +260,8 @@ impl AppSettings {
 
     /// Atomically and durably saves settings to the specified path.
     ///
-    /// Writes to a temporary file (`.<filename>.<pid>-<id>.tmp`) in the destination directory,
-    /// flushes to disk (`sync_all`), renames over destination, and flushes the directory.
+    /// Writes to a temporary file in the destination directory, flushes it to disk, atomically
+    /// replaces the destination, and flushes the directory.
     ///
     /// # Errors
     /// Returns an error if filesystem operations or serialization fail.
@@ -274,43 +270,33 @@ impl AppSettings {
         fs::create_dir_all(parent)?;
 
         let bytes = self.to_json_bytes()?;
-        let id = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
-        let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("settings.json");
-        let temp_path = parent.join(format!(".{file_name}.{}-{id}.tmp", std::process::id()));
-
-        let write_result = (|| {
-            let mut options = OpenOptions::new();
-            options.write(true).create_new(true);
-            let mut file = options.open(&temp_path)?;
-            #[cfg(unix)]
+        sse_sys::secure_fs::atomic_write_checked(
+            path,
+            &bytes,
+            sse_sys::secure_fs::AtomicWriteOptions::create_or_replace()
+                .with_unix_mode(0o600)
+                .without_parent_sync(),
+            |candidate| match fs::symlink_metadata(candidate) {
+                Ok(metadata) if metadata.file_type().is_symlink() => Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "target path is a symbolic link",
+                )),
+                Ok(_) => Ok(()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(error) => Err(error),
+            },
+        )
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::PermissionDenied
+                && error.to_string() == "target path is a symbolic link"
             {
-                use std::os::unix::fs::PermissionsExt;
-                fs::set_permissions(&temp_path, fs::Permissions::from_mode(0o600))?;
+                Error::Refused("target path is a symbolic link".to_owned())
+            } else {
+                Error::from(error)
             }
-            file.write_all(&bytes)?;
-            file.sync_all()?;
-            drop(file);
-
-            if fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
-                return Err(Error::Refused("target path is a symbolic link".to_owned()));
-            }
-
-            fs::rename(&temp_path, path)?;
-            sync_directory(parent);
-            Ok(())
-        })();
-
-        if write_result.is_err() {
-            if let Err(error) = fs::remove_file(&temp_path) {
-                if error.kind() != std::io::ErrorKind::NotFound {
-                    crate::diagnostics::warn(&format!(
-                        "failed to remove temporary settings file after a write failure: {error}"
-                    ));
-                }
-            }
-        }
-
-        write_result
+        })?;
+        sync_directory(parent);
+        Ok(())
     }
 }
 

@@ -327,7 +327,7 @@ impl ToolkitProfileService {
     }
 }
 
-fn json_escape(value: &str) -> String {
+pub(super) fn json_escape(value: &str) -> String {
     let mut escaped = String::with_capacity(value.len());
     for ch in value.chars() {
         match ch {

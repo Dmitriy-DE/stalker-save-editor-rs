@@ -19,7 +19,7 @@ pub use archive::{EntryDecoder, HeaderDecoder, ReadAt, XRayArchive, XRayArchiveE
 pub use atlas::{AtlasBuilder, AtlasEntry, IconAtlas, PageFormat};
 pub use dds::{DdsImage, RgbaImage};
 pub use encoding::{decode_archive_name, decode_text, decode_windows_1250, decode_windows_1251};
-pub use file_tree::{CompanionArchiveLocator, CompanionGame, GameFile, GameFileTree};
+pub use file_tree::{collect_files_recursive, CompanionArchiveLocator, CompanionGame, GameFile, GameFileTree};
 pub use icon::ItemIconService;
 pub use ltx::{LtxDocument, LtxSection};
 pub use preview::{parse_campaigns, slot_guid, PreviewCache, SavePreviewReader, Stalker2SlotMeta};

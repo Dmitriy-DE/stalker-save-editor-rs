@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use sse_catalog::parse_json;
 use sse_codecs::sha256::sha256_hex;
-use sse_content::file_tree::{CompanionGame, GameFileTree};
+use sse_content::file_tree::{CompanionGame, GameFile, GameFileTree};
 
 use sse_core::{Error, Result};
 
@@ -186,15 +186,14 @@ impl GameFixEngine {
                 "The selected directory does not pass the structural game check.".to_string(),
             ));
         }
-        let Some(ref build_id) = steam_build_id else {
-            return Err(Error::Refused(
-                "Steam build ID unavailable for this installation.".to_string(),
-            ));
-        };
-        if !definition.supported_steam_build_ids.iter().any(|b| b == build_id) {
-            return Err(Error::Refused(
-                "This fix does not list the detected Steam build as supported.".to_string(),
-            ));
+        let build_id = steam_build_id.as_deref();
+        if !definition.supports_detected_build_or_hashes(build_id) {
+            let message = if build_id.is_some() {
+                "This fix does not list the detected Steam build as supported."
+            } else {
+                "Steam build ID unavailable and this fix has no exact source-file hash anchors."
+            };
+            return Err(Error::Refused(message.to_string()));
         }
 
         if !self.allow_synthetic_definitions
@@ -405,7 +404,7 @@ impl GameFixEngine {
                 schema_version: MANIFEST_SCHEMA_VERSION,
                 fix_id: definition.id.clone(),
                 game: definition.game,
-                steam_build_id: build_id.clone(),
+                steam_build_id: build_id.unwrap_or_default().to_owned(),
                 version: definition.version.clone(),
                 title: definition.title.clone(),
                 problem: definition.problem.clone(),
@@ -505,11 +504,14 @@ impl GameFixEngine {
         if !is_install {
             return Err(Error::Refused("Invalid game installation".to_string()));
         }
-        let Some(ref bid) = build_id else {
-            return Err(Error::Refused("Build ID unavailable".to_string()));
-        };
-        if !definition.supported_steam_build_ids.iter().any(|b| b == bid) {
-            return Err(Error::Refused("Build ID not supported".to_string()));
+        let build_id = build_id.as_deref();
+        if !definition.supports_detected_build_or_hashes(build_id) {
+            let message = if build_id.is_some() {
+                "Build ID not supported"
+            } else {
+                "Steam build ID unavailable and this fix has no exact source-file hash anchors"
+            };
+            return Err(Error::Refused(message.to_string()));
         }
 
         let old_paths: HashSet<String> = old_manifest
@@ -652,33 +654,56 @@ impl GameFixEngine {
         write_journal(&fix_dir, &journal)?;
 
         let mut applied: Vec<PreparedFileChange> = Vec::new();
-        for change in &changes {
-            check_no_links(game_dir, &change.absolute_path)?;
-            if !matches_file_hash(&change.absolute_path, &change.before_sha256) {
-                return Err(Error::Refused(format!(
-                    "A managed game file changed after removal preflight: {}",
-                    change.relative_path
-                )));
+        let uninstall_result = (|| -> Result<GameFixInstallResult> {
+            for change in &changes {
+                check_no_links(game_dir, &change.absolute_path)?;
+                if !matches_file_hash(&change.absolute_path, &change.before_sha256) {
+                    return Err(Error::Refused(format!(
+                        "A managed game file changed after removal preflight: {}",
+                        change.relative_path
+                    )));
+                }
+                if change.target_existed_before {
+                    AtomicFileWriter::write(&change.absolute_path, &change.after_bytes, true)?;
+                } else {
+                    fs::remove_file(&change.absolute_path)
+                        .map_err(|error| Error::System(format!("Failed to remove managed game file: {error}")))?;
+                }
+                applied.push(change.clone());
             }
-            if change.target_existed_before {
-                AtomicFileWriter::write(&change.absolute_path, &change.after_bytes, true)?;
-            } else {
-                let _ = fs::remove_file(&change.absolute_path);
+
+            let mut removed_manifest = manifest.clone();
+            removed_manifest.installed = false;
+            let removed_bytes = serialize_manifest(&removed_manifest);
+            AtomicFileWriter::write(&manifest_path, &removed_bytes, true)?;
+            delete_journal(&fix_dir);
+
+            Ok(GameFixInstallResult {
+                changed: true,
+                state: GameFixState::Removed,
+                files: manifest.files.into_iter().map(|f| f.relative_path).collect(),
+            })
+        })();
+
+        match uninstall_result {
+            Ok(result) => Ok(result),
+            Err(error) => {
+                let rollback_errors = rollback_uninstallation(game_dir, &applied);
+                if rollback_errors.is_empty() {
+                    match delete_journal_checked(game_dir, &fix_dir) {
+                        Ok(()) => Err(error),
+                        Err(journal_error) => Err(Error::System(format!(
+                            "Game Fix uninstall failed; files were restored, but the recovery journal could not be cleared: {error}; {journal_error}"
+                        ))),
+                    }
+                } else {
+                    Err(Error::System(format!(
+                        "Game Fix uninstall failed and rollback to the installed state was incomplete: {error}; {}",
+                        rollback_errors.join("; ")
+                    )))
+                }
             }
-            applied.push(change.clone());
         }
-
-        let mut removed_manifest = manifest.clone();
-        removed_manifest.installed = false;
-        let removed_bytes = serialize_manifest(&removed_manifest);
-        AtomicFileWriter::write(&manifest_path, &removed_bytes, true)?;
-        delete_journal(&fix_dir);
-
-        Ok(GameFixInstallResult {
-            changed: true,
-            state: GameFixState::Removed,
-            files: manifest.files.into_iter().map(|f| f.relative_path).collect(),
-        })
     }
 
     /// Verifies if a fix can be uninstalled safely without modifying files.
@@ -839,18 +864,17 @@ impl GameFixEngine {
                 "The selected directory does not pass the structural game check".to_string(),
             ));
         }
-        if !fixes.is_empty() {
-            let Some(ref bid) = build_id else {
-                return Err(Error::Refused("Build ID unavailable".to_string()));
-            };
-            if fixes
+        if !fixes.is_empty()
+            && fixes
                 .iter()
-                .any(|f| !f.supported_steam_build_ids.iter().any(|b| b == bid))
-            {
-                return Err(Error::Refused(
-                    "The detected Steam build is not supported by every selected Game Fix".to_string(),
-                ));
-            }
+                .any(|fix| !fix.supports_detected_build_or_hashes(build_id.as_deref()))
+        {
+            let message = if build_id.is_some() {
+                "The detected Steam build is not supported by every selected Game Fix"
+            } else {
+                "Steam build ID unavailable and one or more selected fixes lack exact source-file hash anchors"
+            };
+            return Err(Error::Refused(message.to_string()));
         }
 
         let mut pending = Vec::new();
@@ -910,16 +934,20 @@ impl GameFixEngine {
         check_no_links(game_dir, &state_dir)?;
 
         let mut recovered = Vec::new();
-        let Ok(entries) = fs::read_dir(&state_dir) else {
-            return Ok(Vec::new());
-        };
+        let entries = fs::read_dir(&state_dir)
+            .map_err(|error| Error::System(format!("Failed to read Game Fix state directory: {error}")))?;
 
-        for entry in entries.flatten() {
+        for entry in entries {
+            let entry =
+                entry.map_err(|error| Error::System(format!("Failed to read Game Fix state entry: {error}")))?;
             let path = entry.path();
             if path.is_dir() {
                 if let Some(id) = path.file_name().and_then(|n| n.to_str()) {
-                    if is_valid_id(id) && finish_interrupted_transaction(game_dir, id)? {
-                        recovered.push(id.to_string());
+                    if is_valid_id(id) {
+                        check_no_links(game_dir, &path)?;
+                        if finish_interrupted_transaction(game_dir, id)? {
+                            recovered.push(id.to_string());
+                        }
                     }
                 }
             }
@@ -1158,8 +1186,7 @@ impl GameFixEngine {
         absolute_path: &Path,
     ) -> Result<(Vec<u8>, bool, Option<String>)> {
         if absolute_path.is_file() {
-            let bytes =
-                fs::read(absolute_path).map_err(|e| Error::System(format!("Failed to read target source: {e}")))?;
+            let bytes = GameFile::from_path(relative_path.to_string(), "loose", absolute_path).read()?;
             return Ok((bytes, true, None));
         }
 
@@ -1709,6 +1736,16 @@ fn delete_journal(fix_dir: &Path) {
     }
 }
 
+fn delete_journal_checked(game_dir: &Path, fix_dir: &Path) -> Result<()> {
+    let path = fix_dir.join(JOURNAL_FILE_NAME);
+    check_no_links(game_dir, &path)?;
+    match fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(Error::System(format!("Failed to clear Game Fix journal: {error}"))),
+    }
+}
+
 fn finish_interrupted_transaction(game_dir: &Path, fix_id: &str) -> Result<bool> {
     let fix_dir = get_fix_directory(game_dir, fix_id);
     let journal_path = fix_dir.join(JOURNAL_FILE_NAME);
@@ -1863,6 +1900,54 @@ fn rollback_installation(applied: &[PreparedFileChange]) -> Vec<String> {
             }
         } else {
             let _ = fs::remove_file(&change.absolute_path);
+        }
+    }
+    errors
+}
+
+fn rollback_uninstallation(game_dir: &Path, applied: &[PreparedFileChange]) -> Vec<String> {
+    let mut errors = Vec::new();
+    for change in applied.iter().rev() {
+        if let Err(error) = check_no_links(game_dir, &change.absolute_path) {
+            errors.push(format!("{}: {error}", change.relative_path));
+            continue;
+        }
+
+        let current = match fs::read(&change.absolute_path) {
+            Ok(bytes) => Some(bytes),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound && !change.target_existed_before => None,
+            Err(error) => {
+                errors.push(format!(
+                    "{}: failed to read during rollback: {error}",
+                    change.relative_path
+                ));
+                continue;
+            }
+        };
+
+        if let Some(ref bytes) = current {
+            let current_sha = sha256_hex(bytes);
+            if current_sha == change.before_sha256 {
+                continue;
+            }
+            if current_sha != change.after_sha256 {
+                errors.push(format!(
+                    "{}: file changed during uninstall rollback",
+                    change.relative_path
+                ));
+                continue;
+            }
+        }
+
+        if let Err(error) = AtomicFileWriter::write(&change.absolute_path, &change.before_bytes, true) {
+            errors.push(format!(
+                "{}: failed to restore installed file: {error}",
+                change.relative_path
+            ));
+            continue;
+        }
+        if !matches_file_hash(&change.absolute_path, &change.before_sha256) {
+            errors.push(format!("{}: restored file failed its hash check", change.relative_path));
         }
     }
     errors
@@ -2097,6 +2182,194 @@ mod g13_tests {
             overlays: Vec::new(),
             spawn_edits: Vec::new(),
         }
+    }
+
+    #[test]
+    fn hash_anchored_fix_installs_and_uninstalls_without_a_steam_manifest() -> Result<()> {
+        let root = temp_game_root();
+        fs::create_dir_all(root.join("gamedata/configs"))?;
+        fs::write(root.join("fsgame.ltx"), b"$game_data$=true|true|$fs_root$|gamedata\\")?;
+
+        let original_a = b"value=old-a\n";
+        let original_b = b"value=old-b\n";
+        let path_a = root.join("gamedata/configs/a.ltx");
+        let path_b = root.join("gamedata/configs/b.ltx");
+        fs::write(&path_a, original_a)?;
+        fs::write(&path_b, original_b)?;
+
+        let fix = definition("1.0", "v1-a", "v1-b", &sha256_hex(original_a), &sha256_hex(original_b));
+        let engine = GameFixEngine::with_synthetic(true);
+
+        let installed = engine.install(&fix, &root)?;
+        assert!(installed.changed);
+        assert_eq!(fs::read(&path_a)?, b"value=v1-a\n");
+        assert_eq!(fs::read(&path_b)?, b"value=v1-b\n");
+        assert_eq!(engine.get_manifest(&fix.id, &root)?.steam_build_id, "");
+
+        engine.uninstall(&fix.id, &root)?;
+        assert_eq!(fs::read(&path_a)?, original_a);
+        assert_eq!(fs::read(&path_b)?, original_b);
+
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn steamless_fix_requires_exact_source_hashes() -> Result<()> {
+        let root = temp_game_root();
+        fs::create_dir_all(root.join("gamedata/configs"))?;
+        fs::write(root.join("fsgame.ltx"), b"$game_data$=true|true|$fs_root$|gamedata\\")?;
+        fs::write(root.join("gamedata/configs/a.ltx"), b"value=old-a\n")?;
+        fs::write(root.join("gamedata/configs/b.ltx"), b"value=old-b\n")?;
+
+        let mut fix = definition(
+            "1.0",
+            "v1-a",
+            "v1-b",
+            &sha256_hex(b"value=old-a\n"),
+            &sha256_hex(b"value=old-b\n"),
+        );
+        let patch = fix
+            .text_patches
+            .get_mut(0)
+            .ok_or_else(|| Error::damaged("Test definition is missing its first text patch"))?;
+        patch.expected_file_sha256 = None;
+        let error = match GameFixEngine::with_synthetic(true).install(&fix, &root) {
+            Err(error) => error,
+            Ok(_) => {
+                return Err(Error::damaged(
+                    "Unanchored fix unexpectedly used the non-Steam fallback",
+                ))
+            }
+        };
+
+        assert!(error.to_string().contains("exact source-file hash anchors"));
+        assert_eq!(fs::read(root.join("gamedata/configs/a.ltx"))?, b"value=old-a\n");
+        assert!(!get_manifest_path(&root, &fix.id).exists());
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn steamless_fix_checks_source_hashes_before_writing() -> Result<()> {
+        let root = temp_game_root();
+        fs::create_dir_all(root.join("gamedata/configs"))?;
+        fs::write(root.join("fsgame.ltx"), b"$game_data$=true|true|$fs_root$|gamedata\\")?;
+        fs::write(root.join("gamedata/configs/a.ltx"), b"value=unexpected\n")?;
+        fs::write(root.join("gamedata/configs/b.ltx"), b"value=old-b\n")?;
+
+        let fix = definition(
+            "1.0",
+            "v1-a",
+            "v1-b",
+            &sha256_hex(b"value=old-a\n"),
+            &sha256_hex(b"value=old-b\n"),
+        );
+        let error = match GameFixEngine::with_synthetic(true).install(&fix, &root) {
+            Err(error) => error,
+            Ok(_) => return Err(Error::damaged("A mismatched source hash unexpectedly installed")),
+        };
+
+        assert!(error
+            .to_string()
+            .contains("source file hash does not match verified build"));
+        assert_eq!(fs::read(root.join("gamedata/configs/a.ltx"))?, b"value=unexpected\n");
+        assert!(!get_manifest_path(&root, &fix.id).exists());
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn unlisted_steam_build_can_use_exact_source_hashes() -> Result<()> {
+        let root = temp_game_root();
+        fs::create_dir_all(root.join("gamedata/configs"))?;
+        fs::write(root.join("fsgame.ltx"), b"$game_data$=true|true|$fs_root$|gamedata\\")?;
+        fs::write(
+            root.join("appmanifest_4500.acf"),
+            b"\"AppState\" { \"appid\" \"4500\" \"buildid\" \"101\" }",
+        )?;
+
+        let original_a = b"value=old-a\n";
+        let original_b = b"value=old-b\n";
+        let path_a = root.join("gamedata/configs/a.ltx");
+        let path_b = root.join("gamedata/configs/b.ltx");
+        fs::write(&path_a, original_a)?;
+        fs::write(&path_b, original_b)?;
+
+        let fix = definition("1.0", "v1-a", "v1-b", &sha256_hex(original_a), &sha256_hex(original_b));
+        let engine = GameFixEngine::with_synthetic(true);
+
+        let installed = engine.install(&fix, &root)?;
+        assert!(installed.changed);
+        assert_eq!(engine.get_manifest(&fix.id, &root)?.steam_build_id, "101");
+        engine.uninstall(&fix.id, &root)?;
+        assert_eq!(fs::read(&path_a)?, original_a);
+        assert_eq!(fs::read(&path_b)?, original_b);
+
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn failed_uninstall_restores_files_already_removed_by_the_transaction() -> Result<()> {
+        let root = temp_game_root();
+        fs::create_dir_all(root.join("gamedata/configs"))?;
+        fs::write(root.join("fsgame.ltx"), b"$game_data$=true|true|$fs_root$|gamedata\\")?;
+        fs::write(
+            root.join("appmanifest_4500.acf"),
+            b"\"AppState\" { \"appid\" \"4500\" \"buildid\" \"100\" }",
+        )?;
+
+        let original_a = b"value=old-a\n";
+        let original_b = b"value=old-b\n";
+        let path_a = root.join("gamedata/configs/a.ltx");
+        let path_b = root.join("gamedata/configs/b.ltx");
+        fs::write(&path_a, original_a)?;
+        fs::write(&path_b, original_b)?;
+        let fix = definition("1.0", "v1-a", "v1-b", &sha256_hex(original_a), &sha256_hex(original_b));
+        let engine = GameFixEngine::with_synthetic(true);
+        engine.install(&fix, &root)?;
+        let installed_a = fs::read(&path_a)?;
+        let installed_b = fs::read(&path_b)?;
+
+        // Journal, first restore, then fail while restoring the second managed file.
+        fail_atomic_write_number_for_test(3);
+        assert!(engine.uninstall(&fix.id, &root).is_err());
+
+        assert_eq!(fs::read(&path_a)?, installed_a);
+        assert_eq!(fs::read(&path_b)?, installed_b);
+        assert_eq!(engine.get_status(&fix, &root)?, GameFixState::Installed);
+        assert!(!get_fix_directory(&root, &fix.id).join(JOURNAL_FILE_NAME).exists());
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn uninstall_rollback_recreates_a_removed_overlay() -> Result<()> {
+        let root = temp_game_root();
+        let target = root.join("gamedata/configs/new-overlay.ltx");
+        fs::create_dir_all(
+            target
+                .parent()
+                .ok_or_else(|| Error::damaged("Missing fixture parent"))?,
+        )?;
+        let installed_bytes = b"overlay=installed\n";
+        let change = PreparedFileChange {
+            relative_path: "gamedata/configs/new-overlay.ltx".to_owned(),
+            absolute_path: target.clone(),
+            before_bytes: installed_bytes.to_vec(),
+            after_bytes: Vec::new(),
+            before_sha256: sha256_hex(installed_bytes),
+            after_sha256: sha256_hex(&[]),
+            target_existed_before: false,
+            source_fingerprint: None,
+        };
+
+        assert!(rollback_uninstallation(&root, &[change]).is_empty());
+        assert_eq!(fs::read(&target)?, installed_bytes);
+
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
     }
 
     #[test]

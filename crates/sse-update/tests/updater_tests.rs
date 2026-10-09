@@ -266,37 +266,6 @@ fn signature_verification_verifies_real_release_test_vector() {
         0xE6, 0x8E, 0x4D, 0x68, 0x86, 0x79, 0x51, 0xF2, 0xBF, 0x2B, 0x62, 0x8D, 0x8B, 0x73, 0xA1, 0x6A,
     ];
 
-    let mut base64_str = String::new();
-    const B64_CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut i = 0usize;
-    while i < release_sig_der.len() {
-        let b0 = release_sig_der[i];
-        let b1 = if i + 1 < release_sig_der.len() {
-            release_sig_der[i + 1]
-        } else {
-            0
-        };
-        let b2 = if i + 2 < release_sig_der.len() {
-            release_sig_der[i + 2]
-        } else {
-            0
-        };
-
-        base64_str.push(B64_CHARS[(b0 >> 2) as usize] as char);
-        base64_str.push(B64_CHARS[(((b0 & 3) << 4) | (b1 >> 4)) as usize] as char);
-        if i + 1 < release_sig_der.len() {
-            base64_str.push(B64_CHARS[(((b1 & 0x0f) << 2) | (b2 >> 6)) as usize] as char);
-        } else {
-            base64_str.push('=');
-        }
-        if i + 2 < release_sig_der.len() {
-            base64_str.push(B64_CHARS[(b2 & 0x3f) as usize] as char);
-        } else {
-            base64_str.push('=');
-        }
-        i += 3;
-    }
-
     let pubkey = sse_codecs::p256::PublicKey::from_pem(sse_update::PUBLIC_KEY_PEM).unwrap();
     assert!(pubkey.verify(&release_digest, &release_sig_der));
 
