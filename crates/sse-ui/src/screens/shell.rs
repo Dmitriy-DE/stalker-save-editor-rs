@@ -179,8 +179,44 @@ fn format_open_error(path: &Path, error: &str, io_error: bool) -> String {
     }
 }
 
+#[derive(Clone, Copy)]
+enum SaveReason {
+    SelectSave,
+    UnmappedDraft,
+    UnsupportedFormat(&'static str),
+    NoChanges,
+    InvalidNumbers,
+    CanSave,
+}
+
+impl SaveReason {
+    fn localized(self, language: &str) -> String {
+        let i18n = sse_catalog::I18nService::instance();
+        let key = match self {
+            Self::SelectSave => "Выберите сохранение для редактирования.",
+            Self::UnmappedDraft => {
+                "В черновике есть правки из другой версии редактора, которые эта версия не понимает. Сбросьте черновик, чтобы продолжить (он сохранится рядом)."
+            }
+            Self::UnsupportedFormat(_) => "Эта правка для формата {0} не поддерживается (см. «Возможности»).",
+            Self::NoChanges => "Нет несохранённых изменений.",
+            Self::InvalidNumbers => "Введены некорректные значения (проверьте введённые числа).",
+            Self::CanSave => "Сохранить изменения в файл сейва (с созданием резервной копии).",
+        };
+        if let Self::UnsupportedFormat(format_name) = self {
+            let format_name = i18n.tr_in(Some(language), format_name, &[]);
+            i18n.tr_in(Some(language), key, &[&format_name])
+        } else {
+            i18n.tr_in(Some(language), key, &[])
+        }
+    }
+}
+
+fn draft_badge_text(language: &str, count: usize) -> String {
+    sse_catalog::I18nService::instance().tr_in(Some(language), "Черновик: {0} действ.", &[&count])
+}
+
 struct SaveEligibility {
-    reason: String,
+    reason: SaveReason,
     can_save: bool,
     change_count: usize,
 }
@@ -194,7 +230,7 @@ fn save_eligibility(
 ) -> SaveEligibility {
     if !has_save {
         return SaveEligibility {
-            reason: crate::strings::t("Выберите сохранение для редактирования.").to_owned(),
+            reason: SaveReason::SelectSave,
             can_save: false,
             change_count: 0,
         };
@@ -216,18 +252,15 @@ fn save_eligibility(
     let has_changes = change_count > 0;
     let unsupported = has_changes && plan.is_some_and(|plan| has_unsupported_edit(format_id, legacy_s2, plan));
     let reason = if has_unmapped {
-        "В черновике есть правки из другой версии редактора, которые эта версия не понимает. Сбросьте черновик, чтобы продолжить (он сохранится рядом).".to_owned()
+        SaveReason::UnmappedDraft
     } else if unsupported {
-        format!(
-            "Эта правка для формата {} не поддерживается (см. «Возможности»).",
-            display_format_name(format_id.unwrap_or("неизвестный"))
-        )
+        SaveReason::UnsupportedFormat(display_format_name(format_id.unwrap_or("неизвестный формат")))
     } else if !has_changes {
-        "Нет несохранённых изменений.".to_owned()
+        SaveReason::NoChanges
     } else if invalid_numbers {
-        "Введены некорректные значения (проверьте введённые числа).".to_owned()
+        SaveReason::InvalidNumbers
     } else {
-        "Сохранить изменения в файл сейва (с созданием резервной копии).".to_owned()
+        SaveReason::CanSave
     };
     SaveEligibility {
         reason,
@@ -285,7 +318,7 @@ fn display_format_name(format_id: &str) -> &'static str {
         "stalker-cs-ee" => "Чистое Небо EE",
         "stalker-cop-ee" => "Зов Припяти EE",
         "stalker2" | "s2" => "S.T.A.L.K.E.R. 2",
-        _ => "неизвестный",
+        _ => "Неизвестный формат",
     }
 }
 
@@ -752,19 +785,17 @@ impl Shell {
         let _ = brand;
         let edition = style::label(tree, top, "X-Ray / S2", Text::Value)?;
         tree.set_visible(edition, false)?;
-        let draft_badge = style::label(tree, top, crate::strings::t("Черновик: 0 действ."), Text::Note)?;
+        let language = crate::strings::current_language();
+        let initial_draft_badge = draft_badge_text(language, 0);
+        let draft_badge = style::label(tree, top, &initial_draft_badge, Text::Note)?;
         let undo = top_button(tree, top, crate::strings::t("Отменить"), false)?;
         let redo = top_button(tree, top, crate::strings::t("ПОВТОР"), false)?;
         let reset = top_button(tree, top, crate::strings::t("СБРОС"), false)?;
         let open_button = top_button(tree, top, crate::strings::t("Открыть…"), false)?;
         let refresh = top_button(tree, top, crate::strings::t("ОБНОВИТЬ"), false)?;
         let save = top_button(tree, top, crate::strings::t("СОХРАНИТЬ"), true)?;
-        let save_reason = style::label(
-            tree,
-            header,
-            crate::strings::t("Выберите сохранение для редактирования."),
-            Text::Note,
-        )?;
+        let initial_save_reason = SaveReason::SelectSave.localized(language);
+        let save_reason = style::label(tree, header, &initial_save_reason, Text::Note)?;
         let breadcrumb = style::label(tree, header, "", Text::Note)?;
         let title = style::label(tree, header, "", Text::Title)?;
         let subtitle = tree.add(
@@ -2011,12 +2042,12 @@ impl Shell {
 
     fn sync_draft_controls(&self, tree: &mut Tree) -> Result<()> {
         tree.set_text(self.edition, self.app.selected_game().unwrap_or("X-Ray / S2"))?;
+        let language = crate::strings::current_language();
         let Some(source_sha256) = self.app.current_save_sha256() else {
-            tree.set_text(self.draft_badge, crate::strings::t("Черновик: 0 действ."))?;
-            tree.set_text(
-                self.save_reason,
-                crate::strings::t("Выберите сохранение для редактирования."),
-            )?;
+            tree.set_text(self.draft_badge, &draft_badge_text(language, 0))?;
+            let reason = SaveReason::SelectSave.localized(language);
+            tree.set_text(self.save_reason, &reason)?;
+            tree.set_tooltip(self.save, &reason)?;
             tree.set_enabled(self.undo, false)?;
             tree.set_enabled(self.redo, false)?;
             tree.set_enabled(self.reset, false)?;
@@ -2034,10 +2065,10 @@ impl Shell {
             invalid_numbers,
         );
         let has_changes = eligibility.change_count > 0 || invalid_numbers;
-        let draft_badge = format!("Черновик: {} действ.", eligibility.change_count);
-        tree.set_text(self.draft_badge, &draft_badge)?;
-        tree.set_text(self.save_reason, &eligibility.reason)?;
-        tree.set_tooltip(self.save, crate::strings::t(&eligibility.reason))?;
+        tree.set_text(self.draft_badge, &draft_badge_text(language, eligibility.change_count))?;
+        let reason = eligibility.reason.localized(language);
+        tree.set_text(self.save_reason, &reason)?;
+        tree.set_tooltip(self.save, &reason)?;
         tree.set_enabled(
             self.undo,
             journal.is_some_and(sse_storage::drafts::DraftJournal::can_undo),
@@ -3502,18 +3533,20 @@ mod tests {
     fn save_disabled_reason_matches_reference_priority_and_capabilities() -> sse_core::Result<()> {
         let source_sha256 = "a".repeat(64);
         assert_eq!(
-            save_eligibility(false, None, false, None, false).reason,
-            crate::strings::t("Выберите сохранение для редактирования.")
+            save_eligibility(false, None, false, None, false).reason.localized("ru"),
+            "Выберите сохранение для редактирования."
         );
         assert_eq!(
-            save_eligibility(true, None, false, None, true).reason,
+            save_eligibility(true, None, false, None, true).reason.localized("ru"),
             "Нет несохранённых изменений."
         );
 
         let mut unsupported = DraftPlan::empty(&source_sha256)?;
         unsupported.placements.insert(5, DraftPlacement::Ruck);
         assert_eq!(
-            save_eligibility(true, Some("stalker2"), false, Some(&unsupported), false).reason,
+            save_eligibility(true, Some("stalker2"), false, Some(&unsupported), false)
+                .reason
+                .localized("ru"),
             "Эта правка для формата S.T.A.L.K.E.R. 2 не поддерживается (см. «Возможности»)."
         );
 
@@ -3521,14 +3554,16 @@ mod tests {
         supported.money = Some(700);
         let invalid = save_eligibility(true, Some("stalker2"), false, Some(&supported), true);
         assert_eq!(
-            invalid.reason,
+            invalid.reason.localized("ru"),
             "Введены некорректные значения (проверьте введённые числа)."
         );
         assert!(!invalid.can_save);
 
         supported.unmapped_legacy_plan = Some(JsonValue::Null);
         assert_eq!(
-            save_eligibility(true, Some("stalker2"), false, Some(&supported), true).reason,
+            save_eligibility(true, Some("stalker2"), false, Some(&supported), true)
+                .reason
+                .localized("ru"),
             "В черновике есть правки из другой версии редактора, которые эта версия не понимает. Сбросьте черновик, чтобы продолжить (он сохранится рядом)."
         );
         Ok(())
@@ -3826,7 +3861,7 @@ mod tests {
         assert!(!eligibility.can_save);
         assert_eq!(eligibility.change_count, 1);
         assert_eq!(
-            eligibility.reason,
+            eligibility.reason.localized("ru"),
             "Эта правка для формата S.T.A.L.K.E.R. 2 не поддерживается (см. «Возможности»)."
         );
         Ok(())
@@ -4108,6 +4143,59 @@ mod tests {
     }
 
     #[test]
+    fn draft_badge_translation_preserves_the_count_template() {
+        assert_eq!(super::draft_badge_text("en", 3), "Draft: 3 actions");
+    }
+
+    #[test]
+    fn save_reason_translation_preserves_the_format_name_argument() -> sse_core::Result<()> {
+        let source_sha256 = "d".repeat(64);
+        let mut plan = DraftPlan::empty(&source_sha256)?;
+        plan.placements.insert(1, DraftPlacement::Ruck);
+
+        let eligibility = save_eligibility(true, Some("stalker2"), false, Some(&plan), false);
+
+        assert_eq!(
+            eligibility.reason.localized("en"),
+            "This change is not supported for S.T.A.L.K.E.R. 2 (see \"Capabilities\")."
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn draft_badge_and_save_reasons_are_localized_in_every_language() {
+        let reasons = [
+            super::SaveReason::SelectSave,
+            super::SaveReason::UnmappedDraft,
+            super::SaveReason::UnsupportedFormat(super::display_format_name("stalker-soc")),
+            super::SaveReason::NoChanges,
+            super::SaveReason::InvalidNumbers,
+            super::SaveReason::CanSave,
+        ];
+
+        for language in crate::strings::LANGUAGES {
+            let badge = super::draft_badge_text(language, 3);
+            assert!(badge.contains('3'), "missing count for {language}: {badge}");
+            assert!(!badge.contains("{0}"), "unformatted count for {language}: {badge}");
+            if language != "ru" {
+                assert_ne!(badge, "Черновик: 3 действ.", "untranslated badge for {language}");
+            }
+
+            for reason in reasons {
+                let text = reason.localized(language);
+                assert!(!text.is_empty(), "empty save reason for {language}");
+                assert!(!text.contains("{0}"), "unformatted save reason for {language}: {text}");
+                if language == "en" {
+                    assert!(
+                        !text.chars().any(|ch| ('\u{0400}'..='\u{04ff}').contains(&ch)),
+                        "Russian text in English save reason: {text}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn unverified_s2_stash_transfers_are_counted_but_never_saveable() -> sse_core::Result<()> {
         let source_sha256 = "c".repeat(64);
         let mut plan = DraftPlan::empty(&source_sha256)?;
@@ -4118,7 +4206,7 @@ mod tests {
         assert_eq!(multiple.change_count, 2);
         assert!(!multiple.can_save);
         assert_eq!(
-            multiple.reason,
+            multiple.reason.localized("ru"),
             "Эта правка для формата S.T.A.L.K.E.R. 2 не поддерживается (см. «Возможности»)."
         );
         plan.s2_stash_takes.pop();
@@ -4126,7 +4214,7 @@ mod tests {
         assert_eq!(eligibility.change_count, 1);
         assert!(!eligibility.can_save);
         assert_eq!(
-            eligibility.reason,
+            eligibility.reason.localized("ru"),
             "Эта правка для формата S.T.A.L.K.E.R. 2 не поддерживается (см. «Возможности»)."
         );
         assert!(!save_eligibility(true, Some("stalker2"), true, Some(&plan), false).can_save);
