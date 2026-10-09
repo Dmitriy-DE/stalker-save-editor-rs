@@ -1,5 +1,6 @@
 //! Small dependency-free operating-system adapters used by the UI.
 
+pub mod directory_dialog;
 pub mod fetch;
 pub mod file_dialog;
 pub mod hotkeys;

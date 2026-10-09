@@ -634,6 +634,44 @@ pub fn open_files() -> Result<Option<Vec<PathBuf>>> {
     Ok(Some(paths))
 }
 
+/// Opens a native picker for one existing folder.
+///
+/// Must be called from the Cocoa UI thread.
+///
+/// # Errors
+/// Returns an error when the native picker returns an invalid path.
+pub fn choose_directory() -> Result<Option<PathBuf>> {
+    // SAFETY: NSOpenPanel::openPanel returns a live autoreleased panel on the caller's UI thread.
+    let panel = unsafe { o::id(o::class(c"NSOpenPanel"), o::sel(c"openPanel")) };
+    // SAFETY: panel is live and these selectors take one Objective-C BOOL.
+    unsafe {
+        o::void_bool(panel, o::sel(c"setCanChooseFiles:"), NO);
+        o::void_bool(panel, o::sel(c"setCanChooseDirectories:"), YES);
+        o::void_bool(panel, o::sel(c"setAllowsMultipleSelection:"), NO);
+    }
+    if let Some(title) = o::string("Выберите папку с сохранениями") {
+        // SAFETY: panel is live and retains the configured NSString.
+        unsafe { o::void_id(panel, o::sel(c"setTitle:"), title) };
+    }
+    // SAFETY: NSOpenPanel::runModal takes no arguments and returns NSModalResponse.
+    if unsafe { o::isize_(panel, o::sel(c"runModal")) } != 1 {
+        return Ok(None);
+    }
+    // SAFETY: panel is live and URL returns its selected NSURL.
+    let url = unsafe { o::id(panel, o::sel(c"URL")) };
+    // SAFETY: URL is live and path returns its filesystem path NSString.
+    let path = unsafe { o::id(url, o::sel(c"path")) };
+    let path = o::rust_string(path)
+        .ok_or_else(|| Error::Refused("native folder picker returned an invalid path".to_owned()))?;
+    let path = PathBuf::from(path);
+    if !path.is_absolute() {
+        return Err(Error::Refused(
+            "native folder picker returned a relative path".to_owned(),
+        ));
+    }
+    Ok(Some(path))
+}
+
 fn register_classes() -> Result<()> {
     if o::class(c"SseFramebufferView").is_null() {
         // SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
