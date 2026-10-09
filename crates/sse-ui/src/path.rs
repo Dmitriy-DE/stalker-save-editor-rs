@@ -1557,7 +1557,7 @@ pub enum Icon {
     D2ChevronRight,
     /// Outline icon, `icons-clean/chevron-down.svg`.
     D2ChevronDown,
-    /// Outline icon, `icons-clean/more.svg`.
+    /// Three filled dots, `icons-clean/more.svg`.
     D2More,
     /// Outline icon, `icons-clean/close.svg`.
     D2Close,
@@ -1653,7 +1653,7 @@ impl Icon {
             Self::D2ArrowLeft => "M19 12H5M11 6l-6 6 6 6",
             Self::D2ChevronRight => "M9 6 l 6 6-6 6",
             Self::D2ChevronDown => "M6 9 l 6 6 6-6",
-            Self::D2More => "M12 5h.01M12 12h.01M12 19h.01",
+            Self::D2More => "",
             Self::D2Close => "M6 6l12 12M18 6 6 18",
             Self::D2Undo => "M9 14 4 9l5-5 M4 9h10.5a5.5 5.5 0 0 1 0 11H11",
             Self::D2Redo => "M15 14 l 5-5-5-5 M20 9H9.5a5.5 5.5 0 0 0 0 11H13",
@@ -1676,6 +1676,7 @@ impl Icon {
         match self {
             Self::D2Radiation => "M10.35 9.14L7.25 3.77A9.5 9.5 0 0 1 16.75 3.77L13.65 9.14A3.3 3.3 0 0 0 10.35 9.14ZM15.3 12L21.5 12A9.5 9.5 0 0 1 16.75 20.23L13.65 14.86A3.3 3.3 0 0 0 15.3 12ZM10.35 14.86L7.25 20.23A9.5 9.5 0 0 1 2.5 12L8.7 12A3.3 3.3 0 0 0 10.35 14.86Z M10 12A2 2 0 1 0 14 12A2 2 0 1 0 10 12Z",
             Self::D2Sign => "M 10.371 9.18L 7.5 4.204A 9 9 0 0 1 16.5 4.204L 13.629 9.18A 3.257 3.257 0 0 0 10.371 9.18ZM 15.257 12L 21 12A 9 9 0 0 1 16.5 19.796L 13.629 14.82A 3.257 3.257 0 0 0 15.257 12ZM 10.371 14.82L 7.5 19.796A 9 9 0 0 1 3 12L 8.743 12A 3.257 3.257 0 0 0 10.371 14.82Z M10.114 12A1.886 1.886 0 1 0 13.886 12A1.886 1.886 0 1 0 10.114 12Z",
+            Self::D2More => "M10.5 5a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0-3 0z M10.5 12a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0-3 0z M10.5 19a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0-3 0z",
             _ => "",
         }
     }
@@ -1685,7 +1686,7 @@ impl Icon {
     #[must_use]
     pub const fn stroke_width(self) -> f64 {
         match self {
-            Self::D2Radiation => 0.0,
+            Self::D2Radiation | Self::D2More => 0.0,
             Self::D2Sign => 1.07,
             Self::D2Save
             | Self::D2Games
@@ -1720,7 +1721,6 @@ impl Icon {
             | Self::D2ArrowLeft
             | Self::D2ChevronRight
             | Self::D2ChevronDown
-            | Self::D2More
             | Self::D2Close
             | Self::D2Undo
             | Self::D2Redo

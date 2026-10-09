@@ -120,6 +120,15 @@ fn rasterize(icon: Icon, size: u16, color: u32) -> Result<IconBitmap> {
     } else {
         Some(Path::parse(icon.fill_data())?.flatten(transform, 0.25, FillRule::NonZero)?)
     };
+    coverage(size, color, outline.as_ref(), filled.as_ref())
+}
+
+fn coverage(
+    size: u16,
+    color: u32,
+    outline: Option<&FlattenedPath>,
+    filled: Option<&FlattenedPath>,
+) -> Result<IconBitmap> {
     let side = usize::from(size);
     let count = side
         .checked_mul(side)
@@ -128,14 +137,14 @@ fn rasterize(icon: Icon, size: u16, color: u32) -> Result<IconBitmap> {
     for y in 0..side {
         for x in 0..side {
             let mut covered = 0u8;
-            for sy in [0.25, 0.75] {
-                for sx in [0.25, 0.75] {
+            for sy in [0.125, 0.375, 0.625, 0.875] {
+                for sx in [0.125, 0.375, 0.625, 0.875] {
                     let point = Point::new(
                         f64::from(u16::try_from(x).unwrap_or_default()) + sx,
                         f64::from(u16::try_from(y).unwrap_or_default()) + sy,
                     );
-                    if outline.as_ref().is_some_and(|flat| flat.contains(point))
-                        || filled.as_ref().is_some_and(|flat| flat.contains(point))
+                    if outline.is_some_and(|flat| flat.contains(point))
+                        || filled.is_some_and(|flat| flat.contains(point))
                     {
                         covered = covered.saturating_add(1);
                     }
@@ -146,7 +155,7 @@ fn rasterize(icon: Icon, size: u16, color: u32) -> Result<IconBitmap> {
                 .and_then(|v| v.checked_add(x))
                 .ok_or_else(|| Error::damaged("icon pixel"))?;
             if let Some(p) = alpha.get_mut(i) {
-                *p = covered.saturating_mul(255) / 4;
+                *p = u8::try_from(u32::from(covered).saturating_mul(255) / 16).unwrap_or(u8::MAX);
             }
         }
     }
@@ -248,5 +257,33 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn filled_square_at_center_gives_full_coverage() {
+        let square = Path::parse("M0 0H24V24H0Z")
+            .and_then(|path| path.flatten(Transform::identity(), 0.25, FillRule::NonZero))
+            .unwrap_or_else(|error| panic!("{error:?}"));
+        let bitmap = coverage(24, 0xffffff, None, Some(&square)).unwrap_or_else(|error| panic!("{error:?}"));
+        assert_eq!(bitmap.alpha.get(12 * 24 + 12).copied(), Some(255));
+    }
+
+    #[test]
+    fn more_dots_are_filled_discs() {
+        let mut cache = IconCache::new();
+        let bitmap = cache
+            .get(Icon::D2More, 24, 0xffffff)
+            .unwrap_or_else(|error| panic!("{error:?}"));
+        assert_eq!(bitmap.alpha.get(4 * 24 + 11).copied(), Some(255));
+        assert_eq!(bitmap.alpha.first().copied(), Some(0));
+    }
+
+    #[test]
+    fn outline_stroke_width_two_has_strong_coverage() {
+        let mut cache = IconCache::new();
+        let bitmap = cache
+            .get(Icon::Search, 24, 0xffffff)
+            .unwrap_or_else(|error| panic!("{error:?}"));
+        assert!(bitmap.alpha.iter().any(|&v| v >= 200));
     }
 }

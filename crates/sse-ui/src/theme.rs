@@ -406,8 +406,7 @@ impl Theme {
 /// Colours are `0xRRGGBBAA` (opaque colours carry `FF`; `transparent` is `0x00000000`). The state arrays keep
 /// the order given in the spec, listed on each constant.
 pub mod d2 {
-    /// Fill, border and text colour of one control state. Focus rings and icon colours of the spec are
-    /// not part of this struct and are not carried here.
+    /// Fill, border and text colour of one control state, and the focus ring colour (0 when there is none).
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub struct StateLook {
         /// Fill colour.
@@ -416,6 +415,21 @@ pub mod d2 {
         pub border: u32,
         /// Text colour.
         pub text: u32,
+        /// Focus ring colour, 0 when the state draws no ring.
+        pub ring: u32,
+    }
+
+    /// Text input state: fill, border, text, placeholder/value colour and icon colour.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct InputLook {
+        /// Fill colour.
+        pub fill: u32,
+        /// Border colour.
+        pub border: u32,
+        /// Text colour.
+        pub text: u32,
+        /// Icon colour.
+        pub icon: u32,
     }
 
     /// Badge colours: text, border and fill.
@@ -538,30 +552,35 @@ pub mod d2 {
             fill: 0xD6A62DFF,
             border: 0xD6A62DFF,
             text: 0x0C0D0AFF,
+            ring: 0,
         },
         // заливка #E5B53C
         StateLook {
             fill: 0xE5B53CFF,
             border: 0xE5B53CFF,
             text: 0x0C0D0AFF,
+            ring: 0,
         },
         // заливка #B88E22
         StateLook {
             fill: 0xB88E22FF,
             border: 0xB88E22FF,
             text: 0x0C0D0AFF,
+            ring: 0,
         },
         // кольцо 2 · #D6A62D · зазор 2
         StateLook {
             fill: 0xD6A62DFF,
             border: 0xD6A62DFF,
             text: 0x0C0D0AFF,
+            ring: 0xD6A62DFF,
         },
         // заливка #D6A62D33 · текст #8F7A45
         StateLook {
             fill: 0xD6A62D33,
             border: 0xD6A62D33,
             text: 0x8F7A45FF,
+            ring: 0,
         },
     ];
 
@@ -573,30 +592,35 @@ pub mod d2 {
             fill: 0x151814CC,
             border: 0x3D4837FF,
             text: 0xD8D2BEFF,
+            ring: 0,
         },
         // заливка #23261F · рамка #716F67
         StateLook {
             fill: 0x23261FFF,
             border: 0x716F67FF,
             text: 0xD8D2BEFF,
+            ring: 0,
         },
         // заливка #1A1D17 · рамка #D6A62D
         StateLook {
             fill: 0x1A1D17FF,
             border: 0xD6A62DFF,
             text: 0xE5B53CFF,
+            ring: 0,
         },
         // кольцо 2 · #D6A62D
         StateLook {
             fill: 0x151814CC,
             border: 0x3D4837FF,
             text: 0xD8D2BEFF,
+            ring: 0xD6A62DFF,
         },
         // заливка #15181466 · рамка #242922
         StateLook {
             fill: 0x15181466,
             border: 0x242922FF,
             text: 0x4D4C46FF,
+            ring: 0,
         },
     ];
 
@@ -608,30 +632,35 @@ pub mod d2 {
             fill: 0x151814CC,
             border: 0xD6A62DFF,
             text: 0xE5B53CFF,
+            ring: 0,
         },
         // заливка #D6A62D26
         StateLook {
             fill: 0xD6A62D26,
             border: 0xE5B53CFF,
             text: 0xE5B53CFF,
+            ring: 0,
         },
         // заливка #D6A62D40
         StateLook {
             fill: 0xD6A62D40,
             border: 0xB88E22FF,
             text: 0xE5B53CFF,
+            ring: 0,
         },
         // кольцо 2
         StateLook {
             fill: 0x151814CC,
             border: 0xD6A62DFF,
             text: 0xE5B53CFF,
+            ring: 0xD6A62DFF,
         },
         // рамка #D6A62D40
         StateLook {
             fill: 0x00000000,
             border: 0xD6A62D40,
             text: 0xD6A62D66,
+            ring: 0,
         },
     ];
 
@@ -643,30 +672,35 @@ pub mod d2 {
             fill: 0x00000000,
             border: 0xD85A45FF,
             text: 0xD85A45FF,
+            ring: 0,
         },
         // заливка #D85A4526
         StateLook {
             fill: 0xD85A4526,
             border: 0xD85A45FF,
             text: 0xE87563FF,
+            ring: 0,
         },
         // заливка #D85A4540
         StateLook {
             fill: 0xD85A4540,
             border: 0xD85A45FF,
             text: 0xE87563FF,
+            ring: 0,
         },
         // кольцо 2 · #D6A62D
         StateLook {
             fill: 0x00000000,
             border: 0xD85A45FF,
             text: 0xD85A45FF,
+            ring: 0xD6A62DFF,
         },
         // рамка #D85A4540
         StateLook {
             fill: 0x00000000,
             border: 0xD85A4540,
             text: 0xD85A4566,
+            ring: 0,
         },
     ];
 
@@ -680,30 +714,35 @@ pub mod d2 {
             fill: 0x151814CC,
             border: 0x33382FFF,
             text: 0xA29D90FF,
+            ring: 0,
         },
         // заливка #23261F · рамка #3D4837
         StateLook {
             fill: 0x23261FFF,
             border: 0x3D4837FF,
             text: 0xD8D2BEFF,
+            ring: 0,
         },
         // рамка #D6A62D
         StateLook {
             fill: 0x1A1D17FF,
             border: 0xD6A62DFF,
             text: 0xD8D2BEFF,
+            ring: 0,
         },
         // заливка #D6A62D · текст #0C0D0A
         StateLook {
             fill: 0xD6A62DFF,
             border: 0xD6A62DFF,
             text: 0x0C0D0AFF,
+            ring: 0,
         },
         // текст #4D4C46
         StateLook {
             fill: 0x15181466,
             border: 0x242922FF,
             text: 0x4D4C46FF,
+            ring: 0,
         },
     ];
 
@@ -715,30 +754,35 @@ pub mod d2 {
             fill: 0x00000000,
             border: 0x00000000,
             text: 0xA29D90FF,
+            ring: 0,
         },
         // заливка #23261FCC
         StateLook {
             fill: 0x23261FCC,
             border: 0x00000000,
             text: 0xD8D2BEFF,
+            ring: 0,
         },
         // заливка #D6A62D26
         StateLook {
             fill: 0xD6A62D26,
             border: 0x00000000,
             text: 0xE5B53CFF,
+            ring: 0,
         },
         // заливка #D6A62D · текст #0C0D0A
         StateLook {
             fill: 0xD6A62DFF,
             border: 0xD6A62DFF,
             text: 0x0C0D0AFF,
+            ring: 0,
         },
         // текст #4D4C46
         StateLook {
             fill: 0x00000000,
             border: 0x00000000,
             text: 0x4D4C46FF,
+            ring: 0,
         },
     ];
 
@@ -750,30 +794,35 @@ pub mod d2 {
             fill: 0x00000000,
             border: 0x00000000,
             text: 0xD8D2BEFF,
+            ring: 0,
         },
         // заливка #23261FCC
         StateLook {
             fill: 0x23261FCC,
             border: 0x00000000,
             text: 0xD8D2BEFF,
+            ring: 0,
         },
         // заливка #D6A62D2E
         StateLook {
             fill: 0xD6A62D2E,
             border: 0x00000000,
             text: 0xD8D2BEFF,
+            ring: 0,
         },
         // заливка #D6A62D1A · рамка #D6A62D
         StateLook {
             fill: 0xD6A62D1A,
             border: 0xD6A62DFF,
             text: 0xD8D2BEFF,
+            ring: 0,
         },
         // текст #4D4C46
         StateLook {
             fill: 0x00000000,
             border: 0x00000000,
             text: 0x4D4C46FF,
+            ring: 0,
         },
     ];
 
@@ -785,30 +834,35 @@ pub mod d2 {
             fill: 0x151814CC,
             border: 0x33382FFF,
             text: 0xA29D90FF,
+            ring: 0,
         },
         // заливка #23261F
         StateLook {
             fill: 0x23261FFF,
             border: 0x3D4837FF,
             text: 0xD8D2BEFF,
+            ring: 0,
         },
         // рамка #D6A62D
         StateLook {
             fill: 0x1A1D17FF,
             border: 0xD6A62DFF,
             text: 0xD8D2BEFF,
+            ring: 0,
         },
         // заливка #D6A62D
         StateLook {
             fill: 0xD6A62DFF,
             border: 0xD6A62DFF,
             text: 0x0C0D0AFF,
+            ring: 0,
         },
         // текст #4D4C46
         StateLook {
             fill: 0x15181466,
             border: 0x242922FF,
             text: 0x4D4C46FF,
+            ring: 0,
         },
     ];
 
@@ -816,36 +870,41 @@ pub mod d2 {
 
     /// Text input states (normal, hover, focus, error, disabled).
     /// Order as in the spec.
-    pub const INPUT_STATES: [StateLook; 5] = [
-        // заливка #1A1D17 · рамка #33382F · подсказка #716F67
-        StateLook {
+    pub const INPUT_STATES: [InputLook; 5] = [
+        // заливка #1A1D17 · рамка #33382F · подсказка #716F67 · значок #716F67
+        InputLook {
             fill: 0x1A1D17FF,
             border: 0x33382FFF,
             text: 0x716F67FF,
+            icon: 0x716F67FF,
         },
-        // рамка #3D4837
-        StateLook {
+        // рамка #3D4837 · значок #A29D90
+        InputLook {
             fill: 0x1A1D17FF,
             border: 0x3D4837FF,
             text: 0x716F67FF,
+            icon: 0xA29D90FF,
         },
-        // рамка 1 · #D6A62D, курсор #E5B53C
-        StateLook {
+        // рамка 1 · #D6A62D, курсор #E5B53C · значок #A29D90
+        InputLook {
             fill: 0x1A1D17FF,
             border: 0xD6A62DFF,
             text: 0xD8D2BEFF,
+            icon: 0xA29D90FF,
         },
-        // рамка #D85A45 · причина под полем 12 · #D85A45
-        StateLook {
+        // рамка #D85A45 · причина под полем 12 · #D85A45 · значок #D85A45
+        InputLook {
             fill: 0x1A1D17FF,
             border: 0xD85A45FF,
             text: 0xD8D2BEFF,
+            icon: 0xD85A45FF,
         },
-        // текст #4D4C46
-        StateLook {
+        // текст #4D4C46 · значок #4D4C46
+        InputLook {
             fill: 0x15181466,
             border: 0x242922FF,
             text: 0x4D4C46FF,
+            icon: 0x4D4C46FF,
         },
     ];
 
@@ -1094,6 +1153,31 @@ pub mod d2 {
     pub const LAYOUT_STANDARD_MAX: u32 = 2199;
     /// Wide layout starts at this width.
     pub const LAYOUT_WIDE_MIN: u32 = 2200;
+
+    #[cfg(test)]
+    mod state_tests {
+        use super::*;
+
+        #[test]
+        fn focus_ring_only_on_button_focus_state() {
+            for states in [
+                &BUTTON_PRIMARY,
+                &BUTTON_SECONDARY,
+                &BUTTON_ACCENT_OUTLINE,
+                &BUTTON_DANGER,
+            ] {
+                assert_eq!(states[3].ring, ACCENT);
+                assert_eq!(states.iter().filter(|look| look.ring != 0).count(), 1);
+            }
+            assert!(TAB_STATES.iter().all(|look| look.ring == 0));
+        }
+
+        #[test]
+        fn input_states_carry_icon_colour() {
+            assert_eq!(INPUT_STATES[3].icon, 0xD85A45FF);
+            assert_eq!(INPUT_STATES[0].icon, TEXT_MUTED);
+        }
+    }
 }
 
 #[cfg(test)]
