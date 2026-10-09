@@ -2200,7 +2200,10 @@ impl Shell {
     }
 
     /// Opens the inventory's add-item panel the way a click on its button does. Returns `false` when the current
-    /// screen has no such button. Used by the developer screenshot tool and by tests.
+    /// screen has no such button.
+    ///
+    /// Only for sse-ui-dev (screenshots); not part of the screen API.
+    #[doc(hidden)]
     pub fn open_add_item(&mut self, tree: &mut Tree) -> Result<bool> {
         let label = crate::strings::t("+ Добавить предмет").to_lowercase();
         let Some(button) = find_button_with_text(tree, self.content, &label) else {
@@ -4156,6 +4159,7 @@ impl App<AppMessage> for Shell {
 }
 
 /// First visible widget under `root` whose text contains `needle` (lower case, ignoring case of the text).
+/// Only for sse-ui-dev (through `Shell::open_add_item`).
 fn find_button_with_text(tree: &Tree, root: WidgetId, needle: &str) -> Option<WidgetId> {
     let mut stack = vec![root];
     while let Some(id) = stack.pop() {
