@@ -3010,6 +3010,9 @@ impl Shell {
             typed.as_deref(),
             &mut self.open_path_clipboard,
         )?;
+        if let Some(refusal) = self.open_path_input.take_paste_refusal() {
+            tree.set_text(self.status, crate::widgets::text_input::paste_refusal_message(refusal))?;
+        }
         let path = self.open_path_input.text();
         tree.set_input_text(self.open_path_widget, &path)?;
         tree.set_enabled(
@@ -6604,6 +6607,31 @@ mod tests {
 
         assert_eq!(shell.app.draft(&source_sha256).and_then(|plan| plan.money), Some(5));
         assert!(!shell.app.can_redo_draft(&source_sha256));
+        Ok(())
+    }
+
+    #[test]
+    fn a_refused_paste_in_the_open_path_field_says_why() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut shell = Shell::build_for_test(&mut tree, None)?;
+        shell.open(&mut tree, ScreenId::Overview)?;
+        shell.show_open_file_dialog(&mut tree)?;
+        let full = "a".repeat(32_768);
+        shell.open_path_input = crate::widgets::text_input::TextInput::new(&full, super::open_path_edit_config())?;
+        tree.set_input_text(shell.open_path_widget, &full)?;
+        shell.open_path_clipboard.0 = "x".to_owned();
+        let paste = Message::Window(WindowEvent::Key {
+            pressed: true,
+            keysym: u32::from('v'),
+            text: None,
+            ctrl: true,
+            shift: false,
+        });
+        shell.handle(&mut tree, &paste, None)?;
+        assert_eq!(
+            tree.text(shell.status)?,
+            crate::widgets::text_input::paste_refusal_message(crate::edit::PasteRefusal::TooLong)
+        );
         Ok(())
     }
 

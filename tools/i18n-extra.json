@@ -1308,6 +1308,23 @@
     "zh-CN": "只有在报告提示中确认后才能开启报告发送。",
     "zh-TW": "只有在報告提示中確認後才能開啟報告傳送。"
   },
+  "Выбор игры изменился; запись в облако отменена.": {
+    "ru": "Выбор игры изменился; запись в облако отменена.",
+    "uk": "Вибір гри змінився; запис у хмару скасовано.",
+    "en": "The selected game changed; the cloud write was cancelled.",
+    "de": "Die ausgewählte Spielauswahl hat sich geändert; das Cloud-Schreiben wurde abgebrochen.",
+    "fr": "Le jeu sélectionné a changé ; l'écriture dans le cloud a été annulée.",
+    "it": "Il gioco selezionato è cambiato; la scrittura nel cloud è stata annullata.",
+    "es": "El juego seleccionado cambió; la escritura en la nube se canceló.",
+    "pl": "Wybrana gra się zmieniła; zapis w chmurze anulowano.",
+    "cs": "Vybraná hra se změnila; zápis do cloudu byl zrušen.",
+    "pt-BR": "O jogo selecionado mudou; a gravação na nuvem foi cancelada.",
+    "tr": "Seçilen oyun değişti; bulut yazma iptal edildi.",
+    "ja": "選択中のゲームが変わったため、クラウドへの書き込みを取り消しました。",
+    "ko": "선택한 게임이 바뀌어 클라우드 쓰기를 취소했습니다.",
+    "zh-CN": "所选游戏已更改，已取消云端写入。",
+    "zh-TW": "所選遊戲已變更，已取消雲端寫入。"
+  },
   "РЕЗУЛЬТАТЫ ПРОВЕРКИ": {
     "ru": "РЕЗУЛЬТАТЫ ПРОВЕРКИ",
     "uk": "РЕЗУЛЬТАТИ ПЕРЕВІРКИ",

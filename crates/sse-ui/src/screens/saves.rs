@@ -2871,14 +2871,6 @@ fn inventory_search_config() -> EditConfig {
     }
 }
 
-/// Status text for a paste that inserted nothing.
-fn paste_refusal_text(refusal: crate::edit::PasteRefusal) -> &'static str {
-    match refusal {
-        crate::edit::PasteRefusal::TooLong => t("Вставка не поместилась: текст длиннее оставшегося места в поле."),
-        crate::edit::PasteRefusal::NotAllowed => t("Вставка не принята: текст не подходит под формат поля."),
-    }
-}
-
 /// The writer's read-back accepts one non-ammo item per request; only ammunition takes a count.
 fn quantity_is_writable(item_key: &str, quantity: u32) -> bool {
     quantity == 1 || item_key.to_ascii_lowercase().starts_with("ammo_")
@@ -6788,7 +6780,7 @@ impl Screen for Inventory {
                         &mut clipboard,
                     )?;
                     if let Some(refusal) = input.take_paste_refusal() {
-                        cx.status = Some(paste_refusal_text(refusal).to_owned());
+                        cx.status = Some(crate::widgets::text_input::paste_refusal_message(refusal).to_owned());
                     }
                     self.add_search_query = input.text();
                     if let Some(widget) = self.add_search_widget {
@@ -6824,7 +6816,7 @@ impl Screen for Inventory {
                         &mut clipboard,
                     )?;
                     if let Some(refusal) = input.take_paste_refusal() {
-                        cx.status = Some(paste_refusal_text(refusal).to_owned());
+                        cx.status = Some(crate::widgets::text_input::paste_refusal_message(refusal).to_owned());
                     }
                     if let Some(widget) = self.add_quantity_widget {
                         cx.tree.set_text(widget, &input.text())?;
@@ -6871,7 +6863,7 @@ impl Screen for Inventory {
                         &mut clipboard,
                     )?;
                     if let Some(refusal) = input.take_paste_refusal() {
-                        cx.status = Some(paste_refusal_text(refusal).to_owned());
+                        cx.status = Some(crate::widgets::text_input::paste_refusal_message(refusal).to_owned());
                     }
                     self.search_query = input.text();
                     self.page = 0;
@@ -6930,7 +6922,7 @@ impl Screen for Inventory {
                         &mut clipboard,
                     )?;
                     if let Some(refusal) = input.take_paste_refusal() {
-                        cx.status = Some(paste_refusal_text(refusal).to_owned());
+                        cx.status = Some(crate::widgets::text_input::paste_refusal_message(refusal).to_owned());
                     }
                     if let Some(widget) = self.money_input_widget {
                         let text = input.text();

@@ -46,6 +46,30 @@ pub(crate) fn screens(backup_workspace: Workspace) -> Vec<Box<dyn Screen>> {
     ]
 }
 
+/// The save-game family (`sse_storage` candidate id) of a selected game key, editions included.
+fn save_family(game: &str) -> Option<&'static str> {
+    match game {
+        "soc" | "stalker-soc" | "soc-ee" | "stalker-soc-ee" => Some("soc"),
+        "cs" | "clear_sky" | "stalker-cs" | "cs-ee" | "stalker-cs-ee" => Some("clear_sky"),
+        "cop" | "stalker-cop" | "cop-ee" | "stalker-cop-ee" => Some("cop"),
+        "s2" | "stalker2" => Some("stalker2"),
+        _ => None,
+    }
+}
+
+/// True when `path` lies inside a save folder that the locator assigns to `family`.
+fn in_game_directory(
+    path: &Path,
+    family: Option<&str>,
+    directories: &[sse_storage::discovery::SaveDirectoryCandidate],
+) -> bool {
+    family.is_some_and(|family| {
+        directories
+            .iter()
+            .any(|candidate| candidate.game_id == family && path.starts_with(&candidate.directory_path))
+    })
+}
+
 fn app_id(game: &str) -> Option<u32> {
     match game {
         "soc" | "stalker-soc" => Some(4_500),
@@ -1309,6 +1333,11 @@ struct CloudIntent {
     backup_directory: PathBuf,
 }
 
+/// A cloud write may only go to the game whose save was checked.
+fn intent_is_for_selected_game(selected_game: Option<&str>, intent_app_id: u32) -> bool {
+    selected_game.and_then(app_id) == Some(intent_app_id)
+}
+
 #[derive(Debug)]
 enum CloudReply {
     List(std::result::Result<Vec<CloudFile>, String>),
@@ -1461,10 +1490,15 @@ impl Cloud {
                 candidates.push(current);
             }
         }
+        // A recent save of another game can share the file name, so the local file must sit in this game's folder.
+        let game_directories = sse_storage::discovery::SaveDirectoryLocator::find_candidate_directories(None);
+        let family = save_family(game);
         let mut matching = candidates.into_iter().filter(|path| {
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.eq_ignore_ascii_case(remote_name))
+            in_game_directory(path, family, &game_directories)
+                && path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.eq_ignore_ascii_case(remote_name))
         });
         let Some(local) = matching.next() else {
             cx.status = Some(t("Для выбранного облачного файла не найден локальный сейв с тем же именем.").to_owned());
@@ -1782,6 +1816,11 @@ impl Screen for Cloud {
                         cx.tree.set_visible(card, false)?;
                     }
                 }
+                // The prepared intent belongs to the game that was selected when it was checked.
+                if !intent_is_for_selected_game(cx.app.selected_game(), intent.app_id) {
+                    cx.status = Some(t("Выбранная игра изменилась; подтверждение отменено.").to_owned());
+                    return Ok(());
+                }
                 cx.status = Some(tr("Запись {0} в Steam Cloud (RemoteStorage)...", &[&intent.remote]));
                 self.upload(cx, intent);
             }
@@ -1867,6 +1906,15 @@ impl Screen for Cloud {
                         }
                     }
                     CloudReply::Prepared(Ok(intent)) => {
+                        // The selection may have moved while the comparison ran: never confirm a write for another game.
+                        if cx.app.selected_game().and_then(app_id) != Some(intent.app_id) {
+                            cx.status = Some(t("Выбор игры изменился; запись в облако отменена.").to_owned());
+                            return Ok(());
+                        }
+                        // The dialog does not repeat the game title or file name, so the status line names both.
+                        if let Some(game) = cx.app.selected_game() {
+                            cx.status = Some(format!("{game} · {}", intent.remote));
+                        }
                         if let Some(label) = self.confirm_cloud_version {
                             cx.tree.set_text(
                                 label,
@@ -2247,6 +2295,16 @@ impl Screen for Updates {
 mod service_localization_tests {
     use super::super::saves::Workspace;
     use super::super::{Context, Screen};
+    use super::intent_is_for_selected_game;
+
+    #[test]
+    fn cloud_write_is_refused_when_the_selected_game_changed_after_the_check() {
+        let checked = 4_500;
+        assert!(intent_is_for_selected_game(Some("soc"), checked));
+        assert!(!intent_is_for_selected_game(Some("cop"), checked));
+        assert!(!intent_is_for_selected_game(None, checked));
+    }
+
     use super::{hotkey_label, t_in, tr_in};
 
     #[test]
@@ -2437,5 +2495,53 @@ mod update_tests {
         assert_eq!(displayed, expected);
         assert_eq!(context.status.as_deref(), Some(displayed));
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod cloud_intent_guard_tests {
+    use super::app_id;
+
+    #[test]
+    fn a_prepared_write_is_tied_to_one_game_app_id() {
+        assert_eq!(app_id("stalker-cs"), Some(20_510));
+        assert_ne!(app_id("stalker-cop"), app_id("stalker-cs"));
+    }
+}
+
+#[cfg(test)]
+mod game_directory_tests {
+    use super::{in_game_directory, save_family};
+    use sse_storage::discovery::SaveDirectoryCandidate;
+    use std::path::Path;
+
+    #[test]
+    fn a_local_save_counts_only_inside_the_selected_games_folder() {
+        let directories = [
+            SaveDirectoryCandidate::new("clear_sky", "stalker-cs", "/games/cs/SaveGames"),
+            SaveDirectoryCandidate::new("cop", "stalker-cop", "/games/cop/SaveGames"),
+        ];
+        let clear_sky = save_family("stalker-cs-ee");
+        assert_eq!(clear_sky, Some("clear_sky"));
+        assert!(in_game_directory(
+            Path::new("/games/cs/SaveGames/slot.sav"),
+            clear_sky,
+            &directories
+        ));
+        assert!(!in_game_directory(
+            Path::new("/games/cop/SaveGames/slot.sav"),
+            clear_sky,
+            &directories
+        ));
+        assert!(!in_game_directory(
+            Path::new("/elsewhere/slot.sav"),
+            clear_sky,
+            &directories
+        ));
+        assert!(!in_game_directory(
+            Path::new("/games/cs/SaveGames/slot.sav"),
+            None,
+            &directories
+        ));
     }
 }
