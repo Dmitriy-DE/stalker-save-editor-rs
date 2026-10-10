@@ -3,7 +3,6 @@
 use crate::builder::InstalledGameCatalogBuilder;
 use crate::bundle::{CatalogBundleReader, CatalogBundleWriter};
 use crate::models::{CatalogBundle, ItemCatalog};
-use sse_codecs::crc32::crc32;
 use sse_codecs::sha256::sha256;
 use sse_content::{CompanionGame, DdsImage, GameFile, GameFileTree, LtxDocument, RgbaImage, XRayStringTables};
 use sse_core::Result;
@@ -240,82 +239,6 @@ impl GameContentService {
         );
         format!("{readable}-{hash_hex}")
     }
-
-    /// Encodes an RGBA8 image as PNG bytes.
-    #[must_use]
-    pub fn to_png(image: &RgbaImage) -> Vec<u8> {
-        let capacity = 32usize.saturating_add(image.width.saturating_mul(image.height).saturating_mul(4));
-        let mut out = Vec::with_capacity(capacity);
-        out.extend_from_slice(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
-
-        // IHDR chunk
-        let mut ihdr_data = [0u8; 13];
-        let w_u32 = u32::try_from(image.width).unwrap_or(0);
-        let h_u32 = u32::try_from(image.height).unwrap_or(0);
-        if let Some(slice) = ihdr_data.get_mut(0..4) {
-            slice.copy_from_slice(&w_u32.to_be_bytes());
-        }
-        if let Some(slice) = ihdr_data.get_mut(4..8) {
-            slice.copy_from_slice(&h_u32.to_be_bytes());
-        }
-        ihdr_data[8] = 8; // bit depth
-        ihdr_data[9] = 6; // color type RGBA
-        ihdr_data[10] = 0; // compression
-        ihdr_data[11] = 0; // filter
-        ihdr_data[12] = 0; // interlace
-        write_chunk(&mut out, b"IHDR", &ihdr_data);
-
-        // IDAT chunk (scanlines with filter byte 0)
-        let row_stride = image.width.saturating_mul(4);
-        let mut raw_scanlines = Vec::with_capacity(image.height.saturating_mul(row_stride.saturating_add(1)));
-        for row in 0..image.height {
-            raw_scanlines.push(0); // filter type None
-            let start = row.saturating_mul(row_stride);
-            let end = start.saturating_add(row_stride);
-            if let Some(slice) = image.pixels.get(start..end) {
-                raw_scanlines.extend_from_slice(slice);
-            }
-        }
-
-        // RFC 1950 zlib wrapper around RFC 1951 stored DEFLATE blocks
-        let mut zlib_stream = Vec::with_capacity(raw_scanlines.len().saturating_add(64));
-        zlib_stream.push(0x78); // CMF: deflate, 32K window
-        zlib_stream.push(0x01); // FLG: check bits
-
-        let mut pos = 0usize;
-        while pos < raw_scanlines.len() {
-            let remaining = raw_scanlines.len().saturating_sub(pos);
-            let chunk_len = remaining.min(65535);
-            let is_last = pos.saturating_add(chunk_len) == raw_scanlines.len();
-            zlib_stream.push(if is_last { 0x01 } else { 0x00 });
-            let len_u16 = u16::try_from(chunk_len).unwrap_or(0);
-            zlib_stream.extend_from_slice(&len_u16.to_le_bytes());
-            zlib_stream.extend_from_slice(&(!len_u16).to_le_bytes());
-            if let Some(chunk) = raw_scanlines.get(pos..pos.saturating_add(chunk_len)) {
-                zlib_stream.extend_from_slice(chunk);
-            }
-            pos = pos.saturating_add(chunk_len);
-        }
-
-        let adler = sse_codecs::inflate::adler32(&raw_scanlines);
-        zlib_stream.extend_from_slice(&adler.to_be_bytes());
-
-        write_chunk(&mut out, b"IDAT", &zlib_stream);
-
-        // IEND chunk
-        write_chunk(&mut out, b"IEND", &[]);
-        out
-    }
-}
-
-fn write_chunk(output: &mut Vec<u8>, chunk_type: &[u8; 4], data: &[u8]) {
-    let len_u32 = u32::try_from(data.len()).unwrap_or(0);
-    output.extend_from_slice(&len_u32.to_be_bytes());
-    let crc_start = output.len();
-    output.extend_from_slice(chunk_type);
-    output.extend_from_slice(data);
-    let crc = crc32(output.get(crc_start..).unwrap_or(&[]));
-    output.extend_from_slice(&crc.to_be_bytes());
 }
 
 fn atomic_write_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
@@ -445,7 +368,9 @@ impl IconSource {
         let crop_h = (item.height.unwrap_or(1).max(1) as usize).saturating_mul(cell);
 
         let cropped = atlas.crop(crop_x, crop_y, crop_w, crop_h)?;
-        let png_bytes = GameContentService::to_png(&cropped);
+        let width = u32::try_from(cropped.width).ok()?;
+        let height = u32::try_from(cropped.height).ok()?;
+        let png_bytes = sse_codecs::png_encode::encode_rgba8(width, height, &cropped.pixels).ok()?;
 
         let _ = fs::create_dir_all(&self.cache_directory);
         if let Err(error) = atomic_write_file(&cache_path, &png_bytes) {
