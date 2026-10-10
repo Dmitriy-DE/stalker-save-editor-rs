@@ -138,6 +138,20 @@ impl Stalker2ModToggle {
     /// # Errors
     /// Returns an error if the directory is not an S2 installation, if symlinks are detected,
     /// or if both active and disabled folders exist concurrently.
+    /// Toggles `~mods` only when the game is not running, using the given probe.
+    ///
+    /// # Errors
+    /// Returns [`Error::Refused`] when the game is running or the process list cannot be read.
+    pub fn toggle_while_not_running(
+        game_directory: &Path,
+        probe: &dyn crate::running_game::GameRunningProbe,
+    ) -> Result<ModToggleResult> {
+        crate::running_game::ensure_game_not_running(probe, crate::models::GameTarget::Stalker2)?;
+        Self::toggle(game_directory)
+    }
+
+    /// Renames `~mods` between active and disabled. Callers that can run while the game is open must use
+    /// [`Stalker2ModToggle::toggle_while_not_running`] instead.
     pub fn toggle(game_directory: &Path) -> Result<ModToggleResult> {
         let paks_dir = Self::resolve_paks_dir(game_directory).ok_or_else(|| {
             Error::Refused(

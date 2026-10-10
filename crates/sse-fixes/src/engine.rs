@@ -64,6 +64,11 @@ impl Default for GameFixEngine {
 }
 
 impl GameFixEngine {
+    /// Fails with [`Error::Refused`] when the game for `game` is running or cannot be checked.
+    pub(crate) fn ensure_game_not_running_for(&self, game: GameTarget) -> Result<()> {
+        ensure_game_not_running(self.process_probe.as_ref(), game)
+    }
+
     /// Replaces how the engine detects a running game (used by tests and embedders).
     #[must_use]
     pub fn with_process_probe(mut self, probe: Arc<dyn GameRunningProbe>) -> Self {
@@ -192,7 +197,7 @@ impl GameFixEngine {
         game_dir: &Path,
         allow_version_transition: bool,
     ) -> Result<GameFixInstallResult> {
-        ensure_game_not_running(&self.process_probe, definition.game)?;
+        ensure_game_not_running(self.process_probe.as_ref(), definition.game)?;
         validate_definition(definition)?;
         let fix_dir = get_fix_directory(game_dir, &definition.id);
         check_no_links(game_dir, &fix_dir)?;
@@ -599,7 +604,7 @@ impl GameFixEngine {
         check_no_links(game_dir, &manifest_path)?;
         if manifest_path.is_file() {
             let game = read_manifest(&manifest_path, fix_id)?.game;
-            ensure_game_not_running(&self.process_probe, game)?;
+            ensure_game_not_running(self.process_probe.as_ref(), game)?;
         }
         let _ = self.recover_interrupted(game_dir)?;
 

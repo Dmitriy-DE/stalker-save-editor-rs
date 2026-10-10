@@ -214,6 +214,7 @@ impl ToolkitProfileService {
                     _ => false,
                 };
                 if needs_toggle {
+                    engine.ensure_game_not_running_for(GameTarget::Stalker2)?;
                     Stalker2ModToggle::toggle(game_directory)?;
                 }
             }

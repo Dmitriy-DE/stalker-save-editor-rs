@@ -278,6 +278,7 @@ impl ToolkitSnapshotService {
                     (ModToggleStatus::Active { .. }, "disabled") | (ModToggleStatus::Disabled { .. }, "active")
                 );
                 if needs_toggle {
+                    engine.ensure_game_not_running_for(GameTarget::Stalker2)?;
                     Stalker2ModToggle::toggle(game_directory)?;
                     s2_mods_toggled = true;
                 }
