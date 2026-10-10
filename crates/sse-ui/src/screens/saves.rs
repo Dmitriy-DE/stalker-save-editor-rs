@@ -151,6 +151,8 @@ const INVENTORY_COUNT_WIDTH: f32 = 76.0;
 const INVENTORY_STEPPER_WIDTH: f32 = 64.0;
 const ADD_ITEM_PAGE_SIZE: usize = 8;
 const MAXIMUM_STASH_ROWS: usize = 10;
+/// Transition rows per page: six rows fit the 1366×768 window with the pager under them.
+const TRANSITION_PAGE_SIZE: usize = 6;
 const MAXIMUM_UPGRADE_ROWS: usize = 16;
 const MAX_BROWSER_SAVE_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_BROWSER_FILENAME_BYTES: usize = 240;
@@ -7835,6 +7837,11 @@ struct Transitions {
     confirm: Option<WidgetId>,
     cancel: Option<WidgetId>,
     rows: Vec<TransitionRow>,
+    pages: Option<WidgetId>,
+    previous: Option<WidgetId>,
+    page_range: Option<WidgetId>,
+    next: Option<WidgetId>,
+    page: usize,
     pending_confirmation: Option<u16>,
     last_path: Option<PathBuf>,
 }
@@ -7858,6 +7865,11 @@ impl Transitions {
             confirm: None,
             cancel: None,
             rows: Vec::new(),
+            pages: None,
+            previous: None,
+            page_range: None,
+            next: None,
+            page: 0,
             pending_confirmation: None,
             last_path: None,
         }
@@ -7882,6 +7894,9 @@ impl Transitions {
             cx.tree.set_visible(id, false)?;
         }
         if let Some(id) = self.cancel {
+            cx.tree.set_visible(id, false)?;
+        }
+        if let Some(id) = self.pages {
             cx.tree.set_visible(id, false)?;
         }
         let Some(selected) = selected else {
@@ -7909,6 +7924,13 @@ impl Transitions {
             && !self.workspace.is_saving()
             && !self.workspace.is_restoring();
         let destination_count = destinations.len();
+        let page_size = TRANSITION_PAGE_SIZE;
+        let pages = destination_count
+            .saturating_add(page_size.saturating_sub(1))
+            .checked_div(page_size)
+            .unwrap_or(0);
+        self.page = self.page.min(pages.saturating_sub(1));
+        let start = self.page.saturating_mul(page_size);
         let availability = t(if can_relocate {
             "Выберите точку назначения; изменение попадёт в черновик и запишется с бэкапом после нажатия «Сохранить» в «Инвентаре»."
         } else {
@@ -7921,7 +7943,7 @@ impl Transitions {
                 &[&destination_count, &availability],
             ),
         )?;
-        for (row, (handle, destination)) in self.rows.iter_mut().zip(destinations.iter()) {
+        for (row, (handle, destination)) in self.rows.iter_mut().zip(destinations.iter().skip(start)) {
             let position = destination.dest_position.map_or_else(
                 || t("позиция неизвестна").to_owned(),
                 |point| format!("x {:.1}, y {:.1}, z {:.1}", point.x, point.y, point.z),
@@ -7948,6 +7970,24 @@ impl Transitions {
             cx.tree.set_visible(row.select, pending != Some(*handle))?;
             cx.tree.set_enabled(row.select, can_relocate)?;
             row.handle = Some(*handle);
+        }
+        if let Some(id) = self.pages {
+            cx.tree.set_visible(id, destination_count > page_size)?;
+        }
+        if let Some(id) = self.previous {
+            cx.tree.set_enabled(id, self.page > 0)?;
+        }
+        if let Some(id) = self.next {
+            cx.tree.set_enabled(id, self.page.saturating_add(1) < pages)?;
+        }
+        if let Some(id) = self.page_range {
+            let last = start.saturating_add(page_size).min(destination_count);
+            let range = crate::strings::tr_in(
+                Some(crate::strings::current_language()),
+                "{0}–{1} из {2}",
+                &[&start.saturating_add(1), &last, &destination_count],
+            );
+            cx.tree.set_text(id, if destination_count == 0 { "" } else { &range })?;
         }
         if !can_relocate {
             self.pending_confirmation = None;
@@ -8103,9 +8143,18 @@ impl Screen for Transitions {
         self.confirm = Some(style::button(cx.tree, actions, "Подтвердить перенос", Button::Primary)?);
         self.cancel = Some(style::button(cx.tree, actions, "Отмена", Button::Secondary)?);
         cx.tree.set_visible(actions, false)?;
-        for _ in 0..MAXIMUM_STASH_ROWS {
+        for _ in 0..TRANSITION_PAGE_SIZE {
             let row = style::row(cx.tree, card)?;
             let label = style::label(cx.tree, row, "", Text::Body)?;
+            // The text takes the free width, so every “Перенести сюда…” button ends on the same edge.
+            cx.tree.set_style(
+                label,
+                Style {
+                    grow: 1.0,
+                    shrink: 0.0,
+                    ..Style::default()
+                },
+            )?;
             let select = style::button(cx.tree, row, "Перенести сюда…", Button::Secondary)?;
             cx.tree.set_visible(row, false)?;
             self.rows.push(TransitionRow {
@@ -8115,6 +8164,13 @@ impl Screen for Transitions {
                 handle: None,
             });
         }
+        // The same pager as the inventory table: arrows and the range of the rows shown.
+        let pages = style::row(cx.tree, card)?;
+        self.pages = Some(pages);
+        self.previous = Some(library_icon_button(cx.tree, pages, Icon::D2ArrowLeft)?);
+        self.page_range = Some(style::label(cx.tree, pages, "", Text::Note)?);
+        self.next = Some(library_icon_button(cx.tree, pages, Icon::D2ArrowRight)?);
+        cx.tree.set_visible(pages, false)?;
         self.render(cx)
     }
 
@@ -8133,6 +8189,14 @@ impl Screen for Transitions {
         }
         if clicked.is_some() && clicked == self.cancel {
             self.pending_confirmation = None;
+            return self.render(cx);
+        }
+        if clicked.is_some() && clicked == self.previous {
+            self.page = self.page.saturating_sub(1);
+            return self.render(cx);
+        }
+        if clicked.is_some() && clicked == self.next {
+            self.page = self.page.saturating_add(1);
             return self.render(cx);
         }
         if let Some(handle) = self
