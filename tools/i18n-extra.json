@@ -1086,5 +1086,39 @@
     "ko": "폴더를 추가하는 중…",
     "zh-CN": "正在添加文件夹…",
     "zh-TW": "正在新增資料夾…"
+  },
+  "ВЫБРАННАЯ ЗАПИСЬ": {
+    "ru": "ВЫБРАННАЯ ЗАПИСЬ",
+    "uk": "ОБРАНИЙ ЗАПИС",
+    "en": "SELECTED ENTRY",
+    "de": "GEWÄHLTER EINTRAG",
+    "fr": "ENTRÉE SÉLECTIONNÉE",
+    "it": "VOCE SELEZIONATA",
+    "es": "ENTRADA SELECCIONADA",
+    "pl": "WYBRANY WPIS",
+    "cs": "VYBRANÝ ZÁZNAM",
+    "pt-BR": "ENTRADA SELECIONADA",
+    "tr": "SEÇİLEN KAYIT",
+    "ja": "選択した項目",
+    "ko": "선택한 항목",
+    "zh-CN": "所选条目",
+    "zh-TW": "所選項目"
+  },
+  "Запись не выбрана.": {
+    "ru": "Запись не выбрана.",
+    "uk": "Запис не вибрано.",
+    "en": "No entry selected.",
+    "de": "Kein Eintrag ausgewählt.",
+    "fr": "Aucune entrée sélectionnée.",
+    "it": "Nessuna voce selezionata.",
+    "es": "Ninguna entrada seleccionada.",
+    "pl": "Nie wybrano wpisu.",
+    "cs": "Není vybrán žádný záznam.",
+    "pt-BR": "Nenhuma entrada selecionada.",
+    "tr": "Kayıt seçilmedi.",
+    "ja": "項目が選択されていません。",
+    "ko": "선택된 항목이 없습니다.",
+    "zh-CN": "未选择条目。",
+    "zh-TW": "未選擇項目。"
   }
 }

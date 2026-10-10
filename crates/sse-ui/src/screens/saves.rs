@@ -6974,43 +6974,44 @@ impl Screen for Inventory {
 /// Faction information available from the selected save.
 /// One row of a list panel: a card with two lines of text and a transparent button over it that takes the clicks.
 #[derive(Clone, Copy)]
-struct ListRow {
-    stack: WidgetId,
-    card: WidgetId,
-    title: WidgetId,
-    meta: WidgetId,
-    select: WidgetId,
+pub(super) struct ListRow {
+    pub(super) stack: WidgetId,
+    pub(super) card: WidgetId,
+    pub(super) title: WidgetId,
+    pub(super) meta: WidgetId,
+    pub(super) select: WidgetId,
 }
 
 /// The widgets of a list panel (left) and its side panel (right), shared by the faction and stash screens.
-struct ListSide {
-    list_panel: WidgetId,
-    count: WidgetId,
-    note: WidgetId,
-    rows: Vec<ListRow>,
-    pages: WidgetId,
-    previous: WidgetId,
-    page_range: WidgetId,
-    next: WidgetId,
-    empty: WidgetId,
-    kv_rows: Vec<WidgetId>,
-    kv_values: Vec<WidgetId>,
-    detail: WidgetId,
-    status: WidgetId,
-    actions: WidgetId,
-    side: WidgetId,
+pub(super) struct ListSide {
+    pub(super) list_panel: WidgetId,
+    pub(super) count: WidgetId,
+    pub(super) note: WidgetId,
+    pub(super) rows: Vec<ListRow>,
+    pub(super) pages: WidgetId,
+    pub(super) previous: WidgetId,
+    pub(super) page_range: WidgetId,
+    pub(super) next: WidgetId,
+    pub(super) empty: WidgetId,
+    pub(super) kv_rows: Vec<WidgetId>,
+    pub(super) kv_values: Vec<WidgetId>,
+    pub(super) detail: WidgetId,
+    pub(super) status: WidgetId,
+    pub(super) actions: WidgetId,
+    pub(super) action_button: Option<WidgetId>,
+    pub(super) side: WidgetId,
 }
 
 /// Builds the list panel and the side panel. `title` heads the list, `side_title` the side panel; `keys` are the
 /// key–value rows of the side panel, translated by the caller; `empty` is the side panel's text while nothing is chosen.
-fn build_list_side(
+pub(super) fn build_list_side(
     cx: &mut Context<'_>,
     host: WidgetId,
     title: &str,
     side_title: &str,
     keys: &[String],
-    empty: &str,
-    note: &str,
+    (empty, note): (&str, &str),
+    action: Option<&str>,
 ) -> Result<ListSide> {
     let body = cx.tree.add(
         Some(host),
@@ -7043,6 +7044,10 @@ fn build_list_side(
     let header = style::row(cx.tree, list_panel)?;
     style::d2::panel_title(cx.tree, header, title)?;
     spacer(cx, header)?;
+    let action_button = match action {
+        Some(label) => Some(style::button(cx.tree, header, label, Button::Primary)?),
+        None => None,
+    };
     let count = style::label(cx.tree, header, "0", Text::Note)?;
     // A paragraph: a long note wraps inside the list panel (its width is set when the layout is known).
     let note = paragraph(cx.tree, list_panel, note, Text::Note)?;
@@ -7186,13 +7191,14 @@ fn build_list_side(
         detail,
         status,
         actions,
+        action_button,
         side,
     })
 }
 
 /// Sets the side column's width for the window and the wrap width of its paragraphs (a wrapped paragraph measures its
 /// lines at its minimum width).
-fn sync_side_widths(tree: &mut Tree, list: &ListSide) -> Result<()> {
+pub(super) fn sync_side_widths(tree: &mut Tree, list: &ListSide) -> Result<()> {
     let (window_width, _) = window_pixels(tree);
     let compact = window_width < 1600.0;
     tree.set_style(list.side, side_column_style(compact, false))?;
@@ -7219,7 +7225,7 @@ fn sync_side_widths(tree: &mut Tree, list: &ListSide) -> Result<()> {
 }
 
 /// A column that takes the free room of its parent: pushes the widgets after it to the far edge.
-fn spacer(cx: &mut Context<'_>, parent: WidgetId) -> Result<WidgetId> {
+pub(super) fn spacer(cx: &mut Context<'_>, parent: WidgetId) -> Result<WidgetId> {
     cx.tree.add(
         Some(parent),
         NodeKind::Column,
@@ -7235,7 +7241,7 @@ fn spacer(cx: &mut Context<'_>, parent: WidgetId) -> Result<WidgetId> {
 }
 
 /// Shows a list row with its two lines; a chosen row has the accent border.
-fn show_list_row(tree: &mut Tree, row: ListRow, title: &str, meta: &str, chosen: bool) -> Result<()> {
+pub(super) fn show_list_row(tree: &mut Tree, row: ListRow, title: &str, meta: &str, chosen: bool) -> Result<()> {
     tree.set_text(row.title, title)?;
     tree.set_text(row.meta, meta)?;
     tree.set_look(
@@ -7255,12 +7261,12 @@ fn show_list_row(tree: &mut Tree, row: ListRow, title: &str, meta: &str, chosen:
 }
 
 /// Splits a label written as "title · details" at its first separator; a label without one has no details.
-fn split_label(label: &str) -> (&str, &str) {
+pub(super) fn split_label(label: &str) -> (&str, &str) {
     label.split_once(" · ").unwrap_or((label, ""))
 }
 
 /// Rows per page of a list: the rows that fit the window's height. Before the window has a size, every row slot is used.
-fn list_window(tree: &Tree) -> usize {
+pub(super) fn list_window(tree: &Tree) -> usize {
     let (_, height) = window_pixels(tree);
     if height <= 0.0 {
         return TRANSITION_ROWS;
@@ -7565,8 +7571,8 @@ impl Screen for Factions {
             t("ФРАКЦИИ"),
             t("ВЫБРАННАЯ ФРАКЦИЯ"),
             &keys,
-            t("Фракция не выбрана."),
-            t("Выберите сейв на экране «Обзор»."),
+            (t("Фракция не выбрана."), t("Выберите сейв на экране «Обзор».")),
+            None,
         )?;
         // The two adjustments share the row's width equally.
         for (slot, label) in [(&mut self.decrease, "−100"), (&mut self.increase, "+100")] {
@@ -8228,8 +8234,8 @@ impl Screen for Stashes {
             t("ТАЙНИКИ"),
             t("ВЫБРАННЫЙ ПРЕДМЕТ"),
             &keys,
-            t("Предмет не выбран."),
-            t("Выберите сейв на экране «Обзор»."),
+            (t("Предмет не выбран."), t("Выберите сейв на экране «Обзор».")),
+            None,
         )?;
         self.action = Some(style::d2::button(
             cx.tree,
@@ -8305,7 +8311,7 @@ const TRANSITION_ROW_PITCH: f32 = 50.0;
 const TRANSITION_CHROME: f32 = 393.0;
 
 /// Rows that fit the window height, from one to [`TRANSITION_ROWS`].
-fn transition_page_size(window_height: f32) -> usize {
+pub(super) fn transition_page_size(window_height: f32) -> usize {
     let available = window_height - TRANSITION_CHROME;
     let mut rows = 0_usize;
     while rows < TRANSITION_ROWS {
@@ -8319,7 +8325,7 @@ fn transition_page_size(window_height: f32) -> usize {
 }
 
 /// Window size in pixels as floats: (width, height).
-fn window_pixels(tree: &Tree) -> (f32, f32) {
+pub(super) fn window_pixels(tree: &Tree) -> (f32, f32) {
     let (width, height) = tree.size();
     (
         f32::from(u16::try_from(width).unwrap_or(u16::MAX)),
