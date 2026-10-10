@@ -11,6 +11,12 @@ if [[ -z "$cache_home" ]]; then
   exit 2
 fi
 target_dir="${CARGO_TARGET_DIR:-$cache_home/.cache/sse-target}"
+# The Rust CLI writes its logs under the data directory. Keep oracle runs out of the user's real data folder
+# unless the caller chose one explicitly.
+if [[ -z "${STALKER_SAVE_EDITOR_DATA:-}" ]]; then
+  oracle_data="$(mktemp -d "${TMPDIR:-/tmp}/sse-oracle-data.XXXXXX")"
+  export STALKER_SAVE_EDITOR_DATA="$oracle_data"
+fi
 oracle="${SSE_ORACLE:-}"
 new="${SSE_NEW:-$target_dir/release/stalker-save}"
 if [[ -z "$oracle" || ! -x "$oracle" ]]; then
@@ -31,7 +37,7 @@ if [[ "$oracle_version" != "1.3.1" ]]; then
 fi
 
 work="$(mktemp -d "${TMPDIR:-/tmp}/sse-oracle.XXXXXX")" || exit 2
-trap 'rm -rf "$work"' EXIT
+trap 'rm -rf "$work"; if [[ -n "${oracle_data:-}" ]]; then rm -rf -- "$oracle_data"; fi' EXIT
 
 read_failures=0
 write_failures=0

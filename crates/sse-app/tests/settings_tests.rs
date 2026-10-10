@@ -2,12 +2,12 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use sse_app::settings::AppSettings;
-use std::fs;
+use std::fs::{self, File};
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::{Arc, Barrier};
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 fn temp_test_dir(name: &str) -> PathBuf {
     let nanos = SystemTime::now()
@@ -308,4 +308,73 @@ fn integration_test_process_isolates_settings_and_logs_without_environment_overr
         "child test failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+#[test]
+fn stale_settings_temporaries_are_removed_and_nothing_else_is_touched() {
+    let dir = temp_test_dir("stale_tmp");
+    let old = SystemTime::now() - Duration::from_secs(3 * 24 * 60 * 60);
+    let stale = dir.join(".settings.json.sse-tmp-1-2");
+    let stale_old_form = dir.join(".settings.json.123.tmp");
+    let fresh = dir.join(".settings.json.sse-tmp-9-9");
+    let settings = dir.join("settings.json");
+    let unrelated = dir.join("notes.tmp");
+    for path in [&stale, &stale_old_form, &settings, &unrelated] {
+        fs::write(path, b"{}").expect("write fixture");
+        File::options()
+            .write(true)
+            .open(path)
+            .and_then(|file| file.set_modified(old))
+            .expect("age fixture");
+    }
+    fs::write(&fresh, b"{}").expect("write fresh fixture");
+
+    let removed = sse_app::settings::remove_stale_settings_temporaries(&dir, SystemTime::now());
+
+    assert_eq!(removed, 2);
+    assert!(!stale.exists());
+    assert!(!stale_old_form.exists());
+    assert!(
+        fresh.exists(),
+        "a temporary younger than a day may belong to a running save"
+    );
+    assert!(settings.exists());
+    assert!(unrelated.exists());
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn concurrent_settings_saves_leave_no_temporary_files_behind() {
+    let dir = temp_test_dir("race_tmp");
+    let path = dir.join("settings.json");
+    let barrier = Arc::new(Barrier::new(4));
+    let handles: Vec<_> = (0..4)
+        .map(|index| {
+            let barrier = Arc::clone(&barrier);
+            let path = path.clone();
+            thread::spawn(move || {
+                let settings = AppSettings {
+                    ui_scale_percent: 100 + u32::try_from(index).unwrap_or_default(),
+                    ..AppSettings::default()
+                };
+                barrier.wait();
+                for _ in 0..10 {
+                    settings.save(&path).expect("save must succeed");
+                }
+            })
+        })
+        .collect();
+    for handle in handles {
+        handle.join().expect("writer thread");
+    }
+
+    let leftovers: Vec<_> = fs::read_dir(&dir)
+        .expect("read dir")
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with(".settings.json."))
+        .collect();
+    assert!(leftovers.is_empty(), "temporary files left behind: {leftovers:?}");
+    assert!(AppSettings::load(&path).is_ok());
+    let _ = fs::remove_dir_all(dir);
 }
