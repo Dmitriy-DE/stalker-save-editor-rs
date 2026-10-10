@@ -173,28 +173,13 @@ impl ToolkitProfileService {
         let currently_installed = engine.list_installed(game_directory, None)?;
         let current_ids: Vec<String> = currently_installed.into_iter().map(|f| f.id).collect();
 
-        let mut uninstalled = Vec::new();
-        for cur_id in &current_ids {
-            if !profile.target_fix_ids.contains(cur_id) {
-                engine.uninstall(cur_id, game_directory)?;
-                uninstalled.push(cur_id.clone());
-            }
-        }
-
-        let mut installed = Vec::new();
-        for target_id in &profile.target_fix_ids {
-            if !current_ids.contains(target_id) {
-                if let Some(def) = GameFixCatalog::try_get(target_id) {
-                    engine.install(def, game_directory)?;
-                    installed.push(target_id.clone());
-                } else {
-                    return Err(Error::Refused(format!(
-                        "Fix '{target_id}' specified in profile '{}' not found in catalog",
-                        profile.name
-                    )));
-                }
-            }
-        }
+        let (installed, uninstalled) =
+            reconcile_fixes(engine, game_directory, &current_ids, &profile.target_fix_ids, |id| {
+                format!(
+                    "Fix '{id}' specified in profile '{}' not found in catalog",
+                    profile.name
+                )
+            })?;
 
         // 3. Apply user.ltx overrides
         let user_ltx_changes = if !profile.user_ltx_overrides.is_empty() {
@@ -441,6 +426,57 @@ fn game_target_from_name(name: &str) -> Option<GameTarget> {
         "s2" => Some(GameTarget::Stalker2),
         _ => None,
     }
+}
+
+/// Moves the installed fixes from `current_ids` to `target_ids`.
+///
+/// New fixes are installed first. If one fails, only the fixes installed by this call are rolled back, so the
+/// previously installed fixes are untouched. Fixes that are no longer wanted are removed only after every install
+/// succeeded. Returns `(installed, uninstalled)`.
+///
+/// # Errors
+/// Returns the install error (or a refusal for unknown catalog ids), with any failed rollback reported with it.
+pub(crate) fn reconcile_fixes(
+    engine: &GameFixEngine,
+    game_directory: &Path,
+    current_ids: &[String],
+    target_ids: &[String],
+    missing_message: impl Fn(&str) -> String,
+) -> Result<(Vec<String>, Vec<String>)> {
+    let mut installed: Vec<String> = Vec::new();
+    for target_id in target_ids {
+        if current_ids.contains(target_id) {
+            continue;
+        }
+        let Some(definition) = GameFixCatalog::try_get(target_id) else {
+            return Err(Error::Refused(missing_message(target_id)));
+        };
+        if let Err(error) = engine.install(definition, game_directory) {
+            let mut rollback_failures = Vec::new();
+            for id in installed.iter().rev() {
+                if let Err(rollback_error) = engine.uninstall(id, game_directory) {
+                    rollback_failures.push(format!("{id} ({rollback_error})"));
+                }
+            }
+            if rollback_failures.is_empty() {
+                return Err(error);
+            }
+            return Err(Error::System(format!(
+                "Fix switch failed: {error}; rollback incomplete, still installed: {}",
+                rollback_failures.join("; ")
+            )));
+        }
+        installed.push(target_id.clone());
+    }
+
+    let mut uninstalled: Vec<String> = Vec::new();
+    for cur_id in current_ids {
+        if !target_ids.contains(cur_id) {
+            engine.uninstall(cur_id, game_directory)?;
+            uninstalled.push(cur_id.clone());
+        }
+    }
+    Ok((installed, uninstalled))
 }
 
 fn game_target_str(target: GameTarget) -> &'static str {
