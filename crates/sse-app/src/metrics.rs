@@ -661,6 +661,8 @@ fn percentiles(samples: &[u64]) -> Option<DurationPercentiles> {
 /// Builds the exact aggregate request body preview. No request is sent by this function.
 #[must_use]
 pub fn upload_preview() -> String {
+    let os = os_category();
+    let version = env!("CARGO_PKG_VERSION");
     let sessions = recent_sessions();
     let session_count = sessions.len();
     let first_frame = average(sessions.iter().filter_map(|session| session.first_frame_ms));
@@ -694,7 +696,7 @@ pub fn upload_preview() -> String {
         group.2 = group.2.max(operation.max_ms);
     }
     let mut output = format!(
-        "{{\"schema\":1,\"sessions\":{session_count},\"first_frame_avg_ms\":{},\"screen_switch_ms\":{{\"p50\":{},\"p95\":{},\"max\":{}}},\"scroll_frame_ms\":{{\"p50\":{},\"p95\":{},\"max\":{}}},\"save_discovery_avg_ms\":{},\"peak_memory_mib\":{},\"save_operations\":[",
+        "{{\"schema\":1,\"os\":\"{os}\",\"version\":\"{version}\",\"sessions\":{session_count},\"first_frame_avg_ms\":{},\"screen_switch_ms\":{{\"p50\":{},\"p95\":{},\"max\":{}}},\"scroll_frame_ms\":{{\"p50\":{},\"p95\":{},\"max\":{}}},\"save_discovery_avg_ms\":{},\"peak_memory_mib\":{},\"save_operations\":[",
         json_number(first_frame),
         triplet_value(switch, |triplet| triplet.p50_ms),
         triplet_value(switch, |triplet| triplet.p95_ms),
@@ -944,11 +946,12 @@ mod tests {
     #![allow(clippy::expect_used)]
 
     use super::{
-        append_record, begin_screen_switch, end_session, flush_metrics_writer, percentiles, recent_sessions,
-        record_environment, record_first_frame, record_save_discovery, record_save_read, record_save_write,
-        record_screen_switch, record_screen_switch_presented, record_scroll_frames, size_bucket, start_session,
-        upload_aggregate_preview, upload_aggregate_preview_with, upload_preview, Duration, SessionSummary, VecDeque,
-        MAX_METRICS_BYTES, MAX_SAMPLES, METRICS_FILE, METRICS_UPLOAD_ENDPOINT, ROTATED_METRICS_FILE,
+        append_record, begin_screen_switch, end_session, flush_metrics_writer, os_category, percentiles,
+        recent_sessions, record_environment, record_first_frame, record_save_discovery, record_save_read,
+        record_save_write, record_screen_switch, record_screen_switch_presented, record_scroll_frames, size_bucket,
+        start_session, upload_aggregate_preview, upload_aggregate_preview_with, upload_preview, Duration,
+        SessionSummary, VecDeque, MAX_METRICS_BYTES, MAX_SAMPLES, METRICS_FILE, METRICS_UPLOAD_ENDPOINT,
+        ROTATED_METRICS_FILE,
     };
     use crate::diagnostics::{configure_log_directory, LOG_DIRECTORY_TEST_GATE};
     use std::fs;
@@ -1045,6 +1048,8 @@ mod tests {
     fn aggregate_upload_is_separately_consented() {
         assert!(METRICS_UPLOAD_ENDPOINT.ends_with("/metrics"));
         assert!(upload_preview().contains("\"schema\":1"));
+        assert!(upload_preview().contains(&format!("\"os\":\"{}\"", os_category())));
+        assert!(upload_preview().contains(&format!("\"version\":\"{}\"", env!("CARGO_PKG_VERSION"))));
     }
 
     #[test]
