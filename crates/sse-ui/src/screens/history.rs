@@ -245,6 +245,7 @@ pub struct HistoryScreen {
     selected_row: Option<usize>,
     side_action: Option<WidgetId>,
     side_secondary: Option<WidgetId>,
+    side_actions: Option<WidgetId>,
 }
 
 impl HistoryScreen {
@@ -254,6 +255,7 @@ impl HistoryScreen {
             selected_row: None,
             side_action: None,
             side_secondary: None,
+            side_actions: None,
             id,
             subtitle,
             workspace,
@@ -713,7 +715,15 @@ impl HistoryScreen {
                 break;
             };
             cx.tree.set_visible(slot.row, true)?;
-            set_row_text(cx.tree, slot, &format!("{file} · {status}"))?;
+            // The journal's name starts with the save's time (…_20261010T041157…): it tells the copies apart.
+            let stamp = entry
+                .journal_path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .and_then(|stem| stem.split('_').nth(1))
+                .map(|stamp| stamp.chars().take(15).collect::<String>())
+                .unwrap_or_default();
+            set_row_text(cx.tree, slot, &format!("{file} · {status} · {stamp}"))?;
             cx.tree.set_visible(slot.button, false)?;
             cx.tree.set_visible(slot.secondary_button, false)?;
             if matches!(entry.status, BackupStatus::Verified | BackupStatus::Interrupted)
@@ -920,8 +930,8 @@ impl HistoryScreen {
                     Some(crate::strings::current_language()),
                     "{0} · {1} · {2} · {3} байт",
                     &[
-                        &game,
                         &display_name(&save.path),
+                        &game,
                         &format_system_time(save.last_write_time_utc),
                         &save.size,
                     ],
@@ -1187,20 +1197,37 @@ impl HistoryScreen {
                 select: row.select,
             });
         }
+        // The two actions of a backup are long labels: one above the other, each as wide as the side panel. The
+        // column takes the row's place in the inspector; the row itself stays hidden.
+        let inspector = cx.tree.children(list.side).first().copied().unwrap_or(host);
+        let stacked = cx.tree.add(
+            Some(inspector),
+            NodeKind::Column,
+            Style {
+                gap: Size::new(0.0, crate::theme::CONTROL_GAP),
+                align_items: crate::layout::Align::Stretch,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        cx.tree.set_visible(stacked, false)?;
+        cx.tree.set_visible(list.actions, false)?;
         let side_action = style::d2::button(
             cx.tree,
-            list.actions,
+            stacked,
             "",
             style::d2::ButtonKind::Primary,
             style::d2::ButtonSize::Normal,
         )?;
         let side_secondary = style::d2::button(
             cx.tree,
-            list.actions,
+            stacked,
             "",
             style::d2::ButtonKind::Secondary,
             style::d2::ButtonSize::Normal,
         )?;
+        self.side_actions = Some(stacked);
         self.side_action = Some(side_action);
         self.side_secondary = Some(side_secondary);
         self.refresh = list.action_button;
@@ -1222,6 +1249,14 @@ impl HistoryScreen {
         let selected = self
             .selected_row
             .filter(|index| shown.get(*index).copied().unwrap_or(false));
+        // The header counter is the number of entries the screen holds, not of rows on this page.
+        let total = match (&self.backup_entries, &self.save_entries) {
+            (Some(entries), _) => entries.len(),
+            (None, Some(_)) if self.id == ScreenId::Compare => self.actions.len(),
+            (None, Some(entries)) => entries.len(),
+            (None, None) => shown.iter().filter(|visible| **visible).count(),
+        };
+        tree.set_text(list.count, &total.to_string())?;
         for (index, row) in self.rows.iter().enumerate() {
             let chosen = Some(index) == selected;
             tree.set_look(
@@ -1242,10 +1277,11 @@ impl HistoryScreen {
             for id in &list.kv_rows {
                 tree.set_visible(*id, false)?;
             }
+            tree.set_visible(list.detail, false)?;
             for id in [self.side_action, self.side_secondary].into_iter().flatten() {
                 tree.set_visible(id, false)?;
             }
-            tree.set_visible(list.actions, false)?;
+            tree.set_visible(self.side_actions.unwrap_or(list.actions), false)?;
             tree.set_visible(list.empty, true)?;
             return Ok(());
         };
@@ -1254,30 +1290,34 @@ impl HistoryScreen {
         };
         let title = tree.text(row.label)?.to_owned();
         let detail = tree.text(row.meta)?.to_owned();
-        for (value, text) in list.kv_values.iter().zip([title, detail]) {
-            tree.set_text(*value, &text)?;
+        if let Some(value) = list.kv_values.first() {
+            tree.set_text(*value, &title)?;
         }
-        for id in &list.kv_rows {
-            tree.set_visible(*id, true)?;
+        // The file name is the key line; the details wrap in the paragraph below it, inside the panel.
+        for (index, id) in list.kv_rows.iter().enumerate() {
+            tree.set_visible(*id, index == 0)?;
         }
+        tree.set_text(list.detail, &detail)?;
+        tree.set_visible(list.detail, true)?;
         tree.set_visible(list.empty, false)?;
         // The entry's buttons sit in a hidden host, so their own visibility is not enough: an action exists when the
         // screen offers it for this row.
         let primary = self.actions.iter().any(|action| action.widget == row.button);
         let secondary = self.actions.iter().any(|action| action.widget == row.secondary_button);
         if let Some(action) = self.side_action {
-            let text = tree.text(row.button)?.to_owned();
+            // The label is set after the build, so it is written in capitals here, like the build's own labels.
+            let text = tree.text(row.button)?.to_uppercase();
             tree.set_text(action, &text)?;
             tree.set_enabled(action, tree.is_enabled(row.button)?)?;
             tree.set_visible(action, primary)?;
         }
         if let Some(action) = self.side_secondary {
-            let text = tree.text(row.secondary_button)?.to_owned();
+            let text = tree.text(row.secondary_button)?.to_uppercase();
             tree.set_text(action, &text)?;
             tree.set_enabled(action, tree.is_enabled(row.secondary_button)?)?;
             tree.set_visible(action, secondary)?;
         }
-        tree.set_visible(list.actions, primary || secondary)?;
+        tree.set_visible(self.side_actions.unwrap_or(list.actions), primary || secondary)?;
         Ok(())
     }
 
@@ -3492,6 +3532,77 @@ mod tests {
             screen.message(&mut cx, &message, Some(second_action.widget))?;
         }
         assert_eq!(screen.compare_selection, vec![first_path, second_path]);
+        Ok(())
+    }
+
+    #[test]
+    fn backup_row_then_side_action_asks_the_same_confirmation() -> sse_core::Result<()> {
+        // The row only chooses the backup; the side panel's restore action asks for the same confirmation as the row's own.
+        let temp = TempDirectory::new();
+        let save_directory = temp.0.join("saves");
+        let backup_directory = temp.0.join("backups");
+        fs::create_dir_all(&save_directory)?;
+        fs::create_dir_all(&backup_directory)?;
+        let source = save_directory.join("slot.sav");
+        fs::write(&source, SYNTHETIC_XRAY_SAVE)?;
+        let expected_sha = sse_codecs::sha256::sha256_hex(SYNTHETIC_XRAY_SAVE);
+        let replacement = include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-expected.sav");
+        let receipt = transaction::export_transaction(
+            &source,
+            &expected_sha,
+            replacement,
+            &save_directory.join("edited.sav"),
+            &backup_directory,
+            EditSummary::default(),
+        )?;
+        let fonts = Fonts::bundled()?;
+        let mut tree = Tree::new(fonts, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let mut app = sse_app::AppState::new();
+        let mut screen = HistoryScreen::new(ScreenId::Backups, "test", Workspace::default());
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: None,
+            status: None,
+            app: &mut app,
+        };
+        screen.build(&mut cx, host)?;
+        screen.render_backups(&mut cx, transaction::list_backups(&backup_directory)?)?;
+        let select = screen
+            .rows
+            .first()
+            .map(|row| row.select)
+            .ok_or_else(|| sse_core::Error::damaged("no backup row"))?;
+        let side_action = screen
+            .side_action
+            .ok_or_else(|| sse_core::Error::damaged("the side panel has no action"))?;
+        let pointer = Message::Window(crate::event_loop::WindowEvent::PointerLeft);
+        screen.message(&mut cx, &pointer, Some(select))?;
+        assert!(
+            cx.tree.is_visible(side_action),
+            "the side action is hidden after choosing a backup"
+        );
+        assert!(
+            screen.pending_restore.is_none(),
+            "choosing a row must not ask for a restore"
+        );
+        screen.message(&mut cx, &pointer, Some(side_action))?;
+        let (journal, _, _, _) = screen
+            .pending_restore
+            .clone()
+            .ok_or_else(|| sse_core::Error::damaged("the side action did not ask for the restore"))?;
+        assert_eq!(journal, receipt.journal_path);
+        assert_eq!(
+            fs::read(&source)?,
+            SYNTHETIC_XRAY_SAVE,
+            "nothing is written before the confirmation"
+        );
         Ok(())
     }
 
