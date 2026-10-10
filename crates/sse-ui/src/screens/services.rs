@@ -415,7 +415,12 @@ impl Screen for Companion {
         style::label(cx.tree, all, t("ВСЕ ИГРЫ"), Text::Heading)?;
         for target in GameTarget::ALL {
             let game = target.title_in(language);
-            style::label(cx.tree, all, &tr("[ ] {0} · игра не найдена", &[&game]), Text::Body)?;
+            style::label(
+                cx.tree,
+                all,
+                &tr("[ ] {0} · наличие не проверено", &[&game]),
+                Text::Body,
+            )?;
         }
         let all_install = style::button(
             cx.tree,
@@ -1770,10 +1775,11 @@ impl Updates {
             self.busy = false;
             return;
         };
+        let language = crate::strings::current_language();
         if let Err(error) = sse_app::tasks::try_spawn_named_detached("companion-read", move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let detected = sse_update::UpdateInstallationDetector::detect(None, None, None)
-                    .map_err(|e| format!("Updates are not available: {e}"))?;
+                    .map_err(|e| tr_in(language, "Обновления недоступны: {0}", &[&e]))?;
                 let service = sse_update::UpdateService::new(env!("CARGO_PKG_VERSION"), detected);
                 let mut fetch = sse_update::DefaultFetch;
                 let check = service.check(&mut fetch);
