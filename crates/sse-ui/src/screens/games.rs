@@ -2,6 +2,7 @@
 //!
 //! Replace each placeholder with a struct implementing [`Screen`]; keep the order.
 
+use super::saves::{build_list_side, list_window, show_list_row, sync_side_widths, ListRow, ListSide};
 use super::style::{self, Button, Text};
 use super::{AppMessage, Context, Screen, ScreenId};
 use crate::event_loop::{Message, WindowEvent};
@@ -2055,6 +2056,15 @@ struct EnvironmentResult {
     lines: Vec<String>,
 }
 
+/// One row of an Environment list: the id it acts on, its two lines and the side panel's three values.
+#[derive(Clone)]
+struct EnvironmentItem {
+    id: String,
+    title: String,
+    meta: String,
+    kv: [String; 3],
+}
+
 #[derive(Default)]
 struct Environment {
     status: Option<WidgetId>,
@@ -2063,63 +2073,125 @@ struct Environment {
     restore: Option<WidgetId>,
     audit: Option<WidgetId>,
     delete_snapshot: Option<WidgetId>,
-    snapshot_rows: Vec<WidgetId>,
-    snapshot_ids: Vec<String>,
+    snapshot_side: Option<ListSide>,
+    snapshot_rows: Vec<ListRow>,
+    snapshot_items: Vec<EnvironmentItem>,
     selected_snapshot: Option<String>,
     profile_name: Option<WidgetId>,
     save_profile: Option<WidgetId>,
     apply_profile: Option<WidgetId>,
     delete_profile: Option<WidgetId>,
     user_inputs: Vec<(String, WidgetId, WidgetId, WidgetId)>,
-    profile_rows: Vec<WidgetId>,
-    profile_ids: Vec<String>,
+    profile_side: Option<ListSide>,
+    profile_rows: Vec<ListRow>,
+    profile_items: Vec<EnvironmentItem>,
     selected_profile: Option<String>,
     pending_restore: Option<String>,
     pending_delete_snapshot: Option<String>,
     pending_delete_profile: Option<String>,
 }
 
+/// Shows the list's rows, the chosen item in its side panel and enables the side actions only with a choice.
+fn render_environment_list(
+    tree: &mut Tree,
+    side: &ListSide,
+    rows: &[ListRow],
+    items: &[EnvironmentItem],
+    selected: Option<&str>,
+    actions: &[WidgetId],
+) -> Result<()> {
+    for (index, row) in rows.iter().enumerate() {
+        match items.get(index) {
+            Some(item) => show_list_row(tree, *row, &item.title, &item.meta, selected == Some(item.id.as_str()))?,
+            None => tree.set_visible(row.stack, false)?,
+        }
+    }
+    tree.set_text(side.count, &items.len().to_string())?;
+    let chosen = selected.and_then(|id| items.iter().find(|item| item.id == id));
+    for id in &side.kv_rows {
+        tree.set_visible(*id, chosen.is_some())?;
+    }
+    tree.set_visible(side.empty, chosen.is_none())?;
+    if let Some(item) = chosen {
+        for (value, text) in side.kv_values.iter().zip(item.kv.iter()) {
+            tree.set_text(*value, text)?;
+        }
+    }
+    for id in actions {
+        tree.set_enabled(*id, chosen.is_some())?;
+    }
+    sync_side_widths(tree, side)
+}
+
 impl Environment {
     fn refresh_lists(&mut self, cx: &mut Context<'_>) -> Result<()> {
         let language = crate::strings::current_language();
-        self.snapshot_ids.clear();
+        self.snapshot_items.clear();
         if let Some(directory) = cx.app.game_dir() {
             let snapshots = sse_fixes::toolkit::ToolkitSnapshotService::list_snapshots(directory)?;
-            for (index, widget) in self.snapshot_rows.iter().copied().enumerate() {
-                if let Some(snapshot) = snapshots.get(index) {
-                    self.snapshot_ids.push(snapshot.id.clone());
-                    let game_title = crate::strings::t_in(language, snapshot.game.title());
-                    let fix_count = snapshot.installed_fixes.len();
-                    let text = tr(
-                        language,
-                        "{0} · {1} · исправлений: {2}",
-                        &[&snapshot.label, &game_title, &fix_count],
-                    );
-                    cx.tree.set_text(widget, &text)?;
-                    cx.tree.set_visible(widget, true)?;
-                } else {
-                    cx.tree.set_visible(widget, false)?;
-                }
-            }
+            self.snapshot_items = snapshots
+                .iter()
+                .map(|snapshot| {
+                    let game_title = crate::strings::t_in(language, snapshot.game.title()).to_owned();
+                    EnvironmentItem {
+                        id: snapshot.id.clone(),
+                        title: snapshot.label.clone(),
+                        meta: game_title.clone(),
+                        kv: [
+                            snapshot.label.clone(),
+                            game_title,
+                            snapshot.installed_fixes.len().to_string(),
+                        ],
+                    }
+                })
+                .collect();
         }
         let profiles =
             sse_fixes::toolkit::ToolkitProfileService::list_profiles(&sse_app::paths::default_data_directory())?;
-        self.profile_ids.clear();
-        for (index, widget) in self.profile_rows.iter().copied().enumerate() {
-            if let Some(profile) = profiles.get(index) {
-                self.profile_ids.push(profile.id.clone());
-                let game_title = crate::strings::t_in(language, profile.profile.game.title());
-                let fix_count = profile.profile.target_fix_ids.len();
-                let text = tr(
-                    language,
-                    "{0} · {1} · исправлений: {2}",
-                    &[&profile.profile.name, &game_title, &fix_count],
-                );
-                cx.tree.set_text(widget, &text)?;
-                cx.tree.set_visible(widget, true)?;
-            } else {
-                cx.tree.set_visible(widget, false)?;
-            }
+        self.profile_items = profiles
+            .iter()
+            .map(|profile| {
+                let game_title = crate::strings::t_in(language, profile.profile.game.title()).to_owned();
+                EnvironmentItem {
+                    id: profile.id.clone(),
+                    title: profile.profile.name.clone(),
+                    meta: game_title.clone(),
+                    kv: [
+                        profile.profile.name.clone(),
+                        game_title,
+                        profile.profile.target_fix_ids.len().to_string(),
+                    ],
+                }
+            })
+            .collect();
+        self.render_lists(cx)
+    }
+
+    fn render_lists(&self, cx: &mut Context<'_>) -> Result<()> {
+        if let Some(side) = &self.snapshot_side {
+            let actions: Vec<WidgetId> = [self.restore, self.delete_snapshot].into_iter().flatten().collect();
+            render_environment_list(
+                cx.tree,
+                side,
+                &self.snapshot_rows,
+                &self.snapshot_items,
+                self.selected_snapshot.as_deref(),
+                &actions,
+            )?;
+        }
+        if let Some(side) = &self.profile_side {
+            let actions: Vec<WidgetId> = [self.apply_profile, self.delete_profile]
+                .into_iter()
+                .flatten()
+                .collect();
+            render_environment_list(
+                cx.tree,
+                side,
+                &self.profile_rows,
+                &self.profile_items,
+                self.selected_profile.as_deref(),
+                &actions,
+            )?;
         }
         Ok(())
     }
@@ -2201,7 +2273,9 @@ impl Screen for Environment {
         ScreenId::Environment
     }
     fn subtitle(&self) -> &str {
-        crate::strings::t("Что найдено в установке; экран ничего не изменяет")
+        crate::strings::t(
+            "Здесь создаются, восстанавливаются и применяются снимки и профили; файлы игры меняются только по кнопкам",
+        )
     }
 
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
@@ -2213,69 +2287,124 @@ impl Screen for Environment {
             crate::strings::t("Управляемая установка: не выбрана"),
             Text::Note,
         )?);
-        style::label(cx.tree, card, crate::strings::t("УПРАВЛЯЕМЫЕ СНИМКИ"), Text::Heading)?;
-        style::label(
-            cx.tree,
-            card,
-            crate::strings::t(
-                "Снимки включают только файлы и манифесты Game Fix, Companion и настроек, которыми владеет инструмент.",
+        // Snapshots and profiles are lists with a side panel each; the side actions act on the chosen item only.
+        let snapshot_keys = [
+            crate::strings::t("Снимок"),
+            crate::strings::t("Игра"),
+            crate::strings::t("Исправлений"),
+        ]
+        .map(str::to_owned);
+        let snapshots = build_list_side(
+            cx,
+            host,
+            crate::strings::t("УПРАВЛЯЕМЫЕ СНИМКИ"),
+            crate::strings::t("ВЫБРАННЫЙ СНИМОК"),
+            &snapshot_keys,
+            (
+                crate::strings::t("Снимок не выбран."),
+                crate::strings::t(
+                    "Снимки включают только файлы и манифесты Game Fix, Companion и настроек, которыми владеет инструмент.",
+                ),
             ),
-            Text::Note,
+            Some(crate::strings::t("СОЗДАТЬ СНИМОК")),
         )?;
-        for _ in 0..6 {
-            let row = style::button(cx.tree, card, "", Button::Secondary)?;
-            cx.tree.set_visible(row, false)?;
-            self.snapshot_rows.push(row);
-        }
-        self.snapshot = Some(style::button(
+        let snapshot_inspector = cx.tree.children(snapshots.side).first().copied().unwrap_or(host);
+        cx.tree.set_visible(snapshots.actions, false)?;
+        let snapshot_actions = cx.tree.add(
+            Some(snapshot_inspector),
+            NodeKind::Column,
+            Style {
+                gap: crate::layout::Size::new(0.0, crate::theme::CONTROL_GAP),
+                align_items: crate::layout::Align::Stretch,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        self.restore = Some(style::d2::button(
             cx.tree,
-            card,
-            crate::strings::t("СОЗДАТЬ СНИМОК"),
-            Button::Primary,
-        )?);
-        self.restore = Some(style::button(
-            cx.tree,
-            card,
+            snapshot_actions,
             crate::strings::t("ВОССТАНОВИТЬ ВЫБРАННЫЙ"),
-            Button::Danger,
+            style::d2::ButtonKind::Danger,
+            style::d2::ButtonSize::Normal,
         )?);
-        self.delete_snapshot = Some(style::button(
+        self.delete_snapshot = Some(style::d2::button(
             cx.tree,
-            card,
+            snapshot_actions,
             crate::strings::t("УДАЛИТЬ СНИМОК"),
-            Button::Danger,
+            style::d2::ButtonKind::Danger,
+            style::d2::ButtonSize::Normal,
         )?);
-        style::label(cx.tree, card, crate::strings::t("ПРОФИЛИ ИГРЫ"), Text::Heading)?;
-        style::label(
-            cx.tree,
-            card,
-            crate::strings::t("Профиль хранит набор Game Fix и управляемые значения user.ltx."),
-            Text::Note,
-        )?;
-        for _ in 0..6 {
-            let row = style::button(cx.tree, card, "", Button::Secondary)?;
-            cx.tree.set_visible(row, false)?;
-            self.profile_rows.push(row);
+        for id in [self.restore, self.delete_snapshot].into_iter().flatten() {
+            cx.tree.set_enabled(id, false)?;
         }
-        self.profile_name = Some(style::input(cx.tree, card, "")?);
-        self.save_profile = Some(style::button(
+        self.snapshot = snapshots.action_button;
+        self.snapshot_rows = snapshots.rows.clone();
+        self.snapshot_side = Some(snapshots);
+
+        let profile_keys = [
+            crate::strings::t("Профиль"),
+            crate::strings::t("Игра"),
+            crate::strings::t("Исправлений"),
+        ]
+        .map(str::to_owned);
+        let profiles = build_list_side(
+            cx,
+            host,
+            crate::strings::t("ПРОФИЛИ ИГРЫ"),
+            crate::strings::t("ВЫБРАННЫЙ ПРОФИЛЬ"),
+            &profile_keys,
+            (
+                crate::strings::t("Профиль не выбран."),
+                crate::strings::t("Профиль хранит набор Game Fix и управляемые значения user.ltx."),
+            ),
+            None,
+        )?;
+        let profile_inspector = cx.tree.children(profiles.side).first().copied().unwrap_or(host);
+        cx.tree.set_visible(profiles.actions, false)?;
+        let profile_actions = cx.tree.add(
+            Some(profile_inspector),
+            NodeKind::Column,
+            Style {
+                gap: crate::layout::Size::new(0.0, crate::theme::CONTROL_GAP),
+                align_items: crate::layout::Align::Stretch,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        // A new profile is named here and saved from the current state, so it needs no chosen item.
+        style::label(cx.tree, profile_actions, crate::strings::t("Имя профиля"), Text::Note)?;
+        self.profile_name = Some(style::input(cx.tree, profile_actions, "")?);
+        self.save_profile = Some(style::d2::button(
             cx.tree,
-            card,
+            profile_actions,
             crate::strings::t("СОХРАНИТЬ ТЕКУЩЕЕ СОСТОЯНИЕ"),
-            Button::Primary,
+            style::d2::ButtonKind::Primary,
+            style::d2::ButtonSize::Normal,
         )?);
-        self.apply_profile = Some(style::button(
+        self.apply_profile = Some(style::d2::button(
             cx.tree,
-            card,
+            profile_actions,
             crate::strings::t("ПРИМЕНИТЬ ПРОФИЛЬ"),
-            Button::Secondary,
+            style::d2::ButtonKind::Secondary,
+            style::d2::ButtonSize::Normal,
         )?);
-        self.delete_profile = Some(style::button(
+        self.delete_profile = Some(style::d2::button(
             cx.tree,
-            card,
+            profile_actions,
             crate::strings::t("УДАЛИТЬ ПРОФИЛЬ"),
-            Button::Danger,
+            style::d2::ButtonKind::Danger,
+            style::d2::ButtonSize::Normal,
         )?);
+        for id in [self.apply_profile, self.delete_profile].into_iter().flatten() {
+            cx.tree.set_enabled(id, false)?;
+        }
+        self.profile_rows = profiles.rows.clone();
+        self.profile_side = Some(profiles);
+
+        // The settings and the audit stay in a card below the lists; the name `card` now refers to it.
+        let card = style::card(cx.tree, host)?;
         style::label(cx.tree, card, crate::strings::t("НАСТРОЙКИ user.ltx"), Text::Heading)?;
         style::label(
             cx.tree,
@@ -2343,20 +2472,23 @@ impl Screen for Environment {
         let changed = cx.tree.take_changed_inputs();
         if changed.iter().any(|id| self.profile_name == Some(*id)) {
             self.selected_profile = None;
+            self.render_lists(cx)?;
         }
         if let Some(clicked) = clicked {
-            if let Some(index) = self.snapshot_rows.iter().position(|widget| *widget == clicked) {
-                self.selected_snapshot = self.snapshot_ids.get(index).cloned();
+            if let Some(index) = self.snapshot_rows.iter().position(|row| row.select == clicked) {
+                self.selected_snapshot = self.snapshot_items.get(index).map(|item| item.id.clone());
                 if let Some(id) = &self.selected_snapshot {
                     cx.status = Some(tr(crate::strings::current_language(), "Выбран снимок: {0}", &[id]));
                 }
+                self.render_lists(cx)?;
                 return Ok(());
             }
-            if let Some(index) = self.profile_rows.iter().position(|widget| *widget == clicked) {
-                self.selected_profile = self.profile_ids.get(index).cloned();
+            if let Some(index) = self.profile_rows.iter().position(|row| row.select == clicked) {
+                self.selected_profile = self.profile_items.get(index).map(|item| item.id.clone());
                 if let Some(id) = &self.selected_profile {
                     cx.status = Some(tr(crate::strings::current_language(), "Выбран профиль: {0}", &[id]));
                 }
+                self.render_lists(cx)?;
                 return Ok(());
             }
             if Some(clicked) == self.delete_snapshot {
@@ -2426,6 +2558,7 @@ impl Screen for Environment {
                 ) {
                     Ok(id) => {
                         self.selected_profile = Some(id);
+                        self.refresh_lists(cx)?;
                         cx.status = Some(tr(
                             crate::strings::current_language(),
                             "Профиль сохранён: {0}",
@@ -2513,6 +2646,7 @@ impl Screen for Environment {
                         Ok(()) => {
                             self.selected_profile = None;
                             cx.status = Some(crate::strings::t("Профиль удалён.").to_owned());
+                            self.refresh_lists(cx)?;
                         }
                         Err(error) => {
                             cx.status = Some(tr(
@@ -4426,9 +4560,41 @@ struct GameDoctor {
     confirm_s2_write: Option<WidgetId>,
     confirm_s2_cancel: Option<WidgetId>,
     pending_s2_toggle: Option<PathBuf>,
-    rows: Vec<WidgetId>,
+    list: Option<ListSide>,
+    list_rows: Vec<ListRow>,
     findings: Vec<DoctorFinding>,
+    /// Index into `findings` of the chosen finding; the side panel shows it.
+    selected: Option<usize>,
+    page: usize,
+    /// Set by the first finished check; the list note then describes the result instead of the empty state.
+    checked: bool,
     cancellation: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+}
+
+/// The finding behind a list slot on a page, or `None` past the last finding.
+fn finding_index(page: usize, page_size: usize, slot: usize, total: usize) -> Option<usize> {
+    page.checked_mul(page_size)
+        .and_then(|start| start.checked_add(slot))
+        .filter(|index| *index < total)
+}
+
+/// The two lines of a finding's list row; the side panel shows the same finding, so the row and the panel agree.
+fn finding_row_text(finding: &DoctorFinding) -> (String, String) {
+    (
+        format!("{}:{}", finding.file, finding.line),
+        format!("{} · {} · {}", finding.severity, finding.checker, finding.message),
+    )
+}
+
+/// The side panel's values for a finding, in the order of the keys given to the list.
+fn finding_details(finding: &DoctorFinding) -> [String; 5] {
+    [
+        finding.file.clone(),
+        finding.line.to_string(),
+        finding.severity.clone(),
+        finding.checker.clone(),
+        finding.message.clone(),
+    ]
 }
 
 fn content_game(game: &str) -> Option<sse_content::CompanionGame> {
@@ -4441,6 +4607,59 @@ fn content_game(game: &str) -> Option<sse_content::CompanionGame> {
 }
 
 impl GameDoctor {
+    /// Shows the page of findings the list holds, the chosen finding in the side panel and the pager when needed.
+    fn render(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        let Some(list) = self.list.as_ref() else { return Ok(()) };
+        let page_size = list_window(cx.tree).max(1);
+        let total = self.findings.len();
+        if self.checked {
+            let note = if total == 0 {
+                crate::strings::t("Находок не обнаружено.")
+            } else {
+                crate::strings::t("Выберите находку, чтобы увидеть её подробности справа.")
+            };
+            cx.tree.set_text(list.note, note)?;
+        }
+        let pages = total.div_ceil(page_size).max(1);
+        if self.page >= pages {
+            self.page = pages.saturating_sub(1);
+        }
+        let start = self.page.saturating_mul(page_size);
+        for (slot, row) in self.list_rows.iter().copied().enumerate() {
+            match finding_index(self.page, page_size, slot, total)
+                .and_then(|index| Some((index, self.findings.get(index)?)))
+            {
+                Some((index, finding)) => {
+                    let (title, meta) = finding_row_text(finding);
+                    show_list_row(cx.tree, row, &title, &meta, self.selected == Some(index))?;
+                }
+                None => cx.tree.set_visible(row.stack, false)?,
+            }
+        }
+        cx.tree.set_text(list.count, &total.to_string())?;
+        cx.tree.set_visible(list.pages, total > page_size)?;
+        if total > page_size {
+            let last = start.saturating_add(page_size).min(total);
+            let text = tr(
+                crate::strings::current_language(),
+                "{0}–{1} из {2}",
+                &[&start.saturating_add(1), &last, &total],
+            );
+            cx.tree.set_text(list.page_range, &text)?;
+        }
+        let chosen = self.selected.and_then(|index| self.findings.get(index));
+        for id in &list.kv_rows {
+            cx.tree.set_visible(*id, chosen.is_some())?;
+        }
+        cx.tree.set_visible(list.empty, chosen.is_none())?;
+        if let Some(finding) = chosen {
+            for (value, text) in list.kv_values.iter().zip(finding_details(finding)) {
+                cx.tree.set_text(*value, &text)?;
+            }
+        }
+        sync_side_widths(cx.tree, list)
+    }
+
     fn run(&mut self, cx: &mut Context<'_>) {
         let Some(game) = cx.app.selected_game().and_then(content_game) else {
             cx.status = Some(
@@ -4602,17 +4821,29 @@ impl Screen for GameDoctor {
             Button::Secondary,
         )?);
         cx.tree.set_visible(confirm, false)?;
-        style::label(
-            cx.tree,
-            card,
-            crate::strings::t_in(language, "МОДИФИКАЦИИ · АУДИТ ФАЙЛОВ"),
-            Text::Value,
+        // The findings are the list, the chosen one is in the side panel; nothing there runs a check.
+        let keys = [
+            crate::strings::t("Файл"),
+            crate::strings::t("Строка"),
+            crate::strings::t("Серьёзность"),
+            crate::strings::t("Проверка"),
+            crate::strings::t("Сообщение"),
+        ]
+        .map(str::to_owned);
+        let list = build_list_side(
+            cx,
+            host,
+            crate::strings::t("МОДИФИКАЦИИ · АУДИТ ФАЙЛОВ"),
+            crate::strings::t("ВЫБРАННАЯ НАХОДКА"),
+            &keys,
+            (
+                crate::strings::t("Находка не выбрана."),
+                crate::strings::t("Проверка ещё не выполнена. Нажмите «Проверить»."),
+            ),
+            None,
         )?;
-        for _ in 0..10 {
-            let row = style::label(cx.tree, card, "", Text::Body)?;
-            cx.tree.set_visible(row, false)?;
-            self.rows.push(row);
-        }
+        self.list_rows = list.rows.clone();
+        self.list = Some(list);
         Ok(())
     }
 
@@ -4622,6 +4853,28 @@ impl Screen for GameDoctor {
         message: &Message<AppMessage>,
         clicked: Option<WidgetId>,
     ) -> Result<()> {
+        if let (Some(clicked), Some(list)) = (clicked, self.list.as_ref()) {
+            let previous = list.previous;
+            let next = list.next;
+            let page_size = list_window(cx.tree).max(1);
+            if let Some(slot) = self.list_rows.iter().position(|row| row.select == clicked) {
+                if let Some(index) = finding_index(self.page, page_size, slot, self.findings.len()) {
+                    self.selected = Some(index);
+                    self.render(cx)?;
+                }
+                return Ok(());
+            }
+            if clicked == previous || clicked == next {
+                let pages = self.findings.len().div_ceil(page_size);
+                self.page = if clicked == next {
+                    self.page.saturating_add(1).min(pages.saturating_sub(1))
+                } else {
+                    self.page.saturating_sub(1)
+                };
+                self.render(cx)?;
+                return Ok(());
+            }
+        }
         if clicked.is_some() && clicked == self.start {
             self.run(cx);
         }
@@ -4721,20 +4974,10 @@ impl Screen for GameDoctor {
                                 &tr(language, "100% · файлов: {0} · находок: {1} · {2} мс", &args),
                             )?;
                         }
-                        for (index, widget) in self.rows.iter().copied().enumerate() {
-                            if let Some(finding) = findings.get(index) {
-                                cx.tree.set_visible(widget, true)?;
-                                cx.tree.set_text(
-                                    widget,
-                                    &format!(
-                                        "{}:{} · {} · {} · {}",
-                                        finding.file, finding.line, finding.severity, finding.checker, finding.message
-                                    ),
-                                )?;
-                            } else {
-                                cx.tree.set_visible(widget, false)?;
-                            }
-                        }
+                        self.selected = None;
+                        self.page = 0;
+                        self.checked = true;
+                        self.render(cx)?;
                     }
                     DoctorReply::Done(Err(error)) => {
                         self.cancellation = None;
@@ -5799,5 +6042,38 @@ mod encyclopedia_clipboard_tests {
             clipboard.read_text().unwrap_or_else(|error| panic!("{error:?}")),
             "АК-74"
         );
+    }
+}
+
+#[cfg(test)]
+mod game_doctor_tests {
+    use super::{finding_details, finding_index, finding_row_text, DoctorFinding};
+
+    fn finding(line: usize) -> DoctorFinding {
+        DoctorFinding {
+            file: "gamedata/configs/a.ltx".to_owned(),
+            line,
+            checker: "syntax".to_owned(),
+            severity: "warning".to_owned(),
+            message: format!("message {line}"),
+        }
+    }
+
+    #[test]
+    fn a_row_selects_the_finding_of_its_page_slot() {
+        // Page 1 of 3 findings per page holds findings 3..6; five findings in total.
+        assert_eq!(finding_index(1, 3, 0, 5), Some(3));
+        assert_eq!(finding_index(1, 3, 1, 5), Some(4));
+        assert_eq!(finding_index(1, 3, 2, 5), None);
+        assert_eq!(finding_index(0, 3, 2, 5), Some(2));
+    }
+
+    #[test]
+    fn the_row_and_the_side_panel_describe_the_same_finding() {
+        let chosen = finding(7);
+        let (title, meta) = finding_row_text(&chosen);
+        let details = finding_details(&chosen);
+        assert_eq!(title, format!("{}:{}", details[0], details[1]));
+        assert!(meta.contains(&details[2]) && meta.contains(&details[3]) && meta.contains(&details[4]));
     }
 }
