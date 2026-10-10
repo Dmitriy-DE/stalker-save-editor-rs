@@ -2101,6 +2101,12 @@ fn game_matches(signature_game: &str, requested_game: Option<&str>) -> bool {
         }
 }
 
+/// Whether a `--game` value names a game whose crash signatures can be matched.
+#[must_use]
+pub fn is_known_crash_game(game: &str) -> bool {
+    normalize_crash_game(game).is_some()
+}
+
 fn normalize_crash_game(game: &str) -> Option<&'static str> {
     let game = game.trim();
     if ["cs", "cs-ee", "clear sky", "stalker-cs", "stalker-cs-ee"]
@@ -2108,6 +2114,12 @@ fn normalize_crash_game(game: &str) -> Option<&'static str> {
         .any(|alias| game.eq_ignore_ascii_case(alias))
     {
         Some("cs")
+    } else if ["cop", "cop-ee", "call of pripyat", "stalker-cop", "stalker-cop-ee"]
+        .iter()
+        .any(|alias| game.eq_ignore_ascii_case(alias))
+    {
+        // Call of Pripyat has no crash signatures in the catalog yet; it is a known name with an empty match set.
+        Some("cop")
     } else if ["soc", "soc-ee", "shadow of chernobyl", "stalker-soc", "stalker-soc-ee"]
         .iter()
         .any(|alias| game.eq_ignore_ascii_case(alias))
