@@ -1,6 +1,8 @@
 //! One-copy X-Ray edit preparation. Unknown fields remain untouched.
 
 use sse_catalog::{CatalogBundleReader, FactionCatalog, UpgradeCatalog};
+use sse_core::fields::{read_u16, read_u32};
+use sse_core::ranges::{verify_unchanged_outside_ranges, ChangedRange};
 use sse_core::{Cursor, Error, Result, SaveBuffer};
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
@@ -1594,52 +1596,6 @@ struct SpawnSplice {
     replacement: Vec<u8>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ChangedRange {
-    before: Range<usize>,
-    after: Range<usize>,
-}
-
-fn verify_unchanged_outside_ranges(before: &[u8], after: &[u8], ranges: &[ChangedRange]) -> Result<()> {
-    let mut before_cursor = 0;
-    let mut after_cursor = 0;
-
-    for changed in ranges {
-        if changed.before.start > changed.before.end
-            || changed.after.start > changed.after.end
-            || changed.before.start < before_cursor
-            || changed.after.start < after_cursor
-        {
-            return Err(Error::damaged("changed ranges overlap or are out of order"));
-        }
-        if changed.before.end > before.len() || changed.after.end > after.len() {
-            return Err(Error::damaged("changed range is outside an image"));
-        }
-        let before_gap = before
-            .get(before_cursor..changed.before.start)
-            .ok_or_else(|| Error::damaged("source gap is outside the image"))?;
-        let after_gap = after
-            .get(after_cursor..changed.after.start)
-            .ok_or_else(|| Error::damaged("replacement gap is outside the image"))?;
-        if before_gap != after_gap {
-            return Err(Error::damaged("save bytes differ outside declared changed ranges"));
-        }
-        before_cursor = changed.before.end;
-        after_cursor = changed.after.end;
-    }
-
-    let before_tail = before
-        .get(before_cursor..)
-        .ok_or_else(|| Error::damaged("source tail is outside the image"))?;
-    let after_tail = after
-        .get(after_cursor..)
-        .ok_or_else(|| Error::damaged("replacement tail is outside the image"))?;
-    if before_tail != after_tail {
-        return Err(Error::damaged("save bytes differ outside declared changed ranges"));
-    }
-    Ok(())
-}
-
 fn verify_changed_image_ranges(
     source: &Save,
     replacement_layout: &Save,
@@ -2679,17 +2635,6 @@ fn vector_is_finite(value: crate::Vector3) -> bool {
     value.x.is_finite() && value.y.is_finite() && value.z.is_finite()
 }
 
-fn read_u32(bytes: &[u8], offset: usize) -> Result<u32> {
-    let end = offset
-        .checked_add(4)
-        .ok_or_else(|| Error::damaged("X-Ray u32 range overflow"))?;
-    let value = bytes
-        .get(offset..end)
-        .ok_or_else(|| Error::damaged("X-Ray u32 field is outside the buffer"))?;
-    let value = <[u8; 4]>::try_from(value).map_err(|_| Error::damaged("X-Ray u32 field has the wrong width"))?;
-    Ok(u32::from_le_bytes(value))
-}
-
 fn write_u32(bytes: &mut [u8], offset: usize, value: u32) -> Result<()> {
     let end = offset
         .checked_add(4)
@@ -3086,17 +3031,6 @@ fn valid_packed_placement(value: u16) -> bool {
         2 | 3 => true,
         _ => false,
     }
-}
-
-fn read_u16(bytes: &[u8], offset: usize) -> Result<u16> {
-    let end = offset
-        .checked_add(2)
-        .ok_or_else(|| Error::damaged("X-Ray u16 range overflow"))?;
-    let value = bytes
-        .get(offset..end)
-        .ok_or_else(|| Error::damaged("X-Ray u16 field is outside its record"))?;
-    let value = <[u8; 2]>::try_from(value).map_err(|_| Error::damaged("X-Ray u16 field has the wrong width"))?;
-    Ok(u16::from_le_bytes(value))
 }
 
 fn write_u16(bytes: &mut [u8], offset: usize, value: u16) -> Result<()> {

@@ -10,6 +10,9 @@ mod buffer;
 mod cursor;
 mod error;
 
+pub mod fields;
+pub mod ranges;
+
 pub use buffer::SaveBuffer;
 pub use cursor::Cursor;
 pub use error::{Error, ExitCode, Result};
