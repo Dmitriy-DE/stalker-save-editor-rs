@@ -769,6 +769,29 @@ mod tests {
     }
 
     #[test]
+    fn huffman_refuses_an_oversubscribed_tree() {
+        // Three 1-bit codes cannot fit in a prefix code: only two 1-bit words exist.
+        assert!(matches!(Huffman::from_lengths(&[1, 1, 1]), Err(Error::Damaged(_))));
+    }
+
+    #[test]
+    fn huffman_refuses_an_incomplete_tree_with_several_symbols() {
+        // Two 2-bit codes leave half of the code space unused; RFC 1951 only allows that for one symbol.
+        assert!(matches!(Huffman::from_lengths(&[2, 2]), Err(Error::Damaged(_))));
+    }
+
+    #[test]
+    fn huffman_accepts_a_single_one_bit_symbol() {
+        assert!(Huffman::from_lengths(&[1]).is_ok());
+    }
+
+    #[test]
+    fn huffman_refuses_an_empty_tree_and_long_codes() {
+        assert!(matches!(Huffman::from_lengths(&[0, 0, 0]), Err(Error::Damaged(_))));
+        assert!(matches!(Huffman::from_lengths(&[16]), Err(Error::Damaged(_))));
+    }
+
+    #[test]
     fn huffman_decodes_the_rfc1951_canonical_example() {
         // RFC 1951 section 3.2.2 example: A..H with lengths 3,3,3,3,3,2,4,4 give
         // F=00, A=010, B=011, C=100, D=101, E=110, G=1110, H=1111 (codes as written MSB first).
