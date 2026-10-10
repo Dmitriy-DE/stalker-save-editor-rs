@@ -2,7 +2,6 @@
 
 use std::path::Path;
 
-use sse_content::{CompanionGame, GameFileTree};
 use sse_sys::output::{Output, SystemOutput};
 
 /// Short UI feedback sound selected from the installed game's own assets.
@@ -35,11 +34,8 @@ impl GameUiSounds {
     /// Loads known menu cues from loose files or X-Ray archives without network access.
     #[must_use]
     pub fn load(game_id: &str, game_directory: &Path) -> Self {
-        let game = match game_id {
-            "soc" | "stalker-soc" | "stalker-soc-ee" => CompanionGame::ShadowOfChernobyl,
-            "cs" | "clear_sky" | "stalker-cs" | "stalker-cs-ee" => CompanionGame::ClearSky,
-            "cop" | "stalker-cop" | "stalker-cop-ee" => CompanionGame::CallOfPripyat,
-            _ => return Self::default(),
+        let Some(audio) = crate::game_audio::audio_game(game_id) else {
+            return Self::default();
         };
         let wanted = |path: &str| {
             let lower = path.to_ascii_lowercase();
@@ -47,7 +43,7 @@ impl GameUiSounds {
                 || lower.ends_with("menu_switch.ogg")
                 || lower.ends_with("menu_decline.ogg")
         };
-        let Ok(tree) = GameFileTree::load_simple(game, game_directory, wanted, true) else {
+        let Some(tree) = crate::game_audio::read_game_files(audio, game_directory, wanted) else {
             return Self::default();
         };
         let mut sounds = Self::default();
@@ -73,6 +69,19 @@ impl GameUiSounds {
         sounds
     }
 
+    /// Names of the cues the installed game supplied, in cue order.
+    #[must_use]
+    pub fn loaded_cues(&self) -> Vec<&'static str> {
+        [
+            (self.select.is_some(), "menu_select.ogg"),
+            (self.switch.is_some(), "menu_switch.ogg"),
+            (self.decline.is_some(), "menu_decline.ogg"),
+        ]
+        .into_iter()
+        .filter_map(|(present, name)| present.then_some(name))
+        .collect()
+    }
+
     /// Plays a cached cue when the installed game supplied it.
     pub fn play(&self, cue: Cue, volume: f32) {
         let clip = match cue {
@@ -90,6 +99,18 @@ impl GameUiSounds {
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// Reads the UI cues of a real install, read-only: `SSE_GAME_ID=cop SSE_GAME_DIR=/path cargo test -p sse-ui
+    /// --lib real_install_cues -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "needs an installed game named by SSE_GAME_ID and SSE_GAME_DIR"]
+    fn real_install_cues() {
+        let (Ok(game), Ok(dir)) = (std::env::var("SSE_GAME_ID"), std::env::var("SSE_GAME_DIR")) else {
+            panic!("set SSE_GAME_ID and SSE_GAME_DIR");
+        };
+        let sounds = GameUiSounds::load(&game, Path::new(&dir));
+        eprintln!("CUES {game}: {:?}", sounds.loaded_cues());
+    }
+
     #[test]
     fn unsupported_game_is_silent() {
         let sounds = GameUiSounds::load("stalker2", Path::new("."));

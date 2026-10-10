@@ -6,6 +6,7 @@ pub mod diff;
 pub mod edit;
 /// Event loop: window events and worker messages on one channel, idle sleep, damage-only repaint (U1).
 pub mod event_loop;
+pub mod game_audio;
 /// Bundled fonts, glyph cache and text drawing (U1).
 pub mod glyphs;
 /// Pixel-tolerant screenshot golden comparison (X37).

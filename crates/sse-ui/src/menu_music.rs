@@ -7,7 +7,6 @@
 use std::path::Path;
 
 use sse_codecs::vorbis;
-use sse_content::{CompanionGame, GameFileTree};
 
 /// Upper bound on decoded samples per channel group: a little over ten minutes of 48 kHz stereo.
 const MAXIMUM_TRACK_SAMPLES: usize = 48_000 * 60 * 12;
@@ -272,39 +271,14 @@ impl MusicHost {
 /// a missing install, a missing file or an undecodable file, so the caller stays silent.
 #[must_use]
 pub fn load_track(game_id: &str, game_directory: &Path) -> Option<Track> {
-    let (family, game) = match game_id {
-        "soc" | "stalker-soc" | "stalker-soc-ee" => ("soc", CompanionGame::ShadowOfChernobyl),
-        "cs" | "clear_sky" | "stalker-cs" | "stalker-cs-ee" => ("clear_sky", CompanionGame::ClearSky),
-        "cop" | "stalker-cop" | "stalker-cop-ee" => ("cop", CompanionGame::CallOfPripyat),
-        _ => return None,
-    };
-    let paths = music_paths(family)?;
+    let audio = crate::game_audio::audio_game(game_id)?;
+    let paths = music_paths(audio.family)?;
     let wanted = |path: &str| {
         let lower = path.to_ascii_lowercase();
         paths.iter().any(|candidate| lower.ends_with(candidate))
     };
-    // Enhanced Editions name their index file after the game (fsgame_soc.ltx), so try that name first.
-    let fsgame: &[&str] = match family {
-        "soc" => &["fsgame_soc.ltx", "fsgame.ltx"],
-        "clear_sky" => &["fsgame_cs.ltx", "fsgame.ltx"],
-        _ => &["fsgame_cop.ltx", "fsgame.ltx"],
-    };
-    // Game archives are compressed: the header needs the X-Ray decoder and the entries need LZO.
-    let entry_decoder: sse_content::EntryDecoder =
-        std::sync::Arc::new(|data: &[u8], expected: usize| sse_codecs::lzo1x::decompress(data, expected));
-    let tree = GameFileTree::load(
-        game,
-        game_directory,
-        wanted,
-        Some(fsgame),
-        true,
-        true,
-        false,
-        Some(sse_content::xray_header_decoder()),
-        Some(entry_decoder),
-    )
-    .ok()?;
-    decode_track(family, |relative| {
+    let tree = crate::game_audio::read_game_files(audio, game_directory, wanted)?;
+    decode_track(audio.family, |relative| {
         let file = tree
             .files
             .iter()
