@@ -2821,7 +2821,7 @@ fn grow_style() -> Style {
 }
 
 /// Sentence case for a note written in capitals: its words in lower case (a path keeps its case), the first letter up.
-fn sentence_case(text: &str) -> String {
+pub(super) fn sentence_case(text: &str) -> String {
     let words: Vec<String> = text
         .split(' ')
         .map(|word| {

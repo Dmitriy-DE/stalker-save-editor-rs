@@ -209,7 +209,7 @@ fn xray_change_supported(save: &Save, kind: writer::ChangeKind) -> bool {
     writer::capability(save.format(), kind) != writer::Capability::Unsupported
 }
 
-fn paragraph(tree: &mut crate::widget::Tree, parent: WidgetId, text: &str, role: Text) -> Result<WidgetId> {
+pub(super) fn paragraph(tree: &mut crate::widget::Tree, parent: WidgetId, text: &str, role: Text) -> Result<WidgetId> {
     tree.add(
         Some(parent),
         NodeKind::Leaf,
@@ -282,6 +282,11 @@ impl Default for Workspace {
 }
 
 impl Workspace {
+    /// Number of saves the last search found; zero before a search has finished.
+    pub(super) fn discovered_count(&self) -> usize {
+        self.lock().discovery.as_ref().map_or(0, |result| result.slots.len())
+    }
+
     #[cfg(test)]
     fn with_draft_directory(directory: PathBuf) -> Self {
         Self::with_paths(
@@ -7127,7 +7132,14 @@ pub(super) fn build_list_side(
     style::d2::panel_title(cx.tree, header, title)?;
     spacer(cx, header)?;
     let action_button = match action {
-        Some(label) => Some(style::button(cx.tree, header, label, Button::Primary)?),
+        // A header action is secondary: the screen's main action is the one primary button of the side panel.
+        Some(label) => Some(style::d2::button(
+            cx.tree,
+            header,
+            label,
+            style::d2::ButtonKind::Secondary,
+            style::d2::ButtonSize::Small,
+        )?),
         None => None,
     };
     let count = style::label(cx.tree, header, "0", Text::Note)?;

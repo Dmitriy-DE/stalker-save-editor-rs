@@ -1,11 +1,12 @@
 //! S5: companion, achievements, Steam Cloud, and editor updates.
 
 use super::games::GameTarget;
-use super::saves::Workspace;
+use super::saves::{build_list_side, show_list_row, ListRow, ListSide, Workspace};
 use super::style::{self, Button, Text};
 use super::{AppMessage, Context, Screen, ScreenId};
 use crate::event_loop::{Message, WindowEvent};
-use crate::widget::WidgetId;
+use crate::layout::{NodeKind, Size, Style};
+use crate::widget::{Content, Look, WidgetId};
 use sse_core::Result;
 use sse_steam::api::{Achievement, CloudFile, SteamApi};
 use sse_steam::cloud::XRaySaveFormatVerifier;
@@ -1105,6 +1106,11 @@ enum CloudReply {
 struct Cloud {
     status: Option<WidgetId>,
     rows: Vec<WidgetId>,
+    list_rows: Vec<ListRow>,
+    side_column: Option<WidgetId>,
+    side_empty: Option<WidgetId>,
+    side_kv: Vec<WidgetId>,
+    side_values: Vec<WidgetId>,
     items: Vec<CloudFile>,
     selected: Option<String>,
     download: Option<WidgetId>,
@@ -1157,17 +1163,56 @@ impl Cloud {
     }
 
     fn render(&mut self, cx: &mut Context<'_>) -> Result<()> {
-        for (i, row) in self.rows.iter().copied().enumerate() {
+        for (i, row) in self.list_rows.clone().into_iter().enumerate() {
             if let Some(f) = self.items.get(i) {
-                cx.tree.set_visible(row, true)?;
-                cx.tree
-                    .set_text(row, &format!("{} · {} KiB", clip(&f.name), f.size / 1024))?;
+                let chosen = self.selected.as_deref() == Some(f.name.as_str());
+                show_list_row(cx.tree, row, &clip(&f.name), &format!("{} KiB", f.size / 1024), chosen)?;
             } else {
-                cx.tree.set_visible(row, false)?;
+                cx.tree.set_visible(row.stack, false)?;
             }
         }
         if let Some(id) = self.status {
             cx.tree.set_text(id, &tr("Файлов: {0}", &[&self.items.len()]))?;
+        }
+        let chosen = self
+            .selected
+            .as_deref()
+            .and_then(|name| self.items.iter().find(|file| file.name == name));
+        let shown = chosen.is_some();
+        for id in &self.side_kv {
+            cx.tree.set_visible(*id, shown)?;
+        }
+        if let Some(empty) = self.side_empty {
+            cx.tree.set_visible(empty, !shown)?;
+        }
+        if let Some(file) = chosen {
+            let values = [clip(&file.name), format!("{} KiB", file.size / 1024)];
+            for (value, text) in self.side_values.iter().zip(values.iter()) {
+                cx.tree.set_text(*value, text)?;
+            }
+        }
+        if let Some(download) = self.download {
+            cx.tree.set_enabled(download, shown)?;
+        }
+        // The upload needs a chosen file, a game with a Steam App ID, and not Stalker 2 (see prepare_upload).
+        let uploadable = shown
+            && cx
+                .app
+                .selected_game()
+                .and_then(app_id)
+                .is_some_and(|id| id != sse_steam::discovery::STALKER_2_APP_ID);
+        if let Some(upload) = self.upload {
+            cx.tree.set_enabled(upload, uploadable)?;
+        }
+        // The window's status line shows this screen's state, not the save search's.
+        let line = match self.items.is_empty() {
+            true => t("Список не загружен. Нажмите «ОБНОВИТЬ СПИСОК»."),
+            false => "",
+        };
+        if line.is_empty() {
+            cx.status = Some(tr("Файлов: {0}", &[&self.items.len()]));
+        } else {
+            cx.status = Some(line.to_owned());
         }
         Ok(())
     }
@@ -1351,34 +1396,62 @@ impl Screen for Cloud {
     }
 
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
-        let card = style::card(cx.tree, host)?;
-        style::label(cx.tree, card, t("STEAM CLOUD"), Text::Heading)?;
-        self.status = Some(style::label(
+        // The list of cloud files to the left, the chosen file and its actions to the right; the list is read only when
+        // the user asks for it ("ОБНОВИТЬ СПИСОК"), so nothing here calls Steam.
+        let keys = [t("Файл"), t("Размер")].map(str::to_owned);
+        let list: ListSide = build_list_side(
+            cx,
+            host,
+            t("STEAM CLOUD"),
+            t("ВЫБРАННЫЙ ФАЙЛ"),
+            &keys,
+            (
+                t("Файл не выбран."),
+                t("Список не загружен. Нажмите «ОБНОВИТЬ СПИСОК»."),
+            ),
+            Some(t("ОБНОВИТЬ СПИСОК")),
+        )?;
+        let inspector = cx.tree.children(list.side).first().copied().unwrap_or(host);
+        let stacked = cx.tree.add(
+            Some(inspector),
+            NodeKind::Column,
+            Style {
+                gap: Size::new(0.0, crate::theme::CONTROL_GAP),
+                align_items: crate::layout::Align::Stretch,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        cx.tree.set_visible(list.actions, false)?;
+        self.download = Some(style::d2::button(
             cx.tree,
-            card,
-            t("Список не загружен. Нажмите «ОБНОВИТЬ СПИСОК»."),
-            Text::Note,
-        )?);
-        let refresh = style::button(cx.tree, card, t("ОБНОВИТЬ СПИСОК"), Button::Secondary)?;
-        self.download = Some(style::button(
-            cx.tree,
-            card,
+            stacked,
             t("СКАЧАТЬ В ЛОКАЛЬНЫЕ"),
-            Button::Secondary,
+            style::d2::ButtonKind::Secondary,
+            style::d2::ButtonSize::Normal,
         )?);
-        self.upload = Some(style::button(
+        // Writing to the cloud is the riskiest action of the program: it is never the primary one, and it stays off
+        // until the handler would accept it (see render).
+        self.upload = Some(style::d2::button(
             cx.tree,
-            card,
+            stacked,
             t("ЗАПИСАТЬ В ОБЛАКО..."),
-            Button::Primary,
+            style::d2::ButtonKind::Secondary,
+            style::d2::ButtonSize::Normal,
         )?);
-        self.rows.push(refresh);
-        for _ in 0..ROWS {
-            let row = style::button(cx.tree, card, "", Button::Secondary)?;
-            cx.tree.set_visible(row, false)?;
-            self.rows.push(row);
+        self.side_column = Some(stacked);
+        self.side_empty = Some(list.empty);
+        self.side_kv = list.kv_rows.clone();
+        self.side_values = list.kv_values.clone();
+        self.status = Some(list.note);
+        // The refresh is the header's action; the rows are the list's select buttons, after it.
+        self.rows = list.action_button.into_iter().collect();
+        self.rows.extend(list.rows.iter().map(|row| row.select));
+        self.list_rows = list.rows.clone();
+        for id in [self.download, self.upload].into_iter().flatten() {
+            cx.tree.set_enabled(id, false)?;
         }
-
         let overlay = cx.tree.overlay_host().unwrap_or(host);
         let confirm = style::card(cx.tree, overlay)?;
         self.confirm_card = Some(confirm);
@@ -1416,7 +1489,7 @@ impl Screen for Cloud {
                 cx.tree.open_dialog(card)?;
             }
         }
-        Ok(())
+        self.render(cx)
     }
 
     fn message(
@@ -1450,6 +1523,7 @@ impl Screen for Cloud {
             self.clear_intent(cx)?;
             self.selected = self.items.get(row_index).map(|file| file.name.clone());
             cx.status = self.items.get(row_index).map(|file| tr("Выбран {0}", &[&file.name]));
+            self.render(cx)?;
         }
 
         if clicked.is_some() && clicked == self.upload {
@@ -1946,7 +2020,102 @@ impl Screen for Updates {
 
 #[cfg(test)]
 mod service_localization_tests {
+    use super::super::saves::Workspace;
+    use super::super::{Context, Screen};
     use super::{hotkey_label, t_in, tr_in};
+    use crate::event_loop::{Message, WindowEvent};
+    use sse_steam::api::CloudFile;
+
+    #[test]
+    fn cloud_upload_is_off_and_sends_nothing_without_a_chosen_file() -> sse_core::Result<()> {
+        let fonts = crate::glyphs::Fonts::bundled()?;
+        let mut tree = crate::widget::Tree::new(fonts, crate::screens::style::rgb(crate::theme::BG_BASE));
+        let host = tree.add(
+            None,
+            crate::layout::NodeKind::Column,
+            crate::layout::Style::default(),
+            crate::widget::Content::Panel,
+            crate::widget::Look::default(),
+        )?;
+        let mut app = sse_app::AppState::new();
+        let mut screen = super::Cloud::with_backup_workspace(Workspace::default());
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: None,
+            status: None,
+            app: &mut app,
+        };
+        screen.build(&mut cx, host)?;
+        let upload = screen
+            .upload
+            .ok_or_else(|| sse_core::Error::damaged("no upload action"))?;
+        assert!(
+            !cx.tree.is_enabled(upload)?,
+            "upload is on without a chosen file and a save"
+        );
+        // Even a click that reaches the handler opens no confirmation and sends nothing.
+        let pointer = Message::Window(WindowEvent::PointerLeft);
+        let _ = screen.message(&mut cx, &pointer, Some(upload));
+        assert!(screen.intent.is_none(), "upload prepared a write without a chosen file");
+        Ok(())
+    }
+
+    #[test]
+    fn cloud_file_row_then_download_acts_on_the_chosen_file() -> sse_core::Result<()> {
+        // Nothing is read from Steam here: the list is filled directly. Choosing a file enables the download of that file only.
+        let fonts = crate::glyphs::Fonts::bundled()?;
+        let mut tree = crate::widget::Tree::new(fonts, crate::screens::style::rgb(crate::theme::BG_BASE));
+        let host = tree.add(
+            None,
+            crate::layout::NodeKind::Column,
+            crate::layout::Style::default(),
+            crate::widget::Content::Panel,
+            crate::widget::Look::default(),
+        )?;
+        let mut app = sse_app::AppState::new();
+        let mut screen = super::Cloud::with_backup_workspace(Workspace::default());
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: None,
+            status: None,
+            app: &mut app,
+        };
+        screen.build(&mut cx, host)?;
+        let download = screen
+            .download
+            .ok_or_else(|| sse_core::Error::damaged("no download action"))?;
+        assert!(!cx.tree.is_enabled(download)?, "download is on before a file is chosen");
+        screen.items = vec![
+            CloudFile {
+                name: "alpha.sav".to_owned(),
+                size: 2048,
+                timestamp: 0,
+                persisted: true,
+                exists: true,
+            },
+            CloudFile {
+                name: "beta.sav".to_owned(),
+                size: 4096,
+                timestamp: 0,
+                persisted: true,
+                exists: true,
+            },
+        ];
+        screen.render(&mut cx)?;
+        let select = screen
+            .rows
+            .get(2)
+            .copied()
+            .ok_or_else(|| sse_core::Error::damaged("no row for the second file"))?;
+        let pointer = Message::Window(WindowEvent::PointerLeft);
+        screen.message(&mut cx, &pointer, Some(select))?;
+        assert_eq!(screen.selected.as_deref(), Some("beta.sav"));
+        assert!(
+            cx.tree.is_enabled(download)?,
+            "download stays off after choosing a file"
+        );
+        Ok(())
+    }
 
     #[test]
     fn steam_and_companion_labels_keep_dynamic_values_when_translated() {
