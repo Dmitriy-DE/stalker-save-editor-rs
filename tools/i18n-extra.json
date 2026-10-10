@@ -1154,5 +1154,39 @@
     "ko": "저장되지 않은 변경 사항을 버리려면 '초기화'를 다시 누르세요.",
     "zh-CN": "再次点击“重置”以放弃未保存的修改。",
     "zh-TW": "再次按下「重設」以捨棄未儲存的修改。"
+  },
+  "Нажмите «Открыть заново» ещё раз: несохранённые правки будут удалены.": {
+    "ru": "Нажмите «Открыть заново» ещё раз: несохранённые правки будут удалены.",
+    "uk": "Натисніть «Відкрити знову» ще раз: незбережені зміни буде видалено.",
+    "en": "Press Reopen again: unsaved edits will be discarded.",
+    "de": "Erneut „Neu öffnen“ drücken: nicht gespeicherte Änderungen werden verworfen.",
+    "fr": "Appuyez à nouveau sur « Rouvrir » : les modifications non enregistrées seront supprimées.",
+    "it": "Premi di nuovo «Riapri»: le modifiche non salvate verranno eliminate.",
+    "es": "Pulse «Reabrir» de nuevo: los cambios no guardados se descartarán.",
+    "pl": "Naciśnij ponownie „Otwórz ponownie”: niezapisane zmiany zostaną usunięte.",
+    "cs": "Stiskněte znovu „Znovu otevřít“: neuložené změny budou zahozeny.",
+    "pt-BR": "Pressione «Reabrir» de novo: as alterações não salvas serão descartadas.",
+    "tr": "Yeniden aç düğmesine tekrar basın: kaydedilmemiş değişiklikler silinecek.",
+    "ja": "もう一度「開き直す」を押すと、未保存の変更は破棄されます。",
+    "ko": "다시 '다시 열기'를 누르면 저장되지 않은 변경 사항이 삭제됩니다.",
+    "zh-CN": "再次点击“重新打开”，未保存的修改将被丢弃。",
+    "zh-TW": "再次按下「重新開啟」，未儲存的修改將被捨棄。"
+  },
+  "Для этого предмета можно добавить только одну штуку; патроны добавляются количеством.": {
+    "ru": "Для этого предмета можно добавить только одну штуку; патроны добавляются количеством.",
+    "uk": "Для цього предмета можна додати лише одну штуку; набої додаються кількістю.",
+    "en": "Only one of this item can be added at a time; ammunition is added by count.",
+    "de": "Dieser Gegenstand kann nur einzeln hinzugefügt werden; Munition wird nach Anzahl hinzugefügt.",
+    "fr": "Un seul exemplaire de cet objet peut être ajouté à la fois ; les munitions s'ajoutent par quantité.",
+    "it": "Di questo oggetto si può aggiungere una sola unità alla volta; le munizioni si aggiungono per quantità.",
+    "es": "De este objeto solo se puede añadir uno a la vez; la munición se añade por cantidad.",
+    "pl": "Ten przedmiot można dodać tylko pojedynczo; amunicję dodaje się ilością.",
+    "cs": "Tento předmět lze přidat pouze po jednom; munice se přidává počtem.",
+    "pt-BR": "Só é possível adicionar uma unidade deste item por vez; munição é adicionada por quantidade.",
+    "tr": "Bu eşyadan aynı anda yalnızca bir tane eklenebilir; mühimmat adetle eklenir.",
+    "ja": "このアイテムは一度に1つだけ追加できます。弾薬は数量で追加します。",
+    "ko": "이 아이템은 한 번에 하나만 추가할 수 있습니다. 탄약은 수량으로 추가합니다.",
+    "zh-CN": "此物品一次只能添加一个；弹药按数量添加。",
+    "zh-TW": "此物品一次只能新增一個；彈藥以數量新增。"
   }
 }

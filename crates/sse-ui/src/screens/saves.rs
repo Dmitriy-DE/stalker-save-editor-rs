@@ -603,6 +603,8 @@ struct WorkspaceState {
     pending_relocation: Option<u16>,
     external_change: bool,
     last_file_check: u64,
+    /// Set by the first «Открыть заново» when the draft has edits; the second press confirms.
+    reload_armed: Option<(PathBuf, String)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -1149,6 +1151,17 @@ fn start_reload_selected(workspace: &Workspace, cx: &mut Context<'_>) -> Result<
     };
     let path = selected.slot.path.clone();
     let old_sha256 = selected.source_sha256.clone();
+    if cx.app.has_draft(&old_sha256) {
+        let mut state = workspace.lock();
+        let confirmed = state.reload_armed.as_ref() == Some(&(path.clone(), old_sha256.clone()));
+        if !confirmed {
+            state.reload_armed = Some((path.clone(), old_sha256.clone()));
+            drop(state);
+            cx.status = Some(t("Нажмите «Открыть заново» ещё раз: несохранённые правки будут удалены.").to_owned());
+            return Ok(());
+        }
+        state.reload_armed = None;
+    }
     let draft_store = DraftStore::for_source(workspace.draft_directory.as_path(), &path);
     let draft_identity = draft_store.identity_key(&old_sha256)?;
     let Some(generation) = workspace.session.next_draft_generation(&draft_identity) else {
@@ -2833,6 +2846,11 @@ fn inventory_search_config() -> EditConfig {
     }
 }
 
+/// The writer's read-back accepts one non-ammo item per request; only ammunition takes a count.
+fn quantity_is_writable(item_key: &str, quantity: u32) -> bool {
+    quantity == 1 || item_key.to_ascii_lowercase().starts_with("ammo_")
+}
+
 fn add_quantity_config() -> EditConfig {
     EditConfig {
         mode: FieldMode::SingleLine,
@@ -4330,6 +4348,12 @@ impl Inventory {
             || !inventory.iter().any(|item| item.section == item_key)
         {
             cx.status = Some(t("Для этого предмета или формата нет подтверждённого шаблона добавления.").to_owned());
+            return Ok(());
+        }
+        if !quantity_is_writable(item_key, quantity) {
+            cx.status = Some(
+                t("Для этого предмета можно добавить только одну штуку; патроны добавляются количеством.").to_owned(),
+            );
             return Ok(());
         }
         let source_sha256 = selected.source_sha256.as_str();
@@ -10650,6 +10674,67 @@ mod tests {
         assert!(sse_storage::transaction::list_backups(&temp.0.join("s2-backups"))?
             .iter()
             .any(|entry| entry.status == sse_storage::transaction::BackupStatus::Verified));
+        Ok(())
+    }
+
+    #[test]
+    fn only_ammunition_takes_a_count_above_one() {
+        assert!(super::quantity_is_writable("medkit", 1));
+        assert!(!super::quantity_is_writable("medkit", 3));
+        assert!(super::quantity_is_writable("ammo_9x39_pab9", 17));
+        assert!(super::quantity_is_writable("AMMO_9x39_pab9", 17));
+    }
+
+    #[test]
+    fn reopen_with_draft_edits_needs_a_second_press() -> sse_core::Result<()> {
+        let temp = TempDirectory::new();
+        let bytes: &[u8] = include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-source.sav");
+        let save_a = temp.0.join("a.sav");
+        fs::write(&save_a, bytes)?;
+        let expected_a = fs::canonicalize(&save_a)?;
+        let workspace = Workspace::with_draft_directory(temp.0.join("drafts"));
+        let (proxy, receiver) = channel_pair::<AppMessage>();
+        let mut overview = Overview::new(workspace.clone());
+        let mut app = sse_app::AppState::new();
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let wait = std::time::Duration::from_secs(10);
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: Some(&proxy),
+            status: None,
+            app: &mut app,
+        };
+        overview.build(&mut cx, host)?;
+        assert!(overview.open_save(&mut cx, &save_a)?);
+        let loaded = receiver
+            .recv_timeout(wait)
+            .map_err(|error| Error::System(error.to_string()))?;
+        overview.message(&mut cx, &loaded, None)?;
+        let sha_a = sse_codecs::sha256::sha256_hex(bytes);
+        let mut plan = DraftPlan::empty(&sha_a)?;
+        plan.money = Some(1234);
+        cx.app.set_draft_journal(DraftJournal::new(vec![plan], 0)?);
+
+        super::start_reload_selected(&workspace, &mut cx)?;
+        assert!(cx.app.has_draft(&sha_a), "the first press must keep the draft");
+        assert!(workspace.lock().selected.is_some(), "the first press must not reload");
+        assert_eq!(
+            cx.status.as_deref(),
+            Some(crate::strings::t(
+                "Нажмите «Открыть заново» ещё раз: несохранённые правки будут удалены."
+            ))
+        );
+
+        super::start_reload_selected(&workspace, &mut cx)?;
+        assert!(!cx.app.has_draft(&sha_a), "the confirmed reload discards the draft");
+        assert_eq!(expected_a, fs::canonicalize(&save_a)?);
         Ok(())
     }
 

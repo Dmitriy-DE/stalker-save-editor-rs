@@ -3942,12 +3942,12 @@ impl Shell {
                 self.dispatch_editor_action(tree, EditorAction::Save)?;
                 return Ok(Flow::Continue);
             }
-            if !tree.dialog_open() && *ctrl && matches!(*keysym, 0x5a | 0x7a) {
+            if !tree.dialog_open() && !tree.focused_is_input() && *ctrl && matches!(*keysym, 0x5a | 0x7a) {
                 let action = if *shift { EditorAction::Redo } else { EditorAction::Undo };
                 self.dispatch_editor_action(tree, action)?;
                 return Ok(Flow::Continue);
             }
-            if !tree.dialog_open() && *ctrl && matches!(*keysym, 0x59 | 0x79) {
+            if !tree.dialog_open() && !tree.focused_is_input() && *ctrl && matches!(*keysym, 0x59 | 0x79) {
                 self.dispatch_editor_action(tree, EditorAction::Redo)?;
                 return Ok(Flow::Continue);
             }
