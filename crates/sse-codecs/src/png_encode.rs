@@ -50,7 +50,7 @@ pub fn encode_rgba8(width: u32, height: u32, pixels: &[u8]) -> Result<Vec<u8>> {
         );
         pos = pos.checked_add(n).ok_or_else(|| Error::damaged("PNG stored offset"))?;
     }
-    z.extend_from_slice(&adler32(&scan).to_be_bytes());
+    z.extend_from_slice(&crate::inflate::adler32(&scan).to_be_bytes());
 
     let mut out = Vec::with_capacity(z.len().saturating_add(57));
     out.extend_from_slice(SIG);
@@ -78,16 +78,6 @@ fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) -> Result<()> {
     }
     out.extend_from_slice(&(!crc).to_be_bytes());
     Ok(())
-}
-
-#[allow(clippy::arithmetic_side_effects)]
-fn adler32(data: &[u8]) -> u32 {
-    let (mut a, mut b) = (1u32, 0u32);
-    for x in data {
-        a = (a + u32::from(*x)) % 65_521;
-        b = (b + a) % 65_521;
-    }
-    (b << 16) | a
 }
 
 #[cfg(test)]
