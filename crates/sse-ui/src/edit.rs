@@ -1353,8 +1353,14 @@ fn previous_grapheme(buffer: &GapBuffer, position: usize) -> usize {
         return 0;
     }
     let target = position.min(buffer.len());
-    let mut previous = 0_usize;
-    let mut current = 0_usize;
+    // Start the forward scan at a position the rules are guaranteed to reach from the beginning, so the cost
+    // depends on the cluster at the caret, not on the length of the field.
+    let mut start = target.saturating_sub(1);
+    while start > 0 && !is_cluster_start(buffer, start) {
+        start = start.saturating_sub(1);
+    }
+    let mut previous = start;
+    let mut current = start;
     while current < target {
         previous = current;
         let next = next_grapheme(buffer, current);
@@ -1364,6 +1370,17 @@ fn previous_grapheme(buffer: &GapBuffer, position: usize) -> usize {
         current = next;
     }
     previous
+}
+
+/// True when `next_grapheme` from the beginning of the text also stops at `index`.
+fn is_cluster_start(buffer: &GapBuffer, index: usize) -> bool {
+    let Some(value) = buffer.char_at(index) else {
+        return false;
+    };
+    if is_extend(value) || value == '\u{200D}' || is_regional_indicator(value) {
+        return false;
+    }
+    index == 0 || buffer.char_at(index.saturating_sub(1)) != Some('\u{200D}')
 }
 
 fn grapheme_count_buffer(buffer: &GapBuffer) -> usize {
@@ -1582,7 +1599,8 @@ fn advance_graphemes(buffer: &GapBuffer, start: usize, end: usize, count: usize)
 #[cfg(test)]
 mod tests {
     use super::{
-        float_sub, Clipboard, EditConfig, EditModel, FieldMode, InputFilter, Key, Modifiers, MouseSelect, Selection,
+        float_sub, next_grapheme, previous_grapheme, Clipboard, EditConfig, EditModel, FieldMode, GapBuffer,
+        InputFilter, Key, Modifiers, MouseSelect, Selection,
     };
     use sse_core::Result;
 
@@ -1725,6 +1743,62 @@ mod tests {
             "a full field refuses the whole paste"
         );
         assert_eq!(editor.text(), "abcde");
+    }
+
+    /// The original full-scan definition, kept as the reference for `previous_grapheme`.
+    fn previous_grapheme_reference(buffer: &GapBuffer, position: usize) -> usize {
+        if position == 0 {
+            return 0;
+        }
+        let target = position.min(buffer.len());
+        let mut previous = 0_usize;
+        let mut current = 0_usize;
+        while current < target {
+            previous = current;
+            let next = next_grapheme(buffer, current);
+            if next >= target || next <= current {
+                break;
+            }
+            current = next;
+        }
+        previous
+    }
+
+    #[test]
+    fn previous_grapheme_matches_the_full_scan_on_tricky_text() {
+        let samples = [
+            "abc",
+            "e\u{301}x\u{308}\u{301}y",
+            "👨\u{200D}👩\u{200D}👧 family",
+            "🇺🇦🇺🇦🇺🇦 flags",
+            "\u{200D}\u{301}a\u{200D}b",
+            "тест Ё ё 中文 한글",
+        ];
+        for sample in samples {
+            let buffer = match GapBuffer::from_text(sample) {
+                Ok(value) => value,
+                Err(error) => panic!("failed to build buffer: {error}"),
+            };
+            for position in 0..=buffer.len() {
+                assert_eq!(
+                    previous_grapheme(&buffer, position),
+                    previous_grapheme_reference(&buffer, position),
+                    "sample {sample:?} at {position}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn backspace_on_a_full_field_does_not_scan_the_whole_text() {
+        let text = "a".repeat(32_768);
+        let buffer = match GapBuffer::from_text(&text) {
+            Ok(value) => value,
+            Err(error) => panic!("failed to build buffer: {error}"),
+        };
+        // Each step touches a constant number of characters, so the result is the previous position.
+        assert_eq!(previous_grapheme(&buffer, 32_768), 32_767);
+        assert_eq!(previous_grapheme(&buffer, 1), 0);
     }
 
     #[test]
