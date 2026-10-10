@@ -283,7 +283,27 @@ pub fn load_track(game_id: &str, game_directory: &Path) -> Option<Track> {
         let lower = path.to_ascii_lowercase();
         paths.iter().any(|candidate| lower.ends_with(candidate))
     };
-    let tree = GameFileTree::load_simple(game, game_directory, wanted, true).ok()?;
+    // Enhanced Editions name their index file after the game (fsgame_soc.ltx), so try that name first.
+    let fsgame: &[&str] = match family {
+        "soc" => &["fsgame_soc.ltx", "fsgame.ltx"],
+        "clear_sky" => &["fsgame_cs.ltx", "fsgame.ltx"],
+        _ => &["fsgame_cop.ltx", "fsgame.ltx"],
+    };
+    // Game archives are compressed: the header needs the X-Ray decoder and the entries need LZO.
+    let entry_decoder: sse_content::EntryDecoder =
+        std::sync::Arc::new(|data: &[u8], expected: usize| sse_codecs::lzo1x::decompress(data, expected));
+    let tree = GameFileTree::load(
+        game,
+        game_directory,
+        wanted,
+        Some(fsgame),
+        true,
+        true,
+        false,
+        Some(sse_content::xray_header_decoder()),
+        Some(entry_decoder),
+    )
+    .ok()?;
     decode_track(family, |relative| {
         let file = tree
             .files
@@ -421,5 +441,27 @@ mod tests {
     fn an_unknown_game_or_missing_install_gives_no_track() {
         assert!(load_track("stalker2", Path::new(".")).is_none());
         assert!(load_track("cop", Path::new("/nonexistent/sse-test-install")).is_none());
+    }
+
+    /// Reads the real menu track of an installed game. Run by hand, read-only:
+    /// `SSE_GAME_ID=soc SSE_GAME_DIR=/path/to/install cargo test -p sse-ui --lib real_install_track -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "needs an installed game named by SSE_GAME_ID and SSE_GAME_DIR"]
+    fn real_install_track_decodes() {
+        let (Ok(game), Ok(dir)) = (std::env::var("SSE_GAME_ID"), std::env::var("SSE_GAME_DIR")) else {
+            panic!("set SSE_GAME_ID and SSE_GAME_DIR");
+        };
+        let Some(track) = load_track(&game, Path::new(&dir)) else {
+            panic!("no menu track could be read for {game}");
+        };
+        let frames = track.samples.len() / usize::from(track.channels.max(1));
+        eprintln!(
+            "TRACK {game}: channels {}, rate {} Hz, {} frames, {:.1} s",
+            track.channels,
+            track.rate,
+            frames,
+            frames as f64 / f64::from(track.rate.max(1))
+        );
+        assert!(!track.samples.is_empty());
     }
 }
