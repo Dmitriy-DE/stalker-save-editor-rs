@@ -318,6 +318,48 @@ impl AppSettings {
     }
 }
 
+/// Temporary files older than this are left by an interrupted save and may be removed at startup.
+pub const STALE_SETTINGS_TEMPORARY_AGE: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
+
+/// Removes `settings.json` temporary files that an interrupted save left behind.
+///
+/// Only files named like a settings temporary and last changed at least [`STALE_SETTINGS_TEMPORARY_AGE`]
+/// before `now` are removed, so a save that is running now is never touched. Returns how many were removed.
+pub fn remove_stale_settings_temporaries(directory: &Path, now: std::time::SystemTime) -> usize {
+    let Ok(entries) = fs::read_dir(directory) else {
+        return 0;
+    };
+    let mut removed: usize = 0;
+    for entry in entries.flatten() {
+        let file_name = entry.file_name();
+        let Some(name) = file_name.to_str() else {
+            continue;
+        };
+        if !is_settings_temporary_name(name) {
+            continue;
+        }
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
+        if !metadata.is_file() {
+            continue;
+        }
+        let Ok(modified) = metadata.modified() else {
+            continue;
+        };
+        let age = now.duration_since(modified).unwrap_or_default();
+        if age >= STALE_SETTINGS_TEMPORARY_AGE && fs::remove_file(entry.path()).is_ok() {
+            removed = removed.saturating_add(1);
+        }
+    }
+    removed
+}
+
+/// Names used by atomic settings saves: the current `.sse-tmp-` form and the older `.tmp` form.
+fn is_settings_temporary_name(name: &str) -> bool {
+    name.starts_with(".settings.json.") && (name.contains(".sse-tmp-") || name.ends_with(".tmp"))
+}
+
 fn path_to_json_string(path: &Path) -> Result<&str> {
     path.to_str()
         .ok_or_else(|| Error::Refused("settings path is not valid UTF-8".to_owned()))

@@ -60,6 +60,9 @@ fn sender() -> &'static mpsc::Sender<Request> {
 }
 
 fn run_writer(path: PathBuf, rx: mpsc::Receiver<Request>) {
+    if let Some(directory) = path.parent() {
+        crate::settings::remove_stale_settings_temporaries(directory, std::time::SystemTime::now());
+    }
     let mut current = match AppSettings::load(&path) {
         Ok(settings) => Some(settings),
         Err(error) => {
