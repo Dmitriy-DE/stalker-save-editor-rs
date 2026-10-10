@@ -291,6 +291,67 @@ jobs:
           if-no-files-found: error
           include-hidden-files: true
 
+  release-rehearsal:
+    # Dry run of the release signing path on Linux, on every PR. A throwaway key made in this job signs
+    # latest.json; the shipped key must refuse it, and the rehearsal key must accept it and refuse altered copies.
+    # The owner's key is never read or stored here, and nothing is uploaded or published.
+    needs: [packages-linux, windows-portable]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@fb523f40495206854c36b250850817ae0f83e3d1 # 1.99.0
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: Download Linux and Windows packages
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: packages-*
+          path: dist/
+          merge-multiple: true
+      - name: Build APT index (unsigned, deterministic)
+        env:
+          SOURCE_DATE_EPOCH: "1700000000"
+        run: |
+          set -euo pipefail
+          # Outputs go outside the checkout: package.sh refuses a dirty source tree.
+          tools/apt-repo.sh dist "$RUNNER_TEMP/rehearsal/apt"
+      - name: Build release manifest like the release job
+        env:
+          DOWNLOAD_BASE_URL: https://rehearsal.invalid/sse
+        run: tools/package.sh --manifest-only
+      - name: Sign with a throwaway key
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/rehearsal"
+          mkdir -p "$work"
+          openssl ecparam -name prime256v1 -genkey -noout -out "$work/key.pem"
+          openssl ec -in "$work/key.pem" -pubout -out dist/rehearsal-public.pem 2>/dev/null
+          openssl dgst -sha256 -sign "$work/key.pem" -out "$work/latest.json.der" dist/latest.json
+          base64 -w0 "$work/latest.json.der" >dist/latest.json.sig
+      - name: Shipped key refuses the rehearsal signature
+        shell: bash
+        run: |
+          set +e
+          out="$(cargo run --locked --release -p sse-cli -- update verify-manifest dist/latest.json dist/latest.json.sig 2>&1)"
+          code=$?
+          set -e
+          echo "$out"
+          if [ "$code" -eq 0 ]; then echo "::error::the shipped key accepted the rehearsal signature"; exit 1; fi
+          grep -q "manifest signature is invalid" <<<"$out" || { echo "::error::refused for another reason"; exit 1; }
+      - name: Rehearsal key accepts the manifest and refuses altered copies
+        env:
+          # cargo runs tests from the crate directory, so the path must be absolute.
+          SSE_REHEARSAL_DIR: ${{ github.workspace }}/dist
+        run: cargo test --locked -p sse-update --lib release_rehearsal -- --ignored --nocapture
+      - name: Summary
+        run: |
+          {
+            echo "### Release rehearsal (Linux, throwaway key)"
+            echo "Checked: rehearsal key accepts latest.json; shipped key refuses it; one changed signature byte, one changed manifest byte and one changed artifact byte are refused; an older version is refused as a downgrade."
+            echo "Not checked here: the owner's real key, uploading, the download host, installing packages on a clean system."
+          } >> "$GITHUB_STEP_SUMMARY"
+
   release-manifest:
     # Assemble release metadata only after all package builders passed check.
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
