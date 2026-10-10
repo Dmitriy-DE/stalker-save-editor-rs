@@ -68,6 +68,19 @@ if (Test-Path -LiteralPath $archivePath) {
 }
 Compress-Archive -Path (Join-Path $stageDir '*') -DestinationPath $archivePath -CompressionLevel Optimal
 
+# The archive must contain exactly the expected files, nothing else.
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$archive = [System.IO.Compression.ZipFile]::OpenRead($archivePath)
+try {
+    $names = @($archive.Entries | ForEach-Object { $_.FullName } | Sort-Object)
+} finally {
+    $archive.Dispose()
+}
+$wanted = @('BUILD_MANIFEST.json', 'sse-shell.exe', 'stalker-save-editor.svg', 'stalker-save.exe') | Sort-Object
+if (($names -join '|') -ne ($wanted -join '|')) {
+    throw "Portable archive contents are wrong: $($names -join ', ')"
+}
+
 $size = (Get-Item -LiteralPath $archivePath).Length
 if ($size -le 0 -or $size -gt $sizeBudget) {
     throw "Portable archive size $size is outside the 30 MiB release budget"

@@ -162,7 +162,7 @@ jobs:
 
   windows-portable:
     # The portable Windows archive is built with MSVC, the same target the Windows tests run; no GNU build ships.
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    # It runs on every PR so a packaging break shows before a release; the archive is only uploaded, never published.
     needs: check
     runs-on: windows-latest
     steps:
@@ -179,7 +179,7 @@ jobs:
             dist/SaveEditor-windows-x86_64.zip
             dist/SaveEditor-windows-x86_64.zip.sha256
             dist/.package-metadata/windows-x86_64.tsv
-          retention-days: 30
+          retention-days: 7
           if-no-files-found: error
           include-hidden-files: true
 
