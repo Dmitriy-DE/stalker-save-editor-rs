@@ -1740,6 +1740,24 @@ fn first_free_placement(
     None
 }
 
+/// Offset of an object record after the edited inventory window `window` grew or shrank by `shifted`.
+///
+/// Object records sit before the inventory blocks in every S2 save, so a record before the window keeps its
+/// offset; a record after the window moves by `shifted`. A record inside the window cannot be placed safely.
+fn moved_object_offset(record_offset: usize, window: std::ops::Range<usize>, shifted: usize) -> Result<usize> {
+    if record_offset < window.start {
+        return Ok(record_offset);
+    }
+    if record_offset < window.end {
+        return Err(Error::Refused(
+            "S2 stash item record lies inside the edited inventory block".to_owned(),
+        ));
+    }
+    record_offset
+        .checked_add(shifted)
+        .ok_or_else(|| Error::damaged("S2 moved object record offset overflows"))
+}
+
 fn move_stash_item_to_backpack(
     save: &S2Save,
     stash: &S2StashLayout,
@@ -1756,11 +1774,6 @@ fn move_stash_item_to_backpack(
         .objects
         .unique(handle)
         .ok_or_else(|| Error::Refused("S2 stash item handle is missing or ambiguous".to_owned()))?;
-    if record.record_offset < stash.grid_end_offset {
-        return Err(Error::Refused(
-            "S2 stash item record precedes the stash grid".to_owned(),
-        ));
-    }
     let stash_owned_index = stash
         .owned_handles
         .iter()
@@ -1937,10 +1950,11 @@ fn move_stash_item_to_backpack(
     let shifted_bytes = inserted_bytes
         .checked_sub(removed_bytes)
         .ok_or_else(|| Error::damaged("S2 stash transfer unexpectedly shrank the image"))?;
-    let moved_record_offset = record
-        .record_offset
-        .checked_add(shifted_bytes)
-        .ok_or_else(|| Error::damaged("S2 moved object record offset overflows"))?;
+    let moved_record_offset = moved_object_offset(
+        record.record_offset,
+        save.index.owned_count_offset..stash.grid_end_offset,
+        shifted_bytes,
+    )?;
     let position_x_offset = moved_record_offset.saturating_add(11);
     let position_y_offset = moved_record_offset.saturating_add(13);
     let record_flag_offset = moved_record_offset.saturating_add(15);
@@ -2355,8 +2369,8 @@ fn validate_owned_handles(handles: &[u32], legacy: bool) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_changes_to_image, first_free_placement, pack_and_verify_s2_image, validate_owned_handles, S2Change,
-        S2Container, S2InventoryIndex, S2Save, S2StashLayout, GRID_WIDTH,
+        apply_changes_to_image, first_free_placement, moved_object_offset, pack_and_verify_s2_image,
+        validate_owned_handles, S2Change, S2Container, S2InventoryIndex, S2Save, S2StashLayout, GRID_WIDTH,
     };
     use sse_codecs::crc32;
     use sse_core::Error;
@@ -2967,6 +2981,16 @@ mod tests {
 
         assert!(super::verify_durability_values(&before, &expected, &requested).is_ok());
         assert!(super::verify_durability_values(&before, &collateral_change, &requested).is_err());
+    }
+
+    #[test]
+    fn moved_object_offset_keeps_records_before_the_window_and_shifts_records_after_it() {
+        // Window 100..200 grows by 16 bytes.
+        assert_eq!(moved_object_offset(40, 100..200, 16), Ok(40));
+        assert_eq!(moved_object_offset(250, 100..200, 16), Ok(266));
+        assert_eq!(moved_object_offset(250, 100..200, 0), Ok(250));
+        assert!(moved_object_offset(150, 100..200, 16).is_err());
+        assert!(moved_object_offset(100, 100..200, 16).is_err());
     }
 
     #[test]
