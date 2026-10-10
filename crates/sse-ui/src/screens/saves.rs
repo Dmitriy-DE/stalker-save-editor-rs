@@ -150,7 +150,6 @@ const INVENTORY_CONDITION_WIDTH: f32 = 84.0;
 const INVENTORY_COUNT_WIDTH: f32 = 76.0;
 const INVENTORY_STEPPER_WIDTH: f32 = 64.0;
 const ADD_ITEM_PAGE_SIZE: usize = 8;
-const MAXIMUM_STASH_ROWS: usize = 10;
 const MAXIMUM_UPGRADE_ROWS: usize = 16;
 const MAX_BROWSER_SAVE_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_BROWSER_FILENAME_BYTES: usize = 240;
@@ -6963,15 +6962,309 @@ impl Screen for Inventory {
 }
 
 /// Faction information available from the selected save.
+/// One row of a list panel: a card with two lines of text and a transparent button over it that takes the clicks.
+#[derive(Clone, Copy)]
+struct ListRow {
+    stack: WidgetId,
+    card: WidgetId,
+    title: WidgetId,
+    meta: WidgetId,
+    select: WidgetId,
+}
+
+/// The widgets of a list panel (left) and its side panel (right), shared by the faction and stash screens.
+struct ListSide {
+    list_panel: WidgetId,
+    count: WidgetId,
+    note: WidgetId,
+    rows: Vec<ListRow>,
+    pages: WidgetId,
+    previous: WidgetId,
+    page_range: WidgetId,
+    next: WidgetId,
+    empty: WidgetId,
+    kv_rows: Vec<WidgetId>,
+    kv_values: Vec<WidgetId>,
+    detail: WidgetId,
+    status: WidgetId,
+    actions: WidgetId,
+    side: WidgetId,
+}
+
+/// Builds the list panel and the side panel. `title` heads the list, `side_title` the side panel; `keys` are the
+/// key–value rows of the side panel, translated by the caller; `empty` is the side panel's text while nothing is chosen.
+fn build_list_side(
+    cx: &mut Context<'_>,
+    host: WidgetId,
+    title: &str,
+    side_title: &str,
+    keys: &[String],
+    empty: &str,
+    note: &str,
+) -> Result<ListSide> {
+    let body = cx.tree.add(
+        Some(host),
+        NodeKind::Row,
+        Style {
+            grow: 1.0,
+            shrink: 1.0,
+            min: Size::new(0.0, 0.0),
+            gap: Size::new(crate::theme::CONTROL_GAP + 6.0, 0.0),
+            align_items: crate::layout::Align::Stretch,
+            ..Style::default()
+        },
+        Content::Panel,
+        Look::default(),
+    )?;
+    let list_panel = style::d2::panel(cx.tree, body)?;
+    cx.tree.set_style(
+        list_panel,
+        Style {
+            grow: 1.0,
+            shrink: 1.0,
+            min: Size::new(0.0, 0.0),
+            preferred: Size::new(0.0, 0.0),
+            padding: crate::layout::Edges::all(crate::theme::d2::PANEL_PADDING.0),
+            gap: Size::new(0.0, 8.0),
+            align_items: crate::layout::Align::Stretch,
+            ..Style::default()
+        },
+    )?;
+    let header = style::row(cx.tree, list_panel)?;
+    style::d2::panel_title(cx.tree, header, title)?;
+    spacer(cx, header)?;
+    let count = style::label(cx.tree, header, "0", Text::Note)?;
+    // A paragraph: a long note wraps inside the list panel (its width is set when the layout is known).
+    let note = paragraph(cx.tree, list_panel, note, Text::Note)?;
+    let list = cx.tree.add(
+        Some(list_panel),
+        NodeKind::Column,
+        Style {
+            grow: 1.0,
+            shrink: 1.0,
+            min: Size::new(0.0, 0.0),
+            align_items: crate::layout::Align::Stretch,
+            ..Style::default()
+        },
+        Content::Panel,
+        Look::default(),
+    )?;
+    let mut rows = Vec::new();
+    for _ in 0..TRANSITION_ROWS {
+        // Gaps are bottom margins: a hidden row would otherwise keep a gap of its own.
+        let stack = cx.tree.add(
+            Some(list),
+            NodeKind::Stack,
+            Style {
+                shrink: 0.0,
+                align_items: crate::layout::Align::Stretch,
+                margin: crate::layout::Edges {
+                    bottom: 4.0,
+                    ..crate::layout::Edges::default()
+                },
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        let card = cx.tree.add(
+            Some(stack),
+            NodeKind::Row,
+            Style {
+                min: Size::new(0.0, 46.0),
+                padding: crate::layout::Edges {
+                    left: 12.0,
+                    top: 4.0,
+                    right: 12.0,
+                    bottom: 4.0,
+                },
+                gap: Size::new(12.0, 0.0),
+                align_items: crate::layout::Align::Center,
+                shrink: 0.0,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        let text_column = cx.tree.add(
+            Some(card),
+            NodeKind::Column,
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: Size::new(0.0, 0.0),
+                gap: Size::new(0.0, 2.0),
+                align_items: crate::layout::Align::Stretch,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        let title = style::label(cx.tree, text_column, "", Text::Body)?;
+        let meta = style::label(cx.tree, text_column, "", Text::Note)?;
+        // The select button is last, so it covers the card and takes the clicks.
+        let select = style::button(cx.tree, stack, "", Button::Secondary)?;
+        cx.tree.set_look(select, Look::default())?;
+        cx.tree.set_visible(stack, false)?;
+        rows.push(ListRow {
+            stack,
+            card,
+            title,
+            meta,
+            select,
+        });
+    }
+    let pages = style::row(cx.tree, list_panel)?;
+    let previous = library_icon_button(cx.tree, pages, Icon::D2ArrowLeft)?;
+    let page_range = style::label(cx.tree, pages, "", Text::Note)?;
+    let next = library_icon_button(cx.tree, pages, Icon::D2ArrowRight)?;
+    cx.tree.set_visible(pages, false)?;
+
+    let side = cx.tree.add(
+        Some(body),
+        NodeKind::Column,
+        side_column_style(false, false),
+        Content::Panel,
+        Look::default(),
+    )?;
+    let inspector = style::d2::panel(cx.tree, side)?;
+    cx.tree.set_style(
+        inspector,
+        Style {
+            grow: 1.0,
+            shrink: 1.0,
+            min: Size::new(0.0, 0.0),
+            preferred: Size::new(0.0, 0.0),
+            padding: crate::layout::Edges::all(crate::theme::d2::PANEL_PADDING.0),
+            gap: Size::new(0.0, 8.0),
+            align_items: crate::layout::Align::Stretch,
+            ..Style::default()
+        },
+    )?;
+    cx.tree.set_clip_children(inspector, true)?;
+    style::d2::panel_title(cx.tree, inspector, side_title)?;
+    let empty = paragraph(cx.tree, inspector, empty, Text::Body)?;
+    let mut kv_rows = Vec::new();
+    let mut kv_values = Vec::new();
+    for key in keys {
+        let row = style::d2::key_value_row(cx.tree, inspector, key, "—")?;
+        if let Some(value) = cx.tree.children(row).last().copied() {
+            kv_values.push(value);
+        }
+        cx.tree.set_visible(row, false)?;
+        kv_rows.push(row);
+    }
+    let detail = paragraph(cx.tree, inspector, "", Text::Note)?;
+    let status = paragraph(cx.tree, inspector, "", Text::Note)?;
+    cx.tree.set_visible(detail, false)?;
+    cx.tree.set_visible(status, false)?;
+    spacer(cx, inspector)?;
+    let actions = style::row(cx.tree, inspector)?;
+    cx.tree.set_visible(actions, false)?;
+    Ok(ListSide {
+        list_panel,
+        count,
+        note,
+        rows,
+        pages,
+        previous,
+        page_range,
+        next,
+        empty,
+        kv_rows,
+        kv_values,
+        detail,
+        status,
+        actions,
+        side,
+    })
+}
+
+/// Sets the side column's width for the window and the wrap width of its paragraphs (a wrapped paragraph measures its
+/// lines at its minimum width).
+fn sync_side_widths(tree: &mut Tree, list: &ListSide) -> Result<()> {
+    let (window_width, _) = window_pixels(tree);
+    let compact = window_width < 1600.0;
+    tree.set_style(list.side, side_column_style(compact, false))?;
+    let note_width = side_column_width(compact) - 2.0 * crate::theme::d2::PANEL_PADDING.0;
+    for id in [list.detail, list.status] {
+        tree.set_style(
+            id,
+            Style {
+                min: Size::new(note_width, 0.0),
+                ..Style::default()
+            },
+        )?;
+    }
+    // The list's note takes the list panel's width, as laid out at the last frame.
+    let panel_width = f32::from(u16::try_from(tree.rect(list.list_panel)?.width).unwrap_or(0));
+    tree.set_style(
+        list.note,
+        Style {
+            min: Size::new((panel_width - 2.0 * crate::theme::d2::PANEL_PADDING.0).max(0.0), 0.0),
+            ..Style::default()
+        },
+    )?;
+    Ok(())
+}
+
+/// A column that takes the free room of its parent: pushes the widgets after it to the far edge.
+fn spacer(cx: &mut Context<'_>, parent: WidgetId) -> Result<WidgetId> {
+    cx.tree.add(
+        Some(parent),
+        NodeKind::Column,
+        Style {
+            grow: 1.0,
+            shrink: 1.0,
+            min: Size::new(0.0, 0.0),
+            ..Style::default()
+        },
+        Content::Panel,
+        Look::default(),
+    )
+}
+
+/// Shows a list row with its two lines; a chosen row has the accent border.
+fn show_list_row(tree: &mut Tree, row: ListRow, title: &str, meta: &str, chosen: bool) -> Result<()> {
+    tree.set_text(row.title, title)?;
+    tree.set_text(row.meta, meta)?;
+    tree.set_look(
+        row.card,
+        if chosen {
+            Look {
+                fill: Some(style::d2::argb(crate::theme::d2::ACCENT_TINT)),
+                border: Some((style::d2::argb(crate::theme::d2::ACCENT), 1.0)),
+                radius: crate::theme::d2::RADIUS_BADGE,
+                ..Look::default()
+            }
+        } else {
+            Look::default()
+        },
+    )?;
+    tree.set_visible(row.stack, true)
+}
+
+/// Splits a label written as "title · details" at its first separator; a label without one has no details.
+fn split_label(label: &str) -> (&str, &str) {
+    label.split_once(" · ").unwrap_or((label, ""))
+}
+
+/// Rows per page of a list: the rows that fit the window's height. Before the window has a size, every row slot is used.
+fn list_window(tree: &Tree) -> usize {
+    let (_, height) = window_pixels(tree);
+    if height <= 0.0 {
+        return TRANSITION_ROWS;
+    }
+    transition_page_size(height)
+}
+
 struct Factions {
     workspace: Workspace,
-    text: Option<WidgetId>,
-    controls: Option<WidgetId>,
-    previous: Option<WidgetId>,
-    next: Option<WidgetId>,
+    list: Option<ListSide>,
     decrease: Option<WidgetId>,
     increase: Option<WidgetId>,
     faction_keys: Vec<String>,
+    faction_rows: Vec<Option<usize>>,
     index: usize,
     last_path: Option<PathBuf>,
 }
@@ -6980,16 +7273,41 @@ impl Factions {
     fn new(workspace: Workspace) -> Self {
         Self {
             workspace,
-            text: None,
-            controls: None,
-            previous: None,
-            next: None,
+            list: None,
             decrease: None,
             increase: None,
             faction_keys: Vec::new(),
+            faction_rows: Vec::new(),
             index: 0,
             last_path: None,
         }
+    }
+
+    /// Hides the list and the side panel's values: nothing is chosen, so there is nothing to act on.
+    fn hide_list(&self, cx: &mut Context<'_>) -> Result<()> {
+        let Some(list) = self.list.as_ref() else {
+            return Ok(());
+        };
+        for row in &list.rows {
+            cx.tree.set_visible(row.stack, false)?;
+        }
+        cx.tree.set_visible(list.pages, false)?;
+        for id in &list.kv_rows {
+            cx.tree.set_visible(*id, false)?;
+        }
+        cx.tree.set_visible(list.actions, false)?;
+        cx.tree.set_visible(list.empty, true)?;
+        cx.tree.set_visible(list.status, false)?;
+        cx.tree.set_text(list.count, "0")?;
+        Ok(())
+    }
+
+    /// The note above the list: a message about the save.
+    fn set_text(&self, cx: &mut Context<'_>, text: &str) -> Result<()> {
+        if let Some(list) = self.list.as_ref() {
+            cx.tree.set_text(list.note, t(text))?;
+        }
+        Ok(())
     }
 
     fn render(&mut self, cx: &mut Context<'_>) -> Result<()> {
@@ -6997,10 +7315,14 @@ impl Factions {
             let state = self.workspace.lock();
             (state.selected.clone(), state.pending_faction_relations.clone())
         };
+        let page_size = list_window(cx.tree);
+        if let Some(list) = self.list.as_ref() {
+            sync_side_widths(cx.tree, list)?;
+        }
         let Some(selected) = selected else {
             self.faction_keys.clear();
-            self.set_text(cx, t("Сначала выберите сейв на экране «Обзор»."))?;
-            return self.set_controls_visible(cx, false);
+            self.set_text(cx, "Сначала выберите сейв на экране «Обзор».")?;
+            return self.hide_list(cx);
         };
         if self.last_path.as_ref() != Some(&selected.slot.path) {
             self.last_path = Some(selected.slot.path.clone());
@@ -7009,7 +7331,7 @@ impl Factions {
         let SaveData::Xray { save, .. } = &selected.data else {
             self.faction_keys.clear();
             self.set_text(cx, "Редактирование отношений доступно только для X-Ray сейвов.")?;
-            return self.set_controls_visible(cx, false);
+            return self.hide_list(cx);
         };
         if !xray_change_supported(save, writer::ChangeKind::EditRelations) {
             self.faction_keys.clear();
@@ -7017,7 +7339,7 @@ impl Factions {
                 cx,
                 "Редактирование отношений фракций не поддерживается данным форматом.",
             )?;
-            return self.set_controls_visible(cx, false);
+            return self.hide_list(cx);
         }
         if save.actor_relations().is_none() {
             self.faction_keys.clear();
@@ -7025,13 +7347,13 @@ impl Factions {
                 cx,
                 "Отношения актёра не подтверждены индексом сохранения; редактирование недоступно.",
             )?;
-            return self.set_controls_visible(cx, false);
+            return self.hide_list(cx);
         }
         let bundle = sse_catalog::CatalogBundleReader::load_embedded().get(save.format().id());
         let Some(catalog) = bundle.and_then(|bundle| bundle.factions.as_ref()) else {
             self.faction_keys.clear();
             self.set_text(cx, "Каталог фракций для этого формата недоступен.")?;
-            return self.set_controls_visible(cx, false);
+            return self.hide_list(cx);
         };
         self.faction_keys = catalog
             .factions()
@@ -7041,53 +7363,88 @@ impl Factions {
             .collect();
         self.faction_keys.sort();
         self.index = self.index.min(self.faction_keys.len().saturating_sub(1));
-        let Some(key) = self.faction_keys.get(self.index) else {
+        if self.faction_keys.is_empty() {
             self.set_text(cx, "Каталог не содержит изменяемых числовых фракций.")?;
-            return self.set_controls_visible(cx, false);
-        };
-        let faction = catalog
-            .resolve(key)
-            .map_err(|error| Error::Refused(error.to_string()))?;
-        let current = save.actor_relations().and_then(|relations| {
-            faction
-                .numeric_id
-                .and_then(|community| relations.into_iter().find(|(id, _)| *id == community))
-                .map(|(_, value)| value)
-        });
-        let value = pending.get(key).copied().or(current);
-        let label = faction.display_name.as_deref().unwrap_or(&faction.key);
-        let source = if pending.contains_key(key) {
-            t("черновик")
-        } else {
-            t("сейв")
-        };
-        let index = self.index.saturating_add(1);
+            return self.hide_list(cx);
+        }
         let faction_count = self.faction_keys.len();
-        let relation = value.map_or_else(|| t("нет записи").to_owned(), |value| value.to_string());
-        self.set_text(
-            cx,
-            &tr(
-                "{0} из {1} · {2} ({3}) · отношение: {4} · значение из {5}.\nИзменение отношений экспериментальное. После выбора примените черновик кнопкой «Сохранить» в «Инвентаре»; проверка в игре не выполнена.",
-                &[&index, &faction_count, &t(label), key, &relation, &source],
-            ),
-        )?;
+        let pages = faction_count.div_ceil(page_size.max(1));
+        let start = self.index.checked_div(page_size).unwrap_or(0).saturating_mul(page_size);
         let can_edit = !self.workspace.is_saving() && !self.workspace.is_restoring();
+        let mut chosen_name = None;
+        let mut chosen_lines = None;
+        let mut shown = Vec::new();
+        for (offset, key) in self.faction_keys.iter().enumerate().skip(start).take(page_size) {
+            let faction = catalog
+                .resolve(key)
+                .map_err(|error| Error::Refused(error.to_string()))?;
+            let current = save.actor_relations().and_then(|relations| {
+                faction
+                    .numeric_id
+                    .and_then(|community| relations.into_iter().find(|(id, _)| *id == community))
+                    .map(|(_, value)| value)
+            });
+            let value = pending.get(key).copied().or(current);
+            let label = faction.display_name.as_deref().unwrap_or(&faction.key).to_owned();
+            let relation = value.map_or_else(|| t("нет записи").to_owned(), |value| value.to_string());
+            let source = t(if pending.contains_key(key) {
+                "черновик"
+            } else {
+                "сейв"
+            });
+            let meta = tr("{0} · {1}", &[&relation, &source]);
+            let chosen = offset == self.index;
+            if chosen {
+                chosen_name = Some(t(&label).to_owned());
+                chosen_lines = Some((relation.clone(), source.to_owned(), key.clone()));
+            }
+            shown.push((t(&label).to_owned(), meta, chosen, offset));
+        }
+        let list = self
+            .list
+            .as_mut()
+            .ok_or_else(|| Error::Refused("factions list is not built".to_owned()))?;
+        for row in &list.rows {
+            cx.tree.set_visible(row.stack, false)?;
+        }
+        self.faction_rows.clear();
+        for (row, (title, meta, chosen, offset)) in list.rows.iter().zip(shown.iter()) {
+            show_list_row(cx.tree, *row, title, meta, *chosen)?;
+            self.faction_rows.push(Some(*offset));
+        }
+        cx.tree.set_text(list.count, &faction_count.to_string())?;
+        cx.tree.set_visible(list.pages, pages > 1)?;
+        cx.tree.set_enabled(list.previous, start > 0)?;
+        cx.tree
+            .set_enabled(list.next, start.saturating_add(page_size) < faction_count)?;
+        let last = start.saturating_add(page_size).min(faction_count);
+        let range = crate::strings::tr_in(
+            Some(crate::strings::current_language()),
+            "{0}–{1} из {2}",
+            &[&start.saturating_add(1), &last, &faction_count],
+        );
+        cx.tree.set_text(list.page_range, &range)?;
+        let note = t("Выберите фракцию слева; значение попадает в черновик.");
+        cx.tree.set_text(list.note, note)?;
+        let Some((relation, source, _key)) = chosen_lines else {
+            return self.hide_list(cx);
+        };
+        let name = chosen_name.unwrap_or_default();
+        for id in &list.kv_rows {
+            cx.tree.set_visible(*id, true)?;
+        }
+        for (value, text) in list.kv_values.iter().zip([name, relation, source]) {
+            cx.tree.set_text(*value, &text)?;
+        }
+        cx.tree.set_visible(list.empty, false)?;
+        cx.tree.set_visible(list.actions, true)?;
+        cx.tree.set_visible(list.status, true)?;
+        cx.tree.set_text(
+            list.status,
+            t("Изменение отношений экспериментальное. После выбора примените черновик кнопкой «Сохранить» в «Инвентаре»; проверка в игре не выполнена."),
+        )?;
         for id in [self.decrease, self.increase].into_iter().flatten() {
             cx.tree.set_enabled(id, can_edit)?;
-        }
-        self.set_controls_visible(cx, true)
-    }
-
-    fn set_text(&self, cx: &mut Context<'_>, text: &str) -> Result<()> {
-        if let Some(id) = self.text {
-            cx.tree.set_text(id, t(text))?;
-        }
-        Ok(())
-    }
-
-    fn set_controls_visible(&self, cx: &mut Context<'_>, visible: bool) -> Result<()> {
-        if let Some(id) = self.controls {
-            cx.tree.set_visible(id, visible)?;
         }
         Ok(())
     }
@@ -7191,20 +7548,37 @@ impl Screen for Factions {
     }
 
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
-        let card = style::card(cx.tree, host)?;
-        style::label(cx.tree, card, "ФРАКЦИИ", Text::Heading)?;
-        self.text = Some(style::label(
-            cx.tree,
-            card,
-            "Выберите сейв на экране «Обзор».",
-            Text::Body,
-        )?);
-        let controls = style::row(cx.tree, card)?;
-        self.controls = Some(controls);
-        self.previous = Some(style::button(cx.tree, controls, "Предыдущая", Button::Secondary)?);
-        self.decrease = Some(style::button(cx.tree, controls, "−100", Button::Secondary)?);
-        self.increase = Some(style::button(cx.tree, controls, "+100", Button::Secondary)?);
-        self.next = Some(style::button(cx.tree, controls, "Следующая", Button::Secondary)?);
+        let keys = [t("Фракция"), t("Отношение"), t("Источник")].map(str::to_owned);
+        let list = build_list_side(
+            cx,
+            host,
+            t("ФРАКЦИИ"),
+            t("ВЫБРАННАЯ ФРАКЦИЯ"),
+            &keys,
+            t("Фракция не выбрана."),
+            t("Выберите сейв на экране «Обзор»."),
+        )?;
+        // The two adjustments share the row's width equally.
+        for (slot, label) in [(&mut self.decrease, "−100"), (&mut self.increase, "+100")] {
+            let button = style::d2::button(
+                cx.tree,
+                list.actions,
+                label,
+                style::d2::ButtonKind::Secondary,
+                style::d2::ButtonSize::Normal,
+            )?;
+            cx.tree.set_style(
+                button,
+                Style {
+                    grow: 1.0,
+                    shrink: 1.0,
+                    min: crate::layout::Size::new(0.0, crate::theme::BUTTON_HEIGHT),
+                    ..Style::default()
+                },
+            )?;
+            *slot = Some(button);
+        }
+        self.list = Some(list);
         self.render(cx)
     }
 
@@ -7215,17 +7589,27 @@ impl Screen for Factions {
     fn message(
         &mut self,
         cx: &mut Context<'_>,
-        _message: &Message<AppMessage>,
+        message: &Message<AppMessage>,
         clicked: Option<WidgetId>,
     ) -> Result<()> {
-        if clicked.is_some() && clicked == self.previous {
-            self.index = self.index.saturating_sub(1);
+        if let Message::Window(crate::event_loop::WindowEvent::Resized { .. }) = message {
             return self.render(cx);
         }
-        if clicked.is_some() && clicked == self.next {
+        let page_size = list_window(cx.tree).max(1);
+        let Some(list) = self.list.as_ref() else {
+            return Ok(());
+        };
+        let previous = list.previous;
+        let next = list.next;
+        let rows = list.rows.clone();
+        if clicked.is_some() && clicked == Some(previous) {
+            self.index = self.index.saturating_sub(page_size);
+            return self.render(cx);
+        }
+        if clicked.is_some() && clicked == Some(next) {
             self.index = self
                 .index
-                .saturating_add(1)
+                .saturating_add(page_size)
                 .min(self.faction_keys.len().saturating_sub(1));
             return self.render(cx);
         }
@@ -7235,34 +7619,43 @@ impl Screen for Factions {
         if clicked.is_some() && clicked == self.increase {
             return self.stage_relation(cx, 100);
         }
+        if let Some(offset) = rows
+            .iter()
+            .position(|row| clicked.is_some() && clicked == Some(row.select))
+            .and_then(|position| self.faction_rows.get(position).copied().flatten())
+        {
+            self.index = offset;
+            return self.render(cx);
+        }
         Ok(())
     }
 }
 
-#[derive(Clone, Copy)]
-struct StashRow {
-    row: WidgetId,
-    label: WidgetId,
-    move_button: WidgetId,
-    action: Option<StashAction>,
-}
-
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum StashAction {
     Stalker2Take(u32),
     XrayTake(u16),
     XrayPut { object_id: u16, box_id: u16 },
 }
 
-/// Confirmed stash contents for the selected save.
+/// One stash entry of the selected save: its line, the action on it and whether that action is available.
+#[derive(Clone)]
+struct StashEntry {
+    label: String,
+    action: StashAction,
+    action_text: String,
+    staged: bool,
+    enabled: bool,
+}
+
+/// Confirmed stash contents for the selected save: a list of entries with the chosen one in the side panel.
 struct Stashes {
     workspace: Workspace,
-    text: Option<WidgetId>,
-    status: Option<WidgetId>,
-    pager: Option<WidgetId>,
-    previous: Option<WidgetId>,
-    next: Option<WidgetId>,
-    rows: Vec<StashRow>,
+    list: Option<ListSide>,
+    action: Option<WidgetId>,
+    entries: Vec<StashEntry>,
+    row_entries: Vec<usize>,
+    selected: Option<StashAction>,
     page: usize,
     last_path: Option<PathBuf>,
 }
@@ -7271,15 +7664,131 @@ impl Stashes {
     fn new(workspace: Workspace) -> Self {
         Self {
             workspace,
-            text: None,
-            status: None,
-            pager: None,
-            previous: None,
-            next: None,
-            rows: Vec::new(),
+            list: None,
+            action: None,
+            entries: Vec::new(),
+            row_entries: Vec::new(),
+            selected: None,
             page: 0,
             last_path: None,
         }
+    }
+
+    /// The note above the list: a message about the save, or the header of the entries.
+    fn set_text(&self, cx: &mut Context<'_>, text: &str) -> Result<()> {
+        if let Some(list) = self.list.as_ref() {
+            cx.tree.set_text(list.note, t(text))?;
+        }
+        Ok(())
+    }
+
+    /// The status line in the side panel; the same text goes to the window's status bar.
+    fn set_status(&self, cx: &mut Context<'_>, text: &str) -> Result<()> {
+        let translated = t(text);
+        if let Some(list) = self.list.as_ref() {
+            cx.tree.set_text(list.status, translated)?;
+            cx.tree.set_visible(list.status, !translated.is_empty())?;
+        }
+        cx.status = Some(translated.to_owned());
+        Ok(())
+    }
+
+    /// Hides the rows and the chosen entry: nothing to show or nothing chosen.
+    fn hide_list(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        let Some(list) = self.list.as_ref() else {
+            return Ok(());
+        };
+        for row in &list.rows {
+            cx.tree.set_visible(row.stack, false)?;
+        }
+        cx.tree.set_visible(list.pages, false)?;
+        for id in &list.kv_rows {
+            cx.tree.set_visible(*id, false)?;
+        }
+        if let Some(action) = self.action {
+            cx.tree.set_visible(action, false)?;
+        }
+        cx.tree.set_visible(list.actions, false)?;
+        cx.tree.set_visible(list.empty, true)?;
+        cx.tree.set_text(list.count, "0")?;
+        Ok(())
+    }
+
+    /// Shows the entries of the current page in the rows, and the chosen entry in the side panel.
+    /// Returns the number of pages.
+    fn show_entries(&mut self, cx: &mut Context<'_>, page_size: usize) -> Result<usize> {
+        let page_size = page_size.max(1);
+        let pages = self.entries.len().div_ceil(page_size);
+        self.page = self.page.min(pages.saturating_sub(1));
+        let start = self.page.saturating_mul(page_size);
+        let Some(list) = self.list.as_ref() else {
+            return Ok(pages);
+        };
+        let rows = list.rows.clone();
+        self.row_entries.clear();
+        for row in &rows {
+            cx.tree.set_visible(row.stack, false)?;
+        }
+        for (row, (index, entry)) in rows
+            .iter()
+            .zip(self.entries.iter().enumerate().skip(start).take(page_size))
+        {
+            let (title, meta) = split_label(&entry.label);
+            show_list_row(cx.tree, *row, title, meta, self.selected == Some(entry.action))?;
+            self.row_entries.push(index);
+        }
+        let list = self
+            .list
+            .as_ref()
+            .ok_or_else(|| Error::Refused("stash list is not built".to_owned()))?;
+        cx.tree.set_text(list.count, &self.entries.len().to_string())?;
+        cx.tree.set_visible(list.pages, pages > 1)?;
+        cx.tree.set_enabled(list.previous, self.page > 0)?;
+        cx.tree.set_enabled(list.next, self.page.saturating_add(1) < pages)?;
+        let last = start.saturating_add(page_size).min(self.entries.len());
+        let range = crate::strings::tr_in(
+            Some(crate::strings::current_language()),
+            "{0}–{1} из {2}",
+            &[&start.saturating_add(1), &last, &self.entries.len()],
+        );
+        cx.tree
+            .set_text(list.page_range, if self.entries.is_empty() { "" } else { &range })?;
+        let chosen = self
+            .selected
+            .and_then(|action| self.entries.iter().find(|entry| entry.action == action).cloned());
+        let Some(entry) = chosen else {
+            self.selected = None;
+            for id in &list.kv_rows {
+                cx.tree.set_visible(*id, false)?;
+            }
+            if let Some(action) = self.action {
+                cx.tree.set_visible(action, false)?;
+            }
+            cx.tree.set_visible(list.actions, false)?;
+            cx.tree.set_visible(list.empty, true)?;
+            cx.tree.set_visible(list.status, false)?;
+            cx.tree.set_visible(list.detail, false)?;
+            return Ok(pages);
+        };
+        let (title, meta) = split_label(&entry.label);
+        let values = [title.to_owned(), t(if entry.staged { "Да" } else { "Нет" }).to_owned()];
+        cx.tree.set_text(list.detail, meta)?;
+        cx.tree.set_visible(list.detail, true)?;
+        for id in &list.kv_rows {
+            cx.tree.set_visible(*id, true)?;
+        }
+        for (value, text) in list.kv_values.iter().zip(values.iter()) {
+            cx.tree.set_text(*value, text)?;
+        }
+        cx.tree.set_visible(list.empty, false)?;
+        cx.tree.set_visible(list.actions, true)?;
+        if let Some(action) = self.action {
+            cx.tree.set_text(action, &entry.action_text)?;
+            cx.tree.set_visible(action, true)?;
+            cx.tree.set_enabled(action, entry.enabled)?;
+        }
+        cx.tree.set_visible(list.status, true)?;
+        Ok(pages)
     }
 
     fn render(&mut self, cx: &mut Context<'_>) -> Result<()> {
@@ -7292,149 +7801,125 @@ impl Stashes {
                 state.pending_xray_stash_puts.clone(),
             )
         };
-        for row in &mut self.rows {
-            row.action = None;
-            cx.tree.set_visible(row.row, false)?;
+        let page_size = list_window(cx.tree).max(1);
+        if let Some(list) = self.list.as_ref() {
+            sync_side_widths(cx.tree, list)?;
         }
-        if let Some(id) = self.previous {
-            cx.tree.set_visible(id, false)?;
-        }
-        if let Some(id) = self.next {
-            cx.tree.set_visible(id, false)?;
-        }
-        if let Some(id) = self.pager {
-            cx.tree.set_visible(id, false)?;
-        }
+        self.entries.clear();
         self.set_status(cx, "")?;
         let Some(selected) = selected else {
             self.set_text(cx, t("Сначала выберите сейв на экране «Обзор»."))?;
-            return Ok(());
+            return self.hide_list(cx);
         };
         if self.last_path.as_ref() != Some(&selected.slot.path) {
             self.last_path = Some(selected.slot.path.clone());
             self.page = 0;
+            self.selected = None;
         }
         if let SaveData::Xray { save, inventory } = &selected.data {
-            return self.render_xray_stashes(cx, save, inventory, &pending_xray_takes, &pending_xray_puts);
+            return self.render_xray_stashes(cx, save, inventory, &pending_xray_takes, &pending_xray_puts, page_size);
         }
         let SaveData::Stalker2 { save, stash_items, .. } = &selected.data else {
-            return Ok(());
+            return self.hide_list(cx);
         };
         let items = match stash_items {
             Some(Ok(items)) => items,
             Some(Err(error)) => {
                 self.set_text(cx, &tr("Подтверждённые данные тайника недоступны: {0}", &[&error]))?;
-                return Ok(());
+                return self.hide_list(cx);
             }
             None => {
                 self.set_text(cx, "Подтверждённый блок тайника в этом сохранении не найден.")?;
-                return Ok(());
+                return self.hide_list(cx);
             }
         };
         if items.is_empty() {
             self.set_text(cx, "Подтверждённый тайник найден, но живых предметов в нём нет.")?;
-        } else {
-            let can_move = S2_STASH_MOVE_ENABLED && !save.index().is_legacy() && save.unresolved_handles().is_empty();
-            let pages = items.len().div_ceil(self.rows.len().max(1));
-            self.page = self.page.min(pages.saturating_sub(1));
-            let start = self.page.saturating_mul(self.rows.len());
-            self.set_text(
-                cx,
-                &tr(
-                    "S2: {0} предметов в подтверждённом тайнике · страница {1} из {2}. {3}",
+            return self.hide_list(cx);
+        }
+        let can_move = S2_STASH_MOVE_ENABLED && !save.index().is_legacy() && save.unresolved_handles().is_empty();
+        for item in items {
+            let name = item
+                .display_name
+                .as_deref()
+                .map(|name| t(name).to_owned())
+                .unwrap_or_else(|| {
+                    tr(
+                        "Предмет · ключ {0}",
+                        &[&format!(
+                            "{:02X}{:02X}{:02X}",
+                            item.type_key[0], item.type_key[1], item.type_key[2]
+                        )],
+                    )
+                });
+            let weight = if item.total_weight.is_finite() {
+                format!("{:.1}", item.total_weight)
+            } else {
+                t("неизвестен").to_owned()
+            };
+            let staged = pending_moves.contains(&item.handle);
+            self.entries.push(StashEntry {
+                label: tr(
+                    "{0} · кол-во {1} · вес {2} · ячейки {3} · {4}×{5} от {6},{7} · 0x{8}",
                     &[
-                        &items.len(),
-                        &self.page.saturating_add(1),
-                        &pages,
-                        &t(if can_move {
-                            "Отметьте перенос и сохраните его в «Инвентаре»."
-                        } else {
-                            "Перенос в рюкзак отключён до проверки сохранения в игре."
-                        }),
+                        &name,
+                        &item.count,
+                        &weight,
+                        &item.cells.len(),
+                        &item.width,
+                        &item.height,
+                        &item.x,
+                        &item.y,
+                        &format!("{:08X}", item.handle),
                     ],
                 ),
-            )?;
-            for (offset, row) in self.rows.iter_mut().enumerate() {
-                let Some(item) = items.get(start.saturating_add(offset)) else {
-                    continue;
-                };
-                let name = item
-                    .display_name
-                    .as_deref()
-                    .map(|name| t(name).to_owned())
-                    .unwrap_or_else(|| {
-                        tr(
-                            "Предмет · ключ {0}",
-                            &[&format!(
-                                "{:02X}{:02X}{:02X}",
-                                item.type_key[0], item.type_key[1], item.type_key[2]
-                            )],
-                        )
-                    });
-                let weight = if item.total_weight.is_finite() {
-                    format!("{:.1}", item.total_weight)
+                action: StashAction::Stalker2Take(item.handle),
+                action_text: t(if staged {
+                    "Отменить перенос"
                 } else {
-                    t("неизвестен").to_owned()
-                };
-                cx.tree.set_text(
-                    row.label,
-                    &tr(
-                        "{0} · кол-во {1} · вес {2} · ячейки {3} · {4}×{5} от {6},{7} · 0x{8}",
-                        &[
-                            &name,
-                            &item.count,
-                            &weight,
-                            &item.cells.len(),
-                            &item.width,
-                            &item.height,
-                            &item.x,
-                            &item.y,
-                            &format!("{:08X}", item.handle),
-                        ],
-                    ),
-                )?;
-                cx.tree.set_visible(row.row, true)?;
-                cx.tree.set_text(
-                    row.move_button,
-                    if pending_moves.contains(&item.handle) {
-                        t("Отменить перенос")
+                    "В рюкзак"
+                })
+                .to_owned(),
+                staged,
+                enabled: can_move,
+            });
+        }
+        let pages = self.show_entries(cx, page_size)?;
+        self.set_text(
+            cx,
+            &tr(
+                "S2: {0} предметов в подтверждённом тайнике · страница {1} из {2}. {3}",
+                &[
+                    &self.entries.len(),
+                    &self.page.saturating_add(1),
+                    &pages,
+                    &t(if can_move {
+                        "Отметьте перенос и сохраните его в «Инвентаре»."
                     } else {
-                        t("В рюкзак")
-                    },
-                )?;
-                cx.tree.set_visible(row.move_button, can_move)?;
-                row.action = Some(StashAction::Stalker2Take(item.handle));
-            }
-            if let Some(id) = self.previous {
-                cx.tree.set_visible(id, pages > 1 && self.page > 0)?;
-            }
-            if let Some(id) = self.next {
-                cx.tree
-                    .set_visible(id, pages > 1 && self.page.saturating_add(1) < pages)?;
-            }
-            if let Some(id) = self.pager {
-                cx.tree.set_visible(id, pages > 1)?;
-            }
-            if !S2_STASH_MOVE_ENABLED {
-                self.set_status(cx, "Перенос из тайника S2 отключён до проверки сохранения в игре.")?;
-            } else if !save.unresolved_handles().is_empty() {
-                self.set_status(cx, "Перенос отключён: индекс сейва содержит неразрешённые ссылки.")?;
-            } else if save.index().is_legacy() {
-                self.set_status(cx, S2_LEGACY_EDIT_REFUSAL)?;
-            } else if pending_moves.is_empty() {
-                self.set_status(
-                    cx,
-                    "Отметьте предметы и примените перенос кнопкой «Сохранить» в «Инвентаре».",
-                )?;
-            } else {
-                self.set_status(
-                    cx,
-                    &tr(
-                        "{0} предмет(ов) будет перенесено при сохранении из «Инвентаря».",
-                        &[&pending_moves.len()],
-                    ),
-                )?;
-            }
+                        "Перенос в рюкзак отключён до проверки сохранения в игре."
+                    }),
+                ],
+            ),
+        )?;
+        if !S2_STASH_MOVE_ENABLED {
+            self.set_status(cx, "Перенос из тайника S2 отключён до проверки сохранения в игре.")?;
+        } else if !save.unresolved_handles().is_empty() {
+            self.set_status(cx, "Перенос отключён: индекс сейва содержит неразрешённые ссылки.")?;
+        } else if save.index().is_legacy() {
+            self.set_status(cx, S2_LEGACY_EDIT_REFUSAL)?;
+        } else if pending_moves.is_empty() {
+            self.set_status(
+                cx,
+                "Отметьте предметы и примените перенос кнопкой «Сохранить» в «Инвентаре».",
+            )?;
+        } else {
+            self.set_status(
+                cx,
+                &tr(
+                    "{0} предмет(ов) будет перенесено при сохранении из «Инвентаря».",
+                    &[&pending_moves.len()],
+                ),
+            )?;
         }
         Ok(())
     }
@@ -7446,6 +7931,7 @@ impl Stashes {
         inventory: &[InventoryItem],
         pending_takes: &BTreeSet<u16>,
         pending_puts: &BTreeMap<u16, u16>,
+        page_size: usize,
     ) -> Result<()> {
         let can_move = xray_change_supported(save, writer::ChangeKind::MoveItems)
             && !self.workspace.is_saving()
@@ -7453,7 +7939,7 @@ impl Stashes {
         let catalog = sse_catalog::CatalogBundleReader::load_embedded().get(save.format().id());
         let Some(catalog) = catalog else {
             self.set_text(cx, "Каталог предметов для этой игры недоступен.")?;
-            return Ok(());
+            return self.hide_list(cx);
         };
         let mut boxes = save
             .registry_objects()
@@ -7463,9 +7949,8 @@ impl Stashes {
         boxes.sort_by_key(|object| object.object_id);
         if boxes.is_empty() {
             self.set_text(cx, "Подтверждённые тайники X-Ray в этом сейве не найдены.")?;
-            return Ok(());
+            return self.hide_list(cx);
         }
-        let mut entries = Vec::new();
         for box_object in &boxes {
             for object in save
                 .registry_objects()
@@ -7477,14 +7962,21 @@ impl Stashes {
                 };
                 let name = item.display_name.as_deref().unwrap_or(&item.key);
                 let staged = pending_takes.contains(&object.object_id);
-                entries.push((
-                    tr(
+                self.entries.push(StashEntry {
+                    label: tr(
                         "{0} · тайник {1} · 0x{2}",
                         &[&t(name), &box_object.name_replace, &format!("{:04X}", object.object_id)],
                     ),
-                    StashAction::XrayTake(object.object_id),
+                    action: StashAction::XrayTake(object.object_id),
+                    action_text: t(if staged {
+                        "Отменить"
+                    } else {
+                        "Перенести"
+                    })
+                    .to_owned(),
                     staged,
-                ));
+                    enabled: can_move,
+                });
             }
         }
         if let Some(destination_box) = boxes.first() {
@@ -7498,65 +7990,42 @@ impl Stashes {
                 };
                 let name = t(definition.display_name.as_deref().unwrap_or(&definition.key));
                 let staged = pending_puts.get(&item.handle) == Some(&box_id);
-                entries.push((
-                    tr(
+                self.entries.push(StashEntry {
+                    label: tr(
                         "{0} · в тайник {1} · 0x{2}",
                         &[&name, &destination_box.name_replace, &format!("{:04X}", item.handle)],
                     ),
-                    StashAction::XrayPut {
+                    action: StashAction::XrayPut {
                         object_id: item.handle,
                         box_id,
                     },
+                    action_text: t(if staged {
+                        "Отменить"
+                    } else {
+                        "Перенести"
+                    })
+                    .to_owned(),
                     staged,
-                ));
+                    enabled: can_move,
+                });
             }
         }
-        if entries.is_empty() {
+        if self.entries.is_empty() {
             self.set_text(
                 cx,
                 "В найденных тайниках нет предметов каталога, а в рюкзаке нет предметов с подтверждённым размещением.",
             )?;
-            return Ok(());
+            return self.hide_list(cx);
         }
-        let pages = entries.len().div_ceil(self.rows.len().max(1));
-        self.page = self.page.min(pages.saturating_sub(1));
-        let start = self.page.saturating_mul(self.rows.len());
+        let pages = self.show_entries(cx, page_size)?;
         let move_count = pending_takes.len().saturating_add(pending_puts.len());
         self.set_text(
             cx,
             &tr(
                 "X-Ray: {0} тайник(ов), {1} предмет(ов) для переноса · страница {2} из {3}. Перенос рюкзак↔первый тайник подтверждён writer-ом и сохранится из «Инвентаря».",
-                &[&boxes.len(), &entries.len(), &self.page.saturating_add(1), &pages],
+                &[&boxes.len(), &self.entries.len(), &self.page.saturating_add(1), &pages],
             ),
         )?;
-        for (offset, row) in self.rows.iter_mut().enumerate() {
-            let Some((label, action, staged)) = entries.get(start.saturating_add(offset)) else {
-                continue;
-            };
-            cx.tree.set_text(row.label, label)?;
-            cx.tree.set_visible(row.row, true)?;
-            cx.tree.set_text(
-                row.move_button,
-                if *staged {
-                    t("Отменить")
-                } else {
-                    t("Перенести")
-                },
-            )?;
-            cx.tree.set_visible(row.move_button, true)?;
-            cx.tree.set_enabled(row.move_button, can_move)?;
-            row.action = Some(*action);
-        }
-        if let Some(id) = self.previous {
-            cx.tree.set_visible(id, pages > 1 && self.page > 0)?;
-        }
-        if let Some(id) = self.next {
-            cx.tree
-                .set_visible(id, pages > 1 && self.page.saturating_add(1) < pages)?;
-        }
-        if let Some(id) = self.pager {
-            cx.tree.set_visible(id, pages > 1)?;
-        }
         let status = if !xray_change_supported(save, writer::ChangeKind::MoveItems) {
             t("Перемещение из тайников не поддерживается данным форматом.").to_owned()
         } else if self.workspace.is_saving() || self.workspace.is_restoring() {
@@ -7657,22 +8126,6 @@ impl Stashes {
         self.render(cx)
     }
 
-    fn set_text(&self, cx: &mut Context<'_>, text: &str) -> Result<()> {
-        if let Some(id) = self.text {
-            cx.tree.set_text(id, t(text))?;
-        }
-        Ok(())
-    }
-
-    fn set_status(&self, cx: &mut Context<'_>, text: &str) -> Result<()> {
-        let translated = t(text);
-        if let Some(id) = self.status {
-            cx.tree.set_text(id, translated)?;
-        }
-        cx.status = Some(translated.to_owned());
-        Ok(())
-    }
-
     fn move_item(&mut self, cx: &mut Context<'_>, handle: u32) -> Result<()> {
         let status = {
             let mut state = self.workspace.lock();
@@ -7758,32 +8211,24 @@ impl Screen for Stashes {
     }
 
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
-        let card = style::card(cx.tree, host)?;
-        style::label(cx.tree, card, "ТАЙНИКИ", Text::Heading)?;
-        self.text = Some(style::label(
+        let keys = [t("Предмет"), t("Черновик")].map(str::to_owned);
+        let list = build_list_side(
+            cx,
+            host,
+            t("ТАЙНИКИ"),
+            t("ВЫБРАННЫЙ ПРЕДМЕТ"),
+            &keys,
+            t("Предмет не выбран."),
+            t("Выберите сейв на экране «Обзор»."),
+        )?;
+        self.action = Some(style::d2::button(
             cx.tree,
-            card,
-            "Выберите сейв на экране «Обзор».",
-            Text::Body,
+            list.actions,
+            "",
+            style::d2::ButtonKind::Primary,
+            style::d2::ButtonSize::Normal,
         )?);
-        self.status = Some(style::label(cx.tree, card, "", Text::Note)?);
-        let pager = style::row(cx.tree, card)?;
-        self.pager = Some(pager);
-        self.previous = Some(style::button(cx.tree, pager, "Предыдущая", Button::Secondary)?);
-        self.next = Some(style::button(cx.tree, pager, "Следующая", Button::Secondary)?);
-        cx.tree.set_visible(pager, false)?;
-        for _ in 0..MAXIMUM_STASH_ROWS {
-            let row = style::row(cx.tree, card)?;
-            let label = style::label(cx.tree, row, "", Text::Body)?;
-            let move_button = style::button(cx.tree, row, "В рюкзак", Button::Secondary)?;
-            cx.tree.set_visible(row, false)?;
-            self.rows.push(StashRow {
-                row,
-                label,
-                move_button,
-                action: None,
-            });
-        }
+        self.list = Some(list);
         self.render(cx)
     }
 
@@ -7795,30 +8240,46 @@ impl Screen for Stashes {
     fn message(
         &mut self,
         cx: &mut Context<'_>,
-        _message: &Message<AppMessage>,
+        message: &Message<AppMessage>,
         clicked: Option<WidgetId>,
     ) -> Result<()> {
-        if clicked.is_some() && clicked == self.previous {
+        if let Message::Window(crate::event_loop::WindowEvent::Resized { .. }) = message {
+            return self.render(cx);
+        }
+        let Some(list) = self.list.as_ref() else {
+            return Ok(());
+        };
+        let (previous, next, rows) = (list.previous, list.next, list.rows.clone());
+        if clicked.is_some() && clicked == Some(previous) {
             self.page = self.page.saturating_sub(1);
             return self.render(cx);
         }
-        if clicked.is_some() && clicked == self.next {
+        if clicked.is_some() && clicked == Some(next) {
             self.page = self.page.saturating_add(1);
             return self.render(cx);
         }
-        if let Some(action) = self
-            .rows
+        if let Some(index) = rows
             .iter()
-            .find(|row| Some(row.move_button) == clicked)
-            .and_then(|row| row.action)
+            .position(|row| clicked.is_some() && clicked == Some(row.select))
+            .and_then(|position| self.row_entries.get(position).copied())
         {
-            match action {
-                StashAction::Stalker2Take(handle) => self.move_item(cx, handle)?,
-                StashAction::XrayTake(handle) => self.stage_xray_move(cx, StashAction::XrayTake(handle))?,
-                StashAction::XrayPut { object_id, box_id } => {
-                    self.stage_xray_move(cx, StashAction::XrayPut { object_id, box_id })?
+            if let Some(entry) = self.entries.get(index) {
+                self.selected = Some(entry.action);
+            }
+            return self.render(cx);
+        }
+        if clicked.is_some() && clicked == self.action {
+            if let Some(action) = self.selected {
+                match action {
+                    StashAction::Stalker2Take(handle) => self.move_item(cx, handle)?,
+                    StashAction::XrayTake(handle) => self.stage_xray_move(cx, StashAction::XrayTake(handle))?,
+                    StashAction::XrayPut { object_id, box_id } => {
+                        self.stage_xray_move(cx, StashAction::XrayPut { object_id, box_id })?
+                    }
                 }
             }
+            self.workspace.poll_tasks();
+            return self.render(cx);
         }
         self.workspace.poll_tasks();
         Ok(())
@@ -8941,6 +9402,126 @@ mod tests {
     }
 
     #[test]
+    fn s2_stash_row_then_action_stays_disabled_and_writes_nothing() -> sse_core::Result<()> {
+        // The row only chooses the item; the one action is off while S2 transfers are unverified, so it changes nothing.
+        let temp = TempDirectory::new();
+        let path = temp.0.join("stash.sav");
+        let original = include_bytes!("../../../../fixtures/synthetic/writer-s2-stash/s2-stash-source.sav");
+        fs::write(&path, original)?;
+        let selected = LoadedSave::read(fixture_slot(&path.to_string_lossy(), "stalker2", "stalker2"))?;
+        let source_sha256 = selected.source_sha256.clone();
+        let workspace = Workspace::with_draft_directory(temp.0.join("drafts"));
+        workspace.lock().selected = Some(std::sync::Arc::new(selected));
+        let mut app = sse_app::AppState::new();
+        app.set_current_save_identity(path.clone(), source_sha256.clone());
+        app.set_current_save_format(Some("stalker2".to_owned()), false);
+        app.set_draft_journal(DraftJournal::new(vec![DraftPlan::empty(&source_sha256)?], 0)?);
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let mut screen = super::Stashes::new(workspace);
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: None,
+            status: None,
+            app: &mut app,
+        };
+        screen.build(&mut cx, host)?;
+        let action = screen
+            .action
+            .ok_or_else(|| Error::damaged("stash action was not built"))?;
+        let select = screen
+            .list
+            .as_ref()
+            .and_then(|list| list.rows.first())
+            .map(|row| row.select)
+            .ok_or_else(|| Error::damaged("no row for the S2 item"))?;
+        let pointer = Message::Window(WindowEvent::PointerLeft);
+        screen.message(&mut cx, &pointer, Some(select))?;
+        assert!(
+            cx.tree.is_visible(action),
+            "the action is hidden after choosing the item"
+        );
+        assert!(
+            !cx.tree.is_enabled(action)?,
+            "the S2 action is on while transfers are unverified"
+        );
+        let _ = screen.message(&mut cx, &pointer, Some(action));
+        assert!(cx
+            .app
+            .draft(&source_sha256)
+            .is_none_or(|plan| plan.stash_takes.is_empty()));
+        assert_eq!(fs::read(&path)?, original);
+        Ok(())
+    }
+
+    #[test]
+    fn faction_row_then_adjustment_stages_the_chosen_faction() -> sse_core::Result<()> {
+        let temp = TempDirectory::new();
+        let source = include_bytes!("../../../../fixtures/synthetic/writer-factions/cop-source.sav");
+        let loaded = Arc::new(load_xray(source, "cop-source.sav", "stalker-cop", "cop")?);
+        let source_sha256 = loaded.source_sha256.clone();
+        let workspace = Workspace::with_draft_directory(temp.0.join("drafts"));
+        workspace.lock().selected = Some(Arc::clone(&loaded));
+        let mut app = sse_app::state::AppState::new();
+        app.set_current_save_identity(loaded.slot.path.clone(), source_sha256.clone());
+        app.set_current_save_format(Some("stalker-cop".to_owned()), false);
+        app.set_draft_journal(DraftJournal::new(vec![DraftPlan::empty(&source_sha256)?], 0)?);
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let mut screen = super::Factions::new(workspace);
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: None,
+            status: None,
+            app: &mut app,
+        };
+        screen.build(&mut cx, host)?;
+        let list = screen
+            .list
+            .as_ref()
+            .ok_or_else(|| Error::damaged("factions list was not built"))?;
+        let (select, increase) = (
+            list.rows
+                .get(2)
+                .map(|row| row.select)
+                .ok_or_else(|| Error::damaged("no third row"))?,
+            screen.increase.ok_or_else(|| Error::damaged("no adjustment button"))?,
+        );
+        let key = screen
+            .faction_keys
+            .get(2)
+            .cloned()
+            .ok_or_else(|| Error::damaged("fewer than three factions"))?;
+        let pointer = Message::Window(WindowEvent::PointerLeft);
+        screen.message(&mut cx, &pointer, Some(select))?;
+        screen.message(&mut cx, &pointer, Some(increase))?;
+
+        let relations = cx
+            .app
+            .draft(&source_sha256)
+            .map(|plan| plan.faction_relations.clone())
+            .ok_or_else(|| Error::damaged("the adjustment did not reach the draft"))?;
+        assert!(
+            relations.contains_key(&key),
+            "the draft changed another faction than the chosen row"
+        );
+        assert_eq!(relations.len(), 1);
+        Ok(())
+    }
+
+    #[test]
     fn unsupported_ee_stash_move_never_enters_the_draft() -> sse_core::Result<()> {
         let temp = TempDirectory::new();
         let source = include_bytes!("../../../../fixtures/synthetic/xray-stashes/xray-stash-cop-ee-source.sav");
@@ -9692,11 +10273,10 @@ mod tests {
         };
         screen.build(&mut cx, host)?;
 
+        // Nothing is chosen yet, so the one action stays hidden; the entries are rows of the list.
         let move_button = screen
-            .rows
-            .first()
-            .map(|row| row.move_button)
-            .ok_or_else(|| Error::damaged("S2 stash row was not built"))?;
+            .action
+            .ok_or_else(|| Error::damaged("S2 stash action was not built"))?;
         assert!(!cx.tree.is_visible(move_button));
         screen.move_item(&mut cx, handle)?;
         assert!(cx.status.as_deref().is_some_and(|text| text.contains("отключён")));
