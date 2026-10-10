@@ -47,7 +47,7 @@ fn italian_save_editor_title_is_italian() {
 
     assert_eq!(
         service.tr_in(Some("it"), "РЕДАКТОР СОХРАНЕНИЙ", &[]),
-        "EDITOR DI SALVATAGGI"
+        "EDITOR DEI SALVATAGGI"
     );
 }
 
@@ -89,10 +89,102 @@ fn japanese_burer_references_do_not_mix_scripts() {
 }
 
 #[test]
-fn japanese_companion_enabled_status_uses_enabled_term() {
+fn japanese_companion_snapshot_uses_included_term() {
     let service = I18nService::instance();
 
-    assert_eq!(service.tr_in(Some("ja"), "включён", &[]), "有効");
+    assert_eq!(service.tr_in(Some("ja"), "включён", &[]), "含まれています");
+}
+
+#[test]
+fn polish_item_metadata_uses_section_term() {
+    let service = I18nService::instance();
+
+    assert_eq!(
+        service.tr_in(Some("pl"), "Вес: {0} · Цена: {1} · Секция: {2}", &[]),
+        "Waga: {0} · Cena: {1} · Sekcja: {2}"
+    );
+}
+
+#[test]
+fn polish_game_default_label_preserves_value_meaning() {
+    let service = I18nService::instance();
+
+    assert_eq!(
+        service.tr_in(Some("pl"), "Значение по умолчанию игры", &[]),
+        "Wartość domyślna gry"
+    );
+}
+
+#[test]
+fn polish_level_changer_label_preserves_registry_source() {
+    let service = I18nService::instance();
+
+    assert_eq!(
+        service.tr_in(
+            Some("pl"),
+            "Объекты переходов между локациями (Level Changers) из реестра X-Ray.",
+            &[]
+        ),
+        "Przejścia między lokacjami (Level Changers) z rejestru X-Ray."
+    );
+}
+
+#[test]
+fn polish_profile_summary_keeps_companion_as_product_name() {
+    let service = I18nService::instance();
+
+    assert_eq!(
+        service.tr_in(
+            Some("pl"),
+            "Профиль сохраняет установленные идентификаторы Game Fix, состояние Companion и только явные настройки user.ltx, управляемые инструментом.",
+            &[]
+        ),
+        "Profil zachowuje zainstalowane identyfikatory poprawek do gier, stan moda Companion i tylko jawne ustawienia user.ltx zarządzane przez narzędzie."
+    );
+}
+
+#[test]
+fn polish_manifest_label_keeps_software_term() {
+    let service = I18nService::instance();
+
+    assert_eq!(
+        service.tr_in(Some("pl"), "СОСТОЯНИЕ БЕЗ МАНИФЕСТА", &[]),
+        "STAN BEZ MANIFESTU"
+    );
+}
+
+#[test]
+fn polish_companion_controls_keep_product_name() {
+    let service = I18nService::instance();
+
+    assert_eq!(
+        service.tr_in(Some("pl"), "Состояние и управление компаньоном", &[]),
+        "Stan i obsługa Companion"
+    );
+}
+
+#[test]
+fn polish_compare_with_previous_uses_singular() {
+    let service = I18nService::instance();
+
+    assert_eq!(
+        service.tr_in(Some("pl"), "Сравнить с предыдущим", &[]),
+        "Porównaj z poprzednim"
+    );
+}
+
+#[test]
+fn polish_transition_placement_note_uses_natural_save_wording() {
+    let service = I18nService::instance();
+
+    assert_eq!(
+        service.tr_in(
+            Some("pl"),
+            "Только точки, куда игра сама ставит персонажа после перехода. Сохранение записывается сразу, с бэкапом. В игре это ещё не проверено.",
+            &[]
+        ),
+        "Tylko miejsca, w których gra sama umieszcza postać po przejściu. Zapis następuje od razu po utworzeniu kopii zapasowej. Nie sprawdzono tego jeszcze w grze."
+    );
 }
 
 #[test]
