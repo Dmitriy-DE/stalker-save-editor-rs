@@ -3717,7 +3717,9 @@ impl Inventory {
         });
         if !focused && !cx.app.has_invalid_numeric_input() {
             let text = value.to_string();
-            self.money_input = Some(TextInput::new(&text, money_input_config())?);
+            if self.money_input.as_ref().is_none_or(|input| input.text() != text) {
+                self.money_input = Some(TextInput::new(&text, money_input_config())?);
+            }
             cx.tree.set_text(widget, &text)?;
         }
         cx.tree.set_enabled(widget, enabled)?;
@@ -3753,7 +3755,14 @@ impl Inventory {
             input.focused()
         });
         if !focused {
-            self.search = Some(TextInput::new(&self.search_query, inventory_search_config())?);
+            // Recreate the field only when its text changed, so undo history survives re-renders.
+            if self
+                .search
+                .as_ref()
+                .is_none_or(|input| input.text() != self.search_query)
+            {
+                self.search = Some(TextInput::new(&self.search_query, inventory_search_config())?);
+            }
             cx.tree.set_text(widget, &self.search_query)?;
         }
         Ok(())
