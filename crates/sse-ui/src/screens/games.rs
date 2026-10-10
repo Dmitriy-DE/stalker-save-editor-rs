@@ -4926,7 +4926,7 @@ impl Encyclopedia {
         };
         let Some(proxy) = cx.proxy.cloned() else { return };
         sse_app::tasks::spawn_named_detached("game-read", move || {
-            let cache = std::env::temp_dir().join("stalker-save-editor").join("catalog-cache");
+            let cache = encyclopedia_cache_directory();
             let result = (|| {
                 let content = sse_catalog::GameContentService::load(game, &directory, &cache, "ru")
                     .map_err(|e| e.to_string())?
@@ -5714,5 +5714,24 @@ mod discovery_start_tests {
         })));
         clear_discovery_after_failed_start(&workspace);
         assert!(!workspace.lock().discovering);
+    }
+}
+
+/// Where the encyclopedia keeps its catalog cache: inside the application's own data directory, not in the
+/// shared temporary folder, where another user could pre-create the path.
+fn encyclopedia_cache_directory() -> std::path::PathBuf {
+    sse_app::paths::default_data_directory().join("catalog-cache")
+}
+
+#[cfg(test)]
+mod encyclopedia_cache_tests {
+    use super::encyclopedia_cache_directory;
+
+    #[test]
+    fn encyclopedia_cache_lives_in_the_application_data_directory() {
+        assert_eq!(
+            encyclopedia_cache_directory(),
+            sse_app::paths::default_data_directory().join("catalog-cache")
+        );
     }
 }
