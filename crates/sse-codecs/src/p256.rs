@@ -277,13 +277,14 @@ fn modulus_complement(modulus: U256) -> U256 {
     inverted_plus_one
 }
 
+/// Adds two field elements modulo `modulus`. Both inputs must already be reduced (`< modulus`);
+/// every caller in this module guarantees that, so the result is canonical (`< modulus`).
 fn add_mod(a: U256, b: U256, modulus: U256) -> U256 {
     let (sum, carry) = a.add_raw(b);
     if carry {
-        let (reduced, carry_again) = sum.add_raw(modulus_complement(modulus));
-        if carry_again {
-            return reduced;
-        }
+        // The true sum is `sum + 2^256`; adding `2^256 - modulus` (mod 2^256) gives `a + b - modulus`,
+        // which is below `modulus` because `a + b < 2 * modulus`.
+        let (reduced, _) = sum.add_raw(modulus_complement(modulus));
         return reduced;
     }
     if sum.cmp(&modulus) != Ordering::Less {
@@ -689,6 +690,19 @@ DuEkmd6oGnQq6qsZmILc2fYC0wfqEMk/NB88BSFAC1N6fmziJf11RVtlLQ==\n\
         0x02, 0x20, 0x56, 0xEB, 0x1E, 0x2D, 0xC0, 0x7F, 0xF8, 0xA8, 0x4D, 0x4A, 0xFB, 0x83, 0xE9, 0x35, 0xDF, 0x96,
         0xE6, 0x8E, 0x4D, 0x68, 0x86, 0x79, 0x51, 0xF2, 0xBF, 0x2B, 0x62, 0x8D, 0x8B, 0x73, 0xA1, 0x6A,
     ];
+
+    #[test]
+    fn modular_addition_is_canonical_at_the_wrap_boundary() {
+        // Both sums below carry out of 256 bits; the results must be the reduced residues.
+        let two = U256([2, 0, 0, 0]);
+        let p_minus_one = P.sub_raw(U256::ONE).0;
+        let n_minus_one = N.sub_raw(U256::ONE).0;
+        // (p-1) + (p-1) = p-2 (mod p), and (p-1) + 1 = 0 (mod p); the same for the group order n.
+        assert_eq!(super::add_mod(p_minus_one, p_minus_one, P), P.sub_raw(two).0);
+        assert_eq!(super::add_mod(p_minus_one, U256::ONE, P), U256::ZERO);
+        assert_eq!(super::add_mod(n_minus_one, n_minus_one, N), N.sub_raw(two).0);
+        assert_eq!(super::add_mod(n_minus_one, U256::ONE, N), U256::ZERO);
+    }
 
     #[test]
     fn release_manifest_signature_verifies() {
