@@ -71,8 +71,9 @@ fn main() -> std::process::ExitCode {
         Some("--ci-budget") => ci_budget(),
         Some("--ci-i18n-buttons") => ci_i18n_buttons(),
         Some("--package-ee") => package_ee(&args),
+        Some("--metrics-report") => metrics_report(&args),
         _ => Err(Error::Refused(
-            "usage: sse-ui-dev --screenshot|--bench|--ci-budget|--ci-i18n-buttons|--package-ee <soc|cs|cop> <dir>"
+            "usage: sse-ui-dev --screenshot|--bench|--ci-budget|--ci-i18n-buttons|--package-ee <soc|cs|cop> <dir>|--metrics-report <dir>"
                 .to_owned(),
         )),
     };
@@ -81,6 +82,34 @@ fn main() -> std::process::ExitCode {
         return std::process::ExitCode::FAILURE;
     }
     std::process::ExitCode::SUCCESS
+}
+
+/// Prints the developer table for the `metrics/*.json` summaries in a local folder.
+///
+/// Download the folder first with wrangler, for example `wrangler r2 object get` for each key under `metrics/`.
+fn metrics_report(args: &[String]) -> Result<()> {
+    let [_, directory] = args else {
+        return Err(Error::Refused("usage: sse-ui-dev --metrics-report <dir>".to_owned()));
+    };
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(directory)? {
+        let path = entry?.path();
+        if path.extension().is_some_and(|extension| extension == "json") {
+            let name = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            files.push((name, std::fs::read(&path)?));
+        }
+    }
+    files.sort_by(|left, right| left.0.cmp(&right.0));
+    let report =
+        sse_app::metrics_report::build_report(files.iter().map(|(name, bytes)| (name.as_str(), bytes.as_slice())));
+    for (name, reason) in &report.skipped {
+        eprintln!("sse-ui-dev: пропущен {name}: {reason}");
+    }
+    print!("{}", sse_app::metrics_report::render(&report));
+    Ok(())
 }
 
 fn package_ee(args: &[String]) -> Result<()> {

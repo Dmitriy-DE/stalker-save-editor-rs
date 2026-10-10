@@ -4,6 +4,7 @@
 
 pub mod diagnostics;
 pub mod metrics;
+pub mod metrics_report;
 pub mod paths;
 pub mod save_session;
 pub mod settings;
