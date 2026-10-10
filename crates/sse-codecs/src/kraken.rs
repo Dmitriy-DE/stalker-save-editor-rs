@@ -67,18 +67,12 @@ pub fn decompress_into(source: &[u8], output: &mut [u8]) -> Result<()> {
             continue;
         }
 
-        let quantum = parse_quantum_header(source, &mut src, header.use_checksums)?;
+        let quantum = parse_quantum_header(source, &mut src)?;
         if quantum.compressed_size == 0 {
-            if quantum.whole_match_distance != 0 {
-                let distance = usize::try_from(quantum.whole_match_distance)
-                    .map_err(|_| Error::damaged("whole-match distance does not fit usize"))?;
-                copy_match(output, dst, amount, distance)?;
-            } else {
-                output
-                    .get_mut(dst..dst_end)
-                    .ok_or_else(|| Error::damaged("memset quantum outside output"))?
-                    .fill(quantum.special_byte);
-            }
+            output
+                .get_mut(dst..dst_end)
+                .ok_or_else(|| Error::damaged("memset quantum outside output"))?
+                .fill(quantum.special_byte);
             dst = dst_end;
             continue;
         }
@@ -126,7 +120,6 @@ struct BlockHeader {
 struct QuantumHeader {
     compressed_size: u32,
     special_byte: u8,
-    whole_match_distance: u32,
 }
 
 fn parse_block_header(source: &[u8], at: &mut usize) -> Result<BlockHeader> {
@@ -146,7 +139,8 @@ fn parse_block_header(source: &[u8], at: &mut usize) -> Result<BlockHeader> {
     })
 }
 
-fn parse_quantum_header(source: &[u8], at: &mut usize, use_checksum: bool) -> Result<QuantumHeader> {
+// Block headers that set the checksum flag are refused before quantum headers are read, so no quantum here carries a checksum.
+fn parse_quantum_header(source: &[u8], at: &mut usize) -> Result<QuantumHeader> {
     let a = u32::from(take_u8(source, at)?);
     let b = u32::from(take_u8(source, at)?);
     let c = u32::from(take_u8(source, at)?);
@@ -156,13 +150,9 @@ fn parse_quantum_header(source: &[u8], at: &mut usize, use_checksum: bool) -> Re
         let compressed_size = size
             .checked_add(1)
             .ok_or_else(|| Error::damaged("quantum size overflow"))?;
-        if use_checksum {
-            let _checksum = take_u24_be(source, at)?;
-        }
         return Ok(QuantumHeader {
             compressed_size,
             special_byte: 0,
-            whole_match_distance: 0,
         });
     }
     let special = value >> 18;
@@ -171,7 +161,6 @@ fn parse_quantum_header(source: &[u8], at: &mut usize, use_checksum: bool) -> Re
         return Ok(QuantumHeader {
             compressed_size: 0,
             special_byte,
-            whole_match_distance: 0,
         });
     }
     Err(Error::damaged("unsupported Kraken special quantum header"))
@@ -2957,19 +2946,6 @@ fn add_signed(base: usize, delta: i32) -> Result<usize> {
     }
 }
 
-fn copy_match(output: &mut [u8], dst: usize, count: usize, distance: usize) -> Result<()> {
-    if distance == 0 || distance > dst {
-        return Err(Error::damaged("whole-match distance outside output history"));
-    }
-    let end = dst
-        .checked_add(count)
-        .ok_or_else(|| Error::damaged("whole-match end overflow"))?;
-    if end > output.len() {
-        return Err(Error::damaged("whole-match exceeds output"));
-    }
-    copy_match_distance(output, dst, end, distance)
-}
-
 fn copy_match_distance(output: &mut [u8], mut dst: usize, end: usize, distance: usize) -> Result<()> {
     if distance == 0 || distance > dst {
         return Err(Error::damaged("match distance outside output history"));
@@ -3015,14 +2991,6 @@ fn take_u8(source: &[u8], at: &mut usize) -> Result<u8> {
     *at = at
         .checked_add(1)
         .ok_or_else(|| Error::damaged("Kraken source position overflow"))?;
-    Ok(value)
-}
-fn take_u24_be(source: &[u8], at: &mut usize) -> Result<u32> {
-    let end = at
-        .checked_add(3)
-        .ok_or_else(|| Error::damaged("u24 source range overflow"))?;
-    let value = peek_u24_be(source, *at)?;
-    *at = end;
     Ok(value)
 }
 fn peek_u24_be(source: &[u8], at: usize) -> Result<u32> {
