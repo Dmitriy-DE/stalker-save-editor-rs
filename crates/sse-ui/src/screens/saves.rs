@@ -1297,8 +1297,17 @@ fn default_draft_directory() -> PathBuf {
 }
 
 fn load_draft_journal(directory: &Path, source_path: &Path, source_sha256: &str) -> Result<DraftJournal> {
-    if let Some(journal) = DraftStore::for_source(directory, source_path).load(source_sha256)? {
-        return Ok(journal);
+    let store = DraftStore::for_source(directory, source_path);
+    match store.load(source_sha256) {
+        Ok(Some(journal)) => return Ok(journal),
+        Ok(None) => {}
+        // A damaged draft must not block the save itself: the file is kept beside it, not deleted.
+        Err(Error::Damaged(message)) => {
+            sse_app::diagnostics::warn(&format!("damaged draft moved aside: {message}"));
+            store.set_aside(source_sha256)?;
+        }
+        // Refusals (for example, a journal from a newer editor) stay visible to the user.
+        Err(error) => return Err(error),
     }
     DraftJournal::new(vec![DraftPlan::empty(source_sha256)?], 0)
 }
@@ -10747,6 +10756,26 @@ mod tests {
         super::start_reload_selected(&workspace, &mut cx)?;
         assert!(!cx.app.has_draft(&sha_a), "the confirmed reload discards the draft");
         assert_eq!(expected_a, fs::canonicalize(&save_a)?);
+        Ok(())
+    }
+
+    #[test]
+    fn damaged_draft_is_kept_aside_and_the_save_still_opens() -> sse_core::Result<()> {
+        let temp = TempDirectory::new();
+        let source = temp.0.join("save.sav");
+        let sha = "ab".repeat(32);
+        let store = DraftStore::for_source(&temp.0, &source);
+        fs::write(store.path_for(&sha)?, b"{\"truncated")?;
+        let journal = super::load_draft_journal(&temp.0, &source, &sha)?;
+        assert!(journal.current().is_some_and(|plan| plan.money.is_none()));
+        assert!(
+            !store.path_for(&sha)?.exists(),
+            "the damaged draft must leave its place"
+        );
+        let kept = fs::read_dir(&temp.0)?
+            .filter_map(|entry| entry.ok().map(|entry| entry.file_name().to_string_lossy().into_owned()))
+            .any(|name| name.contains("unsupported"));
+        assert!(kept, "the damaged draft must be kept, not deleted");
         Ok(())
     }
 
