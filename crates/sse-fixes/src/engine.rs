@@ -26,6 +26,7 @@ use crate::models::{
     GameFixSaveCompatibility, GameFixState, GameFixUninstallCheck, GameFixVerificationState, GameTarget,
     ManagedGameFile, SpawnEditOperation,
 };
+use crate::running_game::{ensure_game_not_running, GameRunningProbe, NoGameRunningProbe, SystemGameRunningProbe};
 use crate::store::GameFixContentStore;
 
 const MANIFEST_SCHEMA_VERSION: u32 = 2;
@@ -44,6 +45,7 @@ type OverlayReaderFn = Arc<dyn Fn(&str) -> Option<Vec<u8>> + Send + Sync>;
 pub struct GameFixEngine {
     allow_synthetic_definitions: bool,
     overlay_reader: OverlayReaderFn,
+    process_probe: Arc<dyn GameRunningProbe>,
 }
 
 struct TextPatchTarget {
@@ -62,21 +64,36 @@ impl Default for GameFixEngine {
 }
 
 impl GameFixEngine {
+    /// Replaces how the engine detects a running game (used by tests and embedders).
+    #[must_use]
+    pub fn with_process_probe(mut self, probe: Arc<dyn GameRunningProbe>) -> Self {
+        self.process_probe = probe;
+        self
+    }
+
     /// Creates a production game fix engine.
     #[must_use]
     pub fn new() -> Self {
         Self {
             allow_synthetic_definitions: false,
             overlay_reader: Arc::new(|sha| GameFixContentStore::read(&GameFixContentStore::default_directory(), sha)),
+            process_probe: Arc::new(SystemGameRunningProbe),
         }
     }
 
     /// Creates an engine with synthetic definitions enabled (for unit testing).
     #[must_use]
     pub fn with_synthetic(allow_synthetic_definitions: bool) -> Self {
+        // Synthetic engines are test engines: they must not depend on what is running on this machine.
+        let process_probe: Arc<dyn GameRunningProbe> = if allow_synthetic_definitions {
+            Arc::new(NoGameRunningProbe)
+        } else {
+            Arc::new(SystemGameRunningProbe)
+        };
         Self {
             allow_synthetic_definitions,
             overlay_reader: Arc::new(|sha| GameFixContentStore::read(&GameFixContentStore::default_directory(), sha)),
+            process_probe,
         }
     }
 
@@ -175,6 +192,7 @@ impl GameFixEngine {
         game_dir: &Path,
         allow_version_transition: bool,
     ) -> Result<GameFixInstallResult> {
+        ensure_game_not_running(&self.process_probe, definition.game)?;
         validate_definition(definition)?;
         let fix_dir = get_fix_directory(game_dir, &definition.id);
         check_no_links(game_dir, &fix_dir)?;
@@ -579,6 +597,10 @@ impl GameFixEngine {
     pub fn uninstall(&self, fix_id: &str, game_dir: &Path) -> Result<GameFixInstallResult> {
         let manifest_path = get_manifest_path(game_dir, fix_id);
         check_no_links(game_dir, &manifest_path)?;
+        if manifest_path.is_file() {
+            let game = read_manifest(&manifest_path, fix_id)?.game;
+            ensure_game_not_running(&self.process_probe, game)?;
+        }
         let _ = self.recover_interrupted(game_dir)?;
 
         if !manifest_path.is_file() {

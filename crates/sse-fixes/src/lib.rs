@@ -9,6 +9,7 @@ pub mod extractor;
 pub mod fs_util;
 pub mod identify;
 pub mod models;
+pub mod running_game;
 pub mod store;
 pub mod toolkit;
 
