@@ -1333,6 +1333,11 @@ struct CloudIntent {
     backup_directory: PathBuf,
 }
 
+/// A cloud write may only go to the game whose save was checked.
+fn intent_is_for_selected_game(selected_game: Option<&str>, intent_app_id: u32) -> bool {
+    selected_game.and_then(app_id) == Some(intent_app_id)
+}
+
 #[derive(Debug)]
 enum CloudReply {
     List(std::result::Result<Vec<CloudFile>, String>),
@@ -1811,6 +1816,11 @@ impl Screen for Cloud {
                         cx.tree.set_visible(card, false)?;
                     }
                 }
+                // The prepared intent belongs to the game that was selected when it was checked.
+                if !intent_is_for_selected_game(cx.app.selected_game(), intent.app_id) {
+                    cx.status = Some(t("Выбранная игра изменилась; подтверждение отменено.").to_owned());
+                    return Ok(());
+                }
                 cx.status = Some(tr("Запись {0} в Steam Cloud (RemoteStorage)...", &[&intent.remote]));
                 self.upload(cx, intent);
             }
@@ -1900,6 +1910,10 @@ impl Screen for Cloud {
                         if cx.app.selected_game().and_then(app_id) != Some(intent.app_id) {
                             cx.status = Some(t("Выбор игры изменился; запись в облако отменена.").to_owned());
                             return Ok(());
+                        }
+                        // The dialog does not repeat the game title or file name, so the status line names both.
+                        if let Some(game) = cx.app.selected_game() {
+                            cx.status = Some(format!("{game} · {}", intent.remote));
                         }
                         if let Some(label) = self.confirm_cloud_version {
                             cx.tree.set_text(
@@ -2281,6 +2295,16 @@ impl Screen for Updates {
 mod service_localization_tests {
     use super::super::saves::Workspace;
     use super::super::{Context, Screen};
+    use super::intent_is_for_selected_game;
+
+    #[test]
+    fn cloud_write_is_refused_when_the_selected_game_changed_after_the_check() {
+        let checked = 4_500;
+        assert!(intent_is_for_selected_game(Some("soc"), checked));
+        assert!(!intent_is_for_selected_game(Some("cop"), checked));
+        assert!(!intent_is_for_selected_game(None, checked));
+    }
+
     use super::{hotkey_label, t_in, tr_in};
 
     #[test]
