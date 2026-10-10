@@ -7,8 +7,9 @@ use std::time::Instant;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod curl;
+// `FileFetch` is only exercised by tests now: `SystemFetch` no longer serves file URLs.
+#[cfg(test)]
 mod local;
-use local::FileFetch;
 #[cfg(target_os = "windows")]
 mod windows;
 
@@ -161,14 +162,9 @@ impl Fetch for SystemFetch {
         on_response: &mut dyn FnMut(&Response) -> bool,
         sink: &mut dyn FnMut(&[u8]) -> bool,
     ) -> Result<Response> {
-        if url.starts_with("file://") {
-            return FileFetch {
-                max_bytes: self.max_bytes,
-            }
-            .get_with_response(url, range_from, on_response, sink);
-        }
+        // `SystemFetch` is network-only, so callers cannot bypass the HTTPS rule by passing a file URL.
         if !url.starts_with("https://") {
-            return Err(Error::Refused("only https:// and file:// URLs are allowed".to_owned()));
+            return Err(Error::Refused("only https:// URLs are allowed".to_owned()));
         }
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         {
@@ -308,5 +304,13 @@ mod tests {
             fetch.post("https://example.invalid", "application/gzip", &body, &mut |_| true),
             Err(Error::Refused(_))
         ));
+    }
+
+    #[test]
+    fn system_fetch_refuses_file_urls_before_any_io() {
+        let mut fetch = SystemFetch::default();
+        let mut sink = |_: &[u8]| true;
+        let result = fetch.get("file:///nonexistent-sse-test/any.bin", 0, &mut sink);
+        assert!(matches!(result, Err(Error::Refused(_))), "{result:?}");
     }
 }

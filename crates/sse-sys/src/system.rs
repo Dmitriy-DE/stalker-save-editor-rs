@@ -129,9 +129,19 @@ fn running_processes_impl() -> io::Result<Vec<String>> {
         executable: [0; 260],
     };
     let mut names = Vec::new();
+    // ERROR_NO_MORE_FILES marks the normal end of the list. Any other failure must not look like an
+    // empty list, because an empty list means "game not running" to the process guard.
+    const ERROR_NO_MORE_FILES: i32 = 18;
+    let mut enumeration_error: Option<io::Error> = None;
     // SAFETY: snapshot is valid and entry has the documented size and writable
     // storage required by Process32FirstW.
     let mut ok = unsafe { Process32FirstW(snapshot, &mut entry) } != 0;
+    if !ok {
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() != Some(ERROR_NO_MORE_FILES) {
+            enumeration_error = Some(error);
+        }
+    }
     while ok {
         let len = entry
             .executable
@@ -147,6 +157,12 @@ fn running_processes_impl() -> io::Result<Vec<String>> {
         // SAFETY: snapshot remains open and entry remains valid writable
         // PROCESSENTRY32W storage.
         ok = unsafe { Process32NextW(snapshot, &mut entry) } != 0;
+        if !ok {
+            let error = io::Error::last_os_error();
+            if error.raw_os_error() != Some(ERROR_NO_MORE_FILES) {
+                enumeration_error = Some(error);
+            }
+        }
     }
     // SAFETY: snapshot is the owned kernel handle returned above and is closed
     // exactly once after enumeration.
@@ -154,7 +170,27 @@ fn running_processes_impl() -> io::Result<Vec<String>> {
     if closed == 0 {
         return Err(io::Error::last_os_error());
     }
+    if let Some(error) = enumeration_error {
+        return Err(error);
+    }
     Ok(names)
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod windows_enumeration_tests {
+    #[test]
+    fn running_processes_lists_the_current_process() {
+        let file_name = std::env::current_exe()
+            .ok()
+            .and_then(|path| path.file_name().map(|name| name.to_string_lossy().to_string()));
+        let names = super::running_processes();
+        assert!(
+            file_name.as_deref().is_some_and(|file| names
+                .as_ref()
+                .is_ok_and(|list| list.iter().any(|name| name.eq_ignore_ascii_case(file)))),
+            "{names:?} {file_name:?}"
+        );
+    }
 }
 
 #[cfg(target_os = "linux")]
