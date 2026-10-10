@@ -4680,9 +4680,7 @@ impl Screen for GameDoctor {
             }
             let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
             sse_app::tasks::spawn_named_detached("game-write", move || {
-                let result = sse_fixes::toolkit::Stalker2ModToggle::toggle(&directory)
-                    .map(|value| format!("S2 mods: {value:?}"))
-                    .map_err(|e| e.to_string());
+                let result = toggle_s2_mods_guarded(&directory, &sse_fixes::running_game::SystemGameRunningProbe);
                 proxy.send(AppMessage::ToScreen(
                     ScreenId::GameDoctor,
                     Box::new(DoctorReply::Mods(result)),
@@ -5721,6 +5719,46 @@ mod discovery_start_tests {
 /// shared temporary folder, where another user could pre-create the path.
 fn encyclopedia_cache_directory() -> std::path::PathBuf {
     sse_app::paths::default_data_directory().join("catalog-cache")
+}
+
+/// Toggles S2 mods only when the game is not running; the same guard the engine applies to other writes.
+fn toggle_s2_mods_guarded(
+    directory: &Path,
+    probe: &dyn sse_fixes::running_game::GameRunningProbe,
+) -> std::result::Result<String, String> {
+    sse_fixes::toolkit::Stalker2ModToggle::toggle_while_not_running(directory, probe)
+        .map(|value| format!("S2 mods: {value:?}"))
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod s2_mods_guard_tests {
+    use super::toggle_s2_mods_guarded;
+    use sse_core::Result;
+    use sse_fixes::models::GameTarget;
+    use sse_fixes::running_game::GameRunningProbe;
+    use std::path::Path;
+
+    struct FixedProbe(bool);
+
+    impl GameRunningProbe for FixedProbe {
+        fn is_game_running(&self, _game: GameTarget) -> Result<bool> {
+            Ok(self.0)
+        }
+    }
+
+    #[test]
+    fn running_game_refuses_the_mod_toggle_before_touching_files() {
+        let missing = Path::new("/nonexistent-sse-game-directory");
+        let Err(idle) = toggle_s2_mods_guarded(missing, &FixedProbe(false)) else {
+            panic!("a missing installation must not toggle");
+        };
+        let Err(running) = toggle_s2_mods_guarded(missing, &FixedProbe(true)) else {
+            panic!("a running game must not toggle");
+        };
+        assert!(idle.contains("not a valid"), "idle probe reaches the installation check: {idle}");
+        assert_ne!(running, idle, "running probe must refuse before the installation check");
+    }
 }
 
 #[cfg(test)]
