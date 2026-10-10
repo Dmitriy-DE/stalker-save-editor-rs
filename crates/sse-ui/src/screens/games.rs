@@ -1598,7 +1598,7 @@ fn start_background_discovery(workspace: &Workspace, cx: &mut Context<'_>) {
     }
 
     let workspace_clone = workspace.clone();
-    sse_app::tasks::spawn_named_detached("game-read", move || {
+    let started = sse_app::tasks::try_spawn_named_detached("game-read", move || {
         let found = discover_all_installations();
         let status = if found.is_empty() {
             DiscoveryStatus::NotFound
@@ -1613,8 +1613,18 @@ fn start_background_discovery(workspace: &Workspace, cx: &mut Context<'_>) {
         let mut state = workspace_clone.lock();
         state.discovering = false;
     });
+    if let Err(error) = started {
+        // The search never runs, so nothing else clears `discovering`; clear it here or the button stays dead.
+        clear_discovery_after_failed_start(workspace);
+        sse_app::diagnostics::error(&format!("installation search did not start: {error}"));
+        return;
+    }
 
     cx.status = Some(crate::strings::t("Поиск установок игр на диске…").to_owned());
+}
+
+fn clear_discovery_after_failed_start(workspace: &Workspace) {
+    workspace.lock().discovering = false;
 }
 
 /// Discovers installations across Steam libraries, GOG, Heroic, and known standard paths.
@@ -2567,7 +2577,7 @@ impl Screen for Environment {
         }
         if clicked.is_some() && clicked == self.restore {
             let directory = cx.app.game_dir().map(Path::to_path_buf);
-            let game = cx.app.selected_game().and_then(fix_target);
+            let supported = cx.app.selected_game().and_then(fix_target).is_some();
             let Some(directory) = directory else {
                 cx.status = Some(crate::strings::t("Управляемая установка: не выбрана").to_owned());
                 return Ok(());
@@ -2588,10 +2598,10 @@ impl Screen for Environment {
                 return Ok(());
             }
             self.pending_restore = None;
-            let Some(game) = game else {
+            if !supported {
                 cx.status = Some(crate::strings::t("Игра не поддерживается Toolkit.").to_owned());
                 return Ok(());
-            };
+            }
             let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
             let snapshot_id = snapshot.id.clone();
             let language = crate::strings::current_language().to_owned();
@@ -2617,7 +2627,6 @@ impl Screen for Environment {
                     )]
                 })
                 .unwrap_or_else(|error| vec![tr(&language, "Ошибка восстановления: {0}", &[&error])]);
-                let _ = game;
                 proxy.send(AppMessage::ToScreen(
                     ScreenId::Environment,
                     Box::new(EnvironmentResult { lines }),
@@ -4999,25 +5008,6 @@ impl Encyclopedia {
             })
             .collect();
 
-        let ids: Vec<u64> = self
-            .visible
-            .iter()
-            .filter_map(|index| u64::try_from(*index).ok())
-            .collect();
-        let headers = vec![
-            crate::widgets::table::Header {
-                label: crate::strings::t_in(crate::strings::current_language(), "Тип").to_owned(),
-                sortable: true,
-                direction: None,
-            },
-            crate::widgets::table::Header {
-                label: crate::strings::t_in(crate::strings::current_language(), "Название").to_owned(),
-                sortable: true,
-                direction: None,
-            },
-        ];
-        let _table = crate::widgets::table::Table::new(ids, 24.0, headers)?;
-
         if let Some(label) = self.search_label {
             let language = crate::strings::current_language();
             let query_display = if query.is_empty() {
@@ -5708,5 +5698,21 @@ mod game_target_localization_tests {
             ),
             "fix-1 · Installed · essential / verified\nPROBLEM: startup crash\nCHANGE: patch applied\nSUPPORTED STEAM BUILDS: 4500\nAFFECTED FILES: 2\nSOURCE: audit"
         );
+    }
+}
+
+#[cfg(test)]
+mod discovery_start_tests {
+    use super::{clear_discovery_after_failed_start, Workspace, WorkspaceState};
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn failed_start_clears_discovering_so_the_next_search_can_run() {
+        let workspace = Workspace(Arc::new(Mutex::new(WorkspaceState {
+            discovering: true,
+            ..WorkspaceState::default()
+        })));
+        clear_discovery_after_failed_start(&workspace);
+        assert!(!workspace.lock().discovering);
     }
 }
