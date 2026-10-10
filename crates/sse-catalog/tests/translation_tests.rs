@@ -198,6 +198,22 @@ fn polish_manifest_label_keeps_software_term() {
 }
 
 #[test]
+fn czech_game_and_save_labels_use_their_contextual_meanings() {
+    let service = I18nService::instance();
+
+    assert_eq!(service.tr_in(Some("cs"), "включён", &[]), "zahrnutý");
+    assert_eq!(service.tr_in(Some("cs"), "ИГРЫ И ИНСТРУМЕНТЫ", &[]), "HRY A NÁSTROJE");
+    assert_eq!(
+        service.tr_in(Some("cs"), "СОСТОЯНИЕ БЕЗ МАНИФЕСТА", &[]),
+        "STAV BEZ MANIFESTU"
+    );
+    assert_eq!(
+        service.tr_in(Some("cs"), "Сохранения появятся после выбора папок в настройках.", &[]),
+        "Uložené pozice se objeví po výběru složek v nastavení."
+    );
+}
+
+#[test]
 fn polish_companion_controls_keep_product_name() {
     let service = I18nService::instance();
 
