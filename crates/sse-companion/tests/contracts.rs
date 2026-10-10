@@ -670,3 +670,23 @@ fn saving_over_an_unreadable_hotkey_layout_keeps_its_bytes_beside_it() -> Result
     let _ = fs::remove_dir_all(root);
     Ok(())
 }
+
+#[test]
+fn saving_over_a_non_utf8_hotkey_layout_keeps_its_bytes() -> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("sse-companion-hotkey-binary");
+    let path = root.join("hotkeys.txt");
+    let damaged: &[u8] = &[0x68, 0x65, 0x61, 0x6c, 0x3d, 0xff, 0xfe, 0x00];
+    fs::write(&path, damaged)?;
+
+    HotkeyLayout::default().save(&path)?;
+
+    let copies: Vec<_> = fs::read_dir(&root)?
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with("hotkeys.txt.damaged-"))
+        .collect();
+    assert_eq!(copies.len(), 1, "non-UTF-8 layout must be kept as a copy");
+    let copy = copies.first().ok_or("damaged copy is missing")?;
+    assert_eq!(fs::read(copy.path())?, damaged);
+    let _ = fs::remove_dir_all(root);
+    Ok(())
+}

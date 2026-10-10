@@ -294,12 +294,15 @@ impl HotkeyLayout {
     }
 }
 
-/// Copies an existing layout that cannot be parsed to a sibling file before a save replaces it.
+/// Copies an existing layout that cannot be read or parsed to a sibling file before a save replaces it.
+/// If the copy fails, the save is refused so the original bytes are never overwritten unseen.
 fn keep_unreadable_layout(path: &Path, parent: &Path, file_name: &str, sequence: u64) -> Result<(), HotkeyError> {
-    let Ok(text) = fs::read_to_string(path) else {
-        return Ok(());
-    };
-    if HotkeyLayout::parse(&text).is_ok() {
+    // Read as bytes: a file that is not UTF-8 is unreadable too and must be kept.
+    let readable = fs::read(path)
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .is_some_and(|text| HotkeyLayout::parse(&text).is_ok());
+    if readable {
         return Ok(());
     }
     let stamp = std::time::SystemTime::now()
