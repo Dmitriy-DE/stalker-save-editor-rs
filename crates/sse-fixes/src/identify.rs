@@ -66,47 +66,41 @@ fn try_read_steam_build_id(target: GameTarget, game_directory: &Path) -> Option<
 }
 
 fn parse_vdf_build_id(vdf: &str, expected_app_id: u32) -> Option<String> {
-    let mut actual_app_id: Option<String> = None;
-    let mut build_id: Option<String> = None;
-
-    let tokens = tokenize_vdf(vdf);
-    let mut iter = tokens.iter().peekable();
-
-    while let Some(key) = iter.next() {
-        if key.eq_ignore_ascii_case("appid") {
-            if let Some(val) = iter.next() {
-                actual_app_id = Some(val.clone());
-            }
-        } else if key.eq_ignore_ascii_case("buildid") {
-            if let Some(val) = iter.next() {
-                build_id = Some(val.clone());
-            }
-        }
+    // Read the structure, not a token stream: only the top-level AppState fields count.
+    let document = sse_codecs::vdf::parse(vdf).ok()?;
+    let app_state = document.get_object("AppState")?;
+    if app_state.get_string("appid")? != expected_app_id.to_string() {
+        return None;
     }
-
-    let expected_str = expected_app_id.to_string();
-    if let Some(ref aid) = actual_app_id {
-        if aid != &expected_str {
-            return None;
-        }
-    }
-
-    build_id.filter(|s| !s.trim().is_empty())
+    app_state
+        .get_string("buildid")
+        .map(str::to_owned)
+        .filter(|build| !build.trim().is_empty())
 }
 
-fn tokenize_vdf(s: &str) -> Vec<String> {
-    // Collect quoted tokens from a VDF/ACF file using iterator-based parsing.
-    // Each quoted string between `"..."` is one token; non-quoted content is ignored.
-    let mut tokens = Vec::new();
-    let mut chars = s.chars().peekable();
+#[cfg(test)]
+mod acf_buildid_tests {
+    use super::parse_vdf_build_id;
 
-    while let Some(c) = chars.next() {
-        if c == '"' {
-            // Consume until the closing quote (or end of string).
-            let token: String = chars.by_ref().take_while(|&ch| ch != '"').collect();
-            tokens.push(token);
-        }
+    #[test]
+    fn buildid_comes_from_app_state_not_from_a_value_that_spells_it() {
+        let acf = r#""AppState"
+{
+    "appid"     "1643320"
+    "buildid"   "12345678"
+    "name"      "buildid"
+    "UserConfig"
+    {
+        "buildid"   "999999"
+    }
+}
+"#;
+        assert_eq!(parse_vdf_build_id(acf, 1_643_320).as_deref(), Some("12345678"));
     }
 
-    tokens
+    #[test]
+    fn manifest_for_another_app_gives_no_build_id() {
+        let acf = r#""AppState" { "appid" "4500" "buildid" "7" }"#;
+        assert_eq!(parse_vdf_build_id(acf, 1_643_320), None);
+    }
 }
