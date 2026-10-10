@@ -73,6 +73,14 @@ const ARTIFACT_TABLE: &[(&str, ArtifactDescriptor)] = &[
         },
     ),
     (
+        "linux-appimage-x86_64",
+        ArtifactDescriptor {
+            target: target::LINUX,
+            architecture: architecture::X86_64,
+            kind: kind::APP_IMAGE,
+        },
+    ),
+    (
         "linux-deb-amd64",
         ArtifactDescriptor {
             target: target::LINUX,
