@@ -303,6 +303,7 @@ fn huffman_lengths(freq: &[u32], maximum: u8) -> Result<Vec<u8>> {
     }
     let mut counts = vec![0_usize; usize::from(maximum).saturating_add(1)];
     let mut overflow = 0_usize;
+    let overflow_fixed = raw.iter().any(|depth| *depth > maximum);
     for depth in raw {
         let clipped = depth.min(maximum);
         if let Some(slot) = counts.get_mut(usize::from(clipped)) {
@@ -331,6 +332,15 @@ fn huffman_lengths(freq: &[u32], maximum: u8) -> Result<Vec<u8>> {
         }
         overflow = overflow.saturating_sub(overflow.min(2));
     }
+    // The overflow fix above can leave the code oversubscribed by a unit of 2^-maximum. Such a code is
+    // not a valid DEFLATE tree, so fall back to package-merge, which is exact by construction.
+    let kraft = counts.iter().enumerate().try_fold(0_u64, |sum, (bits, count)| {
+        let weight = 1_u64.checked_shl(u32::from(maximum).saturating_sub(u32::try_from(bits).unwrap_or(0)))?;
+        sum.checked_add(weight.checked_mul(u64::try_from(*count).unwrap_or(0))?)
+    });
+    if overflow_fixed && kraft != Some(1_u64 << maximum) {
+        return package_merge(&used, freq, maximum);
+    }
     let mut ordered = used;
     ordered.sort_by_key(|symbol| (freq.get(*symbol).copied().unwrap_or(0), *symbol));
     let mut cursor = 0_usize;
@@ -351,6 +361,63 @@ fn huffman_lengths(freq: &[u32], maximum: u8) -> Result<Vec<u8>> {
         return Err(Error::damaged("incomplete deflate Huffman assignment"));
     }
     Ok(result)
+}
+
+/// Optimal length-limited Huffman code lengths (Larmore and Hirschberg's package-merge).
+/// The result is a complete code: its Kraft sum is exactly 1.
+fn package_merge(used: &[usize], freq: &[u32], maximum: u8) -> Result<Vec<u8>> {
+    if used.len() < 2 || used.len() > (1_usize << maximum) {
+        return Err(Error::damaged("cannot package-merge deflate Huffman lengths"));
+    }
+    // An item is (weight, symbols it covers); a symbol's length is how often it is covered.
+    let leaves: Vec<(u64, Vec<usize>)> = used
+        .iter()
+        .map(|symbol| (u64::from(freq.get(*symbol).copied().unwrap_or(0)), vec![*symbol]))
+        .collect();
+    let mut sorted_leaves = leaves.clone();
+    sorted_leaves.sort_by_key(|(weight, symbols)| (*weight, symbols.first().copied().unwrap_or(0)));
+    let mut current = sorted_leaves.clone();
+    for _ in 1..maximum {
+        let mut packages = Vec::with_capacity(current.len() / 2);
+        for pair in current.chunks_exact(2) {
+            if let [first, second] = pair {
+                let mut symbols = first.1.clone();
+                symbols.extend_from_slice(&second.1);
+                packages.push((first.0.saturating_add(second.0), symbols));
+            }
+        }
+        // Merge the packages with the leaves, both sorted by weight.
+        let mut merged = Vec::with_capacity(sorted_leaves.len().saturating_add(packages.len()));
+        let (mut leaf_index, mut package_index) = (0_usize, 0_usize);
+        while leaf_index < sorted_leaves.len() || package_index < packages.len() {
+            let take_leaf = match (sorted_leaves.get(leaf_index), packages.get(package_index)) {
+                (Some(leaf), Some(package)) => leaf.0 <= package.0,
+                (Some(_), None) => true,
+                _ => false,
+            };
+            if take_leaf {
+                if let Some(leaf) = sorted_leaves.get(leaf_index) {
+                    merged.push(leaf.clone());
+                }
+                leaf_index = leaf_index.saturating_add(1);
+            } else {
+                if let Some(package) = packages.get(package_index) {
+                    merged.push(package.clone());
+                }
+                package_index = package_index.saturating_add(1);
+            }
+        }
+        current = merged;
+    }
+    let mut lengths = vec![0_u8; freq.len()];
+    for (_, symbols) in current.iter().take(used.len().saturating_mul(2).saturating_sub(2)) {
+        for symbol in symbols {
+            if let Some(length) = lengths.get_mut(*symbol) {
+                *length = length.saturating_add(1);
+            }
+        }
+    }
+    Ok(lengths)
 }
 
 fn canonical(lengths: &[u8], maximum: u8) -> Result<Vec<Code>> {
@@ -670,5 +737,36 @@ mod tests {
         let v = compress_raw(d, Level::Default).unwrap_or_default();
         assert_eq!(v.first().copied().unwrap_or(0) & 7, 5);
         assert_eq!(inflate_raw(&v, d.len()).unwrap_or_default(), d);
+    }
+
+    #[test]
+    fn fibonacci_frequencies_force_length_limiting_and_round_trip() {
+        // Symbol k appears fib(k) times, so an optimal Huffman tree is deeper than 15 and the
+        // length limiter has to rebalance it. The output must still be a valid DEFLATE stream.
+        let mut data = Vec::new();
+        let (mut a, mut b) = (1_usize, 1_usize);
+        for symbol in 0..20_u8 {
+            data.extend(std::iter::repeat_n(symbol, a));
+            (a, b) = (b, a + b);
+        }
+        let packed = compress_raw(&data, Level::Default).unwrap_or_else(|error| panic!("{error:?}"));
+        let unpacked = crate::inflate::inflate_raw(&packed, data.len()).unwrap_or_else(|error| panic!("{error:?}"));
+        assert_eq!(unpacked, data);
+    }
+
+    #[test]
+    fn length_limited_huffman_lengths_satisfy_kraft() {
+        // Fibonacci frequencies 1,1,2,...: an unlimited Huffman tree has depth 19, so the limit of 15
+        // must rebalance it. The result must stay within 15 bits and not oversubscribe the code space.
+        let mut freq = Vec::new();
+        let (mut a, mut b) = (1_u32, 1_u32);
+        for _ in 0..20 {
+            freq.push(a);
+            (a, b) = (b, a + b);
+        }
+        let lengths = huffman_lengths(&freq, 15).unwrap_or_else(|error| panic!("{error:?}"));
+        assert!(lengths.iter().all(|length| (1..=15).contains(length)));
+        let kraft: u64 = lengths.iter().map(|length| 1_u64 << (15 - length)).sum();
+        assert_eq!(kraft, 1 << 15, "a complete length-limited code has Kraft sum exactly 1");
     }
 }
