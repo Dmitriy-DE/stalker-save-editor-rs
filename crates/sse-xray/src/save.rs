@@ -4,6 +4,8 @@ use sse_core::{Cursor, Error, Result};
 use std::collections::HashSet;
 
 use crate::container::{Chunk, Container};
+use crate::statistics::Kills;
+use crate::weather::{find_weather, Weather};
 
 const MAXIMUM_OBJECTS: u32 = 1_000_000;
 const MAXIMUM_VECTOR_LENGTH: u32 = 1_000_000;
@@ -41,6 +43,11 @@ pub struct Save {
     money_offset: usize,
     player_faction: Option<i32>,
     pub(crate) player_faction_offset: Option<usize>,
+    health: Option<f32>,
+    rank: Option<i32>,
+    reputation: Option<i32>,
+    name: Option<String>,
+    kills: Option<Kills>,
     pub(crate) relation_registry: Option<RelationRegistry>,
     game_time: u64,
     time_factor: f32,
@@ -261,9 +268,9 @@ impl Save {
                 format.id()
             )));
         }
-        let (money, money_offset, player_faction, player_faction_offset) =
-            read_actor_fields(container.image(), &actor)?;
+        let fields = read_actor_fields(container.image(), &actor)?;
         let relation_registry = read_relation_registry(&container, format, actor.object_id);
+        let kills = read_kills_from_registry(&container, actor.object_id, relation_registry.as_ref());
 
         Ok(Self {
             format,
@@ -271,10 +278,15 @@ impl Save {
             records,
             actor_id: actor.object_id,
             actor_version: actor.version,
-            money,
-            money_offset,
-            player_faction,
-            player_faction_offset,
+            money: fields.money,
+            money_offset: fields.money_offset,
+            player_faction: fields.player_faction,
+            player_faction_offset: fields.player_faction_offset,
+            health: fields.health,
+            rank: fields.rank,
+            reputation: fields.reputation,
+            name: fields.name,
+            kills,
             relation_registry,
             game_time,
             time_factor,
@@ -341,6 +353,54 @@ impl Save {
     /// Actor wallet value.
     pub const fn money(&self) -> Result<u32> {
         Ok(self.money)
+    }
+
+    /// Actor health as a fraction (0 to 1), when the actor STATE version stores it and the value is in range.
+    #[must_use]
+    pub const fn health(&self) -> Option<f32> {
+        self.health
+    }
+
+    /// Actor rank, when the actor STATE version stores it.
+    #[must_use]
+    pub const fn rank(&self) -> Option<i32> {
+        self.rank
+    }
+
+    /// Actor reputation, when the actor STATE version stores it.
+    #[must_use]
+    pub const fn reputation(&self) -> Option<i32> {
+        self.reputation
+    }
+
+    /// Actor display name, when stored and non-empty.
+    #[must_use]
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
+    /// Kills by stalkers and by monsters from the statistics registry; `None` when the save has no such registry.
+    #[must_use]
+    pub const fn kills(&self) -> Option<Kills> {
+        self.kills
+    }
+
+    /// Dynamic weather from the actor's script storage. Shadow of Chernobyl saves no weather, so it is `None` there.
+    #[must_use]
+    pub fn weather(&self) -> Option<Weather> {
+        if matches!(self.format, Format::Soc | Format::SocEe) {
+            return None;
+        }
+        let record = self.records.iter().find(|record| record.object_id == self.actor_id)?;
+        let image = self.container.image();
+        let mut actor_text =
+            latin1(image.get(record.record_offset..record.record_offset.checked_add(record.record_length)?)?);
+        if let Some(offset) = record.client_data_offset {
+            let end = offset.checked_add(record.client_data_length)?;
+            actor_text.push('\0');
+            actor_text.push_str(&latin1(image.get(offset..end)?));
+        }
+        find_weather(&actor_text, &latin1(image))
     }
 
     /// Player faction numeric identifier if its actor STATE field is recognized.
@@ -801,7 +861,19 @@ fn read_creature_vitals<'a>(raw: &[u8], item: &'a RegistryObject) -> Option<Crea
     })
 }
 
-fn read_actor_fields(raw: &[u8], actor: &ObjectRecord) -> Result<(u32, usize, Option<i32>, Option<usize>)> {
+/// Actor STATE fields read by [`read_actor_fields`]; each optional one is absent in the versions that lack it.
+struct ActorFields {
+    money: u32,
+    money_offset: usize,
+    player_faction: Option<i32>,
+    player_faction_offset: Option<usize>,
+    health: Option<f32>,
+    rank: Option<i32>,
+    reputation: Option<i32>,
+    name: Option<String>,
+}
+
+fn read_actor_fields(raw: &[u8], actor: &ObjectRecord) -> Result<ActorFields> {
     let state_end = actor
         .state_offset
         .checked_add(actor.state_length)
@@ -812,9 +884,13 @@ fn read_actor_fields(raw: &[u8], actor: &ObjectRecord) -> Result<(u32, usize, Op
     let mut reader = Cursor::new(state);
     skip_dynamic_visual(&mut reader, actor.version)?;
     reader.skip(3)?;
-    if actor.version > 18 {
-        let _health = reader.f32()?;
-    }
+    // Health is kept only when it is a fraction, as the C# reader does; anything else is unknown.
+    let health = if actor.version > 18 {
+        let value = reader.f32()?;
+        (0.0..=1.0).contains(&value).then_some(value)
+    } else {
+        None
+    };
     if actor.version < 32 {
         let _legacy = reader.zero_terminated(MAXIMUM_STRING_LENGTH)?;
     }
@@ -861,7 +937,60 @@ fn read_actor_fields(raw: &[u8], actor: &ObjectRecord) -> Result<(u32, usize, Op
     } else {
         (None, None)
     };
-    Ok((money, offset, player_faction, faction_offset))
+    let (rank, reputation) = if actor.version > 86 {
+        let rank = i32::from_le_bytes(reader.u32()?.to_le_bytes());
+        let reputation = i32::from_le_bytes(reader.u32()?.to_le_bytes());
+        (Some(rank), Some(reputation))
+    } else {
+        (None, None)
+    };
+    // The display name is optional text: a name that does not parse is unknown, not a broken save.
+    let name = if actor.version > 104 {
+        reader
+            .zero_terminated(MAXIMUM_STRING_LENGTH + 1)
+            .ok()
+            .map(display_text)
+            .filter(|text| !text.is_empty())
+    } else {
+        None
+    };
+    Ok(ActorFields {
+        money,
+        money_offset: offset,
+        player_faction,
+        player_faction_offset: faction_offset,
+        health,
+        rank,
+        reputation,
+        name,
+    })
+}
+
+/// Latin-1 text of raw bytes: one character per byte, as the C# reader decodes X-Ray's scripts.
+fn latin1(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| char::from(*byte)).collect()
+}
+
+/// Player-visible text: UTF-8 when it is valid (a BOM is dropped), otherwise Windows-1251 as X-Ray writes it.
+fn display_text(bytes: &[u8]) -> String {
+    let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
+    std::str::from_utf8(bytes).map_or_else(|_| decode_cp1251(bytes), str::to_owned)
+}
+
+/// Kill counts from the one registry chunk 9 of the save; `None` unless the chunk is unique and parses.
+fn read_kills_from_registry(
+    container: &Container,
+    actor_id: u16,
+    relations: Option<&RelationRegistry>,
+) -> Option<Kills> {
+    let mut chunks = container.chunks().iter().filter(|chunk| chunk.kind == 9);
+    let chunk = chunks.next().copied()?;
+    if chunks.next().is_some() {
+        return None;
+    }
+    let data = container.chunk_bytes(chunk).ok()?;
+    let from = relations.map_or(0, |registry| registry.info_section_end);
+    crate::statistics::read_kills(data, actor_id, from)
 }
 
 fn read_relation_registry(container: &Container, format: Format, _actor_id: u16) -> Option<RelationRegistry> {
@@ -2048,5 +2177,45 @@ mod tests {
         packed.extend_from_slice(&u32::try_from(raw.len()).unwrap_or_default().to_le_bytes());
         packed.extend_from_slice(&compressed);
         packed
+    }
+
+    /// Values the C# 1.3.1 reader gives for the synthetic Clear Sky, Call of Pripyat and SoC fixtures.
+    #[test]
+    fn overview_actor_fields_match_the_csharp_reader_on_the_synthetic_fixtures() -> sse_core::Result<()> {
+        for (name, bytes) in [
+            (
+                "clear sky",
+                &include_bytes!("../../../fixtures/synthetic/xray-clear-sky.sav")[..],
+            ),
+            (
+                "call of pripyat",
+                &include_bytes!("../../../fixtures/synthetic/xray-call-of-pripyat.sav")[..],
+            ),
+            ("soc", &include_bytes!("../../../fixtures/synthetic/xray-soc.sav")[..]),
+        ] {
+            let save = Save::read(bytes)?;
+            assert_eq!(save.money()?, 1234, "{name}: money");
+            assert_eq!(save.health(), Some(1.0), "{name}: health");
+            assert_eq!(save.rank(), Some(-1), "{name}: rank");
+            assert_eq!(save.reputation(), Some(-1), "{name}: reputation");
+            assert_eq!(save.name(), None, "{name}: name");
+            assert_eq!(save.weather(), None, "{name}: weather");
+            assert_eq!(
+                save.kills(),
+                None,
+                "{name}: kills (no statistics registry in the fixture)"
+            );
+        }
+        Ok(())
+    }
+
+    /// A truncated save is refused with an error, never a panic or a partial overview.
+    #[test]
+    fn truncated_save_is_refused_without_panic() {
+        let bytes = include_bytes!("../../../fixtures/synthetic/xray-clear-sky.sav");
+        for length in [0, 1, 8, 64, bytes.len() / 2, bytes.len() - 1] {
+            let prefix = bytes.get(..length).unwrap_or_default();
+            assert!(Save::read(prefix).is_err(), "prefix of {length} bytes was accepted");
+        }
     }
 }
