@@ -258,8 +258,10 @@ where
     T: Copy + TryInto<u64> + TryFrom<u64>,
 {
     let numeric = value.try_into().unwrap_or(u64::MAX);
-    let next = numeric.checked_add(1).unwrap_or_else(|| numeric.saturating_sub(1));
-    T::try_from(next).unwrap_or(value)
+    // At the top of the type the edit must still change the value, so step down instead of returning it unchanged.
+    let up = numeric.checked_add(1).and_then(|next| T::try_from(next).ok());
+    up.or_else(|| T::try_from(numeric.saturating_sub(1)).ok())
+        .unwrap_or(value)
 }
 
 fn encode_report(report: &AuditReport) -> Result<Vec<u8>> {
@@ -346,7 +348,7 @@ fn peak_rss_bytes() -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
-    use super::{audit_bytes, encode_report, parse_path_list, AuditReport, FileAudit};
+    use super::{audit_bytes, encode_report, increment_or_decrement, parse_path_list, AuditReport, FileAudit};
     use std::time::Duration;
 
     const XRAY: &[u8] = include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-source.sav");
@@ -377,6 +379,13 @@ mod tests {
         assert_eq!(audit.money_edit, "verified");
         assert!(audit.errors.is_empty(), "{:?}", audit.errors);
         assert_eq!(sse_codecs::sha256::sha256_hex(S2), original_sha);
+    }
+
+    #[test]
+    fn audit_edit_changes_the_value_even_at_the_top_of_its_type() {
+        assert_eq!(increment_or_decrement(u32::MAX), u32::MAX - 1);
+        assert_eq!(increment_or_decrement(u16::MAX), u16::MAX - 1);
+        assert_eq!(increment_or_decrement(41_u32), 42);
     }
 
     #[test]
