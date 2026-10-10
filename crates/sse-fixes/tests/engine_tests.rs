@@ -593,6 +593,8 @@ fn all_spawn_refuses_custom_data_outside_latin1_instead_of_writing_question_mark
     assert!(AllSpawnEditor::apply(&original, &[edit]).is_err());
 }
 
+// A quote is not a legal file name on Windows, so this path-based check runs on Unix only.
+#[cfg(unix)]
 #[test]
 fn manifest_with_quote_in_relative_path_is_written_as_valid_json() {
     let fixture = TestFixture::new(GameTarget::ClearSky, "11450472");
@@ -606,4 +608,26 @@ fn manifest_with_quote_in_relative_path_is_written_as_valid_json() {
     let installed = engine.list_installed(&fixture.root, None).unwrap();
     assert_eq!(installed.len(), 1);
     assert_eq!(installed[0].id, "cs.test.quote");
+}
+
+#[test]
+fn manifest_with_quote_in_version_is_written_as_valid_json() {
+    let fixture = TestFixture::new(GameTarget::ClearSky, "11450472");
+    let relative_path = "gamedata/scripts/version.script";
+    fixture.write_file(relative_path, b"version = 1\n");
+    let mut definition = make_test_definition(
+        "cs.test.version",
+        relative_path,
+        "version = 1\n",
+        "version = 2\n",
+        "11450472",
+    );
+    definition.version = "1.0\"quote".to_string();
+
+    let engine = GameFixEngine::with_synthetic(true);
+    engine.install(&definition, &fixture.root).unwrap();
+
+    let installed = engine.list_installed(&fixture.root, None).unwrap();
+    assert_eq!(installed.len(), 1);
+    assert_eq!(installed[0].id, "cs.test.version");
 }
