@@ -461,7 +461,7 @@ impl Workspace {
         self.persist_drafts(vec![journal], cx);
     }
 
-    fn reset_draft(&self, journal: DraftJournal, preserve_unmapped: bool, cx: &mut Context<'_>) {
+    fn reset_draft(&self, journal: DraftJournal, cx: &mut Context<'_>) {
         let Some(proxy) = cx.proxy.cloned() else {
             cx.status = Some(t("Черновик сброшен в памяти; фоновый канал недоступен.").to_owned());
             return;
@@ -506,9 +506,8 @@ impl Workspace {
             }
             let store = DraftStore::for_source(draft_directory.as_path(), &selected.slot.path);
             let result = (|| {
-                if preserve_unmapped {
-                    store.set_aside(&source_sha256)?;
-                }
+                // The previous journal stays on disk beside the new one, so a reset can be undone by hand.
+                store.set_aside(&source_sha256)?;
                 store.save(journal).map(|_| ())
             })()
             .map_err(|error| error.to_string());
@@ -1215,13 +1214,14 @@ fn start_reload_selected(workspace: &Workspace, cx: &mut Context<'_>) -> Result<
             return;
         }
         let result: Result<(LoadedSave, DraftJournal)> = (|| {
+            // The save is read before the draft is cleared, so a failed reread keeps the user's edits on disk.
+            let loaded = LoadedSave::read(slot_for_path(&path)?)?;
             {
                 let _guard = write_lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                 if session.is_current_draft_generation(&draft_identity, generation) {
                     DraftStore::for_source(directory.as_path(), &path).save(empty_journal)?;
                 }
             }
-            let loaded = LoadedSave::read(slot_for_path(&path)?)?;
             let journal = load_draft_journal(directory.as_path(), &loaded.slot.path, &loaded.source_sha256)?;
             Ok((loaded, journal))
         })();
@@ -4742,15 +4742,11 @@ impl Inventory {
             EditorAction::Undo => cx.app.undo_draft(&source_sha256)?,
             EditorAction::Redo => cx.app.redo_draft(&source_sha256)?,
             EditorAction::Reset => {
-                let preserve_unmapped = cx
-                    .app
-                    .draft(&source_sha256)
-                    .is_some_and(|plan| plan.unmapped_legacy_plan.is_some());
                 let empty = DraftJournal::new(vec![DraftPlan::empty(&source_sha256)?], 0)?;
                 cx.app.set_invalid_numeric_input(false);
                 cx.app.set_draft_journal(empty.clone());
                 set_workspace_draft(&self.workspace, &empty);
-                self.workspace.reset_draft(empty, preserve_unmapped, cx);
+                self.workspace.reset_draft(empty, cx);
                 cx.status = Some(t("Черновик сброшен.").to_owned());
                 return self.render(cx);
             }
@@ -10768,6 +10764,104 @@ mod tests {
         super::start_reload_selected(&workspace, &mut cx)?;
         assert!(!cx.app.has_draft(&sha_a), "the confirmed reload discards the draft");
         assert_eq!(expected_a, fs::canonicalize(&save_a)?);
+        Ok(())
+    }
+
+    #[test]
+    fn reset_keeps_the_previous_draft_beside_the_new_one() -> sse_core::Result<()> {
+        let temp = TempDirectory::new();
+        let bytes: &[u8] = include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-source.sav");
+        let save_a = temp.0.join("a.sav");
+        fs::write(&save_a, bytes)?;
+        let drafts = temp.0.join("drafts");
+        let workspace = Workspace::with_draft_directory(drafts.clone());
+        let (proxy, receiver) = channel_pair::<AppMessage>();
+        let mut overview = Overview::new(workspace.clone());
+        let mut app = sse_app::AppState::new();
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let wait = std::time::Duration::from_secs(10);
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: Some(&proxy),
+            status: None,
+            app: &mut app,
+        };
+        overview.build(&mut cx, host)?;
+        assert!(overview.open_save(&mut cx, &save_a)?);
+        let loaded = receiver
+            .recv_timeout(wait)
+            .map_err(|error| Error::System(error.to_string()))?;
+        overview.message(&mut cx, &loaded, None)?;
+        let sha_a = sse_codecs::sha256::sha256_hex(bytes);
+        let mut plan = DraftPlan::empty(&sha_a)?;
+        plan.money = Some(4321);
+        let journal = DraftJournal::new(vec![plan], 0)?;
+        let store = DraftStore::for_source(&drafts, &save_a);
+        store.save(journal.clone())?;
+        let empty = DraftJournal::new(vec![DraftPlan::empty(&sha_a)?], 0)?;
+        workspace.reset_draft(empty, &mut cx);
+        let _ = receiver.recv_timeout(wait);
+        let kept = fs::read_dir(&drafts)?
+            .filter_map(|entry| entry.ok().map(|entry| entry.file_name().to_string_lossy().into_owned()))
+            .any(|name| name.contains("unsupported"));
+        assert!(kept, "the reset must keep the previous draft beside the new one");
+        Ok(())
+    }
+
+    #[test]
+    fn failed_reread_keeps_the_draft_on_disk() -> sse_core::Result<()> {
+        let temp = TempDirectory::new();
+        let bytes: &[u8] = include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-source.sav");
+        let save_a = temp.0.join("a.sav");
+        fs::write(&save_a, bytes)?;
+        let workspace = Workspace::with_draft_directory(temp.0.join("drafts"));
+        let (proxy, receiver) = channel_pair::<AppMessage>();
+        let mut overview = Overview::new(workspace.clone());
+        let mut app = sse_app::AppState::new();
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let wait = std::time::Duration::from_secs(10);
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: Some(&proxy),
+            status: None,
+            app: &mut app,
+        };
+        overview.build(&mut cx, host)?;
+        assert!(overview.open_save(&mut cx, &save_a)?);
+        let loaded = receiver
+            .recv_timeout(wait)
+            .map_err(|error| Error::System(error.to_string()))?;
+        overview.message(&mut cx, &loaded, None)?;
+        let sha_a = sse_codecs::sha256::sha256_hex(bytes);
+        let mut plan = DraftPlan::empty(&sha_a)?;
+        plan.money = Some(777);
+        let journal = DraftJournal::new(vec![plan], 0)?;
+        let store = DraftStore::for_source(temp.0.join("drafts"), &save_a);
+        store.save(journal.clone())?;
+        // Break the save on disk: the reread must fail.
+        fs::write(&save_a, b"not a save")?;
+        cx.app.set_draft_journal(journal);
+        super::start_reload_selected(&workspace, &mut cx)?;
+        super::start_reload_selected(&workspace, &mut cx)?;
+        let _ = receiver.recv_timeout(wait);
+        assert!(
+            store.path_for(&sha_a)?.exists(),
+            "a failed reread must not clear the draft file"
+        );
         Ok(())
     }
 
