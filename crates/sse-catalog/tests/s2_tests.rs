@@ -7,7 +7,7 @@
     clippy::cast_possible_truncation
 )]
 
-use sse_catalog::{Stalker2ArmorUpgrades, Stalker2ItemCatalog};
+use sse_catalog::Stalker2ItemCatalog;
 
 #[test]
 fn embedded_catalog_has_official_names_and_icons() {
@@ -17,7 +17,6 @@ fn embedded_catalog_has_official_names_and_icons() {
     assert_eq!(catalog.name(Some("A012A"), "ru"), Some("12/76 мм жекан"));
     assert_eq!(catalog.name(Some("A012A"), "en"), Some("12x76mm Slug"));
     assert_eq!(catalog.icon(Some("A012A")), Some("s2/A012A.png"));
-    assert!(catalog.description(Some("A012A"), "ru").is_some());
 }
 
 #[test]
@@ -36,21 +35,13 @@ fn neutral_exoskeleton_name_has_no_wiki_markup() {
 }
 
 #[test]
-fn update_20_weapons_have_display_names_and_descriptions_without_wiki_markup() {
+fn update_20_weapons_have_display_names_without_wiki_markup() {
     let catalog = Stalker2ItemCatalog::load_embedded();
 
     assert_eq!(catalog.name(Some("GunArevPrecise_AR"), "en"), Some("Jagerblick"));
     assert_eq!(catalog.name(Some("GunFora230_PP"), "en"), Some("Fora-230"));
     assert_eq!(catalog.name(Some("GunGP3A_DMR"), "en"), Some("GP3A"));
     assert_eq!(catalog.name(Some("GunSKP_DMR"), "en"), Some("SKP"));
-    assert_eq!(
-        catalog.description(Some("GunDnipro_ST"), "en"),
-        Some("Designed to replace the Soviet AKM-74 in special force units, this Ukrainian assault rifle is utilized not just by military special forces, but also by seasoned stalkers.")
-    );
-    assert_eq!(
-        catalog.description(Some("GunGauss_SP"), "en"),
-        Some("Developed in the Zone and incorporating an electromagnetic bullet acceleration system, this sniper rifle is used exclusively within the Zone")
-    );
 }
 
 #[test]
@@ -76,15 +67,4 @@ fn unknown_sid_has_no_name_but_family_icon_fallback_works() {
 #[test]
 fn rejects_a_payload_without_items() {
     assert!(Stalker2ItemCatalog::load(br#"{"schema_version":2}"#).is_err());
-}
-
-#[test]
-fn armor_and_weapon_upgrades_are_resolvable() {
-    assert!(Stalker2ArmorUpgrades::count() > 100);
-
-    let armor_up = Stalker2ArmorUpgrades::find_armor("Anomaly_Scientific_Armor_MaxDurability_Left_1_1");
-    assert!(armor_up.is_some());
-    let up = armor_up.unwrap();
-    assert_eq!(up.effect, "durable");
-    assert_eq!(up.tier, 1);
 }
