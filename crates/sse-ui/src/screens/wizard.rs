@@ -298,14 +298,19 @@ impl Wizard {
 
     /// Adds a save folder through the settings writer. Runs on a worker thread, never on the interface thread.
     pub(super) fn save_directory(path: PathBuf) -> Result<bool> {
+        // A typo must not be saved as a search folder that never yields saves.
+        if !path.is_dir() {
+            return Err(sse_core::Error::Refused(crate::strings::tr_in(
+                Some(crate::strings::current_language()),
+                "Папка не найдена: {0}",
+                &[&path.display()],
+            )));
+        }
         let settings_path = sse_app::default_settings_path();
         let mut settings = sse_app::AppSettings::load(&settings_path)?;
         let directories = settings.save_directories.get_or_insert_with(Vec::new);
-        let key = path.to_string_lossy().trim().to_lowercase();
-        if directories
-            .iter()
-            .any(|item| item.to_string_lossy().trim().to_lowercase() == key)
-        {
+        let key = Self::directory_key(&path);
+        if directories.iter().any(|item| Self::directory_key(item) == key) {
             return Ok(false);
         }
         super::submit_settings_write(
@@ -313,6 +318,15 @@ impl Wizard {
             None,
         )?;
         Ok(true)
+    }
+    /// Duplicate key for a folder: case-insensitive only where the system's default filesystem is (Windows, macOS).
+    fn directory_key(path: &std::path::Path) -> String {
+        let text = path.to_string_lossy().trim().to_owned();
+        if cfg!(any(windows, target_os = "macos")) {
+            text.to_lowercase()
+        } else {
+            text
+        }
     }
     pub(super) fn auto_search() -> Result<usize> {
         let settings_path = sse_app::default_settings_path();
@@ -456,6 +470,19 @@ impl Wizard {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_path_that_is_not_a_folder_is_refused_before_anything_is_saved() {
+        let missing = std::path::PathBuf::from("/definitely/not/a/saves/folder-r4-070");
+        assert!(super::Wizard::save_directory(missing).is_err());
+    }
+
+    #[test]
+    fn duplicate_folder_keys_follow_the_filesystem_case_rule() {
+        let lower = std::path::Path::new("/tmp/saves");
+        let upper = std::path::Path::new("/tmp/Saves");
+        let same = super::Wizard::directory_key(lower) == super::Wizard::directory_key(upper);
+        assert_eq!(same, cfg!(any(windows, target_os = "macos")));
+    }
     use super::{spawn_wizard_task, Text, Wizard, WizardAction, WizardTaskFinished, WizardTaskKind, WizardWorkResult};
     use crate::event_loop::Message;
     use crate::glyphs::Fonts;
