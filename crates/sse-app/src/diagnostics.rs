@@ -549,7 +549,12 @@ pub fn save_automatic_error_report(report: &str) -> Result<PathBuf> {
     let directory = log_directory();
     fs::create_dir_all(&directory)?;
     let path = directory.join(AUTOMATIC_REPORT_FILE);
-    fs::write(&path, redact_paths(&redact(report)))?;
+    // Atomic replace: an interrupted write must not leave a truncated report to be shown as pending.
+    sse_sys::secure_fs::atomic_write(
+        &path,
+        redact_paths(&redact(report)).as_bytes(),
+        sse_sys::secure_fs::AtomicWriteOptions::create_or_replace(),
+    )?;
     Ok(path)
 }
 
@@ -1122,6 +1127,30 @@ mod tests {
     use super::*;
     use sse_codecs::inflate::inflate_raw;
     use sse_sys::fetch::Response;
+
+    #[test]
+    fn automatic_report_is_saved_atomically_with_no_leftover_file() -> Result<()> {
+        let _guard = LOG_DIRECTORY_TEST_GATE
+            .lock()
+            .map_err(|_| Error::System("diagnostics test gate poisoned".to_owned()))?;
+        let directory = std::env::temp_dir().join(format!("sse-report-atomic-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&directory);
+        configure_log_directory(Some(directory.clone()));
+
+        let first = save_automatic_error_report("Error: first report");
+        let first_text = first.and_then(|path| Ok(fs::read_to_string(path)?));
+        let second = save_automatic_error_report("Error: second report");
+        let second_text = second.and_then(|path| Ok(fs::read_to_string(path)?));
+        configure_log_directory(None);
+        let names: Vec<String> = fs::read_dir(&directory)?
+            .filter_map(|entry| entry.ok().map(|entry| entry.file_name().to_string_lossy().into_owned()))
+            .collect();
+        let _ = fs::remove_dir_all(&directory);
+        assert!(first_text?.contains("first report"));
+        assert!(second_text?.contains("second report"));
+        assert_eq!(names, vec![AUTOMATIC_REPORT_FILE.to_owned()]);
+        Ok(())
+    }
 
     #[test]
     fn diagnostic_timestamps_use_readable_utc_calendar_time() {
