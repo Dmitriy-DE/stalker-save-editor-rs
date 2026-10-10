@@ -669,8 +669,8 @@ fn decode_public_key_pem(text: &str) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        field_mul, field_square, jacobian_add, jacobian_double, jacobian_x, parse_signature, pow_mod, scalar_mul,
-        Affine, PublicKey, GX, GY, N, P, P_MINUS_TWO, U256,
+        field_mul, field_square, jacobian_add, jacobian_double, jacobian_x, parse_signature, point_on_curve, pow_mod,
+        scalar_mul, Affine, PublicKey, GX, GY, N, P, P_MINUS_TWO, U256,
     };
     use core::cmp::Ordering;
 
@@ -702,6 +702,40 @@ DuEkmd6oGnQq6qsZmILc2fYC0wfqEMk/NB88BSFAC1N6fmziJf11RVtlLQ==\n\
         assert_eq!(super::add_mod(p_minus_one, U256::ONE, P), U256::ZERO);
         assert_eq!(super::add_mod(n_minus_one, n_minus_one, N), N.sub_raw(two).0);
         assert_eq!(super::add_mod(n_minus_one, U256::ONE, N), U256::ZERO);
+    }
+
+    /// Group order n of P-256 (FIPS 186-4 / SEC 2), big-endian.
+    const ORDER_N: [u8; 32] = [
+        0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xBC, 0xE6,
+        0xFA, 0xAD, 0xA7, 0x17, 0x9E, 0x84, 0xF3, 0xB9, 0xCA, 0xC2, 0xFC, 0x63, 0x25, 0x51,
+    ];
+
+    #[test]
+    fn signature_components_outside_one_to_n_minus_one_are_rejected() {
+        // Standard ECDSA range rule: 1 <= r, s <= n - 1. The release signature is the valid control.
+        let key = PublicKey::from_pem(PUBLIC_KEY).unwrap_or_else(|error| panic!("{error}"));
+        let r_valid = &RELEASE_SIGNATURE_DER[4..36];
+        let s_valid = &RELEASE_SIGNATURE_DER[38..70];
+        let zero = [0_u8; 32];
+        let with = |r: &[u8], s: &[u8]| [r, s].concat();
+
+        assert!(key.verify(&RELEASE_DIGEST, &with(r_valid, s_valid)));
+        assert!(!key.verify(&RELEASE_DIGEST, &with(&zero, s_valid)), "r = 0");
+        assert!(!key.verify(&RELEASE_DIGEST, &with(r_valid, &zero)), "s = 0");
+        assert!(!key.verify(&RELEASE_DIGEST, &with(&ORDER_N, s_valid)), "r = n");
+        assert!(!key.verify(&RELEASE_DIGEST, &with(r_valid, &ORDER_N)), "s = n");
+    }
+
+    #[test]
+    fn points_at_infinity_and_off_the_curve_are_not_on_p256() {
+        assert!(!point_on_curve(Affine {
+            x: U256::ZERO,
+            y: U256::ZERO
+        }));
+        // GX, GY with the lowest limb of y bumped: a valid field element that is not on the curve.
+        let off = U256([GY.limb(0).wrapping_add(1), GY.limb(1), GY.limb(2), GY.limb(3)]);
+        assert!(!point_on_curve(Affine { x: GX, y: off }));
+        assert!(point_on_curve(Affine { x: GX, y: GY }));
     }
 
     #[test]
