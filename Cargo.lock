@@ -134,6 +134,7 @@ dependencies = [
  "sse-codecs",
  "sse-core",
  "sse-sys",
+ "sse-xray",
 ]
 
 [[package]]
