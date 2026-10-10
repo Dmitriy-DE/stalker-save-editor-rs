@@ -1034,6 +1034,7 @@ pub struct Shell {
     sound_game: Option<String>,
     sound_enabled: bool,
     sound_volume: f32,
+    music: crate::menu_music::MusicHost,
 }
 
 fn padded(left: f32, top: f32, right: f32, bottom: f32) -> Edges {
@@ -2169,6 +2170,7 @@ impl Shell {
             sound_game: None,
             sound_enabled: settings.sound_enabled,
             sound_volume: (settings.sound_volume.min(100) as f32) / 100.0,
+            music: crate::menu_music::MusicHost::new(settings.music_enabled, settings.music_volume),
         };
         let initial_collapsed = settings.navigation_collapsed.unwrap_or(false);
         shell.apply_navigation(tree, initial_collapsed)?;
@@ -2222,6 +2224,23 @@ impl Shell {
         if settings.send_reports && settings.reports_notice_shown {
             let _ = self.open_pending_report_dialog(tree);
         }
+    }
+
+    /// Loads the selected game's menu track on a worker when the game changes.
+    fn sync_music_track(&mut self) {
+        let game = self.app.selected_game().map(str::to_owned);
+        if !self.music.select_game(game.as_deref()) {
+            return;
+        }
+        let (Some(game), Some(directory), Some(proxy)) =
+            (game, self.app.game_dir().map(Path::to_path_buf), self.proxy.clone())
+        else {
+            return;
+        };
+        std::thread::spawn(move || {
+            let track = crate::menu_music::load_track(&game, &directory);
+            let _ = proxy.send(AppMessage::MusicLoaded(game, Box::new(track)));
+        });
     }
 
     fn sync_game_sounds(&mut self) {
@@ -3179,6 +3198,8 @@ impl Shell {
                 Message::User(AppMessage::ToScreen(id, _)) => *id == screen.id(),
                 Message::User(AppMessage::EditorAction(_)) => screen.id() == ScreenId::Inventory,
                 Message::User(AppMessage::SoundLoaded(_, _)) => false,
+                Message::User(AppMessage::MusicLoaded(_, _)) => false,
+                Message::User(AppMessage::MusicSettings { .. }) => false,
                 Message::User(AppMessage::SettingsWriteFinished(_)) => false,
                 Message::Window(_) => index == self.selected,
             };
@@ -3334,6 +3355,21 @@ impl Shell {
     }
 
     fn handle(&mut self, tree: &mut Tree, message: &Message<AppMessage>, clicked: Option<WidgetId>) -> Result<Flow> {
+        match message {
+            Message::User(AppMessage::MusicLoaded(game, track)) => {
+                if self.music.track_game() == Some(game.as_str()) {
+                    self.music.set_track((**track).clone());
+                }
+                return Ok(Flow::Continue);
+            }
+            Message::User(AppMessage::MusicSettings { enabled, volume }) => {
+                self.music.set_settings(*enabled, *volume);
+                return Ok(Flow::Continue);
+            }
+            Message::Window(WindowEvent::Focus(focused)) => self.music.set_focused(*focused),
+            Message::Window(WindowEvent::CloseRequested) => self.music.stop(),
+            _ => {}
+        }
         if let Message::User(AppMessage::SettingsWriteFinished(result)) = message {
             let status = match result {
                 Ok(()) => crate::strings::t("Настройки сохранены.").to_owned(),
@@ -4422,7 +4458,10 @@ fn reports_failure(error: &sse_core::Error) -> bool {
 impl App<AppMessage> for Shell {
     fn message(&mut self, tree: &mut Tree, message: &Message<AppMessage>, clicked: Option<WidgetId>) -> Flow {
         self.reset_was_armed = std::mem::take(&mut self.reset_armed);
-        match self.handle(tree, message, clicked) {
+        let flow = self.handle(tree, message, clicked);
+        self.sync_music_track();
+        self.music.sync();
+        match flow {
             Ok(flow) => flow,
             Err(error) => {
                 let detail = crate::status::localize_writer_status(&error.to_string());

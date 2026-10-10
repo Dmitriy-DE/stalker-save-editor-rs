@@ -31,6 +31,8 @@ pub enum SettingsPatch {
     SoundEnabled(bool),
     /// Set whether menu music is enabled.
     MusicEnabled(bool),
+    /// Set the menu music volume in percent.
+    MusicVolume(u32),
     /// Set the sound volume in percent.
     SoundVolume(u32),
     /// Set the backup directory override; `None` restores the default.
@@ -141,6 +143,7 @@ fn apply_patch(settings: &mut AppSettings, patch: SettingsPatch) {
         SettingsPatch::Language(value) => settings.language = value,
         SettingsPatch::SoundEnabled(value) => settings.sound_enabled = value,
         SettingsPatch::MusicEnabled(value) => settings.music_enabled = value,
+        SettingsPatch::MusicVolume(value) => settings.music_volume = value.min(100),
         SettingsPatch::SoundVolume(value) => settings.sound_volume = value,
         SettingsPatch::BackupDirectory(value) => settings.backup_directory = value,
         SettingsPatch::SendReports(value) => settings.send_reports = value,
