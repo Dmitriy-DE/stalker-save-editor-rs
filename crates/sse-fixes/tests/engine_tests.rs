@@ -631,3 +631,82 @@ fn manifest_with_quote_in_version_is_written_as_valid_json() {
     assert_eq!(installed.len(), 1);
     assert_eq!(installed[0].id, "cs.test.version");
 }
+
+struct StubProbe(Result<bool, &'static str>);
+
+impl sse_fixes::running_game::GameRunningProbe for StubProbe {
+    fn is_game_running(&self, _game: GameTarget) -> sse_core::Result<bool> {
+        match self.0 {
+            Ok(running) => Ok(running),
+            Err(message) => Err(sse_core::Error::System(message.to_string())),
+        }
+    }
+}
+
+#[test]
+fn install_is_refused_while_the_game_is_running_and_leaves_files_untouched() {
+    let fixture = TestFixture::new(GameTarget::ClearSky, "11450472");
+    let relative_path = "gamedata/scripts/running.script";
+    fixture.write_file(relative_path, b"run = 1\n");
+    let definition = make_test_definition("cs.test.running", relative_path, "run = 1\n", "run = 2\n", "11450472");
+
+    let engine = GameFixEngine::with_synthetic(true).with_process_probe(std::sync::Arc::new(StubProbe(Ok(true))));
+    assert!(engine.install(&definition, &fixture.root).is_err());
+    assert_eq!(fixture.read_file_string(relative_path), "run = 1\n");
+    assert!(engine.list_installed(&fixture.root, None).unwrap().is_empty());
+}
+
+#[test]
+fn uninstall_is_refused_while_the_game_is_running_and_keeps_the_fix() {
+    let fixture = TestFixture::new(GameTarget::ClearSky, "11450472");
+    let relative_path = "gamedata/scripts/keep.script";
+    fixture.write_file(relative_path, b"keep = 1\n");
+    let definition = make_test_definition("cs.test.keep", relative_path, "keep = 1\n", "keep = 2\n", "11450472");
+
+    let installer = GameFixEngine::with_synthetic(true);
+    installer.install(&definition, &fixture.root).unwrap();
+
+    let engine = GameFixEngine::with_synthetic(true).with_process_probe(std::sync::Arc::new(StubProbe(Ok(true))));
+    assert!(engine.uninstall("cs.test.keep", &fixture.root).is_err());
+    assert_eq!(fixture.read_file_string(relative_path), "keep = 2\n");
+    assert_eq!(engine.list_installed(&fixture.root, None).unwrap().len(), 1);
+}
+
+#[test]
+fn install_is_refused_when_the_process_list_cannot_be_read() {
+    let fixture = TestFixture::new(GameTarget::ClearSky, "11450472");
+    let relative_path = "gamedata/scripts/unknown.script";
+    fixture.write_file(relative_path, b"unknown = 1\n");
+    let definition = make_test_definition(
+        "cs.test.unknown",
+        relative_path,
+        "unknown = 1\n",
+        "unknown = 2\n",
+        "11450472",
+    );
+
+    let engine =
+        GameFixEngine::with_synthetic(true).with_process_probe(std::sync::Arc::new(StubProbe(Err("access denied"))));
+    assert!(engine.install(&definition, &fixture.root).is_err());
+    assert_eq!(fixture.read_file_string(relative_path), "unknown = 1\n");
+}
+
+#[test]
+fn game_process_names_match_their_game_only() {
+    use sse_fixes::running_game::game_process_matches;
+    assert!(game_process_matches(
+        GameTarget::ShadowOfChernobyl,
+        "C:\\Games\\XR_3DA.exe"
+    ));
+    assert!(game_process_matches(GameTarget::ClearSky, "xrEngine.exe"));
+    assert!(game_process_matches(
+        GameTarget::CallOfPripyatEnhancedEdition,
+        "xrengine.exe"
+    ));
+    assert!(game_process_matches(
+        GameTarget::Stalker2,
+        "Stalker2-Win64-Shipping.exe"
+    ));
+    assert!(!game_process_matches(GameTarget::ClearSky, "XR_3DA.exe"));
+    assert!(!game_process_matches(GameTarget::Stalker2, "xrEngine.exe"));
+}
