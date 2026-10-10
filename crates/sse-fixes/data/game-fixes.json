@@ -6856,6 +6856,38 @@
       "references": [
         "https://steamcommunity.com/app/20510/discussions/0/3132792921893743264/"
       ]
+    },
+    {
+      "id": "cs.ai.limansk-bridge-model",
+      "game": "ClearSky",
+      "version": "1.0.0",
+      "title": "NPCs can cross the Limansk bridge (replacement model)",
+      "supportedSteamBuildIds": [
+        "11450472"
+      ],
+      "category": "Optional",
+      "maturity": "Validated",
+      "dependsOn": [],
+      "conflictsWith": [],
+      "textPatches": [],
+      "source": "Model from SRP v1.1.5 by Decane (github.com/Decane/SRP), file red_forest_bridge_01_dynamic.ogf.",
+      "problem": "The retail bridge model in the Limansk Red Forest approach makes NPCs fail to cross the bridge.",
+      "description": "Replaces red_forest_bridge_01_dynamic.ogf with SRP's model. The file is taken from the content store only if its SHA-256 matches; otherwise the fix is refused and nothing is written. Not checked in game.",
+      "implementation": "Overlay",
+      "requiresNewGame": false,
+      "saveCompatibility": "ExistingSaves",
+      "verificationState": "RetailFilesVerified",
+      "detectionMethod": "Exact SHA-256 of the retail bridge model before the change; the replacement is checked against its own SHA-256 when read from the content store.",
+      "references": [
+        "https://github.com/Decane/SRP"
+      ],
+      "overlays": [
+        {
+          "relativePath": "gamedata/meshes/dynamics/scene_objects/red_forest/red_forest_bridge_01_dynamic.ogf",
+          "contentSha256": "0986c216d1549ca8de1a377a3b20368dc4a5428d3d563abab8a5588f1f57e78a",
+          "expectedFileSha256": "b93348e532ba7e5357c4ee73fc7bba93932cfb84acb97b7b8ab7ab10d7908bb4"
+        }
+      ]
     }
   ],
   "enhancedEditionSha256": {
