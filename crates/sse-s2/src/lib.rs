@@ -152,12 +152,16 @@ impl S2Save {
             .chain(index.grid_cells.iter().map(|cell| cell.handle))
             .collect::<HashSet<_>>();
         referenced_handles.remove(&u32::MAX);
+        // Object records never lie inside the inventory header, backpack grid or stash block.
+        // Without this span, handle lists and grid cells there can look like a second record.
+        let mut excluded = None;
         if !index.is_legacy {
             if let Ok(stash) = S2StashLayout::locate(container.image(), &index) {
                 referenced_handles.extend(stash.live_handles().iter().copied());
+                excluded = Some(index.owned_count_offset..stash.grid_end_offset);
             }
         }
-        let objects = S2ObjectIndex::build(container.image(), index.is_legacy, &referenced_handles)?;
+        let objects = S2ObjectIndex::build(container.image(), index.is_legacy, &referenced_handles, excluded)?;
         let names = S2NameTables::locate(container.image(), &objects, index.is_legacy)?;
         let (unresolved_handles, warnings) = collect_inventory_warnings(container.image(), &index, &objects)?;
         Ok(Self {
@@ -726,7 +730,12 @@ struct S2ObjectIndex {
 }
 
 impl S2ObjectIndex {
-    fn build(raw: &[u8], legacy: bool, referenced_handles: &HashSet<u32>) -> Result<Self> {
+    fn build(
+        raw: &[u8],
+        legacy: bool,
+        referenced_handles: &HashSet<u32>,
+        excluded: Option<std::ops::Range<usize>>,
+    ) -> Result<Self> {
         let record_shift = if legacy { 3_usize } else { 0 };
         let marker_offset = 18_usize
             .checked_sub(record_shift)
@@ -751,6 +760,9 @@ impl S2ObjectIndex {
             let Some(record_offset) = marker_position.checked_sub(marker_offset) else {
                 continue;
             };
+            if excluded.as_ref().is_some_and(|span| span.contains(&record_offset)) {
+                continue;
+            }
             if raw.len().saturating_sub(record_offset) < 36 {
                 continue;
             }
@@ -1480,7 +1492,9 @@ fn starts_with_family(value: &str, family: &str) -> bool {
 }
 
 fn is_known_kind(kind: u8) -> bool {
-    matches!(kind, 0 | 1 | 2 | 4 | 5 | 6 | 7 | 8 | 10 | 11)
+    // Kind 3 records have the same header, length and cell fields as kinds 5 and 8 (see the
+    // real-copy dump); it is read as a non-stackable item.
+    matches!(kind, 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 10 | 11)
 }
 
 fn is_editable_stack(kind: u8, count: u32) -> bool {
@@ -1943,7 +1957,7 @@ fn move_stash_item_to_backpack(
             "S2 stash item is already owned by the backpack".to_owned(),
         ));
     }
-    if !is_known_kind(record.kind_code) && record.kind_code != 3 {
+    if !is_known_kind(record.kind_code) {
         return Err(Error::Refused(
             "S2 stash item kind is not confirmed editable".to_owned(),
         ));
@@ -3262,8 +3276,8 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn sequential_transfer_records_a_refused_item_and_keeps_the_image() -> Result<(), Error> {
+    /// Synthetic stash item with the given kind byte; the rest of the record is the fixture's.
+    fn stash_item_with_kind(kind: u8) -> Result<S2Save, Error> {
         let mut raw = WRITER_S2_STASH_SOURCE.to_vec();
         let record_save = S2Save::from_bytes(&pack_raw(&raw))?;
         let record_offset = record_save
@@ -3271,21 +3285,43 @@ mod tests {
             .unique(0x3000_0010)
             .ok_or_else(|| Error::damaged("fixture stash record is missing"))?
             .record_offset;
-        // Kind 3 is accepted by the move check but not by the reader, so the read-back refuses it.
-        let kind = raw
+        let kind_byte = raw
             .get_mut(record_offset.saturating_add(31))
             .ok_or_else(|| Error::damaged("fixture kind byte is missing"))?;
-        *kind = 3;
-        let save = S2Save::from_bytes(&pack_raw(&raw))?;
+        *kind_byte = kind;
+        S2Save::from_bytes(&pack_raw(&raw))
+    }
+
+    #[test]
+    fn sequential_transfer_moves_a_kind_three_item() -> Result<(), Error> {
+        let save = stash_item_with_kind(3)?;
+
+        let transfer = transfer_stash_items_to_backpack(&save, &[], &[0x3000_0010])?;
+
+        assert_eq!(transfer.moved, vec![0x3000_0010]);
+        assert!(transfer.refused.is_empty());
+        assert_eq!(transfer.stopped, None);
+        let packed = transfer
+            .packed
+            .ok_or_else(|| Error::damaged("transfer wrote nothing"))?;
+        let after = S2Save::from_bytes(&packed)?;
+        assert!(after.unresolved_handles().is_empty());
+        assert!(after
+            .items()
+            .iter()
+            .any(|item| item.handle == 0x3000_0010 && item.kind_code == 3));
+        Ok(())
+    }
+
+    #[test]
+    fn sequential_transfer_still_refuses_an_unknown_kind_and_keeps_the_image() -> Result<(), Error> {
+        let save = stash_item_with_kind(9)?;
 
         let transfer = transfer_stash_items_to_backpack(&save, &[], &[0x3000_0010])?;
 
         assert!(transfer.moved.is_empty());
         assert_eq!(transfer.packed, None);
-        assert_eq!(transfer.stopped, None);
-        assert_eq!(transfer.refused.len(), 1);
         assert_eq!(transfer.refused_count(S2SkipReason::Unsupported), 1);
-        assert_eq!(transfer.refused_count(S2SkipReason::NoRoom), 0);
         Ok(())
     }
 
@@ -3312,6 +3348,104 @@ mod tests {
             S2SkipReason::Unsupported
         );
         assert_eq!(classify_refusal("S2 stash handle is duplicated"), S2SkipReason::Other);
+    }
+
+    /// Read-only summary per copy: `SSE_S2_COPY_DIR=<copies> cargo test -p sse-s2 real_copies_read_summary -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "read-only summary on copies of real S2 saves (SSE_S2_COPY_DIR)"]
+    fn real_copies_read_summary() -> Result<(), Error> {
+        let dir =
+            std::env::var("SSE_S2_COPY_DIR").map_err(|_| Error::Refused("SSE_S2_COPY_DIR is not set".to_owned()))?;
+        let mut paths: Vec<_> = std::fs::read_dir(&dir)
+            .map_err(|error| Error::System(error.to_string()))?
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|path| path.is_file())
+            .collect();
+        paths.sort();
+        for path in &paths {
+            let source = std::fs::read(path).map_err(|error| Error::System(error.to_string()))?;
+            let save = S2Save::from_bytes(&source)?;
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            if save.index.is_legacy {
+                println!("{name} legacy");
+                continue;
+            }
+            println!(
+                "{name} backpack={} stash={} unresolved={}",
+                save.items().len(),
+                save.stash_items()?.len(),
+                save.unresolved_handles().len()
+            );
+        }
+        Ok(())
+    }
+
+    /// Manual dump for kind-3 analysis: `SSE_S2_COPY_DIR=<copies> cargo test -p sse-s2 real_copies_kind_dump -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "manual dump of object records on copies of real S2 saves (SSE_S2_COPY_DIR)"]
+    fn real_copies_kind_dump() -> Result<(), Error> {
+        let dir =
+            std::env::var("SSE_S2_COPY_DIR").map_err(|_| Error::Refused("SSE_S2_COPY_DIR is not set".to_owned()))?;
+        let mut paths: Vec<_> = std::fs::read_dir(&dir)
+            .map_err(|error| Error::System(error.to_string()))?
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|path| path.is_file())
+            .collect();
+        paths.sort();
+        for path in &paths {
+            let source = std::fs::read(path).map_err(|error| Error::System(error.to_string()))?;
+            let save = S2Save::from_bytes(&source)?;
+            if save.index.is_legacy {
+                continue;
+            }
+            let image = save.container.image();
+            let items = save.items();
+            let stash = save.stash_items().unwrap_or_default();
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            for (position, record) in save.objects.records.iter().enumerate() {
+                let end = save.objects.record_ends.get(position).copied().unwrap_or(0);
+                let place = if items.iter().any(|i| i.handle == record.handle) {
+                    "bag"
+                } else if stash.iter().any(|i| i.handle == record.handle) {
+                    "stash"
+                } else {
+                    "-"
+                };
+                let cells = items
+                    .iter()
+                    .find(|i| i.handle == record.handle)
+                    .map(|i| i.cells.len())
+                    .or_else(|| stash.iter().find(|i| i.handle == record.handle).map(|i| i.cells.len()))
+                    .unwrap_or(0);
+                let head: String = image
+                    .get(record.record_offset..record.record_offset.saturating_add(40).min(image.len()))
+                    .unwrap_or(&[])
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect();
+                println!(
+                    "{name} h=0x{:08X} kind={} place={place} cells={cells} count={} w={:.2} key={:02x}{:02x}{:02x} off={} len={} f15={} f28={:02x} head={head}",
+                    record.handle,
+                    record.kind_code,
+                    record.count,
+                    record.total_weight,
+                    record.type_key[0],
+                    record.type_key[1],
+                    record.type_key[2],
+                    record.record_offset,
+                    end.saturating_sub(record.record_offset),
+                    image.get(record.record_offset + 15).copied().unwrap_or(0),
+                    image.get(record.record_offset + 28).copied().unwrap_or(0),
+                );
+            }
+        }
+        Ok(())
     }
 
     #[test]
@@ -4082,7 +4216,7 @@ mod tests {
     }
 
     #[test]
-    fn unknown_kind_three_item_remains_visible_but_read_only() -> sse_core::Result<()> {
+    fn kind_three_item_is_read_as_non_stackable_and_count_stays_read_only() -> sse_core::Result<()> {
         let save = S2Save::from_bytes(WRITER_S2_STACK_SOURCE)?;
         let handle = 0x3000_0001;
         let record = save
@@ -4103,11 +4237,7 @@ mod tests {
 
         assert_eq!(item.kind_code, 3);
         assert!(!item.editable_count);
-        assert!(unknown.unresolved_handles().contains(&handle));
-        assert!(unknown
-            .warnings()
-            .iter()
-            .any(|warning| warning.contains("object kind=3, только read-only")));
+        assert!(!unknown.unresolved_handles().contains(&handle));
 
         let original_image = unknown.container().image().to_vec();
         let result = unknown.write_changes(&[S2Change::SetStackCount { handle, count: 7 }]);
@@ -4297,5 +4427,41 @@ mod tests {
             S2StashLayout::locate(&hostile, &player),
             Err(Error::Damaged(_))
         ));
+    }
+}
+
+#[cfg(test)]
+mod object_span_tests {
+    use super::*;
+
+    /// Minimal object-like candidate at `offset`: handle, marker 0x38 at +18, count 1 at +19, weight 1.0 at +24.
+    fn candidate_bytes(handle: u32, offset: usize) -> Vec<u8> {
+        let mut raw = vec![0_u8; offset];
+        let mut record = Vec::with_capacity(64);
+        record.extend_from_slice(&handle.to_le_bytes());
+        record.resize(18, 0);
+        record.push(0x38);
+        record.extend_from_slice(&1_u32.to_le_bytes());
+        record.extend_from_slice(&1.0_f32.to_le_bytes());
+        record.resize(64, 0);
+        raw.extend_from_slice(&record);
+        raw
+    }
+
+    #[test]
+    fn candidates_inside_the_excluded_span_are_not_object_records() -> Result<()> {
+        let handle = 0x3000_1234;
+        let raw = candidate_bytes(handle, 100);
+        let referenced = HashSet::from([handle]);
+
+        let kept = S2ObjectIndex::build(&raw, false, &referenced, None)?;
+        assert_eq!(kept.candidates(handle).len(), 1);
+
+        let excluded = S2ObjectIndex::build(&raw, false, &referenced, Some(90..200))?;
+        assert!(excluded.candidates(handle).is_empty());
+
+        let outside = S2ObjectIndex::build(&raw, false, &referenced, Some(200..300))?;
+        assert_eq!(outside.candidates(handle).len(), 1);
+        Ok(())
     }
 }
