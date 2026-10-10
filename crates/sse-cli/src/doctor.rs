@@ -76,6 +76,13 @@ pub(super) fn doctor_save(path: Option<&String>, json: bool) -> sse_core::Result
 pub(super) fn doctor_crash(path: Option<&String>, game: Option<&String>, json: bool) -> sse_core::Result<()> {
     let path = path.ok_or_else(|| Error::damaged("missing crash-log path"))?;
     let game = game.map(String::as_str);
+    if let Some(name) = game {
+        if !sse_doctor::is_known_crash_game(name) {
+            return Err(Error::Refused(format!(
+                "unknown game for crash signatures: {name}; use cs, cs-ee, soc or soc-ee"
+            )));
+        }
+    }
     let analysis = sse_doctor::analyze_crash_file(Path::new(path), game)?;
     if json {
         println!("{}", json_crash_analysis(&analysis)?);
@@ -563,6 +570,24 @@ mod doctor_tests {
         let _ = std::fs::remove_file(path);
         assert_eq!(exit_code, sse_core::ExitCode::Done as u8);
         assert_eq!(json_exit_code, sse_core::ExitCode::Done as u8);
+    }
+
+    #[test]
+    fn doctor_crash_refuses_an_unknown_game_instead_of_matching_only_general_signatures() {
+        let path = std::env::temp_dir().join(format!("sse-cli-doctor-game-{}.log", std::process::id()));
+        assert!(std::fs::write(&path, "fatal error").is_ok());
+        let arguments = vec![
+            "doctor".to_owned(),
+            "crash".to_owned(),
+            path.to_string_lossy().into_owned(),
+            "--game".to_owned(),
+            "s2".to_owned(),
+        ];
+
+        let exit_code = run(&arguments);
+
+        let _ = std::fs::remove_file(path);
+        assert_eq!(exit_code, sse_core::ExitCode::Refused as u8);
     }
 
     #[test]
