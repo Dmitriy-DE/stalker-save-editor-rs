@@ -6,7 +6,7 @@ use sse_core::{Error, Result, SaveBuffer};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 /// Maximum decoded S2 image admitted by the bounded Rust reader.
-pub const MAXIMUM_UNPACKED_SIZE: usize = 256 * 1024 * 1024;
+pub const MAXIMUM_UNPACKED_SIZE: usize = sse_core::limits::MAXIMUM_UNPACKED_BYTES;
 const MAXIMUM_MONEY: u32 = 2_000_000_000;
 const MAXIMUM_EDITABLE_STACK_COUNT: u32 = 1_000_000;
 const MAXIMUM_OWNED_HANDLES: usize = 4096;

@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::SystemTime;
 
-const MAXIMUM_UNPACKED_SIZE: u64 = 536_870_912; // 512 MiB
+const MAXIMUM_FILE_SIZE: u64 = 536_870_912; // 512 MiB, the largest file discovery reads
 const XRAY_MAGIC: u32 = 0xFFFF_FFFF;
 static FULL_XRAY_EE_DETECTION_LOCK: Mutex<()> = Mutex::new(());
 
@@ -215,7 +215,7 @@ fn scan_single_slot(path: &std::path::Path, candidate_game_id: &str, candidate_r
     let size = metadata.len();
     let mtime = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
 
-    if size > MAXIMUM_UNPACKED_SIZE {
+    if size > MAXIMUM_FILE_SIZE {
         return SaveSlot {
             path: path.to_path_buf(),
             candidate_game_id: candidate_game_id.to_string(),
@@ -270,7 +270,7 @@ pub(crate) fn detect_format_for_file(
     header_bytes: &[u8],
     size: u64,
 ) -> io::Result<(Option<String>, Option<String>, Option<String>)> {
-    if size > MAXIMUM_UNPACKED_SIZE {
+    if size > MAXIMUM_FILE_SIZE {
         return Ok((
             None,
             None,
@@ -346,7 +346,9 @@ fn detect_xray(bytes: &[u8]) -> Option<String> {
         return None;
     }
 
-    if unpacked_size_u32 == 0 || u64::from(unpacked_size_u32) > MAXIMUM_UNPACKED_SIZE {
+    if unpacked_size_u32 == 0
+        || usize::try_from(unpacked_size_u32).is_ok_and(|size| size > sse_core::limits::MAXIMUM_UNPACKED_BYTES)
+    {
         return None;
     }
 
@@ -474,7 +476,6 @@ fn parse_xray_chunks(raw: &[u8]) -> Option<(u32, &[u8])> {
 
 /// Largest S2 save that discovery identifies by its container trailer; a larger file is not identified here.
 const S2_CONTAINER_CHECK_LIMIT: u64 = 64 * 1024 * 1024;
-const S2_MAXIMUM_UNPACKED_SIZE: u32 = 256 * 1024 * 1024;
 
 fn detect_stalker2(bytes: &[u8], path: Option<&std::path::Path>) -> bool {
     match path {
@@ -510,7 +511,9 @@ fn s2_container_is_valid(bytes: &[u8]) -> bool {
     let (Some(unpacked_size), Some(stored_crc)) = (read_u32_le(bytes, 0), read_u32_le(bytes, trailer_offset)) else {
         return false;
     };
-    if unpacked_size == 0 || unpacked_size > S2_MAXIMUM_UNPACKED_SIZE {
+    if unpacked_size == 0
+        || usize::try_from(unpacked_size).is_ok_and(|size| size > sse_core::limits::MAXIMUM_UNPACKED_BYTES)
+    {
         return false;
     }
     bytes
