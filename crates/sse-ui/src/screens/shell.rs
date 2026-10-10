@@ -6613,6 +6613,63 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_z_inside_the_search_field_leaves_the_draft_alone() -> sse_core::Result<()> {
+        let fixture = include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-source.sav");
+        let path = std::env::temp_dir().join(format!("sse-shell-ctrl-z-field-{}.sav", std::process::id()));
+        std::fs::write(&path, fixture)?;
+        let expected_path = std::fs::canonicalize(&path)?;
+        let (proxy, receiver) = channel_pair::<super::super::AppMessage>();
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut shell = Shell::build_for_test(&mut tree, None)?;
+        shell.open(&mut tree, ScreenId::Overview)?;
+        shell.set_proxy(proxy);
+        assert!(shell.open_save(&mut tree, &path)?);
+        while shell.app.current_save() != Some(expected_path.as_path()) {
+            let loaded = receiver
+                .recv_timeout(std::time::Duration::from_secs(10))
+                .map_err(|error| sse_core::Error::System(error.to_string()))?;
+            shell.handle(&mut tree, &loaded, None)?;
+        }
+        let sha = shell
+            .app
+            .current_save_sha256()
+            .map(str::to_owned)
+            .ok_or_else(|| sse_core::Error::damaged("loaded save has no identity"))?;
+        // Two states: the second one (money 5) is current, and Undo would move back to the first.
+        let mut changed = sse_storage::drafts::DraftPlan::empty(&sha)?;
+        changed.money = Some(5);
+        shell.app.set_draft_journal(sse_storage::drafts::DraftJournal::new(
+            vec![sse_storage::drafts::DraftPlan::empty(&sha)?, changed],
+            1,
+        )?);
+        let search = Message::Window(WindowEvent::Key {
+            pressed: true,
+            keysym: u32::from('f'),
+            text: None,
+            ctrl: true,
+            shift: false,
+        });
+        shell.handle(&mut tree, &search, None)?;
+        assert!(tree.focused_is_input(), "Ctrl+F must focus the search field");
+
+        let undo = Message::Window(WindowEvent::Key {
+            pressed: true,
+            keysym: u32::from('z'),
+            text: None,
+            ctrl: true,
+            shift: false,
+        });
+        shell.handle(&mut tree, &undo, None)?;
+        assert_eq!(
+            shell.app.draft(&sha).and_then(|plan| plan.money),
+            Some(5),
+            "Ctrl+Z in a text field must not undo the draft"
+        );
+        std::fs::remove_file(path)?;
+        Ok(())
+    }
+
+    #[test]
     fn ctrl_f_opens_inventory_search_after_a_save_is_loaded() -> sse_core::Result<()> {
         let fixture = include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-source.sav");
         let path = std::env::temp_dir().join(format!("sse-shell-ctrl-f-{}.sav", std::process::id()));

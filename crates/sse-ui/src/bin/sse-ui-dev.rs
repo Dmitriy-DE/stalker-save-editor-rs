@@ -67,6 +67,7 @@ fn main() -> std::process::ExitCode {
     let result = match args.first().map(String::as_str) {
         Some("--screenshot") => screenshot(&args),
         Some("--bench") => bench(&args),
+        Some("--bench-save") => bench_save(&args),
         Some("--ci-budget") => ci_budget(),
         Some("--ci-i18n-buttons") => ci_i18n_buttons(),
         _ => Err(Error::Refused(
@@ -475,6 +476,91 @@ fn linux_rss_kib() -> Option<u64> {
     let status = std::fs::read_to_string("/proc/self/status").ok()?;
     let line = status.lines().find(|line| line.starts_with("VmRSS:"))?;
     line.split_whitespace().nth(1)?.parse().ok()
+}
+
+/// Times screen switches, first paints and pointer moves on a loaded save (the cost a user sees on a real save).
+fn bench_save(args: &[String]) -> Result<()> {
+    let save_path = args
+        .get(1)
+        .ok_or_else(|| Error::Refused("usage: sse-ui-dev --bench-save SAVE_PATH [WxH]".to_owned()))?;
+    let (width, height) = args.get(2).map_or((1280, 800), |value| {
+        let args = vec![String::new(), value.clone()];
+        bench_size(&args)
+    });
+    let mut tree = Tree::new(Fonts::bundled()?, rgb(BG_BASE));
+    let mut shell = Shell::build(&mut tree, None)?;
+    let (proxy, receiver) = channel_pair::<AppMessage>();
+    shell.set_proxy(proxy);
+    tree.resize(width, height);
+    let load_started = Instant::now();
+    if !shell.open_save(&mut tree, Path::new(save_path))? {
+        return Err(Error::Refused("could not start background save loading".to_owned()));
+    }
+    let deadline = Instant::now()
+        .checked_add(Duration::from_secs(60))
+        .unwrap_or_else(Instant::now);
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let message = receiver
+            .recv_timeout(remaining)
+            .map_err(|error| Error::System(format!("save load failed: {error}")))?;
+        let finished = matches!(&message, Message::User(AppMessage::ToScreen(ScreenId::Overview, _)));
+        shell.message(&mut tree, &message, None);
+        if finished {
+            break;
+        }
+    }
+    println!("load_ms {:.1}", load_started.elapsed().as_secs_f64() * 1000.0);
+    let stride = usize::try_from(width).unwrap_or(0);
+    let mut frame = vec![0_u32; stride.saturating_mul(usize::try_from(height).unwrap_or(0))];
+    for id in ScreenId::ALL.iter().copied() {
+        let started = Instant::now();
+        shell.open(&mut tree, id)?;
+        let open = started.elapsed();
+        let started = Instant::now();
+        tree.paint(&mut frame, stride)?;
+        let first = started.elapsed();
+        let mut repaint = Duration::ZERO;
+        let mut small = Duration::ZERO;
+        for _ in 0..5 {
+            tree.damage_all();
+            let started = Instant::now();
+            tree.paint(&mut frame, stride)?;
+            repaint = repaint.max(started.elapsed());
+            // A one-button-sized damage rectangle: the cost here is mostly the walk over every node.
+            tree.add_damage(sse_ui::raster::Rect {
+                x: 20,
+                y: 20,
+                width: 16,
+                height: 16,
+            });
+            let started = Instant::now();
+            tree.paint(&mut frame, stride)?;
+            small = small.max(started.elapsed());
+        }
+        println!(
+            "screen {:?} open_ms {:.2} first_paint_ms {:.2} repaint_worst_ms {:.2} small_damage_worst_ms {:.3}",
+            id,
+            open.as_secs_f64() * 1000.0,
+            first.as_secs_f64() * 1000.0,
+            repaint.as_secs_f64() * 1000.0,
+            small.as_secs_f64() * 1000.0
+        );
+    }
+    shell.open(&mut tree, ScreenId::Overview)?;
+    tree.paint(&mut frame, stride)?;
+    let mut worst_move = Duration::ZERO;
+    for step in 0..200_i32 {
+        let span_x = i32::try_from(width).unwrap_or(1).max(1);
+        let span_y = i32::try_from(height).unwrap_or(1).max(1);
+        let x = 40_i32.saturating_add(step.saturating_mul(5).checked_rem(span_x).unwrap_or(0));
+        let y = 40_i32.saturating_add(step.saturating_mul(3).checked_rem(span_y).unwrap_or(0));
+        let started = Instant::now();
+        tree.pointer_moved(x, y);
+        worst_move = worst_move.max(started.elapsed());
+    }
+    println!("pointer_move_worst_ms {:.3}", worst_move.as_secs_f64() * 1000.0);
+    Ok(())
 }
 
 fn bench_size(args: &[String]) -> (u32, u32) {
