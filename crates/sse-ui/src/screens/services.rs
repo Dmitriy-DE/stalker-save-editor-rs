@@ -1,7 +1,7 @@
 //! S5: companion, achievements, Steam Cloud, and editor updates.
 
 use super::games::GameTarget;
-use super::saves::{build_list_side, show_list_row, sync_side_widths, ListRow, ListSide, Workspace};
+use super::saves::{build_list_side, show_list_row, side_column_style, sync_side_widths, ListRow, ListSide, Workspace};
 use super::style::{self, Button, Text};
 use super::{AppMessage, Context, Screen, ScreenId};
 use crate::event_loop::{Message, WindowEvent};
@@ -289,6 +289,7 @@ struct CompanionIntent {
 #[derive(Default)]
 struct Companion {
     status: Option<WidgetId>,
+    cards: Option<WidgetId>,
     workshop_card: Option<WidgetId>,
     workshop_status: Option<WidgetId>,
     subscribe_workshop: Option<WidgetId>,
@@ -480,31 +481,103 @@ impl Screen for Companion {
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
         self.host = Some(host);
         let language = crate::strings::current_language();
-        let card = style::card(cx.tree, host)?;
+        // The action cards to the left; the state and the primary action to the right.
+        let body = cx.tree.add(
+            Some(host),
+            NodeKind::Row,
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: Size::new(0.0, 0.0),
+                gap: Size::new(crate::theme::CONTROL_GAP + 6.0, 0.0),
+                align_items: crate::layout::Align::Stretch,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        let left = style::d2::panel(cx.tree, body)?;
+        cx.tree.set_style(
+            left,
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: Size::new(0.0, 0.0),
+                preferred: Size::new(0.0, 0.0),
+                padding: crate::layout::Edges::all(crate::theme::d2::PANEL_PADDING.0),
+                gap: Size::new(0.0, 8.0),
+                align_items: crate::layout::Align::Stretch,
+                ..Style::default()
+            },
+        )?;
+        style::d2::panel_title(cx.tree, left, t("ДЕЙСТВИЯ КОМПАНЬОНА"))?;
+        let cards = cx.tree.add(
+            Some(left),
+            NodeKind::Column,
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: Size::new(0.0, 0.0),
+                gap: Size::new(0.0, crate::theme::CONTROL_GAP),
+                align_items: crate::layout::Align::Stretch,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        self.cards = Some(cards);
+        let side = cx.tree.add(
+            Some(body),
+            NodeKind::Column,
+            side_column_style(false, false),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let state = style::d2::panel(cx.tree, side)?;
+        cx.tree.set_style(
+            state,
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: Size::new(0.0, 0.0),
+                preferred: Size::new(0.0, 0.0),
+                padding: crate::layout::Edges::all(crate::theme::d2::PANEL_PADDING.0),
+                gap: Size::new(0.0, 8.0),
+                align_items: crate::layout::Align::Stretch,
+                ..Style::default()
+            },
+        )?;
+        style::d2::panel_title(cx.tree, state, t("СОСТОЯНИЕ"))?;
+        self.status = Some(style::label(cx.tree, state, t("НЕ УСТАНОВЛЕН"), Text::Value)?);
+        self.version = Some(style::label(cx.tree, state, t("Версия мода: —"), Text::Note)?);
+        self.latency = Some(style::label(
+            cx.tree,
+            state,
+            t("Связь / Задержка: Нет ответа"),
+            Text::Note,
+        )?);
+        self.path = Some(style::label(cx.tree, state, t("Путь установки: —"), Text::Note)?);
+        self.install = Some(style::d2::button(
+            cx.tree,
+            state,
+            t("УСТАНОВИТЬ"),
+            style::d2::ButtonKind::Primary,
+            style::d2::ButtonSize::Normal,
+        )?);
+        let card = style::card(cx.tree, cards)?;
         style::label(cx.tree, card, t("МОД-КОМПАНЬОН"), Text::Heading)?;
         style::label(
             cx.tree,
             card,
-            t("Меню в игре: Esc → F1 или КПК компаньона. Хук создаёт распакованный скрипт в gamedata/scripts; установка через приложение ниже."),
+            t("Меню в игре: Esc → F1 или КПК компаньона. Хук создаёт распакованный скрипт в gamedata/scripts; установка через приложение справа."),
             Text::Note,
         )?;
         style::label(cx.tree, card, t("Целевая игра: выбранная в «Обзоре игр»"), Text::Body)?;
-        style::label(cx.tree, card, t("СТАТУС И СВЯЗЬ"), Text::Heading)?;
-        self.status = Some(style::label(cx.tree, card, t("НЕ УСТАНОВЛЕН"), Text::Value)?);
-        self.version = Some(style::label(cx.tree, card, t("Версия мода: —"), Text::Note)?);
-        self.latency = Some(style::label(
-            cx.tree,
-            card,
-            t("Связь / Задержка: Нет ответа"),
-            Text::Note,
-        )?);
-        self.path = Some(style::label(cx.tree, card, t("Путь установки: —"), Text::Note)?);
         let row = style::row(cx.tree, card)?;
-        self.install = Some(style::button(cx.tree, row, t("УСТАНОВИТЬ"), Button::Primary)?);
         self.remove = Some(style::button(cx.tree, row, t("УДАЛИТЬ"), Button::Secondary)?);
         self.ping = Some(style::button(cx.tree, row, t("ПРОВЕРИТЬ СВЯЗЬ"), Button::Secondary)?);
         self.refresh_button = Some(style::button(cx.tree, row, t("ОБНОВИТЬ СТАТУС"), Button::Secondary)?);
-        let live = style::card(cx.tree, host)?;
+        let live = style::card(cx.tree, cards)?;
         style::label(cx.tree, live, t("ЖИВОЙ ИНСПЕКТОР"), Text::Heading)?;
         style::label(
             cx.tree,
@@ -521,7 +594,7 @@ impl Screen for Companion {
             t("Для живой проверки нужен установленный Companion-протокол."),
             Text::Note,
         )?;
-        let s2 = style::card(cx.tree, host)?;
+        let s2 = style::card(cx.tree, cards)?;
         style::label(
             cx.tree,
             s2,
@@ -554,7 +627,7 @@ impl Screen for Companion {
             t("Команды отправляются через протокол Companion в Stalker2\\Saved."),
             Text::Note,
         )?;
-        let all = style::card(cx.tree, host)?;
+        let all = style::card(cx.tree, cards)?;
         style::label(cx.tree, all, t("ВСЕ ИГРЫ"), Text::Heading)?;
         for target in GameTarget::ALL {
             let game = target.title_in(language);
@@ -578,7 +651,7 @@ impl Screen for Companion {
             t("Выбор нескольких установок появится после общего API обнаружения игр."),
             Text::Note,
         )?;
-        let manual = style::card(cx.tree, host)?;
+        let manual = style::card(cx.tree, cards)?;
         style::label(cx.tree, manual, t("ПАПКА ИГРЫ (РУЧНОЙ ВЫБОР)"), Text::Heading)?;
         style::label(
             cx.tree,
@@ -589,7 +662,7 @@ impl Screen for Companion {
         let manual_row = style::row(cx.tree, manual)?;
         self.manual_path = Some(style::input(cx.tree, manual_row, "")?);
         self.apply_manual = Some(style::button(cx.tree, manual_row, t("ПРИМЕНИТЬ"), Button::Secondary)?);
-        let hot = style::card(cx.tree, host)?;
+        let hot = style::card(cx.tree, cards)?;
         style::label(cx.tree, hot, t("ГОРЯЧИЕ КЛАВИШИ"), Text::Heading)?;
         style::label(cx.tree,hot,t("Приложение перехватывает сочетание и отправляет команду моду через файл-протокол. Игра должна быть запущена с установленным модом."),Text::Note)?;
         for action in [
@@ -671,8 +744,8 @@ impl Screen for Companion {
             .selected_game()
             .and_then(sse_companion::workshop::package_for_release);
         if workshop_package.is_some() && self.workshop_card.is_none() {
-            if let Some(host) = self.host {
-                self.build_workshop_card(cx, host)?;
+            if let Some(cards) = self.cards {
+                self.build_workshop_card(cx, cards)?;
             }
         }
         if let Some(card) = self.workshop_card {
