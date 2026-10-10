@@ -121,7 +121,7 @@ fn hash3(d: &[u8], p: usize) -> Option<usize> {
     let c = usize::from(*d.get(p.checked_add(2)?)?);
     Some(a.wrapping_mul(251).wrapping_add(b).wrapping_mul(251).wrapping_add(c) & 0x7fff)
 }
-fn best(d: &[u8], p: usize, head: &[Option<usize>], prev: &[Option<usize>], limit: usize) -> (usize, usize) {
+fn best(d: &[u8], p: usize, head: &[Option<usize>], prev: &[Option<u32>], limit: usize) -> (usize, usize) {
     let Some(h) = hash3(d, p) else { return (0, 0) };
     let mut q = head.get(h).and_then(|x| *x);
     let mut best = (0, 0);
@@ -145,7 +145,7 @@ fn best(d: &[u8], p: usize, head: &[Option<usize>], prev: &[Option<usize>], limi
         if steps >= limit {
             break;
         }
-        q = prev.get(pos).and_then(|x| *x);
+        q = prev.get(pos).and_then(|x| *x).and_then(|x| usize::try_from(x).ok());
     }
     best
 }
@@ -153,7 +153,7 @@ fn best(d: &[u8], p: usize, head: &[Option<usize>], prev: &[Option<usize>], limi
 #[derive(Clone, Copy)]
 enum Token {
     Lit(u8),
-    Match { len: usize, dist: usize },
+    Match { len: u16, dist: u16 },
 }
 
 #[derive(Clone, Copy, Default)]
@@ -196,7 +196,8 @@ fn distance_symbol(dist: usize) -> Result<(usize, u8, u32)> {
 
 fn tokenize(input: &[u8], level: Level) -> Vec<Token> {
     let mut head = vec![None; 32_768];
-    let mut prev = vec![None; input.len()];
+    // Chain links are u32: positions past u32::MAX are not chained, which costs matches, not validity.
+    let mut prev: Vec<Option<u32>> = vec![None; input.len()];
     let chain = if level == Level::Fast { 16 } else { 256 };
     let lazy = if level == Level::Fast { 8 } else { 96 };
     let mut out = Vec::with_capacity(input.len().saturating_div(2).saturating_add(1));
@@ -205,7 +206,11 @@ fn tokenize(input: &[u8], level: Level) -> Vec<Token> {
         let current = best(input, p, &head, &prev, chain);
         if let Some(hash) = hash3(input, p) {
             if let Some(slot) = prev.get_mut(p) {
-                *slot = head.get(hash).copied().flatten();
+                *slot = head
+                    .get(hash)
+                    .copied()
+                    .flatten()
+                    .and_then(|value| u32::try_from(value).ok());
             }
             if let Some(slot) = head.get_mut(hash) {
                 *slot = Some(p);
@@ -219,8 +224,8 @@ fn tokenize(input: &[u8], level: Level) -> Vec<Token> {
         };
         if use_match {
             out.push(Token::Match {
-                len: current.0,
-                dist: current.1,
+                len: u16::try_from(current.0).unwrap_or(u16::MAX),
+                dist: u16::try_from(current.1).unwrap_or(u16::MAX),
             });
             let end = p.saturating_add(current.0).min(input.len());
             let insertion_start = match level {
@@ -231,7 +236,11 @@ fn tokenize(input: &[u8], level: Level) -> Vec<Token> {
             for covered in insertion_start..end {
                 if let Some(hash) = hash3(input, covered) {
                     if let Some(slot) = prev.get_mut(covered) {
-                        *slot = head.get(hash).copied().flatten();
+                        *slot = head
+                            .get(hash)
+                            .copied()
+                            .flatten()
+                            .and_then(|value| u32::try_from(value).ok());
                     }
                     if let Some(slot) = head.get_mut(hash) {
                         *slot = Some(covered);
@@ -475,10 +484,10 @@ fn emit_tokens(writer: &mut Bits, tokens: &[Token], literal: &[Code], distance: 
         match *token {
             Token::Lit(byte) => emit_code(writer, literal, usize::from(byte))?,
             Token::Match { len, dist } => {
-                let (ls, le, lv) = length_symbol(len)?;
+                let (ls, le, lv) = length_symbol(usize::from(len))?;
                 emit_code(writer, literal, ls)?;
                 writer.put(lv, le)?;
-                let (ds, de, dv) = distance_symbol(dist)?;
+                let (ds, de, dv) = distance_symbol(usize::from(dist))?;
                 emit_code(writer, distance, ds)?;
                 writer.put(dv, de)?;
             }
@@ -574,8 +583,8 @@ fn emit_dynamic(writer: &mut Bits, tokens: &[Token]) -> Result<()> {
                 }
             }
             Token::Match { len, dist } => {
-                let (ls, _, _) = length_symbol(len)?;
-                let (ds, _, _) = distance_symbol(dist)?;
+                let (ls, _, _) = length_symbol(usize::from(len))?;
+                let (ds, _, _) = distance_symbol(usize::from(dist))?;
                 if let Some(slot) = lf.get_mut(ls) {
                     *slot = slot.saturating_add(1);
                 }
@@ -650,7 +659,7 @@ fn emit_fixed(writer: &mut Bits, tokens: &[Token]) -> Result<()> {
     for token in tokens {
         match *token {
             Token::Lit(byte) => emit_lit(writer, u16::from(byte))?,
-            Token::Match { len, dist } => emit_match(writer, len, dist)?,
+            Token::Match { len, dist } => emit_match(writer, usize::from(len), usize::from(dist))?,
         }
     }
     emit_lit(writer, 256)
