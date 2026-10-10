@@ -3343,5 +3343,22 @@
     "ko": "초기화",
     "zh-CN": "重置",
     "zh-TW": "重設"
+  },
+  "Деньги: {0} RU · Предметов: {1} · Тайников: —\nИгровое время: {2} · Персонаж: {3} · Здоровье: {4}\nРанг: {5} · Репутация: {6} · Задания: — · Убито (люди / монстры): {7} · Погода: {8}": {
+    "ru": "Деньги: {0} RU · Предметов: {1} · Тайников: —\nИгровое время: {2} · Персонаж: {3} · Здоровье: {4}\nРанг: {5} · Репутация: {6} · Задания: — · Убито (люди / монстры): {7} · Погода: {8}",
+    "uk": "Гроші: {0} RU · Предметів: {1} · Схованок: —\nІгровий час: {2} · Персонаж: {3} · Здоров'я: {4}\nРанг: {5} · Репутація: {6} · Завдання: — · Убито (люди / монстри): {7} · Погода: {8}",
+    "en": "Money: {0} RU · Items: {1} · Stashes: —\nGame time: {2} · Character: {3} · Health: {4}\nRank: {5} · Reputation: {6} · Tasks: — · Killed (stalkers / monsters): {7} · Weather: {8}",
+    "de": "Geld: {0} RU · Gegenstände: {1} · Verstecke: —\nSpielzeit: {2} · Charakter: {3} · Gesundheit: {4}\nRang: {5} · Ruf: {6} · Aufgaben: — · Getötet (Stalker / Monster): {7} · Wetter: {8}",
+    "fr": "Argent : {0} RU · Objets : {1} · Caches : —\nTemps de jeu : {2} · Personnage : {3} · Santé : {4}\nRang : {5} · Réputation : {6} · Tâches : — · Tués (stalkers / monstres) : {7} · Météo : {8}",
+    "it": "Denaro: {0} RU · Oggetti: {1} · Nascondigli: —\nTempo di gioco: {2} · Personaggio: {3} · Salute: {4}\nGrado: {5} · Reputazione: {6} · Compiti: — · Uccisi (stalker / mostri): {7} · Meteo: {8}",
+    "es": "Dinero: {0} RU · Objetos: {1} · Escondites: —\nTiempo de juego: {2} · Personaje: {3} · Salud: {4}\nRango: {5} · Reputación: {6} · Tareas: — · Muertos (stalkers / monstruos): {7} · Clima: {8}",
+    "pl": "Pieniądze: {0} RU · Przedmioty: {1} · Skrytki: —\nCzas gry: {2} · Postać: {3} · Zdrowie: {4}\nRanga: {5} · Reputacja: {6} · Zadania: — · Zabici (stalkerzy / potwory): {7} · Pogoda: {8}",
+    "cs": "Peníze: {0} RU · Předměty: {1} · Úkryty: —\nHerní čas: {2} · Postava: {3} · Zdraví: {4}\nHodnost: {5} · Reputace: {6} · Úkoly: — · Zabito (stalkeři / monstra): {7} · Počasí: {8}",
+    "pt-BR": "Dinheiro: {0} RU · Itens: {1} · Esconderijos: —\nTempo de jogo: {2} · Personagem: {3} · Saúde: {4}\nPatente: {5} · Reputação: {6} · Tarefas: — · Abatidos (stalkers / monstros): {7} · Clima: {8}",
+    "tr": "Para: {0} RU · Eşya: {1} · Saklanma yeri: —\nOyun zamanı: {2} · Karakter: {3} · Sağlık: {4}\nRütbe: {5} · İtibar: {6} · Görevler: — · Öldürülen (stalker / canavar): {7} · Hava durumu: {8}",
+    "ja": "所持金: {0} RU · アイテム: {1} · 隠し場所: —\nゲーム時間: {2} · キャラクター: {3} · 体力: {4}\nランク: {5} · 評判: {6} · タスク: — · 討伐（スタルカー / モンスター）: {7} · 天候: {8}",
+    "ko": "돈: {0} RU · 아이템: {1} · 은닉처: —\n게임 시간: {2} · 캐릭터: {3} · 체력: {4}\n계급: {5} · 평판: {6} · 임무: — · 처치 (스토커 / 몬스터): {7} · 날씨: {8}",
+    "zh-CN": "金钱: {0} RU · 物品: {1} · 藏匿处: —\n游戏时间: {2} · 角色: {3} · 生命值: {4}\n军衔: {5} · 声望: {6} · 任务: — · 击杀（潜行者 / 怪物）: {7} · 天气: {8}",
+    "zh-TW": "金錢: {0} RU · 物品: {1} · 藏匿處: —\n遊戲時間: {2} · 角色: {3} · 生命值: {4}\n軍階: {5} · 聲望: {6} · 任務: — · 擊殺（潛行者 / 怪物）: {7} · 天氣: {8}"
   }
 }
