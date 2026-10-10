@@ -1842,10 +1842,6 @@ fn overlap(previous: &AudioBlock, current: &AudioBlock, output: &mut Vec<f32>) {
         .saturating_div(4)
         .saturating_add(current.size.saturating_div(4));
     let channels = previous.channels.len().min(current.channels.len());
-    let current_shift = current
-        .size
-        .saturating_div(4)
-        .saturating_sub(previous.size.saturating_div(4));
     for frame in 0..count {
         for channel in 0..channels {
             let previous_index = previous.size.saturating_div(2).saturating_add(frame);
@@ -1868,7 +1864,6 @@ fn overlap(previous: &AudioBlock, current: &AudioBlock, output: &mut Vec<f32>) {
                     .copied()
                     .unwrap_or(0.0)
             };
-            let _ = current_shift;
             output.push(previous_value + current_value);
         }
     }

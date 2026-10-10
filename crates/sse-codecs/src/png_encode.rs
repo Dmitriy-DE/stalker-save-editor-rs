@@ -35,9 +35,6 @@ pub fn encode_rgba8(width: u32, height: u32, pixels: &[u8]) -> Result<Vec<u8>> {
     let mut z = Vec::with_capacity(scan.len().saturating_add(scan.len() / 65_535 * 5).saturating_add(16));
     z.extend_from_slice(&[0x78, 0x01]);
     let mut pos = 0usize;
-    if scan.is_empty() {
-        z.extend_from_slice(&[1, 0, 0, 0xff, 0xff]);
-    }
     while pos < scan.len() {
         let n = (scan.len() - pos).min(65_535);
         z.push(if pos + n == scan.len() { 1 } else { 0 });
