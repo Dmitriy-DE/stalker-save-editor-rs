@@ -3,6 +3,10 @@
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 
+/// Steam app ids of every release the Steam layer serves: the three X-Ray trilogy games and their
+/// Enhanced Editions, and S.T.A.L.K.E.R. 2. Every entry point checks against this one list.
+pub const SUPPORTED_APP_IDS: [u32; 7] = [1_643_320, 4_500, 20_510, 41_700, 2_427_410, 2_427_420, 2_427_430];
+
 /// Failure returned by the Steam API boundary.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SteamError {

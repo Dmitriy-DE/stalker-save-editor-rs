@@ -587,8 +587,8 @@ const fn is_remote_storage_app(app_id: u32) -> bool {
     matches!(app_id, APP_SOC | APP_CS | APP_COP | APP_SOC_EE | APP_CS_EE | APP_COP_EE)
 }
 
-const fn is_supported_app(app_id: u32) -> bool {
-    is_remote_storage_app(app_id) || app_id == APP_STALKER_2
+fn is_supported_app(app_id: u32) -> bool {
+    crate::api::SUPPORTED_APP_IDS.contains(&app_id)
 }
 
 #[cfg(test)]

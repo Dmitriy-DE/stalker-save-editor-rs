@@ -1,8 +1,6 @@
 //! Achievement reads and explicitly confirmed mutations.
 
-use crate::api::{Achievement, SteamApi, SteamError};
-
-const SUPPORTED_APP_IDS: [u32; 7] = [1_643_320, 4_500, 20_510, 41_700, 2_427_410, 2_427_420, 2_427_430];
+use crate::api::{Achievement, SteamApi, SteamError, SUPPORTED_APP_IDS};
 
 /// Confirmation supplied by an explicit user action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

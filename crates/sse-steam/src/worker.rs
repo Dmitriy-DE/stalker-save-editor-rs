@@ -476,8 +476,7 @@ impl WorkerSteamApi {
 
 impl SteamApi for WorkerSteamApi {
     fn initialize(&mut self, app_id: u32) -> Result<(), SteamError> {
-        const APP_IDS: [u32; 7] = [1_643_320, 4_500, 20_510, 41_700, 2_427_410, 2_427_420, 2_427_430];
-        if !APP_IDS.contains(&app_id) {
+        if !crate::api::SUPPORTED_APP_IDS.contains(&app_id) {
             return Err(SteamError::new(
                 "Steam operations are limited to supported S.T.A.L.K.E.R. releases.",
             ));
