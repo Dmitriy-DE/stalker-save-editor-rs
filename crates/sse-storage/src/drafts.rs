@@ -1,7 +1,7 @@
 //! C#-compatible local draft journals with bounded undo history.
 
 use crate::transaction::sync_directory;
-use sse_codecs::json::{Event, Reader, Text, Writer};
+use sse_codecs::json::{Event, Reader, Writer};
 use sse_codecs::sha256::sha256_hex;
 use sse_core::{Error, Result};
 use std::collections::{BTreeMap, HashSet};
@@ -1312,10 +1312,4 @@ fn write_durable(directory: &Path, destination: &Path, bytes: &[u8]) -> Result<(
             Error::from(error)
         }
     })
-}
-
-impl From<Text<'_>> for JsonValue {
-    fn from(value: Text<'_>) -> Self {
-        Self::String(value.into_owned())
-    }
 }
