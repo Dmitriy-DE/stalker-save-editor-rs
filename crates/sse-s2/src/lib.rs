@@ -1716,6 +1716,30 @@ fn apply_changes_with_items(
     Ok((image, changed_ranges))
 }
 
+/// Returns the first backpack origin where every cell of the item's footprint is free.
+///
+/// `offsets` are the footprint cells relative to its top-left corner; the search scans rows first.
+fn first_free_placement(
+    occupied: &HashSet<(u16, u16)>,
+    offsets: &[(u16, u16)],
+    width: u16,
+    height: u16,
+) -> Option<(u16, u16)> {
+    for y in 0..=128_u16.saturating_sub(height) {
+        for x in 0..=GRID_WIDTH.saturating_sub(width) {
+            let fits = offsets.iter().all(|&(dx, dy)| {
+                x.checked_add(dx)
+                    .zip(y.checked_add(dy))
+                    .is_some_and(|position| !occupied.contains(&position))
+            });
+            if fits {
+                return Some((x, y));
+            }
+        }
+    }
+    None
+}
+
 fn move_stash_item_to_backpack(
     save: &S2Save,
     stash: &S2StashLayout,
@@ -1804,25 +1828,11 @@ fn move_stash_item_to_backpack(
         .iter()
         .map(|cell| (cell.x, cell.y))
         .collect::<HashSet<_>>();
-    let mut placement = None;
-    for y in 0..=128_u16.saturating_sub(height) {
-        for x in 0..=GRID_WIDTH.saturating_sub(width) {
-            let fits = stash_cells.iter().all(|cell| {
-                let dx = cell.x.saturating_sub(min_x);
-                let dy = cell.y.saturating_sub(min_y);
-                x.checked_add(dx)
-                    .zip(y.checked_add(dy))
-                    .is_some_and(|position| !occupied.contains(&position))
-            });
-            if fits {
-                placement = Some((x, y));
-                break;
-            }
-        }
-        if placement.is_some() {
-            break;
-        }
-    }
+    let offsets = stash_cells
+        .iter()
+        .map(|cell| (cell.x.saturating_sub(min_x), cell.y.saturating_sub(min_y)))
+        .collect::<Vec<_>>();
+    let placement = first_free_placement(&occupied, &offsets, width, height);
     let (place_x, place_y) =
         placement.ok_or_else(|| Error::Refused("S2 backpack has no fitting free cells".to_owned()))?;
 
@@ -2345,11 +2355,12 @@ fn validate_owned_handles(handles: &[u32], legacy: bool) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_changes_to_image, pack_and_verify_s2_image, validate_owned_handles, S2Change, S2Container,
-        S2InventoryIndex, S2Save, S2StashLayout,
+        apply_changes_to_image, first_free_placement, pack_and_verify_s2_image, validate_owned_handles, S2Change,
+        S2Container, S2InventoryIndex, S2Save, S2StashLayout, GRID_WIDTH,
     };
     use sse_codecs::crc32;
     use sse_core::Error;
+    use std::collections::HashSet;
 
     const SYNTHETIC_SAVE: &[u8] = include_bytes!("../../../fixtures/synthetic/synthetic-s2.sav");
     const SYNTHETIC_RAW: &[u8] = include_bytes!("../../../fixtures/synthetic/synthetic-s2.raw");
@@ -2956,6 +2967,24 @@ mod tests {
 
         assert!(super::verify_durability_values(&before, &expected, &requested).is_ok());
         assert!(super::verify_durability_values(&before, &collateral_change, &requested).is_err());
+    }
+
+    #[test]
+    fn free_placement_finds_the_first_origin_that_fits() {
+        let occupied: HashSet<(u16, u16)> = [(0, 0), (1, 0), (0, 1)].into_iter().collect();
+        assert_eq!(first_free_placement(&occupied, &[(0, 0), (1, 0)], 2, 1), Some((2, 0)));
+    }
+
+    #[test]
+    fn free_placement_checks_every_footprint_cell_not_only_the_origin() {
+        let occupied: HashSet<(u16, u16)> = [(0, 1)].into_iter().collect();
+        assert_eq!(first_free_placement(&occupied, &[(0, 0), (0, 1)], 1, 2), Some((1, 0)));
+    }
+
+    #[test]
+    fn free_placement_refuses_a_full_backpack() {
+        let occupied: HashSet<(u16, u16)> = (0..GRID_WIDTH).flat_map(|x| (0..128).map(move |y| (x, y))).collect();
+        assert_eq!(first_free_placement(&occupied, &[(0, 0)], 1, 1), None);
     }
 
     #[test]
