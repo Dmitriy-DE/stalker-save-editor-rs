@@ -393,46 +393,22 @@ fn detect_xray(bytes: &[u8]) -> Option<String> {
         version
     };
 
-    // Check Original formats
-    if container_version == 3 && alife_version == 3 {
-        return Some("stalker-soc".to_string());
-    }
-    if container_version == 5 && alife_version == 5 {
-        return Some("stalker-cs".to_string());
-    }
-    if container_version == 6 && alife_version == 6 {
-        return Some("stalker-cop".to_string());
-    }
-
-    // Check Enhanced formats
-    if container_version == 3 && alife_version == 51 {
-        return Some("stalker-soc-ee".to_string());
-    }
+    // The version rule and the Enhanced Edition markers live in sse-xray; only the object chunk is read here.
     if container_version == 6 && alife_version == 54 {
-        let raw = if let Some(raw) = unpacked {
-            raw
-        } else {
-            let unpacked_size = usize::try_from(unpacked_size_u32).ok()?;
-            sse_codecs::lzo1x::decompress(payload, unpacked_size).ok()?
+        let raw = match unpacked {
+            Some(raw) => raw,
+            None => {
+                let unpacked_size = usize::try_from(unpacked_size_u32).ok()?;
+                sse_codecs::lzo1x::decompress(payload, unpacked_size).ok()?
+            }
         };
         let (confirmed_version, object_data) = parse_xray_chunks(&raw)?;
         if confirmed_version != alife_version {
             return None;
         }
-        let mut has_marsh = false;
-        let mut has_zaton = false;
-        for string in object_data.split(|byte| *byte == 0) {
-            has_marsh |= string == b"marsh";
-            has_zaton |= string == b"zaton";
-        }
-        return match (has_marsh, has_zaton) {
-            (true, false) => Some("stalker-cs-ee".to_string()),
-            (false, true) => Some("stalker-cop-ee".to_string()),
-            _ => None,
-        };
+        return sse_xray::format_id_for_versions(container_version, alife_version, object_data).map(str::to_owned);
     }
-
-    None
+    sse_xray::format_id_for_versions(container_version, alife_version, &[]).map(str::to_owned)
 }
 
 fn extract_alife_version(payload: &[u8]) -> Option<u32> {

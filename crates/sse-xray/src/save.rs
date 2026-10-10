@@ -510,12 +510,15 @@ fn required_chunk(container: &Container, kind: u32) -> Result<Chunk> {
     found.ok_or_else(|| Error::damaged(format!("missing X-Ray chunk type {kind}")))
 }
 
-fn detect_format(container_version: u32, alife_version: u32, objects: &[u8]) -> Result<Format> {
+/// The format id that a container version, an ALIFE version and the object chunk name, or `None` when they name no
+/// supported format. Enhanced Edition (6, 54) needs the object chunk to name exactly one level.
+#[must_use]
+pub fn format_id_for_versions(container_version: u32, alife_version: u32, objects: &[u8]) -> Option<&'static str> {
     match (container_version, alife_version) {
-        (3, 3) => Ok(Format::Soc),
-        (5, 5) => Ok(Format::Cs),
-        (6, 6) => Ok(Format::Cop),
-        (3, 51) => Ok(Format::SocEe),
+        (3, 3) => Some("stalker-soc"),
+        (5, 5) => Some("stalker-cs"),
+        (6, 6) => Some("stalker-cop"),
+        (3, 51) => Some("stalker-soc-ee"),
         (6, 54) => {
             // A complete NUL-terminated level name is evidence; an item section containing the word is not.
             let mut has_marsh = false;
@@ -525,17 +528,39 @@ fn detect_format(container_version: u32, alife_version: u32, objects: &[u8]) -> 
                 has_zaton |= string == b"zaton";
             }
             match (has_marsh, has_zaton) {
-                (true, false) => Ok(Format::CsEe),
-                (false, true) => Ok(Format::CopEe),
-                _ => Err(Error::Refused(
-                    "X-Ray Enhanced Edition level markers are missing or ambiguous".to_owned(),
-                )),
+                (true, false) => Some("stalker-cs-ee"),
+                (false, true) => Some("stalker-cop-ee"),
+                _ => None,
             }
         }
-        _ => Err(Error::Refused(format!(
-            "unsupported X-Ray container/ALIFE version pair {container_version}/{alife_version}"
-        ))),
+        _ => None,
     }
+}
+
+fn format_from_id(id: &str) -> Option<Format> {
+    match id {
+        "stalker-soc" => Some(Format::Soc),
+        "stalker-cs" => Some(Format::Cs),
+        "stalker-cop" => Some(Format::Cop),
+        "stalker-soc-ee" => Some(Format::SocEe),
+        "stalker-cs-ee" => Some(Format::CsEe),
+        "stalker-cop-ee" => Some(Format::CopEe),
+        _ => None,
+    }
+}
+
+fn detect_format(container_version: u32, alife_version: u32, objects: &[u8]) -> Result<Format> {
+    if let Some(format) = format_id_for_versions(container_version, alife_version, objects).and_then(format_from_id) {
+        return Ok(format);
+    }
+    if (container_version, alife_version) == (6, 54) {
+        return Err(Error::Refused(
+            "X-Ray Enhanced Edition level markers are missing or ambiguous".to_owned(),
+        ));
+    }
+    Err(Error::Refused(format!(
+        "unsupported X-Ray container/ALIFE version pair {container_version}/{alife_version}"
+    )))
 }
 
 fn actor_version_supported(format: Format, version: u16) -> bool {
@@ -1855,6 +1880,25 @@ mod tests {
 
         let mod_save = pack(container.version(), &raw);
         assert!(matches!(Save::read(&mod_save), Err(Error::Refused(_))));
+    }
+
+    #[test]
+    fn format_id_table_is_the_single_version_rule() {
+        assert_eq!(super::format_id_for_versions(3, 3, b""), Some("stalker-soc"));
+        assert_eq!(super::format_id_for_versions(5, 5, b""), Some("stalker-cs"));
+        assert_eq!(super::format_id_for_versions(6, 6, b""), Some("stalker-cop"));
+        assert_eq!(super::format_id_for_versions(3, 51, b""), Some("stalker-soc-ee"));
+        assert_eq!(
+            super::format_id_for_versions(6, 54, b"\0marsh\0"),
+            Some("stalker-cs-ee")
+        );
+        assert_eq!(
+            super::format_id_for_versions(6, 54, b"\0zaton\0"),
+            Some("stalker-cop-ee")
+        );
+        assert_eq!(super::format_id_for_versions(6, 54, b"\0marsh\0zaton\0"), None);
+        assert_eq!(super::format_id_for_versions(3, 5, b""), None);
+        assert_eq!(super::format_id_for_versions(4, 3, b""), None);
     }
 
     #[test]
