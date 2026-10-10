@@ -1037,6 +1037,17 @@ struct AchievementIntent {
     name: String,
     set: bool,
 }
+/// The package the update screen may install: only when the check found a newer version.
+fn offered_artifact(
+    state: sse_update::UpdateState,
+    artifact: &Option<sse_update::UpdateArtifact>,
+) -> Option<sse_update::UpdateArtifact> {
+    match state {
+        sse_update::UpdateState::Available => artifact.clone(),
+        _ => None,
+    }
+}
+
 #[derive(Default)]
 struct Achievements {
     status: Option<WidgetId>,
@@ -1048,6 +1059,7 @@ struct Achievements {
     refresh: Option<WidgetId>,
     progress: Option<WidgetId>,
     confirm_card: Option<WidgetId>,
+    confirm_name: Option<WidgetId>,
     confirm_write: Option<WidgetId>,
     confirm_cancel: Option<WidgetId>,
     intent: Option<AchievementIntent>,
@@ -1071,7 +1083,8 @@ impl Achievements {
         }
     }
     fn render(&mut self, cx: &mut Context<'_>) -> Result<()> {
-        for (i, row) in self.rows.iter().copied().skip(1).enumerate() {
+        // rows[i] shows items[i] and a click on rows[i] selects items[i]; the list has no header row.
+        for (i, row) in self.rows.iter().copied().enumerate() {
             if let Some(a) = self.items.get(i) {
                 cx.tree.set_visible(row, true)?;
                 cx.tree.set_text(
@@ -1084,7 +1097,12 @@ impl Achievements {
         }
         if let Some(id) = self.status {
             let count = self.items.len();
-            cx.tree.set_text(id, &tr("Загружено {0} достижений.", &[&count]))?;
+            let mut text = tr("Загружено {0} достижений.", &[&count]);
+            if count > ROWS {
+                text.push(' ');
+                text.push_str(&tr("Показаны первые {0}.", &[&ROWS]));
+            }
+            cx.tree.set_text(id, &text)?;
         }
         if let Some(id) = self.progress {
             let got = self.items.iter().filter(|item| item.achieved).count();
@@ -1137,6 +1155,7 @@ impl Screen for Achievements {
         let confirm = style::card(cx.tree, host)?;
         self.confirm_card = Some(confirm);
         style::label(cx.tree, confirm, t("ПОДТВЕРЖДЕНИЕ ДОСТИЖЕНИЯ"), Text::Heading)?;
+        self.confirm_name = Some(style::label(cx.tree, confirm, "", Text::Value)?);
         style::label(
             cx.tree,
             confirm,
@@ -1195,6 +1214,9 @@ impl Screen for Achievements {
             let Some(app_id) = cx.app.selected_game().and_then(app_id) else {
                 return Ok(());
             };
+            if let Some(name) = self.confirm_name {
+                cx.tree.set_text(name, &item.display_name)?;
+            }
             self.intent = Some(AchievementIntent {
                 app_id,
                 name: item.name.clone(),
@@ -2143,7 +2165,9 @@ impl Screen for Updates {
                 match reply {
                     UpdateReply::Progress(_, _) => {}
                     UpdateReply::Checked(Ok((state, version, artifact))) => {
-                        self.artifact.clone_from(artifact);
+                        // A package is offered for download and install only when the check said it is newer.
+                        // Invalid and DowngradeRefused keep the error text, but no package may be used.
+                        self.artifact = offered_artifact(*state, artifact);
                         self.downloaded = None;
                         if let Some(id) = self.latest {
                             let version = if version.is_empty() { "—" } else { version };
@@ -2224,6 +2248,29 @@ mod service_localization_tests {
     use super::super::saves::Workspace;
     use super::super::{Context, Screen};
     use super::{hotkey_label, t_in, tr_in};
+
+    #[test]
+    fn a_package_is_offered_only_when_the_check_found_a_newer_version() {
+        let artifact = sse_update::UpdateArtifact {
+            target: "linux-deb-amd64".to_owned(),
+            architecture: "x86_64".to_owned(),
+            kind: "package".to_owned(),
+            file: "SaveEditor.deb".to_owned(),
+            size: 1,
+            sha256: "00".repeat(32),
+            url: "https://example.invalid/SaveEditor.deb".to_owned(),
+            release_version: "2.0.0".to_owned(),
+        };
+        assert!(super::offered_artifact(sse_update::UpdateState::Available, &Some(artifact.clone())).is_some());
+        for refused in [
+            sse_update::UpdateState::Invalid,
+            sse_update::UpdateState::DowngradeRefused,
+            sse_update::UpdateState::Current,
+            sse_update::UpdateState::Unavailable,
+        ] {
+            assert!(super::offered_artifact(refused, &Some(artifact.clone())).is_none());
+        }
+    }
     use crate::event_loop::{Message, WindowEvent};
     use sse_steam::api::CloudFile;
 
