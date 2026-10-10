@@ -495,17 +495,6 @@ fn get_embedded_i18n(lang: &str) -> Option<&'static str> {
     std::str::from_utf8(bytes).ok()
 }
 
-/// Helper struct for terse UI localization calls.
-pub struct L;
-
-impl L {
-    /// Translates a Russian source string into the active language.
-    #[must_use]
-    pub fn t(russian: &str, args: &[&dyn std::fmt::Display]) -> String {
-        I18nService::instance().tr(russian, args)
-    }
-}
-
 /// Result of translation completeness validation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidationResult {
