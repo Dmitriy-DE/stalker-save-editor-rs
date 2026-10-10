@@ -282,6 +282,48 @@ fn player_inventory_title_uses_singular_owner_across_locales() {
 }
 
 #[test]
+fn german_item_addition_help_names_the_game_save_and_items() {
+    let service = I18nService::instance();
+
+    assert_eq!(
+        service.tr_in(
+            Some("de"),
+            "Выберите совместимое сохранение с поддержкой добавления предметов.",
+            &[]
+        ),
+        "Wählen Sie einen kompatiblen Spielstand aus, der das Hinzufügen von Gegenständen unterstützt."
+    );
+}
+
+#[test]
+fn ukrainian_item_addition_help_says_the_save_supports_item_addition() {
+    let service = I18nService::instance();
+
+    assert_eq!(
+        service.tr_in(
+            Some("uk"),
+            "Выберите совместимое сохранение с поддержкой добавления предметов.",
+            &[]
+        ),
+        "Виберіть сумісне збереження, яке підтримує додавання предметів."
+    );
+}
+
+#[test]
+fn polish_item_addition_help_names_game_items() {
+    let service = I18nService::instance();
+
+    assert_eq!(
+        service.tr_in(
+            Some("pl"),
+            "Выберите совместимое сохранение с поддержкой добавления предметов.",
+            &[]
+        ),
+        "Wybierz kompatybilny zapis gry obsługujący dodawanie przedmiotów."
+    );
+}
+
+#[test]
 fn completeness_checker_validates_coverage_and_placeholders() {
     let result = I18nCompletenessChecker::validate(None);
 
