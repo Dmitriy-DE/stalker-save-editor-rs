@@ -5,8 +5,9 @@ integrates: it reviews and merges every pull request (owner's decision). `AGENTS
 `TASKS.md`, the required CI checks and branch protection change only by the owner's decision. Read `PLAN.md`,
 the relevant package in `TASKS.md`, and the matching section of `ACCEPTANCE.md` before changing behavior. The C# 1.3.1
 contract remains the reference for exact save bytes and established user-visible behavior. The five root documents
-README, AGENTS, PLAN, TASKS and ACCEPTANCE are the only project documents to add or update; do not create more `.md`
-files.
+README, AGENTS, PLAN, TASKS and ACCEPTANCE are the project's root documents. Public showcase documents live in `docs/`
+(owner's decision 2026-10-10: the five-document limit no longer applies to `docs/`). Every statement in them must match
+the source code; do not write what is not checked.
 
 ## Boundaries
 
