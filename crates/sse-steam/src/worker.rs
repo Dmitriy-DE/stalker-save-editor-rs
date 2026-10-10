@@ -286,13 +286,16 @@ fn run_native_process(
     let payload_sent_writer = Arc::clone(&payload_sent);
     let (write_sender, write_receiver) = mpsc::channel();
     let writer = std::thread::spawn(move || {
-        let result = child_input
-            .write_all(&header)
-            .and_then(|()| child_input.write_all(&payload))
-            .map_err(|error| error.to_string());
-        if result.is_ok() && is_write {
-            payload_sent_writer.store(true, Ordering::Release);
-        }
+        // Mark the payload as started before its first byte is written: a timeout or kill can
+        // land between the last byte entering the pipe and the store, and the child may already
+        // hold the whole request then. Starting the payload is what makes a write uncertain.
+        let result = child_input.write_all(&header).and_then(|()| {
+            if is_write {
+                payload_sent_writer.store(true, Ordering::Release);
+            }
+            child_input.write_all(&payload)
+        });
+        let result = result.map_err(|error| error.to_string());
         drop(child_input);
         let _ = write_sender.send(result);
     });
