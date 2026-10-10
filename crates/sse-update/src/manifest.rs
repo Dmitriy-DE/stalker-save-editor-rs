@@ -419,6 +419,9 @@ fn parse_artifacts_object(reader: &mut sse_codecs::json::Reader<'_>) -> Result<B
                 let key_name = k.into_owned();
                 let art = parse_single_artifact(reader)?;
                 art.validate()?;
+                if art.target != key_name {
+                    return Err(Error::damaged("artifact target does not match manifest key"));
+                }
                 map.insert(key_name, art);
             }
             sse_codecs::json::Event::ObjectEnd => break,
@@ -513,5 +516,41 @@ pub fn compare_versions(current_version: &str, manifest_version: &str) -> Result
         Ordering::Greater => Ok(UpdateState::Available),
         Ordering::Equal => Ok(UpdateState::Current),
         Ordering::Less => Ok(UpdateState::DowngradeRefused),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::UpdateManifest;
+
+    const SHA256: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
+
+    fn artifact(target: &str, kind: &str) -> String {
+        format!(
+            r#"{{"target":"{target}","architecture":"x86_64","kind":"{kind}","file":"SaveEditor.zip","size":10,"sha256":"{SHA256}","url":"https://updates.test/SaveEditor.zip"}}"#
+        )
+    }
+
+    fn manifest_with_optional(key: &str, target: &str, kind: &str) -> String {
+        format!(
+            r#"{{"schema":1,"channel":"stable","version":"1.0.0","source_commit":"{COMMIT}","published_at":"2026-01-01T00:00:00Z","artifacts":{{"windows-x86_64":{w},"linux-x86_64":{l},"linux-deb-amd64":{d}}},"optional_artifacts":{{"{key}":{o}}}}}"#,
+            w = artifact("windows-x86_64", "portable"),
+            l = artifact("linux-x86_64", "portable"),
+            d = artifact("linux-deb-amd64", "package"),
+            o = artifact(target, kind),
+        )
+    }
+
+    #[test]
+    fn optional_artifact_whose_target_matches_its_key_parses() {
+        let text = manifest_with_optional("windows-installer-x86_64", "windows-installer-x86_64", "installer");
+        assert!(UpdateManifest::parse(text.as_bytes()).is_ok());
+    }
+
+    #[test]
+    fn optional_artifact_whose_target_differs_from_its_key_is_rejected() {
+        let text = manifest_with_optional("windows-installer-x86_64", "linux-x86_64", "portable");
+        assert!(UpdateManifest::parse(text.as_bytes()).is_err());
     }
 }

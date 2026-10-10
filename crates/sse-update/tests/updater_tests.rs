@@ -293,7 +293,7 @@ fn signature_verification_verifies_real_release_test_vector() {
     let dummy_manifest = b"test manifest payload";
     let _dummy_digest = sse_codecs::sha256::sha256(dummy_manifest);
     // If we use the exact signature matching the digest, verify_signature passes:
-    assert!(verify_signature(dummy_manifest, b"invalid base64!!!", None).is_err());
+    assert!(verify_signature(dummy_manifest, b"invalid base64!!!").is_err());
 }
 
 #[test]
