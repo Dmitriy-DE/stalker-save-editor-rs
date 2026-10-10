@@ -563,6 +563,9 @@ struct DiagnosticReportFinished {
     result: std::result::Result<PathBuf, String>,
 }
 
+/// Result of the background folder dialog for the backup directory; `None` means the user cancelled.
+struct PickedBackupDirectory(std::result::Result<Option<PathBuf>, String>);
+
 /// Settings screen.
 #[derive(Default)]
 pub struct Settings {
@@ -585,6 +588,7 @@ pub struct Settings {
     include_game_logs: bool,
     report_pending: bool,
     backup_input: Option<WidgetId>,
+    backup_browse: Option<WidgetId>,
     scale_value: Option<WidgetId>,
     scale_button: Option<WidgetId>,
     theme_value: Option<WidgetId>,
@@ -607,6 +611,43 @@ pub struct Settings {
 }
 
 impl Settings {
+    /// Starts the system folder dialog. On macOS it must run on the interface thread; elsewhere it runs in the
+    /// background so the window keeps painting. Cancelling leaves the field and the settings unchanged.
+    fn browse_backup_directory(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        if cfg!(target_os = "macos") {
+            match sse_sys::directory_dialog::choose_directory() {
+                Ok(Some(path)) => self.apply_backup_directory(cx.tree, &path)?,
+                Ok(None) => {}
+                Err(error) => cx.status = Some(tr("Системный диалог недоступен: {0}", &[&error])),
+            }
+            return Ok(());
+        }
+        let Some(proxy) = cx.proxy.cloned() else {
+            cx.status = Some(crate::strings::t("Выбор папки доступен в работающем окне редактора.").to_owned());
+            return Ok(());
+        };
+        let spawned = sse_app::tasks::try_spawn_named_detached("pick-backup-directory", move || {
+            let picked = sse_sys::directory_dialog::choose_directory().map_err(|error| error.to_string());
+            let _ = proxy.send(AppMessage::ToScreen(
+                ScreenId::Settings,
+                Box::new(PickedBackupDirectory(picked)),
+            ));
+        });
+        if let Err(error) = spawned {
+            cx.status = Some(tr("Не удалось открыть выбор папки: {0}", &[&error]));
+        }
+        Ok(())
+    }
+
+    /// Puts a chosen folder into the field and runs the same sync as typing it.
+    fn apply_backup_directory(&mut self, tree: &mut crate::widget::Tree, path: &std::path::Path) -> Result<()> {
+        if let Some(input) = self.backup_input {
+            tree.set_input_text(input, &path.display().to_string())?;
+        }
+        self.sync_backup_directory(tree);
+        Ok(())
+    }
+
     fn sync_backup_directory(&mut self, tree: &crate::widget::Tree) {
         if let (Some(input), Some(workspace)) = (self.backup_input, self.backup_workspace.as_ref()) {
             let value = tree.input_text(input).unwrap_or("").trim();
@@ -920,6 +961,12 @@ impl Screen for Settings {
                 style: TextStyle::new(Face::Body, 14.0),
             },
             Look::default(),
+        )?);
+        self.backup_browse = Some(style::button(
+            cx.tree,
+            backups,
+            crate::strings::t("Обзор…"),
+            Button::Secondary,
         )?);
         style::label(
             cx.tree,
@@ -1296,6 +1343,19 @@ impl Screen for Settings {
             }
             cx.status = Some(crate::strings::t("Язык применится после перезапуска приложения.").to_owned());
         }
+        if let Message::User(AppMessage::ToScreen(ScreenId::Settings, payload)) = message {
+            if let Some(PickedBackupDirectory(picked)) = payload.downcast_ref::<PickedBackupDirectory>() {
+                match picked {
+                    Ok(Some(path)) => self.apply_backup_directory(cx.tree, path.as_path())?,
+                    Ok(None) => {}
+                    Err(error) => cx.status = Some(tr("Системный диалог недоступен: {0}", &[error])),
+                }
+                return Ok(());
+            }
+        }
+        if clicked.is_some() && clicked == self.backup_browse {
+            return self.browse_backup_directory(cx);
+        }
         if clicked.is_some() && clicked == self.save_button {
             if let Some(input) = self.backup_input {
                 let value = cx.tree.input_text(input).unwrap_or("").trim();
@@ -1419,6 +1479,45 @@ mod tests {
             receiver.try_recv().ok(),
             Some(Message::User(AppMessage::OpenScreen(ScreenId::Updates)))
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn picked_backup_folder_takes_the_same_path_as_typing_it() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let input = tree.add(
+            None,
+            NodeKind::Leaf,
+            Style::default(),
+            Content::Input {
+                text: String::new(),
+                style: TextStyle::new(Face::Body, 14.0),
+            },
+            Look::default(),
+        )?;
+        let typed = Workspace::with_backup_directory(PathBuf::from("old-backups"));
+        let mut typed_settings = Settings {
+            backup_input: Some(input),
+            backup_workspace: Some(typed.clone()),
+            ..Settings::default()
+        };
+        tree.set_input_text(input, "picked-backups")?;
+        typed_settings.sync_backup_directory(&tree);
+
+        let picked = Workspace::with_backup_directory(PathBuf::from("old-backups"));
+        let mut picked_settings = Settings {
+            backup_input: Some(input),
+            backup_workspace: Some(picked.clone()),
+            ..Settings::default()
+        };
+        picked_settings.apply_backup_directory(&mut tree, std::path::Path::new("picked-backups"))?;
+
+        assert_eq!(picked.backup_directory(), typed.backup_directory());
+        assert_eq!(tree.input_text(input)?, "picked-backups");
+        assert_eq!(
+            picked_settings.settings.backup_directory,
+            typed_settings.settings.backup_directory
+        );
         Ok(())
     }
 

@@ -1375,5 +1375,39 @@
     "ko": "붙여넣기 거부: 텍스트가 필드 형식과 맞지 않습니다.",
     "zh-CN": "粘贴被拒绝：文本与字段格式不符。",
     "zh-TW": "貼上遭拒：文字與欄位格式不符。"
+  },
+  "Выбор папки доступен в работающем окне редактора.": {
+    "ru": "Выбор папки доступен в работающем окне редактора.",
+    "uk": "Вибір теки доступний у робочому вікні редактора.",
+    "en": "Folder choice is available in the running editor window.",
+    "de": "Die Ordnerauswahl ist im laufenden Editorfenster verfügbar.",
+    "fr": "Le choix de dossier est disponible dans la fenêtre de l'éditeur en cours.",
+    "it": "La scelta della cartella è disponibile nella finestra dell'editor in esecuzione.",
+    "es": "La selección de carpeta está disponible en la ventana del editor en ejecución.",
+    "pl": "Wybór folderu jest dostępny w działającym oknie edytora.",
+    "cs": "Výběr složky je dostupný v běžícím okně editoru.",
+    "pt-BR": "A escolha de pasta está disponível na janela do editor em execução.",
+    "tr": "Klasör seçimi çalışan düzenleyici penceresinde kullanılabilir.",
+    "ja": "フォルダーの選択は、起動中のエディターのウィンドウで利用できます。",
+    "ko": "폴더 선택은 실행 중인 편집기 창에서 사용할 수 있습니다.",
+    "zh-CN": "文件夹选择仅在运行中的编辑器窗口中可用。",
+    "zh-TW": "資料夾選擇僅能在執行中的編輯器視窗中使用。"
+  },
+  "Не удалось открыть выбор папки: {0}": {
+    "ru": "Не удалось открыть выбор папки: {0}",
+    "uk": "Не вдалося відкрити вибір теки: {0}",
+    "en": "Could not open the folder dialog: {0}",
+    "de": "Der Ordnerdialog konnte nicht geöffnet werden: {0}",
+    "fr": "Impossible d'ouvrir le sélecteur de dossier : {0}",
+    "it": "Impossibile aprire la finestra di scelta della cartella: {0}",
+    "es": "No se pudo abrir el diálogo de carpeta: {0}",
+    "pl": "Nie udało się otworzyć wyboru folderu: {0}",
+    "cs": "Výběr složky se nepodařilo otevřít: {0}",
+    "pt-BR": "Não foi possível abrir a escolha de pasta: {0}",
+    "tr": "Klasör penceresi açılamadı: {0}",
+    "ja": "フォルダー選択を開けませんでした: {0}",
+    "ko": "폴더 대화 상자를 열 수 없습니다: {0}",
+    "zh-CN": "无法打开文件夹选择窗口：{0}",
+    "zh-TW": "無法開啟資料夾選擇視窗：{0}"
   }
 }
