@@ -722,34 +722,20 @@ fn copy_match(
     }
 
     let end = ensure_output_capacity(*output_length, expected_size, length)?;
-    let mut source_position = start;
-    let mut destination_position = *output_length;
-
-    for _ in 0..length {
-        let value = output
-            .get(source_position)
-            .copied()
-            .ok_or_else(|| Error::damaged("invalid LZO back-reference"))?;
-        let destination = output
-            .get_mut(destination_position)
-            .ok_or_else(|| Error::damaged("LZO output range is invalid"))?;
-        *destination = value;
-
-        destination_position = destination_position
-            .checked_add(1)
-            .ok_or_else(|| Error::damaged("LZO output position overflow"))?;
-        let next_source = source_position
-            .checked_add(1)
-            .ok_or_else(|| Error::damaged("LZO match position overflow"))?;
-        source_position = if next_source == *output_length {
-            start
-        } else {
-            next_source
-        };
+    if output.len() < end {
+        return Err(Error::damaged("LZO output range is invalid"));
     }
-
-    if destination_position != end {
-        return Err(Error::damaged("LZO match length mismatch"));
+    // The source wraps back to `start` every `period` bytes, so the match repeats a `period`-byte pattern.
+    // Each chunk reads only bytes before the destination, so `copy_within` gives the byte-by-byte result.
+    let period = (*output_length).saturating_sub(start);
+    let mut written = 0_usize;
+    while written < length {
+        let phase = written.checked_rem(period).unwrap_or(0);
+        let chunk = period.saturating_sub(phase).min(length.saturating_sub(written));
+        let source = start.saturating_add(phase);
+        let destination = (*output_length).saturating_add(written);
+        output.copy_within(source..source.saturating_add(chunk), destination);
+        written = written.saturating_add(chunk);
     }
     *output_length = end;
     Ok(())
@@ -767,7 +753,45 @@ fn ensure_output_capacity(current_length: usize, expected_size: usize, additiona
 
 #[cfg(test)]
 mod tests {
-    use super::{compress, compress_fast, decompress};
+    use super::{compress, compress_fast, copy_match, decompress};
+
+    #[test]
+    fn match_copy_equals_the_byte_by_byte_reference() {
+        // Reference: each byte is read from `start + (k % period)`, where the period is the distance to the
+        // end of the output so far. Covers distance 1 (run), overlapping and distant sources.
+        for (base_length, start, length) in [
+            (1_usize, 0_usize, 1_usize),
+            (3, 0, 7),
+            (10, 4, 6),
+            (16, 0, 40),
+            (100, 99, 1000),
+            (64, 0, 64),
+        ] {
+            let base: Vec<u8> = (0..base_length)
+                .map(|i| u8::try_from(i * 37 % 251).unwrap_or(0))
+                .collect();
+            let period = base_length - start;
+            let mut expected = base.clone();
+            for k in 0..length {
+                let value = base.get(start + k % period).copied().unwrap_or(0);
+                expected.push(value);
+            }
+            let total = base_length + length;
+            let mut output = vec![0_u8; total];
+            if let Some(head) = output.get_mut(..base_length) {
+                head.copy_from_slice(&base);
+            }
+            let mut output_length = base_length;
+            copy_match(&mut output, &mut output_length, total, start, length)
+                .unwrap_or_else(|error| panic!("{error:?}"));
+            assert_eq!(output_length, total);
+            assert_eq!(
+                output.as_slice(),
+                expected.as_slice(),
+                "base {base_length}, start {start}, length {length}"
+            );
+        }
+    }
     use sse_core::Error;
 
     #[test]
