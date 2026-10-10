@@ -4436,11 +4436,15 @@ mod object_span_tests {
 
     /// Minimal object-like candidate at `offset`: handle, marker 0x38 at +18, count 1 at +19, weight 1.0 at +24.
     fn candidate_bytes(handle: u32, offset: usize) -> Vec<u8> {
-        let mut raw = vec![0_u8; offset + 64];
-        raw[offset..offset + 4].copy_from_slice(&handle.to_le_bytes());
-        raw[offset + 18] = 0x38;
-        raw[offset + 19..offset + 23].copy_from_slice(&1_u32.to_le_bytes());
-        raw[offset + 24..offset + 28].copy_from_slice(&1.0_f32.to_le_bytes());
+        let mut raw = vec![0_u8; offset];
+        let mut record = Vec::with_capacity(64);
+        record.extend_from_slice(&handle.to_le_bytes());
+        record.resize(18, 0);
+        record.push(0x38);
+        record.extend_from_slice(&1_u32.to_le_bytes());
+        record.extend_from_slice(&1.0_f32.to_le_bytes());
+        record.resize(64, 0);
+        raw.extend_from_slice(&record);
         raw
     }
 
