@@ -817,3 +817,88 @@ fn failed_preset_reports_fixes_that_could_not_be_rolled_back() {
     assert_eq!(installed.len(), 1);
     assert_eq!(installed[0].id, "cs.test.p1");
 }
+
+fn overlay_definition(relative_path: &str, content_sha: &str, expected_sha: &str) -> GameFixDefinition {
+    let mut definition = make_test_definition("cs.test.overlay-model", relative_path, "", "", "11450472");
+    definition.text_patches.clear();
+    definition.implementation = GameFixImplementationType::Overlay;
+    definition.overlays = vec![FileOverlayOperation {
+        relative_path: relative_path.to_string(),
+        content_sha256: content_sha.to_string(),
+        expected_file_sha256: Some(expected_sha.to_string()),
+    }];
+    definition
+}
+
+#[test]
+fn overlay_installs_only_content_whose_sha256_matches_the_catalogue() {
+    let fixture = TestFixture::new(GameTarget::ClearSky, "11450472");
+    let relative_path = "gamedata/meshes/test_model.ogf";
+    let retail = b"retail model bytes";
+    let replacement = b"replacement model bytes";
+    fixture.write_file(relative_path, retail);
+    let definition = overlay_definition(
+        relative_path,
+        &sse_codecs::sha256::sha256_hex(replacement),
+        &sse_codecs::sha256::sha256_hex(retail),
+    );
+    let engine = GameFixEngine::with_overlay_reader(true, move |_sha| Some(replacement.to_vec()));
+
+    let installed = engine.install(&definition, &fixture.root).unwrap();
+
+    assert!(installed.changed);
+    assert_eq!(fixture.read_file(relative_path), replacement.to_vec());
+}
+
+#[test]
+fn overlay_is_refused_and_writes_nothing_when_the_stored_bytes_fail_the_sha256_check() {
+    let fixture = TestFixture::new(GameTarget::ClearSky, "11450472");
+    let relative_path = "gamedata/meshes/test_model.ogf";
+    let retail = b"retail model bytes";
+    fixture.write_file(relative_path, retail);
+    let definition = overlay_definition(
+        relative_path,
+        &sse_codecs::sha256::sha256_hex(b"replacement model bytes"),
+        &sse_codecs::sha256::sha256_hex(retail),
+    );
+    let engine = GameFixEngine::with_overlay_reader(true, |_sha| Some(b"tampered bytes".to_vec()));
+
+    assert!(engine.install(&definition, &fixture.root).is_err());
+    assert_eq!(fixture.read_file(relative_path), retail.to_vec());
+}
+
+#[test]
+fn overlay_is_refused_when_the_content_is_missing_from_the_store() {
+    let fixture = TestFixture::new(GameTarget::ClearSky, "11450472");
+    let relative_path = "gamedata/meshes/test_model.ogf";
+    let retail = b"retail model bytes";
+    fixture.write_file(relative_path, retail);
+    let definition = overlay_definition(
+        relative_path,
+        &sse_codecs::sha256::sha256_hex(b"replacement model bytes"),
+        &sse_codecs::sha256::sha256_hex(retail),
+    );
+    let engine = GameFixEngine::with_overlay_reader(true, |_sha| None);
+
+    assert!(engine.install(&definition, &fixture.root).is_err());
+    assert_eq!(fixture.read_file(relative_path), retail.to_vec());
+}
+
+#[test]
+fn limansk_bridge_model_is_catalogued_with_the_srp_file_and_the_retail_base_hash() {
+    let definition = GameFixCatalog::all()
+        .iter()
+        .find(|fix| fix.id == "cs.ai.limansk-bridge-model")
+        .unwrap();
+    let overlay = definition.overlays.first().unwrap();
+
+    assert_eq!(definition.overlays.len(), 1);
+    assert_eq!(
+        overlay.content_sha256,
+        "0986c216d1549ca8de1a377a3b20368dc4a5428d3d563abab8a5588f1f57e78a"
+    );
+    assert_eq!(
+        overlay.expected_file_sha256.as_deref(),
+        Some("b93348e532ba7e5357c4ee73fc7bba93932cfb84acb97b7b8ab7ab10d7908bb4")
+    );
+}

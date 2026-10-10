@@ -98,7 +98,7 @@ fn all_spawn_fix_is_structured_and_pinned_to_the_retail_file() {
 #[test]
 fn shipped_catalogue_contains_archive_verified_clear_sky_fixes_and_populates_safe_presets() {
     let fixes = GameFixCatalog::for_game(GameTarget::ClearSky);
-    assert_eq!(fixes.len(), 75);
+    assert_eq!(fixes.len(), 76);
 
     let fix = fixes
         .iter()

@@ -102,6 +102,20 @@ impl GameFixEngine {
         }
     }
 
+    /// Creates an engine that reads overlay content through `reader` instead of the content store.
+    ///
+    /// Used by tests to supply bytes that the engine must still check against the catalogue hash.
+    #[must_use]
+    pub fn with_overlay_reader<F>(allow_synthetic: bool, reader: F) -> Self
+    where
+        F: Fn(&str) -> Option<Vec<u8>> + Send + Sync + 'static,
+    {
+        Self {
+            overlay_reader: Arc::new(reader),
+            ..Self::with_synthetic(allow_synthetic)
+        }
+    }
+
     /// Returns the current state of a fix in a game directory.
     ///
     /// # Errors
