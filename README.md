@@ -4,10 +4,21 @@ Second generation of the save editor: one native application without a managed r
 (`Dmitriy-DE/S.T.A.L.K.E.R.-Save-Editor`, 1.3.x) stays the reference: every reader and writer here must answer
 exactly like it before it replaces it.
 
+## Current status — 2026-10-10
+
+- A18, A10, A14, A16 and A17 implementation PRs are merged: #335/#503, #336, #456, #466 and #474/#477.
+- A15 game and companion live checks remain incomplete. The desktop-control API currently exposes no native apps
+  (`apps=[]`); no new game session or in-game load was run. Per-game preflight and the exact blocker are in `TASKS.md`.
+- A13-56–58 translation fixes are merged in #514; all applicable CI checks passed, including Windows installer and
+  portable builds.
+- Current follow-ups: A20 Linux playback is open in #512 with the three OS checks green; D2 S11 is open in #517,
+  which currently reports no CI checks.
+- Rust 2.0 has not been released. Workshop publication and release signing remain owner actions.
+
 | File | What it is |
 |---|---|
 | `AGENTS.md` | rules for everyone who writes code here (people and agents) |
-| `PLAN.md` | architecture, budgets, phases, who owns what, state of each work package |
+| `PLAN.md` | architecture, budgets, implementation stages, current status link |
 | `TASKS.md` | work packages as ready-to-paste task texts |
 
 ```

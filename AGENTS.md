@@ -1,25 +1,25 @@
 # Rules of this repository
 
-You are one of several agents working in parallel. Claude integrates: it owns `sse-core`, `Cargo.toml`, CI,
-`AGENTS.md`, `PLAN.md`, `TASKS.md` and `ACCEPTANCE.md`, reviews and merges every pull request. Read `PLAN.md`, then
-your work package in `TASKS.md`. Any screen work: the screen's section of `ACCEPTANCE.md` (C# 1.3.1 behaviour, exact
-texts, checklist) is the acceptance test; §23 lists every disk/network write and its guards, §24 the C# defects not
-to copy blindly. Part II of the same file is the core: save replacement, backups, drafts, Game Fix, Companion,
-Steam Cloud, updater — exact steps, error texts, and core defects (Part II §15) to fix, not copy. Five documents only: README, AGENTS, PLAN, TASKS, ACCEPTANCE — no new ones.
+This repository has shared code ownership: no crate, file or tool is reserved to a particular agent. Read `PLAN.md`,
+the relevant package in `TASKS.md`, and the matching section of `ACCEPTANCE.md` before changing behavior. The C# 1.3.1
+contract remains the reference for exact save bytes and established user-visible behavior. The five root documents
+README, AGENTS, PLAN, TASKS and ACCEPTANCE are the only project documents to add or update; do not create more `.md`
+files.
 
 ## Boundaries
 
-- Work only inside the crate(s) your package names. Need something in `sse-core` or in another owner's crate?
-  Describe it in the pull request; do not edit it.
-- One package = one branch `wp/<id>-<slug>` = one pull request into `main`. Small follow-ups are new pull requests.
+- Change any crate or project file required by the task, including `sse-ui`, `.github/workflows/ci.yml` and `tools/`.
+- One task = one branch `wp/<id>-<slug>` from fresh `origin/main` and one pull request into `main`. Never merge your
+  own pull request. Do not open a duplicate for the same task; a separately numbered follow-up after a merge gets its
+  own branch and PR.
 - **No third-party code.** No crates, no C or C++: only `std`. What we need we write (codecs, parsers, hashes,
-  signature check, image and font code). Calls into the operating system or into Steam's own library live in
-  `sse-sys` (Claude's crate, the only one where `unsafe` is allowed): ask for the call you need in the pull request.
+  signature check, image and font code). Calls into the operating system or Steam's own library live in
+  `sse-sys` (the only crate where `unsafe` is allowed).
   No `async` runtime anywhere.
 - **Better, not a copy.** The C# editor is the floor: what is read from a save and what bytes are written must
-  match it, because the game is the judge. Structure, speed, memory and checks are designed anew. Each package names
-  what must be better and how it is measured; a line-by-line port is rejected. Where the C# code is wrong, do not
-  copy the mistake: show the proof in the pull request and Claude records the difference in `PLAN.md`.
+  match it, because the game is the judge. Structure, speed, memory and checks are designed anew. Each task names what
+  must be better and how it is measured; a line-by-line port is rejected. Where the C# code is wrong, do not copy the
+  mistake: show the proof in the pull request and record the difference in `PLAN.md`.
 - No new documents. What a reader must know goes into rustdoc; state goes into the pull request text.
 
 ## Correctness (each rule is a bug the C# editor shipped)
@@ -49,8 +49,11 @@ Steam Cloud, updater — exact steps, error texts, and core defects (Part II §1
 
 ## Tests
 
-- Tests never read the machine's real home, saves or games. Fixtures live in `fixtures/`; personal saves are never
-  committed.
+- Automated tests and developer tools use a temporary `STALKER_SAVE_EDITOR_DATA` root, including logs. Confirm they
+  leave the real application-data tree untouched. Fixtures live in `fixtures/`; personal saves are never committed.
+- Live game and Steam tests are allowed when authorized for the task. Make a copy of each save or original game/cloud
+  state first, use only the copy, restore the original state, and record exactly what was loaded or changed. Synthetic
+  round-trips do not prove that a game accepts a mutation.
 - Parity first: `fixtures/synthetic` has source/expected pairs and vectors from the C# editor; a port is done when it
   reproduces them byte for byte and `tools/oracle.sh` prints no difference.
 - Every reader gets a damaged-input test (truncated, bit-flipped, hostile lengths) and a fuzz target.
@@ -61,6 +64,6 @@ Steam Cloud, updater — exact steps, error texts, and core defects (Part II §1
 - A child process that is this same executable (Steam worker, hotkey helper) is dispatched before anything touches
   the interface, and an unknown worker argument exits with a usage error.
 - Developer-only modes (screenshots, measurements) are separate binaries, silent, and not shipped.
-- Interface text: Russian source strings as keys, 14 translations, a CI check that none is missing. No control that
+- Interface text: Russian source strings as keys, 15 translations, a CI check that none is missing. No control that
   does nothing.
 - Report honestly in the pull request: what was run, on what, and what was not checked.
