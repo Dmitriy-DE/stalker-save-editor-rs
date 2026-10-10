@@ -164,12 +164,19 @@ fn parse_xml_string_table(raw_bytes: &[u8], values: &mut HashMap<String, String>
     }
 }
 
+/// Same result as `text.to_ascii_lowercase().starts_with(prefix)` without copying the rest of `text`.
+fn starts_with_ascii_lowercase(text: &str, prefix: &str) -> bool {
+    text.as_bytes()
+        .get(..prefix.len())
+        .is_some_and(|head| head.iter().map(u8::to_ascii_lowercase).eq(prefix.bytes()))
+}
+
 fn find_tag_open(s: &str, tag_name: &str) -> Option<usize> {
     let mut search_idx = 0usize;
     while let Some(idx) = s.get(search_idx..).and_then(|sub| sub.find('<')) {
         let abs_idx = search_idx.saturating_add(idx);
         let after = s.get(abs_idx.saturating_add(1)..)?;
-        if after.to_ascii_lowercase().starts_with(tag_name) {
+        if starts_with_ascii_lowercase(after, tag_name) {
             let next_char = after.chars().nth(tag_name.len());
             if next_char.is_none()
                 || next_char == Some(' ')
@@ -191,7 +198,7 @@ fn find_tag_close(s: &str, tag_name: &str) -> Option<usize> {
     while let Some(idx) = s.get(search_idx..).and_then(|sub| sub.find("</")) {
         let abs_idx = search_idx.saturating_add(idx);
         let after = s.get(abs_idx.saturating_add(2)..)?;
-        if after.to_ascii_lowercase().starts_with(tag_name) {
+        if starts_with_ascii_lowercase(after, tag_name) {
             let next_char = after.chars().nth(tag_name.len());
             if next_char.is_none()
                 || next_char == Some(' ')
@@ -290,4 +297,22 @@ fn decode_xml_entities(s: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tag_scan_tests {
+    use super::{find_tag_close, find_tag_open};
+
+    #[test]
+    fn tag_names_match_case_insensitively_but_not_as_prefixes() {
+        // `<stringx` is a different tag; `<String ` is the same tag in another case.
+        assert_eq!(find_tag_open("<stringx><String id=\"a\">", "string"), Some(9));
+        assert_eq!(find_tag_close("</stringx></STRING>", "string"), Some(10));
+    }
+
+    #[test]
+    fn multibyte_text_before_a_tag_does_not_panic_or_match() {
+        assert_eq!(find_tag_open("<ü<string>", "string"), Some(3));
+        assert_eq!(find_tag_open("<ü>", "string"), None);
+    }
 }
