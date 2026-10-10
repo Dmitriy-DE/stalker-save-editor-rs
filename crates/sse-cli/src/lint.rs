@@ -252,12 +252,12 @@ fn print_json_report(report: &sse_lint::LintReport) {
             LintSeverity::Info => "info",
         };
         print!(
-            "    {{\"checker\":\"{}\",\"file\":\"{}\",\"line\":{},\"severity\":\"{}\",\"message\":\"{}\"}}",
-            finding.checker,
-            finding.file.replace('"', "\\\""),
+            "    {{\"checker\":{},\"file\":{},\"line\":{},\"severity\":\"{}\",\"message\":{}}}",
+            json_string(&finding.checker),
+            json_string(&finding.file),
             finding.line,
             sev,
-            finding.message.replace('"', "\\\"")
+            json_string(&finding.message)
         );
     }
     if !report.findings.is_empty() {
@@ -265,6 +265,25 @@ fn print_json_report(report: &sse_lint::LintReport) {
     }
     println!("  ]");
     println!("}}");
+}
+
+/// Encodes one JSON string: quotes, backslashes and every control character are escaped.
+fn json_string(value: &str) -> String {
+    let mut out = String::with_capacity(value.len().saturating_add(2));
+    out.push('"');
+    for character in value.chars() {
+        match character {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            control if control < ' ' => out.push_str(&format!("\\u{:04x}", u32::from(control))),
+            other => out.push(other),
+        }
+    }
+    out.push('"');
+    out
 }
 
 #[cfg(test)]
@@ -309,6 +328,12 @@ mod tests {
 
         assert!(tree.files.contains_key("configs/system.ltx"));
         assert!(!tree.files.contains_key("config_alias/system.ltx"));
+    }
+
+    #[test]
+    fn json_string_escapes_backslashes_newlines_and_controls() {
+        assert_eq!(super::json_string("C:\\configs\\a.ltx"), "\"C:\\\\configs\\\\a.ltx\"");
+        assert_eq!(super::json_string("line\none\u{1}\""), "\"line\\none\\u0001\\\"\"");
     }
 
     #[test]
