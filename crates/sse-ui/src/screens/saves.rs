@@ -1669,7 +1669,7 @@ impl Overview {
             .selected
             .as_ref()
             .map(|save| (save.info.clone(), save.parameters.clone(), save.integrity.clone()));
-        let compact = cx.tree.size().0 < 1600;
+        let compact = cx.tree.size().0 < u32::from(COMPACT_LAYOUT_WIDTH);
         self.apply_compact(cx.tree, compact)?;
         self.render_details(cx, selected)?;
         Ok(())
@@ -2101,7 +2101,7 @@ impl Screen for Overview {
             schedule_file_check(&self.workspace, cx, *seconds);
         }
         if let Message::Window(WindowEvent::Resized { width, .. }) = message {
-            self.apply_compact(cx.tree, *width < 1600)?;
+            self.apply_compact(cx.tree, *width < u32::from(COMPACT_LAYOUT_WIDTH))?;
         }
         if clicked.is_some() && clicked == self.backup_recovery_button {
             if let Some(proxy) = cx.proxy {
@@ -2966,7 +2966,7 @@ impl Inventory {
         let state = self.workspace.lock();
         let window_width = cx.tree.size().0;
         if window_width > 0 {
-            self.compact = window_width < 1600;
+            self.compact = window_width < u32::from(COMPACT_LAYOUT_WIDTH);
         }
         self.sync_add_list_cap(cx)?;
         // A wrapped note measures its lines at its minimum width, so the width it is drawn in is given here.
@@ -4762,6 +4762,9 @@ fn busy_refusal(workspace: &Workspace) -> Option<&'static str> {
     }
 }
 
+/// Window width below which the saves screens switch to their compact layout.
+const COMPACT_LAYOUT_WIDTH: u16 = 1600;
+
 struct SaveFinished {
     request_id: sse_app::SaveOperationId,
     draft_generation: sse_app::DraftGeneration,
@@ -6413,7 +6416,7 @@ impl Screen for Inventory {
         clicked: Option<WidgetId>,
     ) -> Result<()> {
         if let Message::Window(crate::event_loop::WindowEvent::Resized { width, .. }) = message {
-            self.compact = *width < 1600;
+            self.compact = *width < u32::from(COMPACT_LAYOUT_WIDTH);
             if let Some(side) = self.side_column {
                 cx.tree
                     .set_style(side, side_column_style(self.compact, self.add_panel_open))?;
@@ -7279,7 +7282,7 @@ pub(super) fn build_list_side(
 /// lines at its minimum width).
 pub(super) fn sync_side_widths(tree: &mut Tree, list: &ListSide) -> Result<()> {
     let (window_width, _) = window_pixels(tree);
-    let compact = window_width < 1600.0;
+    let compact = window_width < f32::from(COMPACT_LAYOUT_WIDTH);
     tree.set_style(list.side, side_column_style(compact, false))?;
     let note_width = side_column_width(compact) - 2.0 * crate::theme::d2::PANEL_PADDING.0;
     for id in [list.detail, list.status] {
@@ -8496,7 +8499,7 @@ impl Transitions {
         };
         let (window_width, window_height) = window_pixels(cx.tree);
         let page_size = transition_page_size(window_height);
-        let compact = window_width < 1600.0;
+        let compact = window_width < f32::from(COMPACT_LAYOUT_WIDTH);
         if let Some(side) = self.side {
             cx.tree.set_style(side, side_column_style(compact, false))?;
         }
@@ -8959,7 +8962,7 @@ impl Screen for Transitions {
         let side = cx.tree.add(
             Some(body),
             NodeKind::Column,
-            side_column_style(window_width < 1600.0, false),
+            side_column_style(window_width < f32::from(COMPACT_LAYOUT_WIDTH), false),
             Content::Panel,
             Look::default(),
         )?;
