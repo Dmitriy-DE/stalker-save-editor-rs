@@ -125,10 +125,9 @@ jobs:
           retention-days: 14
           if-no-files-found: error
 
-  packages:
-    # Unsigned release packages via tools/package.sh; run by hand or on a v* tag.
-    # The owner signs the manifest locally with --manifest-only; no key lives in CI.
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+  packages-linux:
+    # Linux release packages via tools/package.sh (.deb, tar.gz, AppImage). Runs on every PR so a packaging break
+    # shows before a release; artifacts are only uploaded, never published or signed here.
     needs: check
     strategy:
       fail-fast: false
@@ -136,6 +135,64 @@ jobs:
         include:
           - os: ubuntu-24.04
             targets: x86_64-unknown-linux-gnu
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@fb523f40495206854c36b250850817ae0f83e3d1 # 1.99.0
+      - name: Toolchains
+        shell: bash
+        run: |
+          for t in ${{ matrix.targets }}; do rustup target add "$t"; done
+          if [ "${{ runner.os }}" = "Linux" ]; then sudo apt-get update && sudo apt-get install -y mingw-w64 squashfs-tools; fi
+      - name: Package
+        shell: bash
+        env:
+          # Builds the pinned AppImage (tools/package.sh checks the SHA-256 of each downloaded tool).
+          SSE_BUILD_APPIMAGE: "1"
+        run: |
+          args=""; for t in ${{ matrix.targets }}; do args="$args --target $t"; done
+          tools/package.sh $args
+      - name: Verify AppImage
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="dist/SaveEditor-linux-x86_64.AppImage"
+          test -s "$app"
+          work="$(mktemp -d)"
+          cp "$app" "$work/app.AppImage"
+          chmod 0755 "$work/app.AppImage"
+          # --appimage-extract needs no FUSE, so it works on the CI runner.
+          (cd "$work" && ./app.AppImage --appimage-extract >/dev/null)
+          root="$work/squashfs-root"
+          for f in AppRun usr/bin/stalker-save usr/bin/sse-shell stalker-save-editor.desktop stalker-save-editor.svg; do
+            test -e "$root/$f" || { echo "AppImage is missing $f"; exit 1; }
+          done
+          "$root/usr/bin/stalker-save" version
+      - name: Stage Enhanced Edition Workshop packages
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          cargo run --release -p sse-ui --bin sse-ui-dev -- --package-ee soc dist/steam-workshop/stalker-soc-ee
+          cargo run --release -p sse-ui --bin sse-ui-dev -- --package-ee cs dist/steam-workshop/stalker-cs-ee
+          cargo run --release -p sse-ui --bin sse-ui-dev -- --package-ee cop dist/steam-workshop/stalker-cop-ee
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: packages-${{ runner.os }}
+          path: dist/
+          retention-days: 30
+          if-no-files-found: error
+          include-hidden-files: true
+
+  packages:
+    # Unsigned macOS release packages via tools/package.sh; run by hand or on a v* tag.
+    # The owner signs the manifest locally with --manifest-only; no key lives in CI.
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
           - os: macos-14
             targets: aarch64-apple-darwin x86_64-apple-darwin
     runs-on: ${{ matrix.os }}
@@ -146,12 +203,32 @@ jobs:
         shell: bash
         run: |
           for t in ${{ matrix.targets }}; do rustup target add "$t"; done
-          if [ "${{ runner.os }}" = "Linux" ]; then sudo apt-get update && sudo apt-get install -y mingw-w64; fi
+          if [ "${{ runner.os }}" = "Linux" ]; then sudo apt-get update && sudo apt-get install -y mingw-w64 squashfs-tools; fi
       - name: Package
         shell: bash
+        env:
+          # Builds the pinned AppImage (tools/package.sh checks the SHA-256 of each downloaded tool).
+          SSE_BUILD_APPIMAGE: "1"
         run: |
           args=""; for t in ${{ matrix.targets }}; do args="$args --target $t"; done
           tools/package.sh $args
+      - name: Verify AppImage
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="dist/SaveEditor-linux-x86_64.AppImage"
+          test -s "$app"
+          work="$(mktemp -d)"
+          cp "$app" "$work/app.AppImage"
+          chmod 0755 "$work/app.AppImage"
+          # --appimage-extract needs no FUSE, so it works on the CI runner.
+          (cd "$work" && ./app.AppImage --appimage-extract >/dev/null)
+          root="$work/squashfs-root"
+          for f in AppRun usr/bin/stalker-save usr/bin/sse-shell stalker-save-editor.desktop stalker-save-editor.svg; do
+            test -e "$root/$f" || { echo "AppImage is missing $f"; exit 1; }
+          done
+          "$root/usr/bin/stalker-save" version
       - name: Stage Enhanced Edition Workshop packages
         if: runner.os == 'Linux'
         shell: bash
@@ -217,7 +294,7 @@ jobs:
   release-manifest:
     # Assemble release metadata only after all package builders passed check.
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
-    needs: [packages, windows-portable, windows-installer]
+    needs: [packages-linux, packages, windows-portable, windows-installer]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
