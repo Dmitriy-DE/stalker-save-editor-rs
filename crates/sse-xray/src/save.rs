@@ -892,7 +892,7 @@ pub(crate) fn parse_relation_registry(payload: &[u8], has_timestamps: bool) -> R
         let mut names = Vec::with_capacity(usize::try_from(count).unwrap_or_default());
         for _ in 0..count {
             let bytes = reader.zero_terminated(MAXIMUM_STRING_LENGTH)?;
-            names.push(bytes.iter().map(|byte| char::from(*byte)).collect());
+            names.push(decode_cp1251(bytes));
             if has_timestamps {
                 reader.skip(8)?;
             }
@@ -1616,6 +1616,25 @@ mod tests {
     }
 
     #[test]
+    fn info_portion_names_are_decoded_as_windows_1251() -> sse_core::Result<()> {
+        // One info row for object 5 with a single name, "\u{0410}" in Windows-1251 (0xC0), and no relation rows.
+        let mut payload = 1_u32.to_le_bytes().to_vec();
+        payload.extend_from_slice(&5_u16.to_le_bytes());
+        payload.extend_from_slice(&1_u32.to_le_bytes());
+        payload.extend_from_slice(&[0xc0, 0x00]);
+        payload.extend_from_slice(&0_u32.to_le_bytes());
+
+        let registry = parse_relation_registry(&payload, false)?;
+        let row = registry
+            .info_rows
+            .first()
+            .ok_or_else(|| Error::damaged("info row should parse"))?;
+
+        assert_eq!(row.names, vec!["\u{0410}".to_owned()]);
+        Ok(())
+    }
+
+    #[test]
     fn condition_is_never_read_from_bytes_after_the_state() {
         let state = synthetic_dynamic_visual_state(b"", true);
         let state_length = state.len();
@@ -1928,7 +1947,7 @@ mod tests {
                 .checked_shl(u32::try_from(index % 8).unwrap_or_default())
                 .unwrap_or_default();
             if let Ok(container) = Container::read(&mutated) {
-                assert!(container.image().len() <= 512 * 1024 * 1024);
+                assert!(container.image().len() <= 256 * 1024 * 1024);
             }
             let _ = Save::read(&mutated);
         }
