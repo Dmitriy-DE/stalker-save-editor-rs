@@ -17,7 +17,10 @@ struct HuffmanEntry {
 
 #[derive(Clone, Debug)]
 struct Huffman {
+    /// Sorted by (length, reversed code), so each length is one contiguous range.
     entries: Vec<HuffmanEntry>,
+    /// Index range of the entries of each code length (`ranges[length]`).
+    ranges: [(usize, usize); MAX_BITS + 1],
     maximum_length: u8,
 }
 
@@ -107,8 +110,21 @@ impl Huffman {
             });
             maximum_length = maximum_length.max(length);
         }
+        entries.sort_unstable_by_key(|entry| (entry.length, entry.reversed_code));
+        let mut ranges = [(0_usize, 0_usize); MAX_BITS + 1];
+        let mut start = 0_usize;
+        for (length, range) in ranges.iter_mut().enumerate() {
+            let count = entries
+                .iter()
+                .filter(|entry| usize::from(entry.length) == length)
+                .count();
+            let end = start.saturating_add(count);
+            *range = (start, end);
+            start = end;
+        }
         Ok(Self {
             entries,
+            ranges,
             maximum_length,
         })
     }
@@ -126,12 +142,12 @@ impl Huffman {
             code |= bit
                 .checked_shl(shift)
                 .ok_or_else(|| Error::damaged("Huffman code shift overflow"))?;
-            if let Some(entry) = self
-                .entries
-                .iter()
-                .find(|entry| entry.length == length && entry.reversed_code == code)
-            {
-                return Ok(entry.symbol);
+            let (start, end) = self.ranges.get(usize::from(length)).copied().unwrap_or((0, 0));
+            let candidates = self.entries.get(start..end).unwrap_or(&[]);
+            if let Ok(index) = candidates.binary_search_by_key(&code, |entry| entry.reversed_code) {
+                if let Some(entry) = candidates.get(index) {
+                    return Ok(entry.symbol);
+                }
             }
             length = length
                 .checked_add(1)
@@ -496,6 +512,7 @@ fn dynamic_trees(reader: &mut BitReader<'_>) -> Result<(Huffman, Huffman)> {
     let distance = if distance_lengths.iter().all(|value| *value == 0) {
         Huffman {
             entries: Vec::new(),
+            ranges: [(0, 0); MAX_BITS + 1],
             maximum_length: 0,
         }
     } else {
@@ -657,7 +674,7 @@ mod tests {
         }
     }
 
-    use super::inflate_zlib;
+    use super::{inflate_zlib, BitReader, Huffman};
     use sse_core::Error;
 
     // zlib streams generated once with Python's stdlib zlib at level 0 / Z_FIXED / default.
@@ -748,6 +765,46 @@ mod tests {
             let prefix = STORED.get(..length).unwrap_or_default();
             assert!(inflate_zlib(prefix, 64).is_err());
             length = length.checked_add(1).unwrap_or(STORED.len());
+        }
+    }
+
+    #[test]
+    fn huffman_decodes_the_rfc1951_canonical_example() {
+        // RFC 1951 section 3.2.2 example: A..H with lengths 3,3,3,3,3,2,4,4 give
+        // F=00, A=010, B=011, C=100, D=101, E=110, G=1110, H=1111 (codes as written MSB first).
+        let lengths = [3_u8, 3, 3, 3, 3, 2, 4, 4];
+        let table = Huffman::from_lengths(&lengths).unwrap_or_else(|error| panic!("{error:?}"));
+        let codes: [(&str, usize); 8] = [
+            ("010", 0),
+            ("011", 1),
+            ("100", 2),
+            ("101", 3),
+            ("110", 4),
+            ("00", 5),
+            ("1110", 6),
+            ("1111", 7),
+        ];
+        // Pack the codes into a DEFLATE-style stream: each code is sent most significant bit first.
+        let mut bits = Vec::new();
+        let mut expected = Vec::new();
+        for _ in 0..3 {
+            for (code, symbol) in codes.iter().rev() {
+                bits.extend(code.chars().map(|c| c == '1'));
+                expected.push(*symbol);
+            }
+        }
+        let mut bytes = vec![0_u8; bits.len().div_ceil(8)];
+        for (index, bit) in bits.iter().enumerate() {
+            if *bit {
+                if let Some(byte) = bytes.get_mut(index / 8) {
+                    *byte |= 1 << (index % 8);
+                }
+            }
+        }
+        let mut reader = BitReader::new(&bytes);
+        for symbol in expected {
+            let decoded = table.decode(&mut reader).unwrap_or_else(|error| panic!("{error:?}"));
+            assert_eq!(usize::from(decoded), symbol);
         }
     }
 }
