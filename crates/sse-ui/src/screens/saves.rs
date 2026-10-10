@@ -7863,6 +7863,8 @@ struct Transitions {
     count: Option<WidgetId>,
     side: Option<WidgetId>,
     detail: Option<WidgetId>,
+    detail_rows: Vec<WidgetId>,
+    detail_values: Vec<WidgetId>,
     confirmation: Option<WidgetId>,
     confirmation_actions: Option<WidgetId>,
     confirm: Option<WidgetId>,
@@ -7898,6 +7900,8 @@ impl Transitions {
             count: None,
             side: None,
             detail: None,
+            detail_rows: Vec::new(),
+            detail_values: Vec::new(),
             confirmation: None,
             confirmation_actions: None,
             confirm: None,
@@ -7925,6 +7929,17 @@ impl Transitions {
         let compact = window_width < 1600.0;
         if let Some(side) = self.side {
             cx.tree.set_style(side, side_column_style(compact, false))?;
+        }
+        // A wrapped status line measures its lines at its minimum width, so the width it is drawn in is set here.
+        if let Some(status) = self.status {
+            let note_width = side_column_width(compact) - 2.0 * crate::theme::d2::PANEL_PADDING.0;
+            cx.tree.set_style(
+                status,
+                Style {
+                    min: Size::new(note_width, 0.0),
+                    ..Style::default()
+                },
+            )?;
         }
         for row in &mut self.rows {
             row.handle = None;
@@ -7990,7 +8005,15 @@ impl Transitions {
         } else {
             "Перенос персонажа не поддерживается этим форматом или временно занят."
         });
-        self.set_text(cx, availability)?;
+        let empty_text = t("В этом сейве нет подтверждённых переходов.");
+        self.set_text(
+            cx,
+            if destination_count == 0 {
+                empty_text
+            } else {
+                availability
+            },
+        )?;
         if let Some(id) = self.pages {
             cx.tree.set_visible(id, destination_count > page_size)?;
         }
@@ -8061,28 +8084,28 @@ impl Transitions {
         let chosen = self
             .selected
             .and_then(|handle| destinations.iter().find(|(candidate, _)| *candidate == handle));
+        let has_choice = chosen.is_some();
+        if let Some(id) = self.detail {
+            cx.tree.set_visible(id, !has_choice)?;
+        }
+        for id in &self.detail_rows {
+            cx.tree.set_visible(*id, has_choice)?;
+        }
         match chosen {
             Some((handle, destination)) => {
                 let position = destination.dest_position.map_or_else(
                     || t("позиция неизвестна").to_owned(),
                     |point| format!("x {:.1}, y {:.1}, z {:.1}", point.x, point.y, point.z),
                 );
-                let title = format!(
+                let route = format!(
                     "{} → {}",
                     t(&destination.dest_level_name),
                     t(&destination.dest_level_point_name)
                 );
-                let staged_suffix = t(if pending == Some(*handle) {
-                    " · в черновике"
-                } else {
-                    ""
-                });
-                let meta = tr(
-                    "{0} · id 0x{1}{2}",
-                    &[&position, &format!("{handle:04X}"), &staged_suffix],
-                );
-                if let Some(id) = self.detail {
-                    cx.tree.set_text(id, &format!("{title}\n{meta}"))?;
+                let draft = t(if pending == Some(*handle) { "Да" } else { "Нет" });
+                let values = [route, position, format!("0x{handle:04X}"), draft.to_owned()];
+                for (value, text) in self.detail_values.iter().zip(values.iter()) {
+                    cx.tree.set_text(*value, text)?;
                 }
                 if let Some(id) = self.move_here {
                     cx.tree.set_enabled(id, can_relocate && pending.is_none())?;
@@ -8262,7 +8285,20 @@ impl Screen for Transitions {
         )?;
         let header = style::row(cx.tree, list_panel)?;
         style::d2::panel_title(cx.tree, header, t("ПЕРЕХОДЫ"))?;
-        self.count = Some(style::d2::badge(cx.tree, header, "0", style::d2::BadgeKind::Installed)?);
+        // The counter is neutral text at the right of the header, like the library's; green is for statuses only.
+        cx.tree.add(
+            Some(header),
+            NodeKind::Column,
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: Size::new(0.0, 0.0),
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        self.count = Some(style::label(cx.tree, header, "0", Text::Note)?);
         self.text = Some(style::label(cx.tree, list_panel, "", Text::Note)?);
         let list = cx.tree.add(
             Some(list_panel),
@@ -8386,7 +8422,15 @@ impl Screen for Transitions {
             },
         )?;
         self.detail = Some(detail);
-        self.status = Some(style::label(cx.tree, inspector, "", Text::Note)?);
+        for key in [t("Куда"), t("Координаты"), t("Идентификатор"), t("Черновик")] {
+            let row = style::d2::key_value_row(cx.tree, inspector, key, "—")?;
+            self.detail_rows.push(row);
+            if let Some(value) = cx.tree.children(row).last().copied() {
+                self.detail_values.push(value);
+            }
+            cx.tree.set_visible(row, false)?;
+        }
+        self.status = Some(paragraph(cx.tree, inspector, "", Text::Note)?);
         self.confirmation = Some(style::label(cx.tree, inspector, "", Text::Body)?);
         if let Some(confirmation) = self.confirmation {
             cx.tree.set_visible(confirmation, false)?;

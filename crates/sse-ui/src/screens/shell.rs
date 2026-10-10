@@ -6005,6 +6005,128 @@ mod tests {
         result
     }
 
+    /// Opens the synthetic save with one level-changer destination on the transitions screen. Only for the tests below.
+    fn open_transitions_for_test(
+        directory: &Path,
+    ) -> sse_core::Result<(
+        Shell,
+        Tree,
+        std::sync::mpsc::Receiver<Message<super::super::AppMessage>>,
+    )> {
+        use crate::event_loop::App as _;
+        let fixture = include_bytes!("../../../../fixtures/synthetic/writer-transitions/cop-level-changer-source.sav");
+        let path = directory.join("transitions.sav");
+        std::fs::write(&path, fixture)?;
+        let path = std::fs::canonicalize(&path)?;
+        let (proxy, receiver) = channel_pair::<super::super::AppMessage>();
+        let mut tree = Tree::new(Fonts::bundled()?, crate::screens::style::rgb(crate::theme::BG_BASE));
+        let mut shell = Shell::build_for_test(&mut tree, None)?;
+        shell.set_proxy(proxy);
+        assert!(shell.open_save(&mut tree, &path)?);
+        loop {
+            let message = receiver
+                .recv_timeout(std::time::Duration::from_secs(60))
+                .map_err(|error| sse_core::Error::System(error.to_string()))?;
+            let finished = matches!(
+                &message,
+                Message::User(super::super::AppMessage::ToScreen(ScreenId::Overview, _))
+            );
+            let _ = shell.message(&mut tree, &message, None);
+            if finished {
+                break;
+            }
+        }
+        shell.open(&mut tree, ScreenId::Transitions)?;
+        shell.resize_window(&mut tree, 1366, 768)?;
+        tree.update_layout()?;
+        Ok((shell, tree, receiver))
+    }
+
+    /// Runs `body` on a fresh temporary directory that is removed afterwards. Nothing outside it is read or written.
+    fn with_transitions_directory(
+        name: &str,
+        body: impl FnOnce(&Path) -> sse_core::Result<()>,
+    ) -> sse_core::Result<()> {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| sse_core::Error::System(error.to_string()))?
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!("sse-shell-{name}-{}-{nonce}", std::process::id()));
+        std::fs::create_dir(&directory)?;
+        let result = body(&directory);
+        let _ = std::fs::remove_dir_all(&directory);
+        result
+    }
+
+    #[test]
+    fn transition_move_is_off_and_does_nothing_without_a_selected_row() -> sse_core::Result<()> {
+        with_transitions_directory("transitions-no-selection", |directory| {
+            let (mut shell, mut tree, _receiver) = open_transitions_for_test(directory)?;
+            let move_here = super::find_button_with_text(
+                &tree,
+                shell.content,
+                &crate::strings::t("Перенести сюда…").to_lowercase(),
+            )
+            .ok_or_else(|| sse_core::Error::damaged("no move button"))?;
+            assert!(!tree.is_enabled(move_here)?, "move is on without a selected transition");
+            let pointer = Message::Window(crate::event_loop::WindowEvent::PointerLeft);
+            // A disabled button refuses the click (the shell reports it); nothing changes either way.
+            let _ = shell.handle(&mut tree, &pointer, Some(move_here));
+            tree.update_layout()?;
+            assert!(
+                super::find_button_with_text(
+                    &tree,
+                    shell.content,
+                    &crate::strings::t("Подтвердить перенос").to_lowercase(),
+                )
+                .is_none(),
+                "a confirmation opened without a selected transition"
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn selected_row_and_move_stage_the_relocation_in_the_draft() -> sse_core::Result<()> {
+        // The row only chooses; the one action asks for confirmation, and confirming stages the relocation.
+        with_transitions_directory("transitions-stage", |directory| {
+            let (mut shell, mut tree, _receiver) = open_transitions_for_test(directory)?;
+            assert!(shell.select_first_fix(&mut tree)?, "no transition row to select");
+            tree.update_layout()?;
+            let move_here = super::find_button_with_text(
+                &tree,
+                shell.content,
+                &crate::strings::t("Перенести сюда…").to_lowercase(),
+            )
+            .ok_or_else(|| sse_core::Error::damaged("no move button"))?;
+            assert!(
+                tree.is_enabled(move_here)?,
+                "move stays off after selecting a transition"
+            );
+            let pointer = Message::Window(crate::event_loop::WindowEvent::PointerLeft);
+            shell.handle(&mut tree, &pointer, Some(move_here))?;
+            tree.update_layout()?;
+            let confirm = super::find_button_with_text(
+                &tree,
+                shell.content,
+                &crate::strings::t("Подтвердить перенос").to_lowercase(),
+            )
+            .ok_or_else(|| sse_core::Error::damaged("no confirmation after move"))?;
+            shell.handle(&mut tree, &pointer, Some(confirm))?;
+            tree.update_layout()?;
+            assert!(
+                super::find_button_with_text(
+                    &tree,
+                    shell.content,
+                    &crate::strings::t("Перенос 0x2222 находится в черновике.").to_lowercase(),
+                )
+                .is_some(),
+                "confirming did not stage the relocation in the draft"
+            );
+            Ok(())
+        })
+    }
+
     #[test]
     fn games_columns_end_on_the_library_bottom_edge() -> sse_core::Result<()> {
         // The library, the screen host and both columns of the games overview end on one edge, inside the window.
