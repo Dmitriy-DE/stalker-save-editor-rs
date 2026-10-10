@@ -128,7 +128,6 @@ enum HistoryResult {
         result: std::result::Result<QuestRepairCompletion, String>,
     },
     Restored {
-        request_id: Option<sse_app::SaveOperationId>,
         result: std::result::Result<RestoredSave, String>,
     },
     ProcessCheck {
@@ -500,7 +499,6 @@ impl HistoryScreen {
         } else {
             None
         };
-        let request_id = restore_guard.as_ref().map(sse_app::SaveOperationGuard::id);
         let id = self.id;
         self.workspace.spawn("save-restore", move |context| {
             if context.is_cancelled() {
@@ -513,10 +511,7 @@ impl HistoryScreen {
                     .map_err(|error| error.to_string()),
             };
             drop(restore_guard);
-            proxy.send(AppMessage::ToScreen(
-                id,
-                Box::new(HistoryResult::Restored { request_id, result }),
-            ));
+            proxy.send(AppMessage::ToScreen(id, Box::new(HistoryResult::Restored { result })));
         })?;
         Ok(true)
     }
@@ -1706,10 +1701,9 @@ impl Screen for HistoryScreen {
                                 }
                             }
                         }
-                        HistoryResult::Restored { request_id, result } => {
-                            if request_id.is_some_and(|id| !self.workspace.session().is_latest_operation(id)) {
-                                return Ok(());
-                            }
+                        HistoryResult::Restored { result } => {
+                            // A result that is no longer the latest operation still shows its outcome, so a
+                            // failed or finished restore is never hidden by a newer operation.
                             match result {
                                 Ok(RestoredSave::Copy(path)) => {
                                     let path = path.display().to_string();
@@ -2963,6 +2957,58 @@ mod tests {
         }
         #[cfg(not(feature = "native-ui"))]
         assert!(!cx.tree.is_visible(row.secondary_button));
+        Ok(())
+    }
+
+    #[test]
+    fn stale_restore_failure_is_still_reported() -> sse_core::Result<()> {
+        let workspace = Workspace::default();
+        let session = workspace.session();
+        let path = PathBuf::from("restore-old.sav");
+        let first = session
+            .begin_restore(&path)
+            .ok_or_else(|| sse_core::Error::Refused("first restore did not start".to_owned()))?;
+        let first_id = first.id();
+        drop(first);
+        let _second = session
+            .begin_restore(&path)
+            .ok_or_else(|| sse_core::Error::Refused("second restore did not start".to_owned()))?;
+        assert!(!session.is_latest_operation(first_id));
+
+        let mut screen = HistoryScreen::new(ScreenId::Backups, "test", workspace.clone());
+        let mut app = sse_app::state::AppState::new();
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: None,
+            status: None,
+            app: &mut app,
+        };
+        screen.build(&mut cx, host)?;
+        screen.message(
+            &mut cx,
+            &Message::User(AppMessage::ToScreen(
+                ScreenId::Backups,
+                Box::new(super::HistoryResult::Restored {
+                    result: Err("disk full".to_owned()),
+                }),
+            )),
+            None,
+        )?;
+        let summary = screen
+            .summary
+            .ok_or_else(|| sse_core::Error::Refused("no summary widget".to_owned()))?;
+        assert!(
+            tree.text(summary)?.contains("disk full"),
+            "the outcome of a superseded restore must still be shown"
+        );
         Ok(())
     }
 
