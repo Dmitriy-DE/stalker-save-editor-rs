@@ -2974,6 +2974,27 @@ mod tests {
     }
 
     #[test]
+    fn cloud_recovery_refuses_a_backup_folder_that_is_a_file_and_writes_nothing() -> TestResult {
+        let root = std::env::temp_dir().join(format!("sse-cloud-refuse-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root)?;
+        let blocker = root.join("not-a-folder");
+        std::fs::write(&blocker, b"plain file")?;
+
+        let result = super::write_cloud_recovery_artifacts(&blocker, 4500, "quicksave.sav", b"cloud", b"edited");
+
+        assert!(result.is_err());
+        assert_eq!(std::fs::read(&blocker)?, b"plain file");
+        assert_eq!(
+            std::fs::read_dir(&root)?.count(),
+            1,
+            "no artifact may be created beside the blocking file"
+        );
+        std::fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
     fn cloud_recovery_artifacts_are_visible_and_restore_only_to_a_new_copy() -> TestResult {
         let unique = format!(
             "sse-storage-cloud-backup-{}-{}",
