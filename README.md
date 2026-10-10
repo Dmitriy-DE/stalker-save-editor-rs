@@ -15,4 +15,5 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 SSE_ORACLE=/path/to/stalker-save-editor-cli tools/oracle.sh        # parity with the C# editor
+cargo run -p sse-ui --bin sse-ui-dev -- --metrics-report <dir>   # table from downloaded metrics/*.json (download with wrangler first)
 ```
