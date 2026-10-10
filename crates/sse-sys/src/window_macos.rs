@@ -205,7 +205,19 @@ impl WakeHandle {
         // SAFETY: NSAutoreleasePool alloc/init follows the Objective-C object creation contract.
         let pool = unsafe { o::id(o::id(o::class(c"NSAutoreleasePool"), o::sel(c"alloc")), o::sel(c"init")) };
         let cls = o::class(c"NSEvent");
-        type F = unsafe extern "C" fn(o::Id, o::Sel, usize, o::Point, usize, f64, isize, o::Id, isize, isize) -> o::Id;
+        type F = unsafe extern "C" fn(
+            o::Id,
+            o::Sel,
+            usize,
+            o::Point,
+            usize,
+            f64,
+            isize,
+            o::Id,
+            isize,
+            isize,
+            isize,
+        ) -> o::Id;
         // SAFETY: objc_msgSend is cast to the exact NSEvent otherEventWithType selector ABI.
         let f: F = unsafe { mem::transmute(objc_msg_send_ptr()) };
         // SAFETY: selector, receiver and argument ABI match +otherEventWithType:... exactly.
@@ -221,6 +233,7 @@ impl WakeHandle {
                 0.0,
                 0,
                 ptr::null_mut(),
+                0,
                 0,
                 0,
             )
