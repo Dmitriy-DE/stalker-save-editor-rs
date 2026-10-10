@@ -249,18 +249,20 @@ impl Companion {
     fn refresh(&self, cx: &mut Context<'_>) {
         let Some(proxy) = cx.proxy.cloned() else { return };
         let selected = self.selected(cx);
-        sse_app::tasks::spawn_named_detached("companion-read", move || {
+        if let Err(error) = sse_app::tasks::try_spawn_named_detached("companion-read", move || {
             let result = selected.and_then(|(g, d)| companion_root(&g, &d).map(|r| installed_version(&r)));
             proxy.send(AppMessage::ToScreen(
                 ScreenId::Companion,
                 Box::new(CompanionReply::Status(result)),
             ));
-        });
+        }) {
+            cx.status = Some(tr("Ошибка: {0}", &[&error]));
+        }
     }
     fn protocol_args(&self, cx: &mut Context<'_>, command: &'static str, argument: Option<&'static str>) {
         let Some(proxy) = cx.proxy.cloned() else { return };
         let selected = self.selected(cx);
-        sse_app::tasks::spawn_named_detached("companion-write", move || {
+        if let Err(error) = sse_app::tasks::try_spawn_named_detached("companion-write", move || {
             let result = selected
                 .and_then(|(game, directory)| Self::exchange_directory(&game, &directory))
                 .and_then(|directory| {
@@ -301,7 +303,9 @@ impl Companion {
                 ScreenId::Companion,
                 Box::new(CompanionReply::Protocol(command, result)),
             ));
-        });
+        }) {
+            cx.status = Some(tr("Ошибка: {0}", &[&error]));
+        }
     }
     fn protocol(&self, cx: &mut Context<'_>, command: &'static str) {
         self.protocol_args(cx, command, None);
@@ -575,7 +579,7 @@ impl Screen for Companion {
             let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
             if active {
                 let runtime = self.hotkey_runtime.lock().ok().and_then(|mut runtime| runtime.take());
-                sse_app::tasks::spawn_named_detached("companion-hotkeys-stop", move || {
+                if let Err(error) = sse_app::tasks::try_spawn_named_detached("companion-hotkeys-stop", move || {
                     let result = runtime
                         .map_or(Ok(()), |mut runtime| runtime.stop())
                         .map(|()| t("Горячие клавиши выключены.").to_owned())
@@ -584,7 +588,9 @@ impl Screen for Companion {
                         ScreenId::Companion,
                         Box::new(CompanionReply::Hotkeys(result)),
                     ));
-                });
+                }) {
+                    cx.status = Some(tr("Ошибка: {0}", &[&error]));
+                }
             } else {
                 let selected = self.selected(cx).and_then(|(game, directory)| {
                     if xray_game(&game).is_none() {
@@ -595,7 +601,7 @@ impl Screen for Companion {
                 let path = sse_app::paths::default_data_directory().join("hotkeys.txt");
                 let layout = sse_companion::hotkeys::HotkeyLayout::load(&path);
                 let runtime_slot = Arc::clone(&self.hotkey_runtime);
-                sse_app::tasks::spawn_named_detached("companion-hotkeys-start", move || {
+                if let Err(error) = sse_app::tasks::try_spawn_named_detached("companion-hotkeys-start", move || {
                     let result = selected.and_then(|directory| {
                         sse_companion::hotkey_runtime::HotkeyRuntime::start(&layout, directory)
                             .map_err(|error| error.to_string())
@@ -614,7 +620,9 @@ impl Screen for Companion {
                             result.map(|()| t("Горячие клавиши включены.").to_owned()),
                         )),
                     ));
-                });
+                }) {
+                    cx.status = Some(tr("Ошибка: {0}", &[&error]));
+                }
             }
             return Ok(());
         }
@@ -630,7 +638,7 @@ impl Screen for Companion {
             let path = sse_app::paths::default_data_directory().join("hotkeys.txt");
             let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
             let runtime_slot = Arc::clone(&self.hotkey_runtime);
-            sse_app::tasks::spawn_named_detached("companion-write", move || {
+            if let Err(error) = sse_app::tasks::try_spawn_named_detached("companion-write", move || {
                 let result = (|| {
                     let layout =
                         sse_companion::hotkeys::HotkeyLayout::parse(&text).map_err(|error| error.to_string())?;
@@ -655,7 +663,9 @@ impl Screen for Companion {
                     ScreenId::Companion,
                     Box::new(CompanionReply::Hotkeys(result)),
                 ));
-            });
+            }) {
+                cx.status = Some(tr("Ошибка: {0}", &[&error]));
+            }
             return Ok(());
         }
         if clicked.is_some() && (clicked == self.install || clicked == self.remove) {
@@ -699,7 +709,7 @@ impl Screen for Companion {
                 cx.tree.close_dialog()?;
             }
             let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
-            sse_app::tasks::spawn_named_detached("companion-write", move || {
+            if let Err(error) = sse_app::tasks::try_spawn_named_detached("companion-write", move || {
                 let result = (|| {
                     let root = companion_root(&intent.game, &intent.directory)?;
                     if intent.install {
@@ -732,7 +742,9 @@ impl Screen for Companion {
                     ScreenId::Companion,
                     Box::new(CompanionReply::Changed(result)),
                 ));
-            });
+            }) {
+                cx.status = Some(tr("Ошибка: {0}", &[&error]));
+            }
             return Ok(());
         }
         if let Message::User(AppMessage::ToScreen(ScreenId::Companion, payload)) = message {
@@ -870,7 +882,7 @@ impl Achievements {
     fn load(&self, cx: &mut Context<'_>) {
         let Some(proxy) = cx.proxy.cloned() else { return };
         let id = cx.app.selected_game().and_then(app_id);
-        sse_app::tasks::spawn_named_detached("companion-read", move || {
+        if let Err(error) = sse_app::tasks::try_spawn_named_detached("companion-read", move || {
             let result = id
                 .ok_or_else(|| t("Для выбранной игры нет Steam App ID").to_owned())
                 .and_then(achievement_list);
@@ -878,7 +890,9 @@ impl Achievements {
                 ScreenId::Achievements,
                 Box::new(AchReply::List(result)),
             ));
-        });
+        }) {
+            cx.status = Some(tr("Ошибка: {0}", &[&error]));
+        }
     }
     fn render(&mut self, cx: &mut Context<'_>) -> Result<()> {
         for (i, row) in self.rows.iter().copied().skip(1).enumerate() {
@@ -1035,13 +1049,15 @@ impl Screen for Achievements {
             let set = intent.set;
             let _ = cx.tree.close_dialog()?;
             let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
-            sse_app::tasks::spawn_named_detached("companion-write", move || {
+            if let Err(error) = sse_app::tasks::try_spawn_named_detached("companion-write", move || {
                 let result = change_achievement(app_id, &name, set);
                 proxy.send(AppMessage::ToScreen(
                     ScreenId::Achievements,
                     Box::new(AchReply::Changed(result)),
                 ));
-            });
+            }) {
+                cx.status = Some(tr("Ошибка: {0}", &[&error]));
+            }
         }
         if let Message::User(AppMessage::ToScreen(ScreenId::Achievements, payload)) = message {
             if let Some(reply) = payload.downcast_ref::<AchReply>() {
@@ -1151,7 +1167,7 @@ impl Cloud {
     fn load(&self, cx: &mut Context<'_>) {
         let Some(proxy) = cx.proxy.cloned() else { return };
         let id = cx.app.selected_game().and_then(app_id);
-        sse_app::tasks::spawn_named_detached("companion-read", move || {
+        if let Err(error) = sse_app::tasks::try_spawn_named_detached("companion-read", move || {
             let result = id
                 .ok_or_else(|| t("Для выбранной игры нет Steam App ID").to_owned())
                 .and_then(cloud_files);
@@ -1159,7 +1175,9 @@ impl Cloud {
                 ScreenId::Cloud,
                 Box::new(CloudReply::List(result)),
             ));
-        });
+        }) {
+            cx.status = Some(tr("Ошибка: {0}", &[&error]));
+        }
     }
 
     fn render(&mut self, cx: &mut Context<'_>) -> Result<()> {
@@ -1263,7 +1281,7 @@ impl Cloud {
         let Some(proxy) = cx.proxy.cloned() else { return };
         let backup_directory = self.backup_workspace.backup_directory();
         cx.status = Some(t("Сверяю облачную и локальную версии перед подтверждением…").to_owned());
-        sse_app::tasks::spawn_named_detached("companion-read", move || {
+        if let Err(error) = sse_app::tasks::try_spawn_named_detached("companion-read", move || {
             let result = (|| {
                 let metadata_before =
                     std::fs::metadata(&local).map_err(|error| tr("Ошибка локального сейва: {0}", &[&error]))?;
@@ -1330,12 +1348,14 @@ impl Cloud {
                 ScreenId::Cloud,
                 Box::new(CloudReply::Prepared(result)),
             ));
-        });
+        }) {
+            cx.status = Some(tr("Ошибка: {0}", &[&error]));
+        }
     }
 
     fn upload(&self, cx: &mut Context<'_>, intent: CloudIntent) {
         let Some(proxy) = cx.proxy.cloned() else { return };
-        sse_app::tasks::spawn_named_detached("companion-write", move || {
+        if let Err(error) = sse_app::tasks::try_spawn_named_detached("companion-write", move || {
             let result = (|| {
                 let output = std::fs::read(&intent.local).map_err(|error| tr("Ошибка записи: {0}", &[&error]))?;
                 if sse_codecs::sha256::sha256(&output) != intent.local_sha256 {
@@ -1382,7 +1402,9 @@ impl Cloud {
                 ScreenId::Cloud,
                 Box::new(CloudReply::Done(result)),
             ));
-        });
+        }) {
+            cx.status = Some(tr("Ошибка: {0}", &[&error]));
+        }
     }
 }
 
@@ -1586,7 +1608,7 @@ impl Screen for Cloud {
             let downloads = self.backup_workspace.backup_directory().join("cloud_downloads");
             let remote = item.name.clone();
             let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
-            sse_app::tasks::spawn_named_detached("companion-write", move || {
+            if let Err(error) = sse_app::tasks::try_spawn_named_detached("companion-write", move || {
                 let result = (|| {
                     let source = cloud_read(app_id, &remote)?;
                     let name = std::path::Path::new(&remote)
@@ -1621,7 +1643,9 @@ impl Screen for Cloud {
                     ScreenId::Cloud,
                     Box::new(CloudReply::Done(result)),
                 ));
-            });
+            }) {
+                cx.status = Some(tr("Ошибка: {0}", &[&error]));
+            }
         }
 
         if let Message::User(AppMessage::ToScreen(ScreenId::Cloud, payload)) = message {
@@ -1772,7 +1796,7 @@ impl Updates {
             if let Some(id) = self.status {
                 let _ = cx.tree.set_text(id, &tr("Ошибка сервера обновлений: {0}", &[&error]));
             }
-            cx.status = Some(error.to_string());
+            cx.status = Some(tr("Ошибка: {0}", &[&error]));
         }
     }
 
@@ -1823,7 +1847,7 @@ impl Updates {
             if let Some(id) = self.status {
                 let _ = cx.tree.set_text(id, &tr("Ошибка скачивания: {0}", &[&error]));
             }
-            cx.status = Some(error.to_string());
+            cx.status = Some(tr("Ошибка: {0}", &[&error]));
         }
     }
 
@@ -1864,7 +1888,7 @@ impl Updates {
             if let Some(id) = self.status {
                 let _ = cx.tree.set_text(id, &tr("Ошибка запуска установки: {0}", &[&error]));
             }
-            cx.status = Some(error.to_string());
+            cx.status = Some(tr("Ошибка: {0}", &[&error]));
         }
     }
 }
