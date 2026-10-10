@@ -34,6 +34,8 @@ impl GameUiSounds {
     /// Loads known menu cues from loose files or X-Ray archives without network access.
     #[must_use]
     pub fn load(game_id: &str, game_directory: &Path) -> Self {
+        // Original (non-Enhanced) releases ship no menu_select/switch/decline and so stay silent: the C# 1.3.1 editor
+        // played copies bundled with the app instead; those are not copied here, as they are the game's own files.
         let Some(audio) = crate::game_audio::audio_game(game_id) else {
             return Self::default();
         };
