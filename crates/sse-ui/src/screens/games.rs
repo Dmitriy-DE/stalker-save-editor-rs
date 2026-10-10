@@ -3121,6 +3121,16 @@ fn matching_game_installation(
         .map(|installation| installation.directory.clone())
 }
 
+fn game_is_running(target: sse_fixes::GameTarget) -> sse_core::Result<bool> {
+    use sse_fixes::running_game::GameRunningProbe;
+    sse_fixes::running_game::SystemGameRunningProbe.is_game_running(target)
+}
+
+/// Reports whether an interrupted install may be restored now. An unreadable process list counts as running.
+fn may_recover_interrupted(running: sse_core::Result<bool>) -> bool {
+    matches!(running, Ok(false))
+}
+
 fn load_fix_rows(
     target: sse_fixes::GameTarget,
     directory: Option<&Path>,
@@ -3129,9 +3139,12 @@ fn load_fix_rows(
     let engine = sse_fixes::GameFixEngine::new();
     let installed = match directory {
         Some(directory) => {
-            engine
-                .recover_interrupted(directory)
-                .map_err(|error| error.to_string())?;
+            // Restoring an interrupted install rewrites game files, so it waits until the game is closed.
+            if may_recover_interrupted(game_is_running(target)) {
+                engine
+                    .recover_interrupted(directory)
+                    .map_err(|error| error.to_string())?;
+            }
             engine
                 .list_installed(directory, None)
                 .map_err(|error| error.to_string())?
@@ -5585,8 +5598,8 @@ impl Screen for Encyclopedia {
 #[cfg(test)]
 mod game_fixes_tests {
     use super::{
-        load_fix_rows, AppMessage, Context, DiscoveredInstallation, FixBadge, FixReply, FixRow, GameFixes,
-        GameInstallSource, GameTarget, Screen, ScreenId,
+        load_fix_rows, may_recover_interrupted, AppMessage, Context, DiscoveredInstallation, FixBadge, FixReply,
+        FixRow, GameFixes, GameInstallSource, GameTarget, Screen, ScreenId,
     };
     use crate::event_loop::Message;
     use crate::glyphs::Fonts;
@@ -5616,6 +5629,16 @@ mod game_fixes_tests {
                 .saturating_add(definition.overlays.len())
                 .saturating_add(definition.spawn_edits.len()),
         })
+    }
+
+    #[test]
+    fn interrupted_install_is_restored_only_when_the_game_is_closed() {
+        assert!(may_recover_interrupted(Ok(false)));
+        assert!(!may_recover_interrupted(Ok(true)));
+        // The process list could not be read: the game may be running, so the files stay as they are.
+        assert!(!may_recover_interrupted(Err(sse_core::Error::System(
+            "no process list".to_owned()
+        ))));
     }
 
     #[test]
