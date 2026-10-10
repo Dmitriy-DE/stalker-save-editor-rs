@@ -164,6 +164,15 @@ fn json_write_string(writer: &mut sse_codecs::json::Writer, value: &str) -> sse_
     writer.string(value)
 }
 
+/// Writes a durability value; NaN and infinities have no JSON form, so they are written as `null`.
+fn json_write_f32(writer: &mut sse_codecs::json::Writer, value: f32) -> sse_core::Result<()> {
+    if value.is_finite() {
+        writer.number(&value.to_string())
+    } else {
+        writer.null()
+    }
+}
+
 fn json_write_optional_string(writer: &mut sse_codecs::json::Writer, value: Option<&str>) -> sse_core::Result<()> {
     match value {
         Some(value) => json_write_string(writer, value),
@@ -226,9 +235,9 @@ fn json_write_change(writer: &mut sse_codecs::json::Writer, change: &Change) -> 
             writer.key("targetObject")?;
             writer.u64(u64::from(*target_object))?;
             writer.key("oldValue")?;
-            writer.number(&old_value.to_string())?;
+            json_write_f32(writer, *old_value)?;
             writer.key("newValue")?;
-            writer.number(&new_value.to_string())?;
+            json_write_f32(writer, *new_value)?;
         }
         Change::SetPlacement {
             target_object,
@@ -505,7 +514,19 @@ fn json_crash_analysis(analysis: &sse_doctor::CrashLogAnalysis) -> sse_core::Res
 
 #[cfg(test)]
 mod doctor_tests {
-    use super::json_string;
+    use super::{json_string, json_write_f32};
+
+    #[test]
+    fn non_finite_durability_is_written_as_null_not_an_error() {
+        for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut writer = sse_codecs::json::Writer::compact();
+            assert!(json_write_f32(&mut writer, value).is_ok());
+            assert_eq!(super::finish_json(writer).ok().as_deref(), Some("null"));
+        }
+        let mut writer = sse_codecs::json::Writer::compact();
+        assert!(json_write_f32(&mut writer, 0.5).is_ok());
+        assert_eq!(super::finish_json(writer).ok().as_deref(), Some("0.5"));
+    }
     use crate::run;
 
     const SYNTHETIC_XRAY_SAVE: &[u8] = include_bytes!("../../../fixtures/synthetic/xray-soc.sav");
