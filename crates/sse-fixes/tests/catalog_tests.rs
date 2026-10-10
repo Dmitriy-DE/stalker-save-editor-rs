@@ -119,7 +119,13 @@ fn shipped_catalogue_contains_archive_verified_clear_sky_fixes_and_populates_saf
             candidate.verification_state,
             GameFixVerificationState::RetailFilesVerified
         );
-        assert_eq!(candidate.maturity, GameFixMaturity::Validated);
+        // The bridge model is taken from SRP and has not been checked in the game: it stays Experimental.
+        let expected_maturity = if candidate.id == "cs.ai.limansk-bridge-model" {
+            GameFixMaturity::Experimental
+        } else {
+            GameFixMaturity::Validated
+        };
+        assert_eq!(candidate.maturity, expected_maturity);
         assert_eq!(candidate.supported_steam_build_ids, vec!["11450472"]);
         for op in &candidate.text_patches {
             assert_eq!(op.expected_file_sha256.as_ref().unwrap().len(), 64);
