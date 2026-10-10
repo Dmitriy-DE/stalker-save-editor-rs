@@ -335,6 +335,16 @@ pub struct EditModel {
     composition: Option<Composition>,
     horizontal_scroll: f32,
     grapheme_count: usize,
+    paste_refusal: Option<PasteRefusal>,
+}
+
+/// Why a paste inserted nothing, so the field can tell the user.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PasteRefusal {
+    /// The clipboard text does not fit in the remaining space.
+    TooLong,
+    /// The text fits in length but the field's filter rejects it.
+    NotAllowed,
 }
 
 impl EditModel {
@@ -371,6 +381,7 @@ impl EditModel {
             composition: None,
             horizontal_scroll: 0.0,
             grapheme_count,
+            paste_refusal: None,
         })
     }
 
@@ -626,6 +637,7 @@ impl EditModel {
         let text = clipboard.read_text()?;
         let text = normalise_for_mode(&text, self.config.mode);
         let (start, end) = self.selection.ordered();
+        self.paste_refusal = None;
         if self.candidate_allowed(start, end, &text)?.is_some() {
             return self.replace_selection(&text, CoalesceKind::None);
         }
@@ -649,10 +661,25 @@ impl EditModel {
             .unwrap_or(0);
         let prefix = text.get(..accepted).unwrap_or("");
         if prefix.is_empty() {
+            let removed = end.saturating_sub(start);
+            let after = self
+                .grapheme_count
+                .saturating_sub(removed)
+                .saturating_add(text.chars().count());
+            self.paste_refusal = Some(if after > self.config.max_graphemes {
+                PasteRefusal::TooLong
+            } else {
+                PasteRefusal::NotAllowed
+            });
             self.break_coalescing();
             return Ok(false);
         }
         self.replace_selection(prefix, CoalesceKind::None)
+    }
+
+    /// Takes the reason the last paste inserted nothing, if any.
+    pub fn take_paste_refusal(&mut self) -> Option<PasteRefusal> {
+        self.paste_refusal.take()
     }
 
     /// Undoes one coalesced edit.
@@ -1725,6 +1752,39 @@ mod tests {
             "a full field refuses the whole paste"
         );
         assert_eq!(editor.text(), "abcde");
+    }
+
+    #[test]
+    fn refused_paste_says_why_it_was_refused() {
+        let config = EditConfig {
+            max_graphemes: 3,
+            ..EditConfig::default()
+        };
+        let mut full = match EditModel::new("abc", config) {
+            Ok(value) => value,
+            Err(error) => panic!("failed to create editor: {error}"),
+        };
+        let mut clipboard = MemoryClipboard { text: "x".to_owned() };
+        full.set_caret_grapheme(3, false);
+        assert_eq!(full.paste(&mut clipboard), Ok(false));
+        assert_eq!(full.take_paste_refusal(), Some(super::PasteRefusal::TooLong));
+        assert_eq!(full.take_paste_refusal(), None, "the reason is reported once");
+
+        let digits = EditConfig {
+            filter: InputFilter::Digits {
+                min: Some(0),
+                max: None,
+                allow_empty: true,
+            },
+            ..EditConfig::default()
+        };
+        let mut numeric = match EditModel::new("", digits) {
+            Ok(value) => value,
+            Err(error) => panic!("failed to create editor: {error}"),
+        };
+        clipboard.text = "abc".to_owned();
+        assert_eq!(numeric.paste(&mut clipboard), Ok(false));
+        assert_eq!(numeric.take_paste_refusal(), Some(super::PasteRefusal::NotAllowed));
     }
 
     #[test]

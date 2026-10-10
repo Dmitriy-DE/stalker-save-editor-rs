@@ -1341,5 +1341,39 @@
     "ko": "형식 읽기 검사입니다. 의미 규칙과 복구는 검증된 데이터가 있을 때만 사용할 수 있습니다.\n퀘스트 복구는 백업과 되읽기 검증이 있는 공통 쓰기 경로를 사용합니다.",
     "zh-CN": "格式可读性检查。语义规则和修复仅在有已验证数据时可用。\n修复任务使用带备份和回读验证的共同写入路径。",
     "zh-TW": "格式可讀性檢查。語意規則與修復僅在有已驗證資料時可用。\n修復任務使用含備份與回讀驗證的共同寫入路徑。"
+  },
+  "Вставка не поместилась: текст длиннее оставшегося места в поле.": {
+    "ru": "Вставка не поместилась: текст длиннее оставшегося места в поле.",
+    "uk": "Вставка не вмістилась: текст довший за залишок місця в полі.",
+    "en": "Paste did not fit: the text is longer than the space left in the field.",
+    "de": "Einfügen nicht möglich: der Text ist länger als der freie Platz im Feld.",
+    "fr": "Collage impossible : le texte est plus long que l'espace restant dans le champ.",
+    "it": "Incolla non riuscita: il testo è più lungo dello spazio rimasto nel campo.",
+    "es": "El pegado no cabe: el texto es más largo que el espacio libre del campo.",
+    "pl": "Wklejenie nie zmieściło się: tekst jest dłuższy niż wolne miejsce w polu.",
+    "cs": "Vložení se nevešlo: text je delší než volné místo v poli.",
+    "pt-BR": "A colagem não coube: o texto é maior que o espaço restante no campo.",
+    "tr": "Yapıştırma sığmadı: metin alandaki boş yerden uzun.",
+    "ja": "貼り付けできません。テキストが欄の残りのスペースより長いです。",
+    "ko": "붙여넣기 실패: 텍스트가 필드의 남은 공간보다 깁니다.",
+    "zh-CN": "粘贴未能放下：文本超过了字段剩余的空间。",
+    "zh-TW": "貼上未能放下：文字超過欄位剩餘的空間。"
+  },
+  "Вставка не принята: текст не подходит под формат поля.": {
+    "ru": "Вставка не принята: текст не подходит под формат поля.",
+    "uk": "Вставку не прийнято: текст не відповідає формату поля.",
+    "en": "Paste refused: the text does not match the field format.",
+    "de": "Einfügen abgelehnt: der Text passt nicht zum Feldformat.",
+    "fr": "Collage refusé : le texte ne correspond pas au format du champ.",
+    "it": "Incolla rifiutata: il testo non corrisponde al formato del campo.",
+    "es": "Pegado rechazado: el texto no coincide con el formato del campo.",
+    "pl": "Wklejenie odrzucone: tekst nie pasuje do formatu pola.",
+    "cs": "Vložení odmítnuto: text neodpovídá formátu pole.",
+    "pt-BR": "Colagem recusada: o texto não corresponde ao formato do campo.",
+    "tr": "Yapıştırma reddedildi: metin alanın biçimine uymuyor.",
+    "ja": "貼り付けを受け付けません。テキストが欄の形式に合いません。",
+    "ko": "붙여넣기 거부: 텍스트가 필드 형식과 맞지 않습니다.",
+    "zh-CN": "粘贴被拒绝：文本与字段格式不符。",
+    "zh-TW": "貼上遭拒：文字與欄位格式不符。"
   }
 }
