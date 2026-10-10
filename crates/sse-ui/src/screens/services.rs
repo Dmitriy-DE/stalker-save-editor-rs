@@ -2721,7 +2721,13 @@ mod cloud_prepared_tests {
         let mut app = AppState::new();
         app.set_selected_game(game.map(str::to_owned));
         let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
-        let host = tree.add(None, NodeKind::Column, Style::default(), Content::Panel, Look::default())?;
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
         let mut cx = Context {
             tree: &mut tree,
             proxy: None,
@@ -2743,14 +2749,20 @@ mod cloud_prepared_tests {
         let (screen, status, opened) = deliver(Some("stalker-cop"), app_id("stalker-cs").unwrap_or_default())?;
         assert!(screen.intent.is_none(), "no write may be armed for another game");
         assert!(!opened, "the confirmation card must stay closed");
-        assert_eq!(status.as_deref(), Some("Выбор игры изменился; запись в облако отменена."));
+        assert_eq!(
+            status.as_deref(),
+            Some("Выбор игры изменился; запись в облако отменена.")
+        );
         Ok(())
     }
 
     #[test]
     fn a_prepared_write_for_the_selected_game_is_armed() -> sse_core::Result<()> {
         let (screen, _status, _opened) = deliver(Some("stalker-cs"), app_id("stalker-cs").unwrap_or_default())?;
-        assert!(screen.intent.is_some(), "the write for the selected game is kept for confirmation");
+        assert!(
+            screen.intent.is_some(),
+            "the write for the selected game is kept for confirmation"
+        );
         Ok(())
     }
 }
