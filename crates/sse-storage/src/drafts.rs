@@ -1,12 +1,11 @@
 //! C#-compatible local draft journals with bounded undo history.
 
+use crate::transaction::sync_directory;
 use sse_codecs::json::{Event, Reader, Text, Writer};
 use sse_codecs::sha256::sha256_hex;
 use sse_core::{Error, Result};
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
-#[cfg(unix)]
-use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -527,7 +526,7 @@ impl DraftStore {
         let _existing = self.load(&source_sha256)?;
         if !current.has_changes() {
             match fs::remove_file(&path) {
-                Ok(()) => sync_directory(&self.directory)?,
+                Ok(()) => sync_directory(Some(&self.directory))?,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                 Err(error) => return Err(error.into()),
             }
@@ -571,7 +570,7 @@ impl DraftStore {
         let id = NEXT_DRAFT_ID.fetch_add(1, Ordering::Relaxed);
         let kept = path.with_extension(format!("json.unsupported-{}-{id}", std::process::id()));
         fs::rename(&path, &kept)?;
-        sync_directory(&self.directory)?;
+        sync_directory(Some(&self.directory))?;
         Ok(Some(kept))
     }
 }
@@ -1313,14 +1312,6 @@ fn write_durable(directory: &Path, destination: &Path, bytes: &[u8]) -> Result<(
             Error::from(error)
         }
     })
-}
-
-fn sync_directory(directory: &Path) -> Result<()> {
-    #[cfg(unix)]
-    File::open(directory)?.sync_all()?;
-    #[cfg(not(unix))]
-    let _ = directory;
-    Ok(())
 }
 
 impl From<Text<'_>> for JsonValue {

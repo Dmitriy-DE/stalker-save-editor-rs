@@ -180,17 +180,22 @@ impl SaveSlotDiscovery {
             });
         }
 
-        slots.sort_by(|left, right| {
-            let mtime_order = right.last_write_time_utc.cmp(&left.last_write_time_utc);
-            if mtime_order != std::cmp::Ordering::Equal {
-                mtime_order
-            } else {
-                left.path.cmp(&right.path)
-            }
-        });
+        sort_newest_first(&mut slots);
 
         SaveDiscoveryResult { slots, searched_paths }
     }
+}
+
+/// Orders slots newest first; equal times are ordered by path.
+pub(crate) fn sort_newest_first(slots: &mut [SaveSlot]) {
+    slots.sort_by(|left, right| {
+        let mtime_order = right.last_write_time_utc.cmp(&left.last_write_time_utc);
+        if mtime_order != std::cmp::Ordering::Equal {
+            mtime_order
+        } else {
+            left.path.cmp(&right.path)
+        }
+    });
 }
 
 fn scan_single_slot(path: &std::path::Path, candidate_game_id: &str, candidate_release_id: &str) -> SaveSlot {
@@ -284,12 +289,12 @@ pub(crate) fn detect_format_for_file(
     Ok(detect_format_with_context(header_bytes, Some(path)))
 }
 
-fn has_save_extension(file_name: &str) -> bool {
+pub(crate) fn has_save_extension(file_name: &str) -> bool {
     let lower = file_name.to_ascii_lowercase();
     lower.ends_with(".sav") || lower.ends_with(".scop") || lower.ends_with(".scs")
 }
 
-fn is_non_slot_file(file_name: &str) -> bool {
+pub(crate) fn is_non_slot_file(file_name: &str) -> bool {
     let lower = file_name.to_ascii_lowercase();
     lower == "campaignssave.sav" || lower == "analyticsdata.sav"
 }
