@@ -227,6 +227,9 @@ impl LtxDocument {
             return HashMap::new();
         };
 
+        // Track cycle cuts per subtree: only a subtree that cut no cycle is independent of the stack,
+        // so only that one may be cached. A cut elsewhere must not stop unrelated nodes from caching.
+        let outer_cut = std::mem::replace(cut, false);
         let mut values: Option<HashMap<String, String>> = None;
 
         for parent in &section.bases {
@@ -257,7 +260,9 @@ impl LtxDocument {
         };
 
         stack.remove(name);
-        if !*cut {
+        let subtree_cut = *cut;
+        *cut = outer_cut || subtree_cut;
+        if !subtree_cut {
             cache.insert(name.to_string(), final_values.clone());
         }
 
@@ -411,4 +416,43 @@ fn find_key_case_insensitive<V>(map: &HashMap<String, V>, target: &str) -> Optio
         }
     }
     None
+}
+
+#[cfg(test)]
+mod resolve_tests {
+    use super::{HashSet, LtxDocument, LtxSection};
+    use std::collections::HashMap;
+
+    fn add(sections: &mut HashMap<String, LtxSection>, name: &str, bases: Vec<String>) {
+        sections.insert(name.to_string(), LtxSection::new(name, bases, "test.ltx"));
+    }
+
+    #[test]
+    fn a_cycle_does_not_make_later_diamond_inheritance_exponential() {
+        // `top` cuts a cycle first, then reaches a 40-level diamond that no earlier resolution has cached.
+        // Without per-subtree caching the diamond is walked once per path (2^40) after the cut.
+        const DEPTH: usize = 40;
+        let mut sections = HashMap::new();
+        add(&mut sections, "cyc_x", vec!["cyc_y".to_string()]);
+        add(&mut sections, "cyc_y", vec!["cyc_x".to_string()]);
+        for level in 0..DEPTH {
+            let next = level + 1;
+            let bases = vec![format!("d{next}_a"), format!("d{next}_b")];
+            add(&mut sections, &format!("d{level}_a"), bases.clone());
+            add(&mut sections, &format!("d{level}_b"), bases);
+        }
+        add(&mut sections, &format!("d{DEPTH}_a"), Vec::new());
+        add(&mut sections, &format!("d{DEPTH}_b"), Vec::new());
+        if let Some(leaf) = sections.get_mut(&format!("d{DEPTH}_a")) {
+            leaf.values.insert("leaf".to_string(), "1".to_string());
+        }
+        add(&mut sections, "top", vec!["cyc_x".to_string(), "d0_a".to_string()]);
+
+        let mut cache = HashMap::new();
+        let mut stack = HashSet::new();
+        let mut cut = false;
+        let resolved = LtxDocument::resolve_one("top", &sections, &mut cache, &mut stack, &mut cut);
+
+        assert_eq!(resolved.get("leaf").map(String::as_str), Some("1"));
+    }
 }
