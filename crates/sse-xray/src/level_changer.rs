@@ -359,7 +359,12 @@ mod tests {
                     .checked_shl(u32::try_from(index % 8).unwrap_or_default())
                     .unwrap_or_default();
             }
-            let _ = parse_state_suffix(&mutated, 118);
+            if let Ok(suffix) = parse_state_suffix(&mutated, 118) {
+                assert!(
+                    suffix.consumed_bytes <= mutated.len(),
+                    "a parsed suffix cannot consume more than its input"
+                );
+            }
         }
     }
 

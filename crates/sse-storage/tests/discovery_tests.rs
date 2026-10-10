@@ -1036,3 +1036,33 @@ fn library_index_forgets_entries_for_files_that_no_longer_exist() {
     assert_eq!(slots.len(), 1);
     assert_eq!(index.len(), 1, "an entry for a deleted save must not survive the scan");
 }
+
+#[test]
+fn an_s2_container_larger_than_the_header_sample_is_identified_by_its_whole_file() {
+    let raw: Vec<u8> = (0..6000_u32)
+        .map(|index| u8::try_from(index % 251).unwrap_or_default())
+        .collect();
+    let mut packed = u32::try_from(raw.len()).unwrap_or_default().to_le_bytes().to_vec();
+    packed.extend_from_slice(&[0xcc, 0x06]);
+    packed.extend_from_slice(&raw);
+    let crc = sse_codecs::crc32::crc32(&packed);
+    packed.extend_from_slice(&crc.to_le_bytes());
+    assert!(
+        packed.len() > 4096,
+        "the container must be longer than the 4 KiB header sample"
+    );
+
+    assert_eq!(
+        sse_storage::discovery::detect_format(&packed).0.as_deref(),
+        Some("stalker2")
+    );
+
+    let temp = TempDir::new("s2-large");
+    let saves = temp.path.join("saves");
+    fs::create_dir_all(&saves).expect("create saves dir");
+    fs::write(saves.join("large.sav"), &packed).expect("write large S2 save");
+    let candidates = vec![SaveDirectoryCandidate::new("stalker2", "stalker2", &saves)];
+    let result = SaveSlotDiscovery::discover(&candidates);
+    assert_eq!(result.slots.len(), 1);
+    assert_eq!(result.slots[0].format_id.as_deref(), Some("stalker2"));
+}
