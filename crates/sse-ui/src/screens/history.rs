@@ -123,9 +123,10 @@ fn set_row_text(tree: &mut crate::widget::Tree, row: ResultRow, text: &str) -> R
     if row.meta == row.label {
         return tree.set_text(row.label, text);
     }
+    // A line is cut to what a row shows; the full text is in the side panel.
     let (title, meta) = split_label(text);
-    tree.set_text(row.label, title)?;
-    tree.set_text(row.meta, meta)
+    tree.set_text(row.label, &truncate(title, 64))?;
+    tree.set_text(row.meta, &truncate(meta, 96))
 }
 
 #[derive(Debug)]
@@ -213,7 +214,6 @@ pub struct HistoryScreen {
     id: ScreenId,
     subtitle: &'static str,
     workspace: Workspace,
-    results: Option<WidgetId>,
     refresh: Option<WidgetId>,
     restore_confirmation: Option<WidgetId>,
     restore_confirmation_title: Option<WidgetId>,
@@ -251,6 +251,62 @@ pub struct HistoryScreen {
 }
 
 impl HistoryScreen {
+    /// The save doctor's heading, description and file controls: a card above the results.
+    fn build_doctor_controls(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
+        let card = style::card(cx.tree, host)?;
+        style::label(cx.tree, card, doctor_title(), Text::Heading)?;
+        if self.id == ScreenId::SaveDoctor {
+            super::saves::paragraph(cx.tree, card, doctor_description(), Text::Note)?;
+            let path_row = style::row(cx.tree, card)?;
+            style::label(cx.tree, path_row, crate::strings::t("Файл"), Text::Note)?;
+            let colors = crate::theme::current().colors;
+            let path_input = cx.tree.add(
+                Some(path_row),
+                NodeKind::Leaf,
+                Style {
+                    min: Size::new(360.0, crate::theme::BUTTON_HEIGHT),
+                    padding: Edges {
+                        left: 12.0,
+                        top: 0.0,
+                        right: 12.0,
+                        bottom: 0.0,
+                    },
+                    ..Style::default()
+                },
+                Content::Input {
+                    text: String::new(),
+                    style: TextStyle::new(Face::Body, 16.0),
+                },
+                Look {
+                    fill: Some(style::rgb(colors.background[4])),
+                    border: Some((style::rgb(colors.borders[1]), 1.0)),
+                    radius: crate::theme::BUTTON_RADIUS,
+                    text: style::rgb(colors.text[0]),
+                    ..Look::default()
+                },
+            )?;
+            self.doctor_path_input = Some(path_input);
+            self.doctor_path = Some(TextInput::new("", doctor_path_edit_config())?);
+            let doctor_actions = style::row(cx.tree, card)?;
+            self.doctor_check = Some(style::button(
+                cx.tree,
+                doctor_actions,
+                crate::strings::t("ПРОВЕРИТЬ"),
+                Button::Primary,
+            )?);
+            self.doctor_open_save = Some(style::button(
+                cx.tree,
+                doctor_actions,
+                crate::strings::t("Открыть"),
+                Button::Secondary,
+            )?);
+            if let Some(check) = self.doctor_check {
+                cx.tree.set_enabled(check, false)?;
+            }
+        }
+        Ok(())
+    }
+
     fn new(id: ScreenId, subtitle: &'static str, workspace: Workspace) -> Self {
         Self {
             side: None,
@@ -262,7 +318,6 @@ impl HistoryScreen {
             id,
             subtitle,
             workspace,
-            results: None,
             refresh: None,
             restore_confirmation: None,
             restore_confirmation_title: None,
@@ -1161,6 +1216,11 @@ impl HistoryScreen {
     /// actions in the side panel. The entries' own buttons are kept hidden; the side panel's buttons stand for them.
     fn build_list_layout(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
         let (title, empty, action) = match self.id {
+            ScreenId::SaveDoctor => (
+                crate::strings::t("РЕЗУЛЬТАТЫ ПРОВЕРКИ"),
+                crate::strings::t("Выберите результат слева."),
+                crate::strings::t("Список сейвов"),
+            ),
             ScreenId::Backups => (
                 crate::strings::t("БЭКАПЫ И ВОССТАНОВЛЕНИЕ"),
                 crate::strings::t("Журнал резервных копий сверяется с файлами и SHA-256; восстановление идёт в отдельный файл после подтверждения."),
@@ -1332,7 +1392,7 @@ impl HistoryScreen {
             tree.set_visible(list.detail, false)?;
         } else {
             if let Some(value) = list.kv_values.first() {
-                tree.set_text(*value, &title)?;
+                tree.set_text(*value, &truncate(&title, 36))?;
             }
             // The file name is the key line; the details wrap in the paragraph below it, inside the panel.
             for (position, id) in list.kv_rows.iter().enumerate() {
@@ -1945,131 +2005,11 @@ impl Screen for HistoryScreen {
     }
 
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
-        if self.id != ScreenId::SaveDoctor {
-            return self.build_list_layout(cx, host);
-        }
-        let card = style::card(cx.tree, host)?;
-        let title = match self.id {
-            ScreenId::Backups => crate::strings::t("БЭКАПЫ И ВОССТАНОВЛЕНИЕ"),
-            ScreenId::Compare => crate::strings::t("СРАВНЕНИЕ СОХРАНЕНИЙ"),
-            ScreenId::Timeline => crate::strings::t("ИСТОРИЯ СОХРАНЕНИЙ"),
-            ScreenId::SaveDoctor => doctor_title(),
-            _ => crate::strings::t("ИСТОРИЯ"),
-        };
-        style::label(cx.tree, card, title, Text::Heading)?;
+        // The save doctor has its file controls above the results; every screen of this family then has the list layout.
         if self.id == ScreenId::SaveDoctor {
-            style::label(cx.tree, card, doctor_description(), Text::Note)?;
-            let path_row = style::row(cx.tree, card)?;
-            style::label(cx.tree, path_row, crate::strings::t("Файл"), Text::Note)?;
-            let colors = crate::theme::current().colors;
-            let path_input = cx.tree.add(
-                Some(path_row),
-                NodeKind::Leaf,
-                Style {
-                    min: Size::new(360.0, crate::theme::BUTTON_HEIGHT),
-                    padding: Edges {
-                        left: 12.0,
-                        top: 0.0,
-                        right: 12.0,
-                        bottom: 0.0,
-                    },
-                    ..Style::default()
-                },
-                Content::Input {
-                    text: String::new(),
-                    style: TextStyle::new(Face::Body, 16.0),
-                },
-                Look {
-                    fill: Some(style::rgb(colors.background[4])),
-                    border: Some((style::rgb(colors.borders[1]), 1.0)),
-                    radius: crate::theme::BUTTON_RADIUS,
-                    text: style::rgb(colors.text[0]),
-                    ..Look::default()
-                },
-            )?;
-            self.doctor_path_input = Some(path_input);
-            self.doctor_path = Some(TextInput::new("", doctor_path_edit_config())?);
-            let doctor_actions = style::row(cx.tree, card)?;
-            self.doctor_check = Some(style::button(
-                cx.tree,
-                doctor_actions,
-                crate::strings::t("ПРОВЕРИТЬ"),
-                Button::Primary,
-            )?);
-            self.doctor_open_save = Some(style::button(
-                cx.tree,
-                doctor_actions,
-                crate::strings::t("Открыть"),
-                Button::Secondary,
-            )?);
-            if let Some(check) = self.doctor_check {
-                cx.tree.set_enabled(check, false)?;
-            }
+            self.build_doctor_controls(cx, host)?;
         }
-        let row = style::row(cx.tree, card)?;
-        let action = match self.id {
-            ScreenId::Compare => crate::strings::t("Найти сейвы"),
-            ScreenId::SaveDoctor => crate::strings::t("Список сейвов"),
-            ScreenId::Timeline => crate::strings::t("Обновить историю"),
-            _ => crate::strings::t("Обновить"),
-        };
-        self.refresh = Some(style::button(cx.tree, row, action, Button::Primary)?);
-        self.previous_page = Some(style::button(
-            cx.tree,
-            row,
-            crate::strings::t("Назад"),
-            Button::Secondary,
-        )?);
-        self.next_page = Some(style::button(
-            cx.tree,
-            row,
-            crate::strings::t("Дальше"),
-            Button::Secondary,
-        )?);
-        if let Some(previous) = self.previous_page {
-            cx.tree.set_visible(previous, false)?;
-        }
-        if let Some(next) = self.next_page {
-            cx.tree.set_visible(next, false)?;
-        }
-        self.summary = Some(style::label(
-            cx.tree,
-            row,
-            crate::strings::t("Нажмите кнопку, чтобы прочитать локальные данные."),
-            Text::Note,
-        )?);
-        self.results = Some(style::card(cx.tree, host)?);
-        let results = self.results.unwrap_or(card);
-        style::label(
-            cx.tree,
-            results,
-            match self.id {
-                ScreenId::Backups => crate::strings::t("Журнал резервных копий сверяется с файлами и SHA-256; восстановление идёт в отдельный файл после подтверждения."),
-                ScreenId::Compare => crate::strings::t("Показываются только различия в читаемых значениях денег и предметов."),
-                ScreenId::Timeline => crate::strings::t("Временная последовательность строится по времени изменения файлов сейвов."),
-                ScreenId::SaveDoctor => crate::strings::t("Ремонт доступен только для доказанно сломанного квеста и записывается с бэкапом и обратным чтением."),
-                _ => "",
-            },
-            Text::Note,
-        )?;
-        for _ in 0..MAXIMUM_VISIBLE_ENTRIES {
-            let row = style::row(cx.tree, results)?;
-            let label = style::label(cx.tree, row, "", Text::Body)?;
-            let button = style::button(cx.tree, row, crate::strings::t("Действие"), Button::Secondary)?;
-            let secondary_button = style::button(cx.tree, row, crate::strings::t("Восстановить"), Button::Danger)?;
-            cx.tree.set_visible(row, false)?;
-            self.rows.push(ResultRow {
-                row,
-                card: row,
-                label,
-                meta: label,
-                button,
-                secondary_button,
-                select: label,
-            });
-        }
-        self.build_restore_confirmation(cx, host)?;
-        Ok(())
+        self.build_list_layout(cx, host)
     }
 
     fn message(
@@ -3276,14 +3216,18 @@ mod tests {
             .first()
             .ok_or_else(|| sse_core::Error::damaged("quest state row was not built"))?;
         assert!(cx.tree.is_visible(row.row));
-        assert!(cx.tree.is_visible(row.button));
+        // The row's own buttons sit in a hidden host; the screen's action list says which of them is offered.
+        assert!(screen.actions.iter().any(|action| action.widget == row.button));
         assert!(matches!(
             screen.actions.first().map(|action| &action.action),
             Some(Action::RepairQuests { .. })
         ));
         #[cfg(feature = "native-ui")]
         {
-            assert!(cx.tree.is_visible(row.secondary_button));
+            assert!(screen
+                .actions
+                .iter()
+                .any(|action| action.widget == row.secondary_button));
             assert!(matches!(
                 screen.actions.get(1).map(|action| &action.action),
                 Some(Action::OpenGameFix { game_id, fix_id })

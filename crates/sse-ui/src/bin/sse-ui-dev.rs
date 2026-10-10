@@ -83,7 +83,7 @@ fn main() -> std::process::ExitCode {
 fn screenshot(args: &[String]) -> Result<()> {
     let path = args.get(1).ok_or_else(|| {
         Error::Refused(
-            "usage: --screenshot OUT.png [WxH] [NAV] [--open SAVE] [--add-item] [--discover] [--press LABEL] [--wait] [--select-first]"
+            "usage: --screenshot OUT.png [WxH] [NAV] [--open SAVE] [--add-item] [--discover] [--press LABEL] [--settle] [--wait] [--select-first]"
                 .to_owned(),
         )
     })?;
@@ -95,6 +95,7 @@ fn screenshot(args: &[String]) -> Result<()> {
     let mut wait = false;
     let mut select_first = false;
     let mut press: Option<&String> = None;
+    let mut settle = false;
     let mut index = 2;
     while index < args.len() {
         match args.get(index).map(String::as_str) {
@@ -102,6 +103,7 @@ fn screenshot(args: &[String]) -> Result<()> {
             Some("--discover") => discover = true,
             Some("--wait") => wait = true,
             Some("--select-first") => select_first = true,
+            Some("--settle") => settle = true,
             Some("--press") => {
                 index = index.saturating_add(1);
                 press = Some(
@@ -197,10 +199,12 @@ fn screenshot(args: &[String]) -> Result<()> {
             }
         }
     }
-    if let Some(label) = press {
-        // The press starts a background read; its result comes back as a message, which is drained here.
-        if !shell.press_button(&mut tree, label)? {
-            return Err(Error::Refused(format!("the screen has no button {label}")));
+    if press.is_some() || settle {
+        // A press or an opened screen starts background reads; their answers come back as messages, drained here.
+        if let Some(label) = press {
+            if !shell.press_button(&mut tree, label)? {
+                return Err(Error::Refused(format!("the screen has no button {label}")));
+            }
         }
         if let Some(receiver) = loader.as_ref() {
             let deadline = Instant::now()

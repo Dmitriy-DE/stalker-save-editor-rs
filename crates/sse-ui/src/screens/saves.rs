@@ -209,7 +209,7 @@ fn xray_change_supported(save: &Save, kind: writer::ChangeKind) -> bool {
     writer::capability(save.format(), kind) != writer::Capability::Unsupported
 }
 
-fn paragraph(tree: &mut crate::widget::Tree, parent: WidgetId, text: &str, role: Text) -> Result<WidgetId> {
+pub(super) fn paragraph(tree: &mut crate::widget::Tree, parent: WidgetId, text: &str, role: Text) -> Result<WidgetId> {
     tree.add(
         Some(parent),
         NodeKind::Leaf,
