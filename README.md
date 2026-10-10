@@ -11,8 +11,9 @@ exactly like it before it replaces it.
   (`apps=[]`); no new game session or in-game load was run. Per-game preflight and the exact blocker are in `TASKS.md`.
 - A13-56–58 translation fixes are merged in #514; all applicable CI checks passed, including Windows installer and
   portable builds.
-- A20 Linux playback merged in #512; the installed-game audio-source follow-up is open in #519. D2 S11 is open in
-  #517, which currently reports no CI checks.
+- A20 Linux playback merged in #512; the installed-game audio-source follow-up is open in #519. A22/S2 follow-ups
+  for download error text and refused stash items are open in #520. D2 S11 is open in #517, which currently reports
+  no CI checks.
 - Rust 2.0 has not been released. Workshop publication and release signing remain owner actions.
 
 | File | What it is |
