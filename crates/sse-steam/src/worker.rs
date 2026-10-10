@@ -461,6 +461,19 @@ impl WorkerSteamApi {
     }
 }
 
+impl WorkerSteamApi {
+    /// Holds one change until `store_stats`; a second change before storing is refused, not overwritten.
+    fn queue_achievement(&mut self, name: &str, achieved: bool) -> Result<(), SteamError> {
+        if self.pending_achievement.is_some() {
+            return Err(SteamError::new(
+                "another achievement change is waiting to be stored; store it before requesting this one",
+            ));
+        }
+        self.pending_achievement = Some((name.to_owned(), achieved));
+        Ok(())
+    }
+}
+
 impl SteamApi for WorkerSteamApi {
     fn initialize(&mut self, app_id: u32) -> Result<(), SteamError> {
         const APP_IDS: [u32; 7] = [1_643_320, 4_500, 20_510, 41_700, 2_427_410, 2_427_420, 2_427_430];
@@ -562,13 +575,11 @@ impl SteamApi for WorkerSteamApi {
     }
 
     fn set_achievement(&mut self, name: &str) -> Result<(), SteamError> {
-        self.pending_achievement = Some((name.to_owned(), true));
-        Ok(())
+        self.queue_achievement(name, true)
     }
 
     fn clear_achievement(&mut self, name: &str) -> Result<(), SteamError> {
-        self.pending_achievement = Some((name.to_owned(), false));
-        Ok(())
+        self.queue_achievement(name, false)
     }
 
     fn store_stats(&mut self) -> Result<(), SteamError> {
@@ -924,6 +935,19 @@ fn poll_child(
             process_tree.terminate(child);
             Err(native_process_error(error.to_string(), false))
         }
+    }
+}
+
+#[cfg(test)]
+mod pending_achievement_tests {
+    use super::{SteamApi, WorkerSteamApi};
+
+    #[test]
+    fn second_achievement_change_before_store_is_refused_not_overwritten() {
+        let mut api = WorkerSteamApi::new();
+        assert!(api.set_achievement("ACH_ONE").is_ok());
+        assert!(api.clear_achievement("ACH_TWO").is_err());
+        assert!(api.set_achievement("ACH_THREE").is_err());
     }
 }
 
