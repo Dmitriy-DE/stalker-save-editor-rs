@@ -35,6 +35,39 @@ fn tr(key: &str, args: &[&dyn std::fmt::Display]) -> String {
     tr_in(crate::strings::current_language(), key, args)
 }
 
+/// The X-Ray overview line. Fields the save does not prove stay «—»: tasks, actor position and game build.
+fn xray_overview_parameters(save: &Save, money: u32, item_count: usize, game_time: &str) -> String {
+    let dash = "—";
+    let health = save
+        .health()
+        .map_or_else(|| dash.to_owned(), |value| format!("{:.0}%", value * 100.0));
+    let name = save.name().unwrap_or(dash);
+    let rank = save.rank().map_or_else(|| dash.to_owned(), |value| value.to_string());
+    let reputation = save
+        .reputation()
+        .map_or_else(|| dash.to_owned(), |value| value.to_string());
+    let tasks = save
+        .tasks()
+        .map_or_else(|| dash.to_owned(), |list| list.len().to_string());
+    let last_received = save
+        .tasks()
+        .and_then(|list| list.iter().map(|task| task.receive_time).max())
+        .filter(|time| *time > 0)
+        .map_or_else(|| dash.to_owned(), format_xray_game_time);
+    let kills = save.kills().map_or_else(
+        || dash.to_owned(),
+        |kills| format!("{} / {}", kills.stalkers, kills.monsters),
+    );
+    let weather = save.weather().map_or_else(
+        || dash.to_owned(),
+        |value| format!("{} → {}", value.current, value.next),
+    );
+    tr(
+        "Деньги: {0} RU · Предметов: {1} · Тайников: —\nИгровое время: {2} · Персонаж: {3} · Здоровье: {4}\nРанг: {5} · Репутация: {6} · Задания: {7} (последнее получено: {8}) · Убито (люди / монстры): {9} · Погода: {10}",
+        &[&money, &item_count, &game_time, &name, &health, &rank, &reputation, &tasks, &last_received, &kills, &weather],
+    )
+}
+
 fn format_xray_game_time(game_time: u64) -> String {
     const MILLIS_PER_DAY: u64 = 86_400_000;
     const MILLIS_PER_HOUR: u64 = 3_600_000;
@@ -762,10 +795,7 @@ impl LoadedSave {
         let info = save_info(&slot);
         let item_count = inventory.len();
         let game_time = format_xray_game_time(save.game_time());
-        let parameters = tr(
-            "Деньги: {0} RU · Предметов: {1} · Тайников: —\nИгровое время: {2} · Персонаж: — · Здоровье: —\nРанг: — · Репутация: — · Задания: — · Убито: — · Погода: —",
-            &[&money, &item_count, &game_time],
-        );
+        let parameters = xray_overview_parameters(&save, money, item_count, &game_time);
         let integrity = save_integrity(
             &slot,
             &source_sha256,
@@ -11543,5 +11573,22 @@ mod tests {
             super::info_header_values(&pairs),
             ("Shadow of Chernobyl", "quicksave.sav", "browser:/quicksave.sav")
         );
+    }
+}
+
+#[cfg(test)]
+mod xray_overview_tests {
+    use super::xray_overview_parameters;
+    use sse_xray::Save;
+
+    /// The synthetic Clear Sky fixture has health 1, rank -1 and reputation -1 (checked against the C# reader).
+    #[test]
+    fn overview_line_shows_the_values_the_save_proves() -> sse_core::Result<()> {
+        let save = Save::read(include_bytes!("../../../../fixtures/synthetic/xray-clear-sky.sav"))?;
+        let text = xray_overview_parameters(&save, 1234, 0, "1 день");
+        assert!(text.contains("100%"), "{text}");
+        assert!(text.contains("-1"), "{text}");
+        assert!(!text.contains('{'), "unfilled placeholder: {text}");
+        Ok(())
     }
 }
