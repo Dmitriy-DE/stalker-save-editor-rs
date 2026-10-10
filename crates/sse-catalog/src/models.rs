@@ -179,10 +179,17 @@ impl ItemCatalog {
             return None;
         }
 
+        // Unicode lowercasing allocates, so the query is lowered once and the per-item lowering is
+        // skipped when both strings are ASCII (there, ASCII case-insensitive equality is the same test).
+        let normalized_lower = normalized.to_lowercase();
+        let normalized_ascii = normalized.is_ascii();
         let mut match_item: Option<&ItemDefinition> = None;
         for item in &self.items {
             if let Some(dn) = &item.display_name {
-                if dn.trim().eq_ignore_ascii_case(normalized) || dn.trim().to_lowercase() == normalized.to_lowercase() {
+                let trimmed = dn.trim();
+                let matches = trimmed.eq_ignore_ascii_case(normalized)
+                    || (!(normalized_ascii && trimmed.is_ascii()) && trimmed.to_lowercase() == normalized_lower);
+                if matches {
                     if match_item.is_some() {
                         return None;
                     }
