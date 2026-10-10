@@ -1,8 +1,9 @@
 //! S.T.A.L.K.E.R. 2 containers and read-only save indexes.
 
+use sse_core::fields::{read_u16, read_u32};
+use sse_core::ranges::{verify_unchanged_outside_ranges, ChangedRange};
 use sse_core::{Error, Result, SaveBuffer};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::ops::Range;
 
 /// Maximum decoded S2 image admitted by the bounded Rust reader.
 pub const MAXIMUM_UNPACKED_SIZE: usize = 256 * 1024 * 1024;
@@ -118,19 +119,6 @@ impl S2Container {
     pub const fn computed_crc32(&self) -> u32 {
         self.computed_crc32
     }
-}
-
-fn read_u32(bytes: &[u8], offset: usize) -> Result<u32> {
-    let end = offset
-        .checked_add(4)
-        .ok_or_else(|| Error::damaged("S2 field offset overflow"))?;
-    let value = bytes
-        .get(offset..end)
-        .ok_or_else(|| Error::damaged("S2 container field is truncated"))?;
-    let encoded: [u8; 4] = value
-        .try_into()
-        .map_err(|_| Error::damaged("S2 container field is truncated"))?;
-    Ok(u32::from_le_bytes(encoded))
 }
 
 /// Read-only indexed S2 save.
@@ -1556,15 +1544,6 @@ impl S2InventoryIndex {
     }
 }
 
-fn read_u16(bytes: &[u8], offset: usize) -> Result<u16> {
-    let end = checked_add(offset, 2, "S2 field offset overflow")?;
-    let value = bytes
-        .get(offset..end)
-        .ok_or_else(|| Error::damaged("S2 field is truncated"))?;
-    let encoded: [u8; 2] = value.try_into().map_err(|_| Error::damaged("S2 field is truncated"))?;
-    Ok(u16::from_le_bytes(encoded))
-}
-
 fn read_u8(bytes: &[u8], offset: usize) -> Result<u8> {
     bytes
         .get(offset)
@@ -1582,12 +1561,6 @@ fn require_range(bytes: &[u8], offset: usize, length: usize, message: &'static s
         return Err(Error::damaged(message));
     }
     Ok(())
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ChangedRange {
-    before: Range<usize>,
-    after: Range<usize>,
 }
 
 fn apply_changes_to_image(save: &S2Save, changes: &[S2Change]) -> Result<(Vec<u8>, Vec<ChangedRange>)> {
@@ -2019,46 +1992,6 @@ fn pack_and_verify_s2_image(
     verify_unchanged_outside_ranges(source_image, image, changed_ranges)?;
     let compressed = sse_codecs::kraken_encode::compress(image);
     pack_and_verify_s2_image_with_stream(image, &compressed)
-}
-
-fn verify_unchanged_outside_ranges(before: &[u8], after: &[u8], ranges: &[ChangedRange]) -> Result<()> {
-    let mut before_cursor = 0;
-    let mut after_cursor = 0;
-
-    for changed in ranges {
-        if changed.before.start > changed.before.end
-            || changed.after.start > changed.after.end
-            || changed.before.start < before_cursor
-            || changed.after.start < after_cursor
-        {
-            return Err(Error::damaged("S2 changed ranges overlap or are out of order"));
-        }
-        if changed.before.end > before.len() || changed.after.end > after.len() {
-            return Err(Error::damaged("S2 changed range is outside an image"));
-        }
-        let before_gap = before
-            .get(before_cursor..changed.before.start)
-            .ok_or_else(|| Error::damaged("S2 source gap is outside the image"))?;
-        let after_gap = after
-            .get(after_cursor..changed.after.start)
-            .ok_or_else(|| Error::damaged("S2 replacement gap is outside the image"))?;
-        if before_gap != after_gap {
-            return Err(Error::damaged("S2 save bytes differ outside declared changed ranges"));
-        }
-        before_cursor = changed.before.end;
-        after_cursor = changed.after.end;
-    }
-
-    let before_tail = before
-        .get(before_cursor..)
-        .ok_or_else(|| Error::damaged("S2 source tail is outside the image"))?;
-    let after_tail = after
-        .get(after_cursor..)
-        .ok_or_else(|| Error::damaged("S2 replacement tail is outside the image"))?;
-    if before_tail != after_tail {
-        return Err(Error::damaged("S2 save bytes differ outside declared changed ranges"));
-    }
-    Ok(())
 }
 
 fn pack_and_verify_s2_image_with_stream(image: &[u8], compressed: &[u8]) -> Result<(Vec<u8>, S2Container)> {
