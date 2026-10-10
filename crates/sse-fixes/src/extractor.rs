@@ -69,15 +69,10 @@ impl GameFileExtractor {
             .unwrap_or_else(|_| output_directory.to_path_buf());
 
         for (relative, file) in &tree.files {
-            let mut destination = out_canonical.clone();
-            for seg in relative.split('/') {
-                destination.push(seg);
-            }
-
-            if !destination.starts_with(&out_canonical) {
+            let Some(destination) = destination_inside(&out_canonical, relative) else {
                 issues.push(format!("skipped a path outside the output folder: {relative}"));
                 continue;
-            }
+            };
 
             match file.read() {
                 Ok(bytes) => {
@@ -97,5 +92,44 @@ impl GameFileExtractor {
         }
 
         Ok((written, issues))
+    }
+}
+
+/// Joins an archive-relative path onto the output folder, or returns `None` if it would leave that folder.
+///
+/// `..` segments are refused before they are joined, because `Path::starts_with` compares components
+/// lexically and would accept `out/../elsewhere`.
+fn destination_inside(output: &Path, relative: &str) -> Option<std::path::PathBuf> {
+    let mut destination = output.to_path_buf();
+    for seg in relative.split('/') {
+        if seg == ".." || seg == "." {
+            return None;
+        }
+        destination.push(seg);
+    }
+    destination.starts_with(output).then_some(destination)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::destination_inside;
+    use std::path::Path;
+
+    #[test]
+    fn a_plain_relative_path_stays_inside_the_output_folder() {
+        let out = Path::new("/tmp/out");
+        assert_eq!(
+            destination_inside(out, "gamedata/scripts/task.script"),
+            Some(out.join("gamedata").join("scripts").join("task.script"))
+        );
+    }
+
+    #[test]
+    fn parent_segments_are_refused_even_when_they_come_back_inside() {
+        let out = Path::new("/tmp/out");
+        assert_eq!(destination_inside(out, "../evil.script"), None);
+        assert_eq!(destination_inside(out, "gamedata/../../evil.script"), None);
+        assert_eq!(destination_inside(out, "gamedata/../scripts/task.script"), None);
+        assert_eq!(destination_inside(out, "./task.script"), None);
     }
 }

@@ -286,7 +286,7 @@ fn check_companion_installed(game: GameTarget, game_directory: &Path) -> bool {
     game_directory
         .join("gamedata")
         .join("scripts")
-        .join("sse_companion.script")
+        .join("save_editor_companion.script")
         .is_file()
 }
 
@@ -404,9 +404,28 @@ fn deserialize_snapshot(bytes: &[u8]) -> Result<ToolkitSnapshot> {
 
 #[cfg(test)]
 mod tests {
-    use super::{deserialize_snapshot, serialize_snapshot, InstalledFixSnapshot, ToolkitSnapshot};
+    use super::{
+        check_companion_installed, deserialize_snapshot, serialize_snapshot, InstalledFixSnapshot, ToolkitSnapshot,
+    };
     use crate::models::GameTarget;
     use std::collections::BTreeMap;
+    use std::fs;
+
+    #[test]
+    fn companion_is_reported_installed_under_the_name_the_mod_ships() -> std::io::Result<()> {
+        let root = std::env::temp_dir().join(format!("sse-snapshot-companion-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let scripts = root.join("gamedata").join("scripts");
+        fs::create_dir_all(&scripts)?;
+        let absent = !check_companion_installed(GameTarget::ClearSky, &root);
+
+        fs::write(scripts.join("save_editor_companion.script"), b"-- marker\n")?;
+        let installed = check_companion_installed(GameTarget::ClearSky, &root);
+        let _ = fs::remove_dir_all(&root);
+        assert!(absent);
+        assert!(installed);
+        Ok(())
+    }
 
     #[test]
     fn snapshot_json_round_trips_quotes_backslashes_and_control_characters() {
