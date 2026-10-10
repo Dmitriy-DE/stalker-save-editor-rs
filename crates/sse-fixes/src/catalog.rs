@@ -373,12 +373,20 @@ fn parse_definition(val: &JsonValue) -> Result<GameFixDefinition> {
                 .find(|(k, _)| k.as_str() == "expectedFileSha256")
                 .and_then(|(_, v)| v.as_str())
                 .map(|s| s.to_string());
-            let cp = p_obj
-                .iter()
-                .find(|(k, _)| k.as_str() == "codePage")
-                .and_then(|(_, v)| v.as_u64())
-                .and_then(|v| u32::try_from(v).ok())
-                .unwrap_or(28591);
+            // A missing codePage keeps the legacy Latin-1 default; a present one must be a supported code page.
+            let cp = match p_obj.iter().find(|(k, _)| k.as_str() == "codePage") {
+                None => 28591,
+                Some((_, value)) => {
+                    let code = value
+                        .as_u64()
+                        .and_then(|v| u32::try_from(v).ok())
+                        .ok_or_else(|| Error::damaged("Text patch codePage must be an integer"))?;
+                    if !matches!(code, 28591 | 1251) {
+                        return Err(Error::damaged(format!("Unsupported text patch codePage {code}")));
+                    }
+                    code
+                }
+            };
             let retail_only = p_obj
                 .iter()
                 .find(|(k, _)| k.as_str() == "retailOnly")
