@@ -857,6 +857,8 @@ impl Tree {
             if self.modal_dialog.is_some_and(|dialog| self.within_subtree(dialog, id)) {
                 self.modal_dialog = None;
                 self.previous_dialog_focus = None;
+                // The scrim covers the whole window, so its pixels must be redrawn, not just the hidden node.
+                self.damage_all();
             }
         }
         self.restyle(id)
@@ -1968,6 +1970,31 @@ mod tests {
             "the tooltip timer must start for a disabled control"
         );
         assert_eq!(tree.active_tooltip(), Some("Nothing to undo"));
+        Ok(())
+    }
+
+    #[test]
+    fn hiding_a_dialog_subtree_repaints_the_whole_scrim() -> sse_core::Result<()> {
+        let (mut tree, first, _) = two_buttons(Look::default())?;
+        let root = tree.node(first)?.parent.unwrap_or(first);
+        let dialog = tree.add(
+            Some(root),
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        tree.open_dialog(dialog)?;
+        tree.damage.clear();
+        tree.set_visible(dialog, false)?;
+        assert_eq!(tree.dialog(), None);
+        assert!(
+            tree.damage
+                .iter()
+                .any(|rect| rect.width == tree.size.0 && rect.height == tree.size.1),
+            "closing a modal must repaint the full window scrim"
+        );
+        assert!(tree.is_enabled(first)?);
         Ok(())
     }
 
