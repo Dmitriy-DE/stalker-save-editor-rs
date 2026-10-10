@@ -519,7 +519,7 @@ fn verify_xray_money_and_stacks(bytes: &[u8], options: &WriteOptions) -> Result<
 fn verify_s2_money_and_stacks(bytes: &[u8], options: &WriteOptions) -> Result<(), Error> {
     let save = sse_s2::S2Save::from_bytes(bytes)?;
     if let Some(expected) = options.money {
-        if save.money() != expected {
+        if save.money()? != expected {
             return Err(Error::damaged("saved S2 wallet value differs after read-back"));
         }
     }
@@ -565,7 +565,10 @@ fn prepare_and_export_s2(
     let mut changes = Vec::with_capacity(change_count);
     let mut stack_output = Vec::with_capacity(stack_count);
     if let Some(amount) = options.money {
-        changes.push(sse_s2::S2Change::SetMoney(amount));
+        changes.push(sse_s2::S2Change::SetMoney {
+            old_value: save.money()?,
+            new_value: amount,
+        });
     }
     for handle in &options.stack_order {
         let count = options
@@ -999,7 +1002,7 @@ mod write_tests {
             verified.container().image(),
             include_bytes!("../../../fixtures/synthetic/writer-s2-money/s2-money-expected.raw")
         );
-        assert_eq!(verified.money(), 876_543);
+        assert_eq!(verified.money().unwrap_or_default(), 876_543);
         assert_eq!(
             verified.container().stored_crc32(),
             verified.container().computed_crc32()
@@ -1065,7 +1068,7 @@ mod write_tests {
         let actual = fs::read(&output).expect("S2 export exists");
         assert_eq!(actual.get(4..6), Some(&[0xcc, 0x06][..]));
         let verified = sse_s2::S2Save::from_bytes(&actual).expect("read back S2 export");
-        assert_eq!(verified.money(), 876_543);
+        assert_eq!(verified.money().unwrap_or_default(), 876_543);
         assert_eq!(
             verified.container().stored_crc32(),
             verified.container().computed_crc32()

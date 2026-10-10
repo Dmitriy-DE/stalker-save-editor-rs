@@ -188,9 +188,18 @@ fn audit_s2(audit: &mut FileAudit, save: &S2Save) {
     let inventory = save.items();
     audit.info_ok = true;
     audit.inventory_count = Some(inventory.len());
-    let original_money = save.money();
+    let original_money = match save.money() {
+        Ok(value) => value,
+        Err(error) => {
+            audit.errors.push(format!("money read failed: {error}"));
+            return;
+        }
+    };
     let new_money = increment_or_decrement(original_money);
-    let mut changes = vec![S2Change::SetMoney(new_money)];
+    let mut changes = vec![S2Change::SetMoney {
+        old_value: original_money,
+        new_value: new_money,
+    }];
     let target_stack = inventory
         .iter()
         .find(|item| item.editable_count)
@@ -204,7 +213,7 @@ fn audit_s2(audit: &mut FileAudit, save: &S2Save) {
     match save.write_changes(&changes) {
         Ok(packed) => match S2Save::from_bytes(&packed) {
             Ok(verified) => {
-                audit.money_edit = if verified.money() == new_money {
+                audit.money_edit = if matches!(verified.money(), Ok(value) if value == new_money) {
                     "verified".to_owned()
                 } else {
                     "error".to_owned()

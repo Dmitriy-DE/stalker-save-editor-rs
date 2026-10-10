@@ -27,7 +27,12 @@ const STASH_HEADER_TAIL: [u8; 4] = [0x03, 0x00, 0x00, 0x00];
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum S2Change {
     /// Replace the player wallet balance.
-    SetMoney(u32),
+    SetMoney {
+        /// The wallet balance the edit was prepared against; the write is refused if the save no longer has it.
+        old_value: u32,
+        /// The requested wallet balance.
+        new_value: u32,
+    },
     /// Replace a validated stack count and scale its total weight.
     SetStackCount {
         /// Unique object handle.
@@ -178,9 +183,11 @@ impl S2Save {
     }
 
     /// Wallet balance.
-    #[must_use]
-    pub fn money(&self) -> u32 {
-        read_u32(self.container.image(), self.index.money_offset).unwrap_or_default()
+    ///
+    /// # Errors
+    /// Returns `Error::Damaged` when the wallet field cannot be read from the image.
+    pub fn money(&self) -> Result<u32> {
+        read_u32(self.container.image(), self.index.money_offset)
     }
 
     /// Read-only inventory item views assembled from the image and its index.
@@ -1609,11 +1616,16 @@ fn apply_changes_with_items(
 
     for change in changes {
         match *change {
-            S2Change::SetMoney(amount) => {
-                if amount > MAXIMUM_MONEY {
+            S2Change::SetMoney { old_value, new_value } => {
+                if new_value > MAXIMUM_MONEY {
                     return Err(Error::Refused("S2 money is outside the supported range".to_owned()));
                 }
-                write_u32_at(&mut image, save.index.money_offset, amount)?;
+                if save.money()? != old_value {
+                    return Err(Error::Refused(
+                        "S2 money changed since the edit was prepared; reload the save".to_owned(),
+                    ));
+                }
+                write_u32_at(&mut image, save.index.money_offset, new_value)?;
                 changed_ranges.push(ChangedRange {
                     before: save.index.money_offset..save.index.money_offset.saturating_add(4),
                     after: save.index.money_offset..save.index.money_offset.saturating_add(4),
@@ -2081,8 +2093,8 @@ fn verify_changes_readback_with_items(
     let mut named = HashSet::new();
     for change in changes {
         match *change {
-            S2Change::SetMoney(amount) => {
-                if verified.money() != amount {
+            S2Change::SetMoney { new_value, .. } => {
+                if verified.money()? != new_value {
                     return Err(damaged("money differs from the requested value"));
                 }
             }
@@ -2365,6 +2377,14 @@ mod tests {
     const WRITER_S2_STASH_PACKED_SOURCE: &[u8] =
         include_bytes!("../../../fixtures/synthetic/writer-s2-stash/s2-stash-source.sav");
 
+    /// A money change from the balance the save has now to `new_value`.
+    fn money_change(save: &S2Save, new_value: u32) -> S2Change {
+        S2Change::SetMoney {
+            old_value: save.money().unwrap_or_default(),
+            new_value,
+        }
+    }
+
     fn next_fuzz_state(state: &mut u64) -> u64 {
         *state ^= state.wrapping_shl(13);
         *state ^= state.wrapping_shr(7);
@@ -2421,15 +2441,15 @@ mod tests {
                 continue;
             };
             parsed_count = parsed_count.saturating_add(1);
-            let old_value = parsed.money();
+            let old_value = parsed.money().unwrap_or_default();
             let new_value = if old_value == 1 { 2 } else { 1 };
-            let Ok(written) = parsed.write_changes(&[S2Change::SetMoney(new_value)]) else {
+            let Ok(written) = parsed.write_changes(&[money_change(&parsed, new_value)]) else {
                 continue;
             };
             let verified = S2Save::from_bytes(&written);
             assert!(verified.is_ok(), "writer output should parse");
             let Ok(verified) = verified else { continue };
-            assert_eq!(verified.money(), new_value);
+            assert_eq!(verified.money().unwrap_or_default(), new_value);
             written_count = written_count.saturating_add(1);
         }
 
@@ -2446,7 +2466,7 @@ mod tests {
         let original_image = parsed.container().image().to_vec();
         let original_sha = sse_codecs::sha256::sha256_hex(WRITER_S2_STACK_SOURCE);
         let changes = [
-            S2Change::SetMoney(876_543),
+            money_change(&parsed, 876_543),
             S2Change::SetStackCount {
                 handle: 0x3000_0001,
                 count: 7,
@@ -2459,7 +2479,7 @@ mod tests {
         let verified = S2Save::from_bytes(&packed);
         assert!(verified.is_ok());
         let Ok(verified) = verified else { return };
-        assert_eq!(verified.money(), 876_543);
+        assert_eq!(verified.money().unwrap_or_default(), 876_543);
         assert_eq!(
             verified
                 .items()
@@ -2487,7 +2507,7 @@ mod tests {
         let mut checksum = 0_u64;
         for value in 0..iterations {
             let packed = parsed.write_changes(&[
-                S2Change::SetMoney(value),
+                money_change(&parsed, value),
                 S2Change::SetStackCount {
                     handle: 0x3000_0001,
                     count: 7,
@@ -2510,16 +2530,36 @@ mod tests {
         let parsed = S2Save::from_bytes(WRITER_S2_MONEY_SOURCE);
         assert!(parsed.is_ok());
         let Ok(parsed) = parsed else { return };
-        let result = apply_changes_to_image(&parsed, &[S2Change::SetMoney(876_543)]);
+        let result = apply_changes_to_image(&parsed, &[money_change(&parsed, 876_543)]);
         assert_eq!(result.map(|(image, _)| image), Ok(WRITER_S2_MONEY_EXPECTED.to_vec()));
-        let packed = parsed.write_changes(&[S2Change::SetMoney(876_543)]);
+        let packed = parsed.write_changes(&[money_change(&parsed, 876_543)]);
         assert!(packed.is_ok());
         let Ok(packed) = packed else { return };
         let verified = S2Save::from_bytes(&packed);
         assert!(verified.is_ok());
         let Ok(verified) = verified else { return };
-        assert_eq!(verified.money(), 876_543);
-        assert_eq!(parsed.money(), 100);
+        assert_eq!(verified.money().unwrap_or_default(), 876_543);
+        assert_eq!(parsed.money().unwrap_or_default(), 100);
+    }
+
+    #[test]
+    fn s2_money_write_refuses_a_stale_old_value() {
+        let parsed = S2Save::from_bytes(WRITER_S2_MONEY_SOURCE);
+        assert!(parsed.is_ok());
+        let Ok(parsed) = parsed else { return };
+        let current = parsed.money().unwrap_or_default();
+
+        let stale = S2Change::SetMoney {
+            old_value: current.saturating_add(1),
+            new_value: 5,
+        };
+        assert!(apply_changes_to_image(&parsed, &[stale]).is_err_and(|error| error.to_string().contains("changed")));
+
+        let fresh = S2Change::SetMoney {
+            old_value: current,
+            new_value: 5,
+        };
+        assert!(apply_changes_to_image(&parsed, &[fresh]).is_ok());
     }
 
     #[test]
@@ -2528,9 +2568,9 @@ mod tests {
         assert!(parsed.is_ok());
         let Ok(parsed) = parsed else { return };
 
-        assert!(apply_changes_to_image(&parsed, &[S2Change::SetMoney(2_000_000_000)]).is_ok());
+        assert!(apply_changes_to_image(&parsed, &[money_change(&parsed, 2_000_000_000)]).is_ok());
         assert!(matches!(
-            apply_changes_to_image(&parsed, &[S2Change::SetMoney(2_000_000_001)]),
+            apply_changes_to_image(&parsed, &[money_change(&parsed, 2_000_000_001)]),
             Err(Error::Refused(_))
         ));
     }
@@ -2558,7 +2598,7 @@ mod tests {
         let parsed = S2Save::from_bytes(WRITER_S2_MONEY_SOURCE);
         assert!(parsed.is_ok());
         let Ok(parsed) = parsed else { return };
-        let image = apply_changes_to_image(&parsed, &[S2Change::SetMoney(876_543)]);
+        let image = apply_changes_to_image(&parsed, &[money_change(&parsed, 876_543)]);
         assert!(image.is_ok());
         let Ok((image, changed_ranges)) = image else { return };
         let packed = pack_and_verify_s2_image(parsed.container().image(), &image, &changed_ranges);
@@ -2614,7 +2654,7 @@ mod tests {
         let parsed = S2Save::from_bytes(WRITER_S2_MONEY_SOURCE);
         assert!(parsed.is_ok());
         let Ok(parsed) = parsed else { return };
-        let prepared = apply_changes_to_image(&parsed, &[S2Change::SetMoney(876_543)]);
+        let prepared = apply_changes_to_image(&parsed, &[money_change(&parsed, 876_543)]);
         assert!(prepared.is_ok());
         let Ok((image, changed_ranges)) = prepared else { return };
         let mut corrupted = image;
@@ -2645,7 +2685,7 @@ mod tests {
         let started = std::time::Instant::now();
         let mut checksum = 0_u64;
         for _ in 0..iterations {
-            let changed = apply_changes_to_image(&parsed, &[S2Change::SetMoney(876_543)]);
+            let changed = apply_changes_to_image(&parsed, &[money_change(&parsed, 876_543)]);
             assert!(changed.is_ok());
             let Ok((image, _)) = changed else { return };
             checksum = checksum.wrapping_add(u64::from(super::read_u32(&image, 50).unwrap_or_default()));
@@ -2839,7 +2879,7 @@ mod tests {
         let result = apply_changes_to_image(
             &parsed,
             &[
-                S2Change::SetMoney(900_000),
+                money_change(&parsed, 900_000),
                 S2Change::SetDurability {
                     handle: 805_308_859,
                     condition: 1.0,
@@ -3111,7 +3151,7 @@ mod tests {
         let save = S2Save::from_bytes(&packed);
         assert_eq!(
             save.map(|value| (
-                value.money(),
+                value.money().unwrap_or_default(),
                 value.index().is_legacy(),
                 value.index().owned_handles().len(),
                 value.name_tables().map(super::S2NameTables::table_count),
@@ -3158,7 +3198,7 @@ mod tests {
         let Ok(parsed) = parsed else { return };
 
         assert!(parsed
-            .write_changes(&[S2Change::SetMoney(85_434)])
+            .write_changes(&[money_change(&parsed, 85_434)])
             .is_err_and(|error| error.to_string().contains(
                 "This save was written by game version 1.0.x. It can be read, but its layout is not supported for editing; load it in the current game and save again."
             )));
@@ -3487,7 +3527,7 @@ mod tests {
         assert_eq!(
             S2Save::from_bytes(SYNTHETIC_SAVE).map(|value| (
                 value.container().image().len(),
-                value.money(),
+                value.money().unwrap_or_default(),
                 value.index().is_legacy(),
                 value.index().owned_handles().to_vec(),
                 value.index().grid_cells().to_vec(),

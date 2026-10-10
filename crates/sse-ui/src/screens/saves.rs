@@ -782,7 +782,9 @@ impl LoadedSave {
         slot.candidate_release_id = "stalker2".to_owned();
         slot.format_id = Some("stalker2".to_owned());
         let info = save_info(&slot);
-        let money = save.money();
+        let money = save
+            .money()
+            .map_or_else(|error| error.to_string(), |value| value.to_string());
         let item_count = inventory.len();
         let stash_count = stash
             .as_ref()
@@ -3236,7 +3238,7 @@ impl Inventory {
             }
             SaveData::Stalker2 { save, inventory, .. } => {
                 let writable = !save.index().is_legacy();
-                let money = save.money();
+                let money = save.money()?;
                 let pending_money = state.pending_money.unwrap_or(money);
                 if let Some(id) = self.money_label {
                     cx.tree
@@ -3765,7 +3767,7 @@ impl Inventory {
         };
         let current_money = match &selected.data {
             SaveData::Xray { save, .. } => save.money().ok(),
-            SaveData::Stalker2 { save, .. } if !save.index().is_legacy() => Some(save.money()),
+            SaveData::Stalker2 { save, .. } if !save.index().is_legacy() => save.money().ok(),
             SaveData::Stalker2 { .. } => None,
         };
         let Some(current_money) = current_money else {
@@ -3813,7 +3815,7 @@ impl Inventory {
         };
         let current_money = match &selected.data {
             SaveData::Xray { save, .. } => save.money().ok(),
-            SaveData::Stalker2 { save, .. } if !save.index().is_legacy() => Some(save.money()),
+            SaveData::Stalker2 { save, .. } if !save.index().is_legacy() => save.money().ok(),
             SaveData::Stalker2 { .. } => None,
         };
         let Some(current_money) = current_money else {
@@ -5192,11 +5194,16 @@ fn prepare_save_edits(
                     }
                 }
             }
-            let current_money = save.money();
+            let current_money = save
+                .money()
+                .map_err(|error| Error::Refused(format!("S2 money cannot be read: {error}")))?;
             let money_change = edits.money.filter(|value| *value != current_money);
             let mut changes = Vec::new();
             if let Some(new_value) = money_change {
-                changes.push(S2Change::SetMoney(new_value));
+                changes.push(S2Change::SetMoney {
+                    old_value: current_money,
+                    new_value,
+                });
             }
             let mut stack_count = 0_usize;
             for (handle, new_value) in &edits.stacks {
@@ -5271,7 +5278,7 @@ fn verify_requested_values(
 ) -> Result<()> {
     let actual_money = match &selected.data {
         SaveData::Xray { save, .. } => save.money()?,
-        SaveData::Stalker2 { save, .. } => save.money(),
+        SaveData::Stalker2 { save, .. } => save.money()?,
     };
     if edits.money.is_some_and(|expected| expected != actual_money) {
         return Err(Error::damaged("saved wallet value differs after read-back"));
@@ -10177,7 +10184,7 @@ mod tests {
             },
             &BTreeSet::new(),
         )?;
-        assert_eq!(S2Save::from_bytes(output.as_slice())?.money(), 1_000);
+        assert_eq!(S2Save::from_bytes(output.as_slice())?.money()?, 1_000);
         assert_eq!(summary.money, Some(1_000));
         Ok(())
     }
@@ -10530,7 +10537,7 @@ mod tests {
         let s2_slot = fixture_slot(&s2_path.to_string_lossy(), "stalker2", "stalker2");
         let s2 = LoadedSave::read(s2_slot)?;
         let s2_money = match &s2.data {
-            super::SaveData::Stalker2 { save, .. } => save.money().saturating_add(654),
+            super::SaveData::Stalker2 { save, .. } => save.money().unwrap_or_default().saturating_add(654),
             super::SaveData::Xray { .. } => return Err(Error::damaged("S2 fixture parsed as X-Ray")),
         };
         let (s2_after, _) = commit_save_edits_to(
@@ -10544,9 +10551,9 @@ mod tests {
         )?;
         assert!(matches!(
             &s2_after.data,
-            super::SaveData::Stalker2 { save, .. } if save.money() == s2_money
+            super::SaveData::Stalker2 { save, .. } if save.money().ok() == Some(s2_money)
         ));
-        assert_eq!(S2Save::from_bytes(&fs::read(s2_path)?)?.money(), s2_money);
+        assert_eq!(S2Save::from_bytes(&fs::read(s2_path)?)?.money()?, s2_money);
         assert!(sse_storage::transaction::list_backups(&backup)?
             .iter()
             .any(|entry| { entry.status == sse_storage::transaction::BackupStatus::Verified }));
