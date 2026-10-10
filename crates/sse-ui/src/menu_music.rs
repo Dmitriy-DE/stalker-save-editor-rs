@@ -200,7 +200,11 @@ pub fn load_track(game_id: &str, game_directory: &Path) -> Option<Track> {
     };
     let tree = GameFileTree::load_simple(game, game_directory, wanted, true).ok()?;
     decode_track(family, |relative| {
-        let file = tree.files.iter().find(|(path, _)| path.to_ascii_lowercase().ends_with(relative))?.1;
+        let file = tree
+            .files
+            .iter()
+            .find(|(path, _)| path.to_ascii_lowercase().ends_with(relative))?
+            .1;
         file.read().ok()
     })
 }
