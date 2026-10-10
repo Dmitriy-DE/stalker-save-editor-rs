@@ -26,8 +26,6 @@ pub struct GameFixCatalog;
 impl GameFixCatalog {
     /// Current dataset version.
     pub const DATASET_VERSION: &'static str = "2026.10.1";
-    /// Previous dataset version for migration checks.
-    pub const PREVIOUS_DATASET_VERSION: &'static str = "2026.09.2";
 
     /// Returns all catalogue definitions, including generated Enhanced Edition variants.
     #[must_use]

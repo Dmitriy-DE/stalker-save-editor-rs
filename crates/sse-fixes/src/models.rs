@@ -580,17 +580,6 @@ fn has_sha256_anchor(value: &Option<String>) -> bool {
         .is_some_and(|hash| hash.len() == 64 && hash.bytes().all(|byte| byte.is_ascii_hexdigit()))
 }
 
-/// Reason a game fix operation failed or was refused.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GameFixFailure {
-    /// Precondition failed or refused.
-    Refused,
-    /// I/O error while reading or writing.
-    Io,
-    /// Operation failed and rollback was incomplete.
-    RollbackIncomplete,
-}
-
 /// Result of installing, updating, or removing a fix.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GameFixInstallResult {
