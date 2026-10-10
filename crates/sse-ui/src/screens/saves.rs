@@ -242,9 +242,6 @@ pub(crate) fn screens_with_workspace(workspace: Workspace) -> Vec<Box<dyn Screen
     ]
 }
 
-/// S2 stash transfer stays disabled until a saved result is validated in-game.
-pub(super) const S2_STASH_MOVE_ENABLED: bool = false;
-
 /// Refreshes the save library and, after an external write, reloads the active save.
 #[derive(Debug)]
 pub(super) struct RefreshOverview {
@@ -3419,18 +3416,14 @@ impl Inventory {
                     || !state.pending_xray_stash_puts.is_empty()
                     || !state.pending_faction_relations.is_empty()
                     || state.pending_relocation.is_some();
-                let blocked_stash_draft = !S2_STASH_MOVE_ENABLED && !state.pending_stash_moves.is_empty();
                 if let Some(id) = self.export {
-                    cx.tree
-                        .set_visible(id, writable && has_changes && !blocked_stash_draft)?;
+                    cx.tree.set_visible(id, writable && has_changes)?;
                     cx.tree.set_text(id, t("Сохранить"))?;
                 }
                 if let Some(id) = self.status {
                     cx.tree.set_text(
                         id,
-                        if blocked_stash_draft {
-                            t("Черновик содержит перенос S2 из тайника, отключённый до проверки в игре. Сбросьте этот черновик, чтобы продолжить.")
-                        } else if writable {
+                        if writable {
                             t("Изменения сохраняются с резервной копией и проверкой повторным чтением.")
                         } else {
                             S2_LEGACY_EDIT_REFUSAL
@@ -4508,14 +4501,6 @@ impl Inventory {
             cx.status = Some(t("Сначала выберите сейв.").to_owned());
             return Ok(());
         };
-        if !S2_STASH_MOVE_ENABLED && !stash_moves.is_empty() {
-            let text = t("Черновик содержит перенос S2 из тайника, отключённый до проверки в игре. Сбросьте этот черновик, чтобы продолжить.");
-            if let Some(status) = self.status {
-                cx.tree.set_text(status, text)?;
-            }
-            cx.status = Some(text.to_owned());
-            return Ok(());
-        }
         if cx.app.has_invalid_numeric_input() {
             cx.status = Some(t("Введены некорректные значения (проверьте введённые числа).").to_owned());
             return Ok(());
@@ -4874,6 +4859,21 @@ fn commit_save_edits_to(
     let mut save_message = tr("Сохранено успешно. Резервная копия: {0}", &[&backup_name]);
     if let Some(warning) = receipt.maintenance_warning.as_deref() {
         save_message.push_str(&tr(" Ротация старых копий не завершена: {0}", &[&warning]));
+    }
+    if summary.move_count > 0 || summary.stash_skipped > 0 {
+        save_message.push_str(&format!(
+            " {}",
+            tr(
+                "Перенос из тайника: перенесено {0}, пропущено {1} (не помечены как лежащие в тайнике).",
+                &[&summary.move_count, &summary.stash_skipped],
+            )
+        ));
+    }
+    if summary.stash_stopped {
+        save_message.push_str(&format!(
+            " {}",
+            t("Перенос остановлен: запись одного предмета не прошла проверку, остальные не переносились.")
+        ));
     }
     Ok((Arc::new(reloaded), save_message))
 }
@@ -5268,11 +5268,6 @@ fn prepare_save_edits(
             if save.index().is_legacy() {
                 return Err(Error::Refused(S2_LEGACY_EDIT_REFUSAL.to_owned()));
             }
-            if !S2_STASH_MOVE_ENABLED && !stash_moves.is_empty() {
-                return Err(Error::Refused(
-                    "S2 stash transfer is disabled until the saved result is validated in-game".to_owned(),
-                ));
-            }
             if !edits.placements.is_empty()
                 || !edits.upgrades.is_empty()
                 || !edits.removals.is_empty()
@@ -5357,19 +5352,41 @@ fn prepare_save_edits(
                     });
                 }
             }
-            for handle in stash_moves {
-                changes.push(S2Change::MoveStashToBackpack { handle: *handle });
-            }
-            if changes.is_empty() {
+            if changes.is_empty() && stash_moves.is_empty() {
                 return Err(Error::Refused("there are no inventory changes to save".to_owned()));
             }
-            let packed = SaveBuffer::from_vec(save.write_changes(&changes)?);
+            let handles = stash_moves.iter().copied().collect::<Vec<_>>();
+            if handles.is_empty() {
+                let packed = SaveBuffer::from_vec(save.write_changes(&changes)?);
+                return Ok((
+                    packed,
+                    EditSummary {
+                        money: money_change,
+                        stack_count,
+                        ..EditSummary::default()
+                    },
+                ));
+            }
+            let transfer = sse_s2::transfer_stash_items_to_backpack(save, &changes, &handles)?;
+            let stopped = transfer.stopped.clone();
+            let Some(written) = transfer.packed else {
+                return Err(Error::Refused(match stopped {
+                    Some(message) => tr(
+                        "Перенос из тайника остановлен после {0} из {1}; ничего не записано: {2}",
+                        &[&transfer.moved.len(), &handles.len(), &message],
+                    ),
+                    None => tr("Нет изменений для записи.", &[]),
+                }));
+            };
+            let packed = SaveBuffer::from_vec(written);
             Ok((
                 packed,
                 EditSummary {
                     money: money_change,
                     stack_count,
-                    move_count: stash_moves.len(),
+                    move_count: transfer.moved.len(),
+                    stash_skipped: transfer.skipped.len(),
+                    stash_stopped: stopped.is_some(),
                     ..EditSummary::default()
                 },
             ))
@@ -7794,6 +7811,7 @@ struct Stashes {
     workspace: Workspace,
     list: Option<ListSide>,
     action: Option<WidgetId>,
+    all: Option<WidgetId>,
     entries: Vec<StashEntry>,
     row_entries: Vec<usize>,
     selected: Option<StashAction>,
@@ -7807,6 +7825,7 @@ impl Stashes {
             workspace,
             list: None,
             action: None,
+            all: None,
             entries: Vec::new(),
             row_entries: Vec::new(),
             selected: None,
@@ -7848,6 +7867,9 @@ impl Stashes {
         }
         if let Some(action) = self.action {
             cx.tree.set_visible(action, false)?;
+        }
+        if let Some(all) = self.all {
+            cx.tree.set_visible(all, false)?;
         }
         cx.tree.set_visible(list.actions, false)?;
         cx.tree.set_visible(list.empty, true)?;
@@ -7923,6 +7945,13 @@ impl Stashes {
         }
         cx.tree.set_visible(list.empty, false)?;
         cx.tree.set_visible(list.actions, true)?;
+        if let Some(all) = self.all {
+            let has_s2_items = self
+                .entries
+                .iter()
+                .any(|entry| matches!(entry.action, StashAction::Stalker2Take(_)) && !entry.staged);
+            cx.tree.set_visible(all, has_s2_items)?;
+        }
         if let Some(action) = self.action {
             // The label is set after the build, so it is written in capitals here; the button stretches with the panel.
             cx.tree.set_text(action, &entry.action_text.to_uppercase())?;
@@ -7979,7 +8008,7 @@ impl Stashes {
             self.set_text(cx, "Подтверждённый тайник найден, но живых предметов в нём нет.")?;
             return self.hide_list(cx);
         }
-        let can_move = S2_STASH_MOVE_ENABLED && !save.index().is_legacy() && save.unresolved_handles().is_empty();
+        let can_move = !save.index().is_legacy() && save.unresolved_handles().is_empty();
         for item in items {
             let name = item
                 .display_name
@@ -8035,17 +8064,19 @@ impl Stashes {
                     &self.entries.len(),
                     &self.page.saturating_add(1),
                     &pages,
-                    &t(if can_move {
-                        "Отметьте перенос и сохраните его в «Инвентаре»."
+                    &if can_move {
+                        format!(
+                            "{} {}",
+                            t("Отметьте перенос и сохраните его в «Инвентаре»."),
+                            t("Перенос из тайника не проверен в игре. Перед записью создаётся резервная копия."),
+                        )
                     } else {
-                        "Перенос в рюкзак отключён до проверки сохранения в игре."
-                    }),
+                        t("Перенос в рюкзак недоступен для этого сейва.").to_owned()
+                    },
                 ],
             ),
         )?;
-        if !S2_STASH_MOVE_ENABLED {
-            self.set_status(cx, "Перенос из тайника S2 отключён до проверки сохранения в игре.")?;
-        } else if !save.unresolved_handles().is_empty() {
+        if !save.unresolved_handles().is_empty() {
             self.set_status(cx, "Перенос отключён: индекс сейва содержит неразрешённые ссылки.")?;
         } else if save.index().is_legacy() {
             self.set_status(cx, S2_LEGACY_EDIT_REFUSAL)?;
@@ -8268,6 +8299,24 @@ impl Stashes {
         self.render(cx)
     }
 
+    /// Marks every stash item of the selected S2 save that is not marked yet. The writer skips items
+    /// the game does not list as stash-owned and reports how many moved.
+    fn move_all(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        let handles = self
+            .entries
+            .iter()
+            .filter_map(|entry| match entry.action {
+                StashAction::Stalker2Take(handle) if !entry.staged => Some(handle),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        for handle in &handles {
+            self.move_item(cx, *handle)?;
+        }
+        let text = tr("Отмечено для переноса: {0}.", &[&handles.len()]);
+        self.set_status(cx, &text)
+    }
+
     fn move_item(&mut self, cx: &mut Context<'_>, handle: u32) -> Result<()> {
         if let Some(text) = busy_refusal(&self.workspace) {
             cx.status = Some(t(text).to_owned());
@@ -8283,17 +8332,8 @@ impl Stashes {
                 cx.status = Some(t("Перенос тайника поддерживается только для S2.").to_owned());
                 return Ok(());
             };
-            if !S2_STASH_MOVE_ENABLED {
-                cx.status = Some(t("Перенос из тайника S2 отключён до проверки сохранения в игре.").to_owned());
-                return Ok(());
-            }
             if save.index().is_legacy() || !save.unresolved_handles().is_empty() {
                 cx.status = Some(t("Перенос недоступен для этого S2-сейва.").to_owned());
-                return Ok(());
-            }
-            if !state.pending_stash_moves.is_empty() && !state.pending_stash_moves.contains(&handle) {
-                cx.status =
-                    Some(t("За один раз можно перенести только один предмет. Отмените предыдущий перенос.").to_owned());
                 return Ok(());
             }
             let Some(items) = stash_items.as_ref().and_then(|items| items.as_ref().ok()) else {
@@ -8384,6 +8424,24 @@ impl Screen for Stashes {
             },
         )?;
         self.action = Some(action);
+        let all = style::d2::button(
+            cx.tree,
+            list.actions,
+            "",
+            style::d2::ButtonKind::Secondary,
+            style::d2::ButtonSize::Normal,
+        )?;
+        cx.tree.set_text(all, &t("Перенести всё").to_uppercase())?;
+        cx.tree.set_style(
+            all,
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: Size::new(0.0, crate::theme::BUTTON_HEIGHT),
+                ..Style::default()
+            },
+        )?;
+        self.all = Some(all);
         self.list = Some(list);
         self.render(cx)
     }
@@ -8422,6 +8480,11 @@ impl Screen for Stashes {
             if let Some(entry) = self.entries.get(index) {
                 self.selected = Some(entry.action);
             }
+            return self.render(cx);
+        }
+        if clicked.is_some() && clicked == self.all {
+            self.move_all(cx)?;
+            self.workspace.poll_tasks();
             return self.render(cx);
         }
         if clicked.is_some() && clicked == self.action {
@@ -9582,8 +9645,8 @@ mod tests {
     }
 
     #[test]
-    fn s2_stash_row_then_action_stays_disabled_and_writes_nothing() -> sse_core::Result<()> {
-        // The row only chooses the item; the one action is off while S2 transfers are unverified, so it changes nothing.
+    fn s2_stash_row_then_action_stages_the_move_without_writing() -> sse_core::Result<()> {
+        // The row only chooses the item; the action stages it in the draft, and nothing is written until save.
         let temp = TempDirectory::new();
         let path = temp.0.join("stash.sav");
         let original = include_bytes!("../../../../fixtures/synthetic/writer-s2-stash/s2-stash-source.sav");
@@ -9628,14 +9691,14 @@ mod tests {
             "the action is hidden after choosing the item"
         );
         assert!(
-            !cx.tree.is_enabled(action)?,
-            "the S2 action is on while transfers are unverified"
+            cx.tree.is_enabled(action)?,
+            "the S2 action is off for a save that can be read"
         );
         let _ = screen.message(&mut cx, &pointer, Some(action));
         assert!(cx
             .app
             .draft(&source_sha256)
-            .is_none_or(|plan| plan.stash_takes.is_empty()));
+            .is_some_and(|plan| plan.s2_stash_takes.len() == 1));
         assert_eq!(fs::read(&path)?, original);
         Ok(())
     }
@@ -10360,16 +10423,14 @@ mod tests {
     }
 
     #[test]
-    fn s2_stash_transfer_transaction_refuses_unverified_ui_writes() -> sse_core::Result<()> {
+    fn s2_stash_transfer_writes_one_verified_move_with_a_backup() -> sse_core::Result<()> {
         let temp = TempDirectory::new();
         let saves = temp.0.join("saves");
         fs::create_dir_all(&saves)?;
         let backup = temp.0.join("backups");
         let path = saves.join("stash.sav");
-        fs::write(
-            &path,
-            include_bytes!("../../../../fixtures/synthetic/writer-s2-stash/s2-stash-source.sav"),
-        )?;
+        let original = include_bytes!("../../../../fixtures/synthetic/writer-s2-stash/s2-stash-source.sav");
+        fs::write(&path, original)?;
         let path_string = path.to_string_lossy().into_owned();
         let selected = LoadedSave::read(fixture_slot(&path_string, "stalker2", "stalker2"))?;
         let handle = match &selected.data {
@@ -10389,26 +10450,20 @@ mod tests {
         };
 
         fs::create_dir_all(&backup)?;
-        let result = commit_save_edits_to(
+        commit_save_edits_to(
             &selected,
             &PendingInventoryEdits::default(),
             &BTreeSet::from([handle]),
             &backup,
-        );
-        assert!(result.is_err_and(|error| error
-            .to_string()
-            .contains("S2 stash transfer is disabled until the saved result is validated in-game")));
-        assert_eq!(
-            fs::read(&path)?,
-            include_bytes!("../../../../fixtures/synthetic/writer-s2-stash/s2-stash-source.sav")
-        );
+        )?;
+        assert_ne!(fs::read(&path)?, original);
         let backups = sse_storage::transaction::list_backups(&backup)?;
-        assert!(backups.is_empty());
+        assert_eq!(backups.len(), 1);
         Ok(())
     }
 
     #[test]
-    fn s2_stash_screen_keeps_transfer_disabled_until_game_validation() -> sse_core::Result<()> {
+    fn s2_stash_screen_stages_transfer_until_save() -> sse_core::Result<()> {
         let temp = TempDirectory::new();
         let path = temp.0.join("stash.sav");
         let original = include_bytes!("../../../../fixtures/synthetic/writer-s2-stash/s2-stash-source.sav");
@@ -10459,18 +10514,17 @@ mod tests {
             .ok_or_else(|| Error::damaged("S2 stash action was not built"))?;
         assert!(!cx.tree.is_visible(move_button));
         screen.move_item(&mut cx, handle)?;
-        assert!(cx.status.as_deref().is_some_and(|text| text.contains("отключён")));
-        assert!(!workspace.lock().pending_stash_moves.contains(&handle));
+        assert!(workspace.lock().pending_stash_moves.contains(&handle));
         assert_eq!(
             cx.app.draft(&source_sha256).map(|plan| plan.s2_stash_takes.as_slice()),
-            Some(&[][..])
+            Some(&[handle][..])
         );
         assert_eq!(fs::read(&path)?, original);
         Ok(())
     }
 
     #[test]
-    fn s2_stash_screen_preserves_an_existing_unverified_transfer_draft() -> sse_core::Result<()> {
+    fn s2_stash_screen_toggles_a_staged_transfer_off() -> sse_core::Result<()> {
         let temp = TempDirectory::new();
         let path = temp.0.join("stash.sav");
         let original = include_bytes!("../../../../fixtures/synthetic/writer-s2-stash/s2-stash-source.sav");
@@ -10488,15 +10542,14 @@ mod tests {
                 .ok_or_else(|| Error::damaged("S2 stash fixture has no items"))?,
             super::SaveData::Xray { .. } => return Err(Error::damaged("S2 fixture parsed as X-Ray")),
         };
-        let already_pending = handle.wrapping_add(1);
         let workspace = Workspace::with_draft_directory(temp.0.join("drafts"));
         workspace.lock().selected = Some(Arc::new(selected));
-        workspace.lock().pending_stash_moves.insert(already_pending);
+        workspace.lock().pending_stash_moves.insert(handle);
         let mut app = sse_app::AppState::new();
         app.set_current_save_identity(path.clone(), source_sha256.clone());
         app.set_current_save_format(Some("stalker2".to_owned()), false);
         let mut plan = DraftPlan::empty(&source_sha256)?;
-        plan.s2_stash_takes.push(already_pending);
+        plan.s2_stash_takes.push(handle);
         app.set_draft_journal(DraftJournal::new(vec![plan], 0)?);
         let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
         let host = tree.add(
@@ -10516,18 +10569,18 @@ mod tests {
         screen.build(&mut cx, host)?;
         screen.move_item(&mut cx, handle)?;
 
-        assert!(cx.status.as_deref().is_some_and(|text| text.contains("отключён")));
-        assert_eq!(workspace.lock().pending_stash_moves, BTreeSet::from([already_pending]));
+        // Choosing an item that is already staged takes it back out of the draft.
+        assert!(workspace.lock().pending_stash_moves.is_empty());
         assert_eq!(
             cx.app.draft(&source_sha256).map(|plan| plan.s2_stash_takes.as_slice()),
-            Some(&[already_pending][..])
+            Some(&[][..])
         );
         assert_eq!(fs::read(&path)?, original);
         Ok(())
     }
 
     #[test]
-    fn inventory_blocks_save_for_an_unverified_stash_draft() -> sse_core::Result<()> {
+    fn inventory_shows_save_for_a_staged_stash_transfer() -> sse_core::Result<()> {
         let temp = TempDirectory::new();
         let path = temp.0.join("stash.sav");
         let original = include_bytes!("../../../../fixtures/synthetic/writer-s2-stash/s2-stash-source.sav");
@@ -10573,9 +10626,7 @@ mod tests {
         screen.build(&mut cx, host)?;
 
         let save_button = screen.export.ok_or_else(|| Error::damaged("save button is missing"))?;
-        assert!(!cx.tree.is_visible(save_button));
-        screen.save(&mut cx)?;
-        assert!(cx.status.as_deref().is_some_and(|text| text.contains("отключён")));
+        assert!(cx.tree.is_visible(save_button));
         assert_eq!(workspace.lock().pending_stash_moves, BTreeSet::from([handle]));
         assert_eq!(
             cx.app

@@ -303,6 +303,100 @@ impl S2Save {
     }
 }
 
+/// Outcome of moving several stash items, one verified write at a time.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct S2StashTransfer {
+    /// Packed save after the last verified write; `None` when nothing was written.
+    pub packed: Option<Vec<u8>>,
+    /// Handles moved into the backpack, in request order.
+    pub moved: Vec<u32>,
+    /// Handles skipped because the record lacks the stash-owned flag.
+    pub skipped: Vec<u32>,
+    /// Message of the write that failed; the transfer stopped there and `packed` holds the writes before it.
+    pub stopped: Option<String>,
+}
+
+/// Applies `changes` (if any), then moves each requested stash item with its own write and re-read.
+///
+/// Items whose record is not in use or lacks the stash-owned flag (byte 28, bit `0x08`) are skipped.
+/// Any other refusal or failed read-back stops the transfer: the writes before it stay in `packed`,
+/// and the failure is reported in `stopped`.
+///
+/// # Errors
+/// Returns an error when `changes` cannot be written, or when the inventory is not fully resolved or is 1.0.x.
+pub fn transfer_stash_items_to_backpack(
+    save: &S2Save,
+    changes: &[S2Change],
+    handles: &[u32],
+) -> Result<S2StashTransfer> {
+    if save.index.is_legacy {
+        return Err(Error::Refused(
+            "This save was written by game version 1.0.x. It can be read, but its layout is not supported for editing; load it in the current game and save again."
+                .to_owned(),
+        ));
+    }
+    if !handles.is_empty() && !save.unresolved_handles.is_empty() {
+        return Err(Error::Refused(
+            "S2 stash move requires a fully resolved inventory".to_owned(),
+        ));
+    }
+    let mut packed = None;
+    let mut current = if changes.is_empty() {
+        None
+    } else {
+        let written = save.write_changes(changes)?;
+        let parsed = S2Save::from_bytes(&written)?;
+        packed = Some(written);
+        Some(parsed)
+    };
+    let mut moved = Vec::new();
+    let mut skipped = Vec::new();
+    for &handle in handles {
+        let source = current.as_ref().unwrap_or(save);
+        let listed = source.stash_items()?.iter().any(|item| item.handle == handle);
+        if !listed || !is_marked_stash_owned(source, handle) {
+            skipped.push(handle);
+            continue;
+        }
+        match source.write_changes(&[S2Change::MoveStashToBackpack { handle }]) {
+            Ok(written) => {
+                current = Some(S2Save::from_bytes(&written)?);
+                packed = Some(written);
+                moved.push(handle);
+            }
+            Err(error) => {
+                return Ok(S2StashTransfer {
+                    packed,
+                    moved,
+                    skipped,
+                    stopped: Some(error.to_string()),
+                });
+            }
+        }
+    }
+    Ok(S2StashTransfer {
+        packed,
+        moved,
+        skipped,
+        stopped: None,
+    })
+}
+
+/// True when the record is in use (byte 15 is 1) and carries the stash-owned flag (byte 28, bit `0x08`).
+fn is_marked_stash_owned(save: &S2Save, handle: u32) -> bool {
+    let Some(record) = save.objects.unique(handle) else {
+        return false;
+    };
+    let image = save.container.image();
+    matches!(
+        (
+            read_u8(image, record.record_offset.saturating_add(15)),
+            read_u8(image, record.record_offset.saturating_add(28)),
+        ),
+        (Ok(1), Ok(flags)) if flags & 0x08 != 0
+    )
+}
+
 /// One validated grid cell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct S2GridCell {
@@ -2370,7 +2464,8 @@ fn validate_owned_handles(handles: &[u32], legacy: bool) -> Result<()> {
 mod tests {
     use super::{
         apply_changes_to_image, first_free_placement, moved_object_offset, pack_and_verify_s2_image,
-        validate_owned_handles, S2Change, S2Container, S2InventoryIndex, S2Save, S2StashLayout, GRID_WIDTH,
+        transfer_stash_items_to_backpack, validate_owned_handles, S2Change, S2Container, S2InventoryIndex, S2Save,
+        S2StashLayout, GRID_WIDTH,
     };
     use sse_codecs::crc32;
     use sse_core::Error;
@@ -3039,6 +3134,102 @@ mod tests {
             .items()
             .iter()
             .any(|backpack_item| backpack_item.handle == item.handle));
+        Ok(())
+    }
+
+    /// Manual run on copies of real saves: `SSE_S2_COPY_DIR=<copies> cargo test -p sse-s2 real_copies -- --ignored --nocapture`.
+    /// Never point it at the originals; the test only reads the files it is given, and writes nothing to disk.
+    #[test]
+    #[ignore = "manual run on copies of real S2 saves (SSE_S2_COPY_DIR)"]
+    fn real_copies_stash_transfer_is_consistent() -> Result<(), Error> {
+        let dir =
+            std::env::var("SSE_S2_COPY_DIR").map_err(|_| Error::Refused("SSE_S2_COPY_DIR is not set".to_owned()))?;
+        let mut paths: Vec<_> = std::fs::read_dir(&dir)
+            .map_err(|error| Error::System(error.to_string()))?
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|path| path.is_file())
+            .collect();
+        paths.sort();
+        let mut inconsistent = 0_usize;
+        for path in &paths {
+            let source = std::fs::read(path).map_err(|error| Error::System(error.to_string()))?;
+            let before = S2Save::from_bytes(&source)?;
+            if before.index.is_legacy {
+                println!("{} legacy-1.0x skipped", path.display());
+                continue;
+            }
+            if !before.unresolved_handles().is_empty() {
+                println!("{} unresolved-inventory skipped", path.display());
+                continue;
+            }
+            let stash = before.stash_items()?;
+            if stash.is_empty() {
+                println!("{} no-stash skipped", path.display());
+                continue;
+            }
+            let handles: Vec<u32> = stash.iter().map(|item| item.handle).collect();
+            let first = handles.get(..1).unwrap_or_default();
+            let one = transfer_stash_items_to_backpack(&before, &[], first)?;
+            let all = transfer_stash_items_to_backpack(&before, &[], &handles)?;
+            for (label, transfer) in [("one", &one), ("all", &all)] {
+                let packed = transfer.packed.clone().unwrap_or_else(|| source.clone());
+                let after = S2Save::from_bytes(&packed)?;
+                let stash_after = after.stash_items()?.len();
+                let backpack_before = before.items().len();
+                let backpack_after = after.items().len();
+                let counts_ok = stash_after + transfer.moved.len() == stash.len()
+                    && backpack_after == backpack_before + transfer.moved.len();
+                if !counts_ok || !after.unresolved_handles().is_empty() {
+                    inconsistent += 1;
+                }
+                println!(
+                    "{} {label}: moved={} skipped={} stopped={} counts_ok={counts_ok}",
+                    path.display(),
+                    transfer.moved.len(),
+                    transfer.skipped.len(),
+                    transfer.stopped.as_deref().unwrap_or("-"),
+                );
+            }
+        }
+        println!("files={} inconsistent={inconsistent}", paths.len());
+        assert_eq!(inconsistent, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn sequential_transfer_moves_a_marked_item_and_reparses_clean() -> Result<(), Error> {
+        let save = S2Save::from_bytes(WRITER_S2_STASH_PACKED_SOURCE)?;
+        let transfer = transfer_stash_items_to_backpack(&save, &[], &[0x3000_0010])?;
+        assert_eq!(transfer.moved, vec![0x3000_0010]);
+        assert!(transfer.skipped.is_empty());
+        assert_eq!(transfer.stopped, None);
+        let packed = transfer
+            .packed
+            .ok_or_else(|| Error::damaged("transfer wrote nothing"))?;
+        let after = S2Save::from_bytes(&packed)?;
+        assert!(after.stash_items()?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn sequential_transfer_skips_an_unmarked_item_and_leaves_the_bytes_unchanged() -> Result<(), Error> {
+        let mut raw = WRITER_S2_STASH_SOURCE.to_vec();
+        let record_save = S2Save::from_bytes(&pack_raw(&raw))?;
+        let record = record_save
+            .objects
+            .unique(0x3000_0010)
+            .ok_or_else(|| Error::damaged("fixture stash record is missing"))?;
+        let flags = raw
+            .get_mut(record.record_offset.saturating_add(28))
+            .ok_or_else(|| Error::damaged("fixture flag byte is missing"))?;
+        *flags &= !0x08;
+
+        let unmarked = S2Save::from_bytes(&pack_raw(&raw))?;
+        let transfer = transfer_stash_items_to_backpack(&unmarked, &[], &[0x3000_0010])?;
+        assert!(transfer.moved.is_empty());
+        assert_eq!(transfer.skipped, vec![0x3000_0010]);
+        assert_eq!(transfer.stopped, None);
+        assert_eq!(transfer.packed, None);
         Ok(())
     }
 
