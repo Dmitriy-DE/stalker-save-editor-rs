@@ -341,7 +341,8 @@ jobs:
           grep -q "manifest signature is invalid" <<<"$out" || { echo "::error::refused for another reason"; exit 1; }
       - name: Rehearsal key accepts the manifest and refuses altered copies
         env:
-          SSE_REHEARSAL_DIR: dist
+          # cargo runs tests from the crate directory, so the path must be absolute.
+          SSE_REHEARSAL_DIR: ${{ github.workspace }}/dist
         run: cargo test --locked -p sse-update --lib release_rehearsal -- --ignored --nocapture
       - name: Summary
         run: |
