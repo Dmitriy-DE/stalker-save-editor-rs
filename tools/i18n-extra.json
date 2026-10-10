@@ -729,5 +729,22 @@
     "ko": "설정 파일을 읽을 수 없습니다: {0}. 다음 저장 전에 옆에 사본을 보관합니다.",
     "zh-CN": "无法读取设置文件：{0}。下次保存前会在旁边保留一份副本。",
     "zh-TW": "無法讀取設定檔：{0}。下次儲存前會在旁邊保留一份副本。"
+  },
+  "Дождитесь записи черновика, затем смените сейв.": {
+    "ru": "Дождитесь записи черновика, затем смените сейв.",
+    "uk": "Дочекайтеся запису чернетки, потім змініть збереження.",
+    "en": "Wait for the draft to be saved, then switch save.",
+    "de": "Warten Sie, bis der Entwurf gespeichert ist, und wechseln Sie dann den Spielstand.",
+    "fr": "Attendez l'enregistrement du brouillon, puis changez de sauvegarde.",
+    "it": "Attendi il salvataggio della bozza, poi cambia salvataggio.",
+    "es": "Espere a que se guarde el borrador y luego cambie de partida.",
+    "pl": "Poczekaj na zapis szkicu, a następnie zmień zapis.",
+    "cs": "Počkejte na uložení konceptu a potom změňte uloženou pozici.",
+    "pt-BR": "Aguarde o salvamento do rascunho e depois troque o save.",
+    "tr": "Taslak kaydedilene kadar bekleyin, sonra kaydı değiştirin.",
+    "ja": "下書きの保存が終わるまで待ってから、セーブを切り替えてください。",
+    "ko": "임시 저장이 끝날 때까지 기다린 후 세이브를 바꾸세요.",
+    "zh-CN": "请等待草稿保存完成后再切换存档。",
+    "zh-TW": "請等待草稿儲存完成後再切換存檔。"
   }
 }

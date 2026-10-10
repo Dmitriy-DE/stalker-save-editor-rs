@@ -19,6 +19,7 @@ use sse_storage::transaction::{self, EditSummary};
 use sse_xray::{save::InventoryItem, writer, Save};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 fn t(key: &str) -> &str {
@@ -259,7 +260,17 @@ pub(crate) struct Workspace {
     backup_directory: Arc<Mutex<PathBuf>>,
     session: sse_app::SaveSession,
     draft_write_lock: Arc<Mutex<()>>,
+    draft_writes_pending: Arc<AtomicUsize>,
     browser_file_bridge: Option<BrowserFileBridge>,
+}
+
+/// Counts one queued or running draft write; the count drops when the write task ends or never starts.
+struct DraftWriteGuard(Arc<AtomicUsize>);
+
+impl Drop for DraftWriteGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 impl Default for Workspace {
@@ -284,6 +295,15 @@ impl Workspace {
         Self::with_paths(default_draft_directory(), directory)
     }
 
+    fn begin_draft_write(&self) -> DraftWriteGuard {
+        self.draft_writes_pending.fetch_add(1, Ordering::SeqCst);
+        DraftWriteGuard(Arc::clone(&self.draft_writes_pending))
+    }
+
+    fn draft_writes_pending(&self) -> bool {
+        self.draft_writes_pending.load(Ordering::SeqCst) > 0
+    }
+
     fn with_paths(draft_directory: PathBuf, backup_directory: PathBuf) -> Self {
         Self {
             state: Arc::new(Mutex::new(WorkspaceState::default())),
@@ -291,6 +311,7 @@ impl Workspace {
             backup_directory: Arc::new(Mutex::new(backup_directory)),
             session: sse_app::SaveSession::new(),
             draft_write_lock: Arc::new(Mutex::new(())),
+            draft_writes_pending: Arc::new(AtomicUsize::new(0)),
             browser_file_bridge: None,
         }
     }
@@ -469,7 +490,9 @@ impl Workspace {
         let session = self.session.clone();
         let write_lock = Arc::clone(&self.draft_write_lock);
         let draft_directory = Arc::clone(&self.draft_directory);
+        let write = self.begin_draft_write();
         if let Err(error) = self.spawn("draft-reset", move |context| {
+            let _write = write;
             if context.is_cancelled() {
                 return;
             }
@@ -526,7 +549,9 @@ impl Workspace {
         let session = self.session.clone();
         let write_lock = Arc::clone(&self.draft_write_lock);
         let draft_directory = Arc::clone(&self.draft_directory);
+        let write = self.begin_draft_write();
         if let Err(error) = self.spawn("draft-save", move |context| {
+            let _write = write;
             if context.is_cancelled() {
                 return;
             }
@@ -953,6 +978,10 @@ fn start_load_from<F>(
             t("Нельзя сменить сейв, пока выполняется запись.")
         };
         cx.status = Some(text.to_owned());
+        return;
+    }
+    if workspace.draft_writes_pending() {
+        cx.status = Some(t("Дождитесь записи черновика, затем смените сейв.").to_owned());
         return;
     }
     let request = {
@@ -8209,6 +8238,46 @@ mod tests {
         assert_eq!(super::format_xray_game_time(63_480_696_003_240), "16.08.2012 06:40");
         assert_eq!(super::format_xray_game_time(0), "—");
         assert_eq!(super::format_xray_game_time(u64::MAX), "—");
+    }
+
+    #[test]
+    fn save_switch_waits_while_a_draft_write_is_pending() -> sse_core::Result<()> {
+        let directory = std::env::temp_dir().join(format!(
+            "sse-switch-wait-{}-{}",
+            std::process::id(),
+            NEXT_TEMP_DIRECTORY.fetch_add(1, Ordering::Relaxed)
+        ));
+        let workspace = Workspace::with_draft_directory(directory.clone());
+        let pending = workspace.begin_draft_write();
+        let (proxy, _receiver) = channel_pair::<AppMessage>();
+        let mut app = sse_app::state::AppState::new();
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: Some(&proxy),
+            status: None,
+            app: &mut app,
+        };
+
+        super::start_load(&workspace, fixture_slot("switch-b.sav", "stalker-cs", "cs"), &mut cx);
+        assert_eq!(
+            cx.status.as_deref(),
+            Some(crate::strings::t("Дождитесь записи черновика, затем смените сейв."))
+        );
+        assert!(
+            !workspace.is_loading(),
+            "the switch must not start while a draft write is pending"
+        );
+
+        drop(pending);
+        assert!(!workspace.draft_writes_pending());
+        super::start_load(&workspace, fixture_slot("switch-b.sav", "stalker-cs", "cs"), &mut cx);
+        assert!(
+            workspace.is_loading(),
+            "the switch starts once the draft write has finished"
+        );
+        let _ = fs::remove_dir_all(directory);
+        Ok(())
     }
 
     #[test]
