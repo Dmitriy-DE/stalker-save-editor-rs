@@ -299,3 +299,36 @@ fn static_player_inventory_title_uses_singular_owner_across_locales() {
         assert_eq!(t_in(language, "Инвентарь игрока"), value, "{language}");
     }
 }
+
+#[test]
+fn static_german_item_addition_help_names_the_game_save_and_items() {
+    assert_eq!(
+        t_in(
+            "de",
+            "Выберите совместимое сохранение с поддержкой добавления предметов."
+        ),
+        "Wählen Sie einen kompatiblen Spielstand aus, der das Hinzufügen von Gegenständen unterstützt."
+    );
+}
+
+#[test]
+fn static_ukrainian_item_addition_help_says_the_save_supports_item_addition() {
+    assert_eq!(
+        t_in(
+            "uk",
+            "Выберите совместимое сохранение с поддержкой добавления предметов."
+        ),
+        "Виберіть сумісне збереження, яке підтримує додавання предметів."
+    );
+}
+
+#[test]
+fn static_polish_item_addition_help_names_game_items() {
+    assert_eq!(
+        t_in(
+            "pl",
+            "Выберите совместимое сохранение с поддержкой добавления предметов."
+        ),
+        "Wybierz kompatybilny zapis gry obsługujący dodawanie przedmiotów."
+    );
+}
