@@ -13,6 +13,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Process-wide counter that makes transaction artifact names unique within one process; with the process id and
+/// the time it avoids collisions between concurrent transactions. It holds no save data.
 static NEXT_TRANSACTION_ID: AtomicU64 = AtomicU64::new(1);
 const MAXIMUM_JOURNAL_BYTES: u64 = 2 * 1024 * 1024;
 const MAXIMUM_VERIFIED_BACKUP_SETS: usize = 100;
@@ -1703,6 +1705,9 @@ struct CachedBackupHash {
     sha256: String,
 }
 
+/// Hashes of backup files, keyed by path and checked against the file's fingerprint before use, so a changed or
+/// replaced file is always rehashed. Bounded by `MAXIMUM_CACHED_BACKUP_HASHES`; eviction clears the whole map. It only
+/// saves reads: a missing entry costs a hash, never a wrong answer.
 static BACKUP_HASH_CACHE: OnceLock<Mutex<HashMap<PathBuf, CachedBackupHash>>> = OnceLock::new();
 const MAXIMUM_CACHED_BACKUP_HASHES: usize = 512;
 
