@@ -1154,7 +1154,7 @@
  "Объединять одинаковые": "Gleiche gruppieren",
  "Объект 0x{0:X4}": "Objekt 0x{0:X4}",
  "Объекты инвентаря": "Inventarobjekte",
- "Объекты переходов между локациями (Level Changers) из реестра X-Ray.": "Übergänge zwischen Orten (Level Changer), aus dem Spielstand gelesen.",
+ "Объекты переходов между локациями (Level Changers) из реестра X-Ray.": "Übergänge zwischen Orten (Level Changer) aus der X-Ray-Registry.",
  "Обычно ничего менять не нужно — редактор находит всё автоматически.": "Normalerweise muss nichts geändert werden — der Editor findet alles automatisch.",
  "Одинаковые предметы показываются одной строкой. Выключи, чтобы изменить или удалить один из них.": "Gleiche Gegenstände werden als eine Zeile gezeigt. Schalte das aus, um einen davon zu ändern oder zu entfernen.",
  "Одинаковых предметов: {0}": "Gleiche Gegenstände: {0}",

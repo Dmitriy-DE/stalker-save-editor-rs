@@ -1154,7 +1154,7 @@
  "Объединять одинаковые": "Group identical",
  "Объект 0x{0:X4}": "Object 0x{0:X4}",
  "Объекты инвентаря": "Inventory objects",
- "Объекты переходов между локациями (Level Changers) из реестра X-Ray.": "Level changers between locations, read from the save.",
+ "Объекты переходов между локациями (Level Changers) из реестра X-Ray.": "Level changers between locations, from the X-Ray registry.",
  "Обычно ничего менять не нужно — редактор находит всё автоматически.": "Usually nothing needs changing — the editor finds everything automatically.",
  "Одинаковые предметы показываются одной строкой. Выключи, чтобы изменить или удалить один из них.": "Identical items are shown as one row. Turn this off to change or remove one of them.",
  "Одинаковых предметов: {0}": "Identical items: {0}",
