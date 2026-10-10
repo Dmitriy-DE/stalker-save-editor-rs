@@ -6,7 +6,7 @@ use sse_core::{Error, ExitCode as CommandExitCode, SaveBuffer};
 use sse_xray::writer::{self, Change, ChangeSet, Placement};
 use sse_xray::Save;
 
-use crate::{configured_backup_directory, S2_LEGACY_EDIT_REFUSAL};
+use crate::{write_backup_directory, S2_LEGACY_EDIT_REFUSAL};
 
 enum WriteFailure {
     Usage(String),
@@ -372,10 +372,7 @@ fn prepare_and_export(arguments: &[String]) -> Result<(), WriteFailure> {
     let output = writer::apply(&save, &ChangeSet::new(changes))?;
     let source_sha256 = sse_codecs::sha256::sha256_hex(source.as_slice());
     let output_path = options.output.clone().unwrap_or_else(|| default_output_path(&path));
-    let backup_directory = options
-        .backup_directory
-        .clone()
-        .unwrap_or_else(configured_backup_directory);
+    let backup_directory = write_backup_directory(options.backup_directory.clone())?;
     let receipt = publish_cli_write(
         WritePublication {
             source_path: &path,
@@ -583,10 +580,7 @@ fn prepare_and_export_s2(
     let output = save.write_changes(&changes)?;
     let source_sha256 = sse_codecs::sha256::sha256_hex(source);
     let output_path = options.output.clone().unwrap_or_else(|| default_output_path(path));
-    let backup_directory = options
-        .backup_directory
-        .clone()
-        .unwrap_or_else(configured_backup_directory);
+    let backup_directory = write_backup_directory(options.backup_directory.clone())?;
     let receipt = publish_cli_write(
         WritePublication {
             source_path: path,
@@ -1410,6 +1404,29 @@ mod write_tests {
 
         assert_eq!(result, 3);
         assert!(!output.exists());
+    }
+
+    #[test]
+    fn write_without_backup_dir_is_refused_when_settings_cannot_be_read() {
+        let settings_path = sse_app::default_settings_path();
+        if let Some(parent) = settings_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        assert!(std::fs::write(&settings_path, b"{ damaged").is_ok());
+        let temporary = TempDirectory::new();
+        let source = temporary.0.join("source.sav");
+        assert!(std::fs::write(
+            &source,
+            include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-source.sav")
+        )
+        .is_ok());
+        let args = vec!["set-money".to_owned(), source.display().to_string(), "5".to_owned()];
+
+        let exit_code = run(&args);
+
+        let _ = std::fs::remove_file(&settings_path);
+        assert_eq!(exit_code, sse_core::ExitCode::Refused as u8);
+        assert!(!temporary.0.join("source_edited.sav").exists());
     }
 
     #[test]

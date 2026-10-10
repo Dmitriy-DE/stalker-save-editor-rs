@@ -106,6 +106,20 @@ fn configured_backup_directory() -> PathBuf {
     sse_app::paths::backup_directory(&settings)
 }
 
+/// Backup directory for a write: `--backup-dir` if given, otherwise the configured one.
+/// A settings file that cannot be read may name a different backup folder, so the write is refused instead.
+fn write_backup_directory(explicit: Option<PathBuf>) -> Result<PathBuf, sse_core::Error> {
+    if let Some(directory) = explicit {
+        return Ok(directory);
+    }
+    match sse_app::AppSettings::load(&sse_app::default_settings_path()) {
+        Ok(settings) => Ok(sse_app::paths::backup_directory(&settings)),
+        Err(error) => Err(sse_core::Error::Refused(format!(
+            "settings.json cannot be read, so the backup folder is unknown; pass --backup-dir explicitly ({error})"
+        ))),
+    }
+}
+
 fn report(result: sse_core::Result<()>) -> u8 {
     match result {
         Ok(()) => sse_core::ExitCode::Done as u8,
