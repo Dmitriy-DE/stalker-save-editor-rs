@@ -1053,6 +1053,23 @@ enum AchReply {
     List(std::result::Result<Vec<Achievement>, String>),
     Changed(std::result::Result<(), String>),
 }
+/// Eight invented achievements for the developer screenshot tool; nothing here comes from Steam.
+/// Only for sse-ui-dev (screenshots); not part of the screen API.
+#[must_use]
+pub fn achievement_fixture_message() -> AppMessage {
+    let items = (1..=8_u32)
+        .map(|index| Achievement {
+            name: format!("FIXTURE_ACHIEVEMENT_{index}"),
+            display_name: format!("Тестовое достижение {index}"),
+            description: format!("Выдуманное описание достижения {index} для снимка экрана."),
+            hidden: false,
+            achieved: index % 3 == 0,
+            unlock_time: 0,
+        })
+        .collect();
+    AppMessage::ToScreen(ScreenId::Achievements, Box::new(AchReply::List(Ok(items))))
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct AchievementIntent {
     app_id: u32,
@@ -1116,7 +1133,7 @@ impl Achievements {
                 Some(a) => show_list_row(
                     cx.tree,
                     row,
-                    &format!("{} {}", if a.achieved { "✓" } else { "○" }, clip(&a.display_name)),
+                    &format!("{} {}", if a.achieved { "●" } else { "○" }, clip(&a.display_name)),
                     &clip(&a.description),
                     chosen == Some(i),
                 )?,
@@ -1135,13 +1152,19 @@ impl Achievements {
             } else {
                 t("Не получено")
             };
-            let values = [clip(&a.display_name), clip(&a.description), status.to_owned()];
+            let values = [clip(&a.display_name), status.to_owned()];
+            // The description wraps in the side panel's paragraph; a key–value row would run past the panel's edge.
+            cx.tree.set_text(list.detail, &a.description)?;
+            cx.tree.set_visible(list.detail, true)?;
             for (value, text) in list.kv_values.iter().zip(values.iter()) {
                 cx.tree.set_text(*value, text)?;
             }
         }
         for id in [self.set, self.clear].into_iter().flatten() {
             cx.tree.set_enabled(id, shown)?;
+        }
+        if chosen.is_none() {
+            cx.tree.set_visible(list.detail, false)?;
         }
         if let Some(id) = self.status {
             let count = self.items.len();
@@ -1185,7 +1208,7 @@ impl Screen for Achievements {
         )?;
         self.progress = Some(style::label(cx.tree, card, t("0 из 0 получено (0%)"), Text::Value)?);
         // The list of achievements to the left, the chosen one and its actions to the right.
-        let keys = [t("Название"), t("Описание"), t("Статус")].map(str::to_owned);
+        let keys = [t("Название"), t("Статус")].map(str::to_owned);
         let list = build_list_side(
             cx,
             host,

@@ -117,7 +117,7 @@ fn package_ee(args: &[String]) -> Result<()> {
 fn screenshot(args: &[String]) -> Result<()> {
     let path = args.get(1).ok_or_else(|| {
         Error::Refused(
-            "usage: --screenshot OUT.png [WxH] [NAV] [--open SAVE] [--add-item] [--discover] [--press LABEL] [--settle] [--wait] [--select-first]"
+            "usage: --screenshot OUT.png [WxH] [NAV] [--open SAVE] [--add-item] [--discover] [--press LABEL] [--settle] [--wait] [--select-first] [--achievements-fixture]"
                 .to_owned(),
         )
     })?;
@@ -128,6 +128,7 @@ fn screenshot(args: &[String]) -> Result<()> {
     let mut discover = false;
     let mut wait = false;
     let mut select_first = false;
+    let mut achievements_fixture = false;
     let mut press: Option<&String> = None;
     let mut settle = false;
     let mut index = 2;
@@ -137,6 +138,7 @@ fn screenshot(args: &[String]) -> Result<()> {
             Some("--discover") => discover = true,
             Some("--wait") => wait = true,
             Some("--select-first") => select_first = true,
+            Some("--achievements-fixture") => achievements_fixture = true,
             Some("--settle") => settle = true,
             Some("--press") => {
                 index = index.saturating_add(1);
@@ -252,6 +254,10 @@ fn screenshot(args: &[String]) -> Result<()> {
                 shell.message(&mut tree, &message, None);
             }
         }
+    }
+    if achievements_fixture {
+        let fixture = Message::User(sse_ui::screens::services::achievement_fixture_message());
+        shell.message(&mut tree, &fixture, None);
     }
     if select_first && !shell.select_first_fix(&mut tree)? {
         return Err(Error::Refused("the screen has no fix row to select".to_owned()));
