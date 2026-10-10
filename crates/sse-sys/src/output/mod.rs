@@ -2,6 +2,10 @@
 
 use std::thread;
 
+pub mod stream;
+
+pub use stream::{ChunkSink, LoopingPlayback, CHUNK_FRAMES};
+
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "macos")]
