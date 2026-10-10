@@ -183,6 +183,19 @@ impl TextInput {
     }
 }
 
+/// Status text for a paste that inserted nothing, for any text field.
+#[must_use]
+pub fn paste_refusal_message(refusal: crate::edit::PasteRefusal) -> &'static str {
+    match refusal {
+        crate::edit::PasteRefusal::TooLong => {
+            crate::strings::t("Вставка не поместилась: текст длиннее оставшегося места в поле.")
+        }
+        crate::edit::PasteRefusal::NotAllowed => {
+            crate::strings::t("Вставка не принята: текст не подходит под формат поля.")
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

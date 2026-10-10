@@ -403,17 +403,21 @@ impl HistoryScreen {
             _ => Key::Character(text.unwrap_or('\0')),
         };
         let typed = text.map(|character| character.to_string());
-        let changed = {
+        let (changed, refusal) = {
             let Some(input) = self.doctor_path.as_mut() else {
                 return Ok(());
             };
-            input.key(
+            let changed = input.key(
                 key,
                 Modifiers { ctrl, shift },
                 typed.as_deref(),
                 &mut self.doctor_clipboard,
-            )?
+            )?;
+            (changed, input.take_paste_refusal())
         };
+        if let Some(refusal) = refusal {
+            cx.status = Some(crate::widgets::text_input::paste_refusal_message(refusal).to_owned());
+        }
         if changed {
             let value = self.doctor_path.as_ref().map_or_else(String::new, TextInput::text);
             if let Some(widget) = self.doctor_path_input {
