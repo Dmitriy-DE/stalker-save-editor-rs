@@ -297,12 +297,7 @@ impl SaveDirectoryLocator {
 
         for release in RELEASES {
             if release.edition == "original" {
-                let folders = match release.family {
-                    "soc" => XRAY_SAVE_FOLDERS_SOC,
-                    "clear_sky" => XRAY_SAVE_FOLDERS_CS,
-                    "cop" => XRAY_SAVE_FOLDERS_COP,
-                    _ => &[],
-                };
+                let folders = xray_save_folders(release.family);
                 for root in &document_roots {
                     for folder in folders {
                         let path = root.join(folder).join("savedgames");
@@ -310,12 +305,7 @@ impl SaveDirectoryLocator {
                     }
                 }
             } else if release.edition == "enhanced" {
-                let folders = match release.id {
-                    "stalker-soc-ee" => ENHANCED_SAVE_FOLDERS_SOC,
-                    "stalker-cs-ee" => ENHANCED_SAVE_FOLDERS_CS,
-                    "stalker-cop-ee" => ENHANCED_SAVE_FOLDERS_COP,
-                    _ => &[],
-                };
+                let folders = enhanced_save_folders(release.id);
                 for root in &saved_game_roots {
                     for folder in folders {
                         let steam_path = root.join(folder).join("STEAM").join("savedgames");
@@ -395,6 +385,26 @@ impl SaveDirectoryLocator {
     }
 }
 
+/// The original-edition save folders for one game family.
+fn xray_save_folders(family: &str) -> &'static [&'static str] {
+    match family {
+        "soc" => XRAY_SAVE_FOLDERS_SOC,
+        "clear_sky" => XRAY_SAVE_FOLDERS_CS,
+        "cop" => XRAY_SAVE_FOLDERS_COP,
+        _ => &[],
+    }
+}
+
+/// The Enhanced Edition save folders for one release identifier.
+fn enhanced_save_folders(release_id: &str) -> &'static [&'static str] {
+    match release_id {
+        "stalker-soc-ee" => ENHANCED_SAVE_FOLDERS_SOC,
+        "stalker-cs-ee" => ENHANCED_SAVE_FOLDERS_CS,
+        "stalker-cop-ee" => ENHANCED_SAVE_FOLDERS_COP,
+        _ => &[],
+    }
+}
+
 fn add_stalker2_local_candidates(
     candidates: &mut Vec<SaveDirectoryCandidate>,
     seen: &mut HashSet<String>,
@@ -454,12 +464,7 @@ fn add_proton_candidates(
         .join("drive_c");
 
     let users = get_proton_user_directories(&drive_c);
-    let folders = match release.family {
-        "soc" => XRAY_SAVE_FOLDERS_SOC,
-        "clear_sky" => XRAY_SAVE_FOLDERS_CS,
-        "cop" => XRAY_SAVE_FOLDERS_COP,
-        _ => &[],
-    };
+    let folders = xray_save_folders(release.family);
 
     for user in &users {
         for folder in folders {
@@ -474,12 +479,7 @@ fn add_proton_candidates(
         }
 
         if release.edition == "enhanced" {
-            let ee_folders = match release.id {
-                "stalker-soc-ee" => ENHANCED_SAVE_FOLDERS_SOC,
-                "stalker-cs-ee" => ENHANCED_SAVE_FOLDERS_CS,
-                "stalker-cop-ee" => ENHANCED_SAVE_FOLDERS_COP,
-                _ => &[],
-            };
+            let ee_folders = enhanced_save_folders(release.id);
             for folder in ee_folders {
                 let steam_path = user.join("Saved Games").join(folder).join("STEAM").join("savedgames");
                 add_candidate(candidates, seen, release, steam_path);
