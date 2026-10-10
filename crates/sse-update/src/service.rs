@@ -30,7 +30,6 @@ pub struct UpdateService {
     current_version: String,
     installation: UpdateInstallation,
     manifest_url: String,
-    public_key_pem: Option<String>,
 }
 
 enum CheckFailure {
@@ -46,7 +45,6 @@ impl UpdateService {
             current_version: current_version.into(),
             installation,
             manifest_url: DEFAULT_MANIFEST_URL.to_string(),
-            public_key_pem: None,
         }
     }
 
@@ -155,7 +153,7 @@ impl UpdateService {
         }
 
         // 3. Verify signature
-        verify_signature(&manifest_bytes, &sig_bytes, self.public_key_pem.as_deref()).map_err(CheckFailure::Invalid)?;
+        verify_signature(&manifest_bytes, &sig_bytes).map_err(CheckFailure::Invalid)?;
 
         // 4. Parse manifest
         let manifest = UpdateManifest::parse(&manifest_bytes).map_err(CheckFailure::Invalid)?;

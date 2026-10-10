@@ -223,7 +223,7 @@ fn run_verify_manifest(args: &[String]) -> ExitCode {
         eprintln!("Refused: the manifest signature is empty; the manifest is not signed");
         return ExitCode::Refused;
     }
-    match sse_update::verify_signature(&manifest_bytes, &signature_bytes, None) {
+    match sse_update::verify_signature(&manifest_bytes, &signature_bytes) {
         Ok(()) => {
             println!("Signature valid");
             ExitCode::Done

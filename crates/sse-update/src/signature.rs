@@ -16,11 +16,7 @@ DuEkmd6oGnQq6qsZmILc2fYC0wfqEMk/NB88BSFAC1N6fmziJf11RVtlLQ==\n\
 /// # Errors
 /// Returns an error if the signature exceeds [`MAXIMUM_SIGNATURE_BYTES`], cannot be base64-decoded,
 /// or fails ECDSA verification against the publisher public key.
-pub fn verify_signature(
-    manifest_bytes: &[u8],
-    signature_file_bytes: &[u8],
-    public_key_pem: Option<&str>,
-) -> Result<()> {
+pub fn verify_signature(manifest_bytes: &[u8], signature_file_bytes: &[u8]) -> Result<()> {
     if signature_file_bytes.len() > MAXIMUM_SIGNATURE_BYTES {
         return Err(Error::Refused(
             "Signature file exceeds maximum permitted size".to_string(),
@@ -33,8 +29,7 @@ pub fn verify_signature(
     let signature_raw = sse_codecs::base64::decode_standard_ignoring_ascii_whitespace(sig_text)?;
 
     let digest = sse_codecs::sha256::sha256(manifest_bytes);
-    let pem = public_key_pem.unwrap_or(PUBLIC_KEY_PEM);
-    let public_key = sse_codecs::p256::PublicKey::from_pem(pem)?;
+    let public_key = sse_codecs::p256::PublicKey::from_pem(PUBLIC_KEY_PEM)?;
 
     if public_key.verify(&digest, &signature_raw) {
         Ok(())
