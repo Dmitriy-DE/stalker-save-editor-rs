@@ -3,6 +3,8 @@
 pub mod directory_dialog;
 pub mod fetch;
 pub mod file_dialog;
+#[cfg(target_os = "linux")]
+mod hex_util;
 pub mod hotkeys;
 pub mod output;
 pub mod process;

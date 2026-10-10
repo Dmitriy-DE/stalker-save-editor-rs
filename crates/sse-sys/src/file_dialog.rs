@@ -211,13 +211,13 @@ fn parse_file_url_selection_output(output: &[u8]) -> Result<Vec<PathBuf>> {
             if byte == b'%' {
                 let high = encoded_path
                     .get(index.saturating_add(1))
-                    .and_then(|value| hex_nibble(*value))
+                    .and_then(|value| crate::hex_util::hex_nibble(*value))
                     .ok_or_else(|| {
                         sse_core::Error::Refused("native file picker returned an invalid file URL".to_owned())
                     })?;
                 let low = encoded_path
                     .get(index.saturating_add(2))
-                    .and_then(|value| hex_nibble(*value))
+                    .and_then(|value| crate::hex_util::hex_nibble(*value))
                     .ok_or_else(|| {
                         sse_core::Error::Refused("native file picker returned an invalid file URL".to_owned())
                     })?;
@@ -242,16 +242,6 @@ fn parse_file_url_selection_output(output: &[u8]) -> Result<Vec<PathBuf>> {
         paths.push(path);
     }
     Ok(paths)
-}
-
-#[cfg(target_os = "linux")]
-fn hex_nibble(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => byte.checked_sub(b'0'),
-        b'a'..=b'f' => byte.checked_sub(b'a').and_then(|value| value.checked_add(10)),
-        b'A'..=b'F' => byte.checked_sub(b'A').and_then(|value| value.checked_add(10)),
-        _ => None,
-    }
 }
 
 #[cfg(target_os = "linux")]
