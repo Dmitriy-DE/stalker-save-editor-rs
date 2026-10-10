@@ -66,13 +66,7 @@ fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) -> Result<()> {
     out.extend_from_slice(&len.to_be_bytes());
     out.extend_from_slice(kind);
     out.extend_from_slice(data);
-    let mut crc = 0xffff_ffffu32;
-    for b in kind.iter().chain(data) {
-        crc ^= u32::from(*b);
-        for _ in 0..8 {
-            crc = (crc >> 1) ^ if crc & 1 != 0 { 0xedb8_8320 } else { 0 };
-        }
-    }
+    let crc = crate::crc32::crc32_update(crate::crc32::crc32_update(0xFFFF_FFFF, kind), data);
     out.extend_from_slice(&(!crc).to_be_bytes());
     Ok(())
 }
