@@ -1,0 +1,54 @@
+{
+  "uk": {
+    "english": 0,
+    "russian": 169
+  },
+  "de": {
+    "english": 644,
+    "russian": 4
+  },
+  "fr": {
+    "english": 647,
+    "russian": 4
+  },
+  "it": {
+    "english": 620,
+    "russian": 4
+  },
+  "es": {
+    "english": 628,
+    "russian": 4
+  },
+  "pl": {
+    "english": 584,
+    "russian": 4
+  },
+  "cs": {
+    "english": 610,
+    "russian": 4
+  },
+  "pt-BR": {
+    "english": 642,
+    "russian": 4
+  },
+  "tr": {
+    "english": 603,
+    "russian": 4
+  },
+  "ja": {
+    "english": 589,
+    "russian": 4
+  },
+  "ko": {
+    "english": 588,
+    "russian": 4
+  },
+  "zh-CN": {
+    "english": 584,
+    "russian": 4
+  },
+  "zh-TW": {
+    "english": 584,
+    "russian": 4
+  }
+}
