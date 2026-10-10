@@ -49,6 +49,7 @@ def main() -> int:
             raise ValueError(f"{fallback_path}: expected object")
         fallback_catalogs[lang] = fallback_catalog
         keys.update(fallback_catalog)
+    catalog_keys = set(keys)
     extras_path = pathlib.Path(__file__).with_name("i18n-extra.json")
     extras = json.loads(extras_path.read_text(encoding="utf-8")) if extras_path.exists() else {}
     if not isinstance(extras, dict):
@@ -71,7 +72,7 @@ def main() -> int:
             if not isinstance(value, str) or not value:
                 value = key
             values.append(value)
-        if key in extras and any(not isinstance(extras[key].get(lang), str) or not extras[key].get(lang) for lang in LANGS):
+        if key in extras and key not in catalog_keys and any(not isinstance(extras[key].get(lang), str) or not extras[key].get(lang) for lang in LANGS):
             raise ValueError(f"{extras_path}: Rust-only key {key!r} must provide all 15 translations")
         rows.append(f"    ({q(key)}, [" + ", ".join(q(v) for v in values) + "]),")
     header = """//! Generated from C# and checked-in Rust localization catalogs. Do not edit by hand.
