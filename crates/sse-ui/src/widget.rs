@@ -253,6 +253,8 @@ pub struct Tree {
     changed_inputs: Vec<WidgetId>,
     tooltip_ticks: u8,
     tooltip_visible: bool,
+    /// Widget whose tooltip is timed. Disabled widgets with a tooltip are targets here, not for hover.
+    tooltip_target: Option<WidgetId>,
 }
 
 impl Tree {
@@ -281,6 +283,7 @@ impl Tree {
             changed_inputs: Vec::new(),
             tooltip_ticks: 0,
             tooltip_visible: false,
+            tooltip_target: None,
         }
     }
 
@@ -554,12 +557,7 @@ impl Tree {
 
     /// Advances the tooltip delay by one 500 ms UI timer tick.
     pub fn tick_tooltip(&mut self) -> bool {
-        let has = self
-            .hover
-            .and_then(|id| self.nodes.get(id.0))
-            .and_then(|node| node.tooltip.as_ref())
-            .is_some();
-        if !has {
+        if self.tooltip_target.is_none() {
             self.tooltip_ticks = 0;
             self.tooltip_visible = false;
             return false;
@@ -576,7 +574,7 @@ impl Tree {
     pub fn active_tooltip(&self) -> Option<&str> {
         self.tooltip_visible
             .then(|| {
-                self.hover
+                self.tooltip_target
                     .and_then(|id| self.nodes.get(id.0))
                     .and_then(|node| node.tooltip.as_deref())
             })
@@ -1148,6 +1146,14 @@ impl Tree {
 
     /// Pointer moved; updates hover and damages what changed. Returns true when hover changed.
     pub fn pointer_moved(&mut self, x: i32, y: i32) -> bool {
+        let tip = self
+            .hit_interactive(x, y, false)
+            .filter(|id| self.nodes.get(id.0).is_some_and(|node| node.tooltip.is_some()));
+        if tip != self.tooltip_target {
+            self.tooltip_target = tip;
+            self.tooltip_ticks = 0;
+            self.tooltip_visible = false;
+        }
         let hit = self.hit_interactive(x, y, true);
         if hit == self.hover {
             return false;
@@ -1169,6 +1175,7 @@ impl Tree {
             self.add_damage(rect);
         }
         self.hover = None;
+        self.tooltip_target = None;
         self.tooltip_ticks = 0;
         self.tooltip_visible = false;
     }
@@ -1944,6 +1951,23 @@ mod tests {
         assert!(!tree.pointer_moved(x, y), "a disabled control must not take hover");
         assert_eq!(tree.pointer_button(true, x, y), None);
         assert_eq!(tree.pointer_button(false, x, y), None);
+        Ok(())
+    }
+
+    #[test]
+    fn disabled_control_shows_its_tooltip_without_hover() -> sse_core::Result<()> {
+        let (mut tree, first, _) = two_buttons(Look::default())?;
+        tree.set_tooltip(first, "Nothing to undo")?;
+        tree.set_enabled(first, false)?;
+        let rect = tree.rect(first)?;
+        let (x, y) = (rect.x.saturating_add(2), rect.y.saturating_add(2));
+        tree.pointer_moved(x, y);
+        assert_eq!(tree.hit(x, y), None, "a disabled control must not take clicks");
+        assert!(
+            tree.tick_tooltip(),
+            "the tooltip timer must start for a disabled control"
+        );
+        assert_eq!(tree.active_tooltip(), Some("Nothing to undo"));
         Ok(())
     }
 
