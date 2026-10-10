@@ -12,6 +12,9 @@ const MAX_GLYPHS: usize = 1_000_000;
 const MAX_CONTOURS: usize = 16_384;
 const MAX_POINTS: usize = 1_000_000;
 const MAX_COMPOSITE_DEPTH: usize = 8;
+// Depth alone does not bound work: a composite may reference several glyphs. This caps the glyph outlines
+// one drawn glyph may expand to, far above any real glyph.
+const MAX_GLYF_WORK: usize = 100_000;
 const MAX_CFF_STACK: usize = 48;
 const MAX_CFF_SUBR_DEPTH: usize = 10;
 // Subroutine depth alone does not bound work: each level may call several subroutines. This caps the
@@ -437,7 +440,8 @@ impl<'a> Font<'a> {
             return Err(Error::damaged("glyph id is outside the font"));
         }
         if self.glyf.is_some() {
-            return self.outline_glyf(glyph.0, sink, Transform::identity(), 0);
+            let mut work = 0_usize;
+            return self.outline_glyf(glyph.0, sink, Transform::identity(), 0, &mut work);
         }
         if let Some(cff) = &self.cff {
             return outline_cff(self.data, cff, glyph.0, sink);
@@ -445,7 +449,18 @@ impl<'a> Font<'a> {
         Err(Error::damaged("font has no outline table"))
     }
 
-    fn outline_glyf(&self, glyph: u16, sink: &mut impl OutlineSink, transform: Transform, depth: usize) -> Result<()> {
+    fn outline_glyf(
+        &self,
+        glyph: u16,
+        sink: &mut impl OutlineSink,
+        transform: Transform,
+        depth: usize,
+        work: &mut usize,
+    ) -> Result<()> {
+        *work = checked_add(*work, 1)?;
+        if *work > MAX_GLYF_WORK {
+            return Err(Error::damaged("composite glyph work exceeds limit"));
+        }
         if depth > MAX_COMPOSITE_DEPTH {
             return Err(Error::damaged("composite glyph depth exceeds limit"));
         }
@@ -472,7 +487,7 @@ impl<'a> Font<'a> {
                 transform,
             )
         } else {
-            self.outline_composite(glyph, bytes, sink, transform, depth)
+            self.outline_composite(glyph, bytes, sink, transform, depth, work)
         }
     }
 
@@ -665,6 +680,7 @@ impl<'a> Font<'a> {
         sink: &mut impl OutlineSink,
         transform: Transform,
         depth: usize,
+        work: &mut usize,
     ) -> Result<()> {
         let mut position = 10_usize;
         let next_depth = checked_add(depth, 1)?;
@@ -742,6 +758,7 @@ impl<'a> Font<'a> {
                 sink,
                 transform.combine(component.transform),
                 next_depth,
+                work,
             )?;
         }
         Ok(())
@@ -3484,6 +3501,83 @@ mod cff_budget_tests {
         };
 
         let result = outline_cff(&data, &cff, 0, &mut NullSink);
+        assert!(matches!(result, Err(Error::Damaged(_))), "{result:?}");
+    }
+}
+
+#[cfg(test)]
+mod glyf_budget_tests {
+    use super::{Font, GlyphId, OutlineSink, Table};
+    use sse_core::Error;
+
+    struct NullSink;
+
+    impl OutlineSink for NullSink {
+        fn move_to(&mut self, _x: f32, _y: f32) {}
+        fn line_to(&mut self, _x: f32, _y: f32) {}
+        fn quad_to(&mut self, _cx: f32, _cy: f32, _x: f32, _y: f32) {}
+        fn cubic_to(&mut self, _c1x: f32, _c1y: f32, _c2x: f32, _c2y: f32, _x: f32, _y: f32) {}
+        fn close(&mut self) {}
+    }
+
+    #[test]
+    fn composite_fan_out_within_the_depth_limit_is_refused_by_the_work_budget() {
+        // Glyph 0 is empty; glyph k (1..GLYPHS) references glyph k-1 FAN_OUT times. The chain is 8 deep,
+        // so the depth limit allows it, but the walk visits FAN_OUT^8 glyphs without a work budget.
+        const GLYPHS: usize = 9;
+        const FAN_OUT: usize = 64;
+        let mut glyf = Vec::new();
+        let mut offsets: Vec<u32> = vec![0, 0];
+        for glyph in 1..GLYPHS {
+            // Composite header: numberOfContours = -1, then a zero bounding box (10 bytes).
+            glyf.extend_from_slice(&[0xFF, 0xFF, 0, 0, 0, 0, 0, 0, 0, 0]);
+            for index in 0..FAN_OUT {
+                // XY-value args as bytes (0x0002); MORE_COMPONENTS (0x0020) on all but the last.
+                let flags: u16 = 0x0002 | if index + 1 < FAN_OUT { 0x0020 } else { 0 };
+                let target = u16::try_from(glyph - 1).unwrap_or(0);
+                glyf.extend_from_slice(&flags.to_be_bytes());
+                glyf.extend_from_slice(&target.to_be_bytes());
+                glyf.extend_from_slice(&[0, 0]);
+            }
+            offsets.push(u32::try_from(glyf.len()).unwrap_or(u32::MAX));
+        }
+        let mut data: Vec<u8> = offsets.iter().flat_map(|offset| offset.to_be_bytes()).collect();
+        let loca_length = data.len();
+        data.extend_from_slice(&glyf);
+
+        let font = Font {
+            data: &data,
+            glyph_count: u32::try_from(GLYPHS).unwrap_or(0),
+            units_per_em: 1000,
+            ascent: 0,
+            descent: 0,
+            line_gap: 0,
+            number_of_h_metrics: 0,
+            loca_long: true,
+            cmap_offset: 0,
+            cmap_length: 0,
+            glyf: Some(Table {
+                tag: *b"glyf",
+                offset: loca_length,
+                length: glyf.len(),
+            }),
+            loca: Some(Table {
+                tag: *b"loca",
+                offset: 0,
+                length: loca_length,
+            }),
+            hmtx: Table {
+                tag: *b"hmtx",
+                offset: 0,
+                length: 0,
+            },
+            kern: None,
+            cff: None,
+            variation: None,
+        };
+
+        let top = u16::try_from(GLYPHS - 1).unwrap_or(0);
+        let result = font.outline(GlyphId(top), &mut NullSink);
         assert!(matches!(result, Err(Error::Damaged(_))), "{result:?}");
     }
 }
