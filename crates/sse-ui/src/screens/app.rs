@@ -564,6 +564,18 @@ struct DiagnosticReportFinished {
     result: std::result::Result<PathBuf, String>,
 }
 
+/// The settings value for a field edited to `text`. A field still showing the current path, even a lossy
+/// rendering of a path that is not valid UTF-8, keeps the exact original path.
+fn field_backup_directory(text: &str, current: Option<&PathBuf>) -> Option<PathBuf> {
+    if let Some(path) = current {
+        if path.to_string_lossy() == text {
+            return Some(path.clone());
+        }
+    }
+    let trimmed = text.trim();
+    (!trimmed.is_empty()).then(|| PathBuf::from(trimmed))
+}
+
 /// Result of the background folder dialog for the backup directory; `None` means the user cancelled.
 struct PickedBackupDirectory(std::result::Result<Option<PathBuf>, String>);
 struct MetricsUploadFinished {
@@ -773,14 +785,17 @@ impl Settings {
         if let Some(input) = self.backup_input {
             tree.set_input_text(input, &path.display().to_string())?;
         }
-        self.sync_backup_directory(tree);
         Ok(())
     }
 
-    fn sync_backup_directory(&mut self, tree: &crate::widget::Tree) {
-        if let (Some(input), Some(workspace)) = (self.backup_input, self.backup_workspace.as_ref()) {
-            let value = tree.input_text(input).unwrap_or("").trim();
-            self.settings.backup_directory = (!value.is_empty()).then(|| std::path::PathBuf::from(value));
+    /// Takes the field into the settings and the shared workspace. Runs only when the user saves: a path typed
+    /// but not saved must not move where backups and journals are written.
+    fn commit_backup_directory(&mut self, tree: &crate::widget::Tree) {
+        if let Some(input) = self.backup_input {
+            let text = tree.input_text(input).unwrap_or("");
+            self.settings.backup_directory = field_backup_directory(text, self.settings.backup_directory.as_ref());
+        }
+        if let Some(workspace) = self.backup_workspace.as_ref() {
             workspace.set_backup_directory(sse_app::paths::backup_directory(&self.settings));
         }
     }
@@ -1027,7 +1042,7 @@ impl Screen for Settings {
         style::label(
             cx.tree,
             paths,
-            crate::strings::t("Добавление/удаление/обзор требуют контроллера выбора папки; до его подключения изменения путей отключены."),
+            crate::strings::t("Путь резервных копий применяется после «Сохранить настройки»."),
             Text::Note,
         )?;
         self.section_panels.push(paths);
@@ -1077,7 +1092,7 @@ impl Screen for Settings {
             .settings
             .backup_directory
             .as_ref()
-            .map_or("", |p| p.to_str().unwrap_or(""));
+            .map_or_else(String::new, |p| p.to_string_lossy().into_owned());
         self.backup_input = Some(cx.tree.add(
             Some(backups),
             NodeKind::Leaf,
@@ -1387,7 +1402,6 @@ impl Screen for Settings {
                 }
             }
         }
-        self.sync_backup_directory(cx.tree);
         if clicked.is_some() && clicked == self.game_logs_button {
             if self.include_game_logs {
                 self.include_game_logs = false;
@@ -1551,7 +1565,10 @@ impl Screen for Settings {
                 if let Some(button) = self.support_save_button {
                     cx.tree.set_text(button, crate::strings::t("Собираю отчёт в фоне…"))?;
                 }
-                let path = sse_app::paths::default_data_directory().join("diagnostics-report.zip");
+                let stamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |elapsed| elapsed.as_millis());
+                let path = sse_app::paths::default_data_directory().join(format!("diagnostics-report-{stamp}.zip"));
                 let worker_path = path.clone();
                 let include_game_logs = self.include_game_logs;
                 sse_app::tasks::spawn_named_detached("diagnostics-background", move || {
@@ -1593,9 +1610,18 @@ impl Screen for Settings {
             cx.status = Some(crate::strings::t("Ошибка скрыта.").to_owned());
         }
         if clicked.is_some() && clicked == self.reports_button {
-            self.settings.send_reports = !self.settings.send_reports;
-            cx.status =
-                Some(crate::strings::t("Настройка отчётов изменена; нажмите «Сохранить настройки».").to_owned());
+            if !self.settings.send_reports && !self.settings.reports_notice_shown {
+                cx.status = Some(
+                    crate::strings::t(
+                        "Включить отправку можно только после подтверждения в окне уведомления об отчётах.",
+                    )
+                    .to_owned(),
+                );
+            } else {
+                self.settings.send_reports = !self.settings.send_reports;
+                cx.status =
+                    Some(crate::strings::t("Настройка отчётов изменена; нажмите «Сохранить настройки».").to_owned());
+            }
         }
         if clicked.is_some() && clicked == self.theme_button {
             self.theme = self
@@ -1696,10 +1722,7 @@ impl Screen for Settings {
             return self.browse_backup_directory(cx);
         }
         if clicked.is_some() && clicked == self.save_button {
-            if let Some(input) = self.backup_input {
-                let value = cx.tree.input_text(input).unwrap_or("").trim();
-                self.settings.backup_directory = (!value.is_empty()).then(|| std::path::PathBuf::from(value));
-            }
+            self.commit_backup_directory(cx.tree);
             self.settings.language = crate::strings::LANGUAGES
                 .get(self.language)
                 .map(|code| (*code).to_owned());
@@ -1884,6 +1907,20 @@ mod tests {
     }
 
     #[test]
+    fn backup_field_keeps_a_path_that_is_not_utf8_unless_it_was_edited() {
+        let current = PathBuf::from("backups");
+        assert_eq!(
+            super::field_backup_directory("backups", Some(&current)),
+            Some(current.clone())
+        );
+        assert_eq!(super::field_backup_directory("  ", Some(&current)), None);
+        assert_eq!(
+            super::field_backup_directory(" other ", Some(&current)),
+            Some(PathBuf::from("other"))
+        );
+    }
+
+    #[test]
     fn picked_backup_folder_takes_the_same_path_as_typing_it() -> sse_core::Result<()> {
         let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
         let input = tree.add(
@@ -1903,7 +1940,7 @@ mod tests {
             ..Settings::default()
         };
         tree.set_input_text(input, "picked-backups")?;
-        typed_settings.sync_backup_directory(&tree);
+        typed_settings.commit_backup_directory(&tree);
 
         let picked = Workspace::with_backup_directory(PathBuf::from("old-backups"));
         let mut picked_settings = Settings {
@@ -1912,6 +1949,12 @@ mod tests {
             ..Settings::default()
         };
         picked_settings.apply_backup_directory(&mut tree, std::path::Path::new("picked-backups"))?;
+        assert_eq!(
+            picked.backup_directory(),
+            PathBuf::from("old-backups"),
+            "a picked folder must not move backups before save"
+        );
+        picked_settings.commit_backup_directory(&tree);
 
         assert_eq!(picked.backup_directory(), typed.backup_directory());
         assert_eq!(tree.input_text(input)?, "picked-backups");
@@ -1943,7 +1986,7 @@ mod tests {
             ..Settings::default()
         };
 
-        settings.sync_backup_directory(&tree);
+        settings.commit_backup_directory(&tree);
 
         assert_eq!(workspace.backup_directory(), PathBuf::from("custom-backups"));
         Ok(())
