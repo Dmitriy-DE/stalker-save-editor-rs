@@ -7,7 +7,7 @@
     clippy::cast_possible_truncation
 )]
 
-use sse_catalog::{Stalker2ArmorUpgrades, Stalker2ItemCatalog};
+use sse_catalog::Stalker2ItemCatalog;
 
 #[test]
 fn embedded_catalog_has_official_names_and_icons() {
@@ -67,9 +67,4 @@ fn unknown_sid_has_no_name_but_family_icon_fallback_works() {
 #[test]
 fn rejects_a_payload_without_items() {
     assert!(Stalker2ItemCatalog::load(br#"{"schema_version":2}"#).is_err());
-}
-
-#[test]
-fn armor_and_weapon_upgrades_are_counted() {
-    assert!(Stalker2ArmorUpgrades::count() > 100);
 }

@@ -23,7 +23,7 @@ pub use models::{
 };
 pub use naming::SaveNaming;
 pub use official_names::OfficialNamesCatalog;
-pub use s2::{Stalker2ArmorUpgrade, Stalker2ArmorUpgrades, Stalker2ItemCatalog, Stalker2ItemEntry};
+pub use s2::{Stalker2ItemCatalog, Stalker2ItemEntry};
 pub use service::{GameContent, GameContentService, GameContentStatus};
 #[cfg(test)]
 mod embedded_json_tests;

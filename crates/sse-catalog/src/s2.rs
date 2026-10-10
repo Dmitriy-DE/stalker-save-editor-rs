@@ -1,19 +1,15 @@
 //! S.T.A.L.K.E.R. 2 item and upgrade catalogs.
 
 use sse_core::{Error, Result};
-use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use crate::value::{parse_json, JsonValue};
 use sse_codecs::embedded_json::{self, JsonAssetCache};
 
 const EMBEDDED_S2_ITEMS_RAW: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/data_s2_items.json.deflate"));
-const EMBEDDED_S2_UPGRADES_RAW: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/data_s2_upgrades.json.deflate"));
 
 static EMBEDDED_S2_ITEMS: OnceLock<Stalker2ItemCatalog> = OnceLock::new();
-static EMBEDDED_S2_ARMOR_MAP: OnceLock<HashMap<String, Stalker2ArmorUpgrade>> = OnceLock::new();
 static EMBEDDED_S2_ITEMS_JSON: JsonAssetCache = OnceLock::new();
-static EMBEDDED_S2_UPGRADES_JSON: JsonAssetCache = OnceLock::new();
 
 /// Item entry in the S.T.A.L.K.E.R. 2 catalog.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -190,56 +186,6 @@ fn parse_strings(val: Option<&JsonValue>) -> Vec<(String, String)> {
         }
     }
     list
-}
-
-/// S2 armor upgrade metadata.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Stalker2ArmorUpgrade {
-    /// Effect key (e.g. "psy", "chem").
-    pub effect: String,
-    /// Tier level (1, 2, 3).
-    pub tier: i32,
-}
-
-/// S2 armor and weapon upgrade lookup.
-pub struct Stalker2ArmorUpgrades;
-
-impl Stalker2ArmorUpgrades {
-    fn load_armors() -> HashMap<String, Stalker2ArmorUpgrade> {
-        let json_bytes = match embedded_json::get_json(EMBEDDED_S2_UPGRADES_RAW, &EMBEDDED_S2_UPGRADES_JSON) {
-            Ok(bytes) => bytes,
-            Err(_) => return HashMap::new(),
-        };
-        let json_str = match std::str::from_utf8(json_bytes) {
-            Ok(text) => text,
-            Err(_) => return HashMap::new(),
-        };
-        let value = parse_json(json_str).unwrap_or(JsonValue::Null);
-
-        let mut armors = HashMap::new();
-        if let Some(upgrades) = value.get("upgrades").and_then(JsonValue::as_object) {
-            for (sid, up_val) in upgrades {
-                let effect = up_val
-                    .get("effect")
-                    .and_then(JsonValue::as_str)
-                    .unwrap_or("")
-                    .to_string();
-                let tier = up_val
-                    .get("tier")
-                    .and_then(JsonValue::as_i64)
-                    .and_then(|v| i32::try_from(v).ok())
-                    .unwrap_or(0);
-                armors.insert(sid.clone(), Stalker2ArmorUpgrade { effect, tier });
-            }
-        }
-        armors
-    }
-
-    /// Number of registered armor upgrades.
-    #[must_use]
-    pub fn count() -> usize {
-        EMBEDDED_S2_ARMOR_MAP.get_or_init(Self::load_armors).len()
-    }
 }
 
 #[cfg(test)]

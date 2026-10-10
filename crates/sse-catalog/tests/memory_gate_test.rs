@@ -7,7 +7,7 @@
     clippy::cast_possible_truncation
 )]
 
-use sse_catalog::{CatalogBundleReader, I18nService, OfficialNamesCatalog, Stalker2ArmorUpgrades, Stalker2ItemCatalog};
+use sse_catalog::{CatalogBundleReader, I18nService, OfficialNamesCatalog, Stalker2ItemCatalog};
 
 fn get_process_rss_bytes() -> Option<u64> {
     #[cfg(target_os = "linux")]
@@ -38,9 +38,6 @@ fn loading_every_shipped_catalogue_keeps_memory_under_15_mib() {
     let s2_items = Stalker2ItemCatalog::load_embedded();
     assert!(s2_items.count() > 1000);
     assert_eq!(s2_items.name(Some("A012A"), "ru"), Some("12/76 мм жекан"));
-
-    let upgrades_count = Stalker2ArmorUpgrades::count();
-    assert!(upgrades_count > 0);
 
     let service = I18nService::instance();
     service.set_language("ru");
