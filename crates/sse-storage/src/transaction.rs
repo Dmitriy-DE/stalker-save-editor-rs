@@ -211,6 +211,12 @@ pub struct EditSummary {
     pub stash_skipped: usize,
     /// True when a stash move was stopped by a write that failed its check; the moves before it are saved.
     pub stash_stopped: bool,
+    /// Stash items the backpack had no free place for.
+    pub stash_no_room: usize,
+    /// Stash items the editor cannot move (kind or layout not confirmed).
+    pub stash_unsupported: usize,
+    /// Stash items refused for another reason.
+    pub stash_refused_other: usize,
     /// Number of removed items in the edit set.
     pub detach_count: usize,
     /// Number of attached items in the edit set.
@@ -227,6 +233,16 @@ pub struct EditSummary {
     pub relation_count: usize,
     /// Whether the actor's player faction changed.
     pub player_faction: bool,
+}
+
+impl EditSummary {
+    /// Stash items the writer refused (no room, unsupported, other).
+    #[must_use]
+    pub const fn stash_refused_skips(&self) -> usize {
+        self.stash_no_room
+            .saturating_add(self.stash_unsupported)
+            .saturating_add(self.stash_refused_other)
+    }
 }
 
 /// Paths and hash created by a safe export to a new file.

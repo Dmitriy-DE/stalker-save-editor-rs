@@ -303,24 +303,73 @@ impl S2Save {
     }
 }
 
+/// Why a stash item was left in the stash by [`transfer_stash_items_to_backpack`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum S2SkipReason {
+    /// The backpack has no free place for the item's footprint.
+    NoRoom,
+    /// The item's kind or layout is not one the editor can move.
+    Unsupported,
+    /// Any other refusal of the single-item write.
+    Other,
+}
+
+/// One item the writer refused before accepting any bytes; the previous image stays in place.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct S2RefusedMove {
+    /// Handle of the refused item.
+    pub handle: u32,
+    /// Category used in the summary.
+    pub reason: S2SkipReason,
+    /// Writer message.
+    pub message: String,
+}
+
 /// Outcome of moving several stash items, one verified write at a time.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct S2StashTransfer {
-    /// Packed save after the last verified write; `None` when nothing was written.
+    /// Packed save after the last accepted write; `None` when nothing was written.
     pub packed: Option<Vec<u8>>,
     /// Handles moved into the backpack, in request order.
     pub moved: Vec<u32>,
-    /// Handles skipped because the record lacks the stash-owned flag.
+    /// Handles skipped because the record is not marked as stash-owned.
     pub skipped: Vec<u32>,
-    /// Message of the write that failed; the transfer stopped there and `packed` holds the writes before it.
+    /// Handles the writer refused; the transfer went on with the next item.
+    pub refused: Vec<S2RefusedMove>,
+    /// Error that stopped the transfer. Only an accepted result that cannot be read back stops it.
     pub stopped: Option<String>,
+}
+
+impl S2StashTransfer {
+    /// Number of refused items in one category.
+    #[must_use]
+    pub fn refused_count(&self, reason: S2SkipReason) -> usize {
+        self.refused.iter().filter(|refused| refused.reason == reason).count()
+    }
+}
+
+fn classify_refusal(message: &str) -> S2SkipReason {
+    if message.contains("does not fit a backpack")
+        || message.contains("no fitting free cells")
+        || message.contains("grid-cell limit")
+    {
+        S2SkipReason::NoRoom
+    } else if message.contains("kind is not confirmed")
+        || message.contains("footprint is missing")
+        || message.contains("unresolved backpack cells")
+    {
+        S2SkipReason::Unsupported
+    } else {
+        S2SkipReason::Other
+    }
 }
 
 /// Applies `changes` (if any), then moves each requested stash item with its own write and re-read.
 ///
-/// Items whose record is not in use or lacks the stash-owned flag (byte 28, bit `0x08`) are skipped.
-/// Any other refusal or failed read-back stops the transfer: the writes before it stay in `packed`,
-/// and the failure is reported in `stopped`.
+/// An item that is not in use or not marked stash-owned (record byte 28, bit `0x08`) is skipped.
+/// A refusal of a single-item write leaves the image as it was, so that item is recorded in
+/// `refused` and the transfer goes on. Only an accepted result that cannot be parsed again stops
+/// the transfer; the writes before it stay in `packed`, and the error is in `stopped`.
 ///
 /// # Errors
 /// Returns an error when `changes` cannot be written, or when the inventory is not fully resolved or is 1.0.x.
@@ -351,6 +400,7 @@ pub fn transfer_stash_items_to_backpack(
     };
     let mut moved = Vec::new();
     let mut skipped = Vec::new();
+    let mut refused = Vec::new();
     for &handle in handles {
         let source = current.as_ref().unwrap_or(save);
         let listed = source.stash_items()?.iter().any(|item| item.handle == handle);
@@ -359,17 +409,28 @@ pub fn transfer_stash_items_to_backpack(
             continue;
         }
         match source.write_changes(&[S2Change::MoveStashToBackpack { handle }]) {
-            Ok(written) => {
-                current = Some(S2Save::from_bytes(&written)?);
-                packed = Some(written);
-                moved.push(handle);
-            }
+            Ok(written) => match S2Save::from_bytes(&written) {
+                Ok(parsed) => {
+                    current = Some(parsed);
+                    packed = Some(written);
+                    moved.push(handle);
+                }
+                Err(error) => {
+                    return Ok(S2StashTransfer {
+                        packed,
+                        moved,
+                        skipped,
+                        refused,
+                        stopped: Some(error.to_string()),
+                    });
+                }
+            },
             Err(error) => {
-                return Ok(S2StashTransfer {
-                    packed,
-                    moved,
-                    skipped,
-                    stopped: Some(error.to_string()),
+                let message = error.to_string();
+                refused.push(S2RefusedMove {
+                    handle,
+                    reason: classify_refusal(&message),
+                    message,
                 });
             }
         }
@@ -378,6 +439,7 @@ pub fn transfer_stash_items_to_backpack(
         packed,
         moved,
         skipped,
+        refused,
         stopped: None,
     })
 }
@@ -2463,9 +2525,9 @@ fn validate_owned_handles(handles: &[u32], legacy: bool) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_changes_to_image, first_free_placement, moved_object_offset, pack_and_verify_s2_image,
+        apply_changes_to_image, classify_refusal, first_free_placement, moved_object_offset, pack_and_verify_s2_image,
         transfer_stash_items_to_backpack, validate_owned_handles, S2Change, S2Container, S2InventoryIndex, S2Save,
-        S2StashLayout, GRID_WIDTH,
+        S2SkipReason, S2StashLayout, GRID_WIDTH,
     };
     use sse_codecs::crc32;
     use sse_core::Error;
@@ -3183,10 +3245,14 @@ mod tests {
                     inconsistent += 1;
                 }
                 println!(
-                    "{} {label}: moved={} skipped={} stopped={} counts_ok={counts_ok}",
+                    "{} {label}: moved={} skipped={} refused={} (room={} unsupported={} other={}) stopped={} counts_ok={counts_ok}",
                     path.display(),
                     transfer.moved.len(),
                     transfer.skipped.len(),
+                    transfer.refused.len(),
+                    transfer.refused_count(S2SkipReason::NoRoom),
+                    transfer.refused_count(S2SkipReason::Unsupported),
+                    transfer.refused_count(S2SkipReason::Other),
                     transfer.stopped.as_deref().unwrap_or("-"),
                 );
             }
@@ -3194,6 +3260,58 @@ mod tests {
         println!("files={} inconsistent={inconsistent}", paths.len());
         assert_eq!(inconsistent, 0);
         Ok(())
+    }
+
+    #[test]
+    fn sequential_transfer_records_a_refused_item_and_keeps_the_image() -> Result<(), Error> {
+        let mut raw = WRITER_S2_STASH_SOURCE.to_vec();
+        let record_save = S2Save::from_bytes(&pack_raw(&raw))?;
+        let record_offset = record_save
+            .objects
+            .unique(0x3000_0010)
+            .ok_or_else(|| Error::damaged("fixture stash record is missing"))?
+            .record_offset;
+        // Kind 3 is accepted by the move check but not by the reader, so the read-back refuses it.
+        let kind = raw
+            .get_mut(record_offset.saturating_add(31))
+            .ok_or_else(|| Error::damaged("fixture kind byte is missing"))?;
+        *kind = 3;
+        let save = S2Save::from_bytes(&pack_raw(&raw))?;
+
+        let transfer = transfer_stash_items_to_backpack(&save, &[], &[0x3000_0010])?;
+
+        assert!(transfer.moved.is_empty());
+        assert_eq!(transfer.packed, None);
+        assert_eq!(transfer.stopped, None);
+        assert_eq!(transfer.refused.len(), 1);
+        assert_eq!(transfer.refused_count(S2SkipReason::Unsupported), 1);
+        assert_eq!(transfer.refused_count(S2SkipReason::NoRoom), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn refusal_messages_map_to_skip_categories() {
+        assert_eq!(
+            classify_refusal("S2 stash item does not fit a backpack"),
+            S2SkipReason::NoRoom
+        );
+        assert_eq!(
+            classify_refusal("S2 backpack has no fitting free cells"),
+            S2SkipReason::NoRoom
+        );
+        assert_eq!(
+            classify_refusal("S2 stash item kind is not confirmed editable"),
+            S2SkipReason::Unsupported
+        );
+        assert_eq!(
+            classify_refusal("S2 stash item footprint is missing"),
+            S2SkipReason::Unsupported
+        );
+        assert_eq!(
+            classify_refusal("S2 write read-back: moved item has unresolved backpack cells"),
+            S2SkipReason::Unsupported
+        );
+        assert_eq!(classify_refusal("S2 stash handle is duplicated"), S2SkipReason::Other);
     }
 
     #[test]

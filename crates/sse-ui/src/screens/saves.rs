@@ -4860,12 +4860,20 @@ fn commit_save_edits_to(
     if let Some(warning) = receipt.maintenance_warning.as_deref() {
         save_message.push_str(&tr(" Ротация старых копий не завершена: {0}", &[&warning]));
     }
-    if summary.move_count > 0 || summary.stash_skipped > 0 {
+    if summary.move_count > 0 || summary.stash_skipped > 0 || summary.stash_refused_skips() > 0 {
+        let skipped = summary.stash_skipped.saturating_add(summary.stash_refused_skips());
         save_message.push_str(&format!(
             " {}",
             tr(
-                "Перенос из тайника: перенесено {0}, пропущено {1} (не помечены как лежащие в тайнике).",
-                &[&summary.move_count, &summary.stash_skipped],
+                "Перенос из тайника: перенесено {0}, пропущено {1}: не помечены в тайнике {2}, не помещаются {3}, тип не поддерживается {4}, прочие отказы {5}.",
+                &[
+                    &summary.move_count,
+                    &skipped,
+                    &summary.stash_skipped,
+                    &summary.stash_no_room,
+                    &summary.stash_unsupported,
+                    &summary.stash_refused_other,
+                ],
             )
         ));
     }
@@ -5369,6 +5377,9 @@ fn prepare_save_edits(
             }
             let transfer = sse_s2::transfer_stash_items_to_backpack(save, &changes, &handles)?;
             let stopped = transfer.stopped.clone();
+            let no_room = transfer.refused_count(sse_s2::S2SkipReason::NoRoom);
+            let unsupported = transfer.refused_count(sse_s2::S2SkipReason::Unsupported);
+            let refused_other = transfer.refused_count(sse_s2::S2SkipReason::Other);
             let Some(written) = transfer.packed else {
                 return Err(Error::Refused(match stopped {
                     Some(message) => tr(
@@ -5387,6 +5398,9 @@ fn prepare_save_edits(
                     move_count: transfer.moved.len(),
                     stash_skipped: transfer.skipped.len(),
                     stash_stopped: stopped.is_some(),
+                    stash_no_room: no_room,
+                    stash_unsupported: unsupported,
+                    stash_refused_other: refused_other,
                     ..EditSummary::default()
                 },
             ))
