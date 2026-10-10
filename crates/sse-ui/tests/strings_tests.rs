@@ -121,3 +121,99 @@ fn korean_companion_status_distinguishes_installed_from_missing() {
     assert_eq!(t_in("ko", "включён"), "설치됨");
     assert_eq!(t_in("ko", "выключен"), "설치되지 않음");
 }
+
+#[test]
+fn static_french_confirmation_text_is_french() {
+    assert_eq!(
+        t_in(
+            "fr",
+            "Подтверждение перед записью не настраивается: изменения проходят через проверяемый черновик."
+        ),
+        "La confirmation avant l’écriture n’est pas configurable ; les modifications passent par un brouillon vérifié."
+    );
+}
+
+#[test]
+fn static_italian_save_editor_title_matches_catalog() {
+    assert_eq!(t_in("it", "РЕДАКТОР СОХРАНЕНИЙ"), "EDITOR DEI SALVATAGGI");
+}
+
+#[test]
+fn static_japanese_player_title_uses_player_term() {
+    assert_eq!(t_in("ja", "Информация игрока"), "プレイヤー情報");
+}
+
+#[test]
+fn static_japanese_burer_text_has_no_latin_fragment() {
+    assert_eq!(
+        t_in(
+            "ja",
+            "Удалить три обработчика попаданий, которые восстанавливают здоровье буреров при атаке извне X8."
+        ),
+        "X8の外から攻撃されたときにブーラーを回復させる3つのヒット処理を削除します。"
+    );
+}
+
+#[test]
+fn static_polish_item_metadata_uses_section_term() {
+    assert_eq!(
+        t_in("pl", "Вес: {0} · Цена: {1} · Секция: {2}"),
+        "Waga: {0} · Cena: {1} · Sekcja: {2}"
+    );
+}
+
+#[test]
+fn static_polish_game_default_label_preserves_value_meaning() {
+    assert_eq!(t_in("pl", "Значение по умолчанию игры"), "Wartość domyślna gry");
+}
+
+#[test]
+fn static_polish_level_changer_label_preserves_registry_source() {
+    assert_eq!(
+        t_in(
+            "pl",
+            "Объекты переходов между локациями (Level Changers) из реестра X-Ray."
+        ),
+        "Przejścia między lokacjami (Level Changers) z rejestru X-Ray."
+    );
+}
+
+#[test]
+fn static_polish_profile_summary_keeps_companion_as_product_name() {
+    assert_eq!(
+        t_in(
+            "pl",
+            "Профиль сохраняет установленные идентификаторы Game Fix, состояние Companion и только явные настройки user.ltx, управляемые инструментом."
+        ),
+        "Profil zachowuje zainstalowane identyfikatory poprawek do gier, stan moda Companion i tylko jawne ustawienia user.ltx zarządzane przez narzędzie."
+    );
+}
+
+#[test]
+fn static_polish_manifest_label_keeps_software_term() {
+    assert_eq!(t_in("pl", "СОСТОЯНИЕ БЕЗ МАНИФЕСТА"), "STAN BEZ MANIFESTU");
+}
+
+#[test]
+fn static_polish_companion_controls_keep_product_name() {
+    assert_eq!(
+        t_in("pl", "Состояние и управление компаньоном"),
+        "Stan i obsługa Companion"
+    );
+}
+
+#[test]
+fn static_polish_compare_with_previous_uses_singular() {
+    assert_eq!(t_in("pl", "Сравнить с предыдущим"), "Porównaj z poprzednim");
+}
+
+#[test]
+fn static_polish_transition_placement_note_uses_natural_save_wording() {
+    assert_eq!(
+        t_in(
+            "pl",
+            "Только точки, куда игра сама ставит персонажа после перехода. Сохранение записывается сразу, с бэкапом. В игре это ещё не проверено."
+        ),
+        "Tylko miejsca, w których gra sama umieszcza postać po przejściu. Zapis następuje od razu po utworzeniu kopii zapasowej. Nie sprawdzono tego jeszcze w grze."
+    );
+}
