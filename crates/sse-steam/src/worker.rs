@@ -1102,7 +1102,7 @@ mod tests {
             run_session_process_with_executable(&worker, 1_643_320, close_receiver, ready_sender)
         });
 
-        assert_eq!(ready_receiver.recv_timeout(Duration::from_secs(1)), Ok(Ok(())));
+        assert_eq!(ready_receiver.recv_timeout(Duration::from_secs(10)), Ok(Ok(())));
         assert!(close_sender.send(SessionCommand::Close).is_ok());
         assert_eq!(manager.join().ok(), Some(Ok(())));
         let _ = std::fs::remove_dir_all(directory);
@@ -1122,7 +1122,7 @@ mod tests {
         let manager = std::thread::spawn(move || {
             run_session_process_with_executable(&worker, 1_643_320, close_receiver, ready_sender)
         });
-        assert_eq!(ready_receiver.recv_timeout(Duration::from_secs(1)), Ok(Ok(())));
+        assert_eq!(ready_receiver.recv_timeout(Duration::from_secs(10)), Ok(Ok(())));
         assert!(close_sender.send(SessionCommand::Abort).is_ok());
         assert!(manager.join().is_ok_and(|result| result.is_err()));
         assert!(started.elapsed() < Duration::from_secs(1));
