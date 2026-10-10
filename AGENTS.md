@@ -1,6 +1,8 @@
 # Rules of this repository
 
-This repository has shared code ownership: no crate, file or tool is reserved to a particular agent. Read `PLAN.md`,
+This repository has shared code ownership: no crate, file or tool is reserved to a particular agent. The local Claude
+integrates: it reviews and merges every pull request (owner's decision). `AGENTS.md`, the "Как работаем" section of
+`TASKS.md`, the required CI checks and branch protection change only by the owner's decision. Read `PLAN.md`,
 the relevant package in `TASKS.md`, and the matching section of `ACCEPTANCE.md` before changing behavior. The C# 1.3.1
 contract remains the reference for exact save bytes and established user-visible behavior. The five root documents
 README, AGENTS, PLAN, TASKS and ACCEPTANCE are the only project documents to add or update; do not create more `.md`
