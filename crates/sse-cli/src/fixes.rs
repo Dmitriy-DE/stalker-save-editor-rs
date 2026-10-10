@@ -262,7 +262,7 @@ fn run_state(args: &[String]) -> ExitCode {
         out.push_str("{\n");
         out.push_str(&format!("  \"game\": \"{}\",\n", target.id()));
         match &steam_build_id {
-            Some(b) => out.push_str(&format!("  \"steamBuildId\": \"{}\",\n", b)),
+            Some(b) => out.push_str(&format!("  \"steamBuildId\": \"{}\",\n", escape_json(b))),
             None => out.push_str("  \"steamBuildId\": null,\n"),
         }
 
@@ -661,8 +661,19 @@ fn escape_json(s: &str) -> String {
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
+            control if control < ' ' => out.push_str(&format!("\\u{:04x}", u32::from(control))),
             _ => out.push(c),
         }
     }
     out
+}
+
+#[cfg(test)]
+mod json_output_tests {
+    use super::escape_json;
+
+    #[test]
+    fn escape_json_covers_quotes_backslashes_and_control_characters() {
+        assert_eq!(escape_json("12\"3\\4\u{1}"), "12\\\"3\\\\4\\u0001");
+    }
 }
