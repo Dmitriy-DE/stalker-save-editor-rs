@@ -444,7 +444,7 @@ mod tests {
         assert_eq!(tags.bytes.get(0..5), Some(&[b'L', 1, 2, 3, 4][..]));
         assert_eq!(tags.bytes.get(5..8), Some(&[b't', b'x', 0][..]));
         assert_eq!(tags.bytes.get(8), Some(&b'1'));
-        assert_eq!(tags.bytes.get(9..16), Some(&[b'a', 3, 0, 0, 0xbb, 0x80, 2][..]));
+        assert_eq!(tags.bytes.get(9..16), Some(&[b'a', 3, 2, 0, 0, 0xbb, 0x80][..]));
     }
 
     #[test]
@@ -515,6 +515,7 @@ mod tests {
         auth_reply.u32(PROTOCOL_VERSION);
         let mut fake = Fake::default();
         fake.recv.extend(control_frame(COMMAND_REPLY, 1, &auth_reply.bytes));
+        fake.recv.extend(control_frame(COMMAND_REPLY, 3, &[]));
         fake.recv.extend(control_frame(COMMAND_REPLY, 2, &tail.bytes));
         let Ok(mut stream) = establish(fake, &[0u8; 256], 1, 48_000, 0.5) else {
             panic!("stream is created on a valid reply");
