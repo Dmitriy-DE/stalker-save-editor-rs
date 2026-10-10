@@ -3760,6 +3760,10 @@ impl Inventory {
     }
 
     fn stage_money(&self, cx: &mut Context<'_>, delta: i64) -> Result<()> {
+        if let Some(text) = busy_refusal(&self.workspace) {
+            cx.status = Some(t(text).to_owned());
+            return Ok(());
+        }
         let (selected, pending_money) = {
             let state = self.workspace.lock();
             (state.selected.clone(), state.pending_money)
@@ -3806,6 +3810,10 @@ impl Inventory {
     }
 
     fn stage_money_value(&self, cx: &mut Context<'_>, value: u32) -> Result<()> {
+        if let Some(text) = busy_refusal(&self.workspace) {
+            cx.status = Some(t(text).to_owned());
+            return Ok(());
+        }
         cx.app.set_invalid_numeric_input(false);
         if value > 2_000_000_000 {
             cx.status = Some(t("Введены некорректные значения (проверьте введённые числа).").to_owned());
@@ -3845,6 +3853,10 @@ impl Inventory {
     }
 
     fn stage_stack(&self, cx: &mut Context<'_>, handle: ItemHandle, increase: bool) -> Result<()> {
+        if let Some(text) = busy_refusal(&self.workspace) {
+            cx.status = Some(t(text).to_owned());
+            return Ok(());
+        }
         let (selected, pending_count) = {
             let state = self.workspace.lock();
             (state.selected.clone(), state.pending_stacks.get(&handle).copied())
@@ -3905,6 +3917,10 @@ impl Inventory {
     }
 
     fn stage_durability(&self, cx: &mut Context<'_>, handle: ItemHandle, percent: u8) -> Result<()> {
+        if let Some(text) = busy_refusal(&self.workspace) {
+            cx.status = Some(t(text).to_owned());
+            return Ok(());
+        }
         let selected = self.workspace.lock().selected.clone();
         let Some(selected) = selected else {
             return Ok(());
@@ -3956,6 +3972,10 @@ impl Inventory {
     }
 
     fn stage_placement(&self, cx: &mut Context<'_>, handle: ItemHandle, destination: DraftPlacement) -> Result<()> {
+        if let Some(text) = busy_refusal(&self.workspace) {
+            cx.status = Some(t(text).to_owned());
+            return Ok(());
+        }
         let selected = self.workspace.lock().selected.clone();
         let Some(selected) = selected else {
             return Ok(());
@@ -4006,6 +4026,10 @@ impl Inventory {
     }
 
     fn stage_remove(&self, cx: &mut Context<'_>, handle: ItemHandle) -> Result<()> {
+        if let Some(text) = busy_refusal(&self.workspace) {
+            cx.status = Some(t(text).to_owned());
+            return Ok(());
+        }
         let selected = self.workspace.lock().selected.clone();
         let Some(selected) = selected else {
             return Ok(());
@@ -4286,6 +4310,10 @@ impl Inventory {
     }
 
     fn stage_add_key(&self, cx: &mut Context<'_>, item_key: &str, quantity: u32) -> Result<()> {
+        if let Some(text) = busy_refusal(&self.workspace) {
+            cx.status = Some(t(text).to_owned());
+            return Ok(());
+        }
         let selected = self.workspace.lock().selected.clone();
         let Some(selected) = selected else {
             return Ok(());
@@ -4328,6 +4356,10 @@ impl Inventory {
     }
 
     fn stage_upgrade(&self, cx: &mut Context<'_>, handle: ItemHandle, upgrade_key: &str) -> Result<()> {
+        if let Some(text) = busy_refusal(&self.workspace) {
+            cx.status = Some(t(text).to_owned());
+            return Ok(());
+        }
         let selected = self.workspace.lock().selected.clone();
         let Some(selected) = selected else {
             return Ok(());
@@ -4682,6 +4714,18 @@ impl Inventory {
             self.workspace.persist_draft(journal, cx);
         }
         self.render(cx)
+    }
+}
+
+/// Staging is refused while a write or restore runs: the write's completion
+/// clears the pending edits, so anything staged in between would be lost silently.
+fn busy_refusal(workspace: &Workspace) -> Option<&'static str> {
+    if workspace.is_restoring() {
+        Some(t("Дождитесь завершения восстановления сейва."))
+    } else if workspace.is_saving() {
+        Some(t("Сохранение уже выполняется."))
+    } else {
+        None
     }
 }
 
@@ -8145,6 +8189,10 @@ impl Stashes {
     }
 
     fn move_item(&mut self, cx: &mut Context<'_>, handle: u32) -> Result<()> {
+        if let Some(text) = busy_refusal(&self.workspace) {
+            cx.status = Some(t(text).to_owned());
+            return Ok(());
+        }
         let status = {
             let mut state = self.workspace.lock();
             let Some(selected) = state.selected.as_ref() else {
@@ -9092,6 +9140,30 @@ mod tests {
         assert_eq!(super::format_xray_game_time(63_480_696_003_240), "16.08.2012 06:40");
         assert_eq!(super::format_xray_game_time(0), "—");
         assert_eq!(super::format_xray_game_time(u64::MAX), "—");
+    }
+
+    #[test]
+    fn edits_are_refused_while_a_save_write_is_in_flight() -> sse_core::Result<()> {
+        let directory = std::env::temp_dir().join(format!(
+            "sse-busy-refusal-{}-{}",
+            std::process::id(),
+            NEXT_TEMP_DIRECTORY.fetch_add(1, Ordering::Relaxed)
+        ));
+        let workspace = Workspace::with_draft_directory(directory.clone());
+        assert_eq!(super::busy_refusal(&workspace), None);
+
+        let guard = workspace.session.begin_save(std::path::Path::new("writer.sav"));
+        assert!(guard.is_some());
+        assert_eq!(
+            super::busy_refusal(&workspace),
+            Some("Сохранение уже выполняется."),
+            "staging must be refused while the write owns the operation"
+        );
+
+        drop(guard);
+        assert_eq!(super::busy_refusal(&workspace), None);
+        let _ = fs::remove_dir_all(directory);
+        Ok(())
     }
 
     #[test]
