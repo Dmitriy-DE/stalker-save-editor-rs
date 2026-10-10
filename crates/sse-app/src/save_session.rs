@@ -265,6 +265,31 @@ impl SaveSession {
         }
     }
 
+    /// Waits at most `timeout` for an active write or in-place restore to end.
+    ///
+    /// Returns `true` if the session became idle in time. A write that outlives the timeout is not
+    /// interrupted; the caller decides what to do with the still-running operation.
+    #[must_use]
+    pub fn wait_until_idle_for(&self, timeout: std::time::Duration) -> bool {
+        let deadline = std::time::Instant::now().checked_add(timeout);
+        let mut state = lock(&self.inner.state);
+        while state.active_operation.is_some() {
+            let Some(deadline) = deadline else {
+                return false;
+            };
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                return false;
+            }
+            state = self
+                .inner
+                .idle
+                .wait_timeout(state, remaining)
+                .map_or_else(|poisoned| poisoned.into_inner().0, |(guard, _)| guard);
+        }
+        true
+    }
+
     /// Blocks the calling shutdown thread until an active write or in-place restore ends.
     pub fn wait_until_idle(&self) {
         let mut state = lock(&self.inner.state);
@@ -355,6 +380,20 @@ mod tests {
             Some(value) => value,
             None => panic!("{reason}"),
         }
+    }
+
+    #[test]
+    fn waiting_for_idle_is_bounded_and_reports_whether_the_write_ended() {
+        let session = SaveSession::new();
+        let path = PathBuf::from("fixture.sav");
+        let operation = required(session.begin_save(&path), "save should start");
+
+        let started = std::time::Instant::now();
+        assert!(!session.wait_until_idle_for(std::time::Duration::from_millis(30)));
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+
+        drop(operation);
+        assert!(session.wait_until_idle_for(std::time::Duration::from_millis(30)));
     }
 
     #[test]
