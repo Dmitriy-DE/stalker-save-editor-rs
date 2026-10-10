@@ -902,6 +902,9 @@ mod tests {
         let mut length = 0_usize;
         while length < dump.len() {
             let prefix = dump.get(..length).unwrap_or_default();
+            if length < super::HEADER_SIZE {
+                assert!(Minidump::parse(prefix).is_err(), "a {length}-byte prefix has no header");
+            }
             if let Ok(parsed) = Minidump::parse(prefix) {
                 let _ = parsed.exception();
                 if let Ok(mut modules) = parsed.modules() {

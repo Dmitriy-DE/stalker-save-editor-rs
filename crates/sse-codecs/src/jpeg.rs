@@ -27,11 +27,13 @@ pub struct Image {
     pub pixels: Vec<u8>,
 }
 
-/// Decodes a baseline JPEG file.
+/// Decodes a baseline JPEG file into one buffer. Only the tests call it: the UI streams rows with
+/// [`decode_rows`], so the buffer version is kept out of the release API.
 ///
 /// # Errors
 /// Returns [`Error::Damaged`] for malformed or truncated streams and [`Error::Refused`] for JPEG processes
 /// this decoder does not implement.
+#[cfg(test)]
 pub fn decode(data: &[u8]) -> Result<Image> {
     let mut pixels = Vec::new();
     let mut header = None;

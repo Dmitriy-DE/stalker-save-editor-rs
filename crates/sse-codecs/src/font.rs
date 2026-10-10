@@ -2856,9 +2856,7 @@ fn checked_mul(a: usize, b: usize) -> Result<usize> {
 }
 
 fn be_u16_at(data: &[u8], offset: usize) -> Result<u16> {
-    let bytes = checked_range(data, offset, 2)?;
-    let array = <[u8; 2]>::try_from(bytes).map_err(|_| Error::damaged("short u16"))?;
-    Ok(u16::from_be_bytes(array))
+    sse_core::fields::read_u16_be(data, offset)
 }
 
 fn be_i16_at(data: &[u8], offset: usize) -> Result<i16> {
@@ -2868,9 +2866,7 @@ fn be_i16_at(data: &[u8], offset: usize) -> Result<i16> {
 }
 
 fn be_u32_at(data: &[u8], offset: usize) -> Result<u32> {
-    let bytes = checked_range(data, offset, 4)?;
-    let array = <[u8; 4]>::try_from(bytes).map_err(|_| Error::damaged("short u32"))?;
-    Ok(u32::from_be_bytes(array))
+    sse_core::fields::read_u32_be(data, offset)
 }
 
 fn be_i32_at(data: &[u8], offset: usize) -> Result<i32> {
