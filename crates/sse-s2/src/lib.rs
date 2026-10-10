@@ -279,12 +279,18 @@ impl S2Save {
                 _ => None,
             })
             .collect::<Vec<_>>();
-        let (image, changed_ranges) = apply_changes_to_image(self, changes)?;
+        let source_items = self.items();
+        let (image, changed_ranges) = apply_changes_with_items(self, &source_items, changes)?;
         let (packed, verified_container) = pack_and_verify_s2_image(self.container.image(), &image, &changed_ranges)?;
         let verified = Self::from_container(verified_container)?;
-        verify_changes_readback(self, &verified, changes)?;
+        let verified_items = verified.items();
+        verify_changes_readback_with_items(self, &source_items, &verified, &verified_items, changes)?;
         if !durability_changes.is_empty() {
-            verify_durability_readback(self, &verified, &durability_changes)?;
+            verify_durability_values(
+                &condition_pairs(&source_items),
+                &condition_pairs(&verified_items),
+                &durability_changes,
+            )?;
         }
         Ok(packed)
     }
@@ -1563,7 +1569,16 @@ fn require_range(bytes: &[u8], offset: usize, length: usize, message: &'static s
     Ok(())
 }
 
+#[cfg(test)]
 fn apply_changes_to_image(save: &S2Save, changes: &[S2Change]) -> Result<(Vec<u8>, Vec<ChangedRange>)> {
+    apply_changes_with_items(save, &save.items(), changes)
+}
+
+fn apply_changes_with_items(
+    save: &S2Save,
+    source_items: &[S2InventoryItem],
+    changes: &[S2Change],
+) -> Result<(Vec<u8>, Vec<ChangedRange>)> {
     if changes.is_empty() {
         return Err(Error::Refused("S2 write requires at least one change".to_owned()));
     }
@@ -1587,7 +1602,7 @@ fn apply_changes_to_image(save: &S2Save, changes: &[S2Change]) -> Result<(Vec<u8
     let durability_items = changes
         .iter()
         .any(|change| matches!(change, S2Change::SetDurability { .. }))
-        .then(|| save.items());
+        .then_some(source_items);
     let mut image = save.container.image().to_vec();
     let mut changed_ranges = Vec::with_capacity(changes.len().saturating_add(3));
     let mut stash_move = None;
@@ -2050,7 +2065,18 @@ fn pack_s2_container(image: &[u8], stream: &[u8]) -> Result<Vec<u8>> {
 /// The image comparison in `pack_and_verify_s2_image` only proves the bytes equal the intended image; this
 /// reads the result back as a save: the money, the stack count, a moved item's footprint and owners, and every
 /// item the change set did not name.
+#[cfg(test)]
 fn verify_changes_readback(source: &S2Save, verified: &S2Save, changes: &[S2Change]) -> Result<()> {
+    verify_changes_readback_with_items(source, &source.items(), verified, &verified.items(), changes)
+}
+
+fn verify_changes_readback_with_items(
+    source: &S2Save,
+    source_items: &[S2InventoryItem],
+    verified: &S2Save,
+    verified_items: &[S2InventoryItem],
+    changes: &[S2Change],
+) -> Result<()> {
     let damaged = |message: &str| Error::damaged(format!("S2 write read-back: {message}"));
     let mut named = HashSet::new();
     for change in changes {
@@ -2061,9 +2087,8 @@ fn verify_changes_readback(source: &S2Save, verified: &S2Save, changes: &[S2Chan
                 }
             }
             S2Change::SetStackCount { handle, count } => {
-                let item = verified
-                    .items()
-                    .into_iter()
+                let item = verified_items
+                    .iter()
                     .find(|item| item.handle == handle)
                     .ok_or_else(|| damaged("stack item disappeared"))?;
                 if item.count != count {
@@ -2122,10 +2147,11 @@ fn verify_changes_readback(source: &S2Save, verified: &S2Save, changes: &[S2Chan
         }
     }
     // Offsets move when a stash item is inserted into the backpack; every other field must be equal.
-    let projection = |save: &S2Save| {
-        save.items()
-            .into_iter()
+    let projection = |items: &[S2InventoryItem]| {
+        items
+            .iter()
             .filter(|item| !named.contains(&item.handle))
+            .cloned()
             .map(|mut item| {
                 item.record_offset = 0;
                 item.count_offset = 0;
@@ -2134,24 +2160,14 @@ fn verify_changes_readback(source: &S2Save, verified: &S2Save, changes: &[S2Chan
             })
             .collect::<Vec<_>>()
     };
-    if projection(source) != projection(verified) {
+    if projection(source_items) != projection(verified_items) {
         return Err(damaged("an item the change set did not name changed"));
     }
     Ok(())
 }
 
-fn verify_durability_readback(save: &S2Save, verified: &S2Save, changes: &[(u32, f32)]) -> Result<()> {
-    let before = save
-        .items()
-        .iter()
-        .map(|item| (item.handle, item.condition))
-        .collect::<Vec<_>>();
-    let after = verified
-        .items()
-        .iter()
-        .map(|item| (item.handle, item.condition))
-        .collect::<Vec<_>>();
-    verify_durability_values(&before, &after, changes)
+fn condition_pairs(items: &[S2InventoryItem]) -> Vec<(u32, Option<f32>)> {
+    items.iter().map(|item| (item.handle, item.condition)).collect()
 }
 
 fn verify_durability_values(
