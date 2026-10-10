@@ -3,6 +3,7 @@
 //! Chunk CRCs, zlib Adler-32, scanline filters and Adam7 interlacing are validated. Dimensions
 //! are capped before allocation and inflated scanline size is computed before decompression.
 
+use crate::crc32::crc32_update;
 use crate::inflate::inflate_zlib;
 use sse_core::{Error, Result};
 
@@ -845,17 +846,7 @@ fn checked_range(data: &[u8], offset: usize, length: usize) -> Result<&[u8]> {
 }
 
 fn crc32_parts(first: &[u8], second: &[u8]) -> u32 {
-    let mut crc = 0xFFFF_FFFF_u32;
-    for byte in first.iter().chain(second.iter()).copied() {
-        crc ^= u32::from(byte);
-        let mut bit = 0_u8;
-        while bit < 8 {
-            let mask = if crc & 1 != 0 { 0xEDB8_8320 } else { 0 };
-            crc = crc.checked_shr(1).unwrap_or_default() ^ mask;
-            bit = bit.checked_add(1).unwrap_or(8);
-        }
-    }
-    !crc
+    !crc32_update(crc32_update(0xFFFF_FFFF, first), second)
 }
 
 #[cfg(test)]
