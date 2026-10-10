@@ -83,7 +83,8 @@ fn main() -> std::process::ExitCode {
 fn screenshot(args: &[String]) -> Result<()> {
     let path = args.get(1).ok_or_else(|| {
         Error::Refused(
-            "usage: --screenshot OUT.png [WxH] [NAV] [--open SAVE] [--add-item] [--discover] [--wait]".to_owned(),
+            "usage: --screenshot OUT.png [WxH] [NAV] [--open SAVE] [--add-item] [--discover] [--wait] [--select-first]"
+                .to_owned(),
         )
     })?;
     let mut size: Option<(u32, u32)> = None;
@@ -92,12 +93,14 @@ fn screenshot(args: &[String]) -> Result<()> {
     let mut add_item = false;
     let mut discover = false;
     let mut wait = false;
+    let mut select_first = false;
     let mut index = 2;
     while index < args.len() {
         match args.get(index).map(String::as_str) {
             Some("--add-item") => add_item = true,
             Some("--discover") => discover = true,
             Some("--wait") => wait = true,
+            Some("--select-first") => select_first = true,
             Some("--open") => {
                 index = index.saturating_add(1);
                 open_save = Some(
@@ -185,6 +188,9 @@ fn screenshot(args: &[String]) -> Result<()> {
                 }
             }
         }
+    }
+    if select_first && !shell.select_first_fix(&mut tree)? {
+        return Err(Error::Refused("the screen has no fix row to select".to_owned()));
     }
     if discover {
         // Background search (a save is open) is awaited: the result comes back to the screen as a message.
