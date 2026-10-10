@@ -207,6 +207,10 @@ pub struct EditSummary {
     pub stack_count: usize,
     /// Number of stash moves in the edit set.
     pub move_count: usize,
+    /// Number of stash items left in the stash because the game does not list them as stash-owned.
+    pub stash_skipped: usize,
+    /// True when a stash move was stopped by a write that failed its check; the moves before it are saved.
+    pub stash_stopped: bool,
     /// Number of removed items in the edit set.
     pub detach_count: usize,
     /// Number of attached items in the edit set.
@@ -2662,6 +2666,7 @@ mod tests {
             upgrade_count: 9,
             relation_count: 10,
             player_faction: true,
+            ..super::EditSummary::default()
         };
 
         let (receipt, (), ()) = super::replace_transaction(
