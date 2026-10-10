@@ -1137,5 +1137,22 @@
     "ko": "관계 변경은 실험적입니다. 값을 고른 뒤 인벤토리의 '저장'으로 초안을 적용하세요. 게임 내 확인은 하지 않았습니다.",
     "zh-CN": "关系修改为实验性功能。选择数值后，请在“物品栏”点击“保存”应用草稿；尚未在游戏中验证。",
     "zh-TW": "關係修改為實驗性功能。選擇數值後，請在「物品欄」按下「儲存」套用草稿；尚未在遊戲中驗證。"
+  },
+  "Нажмите «СБРОС» ещё раз, чтобы удалить несохранённые правки.": {
+    "ru": "Нажмите «СБРОС» ещё раз, чтобы удалить несохранённые правки.",
+    "uk": "Натисніть «СКИНУТИ» ще раз, щоб видалити незбережені зміни.",
+    "en": "Press RESET again to discard unsaved edits.",
+    "de": "Erneut „ZURÜCKSETZEN“ drücken, um nicht gespeicherte Änderungen zu verwerfen.",
+    "fr": "Appuyez à nouveau sur « RÉINITIALISER » pour supprimer les modifications non enregistrées.",
+    "it": "Premi di nuovo «RIPRISTINA» per eliminare le modifiche non salvate.",
+    "es": "Pulse «RESTABLECER» de nuevo para descartar los cambios no guardados.",
+    "pl": "Naciśnij ponownie „RESETUJ”, aby usunąć niezapisane zmiany.",
+    "cs": "Stiskněte znovu „RESET“, aby se neuložené změny zahodily.",
+    "pt-BR": "Pressione «REDEFINIR» de novo para descartar as alterações não salvas.",
+    "tr": "Kaydedilmemiş değişiklikleri silmek için «SIFIRLA» düğmesine yeniden basın.",
+    "ja": "未保存の変更を破棄するには、もう一度「リセット」を押してください。",
+    "ko": "저장되지 않은 변경 사항을 버리려면 '초기화'를 다시 누르세요.",
+    "zh-CN": "再次点击“重置”以放弃未保存的修改。",
+    "zh-TW": "再次按下「重設」以捨棄未儲存的修改。"
   }
 }

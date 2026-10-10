@@ -1000,6 +1000,9 @@ pub struct Shell {
     report_send: WidgetId,
     report_cancel: WidgetId,
     pending_report: Option<String>,
+    /// Set by the first «СБРОС»; the second one discards the draft. Any other message clears it.
+    reset_armed: bool,
+    reset_was_armed: bool,
     report_upload_pending: bool,
     reports_consented: bool,
     saving_dialog: WidgetId,
@@ -2115,6 +2118,8 @@ impl Shell {
             report_send,
             report_cancel,
             pending_report: sse_app::diagnostics::pending_automatic_error_report(),
+            reset_armed: false,
+            reset_was_armed: false,
             report_upload_pending: false,
             reports_consented: settings.send_reports && settings.reports_notice_shown,
             saving_dialog,
@@ -3208,6 +3213,14 @@ impl Shell {
     }
 
     fn dispatch_editor_action(&mut self, tree: &mut Tree, action: EditorAction) -> Result<()> {
+        if action == EditorAction::Reset && !self.reset_was_armed {
+            self.reset_armed = true;
+            tree.set_text(
+                self.status,
+                crate::strings::t("Нажмите «СБРОС» ещё раз, чтобы удалить несохранённые правки."),
+            )?;
+            return Ok(());
+        }
         if action == EditorAction::Save && self.library_workspace.is_restoring() {
             tree.set_text(
                 self.status,
@@ -4329,15 +4342,24 @@ fn wait_for_save_io(session: &sse_app::SaveSession) {
     }
 }
 
+/// Only unexpected failures are crash reports. A refusal is an expected answer
+/// (for example, focus on a widget that cannot take it) and stays in the status line.
+fn reports_failure(error: &sse_core::Error) -> bool {
+    !matches!(error, sse_core::Error::Refused(_))
+}
+
 impl App<AppMessage> for Shell {
     fn message(&mut self, tree: &mut Tree, message: &Message<AppMessage>, clicked: Option<WidgetId>) -> Flow {
+        self.reset_was_armed = std::mem::take(&mut self.reset_armed);
         match self.handle(tree, message, clicked) {
             Ok(flow) => flow,
             Err(error) => {
                 let detail = crate::status::localize_writer_status(&error.to_string());
                 let text = tr("Ошибка: {0}", &[&detail]);
                 let _ = tree.set_text(self.status, &text);
-                self.capture_error_report(tree, &error.to_string());
+                if reports_failure(&error) {
+                    self.capture_error_report(tree, &error.to_string());
+                }
                 Flow::Continue
             }
         }
@@ -4381,7 +4403,7 @@ mod tests {
         keyboard_scroll_target, save_eligibility, spawn_native_file_picker, wait_for_save_io, NativeFilePickerFinished,
         OpenFilesQueue, ScreenId, Shell, KEY_END, KEY_HOME, KEY_PAGE_DOWN, KEY_PAGE_UP,
     };
-    use crate::event_loop::{channel_pair, Flow, Message, WindowEvent};
+    use crate::event_loop::{channel_pair, App, Flow, Message, WindowEvent};
     use crate::glyphs::Fonts;
     use crate::raster::Color;
     use crate::screens::AppMessage;
@@ -4392,6 +4414,45 @@ mod tests {
 
     fn close_task_test_guard() -> std::sync::MutexGuard<'static, ()> {
         crate::screens::task_registry_test_guard()
+    }
+
+    #[test]
+    fn reset_needs_a_second_press_before_it_discards_the_draft() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut shell = Shell::build_for_test(&mut tree, None)?;
+        shell.open(&mut tree, ScreenId::Overview)?;
+        let press = Message::User(AppMessage::Tick(0));
+        let (reset, undo) = (shell.reset, shell.undo);
+
+        App::<AppMessage>::message(&mut shell, &mut tree, &press, Some(reset));
+        assert!(shell.reset_armed, "the first press only arms the reset");
+        assert_eq!(
+            tree.text(shell.status)?,
+            crate::strings::t("Нажмите «СБРОС» ещё раз, чтобы удалить несохранённые правки.")
+        );
+
+        App::<AppMessage>::message(&mut shell, &mut tree, &press, Some(undo));
+        assert!(!shell.reset_armed, "any other action disarms the reset");
+
+        App::<AppMessage>::message(&mut shell, &mut tree, &press, Some(reset));
+        assert!(shell.reset_armed);
+        App::<AppMessage>::message(&mut shell, &mut tree, &press, Some(reset));
+        assert!(
+            !shell.reset_armed,
+            "the second press performs the reset and clears the arm"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn refusals_do_not_open_the_crash_report_dialog() {
+        assert!(!super::reports_failure(&sse_core::Error::Refused(
+            "widget cannot receive keyboard focus".to_owned()
+        )));
+        assert!(super::reports_failure(&sse_core::Error::Damaged(
+            "bad header".to_owned()
+        )));
+        assert!(super::reports_failure(&sse_core::Error::System("disk full".to_owned())));
     }
 
     #[test]
