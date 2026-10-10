@@ -410,23 +410,7 @@ impl Save {
     }
 
     pub(crate) fn object_chunk_bytes<'a>(&self, raw: &'a [u8]) -> Result<&'a [u8]> {
-        let mut found = None;
-        for chunk in self.container.chunks() {
-            if chunk.kind == 2 {
-                if found.is_some() {
-                    return Err(Error::damaged("duplicate X-Ray OBJECT chunks"));
-                }
-                let end = chunk
-                    .offset
-                    .checked_add(chunk.length)
-                    .ok_or_else(|| Error::damaged("X-Ray OBJECT chunk range overflow"))?;
-                found = Some(
-                    raw.get(chunk.offset..end)
-                        .ok_or_else(|| Error::damaged("X-Ray OBJECT chunk is outside the image"))?,
-                );
-            }
-        }
-        found.ok_or_else(|| Error::damaged("missing X-Ray OBJECT chunk"))
+        chunk_payload(raw, required_chunk(&self.container, 2)?)
     }
 
     #[cfg(test)]
@@ -439,23 +423,7 @@ impl Save {
     }
 
     pub(crate) fn relation_chunk_bytes<'a>(&self, raw: &'a [u8]) -> Result<&'a [u8]> {
-        let mut found = None;
-        for chunk in self.container.chunks() {
-            if chunk.kind == 9 {
-                if found.is_some() {
-                    return Err(Error::damaged("duplicate X-Ray relation chunks"));
-                }
-                let end = chunk
-                    .offset
-                    .checked_add(chunk.length)
-                    .ok_or_else(|| Error::damaged("X-Ray relation chunk range overflow"))?;
-                found = Some(
-                    raw.get(chunk.offset..end)
-                        .ok_or_else(|| Error::damaged("X-Ray relation chunk is outside the image"))?,
-                );
-            }
-        }
-        found.ok_or_else(|| Error::damaged("missing X-Ray relation chunk"))
+        chunk_payload(raw, required_chunk(&self.container, 9)?)
     }
 
     pub(crate) const fn relation_has_timestamps(&self) -> bool {
@@ -517,6 +485,16 @@ impl Save {
         }
         Ok(destinations)
     }
+}
+
+/// The payload bytes of one chunk, checked against the image.
+fn chunk_payload(raw: &[u8], chunk: Chunk) -> Result<&[u8]> {
+    let end = chunk
+        .offset
+        .checked_add(chunk.length)
+        .ok_or_else(|| Error::damaged("X-Ray chunk range overflow"))?;
+    raw.get(chunk.offset..end)
+        .ok_or_else(|| Error::damaged("X-Ray chunk is outside the image"))
 }
 
 fn required_chunk(container: &Container, kind: u32) -> Result<Chunk> {
