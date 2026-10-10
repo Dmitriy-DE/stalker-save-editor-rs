@@ -1,6 +1,6 @@
 //! S3 screens: verified backups, bounded save comparison, history, and read-only diagnostics.
 
-use super::saves::{RefreshOverview, Workspace};
+use super::saves::{build_list_side, list_window, split_label, sync_side_widths, ListSide, RefreshOverview, Workspace};
 use super::style::{self, Button, Text};
 use super::{AppMessage, Context, Screen, ScreenId};
 use crate::edit::{Clipboard, EditConfig, FieldMode, InputFilter, Key, Modifiers};
@@ -109,9 +109,23 @@ struct ActionButton {
 #[derive(Clone, Copy, Debug)]
 struct ResultRow {
     row: WidgetId,
+    card: WidgetId,
     label: WidgetId,
+    meta: WidgetId,
     button: WidgetId,
     secondary_button: WidgetId,
+    select: WidgetId,
+}
+
+/// Sets a row's text. A row of the list has two lines: the text before the first " · " is the title, the rest is the
+/// detail line. A row without its own detail line (the doctor's) writes its whole text to the one label.
+fn set_row_text(tree: &mut crate::widget::Tree, row: ResultRow, text: &str) -> Result<()> {
+    if row.meta == row.label {
+        return tree.set_text(row.label, text);
+    }
+    let (title, meta) = split_label(text);
+    tree.set_text(row.label, title)?;
+    tree.set_text(row.meta, meta)
 }
 
 #[derive(Debug)]
@@ -227,11 +241,21 @@ pub struct HistoryScreen {
     doctor_path: Option<TextInput>,
     doctor_clipboard: HistoryClipboard,
     diagnosis_running: bool,
+    side: Option<ListSide>,
+    selected_row: Option<usize>,
+    side_action: Option<WidgetId>,
+    side_secondary: Option<WidgetId>,
+    side_actions: Option<WidgetId>,
 }
 
 impl HistoryScreen {
     fn new(id: ScreenId, subtitle: &'static str, workspace: Workspace) -> Self {
         Self {
+            side: None,
+            selected_row: None,
+            side_action: None,
+            side_secondary: None,
+            side_actions: None,
             id,
             subtitle,
             workspace,
@@ -655,6 +679,7 @@ impl HistoryScreen {
     }
 
     fn render_backups_page(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        let rows = self.page_rows(cx.tree);
         let (visible, total, restorable, pages) = match self.backup_entries.as_ref() {
             Some(entries) => {
                 let total = entries.len();
@@ -662,14 +687,9 @@ impl HistoryScreen {
                     .iter()
                     .filter(|entry| matches!(entry.status, BackupStatus::Verified | BackupStatus::Interrupted))
                     .count();
-                let pages = page_count(total);
-                let start = self.page.saturating_mul(MAXIMUM_VISIBLE_ENTRIES);
-                let visible = entries
-                    .iter()
-                    .skip(start)
-                    .take(MAXIMUM_VISIBLE_ENTRIES)
-                    .cloned()
-                    .collect::<Vec<_>>();
+                let pages = page_count(total, rows);
+                let start = self.page.saturating_mul(rows);
+                let visible = entries.iter().skip(start).take(rows).cloned().collect::<Vec<_>>();
                 (visible, total, restorable, pages)
             }
             None => return Ok(()),
@@ -695,7 +715,15 @@ impl HistoryScreen {
                 break;
             };
             cx.tree.set_visible(slot.row, true)?;
-            cx.tree.set_text(slot.label, &format!("{file} · {status}"))?;
+            // The journal's name starts with the save's time (…_20261010T041157…): it tells the copies apart.
+            let stamp = entry
+                .journal_path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .and_then(|stem| stem.split('_').nth(1))
+                .map(|stamp| stamp.chars().take(15).collect::<String>())
+                .unwrap_or_default();
+            set_row_text(cx.tree, slot, &format!("{file} · {status} · {stamp}"))?;
             cx.tree.set_visible(slot.button, false)?;
             cx.tree.set_visible(slot.secondary_button, false)?;
             if matches!(entry.status, BackupStatus::Verified | BackupStatus::Interrupted)
@@ -732,7 +760,7 @@ impl HistoryScreen {
                     "{0} · {1}: {2}",
                     &[&file, &status, &error],
                 );
-                cx.tree.set_text(slot.label, &detail)?;
+                set_row_text(cx.tree, slot, &detail)?;
             }
         }
         Ok(())
@@ -752,6 +780,7 @@ impl HistoryScreen {
     }
 
     fn render_saves_page(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        let rows = self.page_rows(cx.tree);
         let (visible, total, pages) = match self.save_entries.as_ref() {
             Some(entries) => {
                 let candidates = if self.id == ScreenId::Compare {
@@ -778,14 +807,9 @@ impl HistoryScreen {
                     entries.clone()
                 };
                 let total = candidates.len();
-                let pages = page_count(total);
-                let start = self.page.saturating_mul(MAXIMUM_VISIBLE_ENTRIES);
-                let visible = candidates
-                    .iter()
-                    .skip(start)
-                    .take(MAXIMUM_VISIBLE_ENTRIES)
-                    .cloned()
-                    .collect::<Vec<_>>();
+                let pages = page_count(total, rows);
+                let start = self.page.saturating_mul(rows);
+                let visible = candidates.iter().skip(start).take(rows).cloned().collect::<Vec<_>>();
                 (visible, total, pages)
             }
             None => return Ok(()),
@@ -814,7 +838,7 @@ impl HistoryScreen {
                 .format_id
                 .as_deref()
                 .unwrap_or(crate::strings::t("не распознано"));
-            cx.tree.set_text(row.label, &format!("{filename} · {format}"))?;
+            set_row_text(cx.tree, row, &format!("{filename} · {format}"))?;
             let button_text = if self.id == ScreenId::Compare {
                 crate::strings::t("Выбрать")
             } else {
@@ -841,8 +865,19 @@ impl HistoryScreen {
         Ok(())
     }
 
+    /// Rows per page: on the list layout the rows that fit the window, on the doctor's layout the fixed count.
+    fn page_rows(&self, tree: &crate::widget::Tree) -> usize {
+        match self.side {
+            Some(_) => list_window(tree).min(MAXIMUM_VISIBLE_ENTRIES),
+            None => MAXIMUM_VISIBLE_ENTRIES,
+        }
+    }
+
     fn update_page_controls(&self, tree: &mut crate::widget::Tree, pages: usize) -> Result<()> {
         let multi_page = pages > 1;
+        if let Some(list) = self.side.as_ref() {
+            tree.set_visible(list.pages, multi_page)?;
+        }
         if let Some(previous) = self.previous_page {
             tree.set_visible(previous, multi_page && self.page > 0)?;
         }
@@ -862,19 +897,16 @@ impl HistoryScreen {
     }
 
     fn render_timeline_page(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        let rows = self.page_rows(cx.tree);
         let Some(entries) = self.save_entries.as_ref() else {
             return Ok(());
         };
         let mut ordered = entries.clone();
         ordered.sort_by(timeline_order);
         let total = ordered.len();
-        let pages = page_count(total);
-        let start = self.page.saturating_mul(MAXIMUM_VISIBLE_ENTRIES);
-        let visible = ordered
-            .iter()
-            .skip(start)
-            .take(MAXIMUM_VISIBLE_ENTRIES)
-            .collect::<Vec<_>>();
+        let pages = page_count(total, rows);
+        let start = self.page.saturating_mul(rows);
+        let visible = ordered.iter().skip(start).take(rows).collect::<Vec<_>>();
         self.clear_results(cx.tree)?;
         self.update_page_controls(cx.tree, pages)?;
         let current_page = self.page.saturating_add(1);
@@ -891,14 +923,15 @@ impl HistoryScreen {
             cx.tree.set_visible(row.row, true)?;
             cx.tree.set_visible(row.button, false)?;
             let game = save.game_id.as_deref().unwrap_or(&save.candidate_game_id);
-            cx.tree.set_text(
-                row.label,
+            set_row_text(
+                cx.tree,
+                row,
                 &crate::strings::tr_in(
                     Some(crate::strings::current_language()),
                     "{0} · {1} · {2} · {3} байт",
                     &[
-                        &game,
                         &display_name(&save.path),
+                        &game,
                         &format_system_time(save.last_write_time_utc),
                         &save.size,
                     ],
@@ -909,6 +942,7 @@ impl HistoryScreen {
     }
 
     fn render_compare(&mut self, cx: &mut Context<'_>, report: CompareReport) -> Result<()> {
+        let rows = self.page_rows(cx.tree);
         self.clear_results(cx.tree)?;
         self.update_page_controls(cx.tree, 0)?;
         let count = report.differences.len();
@@ -924,11 +958,10 @@ impl HistoryScreen {
             if let Some(row) = self.rows.first().copied() {
                 cx.tree.set_visible(row.row, true)?;
                 cx.tree.set_visible(row.button, false)?;
-                cx.tree
-                    .set_text(row.label, crate::strings::t("Различий в деньгах и предметах нет."))?;
+                set_row_text(cx.tree, row, crate::strings::t("Различий в деньгах и предметах нет."))?;
             }
         }
-        for (row_index, difference) in report.differences.iter().take(MAXIMUM_VISIBLE_ENTRIES).enumerate() {
+        for (row_index, difference) in report.differences.iter().take(rows).enumerate() {
             let Some(row) = self.rows.get(row_index).copied() else {
                 break;
             };
@@ -940,24 +973,19 @@ impl HistoryScreen {
             let language = crate::strings::current_language();
             let value_a = localized_comparison_value(&difference.value_a, language);
             let value_b = localized_comparison_value(&difference.value_b, language);
-            cx.tree.set_text(
-                row.label,
+            set_row_text(
+                cx.tree,
+                row,
                 &format!("{} · {} · {} → {} · {}", kind, label, value_a, value_b, category),
             )?;
         }
-        if count > MAXIMUM_VISIBLE_ENTRIES {
+        if count > rows {
             self.set_summary(
                 cx.tree,
                 &crate::strings::tr_in(
                     Some(crate::strings::current_language()),
                     "Различий: {0} · добавлено: {1} · удалено: {2} · изменено: {3} · показаны первые {4}",
-                    &[
-                        &count,
-                        &report.added,
-                        &report.removed,
-                        &report.changed,
-                        &MAXIMUM_VISIBLE_ENTRIES,
-                    ],
+                    &[&count, &report.added, &report.removed, &report.changed, &rows],
                 ),
             )?;
         }
@@ -973,8 +1001,9 @@ impl HistoryScreen {
                 break;
             };
             cx.tree.set_visible(row.row, true)?;
-            cx.tree.set_text(
-                row.label,
+            set_row_text(
+                cx.tree,
+                row,
                 &format!("{} · {}", quest_title(state.id), quest_detail(state)),
             )?;
             cx.tree.set_visible(row.button, false)?;
@@ -1018,7 +1047,7 @@ impl HistoryScreen {
         self.set_summary(tree, crate::strings::t("Ошибка"))?;
         if let Some(row) = self.rows.first().copied() {
             tree.set_visible(row.row, true)?;
-            tree.set_text(row.label, &doctor_error_detail(error))?;
+            set_row_text(tree, row, &doctor_error_detail(error))?;
             tree.set_visible(row.button, false)?;
             tree.set_visible(row.secondary_button, false)?;
         }
@@ -1067,174 +1096,9 @@ impl HistoryScreen {
     }
 }
 
-impl Screen for HistoryScreen {
-    fn id(&self) -> ScreenId {
-        self.id
-    }
-
-    fn subtitle(&self) -> &str {
-        self.subtitle
-    }
-
-    fn shown(&mut self, cx: &mut Context<'_>) -> Result<()> {
-        self.workspace.poll_tasks();
-        if self.id == ScreenId::Backups {
-            self.request_refresh(cx.proxy.cloned())?;
-        }
-        if self.id == ScreenId::Compare {
-            let selected = cx.app.current_save().map(Path::to_path_buf);
-            if self.compare_selection.first().cloned() != selected {
-                self.compare_selection = selected.into_iter().collect();
-            }
-        } else if self.id == ScreenId::SaveDoctor {
-            let selected = cx
-                .app
-                .current_save()
-                .zip(cx.app.current_save_sha256())
-                .map(|(path, sha256)| (path.to_path_buf(), sha256.to_owned()));
-            if selected != self.diagnosed_selection {
-                if let Some((path, source_sha256)) = selected {
-                    let format_id = cx.app.current_save_format().map(str::to_owned);
-                    self.set_doctor_path(cx.tree, &path.to_string_lossy())?;
-                    let file = display_name(&path);
-                    let summary =
-                        crate::strings::tr_in(Some(crate::strings::current_language()), "Проверяю {0}…", &[&file]);
-                    self.set_summary(cx.tree, &summary)?;
-                    if self.start_diagnosis(path.clone(), format_id, cx.proxy.cloned())? {
-                        self.diagnosed_selection = Some((path, source_sha256));
-                    }
-                    self.sync_doctor_check(cx.tree)?;
-                } else if self.diagnosed_selection.is_some() || self.diagnosis_running {
-                    self.diagnosis_request_id = self.diagnosis_request_id.saturating_add(1);
-                    self.diagnosed_selection = None;
-                    self.diagnosis_running = false;
-                    self.clear_results(cx.tree)?;
-                    self.set_summary(cx.tree, crate::strings::t("ВЫБЕРИТЕ ФАЙЛ СОХРАНЕНИЯ ДЛЯ ПРОВЕРКИ."))?;
-                    self.sync_doctor_check(cx.tree)?;
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
-        let card = style::card(cx.tree, host)?;
-        let title = match self.id {
-            ScreenId::Backups => crate::strings::t("БЭКАПЫ И ВОССТАНОВЛЕНИЕ"),
-            ScreenId::Compare => crate::strings::t("СРАВНЕНИЕ СОХРАНЕНИЙ"),
-            ScreenId::Timeline => crate::strings::t("ИСТОРИЯ СОХРАНЕНИЙ"),
-            ScreenId::SaveDoctor => doctor_title(),
-            _ => crate::strings::t("ИСТОРИЯ"),
-        };
-        style::label(cx.tree, card, title, Text::Heading)?;
-        if self.id == ScreenId::SaveDoctor {
-            style::label(cx.tree, card, doctor_description(), Text::Note)?;
-            let path_row = style::row(cx.tree, card)?;
-            style::label(cx.tree, path_row, crate::strings::t("Файл"), Text::Note)?;
-            let colors = crate::theme::current().colors;
-            let path_input = cx.tree.add(
-                Some(path_row),
-                NodeKind::Leaf,
-                Style {
-                    min: Size::new(360.0, crate::theme::BUTTON_HEIGHT),
-                    padding: Edges {
-                        left: 12.0,
-                        top: 0.0,
-                        right: 12.0,
-                        bottom: 0.0,
-                    },
-                    ..Style::default()
-                },
-                Content::Input {
-                    text: String::new(),
-                    style: TextStyle::new(Face::Body, 16.0),
-                },
-                Look {
-                    fill: Some(style::rgb(colors.background[4])),
-                    border: Some((style::rgb(colors.borders[1]), 1.0)),
-                    radius: crate::theme::BUTTON_RADIUS,
-                    text: style::rgb(colors.text[0]),
-                    ..Look::default()
-                },
-            )?;
-            self.doctor_path_input = Some(path_input);
-            self.doctor_path = Some(TextInput::new("", doctor_path_edit_config())?);
-            let doctor_actions = style::row(cx.tree, card)?;
-            self.doctor_check = Some(style::button(
-                cx.tree,
-                doctor_actions,
-                crate::strings::t("ПРОВЕРИТЬ"),
-                Button::Primary,
-            )?);
-            self.doctor_open_save = Some(style::button(
-                cx.tree,
-                doctor_actions,
-                crate::strings::t("Открыть"),
-                Button::Secondary,
-            )?);
-            if let Some(check) = self.doctor_check {
-                cx.tree.set_enabled(check, false)?;
-            }
-        }
-        let row = style::row(cx.tree, card)?;
-        let action = match self.id {
-            ScreenId::Compare => crate::strings::t("Найти сейвы"),
-            ScreenId::SaveDoctor => crate::strings::t("Список сейвов"),
-            ScreenId::Timeline => crate::strings::t("Обновить историю"),
-            _ => crate::strings::t("Обновить"),
-        };
-        self.refresh = Some(style::button(cx.tree, row, action, Button::Primary)?);
-        self.previous_page = Some(style::button(
-            cx.tree,
-            row,
-            crate::strings::t("Назад"),
-            Button::Secondary,
-        )?);
-        self.next_page = Some(style::button(
-            cx.tree,
-            row,
-            crate::strings::t("Дальше"),
-            Button::Secondary,
-        )?);
-        if let Some(previous) = self.previous_page {
-            cx.tree.set_visible(previous, false)?;
-        }
-        if let Some(next) = self.next_page {
-            cx.tree.set_visible(next, false)?;
-        }
-        self.summary = Some(style::label(
-            cx.tree,
-            row,
-            crate::strings::t("Нажмите кнопку, чтобы прочитать локальные данные."),
-            Text::Note,
-        )?);
-        self.results = Some(style::card(cx.tree, host)?);
-        let results = self.results.unwrap_or(card);
-        style::label(
-            cx.tree,
-            results,
-            match self.id {
-                ScreenId::Backups => crate::strings::t("Журнал резервных копий сверяется с файлами и SHA-256; восстановление идёт в отдельный файл после подтверждения."),
-                ScreenId::Compare => crate::strings::t("Показываются только различия в читаемых значениях денег и предметов."),
-                ScreenId::Timeline => crate::strings::t("Временная последовательность строится по времени изменения файлов сейвов."),
-                ScreenId::SaveDoctor => crate::strings::t("Ремонт доступен только для доказанно сломанного квеста и записывается с бэкапом и обратным чтением."),
-                _ => "",
-            },
-            Text::Note,
-        )?;
-        for _ in 0..MAXIMUM_VISIBLE_ENTRIES {
-            let row = style::row(cx.tree, results)?;
-            let label = style::label(cx.tree, row, "", Text::Body)?;
-            let button = style::button(cx.tree, row, crate::strings::t("Действие"), Button::Secondary)?;
-            let secondary_button = style::button(cx.tree, row, crate::strings::t("Восстановить"), Button::Danger)?;
-            cx.tree.set_visible(row, false)?;
-            self.rows.push(ResultRow {
-                row,
-                label,
-                button,
-                secondary_button,
-            });
-        }
+impl HistoryScreen {
+    /// The restore confirmation overlay, shared by both layouts.
+    fn build_restore_confirmation(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
         let confirmation_host = cx.tree.overlay_host().unwrap_or(host);
         let confirmation = style::card(cx.tree, confirmation_host)?;
         self.restore_confirmation = Some(confirmation);
@@ -1269,7 +1133,210 @@ impl Screen for HistoryScreen {
         Ok(())
     }
 
-    fn message(
+    /// Layout of the backups, compare and timeline screens: the list of entries to the left, the chosen entry and its
+    /// actions in the side panel. The entries' own buttons are kept hidden; the side panel's buttons stand for them.
+    fn build_list_layout(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
+        let (title, empty, action) = match self.id {
+            ScreenId::Backups => (
+                crate::strings::t("БЭКАПЫ И ВОССТАНОВЛЕНИЕ"),
+                crate::strings::t("Журнал резервных копий сверяется с файлами и SHA-256; восстановление идёт в отдельный файл после подтверждения."),
+                crate::strings::t("Обновить"),
+            ),
+            ScreenId::Compare => (
+                crate::strings::t("СРАВНЕНИЕ СОХРАНЕНИЙ"),
+                crate::strings::t("Показываются только различия в читаемых значениях денег и предметов."),
+                crate::strings::t("Найти сейвы"),
+            ),
+            ScreenId::Timeline => (
+                crate::strings::t("ИСТОРИЯ СОХРАНЕНИЙ"),
+                crate::strings::t("Временная последовательность строится по времени изменения файлов сейвов."),
+                crate::strings::t("Обновить историю"),
+            ),
+            _ => (
+                crate::strings::t("ИСТОРИЯ"),
+                crate::strings::t("Нажмите кнопку, чтобы прочитать локальные данные."),
+                crate::strings::t("Обновить"),
+            ),
+        };
+        let keys = [crate::strings::t("Файл"), crate::strings::t("Подробности")].map(str::to_owned);
+        let list = build_list_side(
+            cx,
+            host,
+            title,
+            crate::strings::t("ВЫБРАННАЯ ЗАПИСЬ"),
+            &keys,
+            (
+                empty,
+                crate::strings::t("Нажмите кнопку, чтобы прочитать локальные данные."),
+            ),
+            Some(action),
+        )?;
+        // The entries' own buttons live in a hidden host: a row shows them only through the side panel.
+        // Hidden children still reserve their parent's gap, so the host sits last in the side panel: its gap only
+        // shortens the panel's free room, not the list's.
+        let inspector = cx.tree.children(list.side).first().copied().unwrap_or(host);
+        let hidden = cx.tree.add(
+            Some(inspector),
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        cx.tree.set_visible(hidden, false)?;
+        self.rows.clear();
+        for row in &list.rows {
+            let button = style::button(cx.tree, hidden, "", Button::Secondary)?;
+            let secondary_button = style::button(cx.tree, hidden, "", Button::Danger)?;
+            self.rows.push(ResultRow {
+                row: row.stack,
+                card: row.card,
+                label: row.title,
+                meta: row.meta,
+                button,
+                secondary_button,
+                select: row.select,
+            });
+        }
+        // The two actions of a backup are long labels: one above the other, each as wide as the side panel. The
+        // column takes the row's place in the inspector; the row itself stays hidden.
+        let inspector = cx.tree.children(list.side).first().copied().unwrap_or(host);
+        let stacked = cx.tree.add(
+            Some(inspector),
+            NodeKind::Column,
+            Style {
+                gap: Size::new(0.0, crate::theme::CONTROL_GAP),
+                align_items: crate::layout::Align::Stretch,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        cx.tree.set_visible(stacked, false)?;
+        cx.tree.set_visible(list.actions, false)?;
+        let side_action = style::d2::button(
+            cx.tree,
+            stacked,
+            "",
+            style::d2::ButtonKind::Primary,
+            style::d2::ButtonSize::Normal,
+        )?;
+        let side_secondary = style::d2::button(
+            cx.tree,
+            stacked,
+            "",
+            style::d2::ButtonKind::Secondary,
+            style::d2::ButtonSize::Normal,
+        )?;
+        self.side_actions = Some(stacked);
+        self.side_action = Some(side_action);
+        self.side_secondary = Some(side_secondary);
+        self.refresh = list.action_button;
+        self.previous_page = Some(list.previous);
+        self.next_page = Some(list.next);
+        self.summary = Some(list.note);
+        self.side = Some(list);
+        self.build_restore_confirmation(cx, host)?;
+        self.sync_side(cx.tree)
+    }
+
+    /// Shows the chosen entry in the side panel and its actions as the entry's own buttons are now.
+    fn sync_side(&self, tree: &mut crate::widget::Tree) -> Result<()> {
+        let Some(list) = self.side.as_ref() else {
+            return Ok(());
+        };
+        sync_side_widths(tree, list)?;
+        let shown: Vec<bool> = self.rows.iter().map(|row| tree.is_visible(row.row)).collect();
+        let selected = self
+            .selected_row
+            .filter(|index| shown.get(*index).copied().unwrap_or(false));
+        // The header counter is the number of entries the screen holds, not of rows on this page.
+        let total = match (&self.backup_entries, &self.save_entries) {
+            (Some(entries), _) => entries.len(),
+            (None, Some(_)) if self.id == ScreenId::Compare => self.actions.len(),
+            (None, Some(entries)) => entries.len(),
+            (None, None) => shown.iter().filter(|visible| **visible).count(),
+        };
+        tree.set_text(list.count, &total.to_string())?;
+        for (index, row) in self.rows.iter().enumerate() {
+            let chosen = Some(index) == selected;
+            tree.set_look(
+                row.card,
+                if chosen {
+                    crate::widget::Look {
+                        fill: Some(style::d2::argb(crate::theme::d2::ACCENT_TINT)),
+                        border: Some((style::d2::argb(crate::theme::d2::ACCENT), 1.0)),
+                        radius: crate::theme::d2::RADIUS_BADGE,
+                        ..crate::widget::Look::default()
+                    }
+                } else {
+                    crate::widget::Look::default()
+                },
+            )?;
+        }
+        let Some(index) = selected else {
+            for id in &list.kv_rows {
+                tree.set_visible(*id, false)?;
+            }
+            tree.set_visible(list.detail, false)?;
+            for id in [self.side_action, self.side_secondary].into_iter().flatten() {
+                tree.set_visible(id, false)?;
+            }
+            tree.set_visible(self.side_actions.unwrap_or(list.actions), false)?;
+            tree.set_visible(list.empty, true)?;
+            return Ok(());
+        };
+        let Some(row) = self.rows.get(index).copied() else {
+            return Ok(());
+        };
+        let title = tree.text(row.label)?.to_owned();
+        let detail = tree.text(row.meta)?.to_owned();
+        if let Some(value) = list.kv_values.first() {
+            tree.set_text(*value, &title)?;
+        }
+        // The file name is the key line; the details wrap in the paragraph below it, inside the panel.
+        for (index, id) in list.kv_rows.iter().enumerate() {
+            tree.set_visible(*id, index == 0)?;
+        }
+        tree.set_text(list.detail, &detail)?;
+        tree.set_visible(list.detail, true)?;
+        tree.set_visible(list.empty, false)?;
+        // The entry's buttons sit in a hidden host, so their own visibility is not enough: an action exists when the
+        // screen offers it for this row.
+        let primary = self.actions.iter().any(|action| action.widget == row.button);
+        let secondary = self.actions.iter().any(|action| action.widget == row.secondary_button);
+        if let Some(action) = self.side_action {
+            // The label is set after the build, so it is written in capitals here, like the build's own labels.
+            let text = tree.text(row.button)?.to_uppercase();
+            tree.set_text(action, &text)?;
+            tree.set_enabled(action, tree.is_enabled(row.button)?)?;
+            tree.set_visible(action, primary)?;
+        }
+        if let Some(action) = self.side_secondary {
+            let text = tree.text(row.secondary_button)?.to_uppercase();
+            tree.set_text(action, &text)?;
+            tree.set_enabled(action, tree.is_enabled(row.secondary_button)?)?;
+            tree.set_visible(action, secondary)?;
+        }
+        tree.set_visible(self.side_actions.unwrap_or(list.actions), primary || secondary)?;
+        Ok(())
+    }
+
+    /// The side panel's buttons act for the chosen entry: they stand for its own buttons.
+    fn side_click(&self, clicked: Option<WidgetId>) -> Option<WidgetId> {
+        let side_button = clicked.is_some() && (clicked == self.side_action || clicked == self.side_secondary);
+        if !side_button {
+            return clicked;
+        }
+        let row = self.selected_row.and_then(|index| self.rows.get(index))?;
+        if clicked == self.side_action {
+            return Some(row.button);
+        }
+        Some(row.secondary_button)
+    }
+}
+
+impl HistoryScreen {
+    fn message_inner(
         &mut self,
         cx: &mut Context<'_>,
         message: &Message<AppMessage>,
@@ -1474,13 +1541,14 @@ impl Screen for HistoryScreen {
             self.render_current_page(cx)?;
         }
         if clicked.is_some() && clicked == self.next_page {
+            let rows = self.page_rows(cx.tree);
             let total_pages = self.backup_entries.as_ref().map_or_else(
                 || {
                     self.save_entries
                         .as_ref()
-                        .map_or(0, |entries| page_count(entries.len()))
+                        .map_or(0, |entries| page_count(entries.len(), rows))
                 },
-                |entries| page_count(entries.len()),
+                |entries| page_count(entries.len(), rows),
             );
             if self.page.saturating_add(1) < total_pages {
                 self.page = self.page.saturating_add(1);
@@ -1773,6 +1841,201 @@ impl Screen for HistoryScreen {
             }
         }
         Ok(())
+    }
+}
+
+impl Screen for HistoryScreen {
+    fn id(&self) -> ScreenId {
+        self.id
+    }
+
+    fn subtitle(&self) -> &str {
+        self.subtitle
+    }
+
+    fn shown(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        self.workspace.poll_tasks();
+        if self.id == ScreenId::Backups {
+            self.request_refresh(cx.proxy.cloned())?;
+        }
+        if self.id == ScreenId::Compare {
+            let selected = cx.app.current_save().map(Path::to_path_buf);
+            if self.compare_selection.first().cloned() != selected {
+                self.compare_selection = selected.into_iter().collect();
+            }
+        } else if self.id == ScreenId::SaveDoctor {
+            let selected = cx
+                .app
+                .current_save()
+                .zip(cx.app.current_save_sha256())
+                .map(|(path, sha256)| (path.to_path_buf(), sha256.to_owned()));
+            if selected != self.diagnosed_selection {
+                if let Some((path, source_sha256)) = selected {
+                    let format_id = cx.app.current_save_format().map(str::to_owned);
+                    self.set_doctor_path(cx.tree, &path.to_string_lossy())?;
+                    let file = display_name(&path);
+                    let summary =
+                        crate::strings::tr_in(Some(crate::strings::current_language()), "Проверяю {0}…", &[&file]);
+                    self.set_summary(cx.tree, &summary)?;
+                    if self.start_diagnosis(path.clone(), format_id, cx.proxy.cloned())? {
+                        self.diagnosed_selection = Some((path, source_sha256));
+                    }
+                    self.sync_doctor_check(cx.tree)?;
+                } else if self.diagnosed_selection.is_some() || self.diagnosis_running {
+                    self.diagnosis_request_id = self.diagnosis_request_id.saturating_add(1);
+                    self.diagnosed_selection = None;
+                    self.diagnosis_running = false;
+                    self.clear_results(cx.tree)?;
+                    self.set_summary(cx.tree, crate::strings::t("ВЫБЕРИТЕ ФАЙЛ СОХРАНЕНИЯ ДЛЯ ПРОВЕРКИ."))?;
+                    self.sync_doctor_check(cx.tree)?;
+                }
+            }
+        }
+        self.sync_side(cx.tree)
+    }
+
+    fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
+        if self.id != ScreenId::SaveDoctor {
+            return self.build_list_layout(cx, host);
+        }
+        let card = style::card(cx.tree, host)?;
+        let title = match self.id {
+            ScreenId::Backups => crate::strings::t("БЭКАПЫ И ВОССТАНОВЛЕНИЕ"),
+            ScreenId::Compare => crate::strings::t("СРАВНЕНИЕ СОХРАНЕНИЙ"),
+            ScreenId::Timeline => crate::strings::t("ИСТОРИЯ СОХРАНЕНИЙ"),
+            ScreenId::SaveDoctor => doctor_title(),
+            _ => crate::strings::t("ИСТОРИЯ"),
+        };
+        style::label(cx.tree, card, title, Text::Heading)?;
+        if self.id == ScreenId::SaveDoctor {
+            style::label(cx.tree, card, doctor_description(), Text::Note)?;
+            let path_row = style::row(cx.tree, card)?;
+            style::label(cx.tree, path_row, crate::strings::t("Файл"), Text::Note)?;
+            let colors = crate::theme::current().colors;
+            let path_input = cx.tree.add(
+                Some(path_row),
+                NodeKind::Leaf,
+                Style {
+                    min: Size::new(360.0, crate::theme::BUTTON_HEIGHT),
+                    padding: Edges {
+                        left: 12.0,
+                        top: 0.0,
+                        right: 12.0,
+                        bottom: 0.0,
+                    },
+                    ..Style::default()
+                },
+                Content::Input {
+                    text: String::new(),
+                    style: TextStyle::new(Face::Body, 16.0),
+                },
+                Look {
+                    fill: Some(style::rgb(colors.background[4])),
+                    border: Some((style::rgb(colors.borders[1]), 1.0)),
+                    radius: crate::theme::BUTTON_RADIUS,
+                    text: style::rgb(colors.text[0]),
+                    ..Look::default()
+                },
+            )?;
+            self.doctor_path_input = Some(path_input);
+            self.doctor_path = Some(TextInput::new("", doctor_path_edit_config())?);
+            let doctor_actions = style::row(cx.tree, card)?;
+            self.doctor_check = Some(style::button(
+                cx.tree,
+                doctor_actions,
+                crate::strings::t("ПРОВЕРИТЬ"),
+                Button::Primary,
+            )?);
+            self.doctor_open_save = Some(style::button(
+                cx.tree,
+                doctor_actions,
+                crate::strings::t("Открыть"),
+                Button::Secondary,
+            )?);
+            if let Some(check) = self.doctor_check {
+                cx.tree.set_enabled(check, false)?;
+            }
+        }
+        let row = style::row(cx.tree, card)?;
+        let action = match self.id {
+            ScreenId::Compare => crate::strings::t("Найти сейвы"),
+            ScreenId::SaveDoctor => crate::strings::t("Список сейвов"),
+            ScreenId::Timeline => crate::strings::t("Обновить историю"),
+            _ => crate::strings::t("Обновить"),
+        };
+        self.refresh = Some(style::button(cx.tree, row, action, Button::Primary)?);
+        self.previous_page = Some(style::button(
+            cx.tree,
+            row,
+            crate::strings::t("Назад"),
+            Button::Secondary,
+        )?);
+        self.next_page = Some(style::button(
+            cx.tree,
+            row,
+            crate::strings::t("Дальше"),
+            Button::Secondary,
+        )?);
+        if let Some(previous) = self.previous_page {
+            cx.tree.set_visible(previous, false)?;
+        }
+        if let Some(next) = self.next_page {
+            cx.tree.set_visible(next, false)?;
+        }
+        self.summary = Some(style::label(
+            cx.tree,
+            row,
+            crate::strings::t("Нажмите кнопку, чтобы прочитать локальные данные."),
+            Text::Note,
+        )?);
+        self.results = Some(style::card(cx.tree, host)?);
+        let results = self.results.unwrap_or(card);
+        style::label(
+            cx.tree,
+            results,
+            match self.id {
+                ScreenId::Backups => crate::strings::t("Журнал резервных копий сверяется с файлами и SHA-256; восстановление идёт в отдельный файл после подтверждения."),
+                ScreenId::Compare => crate::strings::t("Показываются только различия в читаемых значениях денег и предметов."),
+                ScreenId::Timeline => crate::strings::t("Временная последовательность строится по времени изменения файлов сейвов."),
+                ScreenId::SaveDoctor => crate::strings::t("Ремонт доступен только для доказанно сломанного квеста и записывается с бэкапом и обратным чтением."),
+                _ => "",
+            },
+            Text::Note,
+        )?;
+        for _ in 0..MAXIMUM_VISIBLE_ENTRIES {
+            let row = style::row(cx.tree, results)?;
+            let label = style::label(cx.tree, row, "", Text::Body)?;
+            let button = style::button(cx.tree, row, crate::strings::t("Действие"), Button::Secondary)?;
+            let secondary_button = style::button(cx.tree, row, crate::strings::t("Восстановить"), Button::Danger)?;
+            cx.tree.set_visible(row, false)?;
+            self.rows.push(ResultRow {
+                row,
+                card: row,
+                label,
+                meta: label,
+                button,
+                secondary_button,
+                select: label,
+            });
+        }
+        self.build_restore_confirmation(cx, host)?;
+        Ok(())
+    }
+
+    fn message(
+        &mut self,
+        cx: &mut Context<'_>,
+        message: &Message<AppMessage>,
+        clicked: Option<WidgetId>,
+    ) -> Result<()> {
+        // A row's select button only chooses the entry; the side panel's buttons act for the chosen one.
+        if let Some(index) = clicked.and_then(|id| self.rows.iter().position(|row| row.select == id)) {
+            self.selected_row = Some(index);
+            return self.sync_side(cx.tree);
+        }
+        let clicked = self.side_click(clicked);
+        self.message_inner(cx, message, clicked)?;
+        self.sync_side(cx.tree)
     }
 }
 
@@ -2271,8 +2534,12 @@ fn restored_output_path_at(source: &Path, timestamp: u64) -> PathBuf {
     source.with_file_name(format!("{name}_restored_{timestamp}.{extension}"))
 }
 
-fn page_count(total: usize) -> usize {
-    total.saturating_add(MAXIMUM_VISIBLE_ENTRIES.saturating_sub(1)) / MAXIMUM_VISIBLE_ENTRIES
+fn page_count(total: usize, rows: usize) -> usize {
+    let rows = rows.max(1);
+    total
+        .saturating_add(rows.saturating_sub(1))
+        .checked_div(rows)
+        .unwrap_or(0)
 }
 
 fn display_name(path: &Path) -> String {
@@ -2843,10 +3110,11 @@ mod tests {
 
     #[test]
     fn list_pages_cover_all_entries_without_an_empty_tail_page() {
-        assert_eq!(page_count(0), 0);
-        assert_eq!(page_count(12), 1);
-        assert_eq!(page_count(13), 2);
-        assert_eq!(page_count(24), 2);
+        assert_eq!(page_count(0, 12), 0);
+        assert_eq!(page_count(12, 12), 1);
+        assert_eq!(page_count(13, 12), 2);
+        assert_eq!(page_count(24, 12), 2);
+        assert_eq!(page_count(13, 7), 2);
     }
 
     #[test]
@@ -3114,6 +3382,76 @@ mod tests {
     }
 
     #[test]
+    fn compare_row_then_side_action_chooses_the_same_candidate() -> sse_core::Result<()> {
+        // The row only chooses a save; the side panel's one action does what the entry's own button did.
+        let fonts = Fonts::bundled()?;
+        let mut tree = Tree::new(fonts, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let mut app = sse_app::AppState::new();
+        let mut screen = HistoryScreen::new(ScreenId::Compare, "test", Workspace::default());
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: None,
+            status: None,
+            app: &mut app,
+        };
+        screen.build(&mut cx, host)?;
+        screen.render_saves(
+            &mut cx,
+            vec![fixture_slot("soc-a.sav", "soc"), fixture_slot("soc-b.sav", "soc")],
+        )?;
+        let entry = screen
+            .actions
+            .first()
+            .cloned()
+            .ok_or_else(|| sse_core::Error::damaged("missing first candidate"))?;
+        let first_path = match entry.action {
+            Action::Compare(path) => path,
+            _ => return Err(sse_core::Error::damaged("expected compare action")),
+        };
+        let position = screen
+            .rows
+            .iter()
+            .position(|row| row.button == entry.widget)
+            .ok_or_else(|| sse_core::Error::damaged("the candidate has no row"))?;
+        let select = screen
+            .rows
+            .get(position)
+            .map(|row| row.select)
+            .ok_or_else(|| sse_core::Error::damaged("no select button for the row"))?;
+        let side_action = screen
+            .side_action
+            .ok_or_else(|| sse_core::Error::damaged("the side panel has no action"))?;
+        let pointer = Message::Window(crate::event_loop::WindowEvent::PointerLeft);
+        screen.message(&mut cx, &pointer, Some(select))?;
+        assert!(
+            cx.tree.is_visible(side_action),
+            "the side action is hidden after choosing a candidate"
+        );
+        assert!(
+            cx.tree.is_enabled(side_action)?,
+            "the side action is off after choosing a candidate"
+        );
+        assert!(
+            screen.compare_selection.is_empty(),
+            "choosing a row must not start the comparison"
+        );
+        screen.message(&mut cx, &pointer, Some(side_action))?;
+        assert_eq!(
+            screen.compare_selection,
+            vec![first_path],
+            "the side action chose another candidate"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn compare_screen_lists_two_same_game_candidates_when_no_save_is_open() -> sse_core::Result<()> {
         let fonts = Fonts::bundled()?;
         let mut tree = Tree::new(fonts, Color::rgba(12, 13, 10, 255));
@@ -3194,6 +3532,77 @@ mod tests {
             screen.message(&mut cx, &message, Some(second_action.widget))?;
         }
         assert_eq!(screen.compare_selection, vec![first_path, second_path]);
+        Ok(())
+    }
+
+    #[test]
+    fn backup_row_then_side_action_asks_the_same_confirmation() -> sse_core::Result<()> {
+        // The row only chooses the backup; the side panel's restore action asks for the same confirmation as the row's own.
+        let temp = TempDirectory::new();
+        let save_directory = temp.0.join("saves");
+        let backup_directory = temp.0.join("backups");
+        fs::create_dir_all(&save_directory)?;
+        fs::create_dir_all(&backup_directory)?;
+        let source = save_directory.join("slot.sav");
+        fs::write(&source, SYNTHETIC_XRAY_SAVE)?;
+        let expected_sha = sse_codecs::sha256::sha256_hex(SYNTHETIC_XRAY_SAVE);
+        let replacement = include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-expected.sav");
+        let receipt = transaction::export_transaction(
+            &source,
+            &expected_sha,
+            replacement,
+            &save_directory.join("edited.sav"),
+            &backup_directory,
+            EditSummary::default(),
+        )?;
+        let fonts = Fonts::bundled()?;
+        let mut tree = Tree::new(fonts, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let mut app = sse_app::AppState::new();
+        let mut screen = HistoryScreen::new(ScreenId::Backups, "test", Workspace::default());
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: None,
+            status: None,
+            app: &mut app,
+        };
+        screen.build(&mut cx, host)?;
+        screen.render_backups(&mut cx, transaction::list_backups(&backup_directory)?)?;
+        let select = screen
+            .rows
+            .first()
+            .map(|row| row.select)
+            .ok_or_else(|| sse_core::Error::damaged("no backup row"))?;
+        let side_action = screen
+            .side_action
+            .ok_or_else(|| sse_core::Error::damaged("the side panel has no action"))?;
+        let pointer = Message::Window(crate::event_loop::WindowEvent::PointerLeft);
+        screen.message(&mut cx, &pointer, Some(select))?;
+        assert!(
+            cx.tree.is_visible(side_action),
+            "the side action is hidden after choosing a backup"
+        );
+        assert!(
+            screen.pending_restore.is_none(),
+            "choosing a row must not ask for a restore"
+        );
+        screen.message(&mut cx, &pointer, Some(side_action))?;
+        let (journal, _, _, _) = screen
+            .pending_restore
+            .clone()
+            .ok_or_else(|| sse_core::Error::damaged("the side action did not ask for the restore"))?;
+        assert_eq!(journal, receipt.journal_path);
+        assert_eq!(
+            fs::read(&source)?,
+            SYNTHETIC_XRAY_SAVE,
+            "nothing is written before the confirmation"
+        );
         Ok(())
     }
 

@@ -83,7 +83,7 @@ fn main() -> std::process::ExitCode {
 fn screenshot(args: &[String]) -> Result<()> {
     let path = args.get(1).ok_or_else(|| {
         Error::Refused(
-            "usage: --screenshot OUT.png [WxH] [NAV] [--open SAVE] [--add-item] [--discover] [--wait] [--select-first]"
+            "usage: --screenshot OUT.png [WxH] [NAV] [--open SAVE] [--add-item] [--discover] [--press LABEL] [--wait] [--select-first]"
                 .to_owned(),
         )
     })?;
@@ -94,6 +94,7 @@ fn screenshot(args: &[String]) -> Result<()> {
     let mut discover = false;
     let mut wait = false;
     let mut select_first = false;
+    let mut press: Option<&String> = None;
     let mut index = 2;
     while index < args.len() {
         match args.get(index).map(String::as_str) {
@@ -101,6 +102,13 @@ fn screenshot(args: &[String]) -> Result<()> {
             Some("--discover") => discover = true,
             Some("--wait") => wait = true,
             Some("--select-first") => select_first = true,
+            Some("--press") => {
+                index = index.saturating_add(1);
+                press = Some(
+                    args.get(index)
+                        .ok_or_else(|| Error::Refused("--press requires a button label".to_owned()))?,
+                );
+            }
             Some("--open") => {
                 index = index.saturating_add(1);
                 open_save = Some(
@@ -186,6 +194,24 @@ fn screenshot(args: &[String]) -> Result<()> {
                     }
                     break;
                 }
+            }
+        }
+    }
+    if let Some(label) = press {
+        // The press starts a background read; its result comes back as a message, which is drained here.
+        if !shell.press_button(&mut tree, label)? {
+            return Err(Error::Refused(format!("the screen has no button {label}")));
+        }
+        if let Some(receiver) = loader.as_ref() {
+            let deadline = Instant::now()
+                .checked_add(Duration::from_secs(20))
+                .ok_or_else(|| Error::System("invalid screenshot press deadline".to_owned()))?;
+            // The read may answer in several messages (the library and the screen), so the window is timed, not counted.
+            while Instant::now() < deadline {
+                let Ok(message) = receiver.recv_timeout(Duration::from_millis(200)) else {
+                    continue;
+                };
+                shell.message(&mut tree, &message, None);
             }
         }
     }

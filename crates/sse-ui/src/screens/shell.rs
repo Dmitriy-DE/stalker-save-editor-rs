@@ -2268,6 +2268,30 @@ impl Shell {
         Ok(true)
     }
 
+    /// Presses the visible button with `label` the way a click does. Returns `false` when the current screen has no such
+    /// button. The result of the press arrives as a message, like the button's own.
+    ///
+    /// Only for sse-ui-dev (screenshots); not part of the screen API.
+    #[doc(hidden)]
+    pub fn press_button(&mut self, tree: &mut Tree, label: &str) -> Result<bool> {
+        // The library and the screen can both have a button with the same label; the screen's is the later one.
+        let needle = crate::strings::t(label).to_lowercase();
+        let mut found = Vec::new();
+        let mut stack = vec![self.content];
+        while let Some(id) = stack.pop() {
+            if tree.is_visible(id) && tree.text(id).is_ok_and(|text| text.to_lowercase() == needle) {
+                found.push(id);
+            }
+            stack.extend(tree.children(id));
+        }
+        let Some(button) = found.last().copied() else {
+            return Ok(false);
+        };
+        let pointer = Message::Window(crate::event_loop::WindowEvent::PointerLeft);
+        self.handle(tree, &pointer, Some(button))?;
+        Ok(true)
+    }
+
     /// Opens the inventory's add-item panel the way a click on its button does. Returns `false` when the current
     /// screen has no such button.
     ///
