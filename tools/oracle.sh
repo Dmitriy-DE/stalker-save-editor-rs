@@ -137,6 +137,7 @@ run_write_case() {
   local handle_or_value="$3"
   local expected_value="$4"
   local label="$5"
+  local expected_bytes="${6:-}"
   local output="$work/$label.sav"
   local before_info="$work/$label.before.info"
   local before_inventory="$work/$label.before.inventory"
@@ -157,6 +158,12 @@ run_write_case() {
     cat "$rust_log"
     write_failures=$((write_failures + 1))
     return 1
+  fi
+
+  # Byte-exact check against the committed expected image; the C# read-back below only sees the text view.
+  if [[ -n "$expected_bytes" ]] && ! cmp -s "$output" "$expected_bytes"; then
+    printf 'BYTES DIFFER: %s output is not the committed expected image %s\n' "$label" "$expected_bytes"
+    write_failures=$((write_failures + 1))
   fi
 
   capture "$before_info" "$oracle" info "$source"
@@ -223,10 +230,12 @@ run_write_case() {
 run_fixture_writes() {
   local game
   for game in soc cs cop soc-ee cs-ee cop-ee; do
-    run_write_case money "$root/fixtures/synthetic/writer-money/xray-money-$game-source.sav" 876543 '' "xray-money-$game"
+    run_write_case money "$root/fixtures/synthetic/writer-money/xray-money-$game-source.sav" 876543 '' "xray-money-$game" \
+      "$root/fixtures/synthetic/writer-money/xray-money-$game-expected.sav"
   done
   for game in soc cs cop soc-ee cs-ee cop-ee; do
-    run_write_case stack "$root/fixtures/synthetic/writer-stacks/xray-stack-$game-source.sav" 0x1234 44 "xray-stack-$game"
+    run_write_case stack "$root/fixtures/synthetic/writer-stacks/xray-stack-$game-source.sav" 0x1234 44 "xray-stack-$game" \
+      "$root/fixtures/synthetic/writer-stacks/xray-stack-$game-expected.sav"
   done
   run_write_case money "$root/fixtures/synthetic/writer-s2-money/s2-money-source.sav" 876543 '' s2-money
   run_write_case stack "$root/fixtures/synthetic/writer-s2-stacks/s2-stacks-source.sav" 0x30000001 7 s2-stack
