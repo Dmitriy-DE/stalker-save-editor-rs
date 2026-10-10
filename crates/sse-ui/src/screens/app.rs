@@ -10,6 +10,7 @@ use crate::glyphs::{Face, TextStyle};
 use crate::layout::{Align, Edges, GridPlacement, NodeKind, Size, Style, Track};
 use crate::widget::{Content, Look, TextAlign, WidgetId};
 use sse_core::Result;
+use sse_xray::{writer, Format};
 use std::path::PathBuf;
 
 /// Screens of this package.
@@ -32,7 +33,7 @@ fn tr(key: &str, args: &[&dyn std::fmt::Display]) -> String {
     crate::strings::tr_in(Some(crate::strings::current_language()), key, args)
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Support {
     Verified,
     Experimental,
@@ -75,15 +76,42 @@ fn game_labels() -> [&'static str; 7] {
 struct CapabilityRow {
     name: &'static str,
     description: &'static str,
-    support: [Support; 7],
+    /// Writer change kind behind this row; the six game columns are read from the writer when it is set.
+    kind: Option<writer::ChangeKind>,
+    /// Hand-written support for rows without a writer kind and for the S2 column.
+    fallback: [Support; 7],
+}
+
+impl CapabilityRow {
+    /// Support of one game column. A row with a writer kind takes its level from `writer::capability`, so the
+    /// screen cannot disagree with what the editor writes.
+    fn support(&self, column: usize) -> Support {
+        const FORMATS: [Format; 6] = [
+            Format::Soc,
+            Format::Cs,
+            Format::Cop,
+            Format::SocEe,
+            Format::CsEe,
+            Format::CopEe,
+        ];
+        match (self.kind, FORMATS.get(column)) {
+            (Some(kind), Some(format)) => match writer::capability(*format, kind) {
+                writer::Capability::Verified => Support::Verified,
+                writer::Capability::Experimental => Support::Experimental,
+                writer::Capability::Unsupported => Support::Unsupported,
+            },
+            _ => self.fallback.get(column).copied().unwrap_or(Support::Unsupported),
+        }
+    }
 }
 
 fn capability_rows() -> [CapabilityRow; 12] {
     [
         CapabilityRow {
             name: crate::strings::t("Деньги"),
+            kind: Some(writer::ChangeKind::EditMoney),
             description: crate::strings::t("Изменение количества рублей у сталкера"),
-            support: [
+            fallback: [
                 Support::Verified,
                 Support::Verified,
                 Support::Verified,
@@ -95,8 +123,9 @@ fn capability_rows() -> [CapabilityRow; 12] {
         },
         CapabilityRow {
             name: crate::strings::t("Стаки предметов"),
+            kind: Some(writer::ChangeKind::EditStacks),
             description: crate::strings::t("Изменение количества в пачках патронов и расходников"),
-            support: [
+            fallback: [
                 Support::Verified,
                 Support::Verified,
                 Support::Verified,
@@ -108,8 +137,9 @@ fn capability_rows() -> [CapabilityRow; 12] {
         },
         CapabilityRow {
             name: crate::strings::t("Прочность снаряжения"),
+            kind: Some(writer::ChangeKind::EditDurability),
             description: crate::strings::t("Состояние и износ оружия, бронекостюмов и шлемов"),
-            support: [
+            fallback: [
                 Support::Experimental,
                 Support::Experimental,
                 Support::Experimental,
@@ -121,8 +151,9 @@ fn capability_rows() -> [CapabilityRow; 12] {
         },
         CapabilityRow {
             name: crate::strings::t("Размещение в слотах"),
+            kind: Some(writer::ChangeKind::EditPlacement),
             description: crate::strings::t("Слоты оружия, пояс для артефактов и рюкзак"),
-            support: [
+            fallback: [
                 Support::Experimental,
                 Support::Experimental,
                 Support::Experimental,
@@ -134,8 +165,9 @@ fn capability_rows() -> [CapabilityRow; 12] {
         },
         CapabilityRow {
             name: crate::strings::t("Апгрейды и модификации"),
+            kind: Some(writer::ChangeKind::EditUpgrades),
             description: crate::strings::t("Установка и снятие веток улучшений оружия и брони"),
-            support: [
+            fallback: [
                 Support::Unsupported,
                 Support::Experimental,
                 Support::Experimental,
@@ -147,8 +179,9 @@ fn capability_rows() -> [CapabilityRow; 12] {
         },
         CapabilityRow {
             name: crate::strings::t("Отношения группировок"),
+            kind: Some(writer::ChangeKind::EditRelations),
             description: crate::strings::t("Редактирование очков репутации и враждебности фракций"),
-            support: [
+            fallback: [
                 Support::Experimental,
                 Support::Experimental,
                 Support::Experimental,
@@ -160,8 +193,9 @@ fn capability_rows() -> [CapabilityRow; 12] {
         },
         CapabilityRow {
             name: crate::strings::t("Фракция игрока"),
+            kind: Some(writer::ChangeKind::EditPlayerFaction),
             description: crate::strings::t("Смена принадлежности сталкера к группировке"),
-            support: [
+            fallback: [
                 Support::Experimental,
                 Support::Experimental,
                 Support::Experimental,
@@ -173,8 +207,9 @@ fn capability_rows() -> [CapabilityRow; 12] {
         },
         CapabilityRow {
             name: crate::strings::t("Тайники (перемещение)"),
+            kind: Some(writer::ChangeKind::MoveItems),
             description: crate::strings::t("Перемещение хабара из тайников в рюкзак и обратно"),
-            support: [
+            fallback: [
                 Support::Verified,
                 Support::Verified,
                 Support::Verified,
@@ -186,8 +221,9 @@ fn capability_rows() -> [CapabilityRow; 12] {
         },
         CapabilityRow {
             name: crate::strings::t("Добавление предметов"),
+            kind: Some(writer::ChangeKind::AddItems),
             description: crate::strings::t("Спавн новых предметов из каталога в инвентарь"),
-            support: [
+            fallback: [
                 Support::Verified,
                 Support::Verified,
                 Support::Verified,
@@ -199,8 +235,9 @@ fn capability_rows() -> [CapabilityRow; 12] {
         },
         CapabilityRow {
             name: crate::strings::t("Удаление предметов"),
+            kind: Some(writer::ChangeKind::RemoveItems),
             description: crate::strings::t("Безопасное удаление объектов из инвентаря"),
-            support: [
+            fallback: [
                 Support::Verified,
                 Support::Verified,
                 Support::Verified,
@@ -212,8 +249,9 @@ fn capability_rows() -> [CapabilityRow; 12] {
         },
         CapabilityRow {
             name: crate::strings::t("Чтение инвентаря"),
+            kind: None,
             description: crate::strings::t("Парсинг предметов, патронов и экипировки"),
-            support: [
+            fallback: [
                 Support::Verified,
                 Support::Verified,
                 Support::Verified,
@@ -225,8 +263,9 @@ fn capability_rows() -> [CapabilityRow; 12] {
         },
         CapabilityRow {
             name: crate::strings::t("Каталог предметов"),
+            kind: None,
             description: crate::strings::t("Сопоставление идентификаторов с официальными именами"),
-            support: [
+            fallback: [
                 Support::Verified,
                 Support::Verified,
                 Support::Verified,
@@ -393,7 +432,8 @@ impl Screen for Capabilities {
         for (row_index, row) in rows.iter().enumerate() {
             let grid_row = row_index.saturating_add(1);
             grid_label(cx.tree, grid, row.name, 0, grid_row, false)?;
-            for (column, support) in row.support.into_iter().enumerate() {
+            for column in 0..7 {
+                let support = row.support(column);
                 let id = grid_cell(cx.tree, grid, support.label(), column.saturating_add(1), grid_row)?;
                 self.cells.push((id, row_index, column));
             }
@@ -446,9 +486,7 @@ impl Screen for Capabilities {
                 let games = game_labels();
                 if let (Some(capability), Some(game), Some(detail)) = (rows.get(*row), games.get(*column), self.detail)
                 {
-                    let Some(support) = capability.support.get(*column).copied() else {
-                        return Ok(());
-                    };
+                    let support = capability.support(*column);
                     cx.tree.set_text(
                         detail,
                         &format!(
@@ -2059,5 +2097,35 @@ mod tests {
         assert!(!context.tree.dialog_open());
         assert!(screen.include_game_logs);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod capability_matrix_tests {
+    use super::*;
+
+    fn row(name: &str) -> CapabilityRow {
+        capability_rows()
+            .into_iter()
+            .find(|row| row.name == name)
+            .unwrap_or_else(|| panic!("no row {name}"))
+    }
+
+    #[test]
+    fn writer_kinds_decide_the_game_columns() {
+        // Money: Verified for ТЧ/ЧН/ЗП, Experimental for EE, as the writer reports.
+        let money = row("Деньги");
+        assert_eq!(money.support(0), Support::Verified);
+        assert_eq!(money.support(3), Support::Experimental);
+        // Upgrades are not written for ТЧ, so the writer's Unsupported reaches the screen.
+        let upgrades = row("Апгрейды и модификации");
+        assert_eq!(upgrades.support(0), Support::Unsupported);
+        assert_eq!(upgrades.support(1), Support::Experimental);
+    }
+
+    #[test]
+    fn rows_without_a_writer_kind_keep_their_own_levels() {
+        let catalog = row("Каталог предметов");
+        assert_eq!(catalog.support(6), Support::Research);
     }
 }
