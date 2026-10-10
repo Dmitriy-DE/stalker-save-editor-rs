@@ -46,6 +46,14 @@ fn xray_overview_parameters(save: &Save, money: u32, item_count: usize, game_tim
     let reputation = save
         .reputation()
         .map_or_else(|| dash.to_owned(), |value| value.to_string());
+    let tasks = save
+        .tasks()
+        .map_or_else(|| dash.to_owned(), |list| list.len().to_string());
+    let last_received = save
+        .tasks()
+        .and_then(|list| list.iter().map(|task| task.receive_time).max())
+        .filter(|time| *time > 0)
+        .map_or_else(|| dash.to_owned(), format_xray_game_time);
     let kills = save.kills().map_or_else(
         || dash.to_owned(),
         |kills| format!("{} / {}", kills.stalkers, kills.monsters),
@@ -55,8 +63,8 @@ fn xray_overview_parameters(save: &Save, money: u32, item_count: usize, game_tim
         |value| format!("{} → {}", value.current, value.next),
     );
     tr(
-        "Деньги: {0} RU · Предметов: {1} · Тайников: —\nИгровое время: {2} · Персонаж: {3} · Здоровье: {4}\nРанг: {5} · Репутация: {6} · Задания: — · Убито (люди / монстры): {7} · Погода: {8}",
-        &[&money, &item_count, &game_time, &name, &health, &rank, &reputation, &kills, &weather],
+        "Деньги: {0} RU · Предметов: {1} · Тайников: —\nИгровое время: {2} · Персонаж: {3} · Здоровье: {4}\nРанг: {5} · Репутация: {6} · Задания: {7} (последнее получено: {8}) · Убито (люди / монстры): {9} · Погода: {10}",
+        &[&money, &item_count, &game_time, &name, &health, &rank, &reputation, &tasks, &last_received, &kills, &weather],
     )
 }
 

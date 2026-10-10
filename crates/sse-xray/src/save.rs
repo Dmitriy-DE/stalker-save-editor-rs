@@ -4,7 +4,8 @@ use sse_core::{Cursor, Error, Result};
 use std::collections::HashSet;
 
 use crate::container::{Chunk, Container};
-use crate::statistics::Kills;
+use crate::statistics::{kills as kills_of, Kills};
+use crate::tasks::{read_progress, Progress, Task};
 use crate::weather::{find_weather, Weather};
 
 const MAXIMUM_OBJECTS: u32 = 1_000_000;
@@ -47,7 +48,7 @@ pub struct Save {
     rank: Option<i32>,
     reputation: Option<i32>,
     name: Option<String>,
-    kills: Option<Kills>,
+    progress: Option<Progress>,
     pub(crate) relation_registry: Option<RelationRegistry>,
     game_time: u64,
     time_factor: f32,
@@ -270,7 +271,7 @@ impl Save {
         }
         let fields = read_actor_fields(container.image(), &actor)?;
         let relation_registry = read_relation_registry(&container, format, actor.object_id);
-        let kills = read_kills_from_registry(&container, actor.object_id, relation_registry.as_ref());
+        let progress = read_progress_from_registry(&container, format, actor.object_id, relation_registry.as_ref());
 
         Ok(Self {
             format,
@@ -286,7 +287,7 @@ impl Save {
             rank: fields.rank,
             reputation: fields.reputation,
             name: fields.name,
-            kills,
+            progress,
             relation_registry,
             game_time,
             time_factor,
@@ -381,8 +382,17 @@ impl Save {
 
     /// Kills by stalkers and by monsters from the statistics registry; `None` when the save has no such registry.
     #[must_use]
-    pub const fn kills(&self) -> Option<Kills> {
-        self.kills
+    pub fn kills(&self) -> Option<Kills> {
+        self.progress
+            .as_ref()
+            .filter(|progress| !progress.statistics.is_empty())
+            .map(|progress| kills_of(&progress.statistics))
+    }
+
+    /// PDA tasks of the actor with their receive and finish times; `None` when the task registry is not found.
+    #[must_use]
+    pub fn tasks(&self) -> Option<&[Task]> {
+        self.progress.as_ref()?.tasks.as_deref()
     }
 
     /// Dynamic weather from the actor's script storage. Shadow of Chernobyl saves no weather, so it is `None` there.
@@ -978,11 +988,12 @@ fn display_text(bytes: &[u8]) -> String {
 }
 
 /// Kill counts from the one registry chunk 9 of the save; `None` unless the chunk is unique and parses.
-fn read_kills_from_registry(
+fn read_progress_from_registry(
     container: &Container,
+    format: Format,
     actor_id: u16,
     relations: Option<&RelationRegistry>,
-) -> Option<Kills> {
+) -> Option<Progress> {
     let mut chunks = container.chunks().iter().filter(|chunk| chunk.kind == 9);
     let chunk = chunks.next().copied()?;
     if chunks.next().is_some() {
@@ -990,7 +1001,8 @@ fn read_kills_from_registry(
     }
     let data = container.chunk_bytes(chunk).ok()?;
     let from = relations.map_or(0, |registry| registry.info_section_end);
-    crate::statistics::read_kills(data, actor_id, from)
+    let soc = matches!(format, Format::Soc | Format::SocEe);
+    read_progress(data, actor_id, from, soc)
 }
 
 fn read_relation_registry(container: &Container, format: Format, _actor_id: u16) -> Option<RelationRegistry> {
