@@ -63,6 +63,41 @@ pub(crate) fn absorb_worker_result<T>(
     }
 }
 
+/// Scans `items` on up to eight threads and returns the results in input order, with the failures of any lost worker.
+///
+/// Items are split into contiguous chunks, so a worker's results keep their place in the output.
+pub(crate) fn scan_chunked<T: Sync, R: Send>(items: &[T], scan: impl Fn(&T) -> R + Sync) -> (Vec<R>, Vec<String>) {
+    let max_workers = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .clamp(1, 8);
+    let num_workers = max_workers.min(items.len());
+    if num_workers <= 1 {
+        return (items.iter().map(&scan).collect(), Vec::new());
+    }
+    let chunk_size = items
+        .len()
+        .checked_add(num_workers.saturating_sub(1))
+        .and_then(|sum| sum.checked_div(num_workers))
+        .unwrap_or(1)
+        .max(1);
+
+    let scan = &scan;
+    let mut results = Vec::with_capacity(items.len());
+    let mut failures = Vec::new();
+    std::thread::scope(|s| {
+        let mut handles = Vec::with_capacity(num_workers);
+        for chunk in items.chunks(chunk_size) {
+            let expected = chunk.len();
+            handles.push((expected, s.spawn(move || chunk.iter().map(scan).collect::<Vec<R>>())));
+        }
+        for (expected, handle) in handles {
+            absorb_worker_result(&mut results, &mut failures, expected, handle.join());
+        }
+    });
+    (results, failures)
+}
+
 pub(crate) const HEADER_SAMPLE_BYTES: usize = 4096;
 
 pub(crate) fn read_file_header(path: &std::path::Path, max_bytes: usize) -> io::Result<Vec<u8>> {
@@ -155,55 +190,10 @@ impl SaveSlotDiscovery {
             };
         }
 
-        let max_workers = std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(4)
-            .clamp(1, 8);
-        let num_workers = max_workers.min(found_files.len());
-        let chunk_size = found_files
-            .len()
-            .checked_add(num_workers.saturating_sub(1))
-            .and_then(|sum| sum.checked_div(num_workers))
-            .unwrap_or(1)
-            .max(1);
-
-        let mut slots = Vec::with_capacity(found_files.len());
-        let mut worker_failures = Vec::new();
-
-        if num_workers <= 1 {
-            for target in &found_files {
-                slots.push(scan_single_slot(
-                    &target.path,
-                    &target.candidate_game_id,
-                    &target.candidate_release_id,
-                ));
-            }
-        } else {
-            let chunks: Vec<&[SlotTarget]> = found_files.chunks(chunk_size).collect();
-            std::thread::scope(|s| {
-                let mut handles = Vec::with_capacity(chunks.len());
-                for chunk in chunks {
-                    let expected = chunk.len();
-                    handles.push((
-                        expected,
-                        s.spawn(move || {
-                            let mut local_slots = Vec::with_capacity(chunk.len());
-                            for target in chunk {
-                                local_slots.push(scan_single_slot(
-                                    &target.path,
-                                    &target.candidate_game_id,
-                                    &target.candidate_release_id,
-                                ));
-                            }
-                            local_slots
-                        }),
-                    ));
-                }
-                for (expected, handle) in handles {
-                    absorb_worker_result(&mut slots, &mut worker_failures, expected, handle.join());
-                }
-            });
-        }
+        let (scanned, worker_failures) = scan_chunked(&found_files, |target| {
+            scan_single_slot(&target.path, &target.candidate_game_id, &target.candidate_release_id)
+        });
+        let mut slots = scanned;
 
         sort_newest_first(&mut slots);
 
@@ -537,9 +527,7 @@ fn family_for_format(format_id: &str) -> Option<String> {
 }
 
 fn read_u32_le(data: &[u8], offset: usize) -> Option<u32> {
-    let slice = data.get(offset..offset.checked_add(4)?)?;
-    let arr: [u8; 4] = slice.try_into().ok()?;
-    Some(u32::from_le_bytes(arr))
+    sse_core::fields::read_u32(data, offset).ok()
 }
 
 #[cfg(test)]

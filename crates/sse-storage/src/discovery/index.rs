@@ -17,7 +17,7 @@
 //!   - `detection_error`: optional length-prefixed string (`0xFFFF` if `None`)
 
 use crate::discovery::locator::{normalize_full_path, resolve_entry_path, resolve_links, SaveDirectoryCandidate};
-use crate::discovery::slot::{absorb_worker_result, has_save_extension, is_non_slot_file, sort_newest_first, SaveSlot};
+use crate::discovery::slot::{has_save_extension, is_non_slot_file, scan_chunked, sort_newest_first, SaveSlot};
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
@@ -348,60 +348,16 @@ impl LibraryIndex {
         }
 
         if !cold_targets.is_empty() {
-            let max_workers = std::thread::available_parallelism()
-                .map(|n| n.get())
-                .unwrap_or(4)
-                .clamp(1, 8);
-            let num_workers = max_workers.min(cold_targets.len());
-            let chunk_size = cold_targets
-                .len()
-                .checked_add(num_workers.saturating_sub(1))
-                .and_then(|sum| sum.checked_div(num_workers))
-                .unwrap_or(1)
-                .max(1);
-
-            let mut new_entries = Vec::with_capacity(cold_targets.len());
-
-            if num_workers <= 1 {
-                for target in &cold_targets {
-                    new_entries.push(scan_single_index_entry(
-                        &target.path,
-                        &target.candidate_game_id,
-                        &target.candidate_release_id,
-                        target.size,
-                        target.mtime,
-                    ));
-                }
-            } else {
-                let chunks: Vec<&[ColdTarget]> = cold_targets.chunks(chunk_size).collect();
-                std::thread::scope(|s| {
-                    let mut handles = Vec::with_capacity(chunks.len());
-                    for chunk in chunks {
-                        let expected = chunk.len();
-                        handles.push((
-                            expected,
-                            s.spawn(move || {
-                                let mut local = Vec::with_capacity(chunk.len());
-                                for target in chunk {
-                                    local.push(scan_single_index_entry(
-                                        &target.path,
-                                        &target.candidate_game_id,
-                                        &target.candidate_release_id,
-                                        target.size,
-                                        target.mtime,
-                                    ));
-                                }
-                                local
-                            }),
-                        ));
-                    }
-                    let mut failures = Vec::new();
-                    for (expected, handle) in handles {
-                        absorb_worker_result(&mut new_entries, &mut failures, expected, handle.join());
-                    }
-                    self.scan_failures.extend(failures);
-                });
-            }
+            let (new_entries, failures) = scan_chunked(&cold_targets, |target| {
+                scan_single_index_entry(
+                    &target.path,
+                    &target.candidate_game_id,
+                    &target.candidate_release_id,
+                    target.size,
+                    target.mtime,
+                )
+            });
+            self.scan_failures.extend(failures);
 
             for entry in new_entries {
                 slots.push(entry.to_save_slot());
@@ -545,8 +501,7 @@ fn read_optional_string(bytes: &[u8], offset: &mut usize) -> Option<Option<Strin
 }
 
 fn read_u32_le(bytes: &[u8], offset: usize) -> Option<u32> {
-    let slice = bytes.get(offset..offset.checked_add(4)?)?;
-    Some(u32::from_le_bytes(slice.try_into().ok()?))
+    sse_core::fields::read_u32(bytes, offset).ok()
 }
 
 fn read_u32_le_offset(bytes: &[u8], offset: &mut usize) -> Option<u32> {
