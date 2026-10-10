@@ -5,6 +5,8 @@ on:
     branches: [main]
     tags: ['v*']
   workflow_dispatch:
+permissions:
+  contents: read
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -16,11 +18,11 @@ jobs:
         os: [ubuntu-24.04, windows-latest, macos-14]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.99.0
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@fb523f40495206854c36b250850817ae0f83e3d1 # 1.99.0
         with:
           components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test workspace with isolated app data
@@ -72,7 +74,7 @@ jobs:
 
       - name: Upload translation layout report
         if: always() && matrix.os == 'ubuntu-24.04'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: i18n-button-layout
           path: target/i18n-qa/buttons.txt
@@ -99,7 +101,7 @@ jobs:
           python3 tools/check_data_isolation.py -- cargo run --release -p sse-ui --bin sse-ui-dev -- --screenshot target/acceptance-screenshots/capabilities-1280x860.png 1280x860 17
       - name: Upload acceptance screenshots
         if: matrix.os == 'ubuntu-24.04'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: acceptance-screenshots
           path: target/acceptance-screenshots/*.png
@@ -115,9 +117,9 @@ jobs:
         os: [ubuntu-24.04, windows-latest, macos-14]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.99.0
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@fb523f40495206854c36b250850817ae0f83e3d1 # 1.99.0
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - run: cargo build --locked --release -p sse-cli -p sse-ui
       - name: Collect binaries
         shell: bash
@@ -127,7 +129,7 @@ jobs:
           cp "target/release/sse-shell${ext}" "test-build/SaveEditor${ext}"
           cp "target/release/stalker-save${ext}" "test-build/stalker-save${ext}"
           git rev-parse --short HEAD > test-build/COMMIT.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: test-build-${{ runner.os }}
           path: test-build/
@@ -149,8 +151,8 @@ jobs:
             targets: aarch64-apple-darwin x86_64-apple-darwin
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.99.0
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@fb523f40495206854c36b250850817ae0f83e3d1 # 1.99.0
       - name: Toolchains
         shell: bash
         run: |
@@ -161,7 +163,7 @@ jobs:
         run: |
           args=""; for t in ${{ matrix.targets }}; do args="$args --target $t"; done
           tools/package.sh $args
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: packages-${{ runner.os }}
           path: dist/
@@ -174,15 +176,15 @@ jobs:
     needs: check
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.99.0
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@fb523f40495206854c36b250850817ae0f83e3d1 # 1.99.0
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: Install Inno Setup
         run: choco install innosetup --yes --no-progress
       - name: Build Windows installer
         shell: pwsh
         run: ./tools/package-windows-installer.ps1
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: windows-installer
           path: |
@@ -199,16 +201,16 @@ jobs:
     needs: [packages, windows-installer]
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.99.0
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@fb523f40495206854c36b250850817ae0f83e3d1 # 1.99.0
       - name: Download portable and native packages
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: packages-*
           path: dist/
           merge-multiple: true
       - name: Download Windows installer
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: windows-installer
           path: dist/
@@ -226,7 +228,7 @@ jobs:
             echo "::warning::latest.json is NOT SIGNED - do not publish this manifest"
             echo "**NOT SIGNED - do not publish latest.json** (the owner signs it locally)" >> "$GITHUB_STEP_SUMMARY"
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: env.SIGNED == 'true'
         with:
           name: release-manifest
@@ -234,7 +236,7 @@ jobs:
           retention-days: 30
           if-no-files-found: error
           include-hidden-files: true
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: env.SIGNED != 'true'
         with:
           name: release-manifest-UNSIGNED-DO-NOT-PUBLISH
