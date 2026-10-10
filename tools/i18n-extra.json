@@ -1324,5 +1324,22 @@
     "ko": "왼쪽에서 결과를 고르세요.",
     "zh-CN": "请在左侧选择一项结果。",
     "zh-TW": "請在左側選擇一項結果。"
+  },
+  "Проверка читаемости формата. Семантические правила и ремонт доступны только при наличии проверенных данных.\nИСПРАВИТЬ КВЕСТЫ использует общий путь записи с бэкапом и обратным чтением.": {
+    "ru": "Проверка читаемости формата. Семантические правила и ремонт доступны только при наличии проверенных данных.\nИСПРАВИТЬ КВЕСТЫ использует общий путь записи с бэкапом и обратным чтением.",
+    "uk": "Перевірка читабельності формату. Семантичні правила та ремонт доступні лише за наявності перевірених даних.\nВИПРАВИТИ КВЕСТИ використовує спільний шлях запису з резервною копією та зворотним читанням.",
+    "en": "Format readability check. Semantic rules and repair are available only when verified data supports them.\nFIX QUESTS uses the shared write path with a backup and read-back verification.",
+    "de": "Prüfung der Formatlesbarkeit. Semantische Regeln und Reparatur sind nur bei geprüften Daten verfügbar.\nQUESTE REPARIEREN nutzt den gemeinsamen Schreibweg mit Sicherung und Rücklesen.",
+    "fr": "Vérification de la lisibilité du format. Les règles sémantiques et la réparation ne sont disponibles que si les données sont vérifiées.\nRÉPARER LES QUÊTES utilise le chemin d'écriture commun avec sauvegarde et relecture.",
+    "it": "Verifica della leggibilità del formato. Regole semantiche e riparazione sono disponibili solo con dati verificati.\nRIPARA MISSIONI usa il percorso di scrittura comune con backup e rilettura.",
+    "es": "Comprobación de legibilidad del formato. Las reglas semánticas y la reparación solo están disponibles con datos verificados.\nREPARAR MISIONES usa la ruta de escritura común con copia de seguridad y relectura.",
+    "pl": "Sprawdzenie czytelności formatu. Reguły semantyczne i naprawa są dostępne tylko przy sprawdzonych danych.\nNAPRAW ZADANIA korzysta ze wspólnej ścieżki zapisu z kopią zapasową i odczytem zwrotnym.",
+    "cs": "Kontrola čitelnosti formátu. Sémantická pravidla a oprava jsou dostupné jen s ověřenými daty.\nOPRAVIT ÚKOLY používá společnou cestu zápisu se zálohou a zpětným čtením.",
+    "pt-BR": "Verificação de legibilidade do formato. Regras semânticas e reparo só estão disponíveis com dados verificados.\nCORRIGIR MISSÕES usa o caminho de gravação comum com backup e releitura.",
+    "tr": "Biçim okunabilirlik kontrolü. Anlamsal kurallar ve onarım yalnızca doğrulanmış verilerle kullanılabilir.\nGÖREVLERİ ONAR, yedekleme ve geri okuma ile ortak yazma yolunu kullanır.",
+    "ja": "フォーマットの読み取り確認です。意味の規則と修復は、検証済みのデータがある場合のみ利用できます。\nクエストを修復はバックアップと読み戻し検証付きの共通書き込み経路を使います。",
+    "ko": "형식 읽기 검사입니다. 의미 규칙과 복구는 검증된 데이터가 있을 때만 사용할 수 있습니다.\n퀘스트 복구는 백업과 되읽기 검증이 있는 공통 쓰기 경로를 사용합니다.",
+    "zh-CN": "格式可读性检查。语义规则和修复仅在有已验证数据时可用。\n修复任务使用带备份和回读验证的共同写入路径。",
+    "zh-TW": "格式可讀性檢查。語意規則與修復僅在有已驗證資料時可用。\n修復任務使用含備份與回讀驗證的共同寫入路徑。"
   }
 }

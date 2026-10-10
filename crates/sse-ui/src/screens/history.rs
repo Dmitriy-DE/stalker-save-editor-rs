@@ -254,7 +254,7 @@ impl HistoryScreen {
     /// The save doctor's heading, description and file controls: a card above the results.
     fn build_doctor_controls(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
         let card = style::card(cx.tree, host)?;
-        style::label(cx.tree, card, doctor_title(), Text::Heading)?;
+        style::d2::panel_title(cx.tree, card, doctor_title())?;
         if self.id == ScreenId::SaveDoctor {
             super::saves::paragraph(cx.tree, card, doctor_description(), Text::Note)?;
             let path_row = style::row(cx.tree, card)?;
@@ -2553,7 +2553,7 @@ fn doctor_title() -> &'static str {
 
 fn doctor_description() -> &'static str {
     crate::strings::t(
-        "ПРОВЕРКА ЧИТАЕМОСТИ ФОРМАТА. СЕМАНТИЧЕСКИЕ ПРАВИЛА И РЕМОНТ ДОСТУПНЫ ТОЛЬКО ПРИ НАЛИЧИИ ПРОВЕРЕННЫХ ДАННЫХ.\nИСПРАВИТЬ КВЕСТЫ использует общий путь записи с бэкапом и обратным чтением.",
+        "Проверка читаемости формата. Семантические правила и ремонт доступны только при наличии проверенных данных.\nИСПРАВИТЬ КВЕСТЫ использует общий путь записи с бэкапом и обратным чтением.",
     )
 }
 

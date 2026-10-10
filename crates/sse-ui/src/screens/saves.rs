@@ -7133,7 +7133,13 @@ pub(super) fn build_list_side(
     spacer(cx, header)?;
     let action_button = match action {
         // A header action is secondary: the screen's main action is the one primary button of the side panel.
-        Some(label) => Some(style::button(cx.tree, header, label, Button::Secondary)?),
+        Some(label) => Some(style::d2::button(
+            cx.tree,
+            header,
+            label,
+            style::d2::ButtonKind::Secondary,
+            style::d2::ButtonSize::Small,
+        )?),
         None => None,
     };
     let count = style::label(cx.tree, header, "0", Text::Note)?;

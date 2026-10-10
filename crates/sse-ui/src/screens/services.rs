@@ -1194,6 +1194,26 @@ impl Cloud {
         if let Some(download) = self.download {
             cx.tree.set_enabled(download, shown)?;
         }
+        // The upload needs a chosen file, a game with a Steam App ID, and not Stalker 2 (see prepare_upload).
+        let uploadable = shown
+            && cx
+                .app
+                .selected_game()
+                .and_then(app_id)
+                .is_some_and(|id| id != sse_steam::discovery::STALKER_2_APP_ID);
+        if let Some(upload) = self.upload {
+            cx.tree.set_enabled(upload, uploadable)?;
+        }
+        // The window's status line shows this screen's state, not the save search's.
+        let line = match self.items.is_empty() {
+            true => t("Список не загружен. Нажмите «ОБНОВИТЬ СПИСОК»."),
+            false => "",
+        };
+        if line.is_empty() {
+            cx.status = Some(tr("Файлов: {0}", &[&self.items.len()]));
+        } else {
+            cx.status = Some(line.to_owned());
+        }
         Ok(())
     }
 
@@ -1411,11 +1431,13 @@ impl Screen for Cloud {
             style::d2::ButtonKind::Secondary,
             style::d2::ButtonSize::Normal,
         )?);
+        // Writing to the cloud is the riskiest action of the program: it is never the primary one, and it stays off
+        // until the handler would accept it (see render).
         self.upload = Some(style::d2::button(
             cx.tree,
             stacked,
             t("ЗАПИСАТЬ В ОБЛАКО..."),
-            style::d2::ButtonKind::Primary,
+            style::d2::ButtonKind::Secondary,
             style::d2::ButtonSize::Normal,
         )?);
         self.side_column = Some(stacked);
@@ -1427,8 +1449,8 @@ impl Screen for Cloud {
         self.rows = list.action_button.into_iter().collect();
         self.rows.extend(list.rows.iter().map(|row| row.select));
         self.list_rows = list.rows.clone();
-        if let Some(download) = self.download {
-            cx.tree.set_enabled(download, false)?;
+        for id in [self.download, self.upload].into_iter().flatten() {
+            cx.tree.set_enabled(id, false)?;
         }
         let overlay = cx.tree.overlay_host().unwrap_or(host);
         let confirm = style::card(cx.tree, overlay)?;
@@ -1467,7 +1489,7 @@ impl Screen for Cloud {
                 cx.tree.open_dialog(card)?;
             }
         }
-        Ok(())
+        self.render(cx)
     }
 
     fn message(
@@ -2003,6 +2025,40 @@ mod service_localization_tests {
     use super::{hotkey_label, t_in, tr_in};
     use crate::event_loop::{Message, WindowEvent};
     use sse_steam::api::CloudFile;
+
+    #[test]
+    fn cloud_upload_is_off_and_sends_nothing_without_a_chosen_file() -> sse_core::Result<()> {
+        let fonts = crate::glyphs::Fonts::bundled()?;
+        let mut tree = crate::widget::Tree::new(fonts, crate::screens::style::rgb(crate::theme::BG_BASE));
+        let host = tree.add(
+            None,
+            crate::layout::NodeKind::Column,
+            crate::layout::Style::default(),
+            crate::widget::Content::Panel,
+            crate::widget::Look::default(),
+        )?;
+        let mut app = sse_app::AppState::new();
+        let mut screen = super::Cloud::with_backup_workspace(Workspace::default());
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: None,
+            status: None,
+            app: &mut app,
+        };
+        screen.build(&mut cx, host)?;
+        let upload = screen
+            .upload
+            .ok_or_else(|| sse_core::Error::damaged("no upload action"))?;
+        assert!(
+            !cx.tree.is_enabled(upload)?,
+            "upload is on without a chosen file and a save"
+        );
+        // Even a click that reaches the handler opens no confirmation and sends nothing.
+        let pointer = Message::Window(WindowEvent::PointerLeft);
+        let _ = screen.message(&mut cx, &pointer, Some(upload));
+        assert!(screen.intent.is_none(), "upload prepared a write without a chosen file");
+        Ok(())
+    }
 
     #[test]
     fn cloud_file_row_then_download_acts_on_the_chosen_file() -> sse_core::Result<()> {
