@@ -2691,3 +2691,66 @@ mod achievement_list_tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod cloud_prepared_tests {
+    use super::*;
+    use crate::glyphs::Fonts;
+    use crate::raster::Color;
+    use crate::widget::{Content, Look, Tree};
+    use sse_app::state::AppState;
+
+    fn intent(app_id: u32) -> CloudIntent {
+        CloudIntent {
+            app_id,
+            remote: "slot.sav".to_owned(),
+            local: PathBuf::from("/saves/slot.sav"),
+            local_sha256: [1; 32],
+            cloud_sha256: [2; 32],
+            cloud_size: 10,
+            cloud_timestamp: Some(1),
+            local_size: 10,
+            local_timestamp: Some(1),
+            backup_directory: PathBuf::from("/backups"),
+        }
+    }
+
+    /// Builds the Cloud screen, selects `game`, and delivers a prepared write for `app_id`.
+    fn deliver(game: Option<&str>, app_id: u32) -> sse_core::Result<(Cloud, Option<String>, bool)> {
+        let mut screen = Cloud::default();
+        let mut app = AppState::new();
+        app.set_selected_game(game.map(str::to_owned));
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(None, NodeKind::Column, Style::default(), Content::Panel, Look::default())?;
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: None,
+            status: None,
+            app: &mut app,
+        };
+        screen.build(&mut cx, host)?;
+        let reply = AppMessage::ToScreen(ScreenId::Cloud, Box::new(CloudReply::Prepared(Ok(intent(app_id)))));
+        screen.message(&mut cx, &Message::User(reply), None)?;
+        let opened = match screen.confirm_card {
+            Some(card) => cx.tree.dialog() == Some(card),
+            None => false,
+        };
+        Ok((screen, cx.status.clone(), opened))
+    }
+
+    #[test]
+    fn a_prepared_write_for_another_game_never_opens_the_confirmation() -> sse_core::Result<()> {
+        let (screen, status, opened) = deliver(Some("stalker-cop"), app_id("stalker-cs").unwrap_or_default())?;
+        assert!(screen.intent.is_none(), "no write may be armed for another game");
+        assert!(!opened, "the confirmation card must stay closed");
+        assert_eq!(status.as_deref(), Some("Выбор игры изменился; запись в облако отменена."));
+        Ok(())
+    }
+
+    #[test]
+    fn a_prepared_write_for_the_selected_game_is_armed() -> sse_core::Result<()> {
+        let (screen, _status, _opened) = deliver(Some("stalker-cs"), app_id("stalker-cs").unwrap_or_default())?;
+        assert!(screen.intent.is_some(), "the write for the selected game is kept for confirmation");
+        Ok(())
+    }
+}
