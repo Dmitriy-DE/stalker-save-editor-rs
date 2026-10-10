@@ -10807,7 +10807,17 @@ mod tests {
         store.save(journal.clone())?;
         let empty = DraftJournal::new(vec![DraftPlan::empty(&sha_a)?], 0)?;
         workspace.reset_draft(empty, &mut cx);
-        let _ = receiver.recv_timeout(wait);
+        // Wait for the reset's own completion, not for whichever message arrives first.
+        loop {
+            let message = receiver
+                .recv_timeout(wait)
+                .map_err(|error| Error::System(error.to_string()))?;
+            if let Message::User(AppMessage::ToScreen(ScreenId::Inventory, payload)) = &message {
+                if payload.downcast_ref::<super::DraftPersisted>().is_some() {
+                    break;
+                }
+            }
+        }
         let kept = fs::read_dir(&drafts)?
             .filter_map(|entry| entry.ok().map(|entry| entry.file_name().to_string_lossy().into_owned()))
             .any(|name| name.contains("unsupported"));
