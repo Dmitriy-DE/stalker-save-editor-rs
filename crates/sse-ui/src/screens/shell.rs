@@ -3026,7 +3026,7 @@ impl Shell {
         if index == self.selected || index >= self.screens.len() {
             return Ok(());
         }
-        let switch_started = Instant::now();
+        sse_app::metrics::begin_screen_switch();
         if tree.dialog_open() {
             let _ = tree.close_dialog()?;
         }
@@ -3048,7 +3048,6 @@ impl Shell {
         // The previous screen's pixels must not survive where the new one draws nothing.
         tree.damage_all();
         self.show(tree, index)?;
-        sse_app::metrics::record_screen_switch(switch_started.elapsed());
         Ok(())
     }
 

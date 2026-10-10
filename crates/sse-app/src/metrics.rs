@@ -4,11 +4,14 @@ use crate::diagnostics::log_directory;
 use sse_codecs::json::{Event, Reader};
 use sse_core::{Error, Result};
 use sse_sys::fetch::{Fetch, SystemFetch};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::thread;
 use std::time::{Duration, Instant};
 
 /// Destination reserved for the future aggregate metrics route on the existing Worker.
@@ -20,6 +23,7 @@ const METRICS_FILE: &str = "metrics.jsonl";
 const ROTATED_METRICS_FILE: &str = "metrics.jsonl.1";
 const MAX_METRICS_BYTES: u64 = 1024 * 1024;
 const MAX_SAMPLES: usize = 8192;
+const METRICS_WRITER_QUEUE_CAPACITY: usize = 64;
 const RECENT_SESSION_LIMIT: usize = 5;
 const FORMATS: [&str; 8] = [
     "stalker-soc",
@@ -41,10 +45,24 @@ const SIZE_BUCKETS: [&str; 6] = [
 ];
 
 static SESSION: OnceLock<Mutex<Option<ActiveSession>>> = OnceLock::new();
+static METRICS_WRITER: OnceLock<Option<SyncSender<WriterMessage>>> = OnceLock::new();
+static DROPPED_METRICS_LINES: AtomicU64 = AtomicU64::new(0);
+
+enum WriterMessage {
+    Append(MetricsBatch),
+    Flush(SyncSender<()>),
+}
+
+struct MetricsBatch {
+    directory: std::path::PathBuf,
+    lines: Vec<String>,
+    dropped_before: u64,
+}
 
 struct ActiveSession {
     started: Instant,
     first_frame_recorded: bool,
+    screen_switch_started: Option<Instant>,
     environment: Option<(u32, u32, u32)>,
     peak_memory_bytes: u64,
     last_memory_sample: Instant,
@@ -69,6 +87,7 @@ pub fn start_session() {
     *session = Some(ActiveSession {
         started: Instant::now(),
         first_frame_recorded: false,
+        screen_switch_started: None,
         environment: None,
         peak_memory_bytes: 0,
         last_memory_sample: Instant::now(),
@@ -83,6 +102,8 @@ pub fn end_session() {
     if session.take().is_some() {
         append_record("{\"event\":\"session_end\"}");
     }
+    drop(session);
+    flush_metrics_writer();
 }
 
 /// Records the time from application startup to the first presented frame once per session.
@@ -105,10 +126,41 @@ pub fn record_screen_switch(elapsed: Duration) {
     record(&format!("{{\"event\":\"screen_switch\",\"ms\":{elapsed_ms}}}"));
 }
 
+/// Starts a screen-switch measurement that will finish after the new screen is presented.
+pub fn begin_screen_switch() {
+    let mut session = lock_session();
+    let Some(active) = session.as_mut() else { return };
+    active.screen_switch_started.get_or_insert_with(Instant::now);
+}
+
+/// Completes the current screen-switch measurement after a frame is presented.
+pub fn record_screen_switch_presented() {
+    let elapsed = {
+        let mut session = lock_session();
+        let Some(active) = session.as_mut() else { return };
+        active.screen_switch_started.take().map(|started| started.elapsed())
+    };
+    if let Some(elapsed) = elapsed {
+        record_screen_switch(elapsed);
+    }
+}
+
 /// Records one presented frame while the user is scrolling.
 pub fn record_scroll_frame(elapsed: Duration) {
     let elapsed_ms = elapsed_millis(elapsed);
     record(&format!("{{\"event\":\"scroll_frame\",\"ms\":{elapsed_ms}}}"));
+}
+
+/// Records a burst of scrolling frame measurements with one bounded background-writer enqueue.
+pub fn record_scroll_frames(samples: &[Duration]) {
+    if samples.is_empty() || lock_session().is_none() {
+        return;
+    }
+    let lines = samples
+        .iter()
+        .map(|elapsed| format!("{{\"event\":\"scroll_frame\",\"ms\":{}}}", elapsed_millis(*elapsed)))
+        .collect::<Vec<_>>();
+    enqueue_records(lines);
 }
 
 /// Records a save read using a fixed format name and a broad size bucket.
@@ -192,29 +244,140 @@ fn record(line: &str) {
 }
 
 fn append_record(line: &str) {
+    enqueue_records(vec![line.to_owned()]);
+}
+
+fn enqueue_records(lines: Vec<String>) {
+    if lines.is_empty() {
+        return;
+    }
     let directory = log_directory();
+    let Some(sender) = metrics_writer() else {
+        let dropped = u64::try_from(lines.len()).unwrap_or(u64::MAX);
+        DROPPED_METRICS_LINES.fetch_add(dropped, Ordering::Relaxed);
+        return;
+    };
+    let batch = MetricsBatch {
+        directory,
+        lines,
+        dropped_before: DROPPED_METRICS_LINES.swap(0, Ordering::Relaxed),
+    };
+    match sender.try_send(WriterMessage::Append(batch)) {
+        Ok(()) => {}
+        Err(TrySendError::Full(WriterMessage::Append(batch))) => {
+            record_dropped_batch(batch);
+        }
+        Err(TrySendError::Disconnected(WriterMessage::Append(batch))) => {
+            record_dropped_batch(batch);
+        }
+        Err(TrySendError::Full(WriterMessage::Flush(_))) | Err(TrySendError::Disconnected(WriterMessage::Flush(_))) => {
+        }
+    }
+}
+
+fn metrics_writer() -> Option<&'static SyncSender<WriterMessage>> {
+    METRICS_WRITER
+        .get_or_init(|| {
+            let (sender, receiver) = mpsc::sync_channel(METRICS_WRITER_QUEUE_CAPACITY);
+            thread::Builder::new()
+                .name("sse-metrics-writer".to_owned())
+                .spawn(move || metrics_writer_loop(receiver))
+                .ok()
+                .map(|_| sender)
+        })
+        .as_ref()
+}
+
+fn metrics_writer_loop(receiver: Receiver<WriterMessage>) {
+    while let Ok(message) = receiver.recv() {
+        match message {
+            WriterMessage::Append(batch) => append_metrics_batch(batch),
+            WriterMessage::Flush(acknowledge) => {
+                let _ = acknowledge.send(());
+            }
+        }
+    }
+}
+
+fn flush_metrics_writer() {
+    let Some(sender) = metrics_writer() else { return };
+    let dropped = DROPPED_METRICS_LINES.swap(0, Ordering::Relaxed);
+    if dropped != 0 {
+        let batch = MetricsBatch {
+            directory: log_directory(),
+            lines: Vec::new(),
+            dropped_before: dropped,
+        };
+        if let Err(error) = sender.send(WriterMessage::Append(batch)) {
+            if let WriterMessage::Append(batch) = error.0 {
+                DROPPED_METRICS_LINES.fetch_add(batch.dropped_before, Ordering::Relaxed);
+            }
+        }
+    }
+    let (acknowledge, flushed) = mpsc::sync_channel(0);
+    if sender.send(WriterMessage::Flush(acknowledge)).is_ok() {
+        let _ = flushed.recv();
+    }
+}
+
+fn record_dropped_batch(batch: MetricsBatch) {
+    let line_count = u64::try_from(batch.lines.len()).unwrap_or(u64::MAX);
+    let dropped = batch.dropped_before.saturating_add(line_count);
+    DROPPED_METRICS_LINES.fetch_add(dropped, Ordering::Relaxed);
+}
+
+fn append_metrics_batch(batch: MetricsBatch) {
+    let MetricsBatch {
+        directory,
+        lines,
+        dropped_before,
+    } = batch;
     if fs::create_dir_all(&directory).is_err() {
         return;
     }
     let path = directory.join(METRICS_FILE);
     let rotated = directory.join(ROTATED_METRICS_FILE);
-    let line_bytes = u64::try_from(line.len().saturating_add(1)).unwrap_or(u64::MAX);
-    let rotated_now = fs::metadata(&path)
-        .ok()
-        .is_some_and(|metadata| metadata.len().saturating_add(line_bytes) > MAX_METRICS_BYTES);
-    if rotated_now {
-        let _ = fs::remove_file(&rotated);
-        let _ = fs::rename(&path, &rotated);
+    let mut payload = String::new();
+    if dropped_before != 0 {
+        payload.push_str(&format!(
+            "{{\"event\":\"dropped_metrics\",\"count\":{dropped_before}}}\n"
+        ));
     }
-    if line_bytes > MAX_METRICS_BYTES {
+    for line in lines {
+        payload.push_str(&line);
+        payload.push('\n');
+    }
+    let payload_bytes = u64::try_from(payload.len()).unwrap_or(u64::MAX);
+    if payload_bytes == 0 || payload_bytes > MAX_METRICS_BYTES {
         return;
+    }
+    let current_bytes = match fs::metadata(&path) {
+        Ok(metadata) => metadata.len(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0,
+        Err(_) => return,
+    };
+    let rotated_now = current_bytes.saturating_add(payload_bytes) > MAX_METRICS_BYTES;
+    if rotated_now {
+        let continuation_bytes = u64::try_from(b"{\"event\":\"session_continue\"}\n".len()).unwrap_or(u64::MAX);
+        if payload_bytes.saturating_add(continuation_bytes) > MAX_METRICS_BYTES {
+            return;
+        }
+        match fs::remove_file(&rotated) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return,
+        }
+        match fs::rename(&path, &rotated) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return,
+        }
     }
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
         if rotated_now {
             let _ = file.write_all(b"{\"event\":\"session_continue\"}\n");
         }
-        let _ = file.write_all(line.as_bytes());
-        let _ = file.write_all(b"\n");
+        let _ = file.write_all(payload.as_bytes());
     }
 }
 
@@ -309,22 +472,22 @@ pub struct SessionSummary {
     pub peak_memory_bytes: Option<u64>,
     /// Save read/write totals by operation, format and size bucket.
     pub save_operations: Vec<SaveOperationSummary>,
-    screen_switch_samples: Vec<u64>,
-    scroll_samples: Vec<u64>,
+    screen_switch_samples: VecDeque<u64>,
+    scroll_samples: VecDeque<u64>,
     save_groups: BTreeMap<(&'static str, &'static str, &'static str), (u64, u64, u64)>,
 }
 
 impl SessionSummary {
-    fn add_sample(samples: &mut Vec<u64>, value: u64) {
+    fn add_sample(samples: &mut VecDeque<u64>, value: u64) {
         if samples.len() == MAX_SAMPLES {
-            samples.remove(0);
+            samples.pop_front();
         }
-        samples.push(value);
+        samples.push_back(value);
     }
 
     fn finish(&mut self) {
-        self.screen_switch = percentiles(&self.screen_switch_samples);
-        self.scrolling_frame = percentiles(&self.scroll_samples);
+        self.screen_switch = percentiles(self.screen_switch_samples.make_contiguous());
+        self.scrolling_frame = percentiles(self.scroll_samples.make_contiguous());
         self.save_operations = self
             .save_groups
             .iter()
@@ -781,10 +944,11 @@ mod tests {
     #![allow(clippy::expect_used)]
 
     use super::{
-        append_record, end_session, percentiles, recent_sessions, record_environment, record_first_frame,
-        record_save_discovery, record_save_read, record_save_write, record_screen_switch, record_scroll_frame,
-        size_bucket, start_session, upload_aggregate_preview, upload_aggregate_preview_with, upload_preview, Duration,
-        MAX_METRICS_BYTES, METRICS_FILE, METRICS_UPLOAD_ENDPOINT, ROTATED_METRICS_FILE,
+        append_record, begin_screen_switch, end_session, flush_metrics_writer, percentiles, recent_sessions,
+        record_environment, record_first_frame, record_save_discovery, record_save_read, record_save_write,
+        record_screen_switch, record_screen_switch_presented, record_scroll_frames, size_bucket, start_session,
+        upload_aggregate_preview, upload_aggregate_preview_with, upload_preview, Duration, SessionSummary, VecDeque,
+        MAX_METRICS_BYTES, MAX_SAMPLES, METRICS_FILE, METRICS_UPLOAD_ENDPOINT, ROTATED_METRICS_FILE,
     };
     use crate::diagnostics::{configure_log_directory, LOG_DIRECTORY_TEST_GATE};
     use std::fs;
@@ -1040,20 +1204,26 @@ mod tests {
         record_first_frame();
         record_screen_switch(Duration::from_millis(7));
         record_screen_switch(Duration::from_millis(3));
-        record_scroll_frame(Duration::from_millis(11));
+        record_scroll_frames(&[Duration::from_millis(11), Duration::from_millis(14)]);
         record_save_read("stalker-cop", 131_072, Duration::from_millis(12));
         record_save_read("/home/private/person/save.sav", 131_072, Duration::from_millis(13));
         record_save_write("stalker-cop", 131_072, Duration::from_millis(9));
         record_save_discovery(Duration::from_millis(42));
         record_environment(1280, 800, 1.25);
-        let mut padding = vec![b'x'; usize::try_from(MAX_METRICS_BYTES).expect("metrics limit fits usize")];
+        flush_metrics_writer();
+        let metrics_path = directory.join(METRICS_FILE);
+        let current_bytes = fs::metadata(&metrics_path)
+            .expect("metrics writer flushed startup events")
+            .len();
+        let padding_bytes = MAX_METRICS_BYTES.saturating_sub(current_bytes);
+        let mut padding = vec![b'x'; usize::try_from(padding_bytes).expect("metrics limit fits usize")];
         let mut current_file = fs::OpenOptions::new()
             .append(true)
-            .open(directory.join(METRICS_FILE))
+            .open(metrics_path)
             .expect("open metrics file");
         current_file.write_all(&padding).expect("force metrics rotation");
         padding.clear();
-        record_scroll_frame(Duration::from_millis(15));
+        record_scroll_frames(&[Duration::from_millis(15)]);
         end_session();
 
         let metrics = format!(
@@ -1093,6 +1263,44 @@ mod tests {
     }
 
     #[test]
+    fn bounded_sample_window_discards_oldest_without_shifting_the_rest() {
+        let mut samples = VecDeque::new();
+        for value in 0..=u64::try_from(MAX_SAMPLES).expect("sample limit fits u64") {
+            SessionSummary::add_sample(&mut samples, value);
+        }
+        assert_eq!(samples.len(), MAX_SAMPLES);
+        assert_eq!(samples.front(), Some(&1));
+        assert_eq!(
+            samples.back(),
+            Some(&u64::try_from(MAX_SAMPLES).expect("sample limit fits u64"))
+        );
+    }
+
+    #[test]
+    fn screen_switch_measurement_finishes_after_a_presented_frame() {
+        let _guard = LOG_DIRECTORY_TEST_GATE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let stamp = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        let directory = std::env::temp_dir().join(format!("sse-metrics-screen-switch-{stamp}"));
+        fs::create_dir_all(&directory).expect("create temporary metrics directory");
+        configure_log_directory(Some(directory.clone()));
+
+        start_session();
+        begin_screen_switch();
+        std::thread::sleep(Duration::from_millis(5));
+        record_screen_switch_presented();
+        end_session();
+
+        let summary = recent_sessions().into_iter().next().expect("session recorded");
+        assert!(summary.screen_switch.is_some_and(|samples| samples.max_ms >= 1));
+        configure_log_directory(None);
+        fs::remove_dir_all(directory).expect("remove temporary metrics directory");
+    }
+
+    #[test]
     fn metrics_file_rotates_at_one_mibibyte() {
         let _guard = LOG_DIRECTORY_TEST_GATE
             .lock()
@@ -1110,6 +1318,7 @@ mod tests {
         .expect("write oversized metrics file");
 
         append_record("{\"event\":\"session_start\",\"os\":\"linux\"}");
+        flush_metrics_writer();
 
         assert_eq!(
             fs::metadata(directory.join(ROTATED_METRICS_FILE))
@@ -1122,6 +1331,38 @@ mod tests {
                 .expect("new metrics file exists")
                 .len()
                 < 100
+        );
+        configure_log_directory(None);
+        fs::remove_dir_all(directory).expect("remove temporary metrics directory");
+    }
+
+    #[test]
+    fn failed_rotation_never_appends_past_the_one_mibibyte_limit() {
+        let _guard = LOG_DIRECTORY_TEST_GATE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let stamp = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        let directory = std::env::temp_dir().join(format!("sse-metrics-rotation-error-{stamp}"));
+        fs::create_dir_all(&directory).expect("create temporary metrics directory");
+        configure_log_directory(Some(directory.clone()));
+        let current_path = directory.join(METRICS_FILE);
+        fs::write(
+            &current_path,
+            vec![b'x'; usize::try_from(MAX_METRICS_BYTES.saturating_sub(8)).expect("file limit fits usize")],
+        )
+        .expect("write metrics file near the limit");
+        let rotated_path = directory.join(ROTATED_METRICS_FILE);
+        fs::create_dir(&rotated_path).expect("create an unremovable rotation target");
+        fs::write(rotated_path.join("blocker"), b"keep").expect("block rotation target removal");
+
+        append_record("{\"event\":\"screen_switch\",\"ms\":9}");
+        flush_metrics_writer();
+
+        assert_eq!(
+            fs::metadata(current_path).expect("current log remains").len(),
+            MAX_METRICS_BYTES - 8
         );
         configure_log_directory(None);
         fs::remove_dir_all(directory).expect("remove temporary metrics directory");

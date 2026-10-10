@@ -11,6 +11,8 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+const MAX_SCROLL_FRAME_SAMPLES: usize = 1024;
+
 /// Platform-independent window input.
 #[derive(Clone, Debug, PartialEq)]
 pub enum WindowEvent {
@@ -232,7 +234,14 @@ pub fn run<U, A: App<U>, P: Present>(
     let mut stats = Stats::default();
     let mut frame: Vec<u32> = Vec::new();
     let mut scrolling_until: Option<Instant> = None;
+    let mut scroll_frame_samples = Vec::new();
     while let Some(first) = backend.wait_for_message(receiver)? {
+        let wake_started = Instant::now();
+        if scrolling_until.is_some_and(|deadline| wake_started > deadline) {
+            sse_app::metrics::record_scroll_frames(&scroll_frame_samples);
+            scroll_frame_samples.clear();
+            scrolling_until = None;
+        }
         stats.wakes = stats.wakes.saturating_add(1);
         let mut next = Some(first);
         while let Some(message) = next {
@@ -250,6 +259,7 @@ pub fn run<U, A: App<U>, P: Present>(
                 tree.update_layout()?;
             }
             if handle(tree, app, &message) == Flow::Exit {
+                sse_app::metrics::record_scroll_frames(&scroll_frame_samples);
                 return Ok(stats);
             }
             next = receiver.try_recv().ok();
@@ -265,18 +275,29 @@ pub fn run<U, A: App<U>, P: Present>(
             frame.resize(pixels, 0);
             tree.damage_all();
         }
+        let frame_started = Instant::now();
         let rects = tree.paint(&mut frame, stride)?;
         if rects.is_empty() {
             continue;
         }
-        let frame_started = Instant::now();
         backend.present(&frame, stride, width, height, &rects)?;
+        let frame_elapsed = frame_started.elapsed();
         sse_app::metrics::record_first_frame();
+        sse_app::metrics::record_screen_switch_presented();
         sse_app::metrics::record_environment(width, height, tree.scale());
         sse_app::metrics::sample_peak_memory();
-        if scrolling_until.is_some_and(|deadline| Instant::now() <= deadline) {
-            sse_app::metrics::record_scroll_frame(frame_started.elapsed());
-        } else {
+        if scrolling_until.is_some_and(|deadline| wake_started <= deadline)
+            && scroll_frame_samples.len() < MAX_SCROLL_FRAME_SAMPLES
+        {
+            scroll_frame_samples.push(frame_elapsed);
+            if scroll_frame_samples.len() == MAX_SCROLL_FRAME_SAMPLES {
+                sse_app::metrics::record_scroll_frames(&scroll_frame_samples);
+                scroll_frame_samples.clear();
+            }
+        }
+        if scrolling_until.is_some_and(|deadline| Instant::now() > deadline) {
+            sse_app::metrics::record_scroll_frames(&scroll_frame_samples);
+            scroll_frame_samples.clear();
             scrolling_until = None;
         }
         stats.frames = stats.frames.saturating_add(1);
@@ -286,6 +307,7 @@ pub fn run<U, A: App<U>, P: Present>(
                 .saturating_add(u64::from(rect.width).saturating_mul(u64::from(rect.height)));
         }
     }
+    sse_app::metrics::record_scroll_frames(&scroll_frame_samples);
     Ok(stats)
 }
 
