@@ -616,10 +616,43 @@ impl EditModel {
     ///
     /// # Errors
     /// Forwards clipboard failures or editing errors.
+    ///
+    /// Text that does not fit the limit is cut at the longest prefix that does. Only a paste that
+    /// inserts nothing returns `Ok(false)`, so the caller can tell a refused paste from a shortened one.
+    ///
+    /// # Errors
+    /// Returns an error only if the clipboard fails or the buffer and history disagree.
     pub fn paste<C: Clipboard>(&mut self, clipboard: &mut C) -> Result<bool> {
         let text = clipboard.read_text()?;
         let text = normalise_for_mode(&text, self.config.mode);
-        self.replace_selection(&text, CoalesceKind::None)
+        let (start, end) = self.selection.ordered();
+        if self.candidate_allowed(start, end, &text)?.is_some() {
+            return self.replace_selection(&text, CoalesceKind::None);
+        }
+        let mut ends: Vec<usize> = text.char_indices().skip(1).map(|(index, _)| index).collect();
+        ends.push(text.len());
+        // Binary search for the longest accepted prefix; acceptance only grows with length up to the limit.
+        let (mut low, mut high) = (0, ends.len());
+        while low < high {
+            let middle = low.saturating_add(high.saturating_sub(low) / 2);
+            let prefix = text.get(..ends.get(middle).copied().unwrap_or(0)).unwrap_or("");
+            if self.candidate_allowed(start, end, prefix)?.is_some() {
+                low = middle.saturating_add(1);
+            } else {
+                high = middle;
+            }
+        }
+        let accepted = low
+            .checked_sub(1)
+            .and_then(|index| ends.get(index))
+            .copied()
+            .unwrap_or(0);
+        let prefix = text.get(..accepted).unwrap_or("");
+        if prefix.is_empty() {
+            self.break_coalescing();
+            return Ok(false);
+        }
+        self.replace_selection(prefix, CoalesceKind::None)
     }
 
     /// Undoes one coalesced edit.
@@ -1669,6 +1702,29 @@ mod tests {
         };
         assert_eq!(editor.paste(&mut clipboard), Ok(true));
         assert_eq!(editor.text(), "ab c d");
+    }
+
+    #[test]
+    fn paste_longer_than_the_limit_keeps_the_part_that_fits() {
+        let config = EditConfig {
+            max_graphemes: 5,
+            ..EditConfig::default()
+        };
+        let mut editor = match EditModel::new("ab", config) {
+            Ok(value) => value,
+            Err(error) => panic!("failed to create editor: {error}"),
+        };
+        let mut clipboard = MemoryClipboard {
+            text: "cdefgh".to_owned(),
+        };
+        assert_eq!(editor.paste(&mut clipboard), Ok(true));
+        assert_eq!(editor.text(), "abcde");
+        assert_eq!(
+            editor.paste(&mut clipboard),
+            Ok(false),
+            "a full field refuses the whole paste"
+        );
+        assert_eq!(editor.text(), "abcde");
     }
 
     #[test]
