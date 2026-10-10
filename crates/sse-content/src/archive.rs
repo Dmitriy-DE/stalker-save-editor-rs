@@ -30,11 +30,17 @@ pub type EntryDecoder = Arc<dyn Fn(&[u8], usize) -> Result<Vec<u8>> + Send + Syn
 /// Trait for positional reads without moving an internal file pointer.
 pub trait ReadAt: Send + Sync {
     /// Returns the length of the readable resource in bytes.
-    fn len(&self) -> u64;
+    ///
+    /// # Errors
+    /// Returns [`Error::System`] when the length cannot be determined; it must not be reported as zero.
+    fn len(&self) -> Result<u64>;
 
     /// Returns `true` if the resource is empty.
-    fn is_empty(&self) -> bool {
-        self.len() == 0
+    ///
+    /// # Errors
+    /// Propagates the error from [`ReadAt::len`].
+    fn is_empty(&self) -> Result<bool> {
+        Ok(self.len()? == 0)
     }
 
     /// Reads exact number of bytes into `buf` starting at `offset`.
@@ -45,8 +51,8 @@ pub trait ReadAt: Send + Sync {
 }
 
 impl ReadAt for [u8] {
-    fn len(&self) -> u64 {
-        self.len() as u64
+    fn len(&self) -> Result<u64> {
+        Ok(self.len() as u64)
     }
 
     fn read_exact_at(&self, buf: &mut [u8], offset: u64) -> Result<()> {
@@ -63,8 +69,8 @@ impl ReadAt for [u8] {
 }
 
 impl ReadAt for Vec<u8> {
-    fn len(&self) -> u64 {
-        self.len() as u64
+    fn len(&self) -> Result<u64> {
+        Ok(self.len() as u64)
     }
 
     fn read_exact_at(&self, buf: &mut [u8], offset: u64) -> Result<()> {
@@ -73,7 +79,7 @@ impl ReadAt for Vec<u8> {
 }
 
 impl<T: ReadAt + ?Sized> ReadAt for &T {
-    fn len(&self) -> u64 {
+    fn len(&self) -> Result<u64> {
         (**self).len()
     }
 
@@ -83,7 +89,7 @@ impl<T: ReadAt + ?Sized> ReadAt for &T {
 }
 
 impl<T: ReadAt + ?Sized> ReadAt for Box<T> {
-    fn len(&self) -> u64 {
+    fn len(&self) -> Result<u64> {
         (**self).len()
     }
 
@@ -93,7 +99,7 @@ impl<T: ReadAt + ?Sized> ReadAt for Box<T> {
 }
 
 impl<T: ReadAt + ?Sized> ReadAt for Arc<T> {
-    fn len(&self) -> u64 {
+    fn len(&self) -> Result<u64> {
         (**self).len()
     }
 
@@ -103,8 +109,8 @@ impl<T: ReadAt + ?Sized> ReadAt for Arc<T> {
 }
 
 impl ReadAt for File {
-    fn len(&self) -> u64 {
-        self.metadata().map(|m| m.len()).unwrap_or(0)
+    fn len(&self) -> Result<u64> {
+        Ok(self.metadata()?.len())
     }
 
     fn read_exact_at(&self, buf: &mut [u8], offset: u64) -> Result<()> {
@@ -305,7 +311,7 @@ impl XRayArchive {
         let stored_end = u64::from(entry.offset)
             .checked_add(u64::from(entry.compressed_size))
             .ok_or_else(|| Error::damaged("archive entry range overflow"))?;
-        if stored_end > self.reader.len() {
+        if stored_end > self.reader.len()? {
             return Err(Error::damaged(format!(
                 "entry '{}' points past the end of the archive",
                 entry.name
@@ -358,7 +364,7 @@ fn read_entries(reader: &dyn ReadAt, header_decoder: Option<HeaderDecoder>) -> R
     let mut data_start: Option<usize> = None;
     let mut data_end: usize = 0;
     let mut position = 0u64;
-    let total_len = reader.len();
+    let total_len = reader.len()?;
 
     while position < total_len {
         if position.checked_add(8).is_none_or(|end| end > total_len) {
@@ -513,5 +519,22 @@ mod bounds_tests {
         let archive = XRayArchive::from_reader_with_entries(Box::new(vec![0_u8; 16]), vec![entry], None)
             .unwrap_or_else(|error| panic!("archive construction failed: {error:?}"));
         assert!(matches!(archive.read_file("oversized.bin"), Err(Error::Damaged(_))));
+    }
+
+    struct UnknownLength;
+
+    impl ReadAt for UnknownLength {
+        fn len(&self) -> Result<u64> {
+            Err(Error::System("metadata unavailable".to_owned()))
+        }
+
+        fn read_exact_at(&self, _buf: &mut [u8], _offset: u64) -> Result<()> {
+            Err(Error::System("unreadable".to_owned()))
+        }
+    }
+
+    #[test]
+    fn unknown_archive_length_is_an_error_not_an_empty_archive() {
+        assert!(matches!(read_entries(&UnknownLength, None), Err(Error::System(_))));
     }
 }
