@@ -1220,6 +1220,19 @@ impl Screen for Achievements {
         )?;
         let inspector = cx.tree.children(list.side).first().copied().unwrap_or(host);
         cx.tree.set_visible(list.actions, false)?;
+        // build_list_side puts a growing spacer before its action row, which pushes the actions to the panel's
+        // bottom edge (below the window at 1366×768). The actions follow the description instead, so they stay in view.
+        let spacer = {
+            let children = cx.tree.children(inspector);
+            children
+                .len()
+                .checked_sub(2)
+                .and_then(|index| children.get(index))
+                .copied()
+        };
+        if let Some(spacer) = spacer {
+            cx.tree.set_style(spacer, Style::default())?;
+        }
         let stacked = cx.tree.add(
             Some(inspector),
             NodeKind::Column,
