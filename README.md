@@ -1,31 +1,170 @@
-# S.T.A.L.K.E.R. Save Editor — Rust
+# S.T.A.L.K.E.R. Save Editor
 
-Second generation of the save editor: one native application without a managed runtime. The released C# editor
-(`Dmitriy-DE/S.T.A.L.K.E.R.-Save-Editor`, 1.3.x) stays the reference: every reader and writer here must answer
-exactly like it before it replaces it.
+A save editor for the S.T.A.L.K.E.R. series. It reads and edits saves of *Shadow of Chernobyl*, *Clear Sky*,
+*Call of Pripyat* and their Enhanced Editions, and of *S.T.A.L.K.E.R. 2: Heart of Chornobyl*. It also applies
+game bug fixes, installs an optional in-game companion, and checks game scripts.
 
-## Current status — 2026-10-10
+Version `2.0.0-dev`. Not released yet. What is checked and what is not is listed in [Verification](#verification).
 
-- A18, A10, A14, A16 and A17 implementation PRs are merged: #335/#503, #336, #456, #466 and #474/#477.
-- A15 game and companion live checks remain incomplete. The desktop-control API currently exposes no native apps
-  (`apps=[]`); no new game session or in-game load was run. Per-game preflight and the exact blocker are in `TASKS.md`.
-- A13-56–58 translation fixes are merged in #514; all applicable CI checks passed, including Windows installer and
-  portable builds.
-- A20 Linux playback merged in #512; the installed-game audio-source follow-up is open in #519. A22/S2 follow-ups
-  for download error text and refused stash items are open in #520. D2 S11 is open in #517, which currently reports
-  no CI checks.
-- Rust 2.0 has not been released. Workshop publication and release signing remain owner actions.
+![Inventory screen](docs/images/inventory.png)
 
-| File | What it is |
+## What it can do
+
+### Saves
+
+- **X-Ray saves** (Shadow of Chernobyl, Clear Sky, Call of Pripyat and the Enhanced Editions): read the actor's
+  money, inventory, ammunition stacks, equipment condition and upgrades. Edits are listed in the table below.
+- **S.T.A.L.K.E.R. 2 saves**: read the wallet, backpack and stash. Edits: wallet, ammunition stack count, equipment
+  condition, and moving stash items into the backpack. Placement, upgrades, item removal and item addition are refused.
+  Saves written by game version 1.0.x can be read but not edited.
+- **Every write** keeps the original: a backup copy and a journal are written first, the new file replaces the old one
+  atomically, the result is read back and compared, and the original is restored if a step fails.
+  See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+### X-Ray edit support
+
+Taken from the capability registry in `crates/sse-xray/src/writer.rs` (`capability()`), which mirrors the C# 1.3.1
+reference:
+
+| Change | Shadow of Chernobyl, Clear Sky, Call of Pripyat | Enhanced Editions |
+|---|---|---|
+| Money | Verified | Experimental |
+| Ammunition stacks | Verified | Experimental |
+| Add items | Verified | Experimental |
+| Remove items | Verified | Experimental |
+| Equipment condition | Experimental | Unsupported |
+| Item placement | Experimental | Unsupported |
+| Actor faction | Experimental | Unsupported |
+| Faction relations | Experimental | Unsupported |
+| Move items to or from a stash | Experimental | Unsupported |
+| Info portions | Experimental | Unsupported |
+| Relocate actor | Experimental | Unsupported |
+| Upgrades | Clear Sky, Call of Pripyat: Experimental; Shadow of Chernobyl: Unsupported | Unsupported |
+
+*Verified* means the reference fixtures confirm the field. It does not mean a game has loaded the result.
+*Experimental* means the reference allows the edit with experimental status. *Unsupported* means the editor refuses it.
+
+### Game fixes
+
+A catalogue of 149 fixes (dataset `2026.10.1`, `crates/sse-fixes/data/game-fixes.json`):
+
+| Game | Fixes |
 |---|---|
-| `AGENTS.md` | rules for everyone who writes code here (people and agents) |
-| `PLAN.md` | architecture, budgets, implementation stages, current status link |
-| `TASKS.md` | work packages as ready-to-paste task texts |
+| Shadow of Chernobyl | 35 validated |
+| Shadow of Chernobyl Enhanced Edition | 2 validated |
+| Clear Sky | 75 validated, 1 experimental |
+| Call of Pripyat | 36 validated |
+| S.T.A.L.K.E.R. 2 | none |
 
+Fixes are applied only when the user chooses them. Each one is checked against the expected file hashes before it
+changes anything, and can be removed again. See [docs/GAME_FIXES.md](docs/GAME_FIXES.md).
+
+### Companion
+
+An optional in-game companion: a Lua mod for the X-Ray games (bundled in the program) and a UE4SS mod for
+S.T.A.L.K.E.R. 2. It is installed only on the user's explicit choice and removed exactly as it was installed.
+See [docs/COMPANION.md](docs/COMPANION.md).
+
+### Diagnostics
+
+- `stalker-save doctor` reads saves, crash markers and game installations without changing them.
+- `stalker-save lint` runs static checks on game scripts.
+- A crash marker and a local log are kept. An error report is sent only after the user confirms it.
+- Performance metrics stay on the computer unless the user turns on sending and confirms each upload.
+
+See [docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md).
+
+### Steam
+
+- Finds Steam libraries and installed games.
+- Steam Cloud writes are explicit transactions that check the file hash first. An uncertain write is never retried
+  automatically.
+- Reads achievements.
+- Builds Steam Workshop packages for the Enhanced Editions (developer tool `sse-ui-dev --package-ee`).
+
+### Updates
+
+The user checks for updates on request. The manifest is signed with ECDSA P-256 and the signature is verified before
+anything is downloaded. Downloads and platform installs are handled by the installers in `crates/sse-update`.
+
+### Web
+
+`sse-web` hosts the same editor shell in a browser. The build script is `tools/build-web.sh`.
+
+## Install
+
+Packages are built by CI (`.github/workflows/ci.yml`) and attached to the workflow run. They are not published
+releases.
+
+| Platform | File | Built by CI |
+|---|---|---|
+| Linux x86_64 | `SaveEditor-linux-x86_64.AppImage` | every pull request |
+| Linux x86_64 | `SaveEditor-linux-x86_64.tar.gz` | every pull request |
+| Linux x86_64 (Debian, Ubuntu) | `stalker-save-editor_<version>_amd64.deb` | every pull request |
+| Windows x86_64 | `SaveEditor-windows-x86_64.zip` (portable, MSVC build) | every pull request |
+| Windows x86_64 | `SaveEditor-windows-x86_64-setup.exe` (Inno Setup installer) | every pull request |
+| macOS | `SaveEditor-macos-arm64.dmg`, `SaveEditor-macos-x86_64.dmg` | by hand or on a `v*` tag |
+
+The macOS disk images are not signed or notarized by the build script. The release manifest is signed by the
+owner, not by CI. See [docs/PACKAGING.md](docs/PACKAGING.md).
+
+Platforms other than those listed here are not built or tested by CI.
+
+## Build from source
+
+The toolchain is pinned in `rust-toolchain.toml` (Rust 1.99.0). The declared minimum is Rust 1.85. There are no
+third-party crates; every dependency is another crate in this workspace.
+
+```bash
+cargo build --release -p sse-cli -p sse-ui
 ```
+
+Checks that CI runs:
+
+```bash
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-SSE_ORACLE=/path/to/stalker-save-editor-cli tools/oracle.sh        # parity with the C# editor
-cargo run -p sse-ui --bin sse-ui-dev -- --metrics-report <dir>   # table from downloaded metrics/*.json (download with wrangler first)
 ```
+
+## Command line
+
+```text
+stalker-save version
+stalker-save info <save>
+stalker-save inventory <save> [--all]
+stalker-save audit [path]
+stalker-save doctor save|crash|game|quests ...
+stalker-save set-money|set-stack|edit <save> ... (-o OUTPUT | --in-place) [--backup-dir DIR]
+stalker-save backups list|restore ...
+stalker-save fixes list|state|status|preset|apply-preset|install|update|remove|extract ...
+stalker-save lint <game-folder> [--check NAME] [--config SUBDIR] [--json]
+stalker-save update check|download|verify-manifest ...
+```
+
+Write commands take `--in-place` for a journaled replacement, or `-o`/`--output` for a new file. The two cannot be
+combined. Exit codes: `0` done, `2` wrong arguments, `3` refused (unsupported or unsafe), `4` unreadable or damaged
+input, `5` file or system error.
+
+## Verification
+
+What the project checks, and where it stops:
+
+- **Automated, in CI:** formatting, clippy with warnings denied, the workspace tests on Linux, Windows and macOS,
+  parser fuzz smoke tests, interface performance budgets, translation layout and source checks, and acceptance
+  screenshots.
+- **Parity with the C# editor:** `tools/oracle.sh` compares output with the C# 1.3.1 command-line editor when
+  `SSE_ORACLE` points at it. It is run by hand, not in CI.
+- **Not verified:** writes from this version have not been loaded in the game. The game launch and in-game
+  loading check is still open (see `TASKS.md`, A15). Synthetic round-trip tests do not prove that the game accepts
+  an edit.
+
+## Documentation
+
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): crates, boundaries, and the save write path.
+- [docs/GAME_FIXES.md](docs/GAME_FIXES.md): the fix catalogue and how fixes are applied.
+- [docs/COMPANION.md](docs/COMPANION.md): the in-game companion.
+- [docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md): logs, reports and metrics.
+- [docs/PACKAGING.md](docs/PACKAGING.md): packages, the release manifest and signing.
+- [PLAN.md](PLAN.md), [TASKS.md](TASKS.md), [ACCEPTANCE.md](ACCEPTANCE.md), [AGENTS.md](AGENTS.md): plan,
+  open work, acceptance criteria, and rules for contributors.
