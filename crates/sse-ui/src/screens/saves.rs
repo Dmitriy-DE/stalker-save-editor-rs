@@ -10773,6 +10773,7 @@ mod tests {
         let bytes: &[u8] = include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-source.sav");
         let save_a = temp.0.join("a.sav");
         fs::write(&save_a, bytes)?;
+        let expected_a = fs::canonicalize(&save_a)?;
         let drafts = temp.0.join("drafts");
         let workspace = Workspace::with_draft_directory(drafts.clone());
         let (proxy, receiver) = channel_pair::<AppMessage>();
@@ -10803,7 +10804,7 @@ mod tests {
         let mut plan = DraftPlan::empty(&sha_a)?;
         plan.money = Some(4321);
         let journal = DraftJournal::new(vec![plan], 0)?;
-        let store = DraftStore::for_source(&drafts, &save_a);
+        let store = DraftStore::for_source(&drafts, &expected_a);
         store.save(journal.clone())?;
         let empty = DraftJournal::new(vec![DraftPlan::empty(&sha_a)?], 0)?;
         workspace.reset_draft(empty, &mut cx);
