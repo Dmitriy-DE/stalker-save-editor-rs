@@ -1720,7 +1720,7 @@
     "ru": "Отмечено для переноса: {0}.",
     "uk": "Позначено для перенесення: {0}.",
     "en": "Marked for transfer: {0}.",
-    "de": "Marked for transfer: {0}.",
+    "de": "Zur Übertragung markiert: {0}.",
     "fr": "Marked for transfer: {0}.",
     "it": "Marked for transfer: {0}.",
     "es": "Marked for transfer: {0}.",
@@ -1737,7 +1737,7 @@
     "ru": "Перенести всё",
     "uk": "Перенести все",
     "en": "Transfer all",
-    "de": "Transfer all",
+    "de": "Alles übertragen",
     "fr": "Transfer all",
     "it": "Transfer all",
     "es": "Transfer all",
@@ -1754,7 +1754,7 @@
     "ru": "Перенос из тайника не проверен в игре. Перед записью создаётся резервная копия.",
     "uk": "Перенесення з тайника не перевірено в грі. Перед записом створюється резервна копія.",
     "en": "Transfer from the stash is not verified in-game. A backup is made before writing.",
-    "de": "Transfer from the stash is not verified in-game. A backup is made before writing.",
+    "de": "Die Übertragung aus dem Versteck ist im Spiel nicht geprüft. Vor dem Schreiben wird ein Backup erstellt.",
     "fr": "Transfer from the stash is not verified in-game. A backup is made before writing.",
     "it": "Transfer from the stash is not verified in-game. A backup is made before writing.",
     "es": "Transfer from the stash is not verified in-game. A backup is made before writing.",
@@ -1771,7 +1771,7 @@
     "ru": "Перенос из тайника остановлен после {0} из {1}; ничего не записано: {2}",
     "uk": "Перенесення з тайника зупинено після {0} з {1}; нічого не записано: {2}",
     "en": "Stash transfer stopped after {0} of {1}; nothing was written: {2}",
-    "de": "Stash transfer stopped after {0} of {1}; nothing was written: {2}",
+    "de": "Die Übertragung aus dem Versteck wurde nach {0} von {1} gestoppt; nichts wurde geschrieben: {2}",
     "fr": "Stash transfer stopped after {0} of {1}; nothing was written: {2}",
     "it": "Stash transfer stopped after {0} of {1}; nothing was written: {2}",
     "es": "Stash transfer stopped after {0} of {1}; nothing was written: {2}",
@@ -1784,11 +1784,1931 @@
     "zh-CN": "Stash transfer stopped after {0} of {1}; nothing was written: {2}",
     "zh-TW": "Stash transfer stopped after {0} of {1}; nothing was written: {2}"
   },
+  " · в черновике": {
+    "de": " · im Entwurf"
+  },
+  " · запись отключена для этого формата": {
+    "de": " · Schreiben für dieses Format deaktiviert"
+  },
+  " · нет подтверждённого шаблона в сейве": {
+    "de": " · keine bestätigte Vorlage im Spielstand"
+  },
+  " · ротация старых копий не завершена: {0}": {
+    "de": "Rotation alter Sicherungen nicht abgeschlossen: {0}"
+  },
+  " Ротация старых копий не завершена: {0}": {
+    "de": " Rotation alter Sicherungen nicht abgeschlossen: {0}"
+  },
+  "0 из 0 получено (0%)": {
+    "de": "0 von 0 freigeschaltet (0 %)"
+  },
+  "100% · файлов: {0} · находок: {1} · {2} мс": {
+    "de": "100 % · Dateien: {0} · Funde: {1} · {2} ms"
+  },
+  "25% · строю дерево файлов": {
+    "de": "25 % · Dateibaum wird erstellt"
+  },
+  "60% · запускаю линтер": {
+    "de": "60 % · Linter wird gestartet"
+  },
+  "9×18 мм": {
+    "de": "9×18 mm"
+  },
+  "9×19 мм": {
+    "de": "9×19 mm"
+  },
+  "9×39 мм": {
+    "de": "9×39 mm"
+  },
+  "? NPC НЕ НАЙДЕН ИЛИ НЕ ЧИТАЕТСЯ; СОСТОЯНИЕ НЕИЗВЕСТНО.": {
+    "de": "? NPC NICHT GEFUNDEN ODER NICHT LESBAR; ZUSTAND UNBEKANNT."
+  },
+  "LOCALAPPDATA не задан; папка протокола S.T.A.L.K.E.R. 2 не найдена": {
+    "de": "LOCALAPPDATA ist nicht gesetzt; der Protokollordner von S.T.A.L.K.E.R. 2 wurde nicht gefunden"
+  },
+  "S.T.A.L.K.E.R. 2: Сердце Чернобыля": {
+    "de": "S.T.A.L.K.E.R. 2: Herz von Tschernobyl"
+  },
+  "S.T.A.L.K.E.R. Зов Припяти": {
+    "de": "S.T.A.L.K.E.R. Call of Pripyat"
+  },
+  "S.T.A.L.K.E.R. Тень Чернобыля": {
+    "de": "S.T.A.L.K.E.R. Shadow of Chernobyl"
+  },
+  "S.T.A.L.K.E.R. Чистое Небо": {
+    "de": "S.T.A.L.K.E.R. Clear Sky"
+  },
+  "S.T.A.L.K.E.R.: Зов Припяти": {
+    "de": "S.T.A.L.K.E.R.: Call of Pripyat"
+  },
+  "S.T.A.L.K.E.R.: Зов Припяти (41700)": {
+    "de": "S.T.A.L.K.E.R.: Call of Pripyat (41700)"
+  },
+  "S.T.A.L.K.E.R.: Тень Чернобыля": {
+    "de": "S.T.A.L.K.E.R.: Shadow of Chernobyl"
+  },
+  "S.T.A.L.K.E.R.: Тень Чернобыля (4500)": {
+    "de": "S.T.A.L.K.E.R.: Shadow of Chernobyl (4500)"
+  },
+  "S.T.A.L.K.E.R.: Чистое Небо": {
+    "de": "S.T.A.L.K.E.R.: Clear Sky"
+  },
+  "S.T.A.L.K.E.R.: Чистое Небо (20510)": {
+    "de": "S.T.A.L.K.E.R.: Clear Sky (20510)"
+  },
+  "S2: {0} байт · CRC {1}/{2} · деньги {3} · предметов {4} · тайник {5} · предупреждений {6} · неразрешённых ссылок {7}. Правила Quest Doctor для S2 недоступны.": {
+    "de": "S2: {0} Byte · CRC {1}/{2} · Geld {3} · Gegenstände {4} · Versteck {5} · Warnungen {6} · ungelöste Verweise {7}. Quest-Doctor-Regeln für S2 sind nicht verfügbar."
+  },
+  "S2: {0} предметов в подтверждённом тайнике · страница {1} из {2}. {3}": {
+    "de": "S2: {0} Gegenstände im bestätigten Versteck · Seite {1} von {2}. {3}"
+  },
+  "Steam Cloud: список, локальная копия и защищённая запись": {
+    "de": "Steam Cloud: Dateiliste, lokale Kopie und geschützte Schreibvorgänge"
+  },
+  "Steam доступен / недоступен определяется рабочим процессом Steam.": {
+    "de": "Die Verfügbarkeit von Steam wird vom Steam-Client bestimmt."
+  },
+  "Steam не подтвердил сохранённую облачную версию; запись отменена": {
+    "de": "Steam hat die gespeicherte Cloud-Version nicht bestätigt; das Schreiben wurde abgebrochen"
+  },
+  "X-Ray {0}: упакованный файл {1} байт · реестр {2} · предметов инвентаря {3} · деньги {4} · игровой тик {5}. Структура прочитана. {6}": {
+    "de": "X-Ray {0}: gepackte Datei {1} Byte · Registry {2} · Inventargegenstände {3} · Geld {4} · Spieltick {5}. Struktur gelesen. {6}"
+  },
+  "X-Ray тайники доступны только для X-Ray сейвов.": {
+    "de": "X-Ray-Verstecke sind nur für X-Ray-Spielstände verfügbar."
+  },
+  "X-Ray: {0} тайник(ов), {1} предмет(ов) для переноса · страница {2} из {3}. Перенос рюкзак↔первый тайник подтверждён writer-ом и сохранится из «Инвентаря».": {
+    "de": "X-Ray: {0} Versteck(e), {1} Gegenstand/Gegenstände zum Übertragen · Seite {2} von {3}. Übertragung Rucksack↔erstes Versteck ist vom Writer bestätigt und wird aus dem Inventar gespeichert."
+  },
+  "[ ] {0} · игра не найдена": {
+    "de": "[ ] {0} · Spiel nicht gefunden"
+  },
+  "[ ] Я подтверждаю перезапись": {
+    "de": "[ ] Ich bestätige das Überschreiben"
+  },
+  "[✓] Я подтверждаю перезапись": {
+    "de": "[✓] Ich bestätige das Überschreiben"
+  },
+  "{0:.1f} КБ": {
+    "de": "{0:.1f} KB"
+  },
+  "{0:.1f} кг": {
+    "de": "{0:.1f} kg"
+  },
+  "{0:.2f} МБ": {
+    "de": "{0:.2f} MB"
+  },
+  "{0:F0} КБ": {
+    "de": "{0:F0} KB"
+  },
+  "{0:F0} мс": {
+    "de": "{0:F0} ms"
+  },
+  "{0:F1} КБ": {
+    "de": "{0:F1} KB"
+  },
+  "{0:F1} МБ": {
+    "de": "{0:F1} MB"
+  },
+  "{0}\nКлюч: {1}\nКоличество в пачке: {2}": {
+    "de": "{0}\nSchlüssel: {1}\nAnzahl im Stapel: {2}"
+  },
+  "{0}\nФормат: {1}": {
+    "de": "{0}\nFormat: {1}"
+  },
+  "{0} · {1} · {2} / {3}\nПРОБЛЕМА: {4}\nИЗМЕНЕНИЕ: {5}\nПОДДЕРЖИВАЕМЫЕ STEAM-СБОРКИ: {6}\nЗАТРАГИВАЕМЫЕ ФАЙЛЫ: {7}\nИСТОЧНИК: {8}": {
+    "de": "{0} · {1} · {2} / {3}\nPROBLEM: {4}\nÄNDERUNG: {5}\nUNTERSTÜTZTE STEAM-VERSIONEN: {6}\nBETROFFENE DATEIEN: {7}\nQUELLE: {8}"
+  },
+  "{0} · {1} · {2} · {3} байт": {
+    "de": "{0} · {1} · {2} · {3} Byte"
+  },
+  "{0} · {1} · исправлений: {2}": {
+    "de": "{0} · {1} · Korrekturen: {2}"
+  },
+  "{0} · {1} · цена: {2}": {
+    "de": "{0} · {1} · Preis: {2}"
+  },
+  "{0} · {1} ч": {
+    "de": "{0} · {1} Std."
+  },
+  "{0} · в тайник {1} · 0x{2}": {
+    "de": "{0} · in Versteck {1} · 0x{2}"
+  },
+  "{0} · кол-во {1} · вес {2} · ячейки {3} · {4}×{5} от {6},{7} · 0x{8}": {
+    "de": "{0} · Anzahl {1} · Gewicht {2} · Zellen {3} · {4}×{5} von {6},{7} · 0x{8}"
+  },
+  "{0} · ошибка: {1}": {
+    "de": "{0} · Fehler: {1}"
+  },
+  "{0} · тайник {1} · 0x{2}": {
+    "de": "{0} · Versteck {1} · 0x{2}"
+  },
+  "{0} Б": {
+    "de": "{0} B"
+  },
+  "{0} ЧТОБЫ ИГРА УВИДЕЛА ФЛАГ, УСТАНОВИТЕ ИСПРАВЛЕНИЕ ИГРЫ {1}.": {
+    "de": "{0} DAMIT DAS SPIEL DIE MARKIERUNG SIEHT, INSTALLIERE DEN SPIEL-FIX {1}."
+  },
+  "{0} будет перенесён в рюкзак при сохранении.": {
+    "de": "{0} wird beim Speichern in den Rucksack übertragen."
+  },
+  "{0} из {1} · {2} ({3}) · отношение: {4} · значение из {5}.\nИзменение отношений экспериментальное. После выбора примените черновик кнопкой «Сохранить» в «Инвентаре»; проверка в игре не выполнена.": {
+    "de": "{0} von {1} · {2} ({3}) · Beziehung: {4} · Wert von {5}.\nDie Bearbeitung der Fraktionsbeziehungen ist experimentell. Nach der Auswahl eines Werts übernimm den Entwurf mit „Speichern“ im Inventar; die Prüfung im Spiel wurde nicht durchgeführt."
+  },
+  "{0} из {1} получено ({2}%)": {
+    "de": "{0} von {1} freigeschaltet ({2} %)"
+  },
+  "{0} мс": {
+    "de": "{0} ms"
+  },
+  "{0} объектов · количество неизвестно": {
+    "de": "{0} Objekte · Menge unbekannt"
+  },
+  "{0} перенос(ов) в черновике; проверьте результат после записи.": {
+    "de": "{0} Übertragung(en) im Entwurf; prüfe das Ergebnis nach dem Schreiben."
+  },
+  "{0} подтверждённых переходов. {1}": {
+    "de": "{0} bestätigte Übergänge. {1}"
+  },
+  "{0} предмет(ов) будет перенесено при сохранении из «Инвентаря».": {
+    "de": "{0} Gegenstand/Gegenstände werden beim Speichern aus dem Inventar übertragen."
+  },
+  "{0} сейвов · каталогов проверено: {1} · страница {2} из {3}": {
+    "de": "{0} Spielstände · Ordner geprüft: {1} · Seite {2} von {3}"
+  },
+  "{0} уже есть": {
+    "de": "{0} ist bereits vorhanden"
+  },
+  "{0}: {1}; файлов: {2}": {
+    "de": "{0}: {1}; Dateien: {2}"
+  },
+  "{0}{1} [{2}] · сейвов: {3}\n   {4}": {
+    "de": "{0}{1} [{2}] · Spielstände: {3}\n   {4}"
+  },
+  "«{name}» — не сохранение S.T.A.L.K.E.R. или файл повреждён.": {
+    "de": "„{name}“ ist kein S.T.A.L.K.E.R.-Spielstand oder die Datei ist beschädigt."
+  },
+  "× NPC МЁРТВ БЕЗ ФЛАГА, НО СЮЖЕТ УЖЕ ПОШЁЛ ДАЛЬШЕ: ДОБАВЛЕНИЕ ФЛАГА НЕ ПОМОЖЕТ. НУЖЕН БОЛЕЕ РАННИЙ СЕЙВ.": {
+    "de": "× NPC IST OHNE MARKIERUNG TOT, ABER DIE HANDLUNG IST SCHON WEITERGEGANGEN: EINE MARKIERUNG HINZUZUFÜGEN HILFT NICHT. NÖTIG IST EIN FRÜHERER SPIELSTAND."
+  },
+  "× СТРУКТУРНАЯ ПРОВЕРКА — {0}": {
+    "de": "× STRUKTURPRÜFUNG — {0}"
+  },
+  "× СТРУКТУРНАЯ ПРОВЕРКА — ФАЙЛ НЕ РАСПОЗНАН ИЛИ ПОВРЕЖДЁН: {0}": {
+    "de": "× STRUKTURPRÜFUNG — DATEI NICHT ERKANNT ODER BESCHÄDIGT: {0}"
+  },
+  "АРТ.": {
+    "de": "ART."
+  },
+  "Агропром": {
+    "de": "Agroprom"
+  },
+  "Акцент:": {
+    "de": "Akzent:"
+  },
+  "Апгрейд": {
+    "de": "Upgrade"
+  },
+  "Апгрейды": {
+    "de": "Upgrades"
+  },
+  "Аптечка": {
+    "de": "Medkit"
+  },
+  "Б": {
+    "de": "B"
+  },
+  "БИБЛИОТЕКА": {
+    "de": "BIBLIOTHEK"
+  },
+  "БЭКАПЫ": {
+    "de": "BACKUPS"
+  },
+  "БЭКАПЫ И ВОССТАНОВЛЕНИЕ": {
+    "de": "BACKUPS UND WIEDERHERSTELLUNG"
+  },
+  "Бар": {
+    "de": "Bar"
+  },
+  "Безопасное удаление запрещено": {
+    "de": "Sicheres Entfernen ist nicht erlaubt"
+  },
+  "Болота": {
+    "de": "Sümpfe"
+  },
+  "Бэкап ": {
+    "de": "Backup "
+  },
+  "В копию…": {
+    "de": "In eine Kopie wiederherstellen…"
+  },
+  "В режиме headless screenshot диски не сканируются.": {
+    "de": "Im Headless-Screenshot-Modus werden keine Laufwerke durchsucht."
+  },
+  "ВЕРСИЯ": {
+    "de": "VERSION"
+  },
+  "ВОССТАНОВИТЬ РЕЗЕРВНУЮ КОПИЮ": {
+    "de": "BACKUP WIEDERHERSTELLEN"
+  },
+  "ВОССТАНОВЛЕНИЕ ИЗМЕНИТ ФАЙЛЫ ИГРЫ. Нажмите «ВОССТАНОВИТЬ ПОСЛЕДНИЙ СНИМОК» ещё раз для подтверждения: {0}": {
+    "de": "DIE WIEDERHERSTELLUNG ÄNDERT SPIELDATEIEN. Klicke erneut auf „LETZTEN SNAPSHOT WIEDERHERSTELLEN“, um zu bestätigen: {0}"
+  },
+  "ВРЕМЕННО ОТКЛЮЧИТЬ / ВОССТАНОВИТЬ КАСТОМНЫЕ МОДЫ": {
+    "de": "EIGENE MODS VORÜBERGEHEND DEAKTIVIEREN / WIEDERHERSTELLEN"
+  },
+  "ВЫБРАННАЯ ИГРА": {
+    "de": "AUSGEWÄHLTES SPIEL"
+  },
+  "ВЫБРАННЫЙ ПРЕДМЕТ": {
+    "de": "AUSGEWÄHLTER GEGENSTAND"
+  },
+  "Варта": {
+    "de": "Wache"
+  },
+  "Введите имя профиля.": {
+    "de": "Gib einen Profilnamen ein."
+  },
+  "Версия мода: {0}": {
+    "de": "Mod-Version: {0}"
+  },
+  "Ветеран": {
+    "de": "Veteran"
+  },
+  "Восстановлен снимок {0} · установлено фиксов {1} · удалено {2} · user.ltx {3}": {
+    "de": "Snapshot {0} wiederhergestellt · installierte Fixes {1} · entfernt {2} · user.ltx aktualisiert {3}"
+  },
+  "Восстановление отменено.": {
+    "de": "Wiederherstellung abgebrochen."
+  },
+  "Восстановление сейва уже выполняется.": {
+    "de": "Die Wiederherstellung des Spielstands läuft bereits."
+  },
+  "Восстановлено на место: {0} · {1}": {
+    "de": "Am Ort wiederhergestellt: {0} · {1}"
+  },
+  "Временная последовательность строится по времени изменения файлов сейвов.": {
+    "de": "Die Zeitleiste basiert auf den Änderungszeiten der Spielstand-Dateien."
+  },
+  "Всё равно сохранить": {
+    "de": "Trotzdem speichern"
+  },
+  "Выберите второй сейв этой игры.": {
+    "de": "Wähle einen zweiten Spielstand dieses Spiels."
+  },
+  "Выберите другой сейв этой игры.": {
+    "de": "Wähle einen anderen Spielstand dieses Spiels."
+  },
+  "Выберите запись": {
+    "de": "Eintrag auswählen"
+  },
+  "Выберите игру": {
+    "de": "Spiel auswählen"
+  },
+  "Выберите не более 512 файлов за один раз.": {
+    "de": "Wähle höchstens 512 Dateien auf einmal."
+  },
+  "Выберите папку с сохранениями…": {
+    "de": "Ordner mit Spielständen wählen…"
+  },
+  "Выберите поддерживаемую игру": {
+    "de": "Unterstütztes Spiel auswählen"
+  },
+  "Выберите предмет с подтверждённым шаблоном добавления.": {
+    "de": "Wähle einen Gegenstand mit bestätigter Hinzufüge-Vorlage."
+  },
+  "Выберите сейв для просмотра и правки.": {
+    "de": "Wähle einen Spielstand zum Ansehen und Bearbeiten."
+  },
+  "Выберите сейв на экране «Обзор».": {
+    "de": "Wähle einen Spielstand auf dem Bildschirm „Übersicht“."
+  },
+  "Выберите сохранение для просмотра.": {
+    "de": "Wähle einen Spielstand, um die Details anzusehen."
+  },
+  "Выберите ячейку, чтобы увидеть причину уровня поддержки.": {
+    "de": "Wähle eine Zelle, um den Grund für diese Unterstützungsstufe zu sehen."
+  },
+  "Выбор папки отменён.": {
+    "de": "Ordnerauswahl abgebrochen."
+  },
+  "Выбор установки изменился; подтверждение отменено.": {
+    "de": "Die ausgewählte Installation hat sich geändert; die Bestätigung wurde abgebrochen."
+  },
+  "Выбор файла доступен только в рабочем окне.": {
+    "de": "Die Dateiauswahl ist nur im aktiven Fenster verfügbar."
+  },
+  "Выбран {0}": {
+    "de": "Ausgewählt: {0}"
+  },
+  "Выбран профиль: {0}": {
+    "de": "Ausgewähltes Profil: {0}"
+  },
+  "Выбран снимок: {0}": {
+    "de": "Ausgewählter Snapshot: {0}"
+  },
+  "Выбранная игра изменилась; подтверждение отменено.": {
+    "de": "Das ausgewählte Spiel hat sich geändert; die Bestätigung wurde abgebrochen."
+  },
+  "Выбранная игра не поддерживается каталогом фиксов": {
+    "de": "Das ausgewählte Spiel wird vom Fix-Katalog nicht unterstützt"
+  },
+  "Выбранное достижение исчезло после обновления списка": {
+    "de": "Die ausgewählte Errungenschaft ist nach dem Aktualisieren der Liste verschwunden"
+  },
+  "Выбранное исправление исчезло после обновления списка": {
+    "de": "Der ausgewählte Fix ist nach dem Aktualisieren der Liste verschwunden"
+  },
+  "Выбранный облачный файл исчез после обновления списка": {
+    "de": "Die ausgewählte Cloud-Datei ist nach dem Aktualisieren der Liste verschwunden"
+  },
+  "Выбранный переход больше не подтверждается сейвом.": {
+    "de": "Der ausgewählte Übergang wird vom Spielstand nicht mehr bestätigt."
+  },
+  "Выбранный предмет отсутствует в текущем сейве.": {
+    "de": "Der ausgewählte Gegenstand ist im aktuellen Spielstand nicht vorhanden."
+  },
+  "Выбрано": {
+    "de": "Ausgewählt"
+  },
+  "Выбрать": {
+    "de": "Auswählen"
+  },
+  "ГБ": {
+    "de": "GB"
+  },
+  "Геркулес": {
+    "de": "Herkules"
+  },
+  "Готов к проверке": {
+    "de": "Bereit zur Prüfung"
+  },
+  "Громкость звуков: {0}%": {
+    "de": "Lautstärke der Geräusche: {0} %"
+  },
+  "Громкость: {0}%. Нажмите «Сохранить настройки».": {
+    "de": "Lautstärke: {0} %. Speichere die Einstellungen, um sie anzuwenden."
+  },
+  "ДОБАВИТЬ ПРЕДМЕТ": {
+    "de": "GEGENSTAND HINZUFÜGEN"
+  },
+  "Дальше": {
+    "de": "Weiter"
+  },
+  "Действие": {
+    "de": "Aktion"
+  },
+  "Деньги: {0} RU · Предметов: {1} · Тайников: {2}\nИгровое время · Персонаж · Здоровье · Ранг · Репутация · Задания · Убито · Погода: —\nНеопознанных ссылок: {3}": {
+    "de": "Geld: {0} RU · Gegenstände: {1} · Verstecke: {2}\nSpielzeit · Charakter · Gesundheit · Rang · Ansehen · Aufgaben · Abschüsse · Wetter: —\nNicht aufgelöste Verweise: {3}"
+  },
+  "Деньги: {0} RU · Предметов: {1} · Тайников: —\nИгровое время: {2} · Персонаж: — · Здоровье: —\nРанг: — · Репутация: — · Задания: — · Убито: — · Погода: —": {
+    "de": "Geld: {0} RU · Gegenstände: {1} · Verstecke: —\nSpielzeit: {2} · Charakter: — · Gesundheit: —\nRang: — · Ansehen: — · Aufgaben: — · Abschüsse: — · Wetter: —"
+  },
+  "Деньги: {pending_money}": {
+    "de": "Geld: {pending_money}"
+  },
+  "Деньги: {pending_money}{disabled_reason}": {
+    "de": "Geld: {pending_money}{disabled_reason}"
+  },
+  "Деньги: —\nПредметов: —\nТайников: —\nИгровое время: —": {
+    "de": "Geld: —\nGegenstände: —\nVerstecke: —\nSpielzeit: —"
+  },
+  "Детали: {0}": {
+    "de": "Details: {0}"
+  },
+  "Дикий остров": {
+    "de": "Wilde Insel"
+  },
+  "Для выбранного облачного файла не найден локальный сейв с тем же именем.": {
+    "de": "Für die ausgewählte Cloud-Datei wurde kein lokaler Spielstand mit demselben Namen gefunden."
+  },
+  "Для выбранной игры протокол Companion не поддерживается.": {
+    "de": "Für das ausgewählte Spiel wird das Companion-Protokoll nicht unterstützt."
+  },
+  "Для этого предмета или формата нет подтверждённого шаблона добавления.": {
+    "de": "Für diesen Gegenstand oder dieses Format gibt es keine bestätigte Hinzufüge-Vorlage."
+  },
+  "Добавление доступно только для подтверждённых X-Ray форматов.": {
+    "de": "Gegenstände hinzufügen ist nur für bestätigte X-Ray-Formate verfügbar."
+  },
+  "Добавление/удаление/обзор требуют контроллера выбора папки; до его подключения изменения путей отключены.": {
+    "de": "Hinzufügen, Entfernen und Durchsuchen erfordern einen Ordnerauswahl-Controller; bis er verbunden ist, sind Pfadänderungen deaktiviert."
+  },
+  "Дождитесь завершения восстановления сейва.": {
+    "de": "Warte, bis die Wiederherstellung des Spielstands abgeschlossen ist."
+  },
+  "Дождитесь завершения восстановления, чтобы закрыть окно.": {
+    "de": "Warte, bis die Wiederherstellung abgeschlossen ist, bevor du das Fenster schließt."
+  },
+  "Дождитесь завершения записи в игру/компаньон, чтобы закрыть окно.": {
+    "de": "Warte, bis das Schreiben ins Spiel bzw. in den Companion abgeschlossen ist, bevor du das Fenster schließt."
+  },
+  "Дождитесь завершения записи сейва.": {
+    "de": "Warte, bis das Schreiben des Spielstands abgeschlossen ist."
+  },
+  "Дождитесь завершения операции мастера, чтобы закрыть окно.": {
+    "de": "Warte, bis der Assistent fertig ist, bevor du das Fenster schließt."
+  },
+  "Дождитесь завершения сохранения, чтобы восстановить сейв на место.": {
+    "de": "Warte, bis das Speichern abgeschlossen ist, bevor du den Spielstand am Ort wiederherstellst."
+  },
+  "Дождитесь завершения сохранения, чтобы закрыть окно.": {
+    "de": "Warte, bis das Speichern abgeschlossen ist, bevor du das Fenster schließt."
+  },
+  "Дождитесь завершения фоновой операции с игрой, чтобы закрыть окно.": {
+    "de": "Warte, bis der Hintergrundvorgang mit dem Spiel abgeschlossen ist, bevor du das Fenster schließt."
+  },
+  "Доктор игры сейчас проверяет X-Ray установки": {
+    "de": "Der Spiel-Doktor prüft gerade X-Ray-Installationen"
+  },
+  "Доступны записи каталога с сериализованным шаблоном в этом сейве.": {
+    "de": "In diesem Spielstand sind Katalogeinträge mit serialisierter Vorlage verfügbar."
+  },
+  "Дуга": {
+    "de": "Duga"
+  },
+  "Железный лес": {
+    "de": "Eisenwald"
+  },
+  "Журнал резервных копий сверяется с файлами и SHA-256; восстановление идёт в отдельный файл после подтверждения.": {
+    "de": "Das Backup-Journal wird mit den Dateien und SHA-256 abgeglichen; die Wiederherstellung schreibt nach Bestätigung in eine separate Datei."
+  },
+  "Журнал: {0}": {
+    "de": "Journal: {0}"
+  },
+  "ЗАКРЫТЬ": {
+    "de": "SCHLIESSEN"
+  },
+  "ЗАКРЫТЬ, НЕ ДОЖИДАЯСЬ?": {
+    "de": "FENSTER TROTZDEM SCHLIESSEN?"
+  },
+  "ЗОНА": {
+    "de": "ZONE"
+  },
+  "ЗП": {
+    "de": "CoP"
+  },
+  "ЗП EE": {
+    "de": "CoP EE"
+  },
+  "За один раз можно перенести только один предмет. Отмените предыдущий перенос.": {
+    "de": "Pro Vorgang kann nur ein Gegenstand übertragen werden. Mache zuerst die vorherige Übertragung rückgängig."
+  },
+  "Загружаю и проверяю выбранный сейв…": {
+    "de": "Der ausgewählte Spielstand wird geladen und geprüft…"
+  },
+  "Загрузка каталога…": {
+    "de": "Katalog wird geladen…"
+  },
+  "Загрузка сейва доступна в работающем окне редактора.": {
+    "de": "Das Laden eines Spielstands ist im laufenden Editorfenster verfügbar."
+  },
+  "Загрузка…": {
+    "de": "Lade…"
+  },
+  "Закройте системный диалог выбора файла, чтобы закрыть окно.": {
+    "de": "Schließe den Systemdialog zur Dateiauswahl, bevor du das Fenster schließt."
+  },
+  "Залесье": {
+    "de": "Залесье"
+  },
+  "Заменить исходный сейв? Текущий файл сверяется с журналом, перед записью создаётся страховочный бэкап.": {
+    "de": "Ursprünglichen Spielstand ersetzen? Die aktuelle Datei wird mit dem Journal abgeglichen; vor dem Schreiben wird ein Sicherheitsbackup erstellt."
+  },
+  "Записано и проверено: {0}. {1}": {
+    "de": "Geschrieben und geprüft: {0}. {1}"
+  },
+  "Записей: {0} · восстановимо: {1} · страница {2} из {3}": {
+    "de": "Einträge: {0} · wiederherstellbar: {1} · Seite {2} von {3}"
+  },
+  "Запись S.T.A.L.K.E.R. 2 в Steam Cloud запрещена.": {
+    "de": "Das Schreiben von S.T.A.L.K.E.R.-2-Spielständen in die Steam Cloud ist deaktiviert."
+  },
+  "Запись отменена пользователем.": {
+    "de": "Schreiben vom Benutzer abgebrochen."
+  },
+  "Запись сейва уже выполняется.": {
+    "de": "Ein Speichervorgang läuft bereits."
+  },
+  "Запись — полная поддержка чтения и записи, верифицировано тестами.": {
+    "de": "Schreiben — volle Unterstützung für Lesen und Schreiben, durch Tests geprüft."
+  },
+  "Запрос достижений...": {
+    "de": "Errungenschaften werden abgefragt…"
+  },
+  "Затон": {
+    "de": "Zaton"
+  },
+  "Звук изменён; нажмите «Сохранить настройки», чтобы применить.": {
+    "de": "Geräusche geändert; speichere die Einstellungen, um sie anzuwenden."
+  },
+  "Звуковые эффекты: ВКЛ": {
+    "de": "Soundeffekte: AN"
+  },
+  "Звуковые эффекты: ВЫКЛ": {
+    "de": "Soundeffekte: AUS"
+  },
+  "Зов Припяти": {
+    "de": "Call of Pripyat"
+  },
+  "Зов Припяти (Enhanced Edition)": {
+    "de": "Call of Pripyat (Enhanced Edition)"
+  },
+  "Зов Припяти EE": {
+    "de": "Call of Pripyat EE"
+  },
+  "Зона": {
+    "de": "Zone"
+  },
+  "ИГРА · СОХРАНЕНИЕ · РАЗМЕР · ДАТА ИЗМЕНЕНИЯ": {
+    "de": "SPIEL · SPIELSTAND · GRÖSSE · ÄNDERUNGSDATUM"
+  },
+  "ИЗМЕНЕНИЕ|ИЗМЕНЕНИЯ|ИЗМЕНЕНИЙ": {
+    "de": "Änderung|Änderungen|Änderungen"
+  },
+  "Игра не выбрана": {
+    "de": "Kein Spiel ausgewählt"
+  },
+  "Игра не поддерживается": {
+    "de": "Das Spiel wird nicht unterstützt"
+  },
+  "Игра не поддерживается Toolkit.": {
+    "de": "Dieses Spiel wird vom Toolkit nicht unterstützt."
+  },
+  "Игра: {0}\nИмя файла: {1}\nПуть: {2}": {
+    "de": "Spiel: {0}\nDateiname: {1}\nPfad: {2}"
+  },
+  "Изменение будет отправлено в Steam для выбранной игры и достижения.": {
+    "de": "Die Änderung wird für das ausgewählte Spiel und die Errungenschaft an Steam gesendet."
+  },
+  "Изменения подготовлены. Сохранение создаст бэкап, запишет файл и повторно его прочитает.": {
+    "de": "Änderungen sind vorbereitet. Beim Speichern wird ein Backup erstellt, die Datei geschrieben und erneut gelesen."
+  },
+  "Изменения пока не подготовлены.": {
+    "de": "Noch keine Änderungen vorbereitet."
+  },
+  "Изменения сохраняются с резервной копией и проверкой повторным чтением.": {
+    "de": "Änderungen werden mit Backup gespeichert und durch erneutes Lesen geprüft."
+  },
+  "Изменить": {
+    "de": "Ändern"
+  },
+  "Изменяются только известные параметры; остальные строки user.ltx сохраняются без изменений.": {
+    "de": "Nur bekannte Einstellungen werden geändert; alle anderen Zeilen der user.ltx bleiben unverändert."
+  },
+  "Импорт": {
+    "de": "Importieren"
+  },
+  "Имя: {0}": {
+    "de": "Name: {0}"
+  },
+  "Инвентарь игрока: {0}": {
+    "de": "Spielerinventar: {0}"
+  },
+  "Информация игрока: {0}": {
+    "de": "Spielerinfo: {0}"
+  },
+  "Искра": {
+    "de": "Funke"
+  },
+  "Используется автопоиск папок.": {
+    "de": "Die automatische Ordnersuche wird verwendet."
+  },
+  "Исправление игры можно открыть только в рабочем окне.": {
+    "de": "Ein Spiel-Fix kann nur im aktiven Fenster geöffnet werden."
+  },
+  "Исправление не выбрано": {
+    "de": "Kein Fix ausgewählt"
+  },
+  "Исправления": {
+    "de": "Fixes"
+  },
+  "История экспортов и резервных копий": {
+    "de": "Verlauf der Exporte und Backups"
+  },
+  "Источник: файлы выбранной установленной игры. Записей: {0}": {
+    "de": "Quelle: Dateien der ausgewählten installierten Spielversion. Einträge: {0}"
+  },
+  "Исчерпан номер проверки запущенной игры.": {
+    "de": "Die Nummer der Prüfung des laufenden Spiels ist erschöpft."
+  },
+  "Ищу папки с сохранениями…": {
+    "de": "Suche nach Spielstand-Ordnern…"
+  },
+  "Ищу сейвы в обнаруженных каталогах…": {
+    "de": "Suche nach Spielständen in den gefundenen Ordnern…"
+  },
+  "Ищу сейвы…": {
+    "de": "Suche nach Spielständen…"
+  },
+  "КАТАЛОГИ СОХРАНЕНИЙ": {
+    "de": "SPEICHERORDNER"
+  },
+  "КАТЕГОРИИ: ОБЯЗАТЕЛЬНЫЕ · РЕКОМЕНДУЕМЫЕ · НЕОБЯЗАТЕЛЬНЫЕ · СООБЩЕСТВО · ЭКСПЕРИМЕНТАЛЬНЫЕ": {
+    "de": "KATEGORIEN: ERFORDERLICH · EMPFOHLEN · OPTIONAL · COMMUNITY · EXPERIMENTELL"
+  },
+  "КБ": {
+    "de": "KB"
+  },
+  "КВЕСТ": {
+    "de": "QUEST"
+  },
+  "КВЕСТЫ ИСПРАВЛЕНЫ. Резервная копия: {0}": {
+    "de": "QUESTS REPARIERT. Backup: {0}"
+  },
+  "КВЕСТЫ ИСПРАВЛЕНЫ. Резервная копия: {0} · повторная проверка: {1}": {
+    "de": "QUESTS REPARIERT. Backup: {0} · erneute Prüfung: {1}"
+  },
+  "КПК": {
+    "de": "PDA"
+  },
+  "Каталог исправлений выбранной игры с транзакционной установкой": {
+    "de": "Katalog der Fixes für das ausgewählte Spiel mit transaktionaler Installation"
+  },
+  "Каталог не загружен: {0}": {
+    "de": "Katalog konnte nicht geladen werden: {0}"
+  },
+  "Каталог установки не построен": {
+    "de": "Der Installationskatalog wurde nicht erstellt"
+  },
+  "Каталог фракций недоступен для выбранного сейва.": {
+    "de": "Der Fraktionskatalog ist für den ausgewählten Spielstand nicht verfügbar."
+  },
+  "Кодеки": {
+    "de": "Codecs"
+  },
+  "Количество должно быть от 1 до 65535 для этого формата.": {
+    "de": "Die Menge muss für dieses Format zwischen 1 und 65535 liegen."
+  },
+  "Компаньон для выбранного издания не поддерживается": {
+    "de": "Der Companion wird für die ausgewählte Edition nicht unterstützt"
+  },
+  "Копия восстановлена в {0}": {
+    "de": "Kopie nach {0} wiederhergestellt"
+  },
+  "Копия облачной версии: {0}": {
+    "de": "Kopie der Cloud-Version: {0}"
+  },
+  "Копия отправки: {0}": {
+    "de": "Upload-Kopie: {0}"
+  },
+  "Кордон": {
+    "de": "Kordon"
+  },
+  "Лечение": {
+    "de": "Heilen"
+  },
+  "Лиманск": {
+    "de": "Limansk"
+  },
+  "Локальный сейв изменился во время подготовки; повторите попытку": {
+    "de": "Der lokale Spielstand hat sich während der Vorbereitung geändert; versuche es erneut"
+  },
+  "Локальный сейв: {0} Б · {1}": {
+    "de": "Lokaler Spielstand: {0} B · {1}"
+  },
+  "Локальный сейв: —": {
+    "de": "Lokaler Spielstand: —"
+  },
+  "Локальный файл изменился после запроса записи; подтвердите запись ещё раз": {
+    "de": "Die lokale Datei hat sich nach der Schreibanfrage geändert; bestätige das Schreiben erneut"
+  },
+  "МБ": {
+    "de": "MB"
+  },
+  "МОДИФИКАЦИИ · АУДИТ ФАЙЛОВ": {
+    "de": "MODIFIKATIONEN · DATEIPRÜFUNG"
+  },
+  "МОДЫ": {
+    "de": "MODS"
+  },
+  "Малахит": {
+    "de": "Malachit"
+  },
+  "Малая Зона": {
+    "de": "Kleine Zone"
+  },
+  "Меню в игре: Esc → F1 или КПК компаньона. Хук создаёт распакованный скрипт в gamedata/scripts; установка через приложение ниже.": {
+    "de": "Menü im Spiel: Esc → F1 oder der PDA des Companions. Der Hook erstellt ein entpacktes Skript in gamedata/scripts; die Installation erfolgt unten über die App."
+  },
+  "Мод отвечает. Задержка: {0}": {
+    "de": "Der Mod antwortet. Latenz: {0}"
+  },
+  "Модификации: {upgrades}": {
+    "de": "Modifikationen: {upgrades}"
+  },
+  "Модификации: —": {
+    "de": "Modifikationen: —"
+  },
+  "Моды": {
+    "de": "Mods"
+  },
+  "Монолит": {
+    "de": "Monolith"
+  },
+  "Музыка изменена; нажмите «Сохранить настройки», чтобы применить.": {
+    "de": "Musik geändert; speichere die Einstellungen, um sie anzuwenden."
+  },
+  "Музыка меню: ВКЛ": {
+    "de": "Menümusik: AN"
+  },
+  "Музыка меню: ВЫКЛ": {
+    "de": "Menümusik: AUS"
+  },
+  "НАЗВАНИЕ": {
+    "de": "NAME"
+  },
+  "НЕОБЯЗАТЕЛЬНЫЕ": {
+    "de": "OPTIONAL"
+  },
+  "НИИЧАЗ": {
+    "de": "NIICHAZ"
+  },
+  "На место…": {
+    "de": "Am Ort wiederherstellen…"
+  },
+  "Нажмите кнопку, чтобы прочитать локальные данные.": {
+    "de": "Klicke auf die Schaltfläche, um die lokalen Daten zu lesen."
+  },
+  "Название": {
+    "de": "Name"
+  },
+  "Найденные установки, версии и быстрые действия для каждой игры": {
+    "de": "Gefundene Installationen, Versionen und Schnellaktionen für jedes Spiel"
+  },
+  "Найдено несколько локальных сейвов с тем же именем; запись в облако отменена.": {
+    "de": "Mehrere lokale Spielstände mit demselben Namen wurden gefunden; das Schreiben in die Cloud wurde abgebrochen."
+  },
+  "Найдено файлов: {0} · страница {1} из {2}": {
+    "de": "Gefundene Dateien: {0} · Seite {1} von {2}"
+  },
+  "Найдено: 0": {
+    "de": "Gefunden: 0"
+  },
+  "Найдено: {count}": {
+    "de": "Gefunden: {count}"
+  },
+  "Настройка отчётов изменена; нажмите «Сохранить настройки».": {
+    "de": "Die Berichtseinstellung wurde geändert; speichere die Einstellungen."
+  },
+  "Не восстановлено: {0}": {
+    "de": "Nicht wiederhergestellt: {0}"
+  },
+  "Не найдена папка UE4SS Mods для S.T.A.L.K.E.R. 2": {
+    "de": "Der UE4SS-Mods-Ordner für S.T.A.L.K.E.R. 2 wurde nicht gefunden"
+  },
+  "Не удалось запустить повторное чтение: {0}": {
+    "de": "Erneutes Lesen des Spielstands konnte nicht gestartet werden: {0}"
+  },
+  "Не удалось запустить поиск сейвов: {0}": {
+    "de": "Spielstandsuche konnte nicht gestartet werden: {0}"
+  },
+  "Не удалось запустить проверку файла: {0}": {
+    "de": "Prüfung der Datei konnte nicht gestartet werden: {0}"
+  },
+  "Не удалось запустить сохранение черновика: {0}": {
+    "de": "Speichern des Entwurfs konnte nicht gestartet werden: {0}"
+  },
+  "Не удалось запустить фоновое чтение сейва.": {
+    "de": "Das Hintergrundlesen des Spielstands konnte nicht gestartet werden."
+  },
+  "Не удалось запустить чтение сейва: {0}": {
+    "de": "Lesen des Spielstands konnte nicht gestartet werden: {0}"
+  },
+  "Не удалось назначить поколение черновика.": {
+    "de": "Die Entwurfsgeneration konnte nicht zugewiesen werden."
+  },
+  "Не удалось начать операцию с сейвом.": {
+    "de": "Der Vorgang mit dem Spielstand konnte nicht gestartet werden."
+  },
+  "Не удалось начать проверку запущенной игры: {0}": {
+    "de": "Die Prüfung des laufenden Spiels konnte nicht gestartet werden: {0}"
+  },
+  "Не удалось начать проверку запущенной игры: {error}": {
+    "de": "Die Prüfung des laufenden Spiels konnte nicht gestartet werden: {error}"
+  },
+  "Не удалось начать сохранение: {error}": {
+    "de": "Speichern konnte nicht gestartet werden: {error}"
+  },
+  "Не удалось определить путь сейва для черновика.": {
+    "de": "Der Spielstandpfad für den Entwurf konnte nicht bestimmt werden."
+  },
+  "Не удалось определить формат сейва для проверки запущенной игры.": {
+    "de": "Das Spielstandformat für die Prüfung des laufenden Spiels konnte nicht bestimmt werden."
+  },
+  "Не удалось определить черновик: {0}": {
+    "de": "Der Entwurf konnte nicht bestimmt werden: {0}"
+  },
+  "Не удалось открыть «{name}»: {error}": {
+    "de": "„{name}“ konnte nicht geöffnet werden: {error}"
+  },
+  "Не удалось переключить моды S2: {0}": {
+    "de": "S2-Mods konnten nicht umgeschaltet werden: {0}"
+  },
+  "Не удалось проверить запущенную игру.": {
+    "de": "Das laufende Spiel konnte nicht geprüft werden."
+  },
+  "Не удалось проверить запущенную игру: {0}. Сохранение не проверено.": {
+    "de": "Das laufende Spiel konnte nicht geprüft werden: {0}. Der Spielstand wurde nicht geprüft."
+  },
+  "Не удалось проверить запущенную игру; операция отменена: {0}": {
+    "de": "Das laufende Spiel konnte nicht geprüft werden; der Vorgang wurde abgebrochen: {0}"
+  },
+  "Не удалось проверить переходы: {0}": {
+    "de": "Die Übergänge konnten nicht geprüft werden: {0}"
+  },
+  "Не удалось проверить резервные копии после запуска: {0}": {
+    "de": "Die Backups konnten beim Start nicht geprüft werden: {0}"
+  },
+  "Не удалось сохранить настройки: {0}": {
+    "de": "Die Einstellungen konnten nicht gespeichert werden: {0}"
+  },
+  "Не удалось сохранить черновик: {error}": {
+    "de": "Der Entwurf konnte nicht gespeichert werden: {error}"
+  },
+  "Не удалось сохранить: {error}": {
+    "de": "Speichern nicht möglich: {error}"
+  },
+  "Не удалось установить обновление: {0}": {
+    "de": "Das Update konnte nicht installiert werden: {0}"
+  },
+  "Нейтрал": {
+    "de": "Neutral"
+  },
+  "Нейтрал (0)": {
+    "de": "Neutral (0)"
+  },
+  "Нейтральная": {
+    "de": "Neutral"
+  },
+  "Нельзя перечитать сейв, пока выполняется восстановление.": {
+    "de": "Der Spielstand kann nicht neu gelesen werden, solange eine Wiederherstellung läuft."
+  },
+  "Нельзя перечитать сейв, пока выполняется запись.": {
+    "de": "Der Spielstand kann nicht neu gelesen werden, solange ein Schreibvorgang läuft."
+  },
+  "Нельзя сменить сейв, пока выполняется восстановление.": {
+    "de": "Der Spielstand kann nicht gewechselt werden, solange eine Wiederherstellung läuft."
+  },
+  "Нельзя сменить сейв, пока выполняется запись.": {
+    "de": "Der Spielstand kann nicht gewechselt werden, solange ein Schreibvorgang läuft."
+  },
+  "Нет других сейвов этой игры для сравнения.": {
+    "de": "Es gibt keine anderen Spielstände dieses Spiels zum Vergleichen."
+  },
+  "Нет пакета для этой установки": {
+    "de": "Für diese Installation ist kein Paket verfügbar"
+  },
+  "Нет проверенных правил квестов для этого формата.": {
+    "de": "Für dieses Format sind keine geprüften Questregeln verfügbar."
+  },
+  "Нет — механика отсутствует или не поддерживается.": {
+    "de": "Nein — die Funktion fehlt oder wird nicht unterstützt."
+  },
+  "Новое значение применяется сразу; settings.json обновится после сохранения настроек.": {
+    "de": "Der neue Wert gilt sofort; settings.json wird beim Speichern der Einstellungen aktualisiert."
+  },
+  "Номер сборки:  ": {
+    "de": "Build-Nummer:  "
+  },
+  "О ПРОГРАММЕ": {
+    "de": "ÜBER"
+  },
+  "ОБЛАКО": {
+    "de": "CLOUD"
+  },
+  "ОБНОВЛЕНИЯ": {
+    "de": "UPDATES"
+  },
+  "ОК": {
+    "de": "OK"
+  },
+  "ОТЧЁТЫ ОБ ОШИБКАХ": {
+    "de": "FEHLERBERICHTE"
+  },
+  "Облако Steam: {0} Б · {1}": {
+    "de": "Steam Cloud: {0} B · {1}"
+  },
+  "Облако Steam: —": {
+    "de": "Steam Cloud: —"
+  },
+  "Облачная версия изменилась во время чтения; обновите список": {
+    "de": "Die Cloud-Version hat sich während des Lesens geändert; aktualisiere die Liste"
+  },
+  "Облачная версия изменилась после загрузки списка; обновите список": {
+    "de": "Die Cloud-Version hat sich nach dem Laden der Liste geändert; aktualisiere die Liste"
+  },
+  "Облачный файл без имени": {
+    "de": "Die Cloud-Datei hat keinen Namen"
+  },
+  "Облачный файл исчез; обновите список": {
+    "de": "Die Cloud-Datei ist verschwunden; aktualisiere die Liste"
+  },
+  "Обнаружена прерванная запись сейва ({0}). Откройте восстановление, чтобы проверить копию и продолжить.": {
+    "de": "Ein unterbrochenes Schreiben des Spielstands wurde gefunden ({0}). Öffne die Wiederherstellung, um das Backup zu prüfen und fortzufahren."
+  },
+  "Обнаружена прерванная запись сейва. Проверьте резервную копию перед продолжением.": {
+    "de": "Ein unterbrochenes Schreiben des Spielstands wurde erkannt. Prüfe das Backup, bevor du fortfährst."
+  },
+  "Обновить историю": {
+    "de": "Verlauf aktualisieren"
+  },
+  "Обновление установлено.": {
+    "de": "Update installiert."
+  },
+  "Ожидаю завершения записи в игру/компаньон…": {
+    "de": "Warten auf das Ende des Schreibens ins Spiel bzw. in den Companion…"
+  },
+  "Ожидаю сохранения последней правки в черновик…": {
+    "de": "Warten, bis die letzte Änderung im Entwurf gespeichert ist…"
+  },
+  "Операция изменит файлы выбранной игры. Подтверждение действует только для текущего исправления и установки.": {
+    "de": "Der Vorgang ändert Dateien des ausgewählten Spiels. Die Bestätigung gilt nur für diesen Fix und diese Installation."
+  },
+  "Операция отменена.": {
+    "de": "Vorgang abgebrochen."
+  },
+  "Операция ремонта отменена.": {
+    "de": "Reparatur abgebrochen."
+  },
+  "Осмотреть": {
+    "de": "Prüfen"
+  },
+  "Отдельный менеджер модов отсутствует; используйте «Среда игры».": {
+    "de": "Ein eigener Mod-Manager fehlt; verwende „Spielumgebung“."
+  },
+  "Открываю выбор файла сохранения…": {
+    "de": "Dialog zur Auswahl der Spielstand-Datei wird geöffnet…"
+  },
+  "Открываю связанное исправление игры…": {
+    "de": "Verknüpfter Spiel-Fix wird geöffnet…"
+  },
+  "Открываю файл {0} из {1}…": {
+    "de": "Datei {0} von {1} wird geöffnet…"
+  },
+  "Открыт проверенный установщик. Завершите установку в его окне.": {
+    "de": "Der geprüfte Installer ist geöffnet. Schließe die Installation in seinem Fenster ab."
+  },
+  "Открытие сейва требует фонового канала приложения.": {
+    "de": "Zum Öffnen eines Spielstands wird der Hintergrundkanal der Anwendung benötigt."
+  },
+  "Открыто {0} из {1} файлов. {2}": {
+    "de": "{0} von {1} Dateien geöffnet. {2}"
+  },
+  "Открыто {0} файлов.": {
+    "de": "{0} Dateien geöffnet."
+  },
+  "Открыть восстановление": {
+    "de": "Wiederherstellung öffnen"
+  },
+  "Открыть обновления": {
+    "de": "Updates öffnen"
+  },
+  "Открыть папку": {
+    "de": "Ordner öffnen"
+  },
+  "Отмена запрошена…": {
+    "de": "Abbruch angefordert…"
+  },
+  "Отменить перенос": {
+    "de": "Übertragung rückgängig machen"
+  },
+  "Отношение {key} изменено в черновике: {next}.": {
+    "de": "Beziehung {key} im Entwurf geändert: {next}."
+  },
+  "Отношения актёра не подтверждены индексом сохранения.": {
+    "de": "Die Beziehungen der Akteure sind durch den Spielstand-Index nicht bestätigt."
+  },
+  "Отношения недоступны во время записи или восстановления.": {
+    "de": "Beziehungen können nicht bearbeitet werden, während ein Spielstand geschrieben oder wiederhergestellt wird."
+  },
+  "Отправлять отчёты: ВКЛ": {
+    "de": "Berichte senden: AN"
+  },
+  "Отправлять отчёты: ВЫКЛ": {
+    "de": "Berichte senden: AUS"
+  },
+  "Ошибка локального сейва: {0}": {
+    "de": "Fehler beim lokalen Spielstand: {0}"
+  },
+  "Ошибка сервера обновлений: {0}": {
+    "de": "Fehler des Update-Servers: {0}"
+  },
+  "Ошибка скрыта.": {
+    "de": "Absturzhinweis ausgeblendet."
+  },
+  "Ошибка сравнения: {0}": {
+    "de": "Fehler beim Vergleich: {0}"
+  },
+  "Ошибка: {0}": {
+    "de": "Fehler: {0}"
+  },
+  "ПМ": {
+    "de": "PM"
+  },
+  "ПОДОЖДАТЬ": {
+    "de": "WARTEN"
+  },
+  "ПОДТВЕРЖДЕНИЕ ДОСТИЖЕНИЯ": {
+    "de": "BESTÄTIGUNG DER ERRUNGENSCHAFT"
+  },
+  "ПОДТВЕРЖДЕНИЕ ЗАПИСИ": {
+    "de": "BESTÄTIGUNG DES CLOUD-SCHREIBENS"
+  },
+  "ПОДТВЕРЖДЕНИЕ ИЗМЕНЕНИЯ МОДОВ S2": {
+    "de": "BESTÄTIGUNG DER S2-MOD-ÄNDERUNG"
+  },
+  "ПОИСК УСТАНОВКИ ИГРЫ…": {
+    "de": "SUCHE NACH SPIELINSTALLATION…"
+  },
+  "ПОСЛЕДНЯЯ ВЕРСИЯ: {0}": {
+    "de": "NEUESTE VERSION: {0}"
+  },
+  "ПОСЛЕДНЯЯ ВЕРСИЯ: —": {
+    "de": "NEUESTE VERSION: —"
+  },
+  "ПРОБЛЕМА": {
+    "de": "PROBLEM"
+  },
+  "ПРОВЕРКА ЗАПУЩЕННОЙ ИГРЫ": {
+    "de": "PRÜFUNG DES LAUFENDEN SPIELS"
+  },
+  "ПРОВЕРКА ОКРУЖЕНИЯ": {
+    "de": "SYSTEMPRÜFUNG"
+  },
+  "ПРОВЕРКА ЧИТАЕМОСТИ ФОРМАТА. СЕМАНТИЧЕСКИЕ ПРАВИЛА И РЕМОНТ ДОСТУПНЫ ТОЛЬКО ПРИ НАЛИЧИИ ПРОВЕРЕННЫХ ДАННЫХ.\nИСПРАВИТЬ КВЕСТЫ использует общий путь записи с бэкапом и обратным чтением.": {
+    "de": "FORMAT-LESBARKEITSPRÜFUNG. SEMANTISCHE REGELN UND REPARATUR SIND NUR MIT GEPRÜFTEN DATEN VERFÜGBAR.\nQUESTS REPARIEREN nutzt den gemeinsamen Schreibweg mit Backup und Prüfung durch erneutes Lesen."
+  },
+  "Папка ~mods будет атомарно переименована. Проверьте выбранную установку.": {
+    "de": "Der Ordner ~mods wird atomar umbenannt. Prüfe die ausgewählte Installation."
+  },
+  "Папка выбрана. Нажмите «Добавить».": {
+    "de": "Ordner ausgewählt. Drücke „Hinzufügen“."
+  },
+  "Папка добавлена в список поиска.": {
+    "de": "Ordner zur Suchliste hinzugefügt."
+  },
+  "Папка игры не выбрана": {
+    "de": "Kein Spielordner ausgewählt"
+  },
+  "Папка игры:    ": {
+    "de": "Spielordner:    "
+  },
+  "Папка игры: {0}": {
+    "de": "Spielordner: {0}"
+  },
+  "Папка резервных копий: {0}": {
+    "de": "Backup-Ordner: {0}"
+  },
+  "Папка резервных копий: —": {
+    "de": "Backup-Ordner: —"
+  },
+  "Перейти к последней отметке": {
+    "de": "Zur letzten Markierung springen"
+  },
+  "Переключение модов S2: {0}": {
+    "de": "S2-Mods: {0}"
+  },
+  "Переключение модов доступно только для S.T.A.L.K.E.R. 2.": {
+    "de": "Das Umschalten von Mods ist nur für S.T.A.L.K.E.R. 2 verfügbar."
+  },
+  "Перемещение временно недоступно во время записи или восстановления.": {
+    "de": "Verschieben ist während des Schreibens oder Wiederherstellens vorübergehend nicht verfügbar."
+  },
+  "Перемещение из тайников не поддерживается данным форматом.": {
+    "de": "Das Verschieben von Gegenständen aus Verstecken wird von diesem Format nicht unterstützt."
+  },
+  "Перенести": {
+    "de": "Übertragen"
+  },
+  "Перенести сюда…": {
+    "de": "Hierher verschieben…"
+  },
+  "Перенос 0x{0} в тайник отменён.": {
+    "de": "Übertragung von 0x{0} in das Versteck wurde rückgängig gemacht."
+  },
+  "Перенос 0x{0} из тайника отменён.": {
+    "de": "Übertragung von 0x{0} aus dem Versteck wurde rückgängig gemacht."
+  },
+  "Перенос 0x{0} находится в черновике.": {
+    "de": "Übertragung 0x{0} ist im Entwurf."
+  },
+  "Перенос 0x{0} подтверждён и добавлен в черновик.": {
+    "de": "Übertragung 0x{0} wurde bestätigt und dem Entwurf hinzugefügt."
+  },
+  "Перенос {0} отменён.": {
+    "de": "Übertragung von {0} wurde rückgängig gemacht."
+  },
+  "Перенос временно недоступен во время записи или восстановления.": {
+    "de": "Übertragungen sind während des Schreibens oder Wiederherstellens vorübergehend nicht verfügbar."
+  },
+  "Перенос из тайника S2 отключён до проверки сохранения в игре.": {
+    "de": "Übertragungen aus S2-Verstecken sind deaktiviert, bis der Spielstand im Spiel geprüft ist."
+  },
+  "Перенос недоступен во время записи или восстановления.": {
+    "de": "Übertragungen sind während des Schreibens oder Wiederherstellens nicht verfügbar."
+  },
+  "Перенос недоступен для этого S2-сейва.": {
+    "de": "Übertragungen sind für diesen S2-Spielstand nicht verfügbar."
+  },
+  "Перенос персонажа не поддерживается данным форматом.": {
+    "de": "Die Verlegung des Charakters wird von diesem Format nicht unterstützt."
+  },
+  "Перенос тайника поддерживается только для S2.": {
+    "de": "Übertragungen aus Verstecken werden nur für S2 unterstützt."
+  },
+  "Переход в раздел «Доктор игры»": {
+    "de": "Wechsel zu „Spiel-Doktor“"
+  },
+  "Переход в раздел «Исправления игры»": {
+    "de": "Wechsel zu „Spiel-Fixes“"
+  },
+  "Переход в раздел «Среда игры»": {
+    "de": "Wechsel zu „Spielumgebung“"
+  },
+  "Переход в раздел «Энциклопедия»": {
+    "de": "Wechsel zur „Enzyklopädie“"
+  },
+  "Переходы из индексированных объектов level_changer": {
+    "de": "Übergänge aus indizierten level_changer-Objekten"
+  },
+  "Персонаж не перемещён. Выберите подтверждённый переход.": {
+    "de": "Der Charakter wurde nicht verschoben. Wähle einen bestätigten Übergang."
+  },
+  "Платформа:     ": {
+    "de": "Plattform:     "
+  },
+  "Повторное чтение доступно в работающем окне редактора.": {
+    "de": "Erneutes Lesen ist im laufenden Editorfenster verfügbar."
+  },
+  "Подробнее": {
+    "de": "Mehr"
+  },
+  "Подробности": {
+    "de": "Details"
+  },
+  "Подробности: {0}": {
+    "de": "Details: {0}"
+  },
+  "Подтвердите восстановление.": {
+    "de": "Bestätige die Wiederherstellung."
+  },
+  "Подтвердите создание отдельного файла из проверенной копии. Исходный сейв останется без изменений.": {
+    "de": "Bestätige das Erstellen einer separaten Datei aus der geprüften Kopie. Der ursprüngliche Spielstand bleibt unverändert."
+  },
+  "Подтвердить восстановление": {
+    "de": "Wiederherstellung bestätigen"
+  },
+  "Подтвердить перенос": {
+    "de": "Übertragung bestätigen"
+  },
+  "Подтвердить перенос в {0} → {1}? Затем отдельно нажмите «Сохранить» в «Инвентаре».": {
+    "de": "Übertragung nach {0} → {1} bestätigen? Danach separat „Speichern“ im Inventar drücken."
+  },
+  "Подтверждённо сломанных квестов: {0}; доступен ремонт.": {
+    "de": "Bestätigt defekte Quests: {0}; Reparatur ist verfügbar."
+  },
+  "Подтверждённые данные тайника недоступны: {0}": {
+    "de": "Bestätigte Verstecksdaten sind nicht verfügbar: {0}"
+  },
+  "Подтверждённые тайники и их предметы": {
+    "de": "Bestätigte Verstecke und ihre Gegenstände"
+  },
+  "Подтверждённых сломанных квестов не найдено.": {
+    "de": "Keine bestätigten defekten Quests gefunden."
+  },
+  "Позиция": {
+    "de": "Position"
+  },
+  "Поиск активен: вводите текст с клавиатуры": {
+    "de": "Suche aktiv: Text über die Tastatur eingeben"
+  },
+  "Поиск сейвов…": {
+    "de": "Suche nach Spielständen…"
+  },
+  "Поиск установок игр на диске…": {
+    "de": "Suche nach Spielinstallationen auf dem Datenträger…"
+  },
+  "Поиск: {0} · результатов: {1}": {
+    "de": "Suche: {0} · Treffer: {1}"
+  },
+  "Поиск: все · нажмите и печатайте": {
+    "de": "Suche: alle · anklicken und tippen"
+  },
+  "Показываются только различия в читаемых значениях денег и предметов.": {
+    "de": "Es werden nur Unterschiede in lesbaren Geld- und Gegenstandswerten angezeigt."
+  },
+  "Портативное обновление проверено: {0}. Закройте редактор, распакуйте архив в папку установки и запустите sse-shell из этой папки.": {
+    "de": "Portables Update geprüft: {0}. Schließe den Editor, entpacke das Archiv in den Installationsordner und starte sse-shell aus diesem Ordner."
+  },
+  "Последняя правка не сохранена в черновик.": {
+    "de": "Die letzte Änderung wurde nicht im Entwurf gespeichert."
+  },
+  "Предмет 0x{0} будет перенесён в рюкзак при сохранении.": {
+    "de": "Gegenstand 0x{0} wird beim Speichern in den Rucksack übertragen."
+  },
+  "Предмет 0x{0} будет перенесён в тайник при сохранении.": {
+    "de": "Gegenstand 0x{0} wird beim Speichern in das Versteck übertragen."
+  },
+  "Предмет 0x{0} назначен другому тайнику.": {
+    "de": "Gegenstand 0x{0} wurde einem anderen Versteck zugewiesen."
+  },
+  "Предмет {0}": {
+    "de": "Gegenstand {0}"
+  },
+  "Предмет {item_key} ({quantity} шт.) добавлен в очередь на запись.": {
+    "de": "Gegenstand {item_key} ({quantity}) wurde der Schreibwarteschlange hinzugefügt."
+  },
+  "Предмет · ключ {0}": {
+    "de": "Gegenstand · Schlüssel {0}"
+  },
+  "Предмет больше не найден в выбранном сейве.": {
+    "de": "Der Gegenstand ist im ausgewählten Spielstand nicht mehr vorhanden."
+  },
+  "Предмет не выбран\nВыберите предмет для редактирования характеристик.": {
+    "de": "Kein Gegenstand ausgewählt\nWähle einen Gegenstand, um seine Eigenschaften zu bearbeiten."
+  },
+  "Предметы, персонажи и локации из каталога установленной игры": {
+    "de": "Gegenstände, Charaktere und Orte aus dem Katalog der installierten Spielversion"
+  },
+  "Предыдущая": {
+    "de": "Vorherige"
+  },
+  "Припять": {
+    "de": "Prypjat"
+  },
+  "Проверено файлов: {0}. Управляемых: {1}. Неизвестных/модов: {2}. Требуют проверки: {3}.": {
+    "de": "Geprüfte Dateien: {0}. Verwaltet: {1}. Unbekannt oder Mods: {2}. Müssen geprüft werden: {3}."
+  },
+  "Проверить": {
+    "de": "Prüfen"
+  },
+  "Проверка запущенной игры уже выполняется.": {
+    "de": "Eine Prüfung des laufenden Spiels läuft bereits."
+  },
+  "Проверка и установка доступны на экране обновлений.": {
+    "de": "Prüfen und Installieren sind auf dem Bildschirm „Updates“ verfügbar."
+  },
+  "Проверка не выполнена: {0}": {
+    "de": "Prüfung fehlgeschlagen: {0}"
+  },
+  "Проверка окружения ещё не запускалась.": {
+    "de": "Die Systemprüfung wurde noch nicht gestartet."
+  },
+  "Проверка окружения завершена.": {
+    "de": "Systemprüfung abgeschlossen."
+  },
+  "Проверка отменена": {
+    "de": "Prüfung abgebrochen"
+  },
+  "Проверка структуры и целостности": {
+    "de": "Struktur- und Integritätsprüfung"
+  },
+  "Проверка, загрузка и установка новой версии приложения": {
+    "de": "Neue App-Version prüfen, herunterladen und installieren"
+  },
+  "Проверка…": {
+    "de": "Prüfung…"
+  },
+  "Проверяю {0}…": {
+    "de": "Prüfe {0}…"
+  },
+  "Проверяю выбранный сейв…": {
+    "de": "Der ausgewählte Spielstand wird geprüft…"
+  },
+  "Проверяю запущенную игру…": {
+    "de": "Prüfe, ob das Spiel läuft…"
+  },
+  "Проверяю, запущена ли игра для выбранного сейва…": {
+    "de": "Prüfe, ob das Spiel für diesen Spielstand läuft…"
+  },
+  "Профиль применён: {0} · резервная точка: {1}": {
+    "de": "Profil angewendet: {0} · Wiederherstellungspunkt: {1}"
+  },
+  "Профиль хранит набор Game Fix и управляемые значения user.ltx.": {
+    "de": "Ein Profil speichert eine Auswahl von Game Fixes und verwaltete user.ltx-Werte."
+  },
+  "Прочность: —": {
+    "de": "Haltbarkeit: —"
+  },
+  "Путь изменён. Нажмите «ПРОВЕРИТЬ СОХРАНЕНИЕ».": {
+    "de": "Pfad geändert. Klicke auf „SPIELSTAND PRÜFEN“."
+  },
+  "Путь к файлу сохранения": {
+    "de": "Pfad zur Spielstand-Datei"
+  },
+  "Путь установки: {0}": {
+    "de": "Installationspfad: {0}"
+  },
+  "РАЗМЕЩЕНИЕ": {
+    "de": "PLATZIERUNG"
+  },
+  "РЕЗЕРВНОЕ КОПИРОВАНИЕ": {
+    "de": "BACKUPS"
+  },
+  "Различий в деньгах и предметах нет.": {
+    "de": "Keine Unterschiede bei Geld und Gegenständen."
+  },
+  "Различий: {0} · добавлено: {1} · удалено: {2} · изменено: {3} · {4} → {5}": {
+    "de": "Unterschiede: {0} · hinzugefügt: {1} · entfernt: {2} · geändert: {3} · {4} → {5}"
+  },
+  "Различий: {0} · добавлено: {1} · удалено: {2} · изменено: {3} · показаны первые {4}": {
+    "de": "Unterschiede: {0} · hinzugefügt: {1} · entfernt: {2} · geändert: {3} · die ersten {4} werden angezeigt"
+  },
+  "Размер локального сейва вне поддерживаемого диапазона для Steam Cloud": {
+    "de": "Die Größe des lokalen Spielstands liegt außerhalb des für Steam Cloud unterstützten Bereichs"
+  },
+  "Размер локального сейва превышает диапазон метаданных": {
+    "de": "Die Größe des lokalen Spielstands überschreitet den Metadaten-Bereich"
+  },
+  "Размер облачного сейва вне поддерживаемого диапазона": {
+    "de": "Die Größe des Cloud-Spielstands liegt außerhalb des unterstützten Bereichs"
+  },
+  "Размер облачного сейва превышает диапазон метаданных": {
+    "de": "Die Größe des Cloud-Spielstands überschreitet den Metadaten-Bereich"
+  },
+  "Размер облачного файла изменился во время чтения; обновите список": {
+    "de": "Die Größe der Cloud-Datei hat sich während des Lesens geändert; aktualisiere die Liste"
+  },
+  "Размер файла: {0} байт · Изменён: {1} UTC\nSHA-256: {2}\nCRC: {3} · Формат: {4} · Сборка игры: —": {
+    "de": "Dateigröße: {0} Byte · geändert: {1} UTC\nSHA-256: {2}\nCRC: {3} · Format: {4} · Spielversion: —"
+  },
+  "Размер файла: —\nИзменён: —\nSHA-256: —\nФормат: —\nСборка игры: —": {
+    "de": "Dateigröße: —\nGeändert: —\nSHA-256: —\nFormat: —\nSpielversion: —"
+  },
+  "Размещение не прочитано": {
+    "de": "Platzierung nicht gelesen"
+  },
+  "Размещение: {placement}": {
+    "de": "Platzierung: {placement}"
+  },
+  "Размещение: —": {
+    "de": "Platzierung: —"
+  },
+  "Редактирование отношений фракций не поддерживается данным форматом.": {
+    "de": "Fraktionsbeziehungen können in diesem Format nicht bearbeitet werden."
+  },
+  "Резервное копирование": {
+    "de": "Backups"
+  },
+  "Резервные копии и восстановление": {
+    "de": "Backups und Wiederherstellung"
+  },
+  "Результат записи не подтверждён (повтор не выполняется): {0}{1}. {2}": {
+    "de": "Das Schreibergebnis ist nicht bestätigt (wird nicht wiederholt): {0}{1}. {2}"
+  },
+  "Ремонт доступен только в работающем окне.": {
+    "de": "Reparatur ist nur im aktiven Fenster verfügbar."
+  },
+  "Ремонт доступен только для доказанно сломанного квеста и записывается с бэкапом и обратным чтением.": {
+    "de": "Die Questreparatur ist nur für eine bestätigt defekte Quest verfügbar. Sie erstellt ein Backup und prüft das gespeicherte Ergebnis durch erneutes Lesen."
+  },
+  "Ремонт экипировки": {
+    "de": "Ausrüstung reparieren"
+  },
+  "Росток": {
+    "de": "Rostok"
+  },
+  "Русский": {
+    "de": "Russisch"
+  },
+  "Ручная отправка отчёта отключена в Rust-версии.": {
+    "de": "Manuelles Senden von Berichten ist in der Rust-Version deaktiviert."
+  },
+  "Рыжий лес": {
+    "de": "Roter Wald"
+  },
+  "Рюкзак: столбец {0}, строка {1}": {
+    "de": "Rucksack: Spalte {0}, Zeile {1}"
+  },
+  "СООБЩЕСТВО": {
+    "de": "COMMUNITY"
+  },
+  "СОХРАНЕНИЕ ФАЙЛА": {
+    "de": "SPIELSTAND WIRD GESPEICHERT"
+  },
+  "СОХРАНЕНИЙ": {
+    "de": "SPIELSTÄNDE"
+  },
+  "СТАТУС": {
+    "de": "STATUS"
+  },
+  "Сайга Д-12": {
+    "de": "Saiga D-12"
+  },
+  "Сбрасываю черновик и перечитываю сейв с диска…": {
+    "de": "Der Entwurf wird verworfen und der Spielstand von der Festplatte neu geladen…"
+  },
+  "Свалка": {
+    "de": "Müllhalde"
+  },
+  "Сведения о сбое записаны.": {
+    "de": "Absturzdetails wurden aufgezeichnet."
+  },
+  "Сверяю облачную и локальную версии перед подтверждением…": {
+    "de": "Cloud- und lokale Version werden vor der Bestätigung verglichen…"
+  },
+  "Связанное исправление не относится к выбранной игре": {
+    "de": "Der verknüpfte Fix gehört nicht zum ausgewählten Spiel"
+  },
+  "Связанное исправление не относится к выбранной игре.": {
+    "de": "Der verknüpfte Fix gehört nicht zum ausgewählten Spiel."
+  },
+  "Связанное исправление отсутствует в каталоге.": {
+    "de": "Der verknüpfte Fix fehlt im Katalog."
+  },
+  "Связь / Задержка: {0}": {
+    "de": "Verbindung / Latenz: {0}"
+  },
+  "Сейв прочитан и проверен.": {
+    "de": "Spielstand gelesen und geprüft."
+  },
+  "Сейвы ещё не искали.": {
+    "de": "Spielstände wurden noch nicht gesucht."
+  },
+  "Сейвы не найдены": {
+    "de": "Keine Spielstände gefunden"
+  },
+  "Системный диалог не запущен: {0}": {
+    "de": "Der Systemdialog konnte nicht gestartet werden: {0}"
+  },
+  "Системный диалог недоступен: {0}": {
+    "de": "Der Systemdialog ist nicht verfügbar: {0}"
+  },
+  "Скачивание пакета обновления... {0}%": {
+    "de": "Update-Paket wird heruntergeladen… {0} %"
+  },
+  "Следующая": {
+    "de": "Weiter"
+  },
+  "Слот": {
+    "de": "Slot"
+  },
+  "Слот {0}": {
+    "de": "Slot {0}"
+  },
+  "Слот: {0}": {
+    "de": "Slot: {0}"
+  },
+  "Сначала выберите X-Ray игру в «Обзоре игр»": {
+    "de": "Wähle zuerst ein X-Ray-Spiel in der „Spielübersicht“"
+  },
+  "Сначала выберите достижение": {
+    "de": "Wähle zuerst eine Errungenschaft"
+  },
+  "Сначала выберите игру в «Обзоре игр»": {
+    "de": "Wähle zuerst ein Spiel in der „Spielübersicht“"
+  },
+  "Сначала выберите исправление": {
+    "de": "Wähle zuerst einen Fix"
+  },
+  "Сначала выберите профиль.": {
+    "de": "Wähle zuerst ein Profil."
+  },
+  "Сначала выберите сейв на экране «Обзор».": {
+    "de": "Wähle zuerst einen Spielstand auf dem Bildschirm „Übersicht“."
+  },
+  "Сначала выберите сейв.": {
+    "de": "Wähle zuerst einen Spielstand."
+  },
+  "Сначала выберите установленную игру": {
+    "de": "Wähle zuerst eine installierte Spielversion"
+  },
+  "Сначала выберите файл Steam Cloud": {
+    "de": "Wähle zuerst eine Steam-Cloud-Datei"
+  },
+  "Сначала скачайте обновление.": {
+    "de": "Lade zuerst das Update herunter."
+  },
+  "Сначала сохраните или сбросьте черновик выбранного сейва.": {
+    "de": "Speichere oder verwirf zuerst den Entwurf des ausgewählten Spielstands."
+  },
+  "Снимки включают только файлы и манифесты Game Fix, Companion и настроек, которыми владеет инструмент.": {
+    "de": "Snapshots enthalten nur Dateien und Manifeste, die dieses Werkzeug verwaltet: Game Fix, Companion und Einstellungen."
+  },
+  "Снимки доступны только для X-Ray игр.": {
+    "de": "Snapshots sind nur für X-Ray-Spiele verfügbar."
+  },
+  "Содержимое тайника не подтверждено индексом.": {
+    "de": "Der Inhalt des Verstecks ist durch den Index nicht bestätigt."
+  },
+  "Создать отдельный файл из проверенной копии? Исходный сейв останется без изменений.": {
+    "de": "Eine separate Datei aus der geprüften Kopie erstellen? Der ursprüngliche Spielstand bleibt unverändert."
+  },
+  "Создаю резервную копию, записываю файл и проверяю его повторным чтением…": {
+    "de": "Backup wird erstellt, die Datei geschrieben und durch erneutes Lesen geprüft…"
+  },
+  "Состав рюкзака и подтверждённые изменения X-Ray / S2": {
+    "de": "Inventar und bestätigte X-Ray- / S2-Änderungen"
+  },
+  "Состояние / прочность: {shown}": {
+    "de": "Zustand / Haltbarkeit: {shown}"
+  },
+  "Состояние / прочность: —": {
+    "de": "Zustand / Haltbarkeit: —"
+  },
+  "Сохранение доступно в работающем окне редактора.": {
+    "de": "Speichern ist im laufenden Editorfenster verfügbar."
+  },
+  "Сохранение недоступно: дождитесь завершения восстановления сейва.": {
+    "de": "Speichern nicht möglich: warte, bis die Wiederherstellung des Spielstands abgeschlossen ist."
+  },
+  "Сохранение отменено.": {
+    "de": "Speichern abgebrochen."
+  },
+  "Сохранение уже выполняется.": {
+    "de": "Ein Speichervorgang läuft bereits."
+  },
+  "Сохранений: {0} · порядок: игра, от старых к новым · страница {1} из {2}": {
+    "de": "Spielstände: {0} · Reihenfolge: Spiel, vom ältesten zum neuesten · Seite {1} von {2}"
+  },
+  "Сохранено успешно. Резервная копия: {0}": {
+    "de": "Erfolgreich gespeichert. Backup: {0}"
+  },
+  "Сохранить всё равно": {
+    "de": "Trotzdem speichern"
+  },
+  "Сохранить отметку": {
+    "de": "Markierung speichern"
+  },
+  "Список не загружен. Нажмите «ОБНОВИТЬ СПИСОК».": {
+    "de": "Die Liste ist nicht geladen. Wähle „LISTE AKTUALISIEREN“."
+  },
+  "Список сейвов": {
+    "de": "Spielstandliste"
+  },
+  "Список сохранений и сведения о выбранном файле": {
+    "de": "Spielstandliste und Details der ausgewählten Datei"
+  },
+  "Сравнение двух сохранений": {
+    "de": "Zwei Spielstände vergleichen"
+  },
+  "Сравниваю…": {
+    "de": "Vergleiche…"
+  },
+  "Среда X-Ray для выбранной игры не применяется": {
+    "de": "Die X-Ray-Umgebung gilt für das ausgewählte Spiel nicht"
+  },
+  "Статус": {
+    "de": "Status"
+  },
+  "Статус:        ": {
+    "de": "Status:        "
+  },
+  "Статус: {0}": {
+    "de": "Status: {0}"
+  },
+  "Статус<br>{0}": {
+    "de": "Status<br>{0}"
+  },
+  "ТЕКУЩАЯ ВЕРСИЯ: {0}": {
+    "de": "AKTUELLE VERSION: {0}"
+  },
+  "ТИП · НАЗВАНИЕ · КЛЮЧ": {
+    "de": "TYP · NAME · SCHLÜSSEL"
+  },
+  "ТЧ": {
+    "de": "SoC"
+  },
+  "ТЧ EE": {
+    "de": "SoC EE"
+  },
+  "Тема:": {
+    "de": "Thema:"
+  },
+  "Тень Чернобыля": {
+    "de": "Shadow of Chernobyl"
+  },
+  "Тень Чернобыля (Enhanced Edition)": {
+    "de": "Shadow of Chernobyl (Enhanced Edition)"
+  },
+  "Тень Чернобыля EE": {
+    "de": "Shadow of Chernobyl EE"
+  },
+  "Тип": {
+    "de": "Typ"
+  },
+  "Только сведения, подтверждённые индексатором сейва": {
+    "de": "Nur Daten, die der Spielstand-Indexer bestätigt hat"
+  },
+  "Только чтение · проверка завершена": {
+    "de": "Nur lesen · Prüfung abgeschlossen"
+  },
+  "Тёмная": {
+    "de": "Dunkel"
+  },
+  "У этой фракции не задан числовой id.": {
+    "de": "Für diese Fraktion ist keine numerische ID hinterlegt."
+  },
+  "УСТАНОВКА НЕ НАЙДЕНА. ВЫБЕРИТЕ ПАПКУ ИГРЫ НА ЭКРАНЕ «ИГРЫ».": {
+    "de": "INSTALLATION NICHT GEFUNDEN. WÄHLE AUF DEM BILDSCHIRM „SPIELE“ EINEN SPIELORDNER."
+  },
+  "УСТАНОВКА ОБНАРУЖЕНА: {0}. ПРОВЕРЬТЕ СОВМЕСТИМОСТЬ ПЕРЕД УСТАНОВКОЙ.": {
+    "de": "INSTALLATION GEFUNDEN: {0}. PRÜFE VOR DER INSTALLATION DIE KOMPATIBILITÄT."
+  },
+  "Удаление профиля необратимо. Нажмите «УДАЛИТЬ ПРОФИЛЬ» ещё раз для подтверждения: {0}": {
+    "de": "Das Löschen eines Profils ist unwiderruflich. Klicke erneut auf „PROFIL LÖSCHEN“, um zu bestätigen: {0}"
+  },
+  "Удаление снимка необратимо. Нажмите «УДАЛИТЬ СНИМОК» ещё раз для подтверждения: {0}": {
+    "de": "Das Löschen eines Snapshots ist unwiderruflich. Klicke erneut auf „SNAPSHOT LÖSCHEN“, um zu bestätigen: {0}"
+  },
+  "Укажите путь к файлу сохранения.": {
+    "de": "Gib den Pfad zu einer Spielstand-Datei an."
+  },
+  "Укажите путь к файлу сохранения. Файл будет проверен и прочитан в фоне.": {
+    "de": "Gib den Pfad zur Spielstand-Datei an. Die Datei wird im Hintergrund geprüft und gelesen."
+  },
+  "Українська": {
+    "de": "Ukrainisch"
+  },
+  "Управляемая установка: не выбрана": {
+    "de": "Verwaltete Installation: keine ausgewählt"
+  },
+  "Установите флажок «Я подтверждаю перезапись».": {
+    "de": "Setze zuerst das Häkchen bei „Ich bestätige das Überschreiben“."
+  },
+  "Установка": {
+    "de": "Installation"
+  },
+  "Установка игры не выбрана": {
+    "de": "Keine Spielinstallation ausgewählt"
+  },
+  "Установка обновления отменена.": {
+    "de": "Update-Installation abgebrochen."
+  },
+  "Файл изменился после проверки. Проверьте его ещё раз.": {
+    "de": "Die Datei hat sich nach der Prüfung geändert. Prüfe sie erneut."
+  },
+  "Файл сейва изменился после открытия.": {
+    "de": "Die Spielstand-Datei hat sich nach dem Öffnen geändert."
+  },
+  "Файл скачан отдельно, открытый сейв не тронут: {0}": {
+    "de": "Als separate Datei heruntergeladen; der geöffnete Spielstand wurde nicht verändert: {0}"
+  },
+  "Файлов: {0}": {
+    "de": "Dateien: {0}"
+  },
+  "Фикс исчез из каталога": {
+    "de": "Der Fix ist aus dem Katalog verschwunden"
+  },
+  "Фикс не относится к выбранной игре": {
+    "de": "Der Fix gehört nicht zum ausgewählten Spiel"
+  },
+  "Фильтр": {
+    "de": "Filter"
+  },
+  "Фоновая операция ещё записывает файлы. Принудительное закрытие может оставить операцию незавершённой.": {
+    "de": "Eine Hintergrundoperation schreibt noch Dateien. Wenn du das Fenster erzwungen schließt, bleibt die Operation möglicherweise unvollständig."
+  },
+  "Фоновая проверка установки линтером; находки сгруппированы по файлу и тяжести": {
+    "de": "Hintergrundprüfung der Installation mit einem Linter; Befunde nach Datei und Schwere gruppiert"
+  },
+  "Химзавод": {
+    "de": "Chemiewerk"
+  },
+  "Цементный завод": {
+    "de": "Zementwerk"
+  },
+  "ЧАЭС": {
+    "de": "ChNPP"
+  },
+  "ЧН": {
+    "de": "CS"
+  },
+  "ЧН EE": {
+    "de": "CS EE"
+  },
+  "Черновик изменён только в памяти: фоновый канал недоступен.": {
+    "de": "Der Entwurf wurde nur im Speicher geändert: der Hintergrundkanal ist nicht verfügbar."
+  },
+  "Черновик сброшен в памяти; фоновый канал недоступен.": {
+    "de": "Der Entwurf wurde nur im Speicher zurückgesetzt; der Hintergrundkanal ist nicht verfügbar."
+  },
+  "Черновик содержит перенос S2 из тайника, отключённый до проверки в игре. Сбросьте этот черновик, чтобы продолжить.": {
+    "de": "Der Entwurf enthält eine Übertragung aus einem S2-Versteck, die bis zur Prüfung im Spiel deaktiviert ist. Setze diesen Entwurf zurück, um fortzufahren."
+  },
+  "Черновик сохранён.": {
+    "de": "Entwurf gespeichert."
+  },
+  "Число сейвов:  ": {
+    "de": "Anzahl der Spielstände:  "
+  },
+  "Чистое Небо": {
+    "de": "Clear Sky"
+  },
+  "Чистое Небо (Enhanced Edition)": {
+    "de": "Clear Sky (Enhanced Edition)"
+  },
+  "Чистое Небо EE": {
+    "de": "Clear Sky EE"
+  },
+  "Чтение — режим только для чтения.": {
+    "de": "Lesen — Nur-Lese-Modus."
+  },
+  "Что найдено в установке; экран ничего не изменяет": {
+    "de": "Was in der Installation gefunden wurde; dieser Bildschirm ändert nichts"
+  },
+  "Экран в работе ({0})": {
+    "de": "Bildschirm in Arbeit ({0})"
+  },
+  "Эксперим.": {
+    "de": "Experim."
+  },
+  "Эксперим. — поддержка реализована, ожидается подтверждение в игре.": {
+    "de": "Experimentell — implementiert; die Bestätigung im Spiel steht noch aus."
+  },
+  "Энциклопедия": {
+    "de": "Enzyklopädie"
+  },
+  "Энциклопедия сейчас доступна для X-Ray игр": {
+    "de": "Die Enzyklopädie ist derzeit nur für X-Ray-Spiele verfügbar"
+  },
+  "Юпитер": {
+    "de": "Jupiter"
+  },
+  "ЯЗЫК, ТЕМА, АКЦЕНТ И МАСШТАБ": {
+    "de": "SPRACHE, DESIGN, AKZENT UND SKALIERUNG"
+  },
+  "Янов": {
+    "de": "Janow"
+  },
+  "Янтарь": {
+    "de": "Yantar"
+  },
+  "архивов обнаружено: {0}": {
+    "de": "Archive gefunden: {0}"
+  },
+  "без имени": {
+    "de": "ohne Namen"
+  },
+  "без категории": {
+    "de": "ohne Kategorie"
+  },
+  "без страховочного бэкапа (исходного файла не было)": {
+    "de": "ohne Sicherheits-Backup (die Quelldatei existierte nicht)"
+  },
+  "все": {
+    "de": "alle"
+  },
+  "группировка · {0}": {
+    "de": "Fraktion · {0}"
+  },
+  "дата вне диапазона": {
+    "de": "Datum außerhalb des Bereichs"
+  },
+  "дата неизвестна": {
+    "de": "Datum unbekannt"
+  },
+  "изменение|изменения|изменений": {
+    "de": "Änderung|Änderungen|Änderungen"
+  },
+  "исправлений: {0} · Companion: {1}": {
+    "de": "{0} Fixes · Companion: {1}"
+  },
+  "локация": {
+    "de": "Ort"
+  },
+  "найдена": {
+    "de": "gefunden"
+  },
+  "не подтверждается отдельным полем": {
+    "de": "nicht durch ein eigenes Feld bestätigt"
+  },
+  "не распознано": {
+    "de": "nicht erkannt"
+  },
+  "неизвестен": {
+    "de": "unbekannt"
+  },
+  "неизвестный": {
+    "de": "unbekannt"
+  },
+  "неизвестный формат": {
+    "de": "unbekanntes Format"
+  },
+  "нет записи": {
+    "de": "kein Eintrag"
+  },
+  "нет снимка · {0}": {
+    "de": "kein Screenshot · {0}"
+  },
+  "нет шкалы состояния / износа": {
+    "de": "kein Zustands- / Verschleißwert"
+  },
+  "ошибка": {
+    "de": "Fehler"
+  },
+  "ошибка проверки": {
+    "de": "Prüfung fehlgeschlagen"
+  },
+  "персонаж/группировка": {
+    "de": "Charakter/Fraktion"
+  },
+  "позиция неизвестна": {
+    "de": "Position unbekannt"
+  },
+  "появится после протокола компаньона": {
+    "de": "wird nach dem Companion-Protokoll verfügbar"
+  },
+  "предмет 0x{0}": {
+    "de": "Gegenstand 0x{0}"
+  },
+  "предмет|предмета|предметов": {
+    "de": "Gegenstand|Gegenstände|Gegenstände"
+  },
+  "прервано, копия проверена": {
+    "de": "unterbrochen, Kopie geprüft"
+  },
+  "проверен": {
+    "de": "geprüft"
+  },
+  "распакованные файлы/папки в gamedata: {0}": {
+    "de": "entpackte Dateien/Ordner in gamedata: {0}"
+  },
+  "сейв": {
+    "de": "Spielstand"
+  },
+  "сохранение|сохранения|сохранений": {
+    "de": "Spielstand|Spielstände|Spielstände"
+  },
+  "страховочный бэкап: {0}": {
+    "de": "Sicherheits-Backup: {0}"
+  },
+  "файл отсутствует": {
+    "de": "Datei fehlt"
+  },
+  "формат не распознан;": {
+    "de": "Format nicht erkannt;"
+  },
+  "формат не распознан; структурная проверка не запускалась": {
+    "de": "Format nicht erkannt; die Strukturprüfung wurde nicht ausgeführt"
+  },
+  "черновик": {
+    "de": "Entwurf"
+  },
+  "— кг": {
+    "de": "— kg"
+  },
+  "●  НАЙДЕНО {0}": {
+    "de": "●  GEFUNDEN {0}"
+  },
+  "☰  Свернуть меню": {
+    "de": "☰  Menü einklappen"
+  },
+  "⚠ NPC МЁРТВ, НО ФЛАГ {0} НЕ ВЫДАН: ЗАДАНИЕ ЗАВИСНЕТ.": {
+    "de": "⚠ NPC IST TOT, ABER DIE MARKIERUNG {0} WURDE NICHT GESETZT: DIE AUFGABE BLEIBT HÄNGEN."
+  },
+  "✓ NPC ЖИВ.": {
+    "de": "✓ NPC LEBT."
+  },
+  "✓ ФЛАГ УЖЕ ВЫДАН.": {
+    "de": "✓ DIE MARKIERUNG IST BEREITS GESETZT."
+  },
   "Перенос из тайника: перенесено {0}, пропущено {1} (не помечены как лежащие в тайнике).": {
     "ru": "Перенос из тайника: перенесено {0}, пропущено {1} (не помечены как лежащие в тайнике).",
     "uk": "Перенесення з тайника: перенесено {0}, пропущено {1} (не позначені як такі, що лежать у тайнику).",
     "en": "Stash transfer: moved {0}, skipped {1} (not marked as lying in the stash).",
-    "de": "Stash transfer: moved {0}, skipped {1} (not marked as lying in the stash).",
+    "de": "Übertragung aus dem Versteck: {0} übertragen, {1} übersprungen (nicht als im Versteck liegend markiert).",
     "fr": "Stash transfer: moved {0}, skipped {1} (not marked as lying in the stash).",
     "it": "Stash transfer: moved {0}, skipped {1} (not marked as lying in the stash).",
     "es": "Stash transfer: moved {0}, skipped {1} (not marked as lying in the stash).",
@@ -1805,7 +3725,7 @@
     "ru": "Перенос из тайника: перенесено {0}, пропущено {1}: не помечены в тайнике {2}, не помещаются {3}, тип не поддерживается {4}, прочие отказы {5}.",
     "uk": "Перенесення з тайника: перенесено {0}, пропущено {1}: не позначені в тайнику {2}, не поміщаються {3}, тип не підтримується {4}, інші відмови {5}.",
     "en": "Stash transfer: moved {0}, skipped {1}: not marked in the stash {2}, no room {3}, type not supported {4}, other refusals {5}.",
-    "de": "Stash transfer: moved {0}, skipped {1}: not marked in the stash {2}, no room {3}, type not supported {4}, other refusals {5}.",
+    "de": "Übertragung aus dem Versteck: {0} übertragen, {1} übersprungen: nicht im Versteck markiert {2}, kein Platz {3}, Typ nicht unterstützt {4}, sonstige Ablehnungen {5}.",
     "fr": "Stash transfer: moved {0}, skipped {1}: not marked in the stash {2}, no room {3}, type not supported {4}, other refusals {5}.",
     "it": "Stash transfer: moved {0}, skipped {1}: not marked in the stash {2}, no room {3}, type not supported {4}, other refusals {5}.",
     "es": "Stash transfer: moved {0}, skipped {1}: not marked in the stash {2}, no room {3}, type not supported {4}, other refusals {5}.",
@@ -1822,7 +3742,7 @@
     "ru": "Перенос остановлен: запись одного предмета не прошла проверку, остальные не переносились.",
     "uk": "Перенесення зупинено: запис одного предмета не пройшов перевірку, решту не переносили.",
     "en": "Transfer stopped: one item's write failed its check; the rest were not moved.",
-    "de": "Transfer stopped: one item's write failed its check; the rest were not moved.",
+    "de": "Übertragung gestoppt: Das Schreiben eines Gegenstands hat die Prüfung nicht bestanden; die übrigen wurden nicht verschoben.",
     "fr": "Transfer stopped: one item's write failed its check; the rest were not moved.",
     "it": "Transfer stopped: one item's write failed its check; the rest were not moved.",
     "es": "Transfer stopped: one item's write failed its check; the rest were not moved.",
