@@ -4,8 +4,8 @@
     "russian": 163
   },
   "de": {
-    "english": 644,
-    "russian": 4
+    "english": 88,
+    "russian": 1
   },
   "fr": {
     "english": 647,
@@ -36,19 +36,19 @@
     "russian": 0
   },
   "ja": {
-    "english": 589,
-    "russian": 4
+    "english": 60,
+    "russian": 0
   },
   "ko": {
-    "english": 588,
-    "russian": 4
+    "english": 59,
+    "russian": 0
   },
   "zh-CN": {
-    "english": 584,
-    "russian": 4
+    "english": 54,
+    "russian": 0
   },
   "zh-TW": {
-    "english": 584,
-    "russian": 4
+    "english": 54,
+    "russian": 0
   }
 }
