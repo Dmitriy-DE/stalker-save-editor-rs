@@ -4374,7 +4374,13 @@ impl Screen for GameFixes {
                                 FixOperation::Install => {
                                     match engine.get_status(definition, &directory).map_err(|e| e.to_string())? {
                                         sse_fixes::GameFixState::Installed => engine.update(definition, &directory),
-                                        _ => engine.install(definition, &directory),
+                                        _ => {
+                                            // Only this explicit install may download a missing fix file.
+                                            let mut fetch = sse_fixes::fix_assets::fix_asset_fetch_config();
+                                            sse_fixes::fix_assets::fetch_missing_overlays(definition, &mut fetch)
+                                                .map_err(|e| e.to_string())?;
+                                            engine.install(definition, &directory)
+                                        }
                                     }
                                 }
                                 FixOperation::Remove => {

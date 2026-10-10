@@ -6,6 +6,7 @@ pub mod all_spawn;
 pub mod catalog;
 pub mod engine;
 pub mod extractor;
+pub mod fix_assets;
 pub mod fs_util;
 pub mod identify;
 pub mod models;
