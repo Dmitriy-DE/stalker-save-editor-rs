@@ -1409,5 +1409,39 @@
     "ko": "폴더 대화 상자를 열 수 없습니다: {0}",
     "zh-CN": "无法打开文件夹选择窗口：{0}",
     "zh-TW": "無法開啟資料夾選擇視窗：{0}"
+  },
+  "Обновления недоступны: {0}": {
+    "ru": "Обновления недоступны: {0}",
+    "uk": "Оновлення недоступні: {0}",
+    "en": "Updates are not available: {0}",
+    "de": "Updates sind nicht verfügbar: {0}",
+    "fr": "Mises à jour indisponibles : {0}",
+    "it": "Aggiornamenti non disponibili: {0}",
+    "es": "Actualizaciones no disponibles: {0}",
+    "pl": "Aktualizacje są niedostępne: {0}",
+    "cs": "Aktualizace nejsou dostupné: {0}",
+    "pt-BR": "Atualizações indisponíveis: {0}",
+    "tr": "Güncellemeler kullanılamıyor: {0}",
+    "ja": "更新を利用できません: {0}",
+    "ko": "업데이트를 사용할 수 없습니다: {0}",
+    "zh-CN": "无法使用更新：{0}",
+    "zh-TW": "無法使用更新：{0}"
+  },
+  "[ ] {0} · наличие не проверено": {
+    "ru": "[ ] {0} · наличие не проверено",
+    "uk": "[ ] {0} · наявність не перевірено",
+    "en": "[ ] {0} · not checked",
+    "de": "[ ] {0} · nicht geprüft",
+    "fr": "[ ] {0} · non vérifié",
+    "it": "[ ] {0} · non verificato",
+    "es": "[ ] {0} · no comprobado",
+    "pl": "[ ] {0} · nie sprawdzono",
+    "cs": "[ ] {0} · nezkontrolováno",
+    "pt-BR": "[ ] {0} · não verificado",
+    "tr": "[ ] {0} · kontrol edilmedi",
+    "ja": "[ ] {0} · 未確認",
+    "ko": "[ ] {0} · 확인되지 않음",
+    "zh-CN": "[ ] {0} · 未检查",
+    "zh-TW": "[ ] {0} · 未檢查"
   }
 }
