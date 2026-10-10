@@ -7455,10 +7455,9 @@ impl Factions {
         cx.tree.set_visible(list.empty, false)?;
         cx.tree.set_visible(list.actions, true)?;
         cx.tree.set_visible(list.status, true)?;
-        cx.tree.set_text(
-            list.status,
-            t("Изменение отношений экспериментальное. После выбора примените черновик кнопкой «Сохранить» в «Инвентаре»; проверка в игре не выполнена."),
-        )?;
+        let note = t("Изменение отношений экспериментальное. После выбора примените черновик кнопкой «Сохранить» в «Инвентаре»; проверка в игре не выполнена.");
+        cx.tree.set_text(list.status, note)?;
+        cx.status = Some(note.to_owned());
         for id in [self.decrease, self.increase].into_iter().flatten() {
             cx.tree.set_enabled(id, can_edit)?;
         }
@@ -7799,7 +7798,8 @@ impl Stashes {
         cx.tree.set_visible(list.empty, false)?;
         cx.tree.set_visible(list.actions, true)?;
         if let Some(action) = self.action {
-            cx.tree.set_text(action, &entry.action_text)?;
+            // The label is set after the build, so it is written in capitals here; the button stretches with the panel.
+            cx.tree.set_text(action, &entry.action_text.to_uppercase())?;
             cx.tree.set_visible(action, true)?;
             cx.tree.set_enabled(action, entry.enabled)?;
         }
@@ -8237,13 +8237,23 @@ impl Screen for Stashes {
             (t("Предмет не выбран."), t("Выберите сейв на экране «Обзор».")),
             None,
         )?;
-        self.action = Some(style::d2::button(
+        let action = style::d2::button(
             cx.tree,
             list.actions,
             "",
             style::d2::ButtonKind::Primary,
             style::d2::ButtonSize::Normal,
-        )?);
+        )?;
+        cx.tree.set_style(
+            action,
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: Size::new(0.0, crate::theme::BUTTON_HEIGHT),
+                ..Style::default()
+            },
+        )?;
+        self.action = Some(action);
         self.list = Some(list);
         self.render(cx)
     }
