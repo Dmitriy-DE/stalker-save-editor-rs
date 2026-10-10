@@ -2239,6 +2239,20 @@ impl Shell {
         self.library_workspace.library_snapshot().0
     }
 
+    /// Clicks the first fix row of the game fixes screen, as a click on it does. Returns `false` when the screen has no
+    /// visible row.
+    ///
+    /// Only for sse-ui-dev (screenshots); not part of the screen API.
+    #[doc(hidden)]
+    pub fn select_first_fix(&mut self, tree: &mut Tree) -> Result<bool> {
+        let Some(row) = first_focusable_empty(tree, self.content) else {
+            return Ok(false);
+        };
+        let pointer = Message::Window(crate::event_loop::WindowEvent::PointerLeft);
+        self.handle(tree, &pointer, Some(row))?;
+        Ok(true)
+    }
+
     /// Starts the search for game installations the way the "Найти установки" button does. Returns `false` when the
     /// current screen has no such button.
     ///
@@ -4287,6 +4301,19 @@ impl App<AppMessage> for Shell {
     }
 }
 
+/// First visible focusable widget with an empty text under `id`, in tree order (a fix row's select button).
+fn first_focusable_empty(tree: &Tree, id: WidgetId) -> Option<WidgetId> {
+    if !tree.is_visible(id) {
+        return None;
+    }
+    if tree.text(id).is_ok_and(str::is_empty) && tree.first_focusable_in(id) == Some(id) {
+        return Some(id);
+    }
+    tree.children(id)
+        .into_iter()
+        .find_map(|child| first_focusable_empty(tree, child))
+}
+
 /// First visible widget under `root` whose text is `needle`, ignoring case (a button's label is its whole text).
 /// Only for sse-ui-dev (through `Shell::open_add_item`).
 fn find_button_with_text(tree: &Tree, root: WidgetId, needle: &str) -> Option<WidgetId> {
@@ -5841,6 +5868,141 @@ mod tests {
             result?;
         }
         Ok(())
+    }
+
+    /// Opens a Shadow of Chernobyl save (the fixes catalog's game) and the game fixes screen, and waits for the list.
+    fn open_fixes_for_soc(
+        directory: &Path,
+        width: u32,
+        height: u32,
+    ) -> sse_core::Result<(
+        Shell,
+        Tree,
+        std::sync::mpsc::Receiver<Message<super::super::AppMessage>>,
+    )> {
+        use crate::event_loop::App as _;
+        let fixture = include_bytes!("../../../../fixtures/synthetic/xray-soc.sav");
+        let path = directory.join("soc.sav");
+        std::fs::write(&path, fixture)?;
+        let path = std::fs::canonicalize(&path)?;
+        let (proxy, receiver) = channel_pair::<super::super::AppMessage>();
+        let mut tree = Tree::new(Fonts::bundled()?, crate::screens::style::rgb(crate::theme::BG_BASE));
+        let mut shell = Shell::build_for_test(&mut tree, None)?;
+        shell.set_proxy(proxy);
+        assert!(shell.open_save(&mut tree, &path)?);
+        loop {
+            let message = receiver
+                .recv_timeout(std::time::Duration::from_secs(60))
+                .map_err(|error| sse_core::Error::System(error.to_string()))?;
+            let finished = matches!(
+                &message,
+                Message::User(super::super::AppMessage::ToScreen(ScreenId::Overview, _))
+            );
+            let _ = shell.message(&mut tree, &message, None);
+            if finished {
+                break;
+            }
+        }
+        shell.open(&mut tree, ScreenId::GameFixes)?;
+        loop {
+            let message = receiver
+                .recv_timeout(std::time::Duration::from_secs(60))
+                .map_err(|error| sse_core::Error::System(error.to_string()))?;
+            let finished = matches!(
+                &message,
+                Message::User(super::super::AppMessage::ToScreen(ScreenId::GameFixes, _))
+            );
+            let _ = shell.message(&mut tree, &message, None);
+            if finished {
+                break;
+            }
+        }
+        shell.resize_window(&mut tree, width, height)?;
+        while let Ok(later) = receiver.recv_timeout(std::time::Duration::from_secs(2)) {
+            let _ = shell.message(&mut tree, &later, None);
+        }
+        tree.update_layout()?;
+        Ok((shell, tree, receiver))
+    }
+
+    #[test]
+    fn fixes_columns_end_on_the_library_edge_and_list_rows_fit() -> sse_core::Result<()> {
+        // The game fixes screen: three columns on one bottom edge; the list shows at least six rows at 1366x768 and
+        // ten at 1920x1080 (the catalog has 35 fixes for this game).
+        for (width, height, minimum) in [(1366_u32, 768_u32, 6_usize), (1920, 1080, 10)] {
+            let nonce = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| sse_core::Error::System(error.to_string()))?
+                .as_nanos();
+            let directory = std::env::temp_dir().join(format!("sse-shell-fixes-{}-{nonce}", std::process::id()));
+            std::fs::create_dir(&directory)?;
+            let result = (|| -> sse_core::Result<()> {
+                let (shell, tree, _receiver) = open_fixes_for_soc(&directory, width, height)?;
+                let mut tree = tree;
+                let stride = usize::try_from(width).unwrap_or(0);
+                let mut frame = vec![0_u32; stride.saturating_mul(usize::try_from(height).unwrap_or(0))];
+                for _ in 0..2 {
+                    tree.paint(&mut frame, stride)?;
+                }
+                check_bottoms_on_library_edge(&tree, &shell, width, height, "game fixes")?;
+                // The rows are the focusable widgets with an empty text; the pager's two arrows are among them.
+                let mut rows = 0_usize;
+                let mut stack = vec![shell.content];
+                while let Some(id) = stack.pop() {
+                    if tree.is_visible(id)
+                        && tree.text(id).is_ok_and(str::is_empty)
+                        && tree.first_focusable_in(id) == Some(id)
+                    {
+                        rows += 1;
+                    }
+                    stack.extend(tree.children(id));
+                }
+                assert!(
+                    rows.saturating_sub(2) >= minimum,
+                    "only {} fix rows fit at {width}x{height}, expected at least {minimum}",
+                    rows.saturating_sub(2)
+                );
+                Ok(())
+            })();
+            let _ = std::fs::remove_dir_all(&directory);
+            result?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn fix_actions_wait_for_a_selected_fix() -> sse_core::Result<()> {
+        // Install and remove are off until a fix is selected; selecting the first row turns them on. Nothing is written.
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| sse_core::Error::System(error.to_string()))?
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!("sse-shell-fix-actions-{}-{nonce}", std::process::id()));
+        std::fs::create_dir(&directory)?;
+        let result = (|| -> sse_core::Result<()> {
+            let (mut shell, mut tree, _receiver) = open_fixes_for_soc(&directory, 1366, 768)?;
+            let install = super::find_button_with_text(
+                &tree,
+                shell.content,
+                &crate::strings::t("УСТАНОВИТЬ ВЫБРАННОЕ").to_lowercase(),
+            )
+            .ok_or_else(|| sse_core::Error::damaged("no install button"))?;
+            let remove = super::find_button_with_text(
+                &tree,
+                shell.content,
+                &crate::strings::t("УДАЛИТЬ И ВОССТАНОВИТЬ").to_lowercase(),
+            )
+            .ok_or_else(|| sse_core::Error::damaged("no remove button"))?;
+            assert!(!tree.is_enabled(install)?, "install is on without a selected fix");
+            assert!(!tree.is_enabled(remove)?, "remove is on without a selected fix");
+            assert!(shell.select_first_fix(&mut tree)?, "no fix row to select");
+            tree.update_layout()?;
+            assert!(tree.is_enabled(install)?, "install stays off after selecting a fix");
+            assert!(tree.is_enabled(remove)?, "remove stays off after selecting a fix");
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&directory);
+        result
     }
 
     #[test]

@@ -2716,8 +2716,18 @@ impl Screen for Environment {
     }
 }
 
+/// State of a fix in the list, as the badge shows it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FixBadge {
+    Installed,
+    Update,
+    Changed,
+    NotInstalled,
+}
+
 #[derive(Clone, Debug)]
 struct FixRow {
+    badge: FixBadge,
     id: String,
     title: String,
     description: String,
@@ -2766,8 +2776,153 @@ struct FixCompatibility {
     build: Option<String>,
 }
 
+/// One row of the fix list: a card with the title, the id and version, and the state badge.
+#[derive(Clone, Copy)]
+struct FixListRow {
+    stack: WidgetId,
+    card: WidgetId,
+    title: WidgetId,
+    meta: WidgetId,
+    badge: WidgetId,
+}
+
+/// Height of a fix row in the list (the frame's 56 px, with the card's 4 px of padding above and below).
+const FIX_ROW_HEIGHT: f32 = 56.0;
+
+/// Style of a column of fixed width: a panel's children with a gap and the panel padding.
+fn fixed_column_style(width: f32, gap: f32, padding: f32) -> Style {
+    Style {
+        preferred: crate::layout::Size::new(width, 0.0),
+        min: crate::layout::Size::new(width, 0.0),
+        max: crate::layout::Size::new(width, f32::INFINITY),
+        shrink: 0.0,
+        ..panel_style(gap, padding)
+    }
+}
+
+/// Style of a panel's column: a gap between its children and the panel padding.
+fn panel_style(gap: f32, padding: f32) -> Style {
+    Style {
+        shrink: 0.0,
+        padding: crate::layout::Edges::all(padding),
+        gap: crate::layout::Size::new(0.0, gap),
+        align_items: crate::layout::Align::Stretch,
+        ..Style::default()
+    }
+}
+
+/// A child that takes the room it can (heading beside a button).
+fn grow_style() -> Style {
+    Style {
+        grow: 1.0,
+        shrink: 0.0,
+        ..Style::default()
+    }
+}
+
+/// Sentence case for a note written in capitals: its words in lower case (a path keeps its case), the first letter up.
+fn sentence_case(text: &str) -> String {
+    let words: Vec<String> = text
+        .split(' ')
+        .map(|word| {
+            let capitals = word.chars().any(char::is_alphabetic)
+                && word.chars().all(|c| !c.is_alphabetic() || c.is_uppercase())
+                && !word.contains('/')
+                && !word.contains('\\');
+            if capitals {
+                word.to_lowercase()
+            } else {
+                word.to_owned()
+            }
+        })
+        .collect();
+    // Each sentence starts with a capital letter.
+    words
+        .join(" ")
+        .split(". ")
+        .map(|sentence| {
+            let mut chars = sentence.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(". ")
+}
+
+/// Look of a state badge in the fix list: the state's colours from the theme.
+fn badge_look(kind: FixBadge) -> Look {
+    let colours = match kind {
+        FixBadge::Installed => theme::d2::BADGE_INSTALLED,
+        FixBadge::Update => theme::d2::BADGE_UPDATE,
+        FixBadge::Changed => theme::d2::BADGE_CHANGED,
+        FixBadge::NotInstalled => theme::d2::BADGE_NOT_INSTALLED,
+    };
+    Look {
+        fill: Some(style::d2::argb(colours.fill)),
+        border: Some((style::d2::argb(colours.border), 1.0)),
+        text: style::d2::argb(colours.text),
+        radius: 2.0,
+        ..Look::default()
+    }
+}
+
+/// Sets the width a wrapped text takes, so that its lines are measured at the width it is drawn in.
+fn set_wrap_width(tree: &mut Tree, id: WidgetId, width: f32) -> Result<()> {
+    tree.set_style(
+        id,
+        Style {
+            min: crate::layout::Size::new(width.max(1.0), 0.0),
+            shrink: 0.0,
+            ..Style::default()
+        },
+    )
+}
+
+/// A multi-line text, wrapped to the width it is drawn in; the caller passes the translated text.
+fn paragraph_leaf(tree: &mut Tree, parent: WidgetId, text: &str, role: Text) -> Result<WidgetId> {
+    tree.add(
+        Some(parent),
+        NodeKind::Leaf,
+        Style {
+            shrink: 0.0,
+            ..Style::default()
+        },
+        Content::Paragraph {
+            text: text.to_owned(),
+            style: role.style(),
+        },
+        Look {
+            text: role.color(),
+            ..Look::default()
+        },
+    )
+}
+
 #[derive(Default)]
 struct GameFixes {
+    compact: bool,
+    details_scroll: Option<WidgetId>,
+    details_title: Option<WidgetId>,
+    details_key: Option<WidgetId>,
+    details_badge: Option<WidgetId>,
+    details_thumb: Option<WidgetId>,
+    details_offset: i32,
+    right_column: Option<WidgetId>,
+    top_card: Option<WidgetId>,
+    categories: Option<WidgetId>,
+    list_card: Option<WidgetId>,
+    list_rows: Vec<FixListRow>,
+    list_pager: Option<WidgetId>,
+    list_previous: Option<WidgetId>,
+    list_range: Option<WidgetId>,
+    list_next: Option<WidgetId>,
+    page: usize,
+    page_size: usize,
+    details_card: Option<WidgetId>,
+    bottom_card: Option<WidgetId>,
+    write_note: Option<WidgetId>,
     status: Option<WidgetId>,
     detail: Option<WidgetId>,
     rows: Vec<WidgetId>,
@@ -2845,27 +3000,42 @@ fn load_fix_rows(
         .into_iter()
         .map(|definition| {
             let current = installed.iter().find(|item| item.id == definition.id);
-            let status = if let Some(item) = current {
+            let (status, badge) = if let Some(item) = current {
                 if item.version != definition.version {
-                    crate::strings::t_in(language, "ОБНОВЛЕНИЕ ДОСТУПНО").to_owned()
+                    (
+                        crate::strings::t_in(language, "ОБНОВЛЕНИЕ ДОСТУПНО").to_owned(),
+                        FixBadge::Update,
+                    )
                 } else if let Some(directory) = directory {
                     match engine.get_status(definition, directory) {
-                        Ok(sse_fixes::GameFixState::Installed) => {
-                            crate::strings::t_in(language, "УСТАНОВЛЕНО").to_owned()
-                        }
-                        Ok(sse_fixes::GameFixState::Modified) => {
-                            crate::strings::t_in(language, "ФАЙЛ ИЗМЕНЁН ПОСЛЕ УСТАНОВКИ").to_owned()
-                        }
-                        Ok(_) => crate::strings::t_in(language, "НЕ УСТАНОВЛЕНО").to_owned(),
-                        Err(error) => tr(language, "ОШИБКА: {0}", &[&error]),
+                        Ok(sse_fixes::GameFixState::Installed) => (
+                            crate::strings::t_in(language, "УСТАНОВЛЕНО").to_owned(),
+                            FixBadge::Installed,
+                        ),
+                        Ok(sse_fixes::GameFixState::Modified) => (
+                            crate::strings::t_in(language, "ФАЙЛ ИЗМЕНЁН ПОСЛЕ УСТАНОВКИ").to_owned(),
+                            FixBadge::Changed,
+                        ),
+                        Ok(_) => (
+                            crate::strings::t_in(language, "НЕ УСТАНОВЛЕНО").to_owned(),
+                            FixBadge::NotInstalled,
+                        ),
+                        Err(error) => (tr(language, "ОШИБКА: {0}", &[&error]), FixBadge::Changed),
                     }
                 } else {
-                    crate::strings::t_in(language, "НЕ УСТАНОВЛЕНО").to_owned()
+                    (
+                        crate::strings::t_in(language, "НЕ УСТАНОВЛЕНО").to_owned(),
+                        FixBadge::NotInstalled,
+                    )
                 }
             } else {
-                crate::strings::t_in(language, "НЕ УСТАНОВЛЕНО").to_owned()
+                (
+                    crate::strings::t_in(language, "НЕ УСТАНОВЛЕНО").to_owned(),
+                    FixBadge::NotInstalled,
+                )
             };
             FixRow {
+                badge,
                 id: definition.id.clone(),
                 title: definition.title.clone(),
                 description: definition.description.clone(),
@@ -2977,38 +3147,315 @@ impl GameFixes {
                     })
             })
             .unwrap_or_else(|| crate::strings::t_in(language, "ВЫБЕРИТЕ ИСПРАВЛЕНИЕ").to_owned());
-        cx.tree.set_text(detail, &text)
+        // The first line of the text is the fix's title and key; the rest is its body.
+        let (head, body) = text.split_once('\n').unwrap_or((text.as_str(), ""));
+        let item = self
+            .selected
+            .as_deref()
+            .and_then(|id| self.items.iter().find(|item| item.id == id));
+        if let Some(item) = item {
+            if let Some(title) = self.details_title {
+                // The title is one line: it is shortened with an ellipsis to the card's inner width.
+                let details_width = if cx.tree.size().0 < 1600 { 340.0 } else { 440.0 };
+                let width = details_width - 2.0 * theme::d2::PANEL_PADDING.0;
+                let heading = crate::strings::t_in(language, &item.title).to_uppercase();
+                let heading = {
+                    let metrics = cx.tree.fonts().metrics(Text::Heading.style());
+                    text::ellipsize_end(&heading, width, &metrics)
+                };
+                cx.tree.set_text(title, &heading)?;
+            }
+            if let Some(key) = self.details_key {
+                cx.tree.set_text(key, &item.id)?;
+            }
+            if let Some(badge) = self.details_badge {
+                cx.tree.set_text(badge, crate::strings::t_in(language, &item.status))?;
+                cx.tree.set_look(badge, badge_look(item.badge))?;
+            }
+            cx.tree.set_text(detail, body)
+        } else {
+            for id in [self.details_title, self.details_key].into_iter().flatten() {
+                cx.tree.set_text(id, "")?;
+            }
+            cx.tree.set_text(detail, head)
+        }
     }
 
     fn render(&mut self, cx: &mut Context<'_>) -> Result<()> {
         let language = crate::strings::current_language();
-        if let Some(status) = self.status {
-            cx.tree.set_text(
-                status,
-                &if self.items.is_empty() {
-                    crate::strings::t_in(language, "НЕТ ПРОВЕРЕННЫХ ИСПРАВЛЕНИЙ ДЛЯ ЭТОЙ ВЕРСИИ.").to_owned()
-                } else {
-                    tr(language, "ИСПРАВЛЕНИЙ В КАТАЛОГЕ: {0}", &[&self.items.len()])
+        let window_width = cx.tree.size().0;
+        if window_width > 0 {
+            self.compact = window_width < 1600;
+        }
+        let left_width = if self.compact { 240.0 } else { 280.0 };
+        let details_width = if self.compact { 340.0 } else { 440.0 };
+        // The columns' widths follow the window (they are set when the window's size is known).
+        let gap = if self.compact { 12.0 } else { 16.0 };
+        if let Some(left) = self.top_card {
+            cx.tree.set_style(left, fixed_column_style(left_width, 10.0, 16.0))?;
+        }
+        if let Some(right) = self.right_column {
+            cx.tree.set_style(
+                right,
+                Style {
+                    shrink: 0.0,
+                    gap: crate::layout::Size::new(0.0, gap),
+                    align_items: crate::layout::Align::Stretch,
+                    preferred: crate::layout::Size::new(details_width, 0.0),
+                    min: crate::layout::Size::new(details_width, 0.0),
+                    max: crate::layout::Size::new(details_width, f32::INFINITY),
+                    ..Style::default()
                 },
             )?;
         }
-        for (index, widget) in self.rows.iter().copied().enumerate() {
-            if let Some(item) = self.items.get(index) {
-                cx.tree.set_visible(widget, true)?;
-                let marker = if self.selected.as_deref() == Some(item.id.as_str()) {
-                    "✓ "
-                } else {
-                    ""
-                };
-                let title = crate::strings::t_in(language, &item.title);
-                let status = crate::strings::t_in(language, &item.status);
-                cx.tree
-                    .set_text(widget, &format!("{marker}{title} · v{} · {status}", item.version))?;
+        // The catalog's count is the pager's range; without fixes the status line says why there are none.
+        let total = self.items.len();
+        if let Some(status) = self.status {
+            cx.tree.set_visible(status, total == 0)?;
+            cx.tree.set_text(
+                status,
+                crate::strings::t_in(language, "НЕТ ПРОВЕРЕННЫХ ИСПРАВЛЕНИЙ ДЛЯ ЭТОЙ ВЕРСИИ."),
+            )?;
+        }
+        if let Some(pager) = self.list_pager {
+            cx.tree.set_visible(pager, total > 0)?;
+        }
+        // Wrapped texts take the width they are drawn in (set before the list's room is measured).
+        for id in [self.compatibility, self.status, self.categories].into_iter().flatten() {
+            set_wrap_width(cx.tree, id, left_width - 2.0 * theme::d2::PANEL_PADDING.0)?;
+        }
+        for id in [self.detail, self.write_note].into_iter().flatten() {
+            set_wrap_width(cx.tree, id, details_width - 2.0 * theme::d2::PANEL_PADDING.0)?;
+        }
+        // The list's room comes from the window; the page is what fits in it.
+        cx.tree.update_layout()?;
+        let capacity = self.sync_list_cap(cx)?;
+        self.page_size = self.rows_that_fit(cx.tree, capacity);
+        // The presets' card's height is settled by one pass with the new cap; the second pass uses it.
+        self.sync_details_cap(cx)?;
+        cx.tree.update_layout()?;
+        self.sync_details_cap(cx)?;
+        let pages = total
+            .saturating_add(self.page_size.saturating_sub(1))
+            .checked_div(self.page_size)
+            .unwrap_or(0);
+        if self.page >= pages {
+            self.page = 0;
+        }
+        let start = self.page.saturating_mul(self.page_size);
+
+        // Rows of the page: title, id and version, and the state badge; the selected fix has the accent border.
+        let row_width = self.row_text_width(cx.tree);
+        for (index, row) in self.list_rows.clone().into_iter().enumerate() {
+            let shown = if index < self.page_size {
+                self.items.get(start.saturating_add(index))
             } else {
-                cx.tree.set_visible(widget, false)?;
+                None
+            };
+            let Some(item) = shown else {
+                cx.tree.set_visible(row.stack, false)?;
+                continue;
+            };
+            cx.tree.set_visible(row.stack, true)?;
+            let title = crate::strings::t_in(language, &item.title).to_owned();
+            let meta = format!("{} · v{}", item.id, item.version);
+            let (title, meta) = {
+                let metrics = cx.tree.fonts().metrics(Text::Body.style());
+                let title = text::ellipsize_end(&title, row_width, &metrics);
+                let metrics = cx.tree.fonts().metrics(Text::Note.style());
+                (title, text::ellipsize_end(&meta, row_width, &metrics))
+            };
+            cx.tree.set_text(row.title, &title)?;
+            cx.tree.set_text(row.meta, &meta)?;
+            let status = crate::strings::t_in(language, &item.status).to_owned();
+            cx.tree.set_text(row.badge, &status)?;
+            cx.tree.set_look(row.badge, badge_look(item.badge))?;
+            let selected = self.selected.as_deref() == Some(item.id.as_str());
+            let border = if selected {
+                theme::d2::ACCENT
+            } else {
+                theme::d2::BORDER_SUBTLE
+            };
+            let fill = if selected {
+                theme::d2::ACCENT_TINT
+            } else {
+                theme::d2::PANEL_RAISED
+            };
+            cx.tree.set_look(
+                row.card,
+                Look {
+                    fill: Some(style::d2::argb(fill)),
+                    border: Some((style::d2::argb(border), 1.0)),
+                    radius: 3.0,
+                    ..Look::default()
+                },
+            )?;
+        }
+        // Pager: arrows and the range shown, as in the library.
+        if let Some(id) = self.list_previous {
+            cx.tree.set_enabled(id, self.page > 0)?;
+        }
+        if let Some(id) = self.list_next {
+            cx.tree.set_enabled(id, self.page.saturating_add(1) < pages)?;
+        }
+        if let Some(id) = self.list_range {
+            let text = if total == 0 {
+                String::new()
+            } else {
+                let last = start.saturating_add(self.page_size).min(total);
+                tr(language, "{0}–{1} из {2}", &[&start.saturating_add(1), &last, &total])
+            };
+            cx.tree.set_text(id, &text)?;
+        }
+        self.sync_details_thumb(cx)?;
+        // The left block's notes are sentence case, as the other explanations; their paths keep their case.
+        for id in [self.compatibility, self.categories].into_iter().flatten() {
+            let text = cx.tree.text(id)?.to_owned();
+            let next = sentence_case(&text);
+            if next != text {
+                cx.tree.set_text(id, &next)?;
             }
         }
+        // The actions need a selected fix: without one they are off.
+        let has_selection = self.selected.is_some();
+        for id in [self.install, self.remove].into_iter().flatten() {
+            cx.tree.set_enabled(id, has_selection)?;
+        }
         Ok(())
+    }
+
+    /// Width a row's text may take: the list card less the list padding, the row's padding and the badge.
+    fn row_text_width(&self, tree: &crate::widget::Tree) -> f32 {
+        let list = self
+            .list_card
+            .and_then(|id| tree.rect(id).ok())
+            .map_or(0.0, |rect| f32::from(u16::try_from(rect.width).unwrap_or(0)));
+        (list - 2.0 * 6.0 - 2.0 * 12.0 - 12.0 - 96.0).max(1.0)
+    }
+
+    /// Caps the list at the room the list card has: the card's other parts are measured, the window is the limit.
+    fn sync_list_cap(&self, cx: &mut Context<'_>) -> Result<f32> {
+        let (Some(scroll), Some(card)) = (self.list_scroll, self.list_card) else {
+            return Ok(0.0);
+        };
+        let window_height = f32::from(u16::try_from(cx.tree.size().1).unwrap_or(u16::MAX));
+        let card_top = f32::from(u16::try_from(cx.tree.rect(card)?.y.max(0)).unwrap_or(0));
+        let mut others = 0.0_f32;
+        for child in cx.tree.children(card) {
+            if child != scroll {
+                others += f32::from(u16::try_from(cx.tree.rect(child)?.height).unwrap_or(0));
+            }
+        }
+        // The shell keeps 12 px below the content and a 30 px status bar under the window; the card's borders take 4.
+        let cap = (window_height - card_top - 42.0 - others - 4.0).max(0.0);
+        cx.tree.set_style(
+            scroll,
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: crate::layout::Size::new(0.0, 0.0),
+                max: crate::layout::Size::new(f32::INFINITY, cap),
+                ..Style::default()
+            },
+        )?;
+        // The new cap changes the layout of the card and of the parts under it: settle it before they are read.
+        cx.tree.update_layout()?;
+        Ok(cap)
+    }
+
+    /// How far the details' text can scroll: its height less the height of the area it shows (0 when it fits).
+    fn details_limit(&self, tree: &mut crate::widget::Tree) -> Result<f32> {
+        let Some(scroll) = self.details_scroll else {
+            return Ok(0.0);
+        };
+        let viewport = f32::from(u16::try_from(tree.rect(scroll)?.height).unwrap_or(0));
+        let content = tree.content_height(scroll)?;
+        Ok((content - viewport).max(0.0))
+    }
+
+    /// Sizes and places the thumb of the details scroll: it shows where the text is, and only when the text overflows.
+    fn sync_details_thumb(&self, cx: &mut Context<'_>) -> Result<()> {
+        let (Some(scroll), Some(thumb)) = (self.details_scroll, self.details_thumb) else {
+            return Ok(());
+        };
+        let limit = self.details_limit(cx.tree)?;
+        if limit <= 0.0 {
+            return cx.tree.set_visible(thumb, false);
+        }
+        let viewport = f32::from(u16::try_from(cx.tree.rect(scroll)?.height).unwrap_or(0));
+        let content = viewport + limit;
+        let thumb_height = (viewport * viewport / content).clamp(24.0, viewport.max(24.0));
+        let offset = (self.details_offset as f32).clamp(0.0, limit);
+        let top = offset / limit * (viewport - thumb_height).max(0.0);
+        cx.tree.set_style(
+            thumb,
+            Style {
+                shrink: 0.0,
+                min: crate::layout::Size::new(8.0, thumb_height),
+                preferred: crate::layout::Size::new(8.0, thumb_height),
+                margin: crate::layout::Edges {
+                    top,
+                    ..crate::layout::Edges::default()
+                },
+                ..Style::default()
+            },
+        )?;
+        cx.tree.set_visible(thumb, true)
+    }
+
+    /// Caps the details' scroll at the room the right column has below the details card's top: the presets' card and
+    /// the card's other parts are measured; the window is the limit.
+    fn sync_details_cap(&self, cx: &mut Context<'_>) -> Result<()> {
+        let (Some(scroll), Some(details)) = (self.details_scroll, self.details_card) else {
+            return Ok(());
+        };
+        let window_height = f32::from(u16::try_from(cx.tree.size().1).unwrap_or(u16::MAX));
+        let details_top = f32::from(u16::try_from(cx.tree.rect(details)?.y.max(0)).unwrap_or(0));
+        let mut below = 0.0_f32;
+        if let Some(apply) = self.bottom_card {
+            below += f32::from(u16::try_from(cx.tree.rect(apply)?.height).unwrap_or(0));
+            below += if self.compact { 12.0 } else { 16.0 };
+        }
+        // The card's children besides the scroll, its gaps, its padding and its borders take room too.
+        let children = cx.tree.children(details);
+        let mut others = 0.0_f32;
+        for child in &children {
+            if *child != scroll {
+                others += f32::from(u16::try_from(cx.tree.rect(*child)?.height).unwrap_or(0));
+            }
+        }
+        let gaps = f32::from(u16::try_from(children.len().saturating_sub(1)).unwrap_or(0)) * 12.0;
+        let padding = 2.0 * theme::d2::PANEL_PADDING.0 + 2.0;
+        let cap = (window_height - details_top - 42.0 - below - others - gaps - padding).max(0.0);
+        cx.tree.set_style(
+            scroll,
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: crate::layout::Size::new(0.0, 0.0),
+                max: crate::layout::Size::new(f32::INFINITY, cap),
+                ..Style::default()
+            },
+        )
+    }
+
+    /// Rows that fit in a list of `capacity` pixels, from the measured row height.
+    fn rows_that_fit(&self, tree: &crate::widget::Tree, capacity: f32) -> usize {
+        let measured = self
+            .list_rows
+            .first()
+            .and_then(|row| tree.rect(row.stack).ok())
+            .map_or(0.0, |rect| f32::from(u16::try_from(rect.height).unwrap_or(0)));
+        let row_height = if measured > 0.0 { measured } else { 56.0 };
+        let mut rows = 0_usize;
+        while rows < self.list_rows.len() {
+            let next = f32::from(u16::try_from(rows.saturating_add(1)).unwrap_or(u16::MAX));
+            if next * row_height + (next - 1.0) * 4.0 + 12.0 > capacity {
+                break;
+            }
+            rows = rows.saturating_add(1);
+        }
+        rows.max(1)
     }
 
     fn select_item(&mut self, cx: &mut Context<'_>, fix_id: &str) -> Result<()> {
@@ -3017,6 +3464,10 @@ impl GameFixes {
             return Ok(());
         }
         self.selected = Some(fix_id.to_owned());
+        self.details_offset = 0;
+        if let Some(scroll) = self.details_scroll {
+            cx.tree.set_scroll_y(scroll, 0)?;
+        }
         self.intent = None;
         if self.confirm_card.is_some_and(|card| cx.tree.dialog() == Some(card)) {
             let _ = cx.tree.close_dialog()?;
@@ -3063,117 +3514,412 @@ impl Screen for GameFixes {
     }
 
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
-        let card = style::card(cx.tree, host)?;
-        style::label(cx.tree, card, crate::strings::t("ИСПРАВЛЕНИЯ ИГРЫ"), Text::Heading)?;
-        self.compatibility = Some(style::label(
+        // Three columns as in the frame: the game and its check on the left, the fix list in the middle, the selected
+        // fix with its actions and the presets on the right. The window's height is the list's room.
+        let window_width = cx.tree.size().0;
+        if window_width > 0 {
+            self.compact = window_width < 1600;
+        }
+        let gap = if self.compact { 12.0 } else { 16.0 };
+        let left_width = if self.compact { 240.0 } else { 280.0 };
+        let details_width = if self.compact { 340.0 } else { 440.0 };
+        let main = cx.tree.add(
+            Some(host),
+            NodeKind::Row,
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: crate::layout::Size::new(0.0, 0.0),
+                gap: crate::layout::Size::new(gap, 0.0),
+                align_items: crate::layout::Align::Stretch,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+
+        // --- LEFT: the game's installation and its check ---
+        let left = style::d2::panel(cx.tree, main)?;
+        cx.tree.set_style(left, fixed_column_style(left_width, 10.0, 16.0))?;
+        self.top_card = Some(left);
+        style::d2::panel_title(cx.tree, left, crate::strings::t("ИСПРАВЛЕНИЯ ИГРЫ"))?;
+        self.check = Some(style::d2::button(
             cx.tree,
-            card,
+            left,
+            crate::strings::t("ПРОВЕРИТЬ СОВМЕСТИМОСТЬ"),
+            style::d2::ButtonKind::Outline,
+            style::d2::ButtonSize::Normal,
+        )?);
+        self.compatibility = Some(paragraph_leaf(
+            cx.tree,
+            left,
             crate::strings::t("СНАЧАЛА ПРОВЕРЬТЕ УСТАНОВКУ И ВЕРСИЮ."),
             Text::Note,
         )?);
-        self.check = Some(style::button(
+        // The catalog's count is the pager's range; without fixes this line says why there are none.
+        self.status = Some(paragraph_leaf(
             cx.tree,
-            card,
-            crate::strings::t("ПРОВЕРИТЬ СОВМЕСТИМОСТЬ"),
-            Button::Secondary,
+            left,
+            crate::strings::t("Выберите игру"),
+            Text::Note,
         )?);
-        let counts = style::card(cx.tree, card)?;
-        style::label(
+        self.categories = Some(paragraph_leaf(
             cx.tree,
-            counts,
+            left,
             crate::strings::t(
                 "КАТЕГОРИИ: ОБЯЗАТЕЛЬНЫЕ · РЕКОМЕНДУЕМЫЕ · НЕОБЯЗАТЕЛЬНЫЕ · СООБЩЕСТВО · ЭКСПЕРИМЕНТАЛЬНЫЕ",
             ),
             Text::Note,
-        )?;
-        self.status = Some(style::label(
-            cx.tree,
-            card,
-            crate::strings::t("Выберите игру"),
-            Text::Note,
         )?);
+
+        // --- MIDDLE: the fix list with its pager ---
+        let list_card = style::d2::panel(cx.tree, main)?;
+        cx.tree.set_style(
+            list_card,
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: crate::layout::Size::new(0.0, 0.0),
+                align_items: crate::layout::Align::Stretch,
+                ..Style::default()
+            },
+        )?;
+        cx.tree.set_clip_children(list_card, true)?;
+        self.list_card = Some(list_card);
+        let list_head = cx.tree.add(
+            Some(list_card),
+            NodeKind::Row,
+            Style {
+                min: crate::layout::Size::new(0.0, 44.0),
+                padding: crate::layout::Edges {
+                    left: 16.0,
+                    top: 0.0,
+                    right: 16.0,
+                    bottom: 0.0,
+                },
+                align_items: crate::layout::Align::Center,
+                shrink: 0.0,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        let list_title = style::d2::panel_title(cx.tree, list_head, crate::strings::t("ДОСТУПНЫЕ ИСПРАВЛЕНИЯ"))?;
+        cx.tree.set_style(list_title, grow_style())?;
         let scroll = cx.tree.add(
-            Some(card),
-            crate::layout::NodeKind::Scroll {
+            Some(list_card),
+            NodeKind::Scroll {
                 horizontal: false,
                 vertical: true,
                 offset_x: 0.0,
                 offset_y: 0.0,
             },
-            crate::layout::Style {
-                preferred: crate::layout::Size::new(0.0, 340.0),
-                max: crate::layout::Size::new(f32::INFINITY, 340.0),
+            Style {
                 grow: 1.0,
-                ..crate::layout::Style::default()
+                shrink: 1.0,
+                min: crate::layout::Size::new(0.0, 0.0),
+                ..Style::default()
             },
-            crate::widget::Content::Panel,
-            crate::widget::Look::default(),
+            Content::Panel,
+            Look::default(),
         )?;
         cx.tree.set_clip_children(scroll, true)?;
         self.list_scroll = Some(scroll);
         let list = cx.tree.add(
             Some(scroll),
-            crate::layout::NodeKind::Column,
-            crate::layout::Style {
+            NodeKind::Column,
+            Style {
+                padding: crate::layout::Edges::all(6.0),
                 gap: crate::layout::Size::new(0.0, 4.0),
                 align_items: crate::layout::Align::Stretch,
-                ..crate::layout::Style::default()
+                ..Style::default()
             },
-            crate::widget::Content::Panel,
-            crate::widget::Look::default(),
+            Content::Panel,
+            Look::default(),
         )?;
         for _ in 0..sse_fixes::GameFixCatalog::all().len().max(1) {
-            let row = style::button(cx.tree, list, "", Button::Secondary)?;
-            cx.tree.set_visible(row, false)?;
-            self.rows.push(row);
+            let stack = cx.tree.add(
+                Some(list),
+                NodeKind::Stack,
+                Style {
+                    shrink: 0.0,
+                    align_items: crate::layout::Align::Stretch,
+                    ..Style::default()
+                },
+                Content::Panel,
+                Look::default(),
+            )?;
+            let card = cx.tree.add(
+                Some(stack),
+                NodeKind::Row,
+                Style {
+                    min: crate::layout::Size::new(0.0, FIX_ROW_HEIGHT - 8.0),
+                    padding: crate::layout::Edges {
+                        left: 12.0,
+                        top: 4.0,
+                        right: 12.0,
+                        bottom: 4.0,
+                    },
+                    gap: crate::layout::Size::new(12.0, 0.0),
+                    align_items: crate::layout::Align::Center,
+                    shrink: 0.0,
+                    ..Style::default()
+                },
+                Content::Panel,
+                Look::default(),
+            )?;
+            let text_column = cx.tree.add(
+                Some(card),
+                NodeKind::Column,
+                Style {
+                    grow: 1.0,
+                    shrink: 1.0,
+                    min: crate::layout::Size::new(0.0, 0.0),
+                    gap: crate::layout::Size::new(0.0, 2.0),
+                    align_items: crate::layout::Align::Stretch,
+                    ..Style::default()
+                },
+                Content::Panel,
+                Look::default(),
+            )?;
+            let title = style::label(cx.tree, text_column, "", Text::Body)?;
+            let meta = style::label(cx.tree, text_column, "", Text::Note)?;
+            let badge = style::d2::badge(
+                cx.tree,
+                card,
+                crate::strings::t("НЕ УСТАНОВЛЕНО"),
+                style::d2::BadgeKind::NotInstalled,
+            )?;
+            // The select button is last, so it covers the card and takes the clicks.
+            let select = style::button(cx.tree, stack, "", Button::Secondary)?;
+            cx.tree.set_look(select, Look::default())?;
+            cx.tree.set_visible(stack, false)?;
+            self.rows.push(select);
+            self.list_rows.push(FixListRow {
+                stack,
+                card,
+                title,
+                meta,
+                badge,
+            });
         }
-        self.detail = Some(style::label(
+        // Pager: arrows and the range, as in the library; 12 px above the card's bottom edge.
+        let pager = cx.tree.add(
+            Some(list_card),
+            NodeKind::Row,
+            Style {
+                min: crate::layout::Size::new(0.0, 28.0),
+                padding: crate::layout::Edges {
+                    left: 16.0,
+                    top: 0.0,
+                    right: 16.0,
+                    bottom: 12.0,
+                },
+                gap: crate::layout::Size::new(8.0, 0.0),
+                align_items: crate::layout::Align::Center,
+                shrink: 0.0,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        self.list_pager = Some(pager);
+        self.list_previous = Some(super::shell::library_icon_button(
             cx.tree,
-            card,
+            pager,
+            crate::path::Icon::D2ArrowLeft,
+        )?);
+        self.list_range = Some(style::label(cx.tree, pager, "", Text::Note)?);
+        self.list_next = Some(super::shell::library_icon_button(
+            cx.tree,
+            pager,
+            crate::path::Icon::D2ArrowRight,
+        )?);
+        cx.tree.set_visible(pager, false)?;
+
+        // --- RIGHT: the selected fix, its actions, the write note and the presets ---
+        let right = cx.tree.add(
+            Some(main),
+            NodeKind::Column,
+            Style {
+                shrink: 0.0,
+                gap: crate::layout::Size::new(0.0, gap),
+                align_items: crate::layout::Align::Stretch,
+                preferred: crate::layout::Size::new(details_width, 0.0),
+                min: crate::layout::Size::new(details_width, 0.0),
+                max: crate::layout::Size::new(details_width, f32::INFINITY),
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        self.right_column = Some(right);
+        // The details take the column's rest; the presets' card keeps its own height at the bottom.
+        let details = style::d2::panel(cx.tree, right)?;
+        cx.tree.set_style(
+            details,
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: crate::layout::Size::new(0.0, 0.0),
+                ..panel_style(12.0, 16.0)
+            },
+        )?;
+        self.details_card = Some(details);
+        // The fix's title, its id and status, then its text; the text scrolls with a thumb at its right.
+        self.details_title = Some(style::label(cx.tree, details, "", Text::Heading)?);
+        let key_row = style::row(cx.tree, details)?;
+        cx.tree.set_style(
+            key_row,
+            Style {
+                shrink: 0.0,
+                gap: crate::layout::Size::new(8.0, 0.0),
+                align_items: crate::layout::Align::Center,
+                ..Style::default()
+            },
+        )?;
+        self.details_key = Some(style::label(cx.tree, key_row, "", Text::Note)?);
+        self.details_badge = Some(style::d2::badge(
+            cx.tree,
+            key_row,
+            crate::strings::t("НЕ УСТАНОВЛЕНО"),
+            style::d2::BadgeKind::NotInstalled,
+        )?);
+        let body_row = cx.tree.add(
+            Some(details),
+            NodeKind::Row,
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: crate::layout::Size::new(0.0, 0.0),
+                gap: crate::layout::Size::new(8.0, 0.0),
+                align_items: crate::layout::Align::Stretch,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        // The details scroll inside a height capped to the room the right column has.
+        let details_scroll = cx.tree.add(
+            Some(body_row),
+            NodeKind::Scroll {
+                horizontal: false,
+                vertical: true,
+                offset_x: 0.0,
+                offset_y: 0.0,
+            },
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: crate::layout::Size::new(0.0, 0.0),
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        cx.tree.set_clip_children(details_scroll, true)?;
+        self.details_scroll = Some(details_scroll);
+        self.detail = Some(paragraph_leaf(
+            cx.tree,
+            details_scroll,
             crate::strings::t("ВЫБЕРИТЕ ИСПРАВЛЕНИЕ"),
             Text::Body,
         )?);
-        let presets = style::row(cx.tree, card)?;
-        self.preset_recommended = Some(style::button(
-            cx.tree,
-            presets,
-            crate::strings::t("ПРИМЕНИТЬ: РЕКОМЕНДУЕМЫЕ"),
-            Button::Primary,
+        // The thumb of the details scroll: a bar at the right, sized and placed by render.
+        let track = cx.tree.add(
+            Some(body_row),
+            NodeKind::Column,
+            Style {
+                shrink: 0.0,
+                min: crate::layout::Size::new(8.0, 0.0),
+                preferred: crate::layout::Size::new(8.0, 0.0),
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        self.details_thumb = Some(cx.tree.add(
+            Some(track),
+            NodeKind::Leaf,
+            Style {
+                shrink: 0.0,
+                min: crate::layout::Size::new(8.0, 24.0),
+                preferred: crate::layout::Size::new(8.0, 24.0),
+                ..Style::default()
+            },
+            Content::Panel,
+            Look {
+                fill: Some(style::d2::argb(theme::d2::BORDER_METAL)),
+                radius: 3.0,
+                ..Look::default()
+            },
         )?);
-        self.preset_essential = Some(style::button(
-            cx.tree,
-            presets,
-            crate::strings::t("ПРИМЕНИТЬ: ОБЯЗАТЕЛЬНЫЕ"),
-            Button::Secondary,
-        )?);
-        self.preset_safe = Some(style::button(
-            cx.tree,
-            presets,
-            crate::strings::t("ПРИМЕНИТЬ: ВСЕ БЕЗОПАСНЫЕ"),
-            Button::Secondary,
-        )?);
-        let actions = style::row(cx.tree, card)?;
-        self.install = Some(style::button(
+        cx.tree.set_visible(self.details_thumb.unwrap_or(track), false)?;
+        // The two actions stack with 8 px between them, at the card's full width.
+        let actions = cx.tree.add(
+            Some(details),
+            NodeKind::Column,
+            Style {
+                shrink: 0.0,
+                gap: crate::layout::Size::new(0.0, 8.0),
+                align_items: crate::layout::Align::Stretch,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        self.install = Some(style::d2::button(
             cx.tree,
             actions,
             crate::strings::t("УСТАНОВИТЬ ВЫБРАННОЕ"),
-            Button::Primary,
+            style::d2::ButtonKind::Primary,
+            style::d2::ButtonSize::Normal,
         )?);
-        self.remove = Some(style::button(
+        self.remove = Some(style::d2::button(
             cx.tree,
             actions,
             crate::strings::t("УДАЛИТЬ И ВОССТАНОВИТЬ"),
-            Button::Secondary,
+            style::d2::ButtonKind::Secondary,
+            style::d2::ButtonSize::Normal,
         )?);
-        style::label(
+
+        // The presets' card sits at the bottom of the column, at its own height.
+        let apply = style::d2::panel(cx.tree, right)?;
+        cx.tree.set_style(apply, panel_style(10.0, 16.0))?;
+        self.bottom_card = Some(apply);
+        self.write_note = Some(paragraph_leaf(
             cx.tree,
-            card,
+            apply,
             crate::strings::t(
                 "ИСПРАВЛЕНИЕ ЗАПИСЫВАЕТСЯ ТОЛЬКО ПО НАЖАТИЮ КНОПКИ. ПРИ ИЗМЕНЕНИИ УПРАВЛЯЕМОГО ФАЙЛА УДАЛЕНИЕ ОСТАНОВИТСЯ, НЕ ПЕРЕЗАПИСЫВАЯ ЕГО.",
             ),
             Text::Note,
-        )?;
-        let confirm = style::card(cx.tree, host)?;
+        )?);
+        self.preset_safe = Some(style::d2::button(
+            cx.tree,
+            apply,
+            crate::strings::t("ПРИМЕНИТЬ: ВСЕ БЕЗОПАСНЫЕ"),
+            style::d2::ButtonKind::Secondary,
+            style::d2::ButtonSize::Normal,
+        )?);
+        self.preset_essential = Some(style::d2::button(
+            cx.tree,
+            apply,
+            crate::strings::t("ПРИМЕНИТЬ: ОБЯЗАТЕЛЬНЫЕ"),
+            style::d2::ButtonKind::Secondary,
+            style::d2::ButtonSize::Normal,
+        )?);
+        self.preset_recommended = Some(style::d2::button(
+            cx.tree,
+            apply,
+            crate::strings::t("ПРИМЕНИТЬ: РЕКОМЕНДУЕМЫЕ"),
+            style::d2::ButtonKind::Primary,
+            style::d2::ButtonSize::Normal,
+        )?);
+
+        // --- CONFIRMATION: shown only when a write is asked for ---
+        // The confirmation is a dialog: it sits in the row, where a hidden child takes no height.
+        let confirm = style::card(cx.tree, main)?;
         self.confirm_card = Some(confirm);
         style::label(
             cx.tree,
@@ -3188,19 +3934,22 @@ impl Screen for GameFixes {
             Text::Note,
         )?;
         let confirm_actions = style::row(cx.tree, confirm)?;
-        self.confirm_write = Some(style::button(
+        self.confirm_write = Some(style::d2::button(
             cx.tree,
             confirm_actions,
             crate::strings::t("ПОДТВЕРДИТЬ"),
-            Button::Primary,
+            style::d2::ButtonKind::Primary,
+            style::d2::ButtonSize::Normal,
         )?);
-        self.confirm_cancel = Some(style::button(
+        self.confirm_cancel = Some(style::d2::button(
             cx.tree,
             confirm_actions,
             crate::strings::t("ОТМЕНА"),
-            Button::Secondary,
+            style::d2::ButtonKind::Secondary,
+            style::d2::ButtonSize::Normal,
         )?);
         cx.tree.set_visible(confirm, false)?;
+        self.page_size = 1;
         Ok(())
     }
 
@@ -3220,6 +3969,19 @@ impl Screen for GameFixes {
             return Ok(());
         }
         if let Message::Window(WindowEvent::Wheel { delta }) = message {
+            if let Some(scroll) = self
+                .details_scroll
+                .filter(|_| self.details_limit(cx.tree).is_ok_and(|limit| limit > 0.0))
+            {
+                // The limit in whole pixels, from its rounded text.
+                let limit: i32 = format!("{:.0}", self.details_limit(cx.tree)?).parse().unwrap_or(0);
+                self.details_offset = self
+                    .details_offset
+                    .saturating_add(delta.saturating_mul(24))
+                    .clamp(0, limit);
+                cx.tree.set_scroll_y(scroll, self.details_offset)?;
+                return Ok(());
+            }
             if let Some(scroll) = self.list_scroll {
                 self.scroll_y = self.scroll_y.saturating_add(delta.saturating_mul(48)).max(0);
                 cx.tree.set_scroll_y(scroll, self.scroll_y)?;
@@ -3230,9 +3992,26 @@ impl Screen for GameFixes {
             return Ok(());
         }
 
+        // The list's pager and its rows: a row is the item at its place on the shown page.
+        if clicked.is_some() && clicked == self.list_previous {
+            self.page = self.page.saturating_sub(1);
+            return self.render(cx);
+        }
+        if clicked.is_some() && clicked == self.list_next {
+            self.page = self.page.saturating_add(1);
+            return self.render(cx);
+        }
+        if let Message::Window(WindowEvent::Resized { .. }) = message {
+            return self.render(cx);
+        }
+        let page_start = self.page.saturating_mul(self.page_size);
         let clicked_fix = self.rows.iter().copied().enumerate().find_map(|(index, row)| {
             (clicked == Some(row))
-                .then(|| self.items.get(index).map(|item| item.id.clone()))
+                .then(|| {
+                    self.items
+                        .get(page_start.saturating_add(index))
+                        .map(|item| item.id.clone())
+                })
                 .flatten()
         });
         if let Some(fix_id) = clicked_fix {
@@ -3508,6 +4287,15 @@ impl Screen for GameFixes {
                             let _ = cx.tree.close_dialog()?;
                         }
                         self.items.clone_from(items);
+                        // The search is over: the status line says whether the game's installation was found.
+                        cx.status = Some(
+                            crate::strings::t(if directory.is_some() {
+                                "Установка найдена"
+                            } else {
+                                "Не выбрана"
+                            })
+                            .to_owned(),
+                        );
                         let selection = selected_fix
                             .as_deref()
                             .or(self.selected.as_deref())
@@ -4553,8 +5341,8 @@ impl Screen for Encyclopedia {
 #[cfg(test)]
 mod game_fixes_tests {
     use super::{
-        load_fix_rows, AppMessage, Context, DiscoveredInstallation, FixReply, FixRow, GameFixes, GameInstallSource,
-        GameTarget, Screen, ScreenId,
+        load_fix_rows, AppMessage, Context, DiscoveredInstallation, FixBadge, FixReply, FixRow, GameFixes,
+        GameInstallSource, GameTarget, Screen, ScreenId,
     };
     use crate::event_loop::Message;
     use crate::glyphs::Fonts;
@@ -4567,6 +5355,7 @@ mod game_fixes_tests {
         let definition = sse_fixes::GameFixCatalog::try_get(id)
             .ok_or_else(|| sse_core::Error::damaged("test fix is missing from the catalog"))?;
         Ok(FixRow {
+            badge: FixBadge::NotInstalled,
             id: definition.id.clone(),
             title: definition.title.clone(),
             description: definition.description.clone(),
