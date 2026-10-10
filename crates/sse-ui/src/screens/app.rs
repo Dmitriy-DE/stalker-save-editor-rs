@@ -2117,6 +2117,10 @@ mod capability_matrix_tests {
         let money = row("Деньги");
         assert_eq!(money.support(0), Support::Verified);
         assert_eq!(money.support(3), Support::Experimental);
+        // Stash moves are Experimental in vanilla games and Unsupported in EE; the old table said Verified.
+        let stash = row("Тайники (перемещение)");
+        assert_eq!(stash.support(0), Support::Experimental);
+        assert_eq!(stash.support(3), Support::Unsupported);
         // Upgrades are not written for ТЧ, so the writer's Unsupported reaches the screen.
         let upgrades = row("Апгрейды и модификации");
         assert_eq!(upgrades.support(0), Support::Unsupported);
