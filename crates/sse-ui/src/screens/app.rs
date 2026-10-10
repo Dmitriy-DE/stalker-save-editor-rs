@@ -5,7 +5,7 @@
 
 use super::style::{self, Button, Text};
 use super::{AppMessage, Context, Screen, ScreenId};
-use crate::event_loop::Message;
+use crate::event_loop::{Message, WindowEvent};
 use crate::glyphs::{Face, TextStyle};
 use crate::layout::{Align, Edges, GridPlacement, NodeKind, Size, Style, Track};
 use crate::widget::{Content, Look, TextAlign, WidgetId};
@@ -522,6 +522,7 @@ fn save_all_settings(
         SettingsPatch::MusicEnabled(settings.music_enabled),
         SettingsPatch::SoundVolume(settings.sound_volume),
         SettingsPatch::SendReports(settings.send_reports),
+        SettingsPatch::MetricsConsent(settings.send_metrics),
     ];
     for patch in patches {
         save_setting(patch, proxy.clone())?;
@@ -565,6 +566,121 @@ struct DiagnosticReportFinished {
 
 /// Result of the background folder dialog for the backup directory; `None` means the user cancelled.
 struct PickedBackupDirectory(std::result::Result<Option<PathBuf>, String>);
+struct MetricsUploadFinished {
+    result: std::result::Result<(), String>,
+}
+
+fn performance_summary_text() -> String {
+    let sessions = sse_app::metrics::recent_sessions();
+    if sessions.is_empty() {
+        return crate::strings::t("Метрики появятся после первого сеанса редактора.").to_owned();
+    }
+    sessions
+        .iter()
+        .enumerate()
+        .map(|(index, session)| {
+            let switch = session.screen_switch.map_or_else(
+                || "—".to_owned(),
+                |value| tr("{0}/{1}/{2} мс", &[&value.p50_ms, &value.p95_ms, &value.max_ms]),
+            );
+            let scroll = session.scrolling_frame.map_or_else(
+                || "—".to_owned(),
+                |value| tr("{0}/{1}/{2} мс", &[&value.p50_ms, &value.p95_ms, &value.max_ms]),
+            );
+            let memory = session
+                .peak_memory_bytes
+                .map_or_else(|| "—".to_owned(), |bytes| (bytes / (1024 * 1024)).to_string());
+            let (width, height) = session.resolution.unwrap_or_default();
+            let scale = session.scale_percent.map_or_else(|| "—".to_owned(), |value| value.to_string());
+            let os = session.operating_system.unwrap_or("—");
+            let saves = if session.save_operations.is_empty() {
+                "—".to_owned()
+            } else {
+                session
+                    .save_operations
+                    .iter()
+                    .map(|operation| {
+                        let label = if operation.operation == "read" {
+                            crate::strings::t("Чтение")
+                        } else {
+                            crate::strings::t("Запись")
+                        };
+                        tr(
+                            "{0} {1}/{2}: {3} мс ×{4}",
+                            &[
+                                &label,
+                                &operation.format,
+                                &operation.size_bucket,
+                                &operation.average_ms,
+                                &operation.count,
+                            ],
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
+            let first_frame = session
+                .first_frame_ms
+                .map_or_else(|| "—".to_owned(), |value| value.to_string());
+            let discovery = session
+                .save_discovery_ms
+                .map_or_else(|| "—".to_owned(), |value| value.to_string());
+            tr(
+                "Сеанс {0}: первый кадр {1} мс; переключения экранов p50/p95/макс {2}; прокрутка p50/p95/макс {3}; поиск сейвов {4} мс; пик памяти {5} МиБ; среда {6}, {7}×{8}, масштаб {9}%; чтение/запись: {10}.",
+                &[&index.saturating_add(1), &first_frame, &switch, &scroll, &discovery, &memory, &os, &width, &height, &scale, &saves],
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn scrollable_paragraph(
+    tree: &mut crate::widget::Tree,
+    parent: WidgetId,
+    text: &str,
+    role: Text,
+    width: f32,
+    height: f32,
+) -> Result<(WidgetId, WidgetId)> {
+    let scroll = tree.add(
+        Some(parent),
+        NodeKind::Scroll {
+            horizontal: false,
+            vertical: true,
+            offset_x: 0.0,
+            offset_y: 0.0,
+        },
+        Style {
+            min: Size::new(180.0, 100.0),
+            preferred: Size::new(width, height),
+            max: Size::new(width, height),
+            grow: 1.0,
+            shrink: 1.0,
+            ..Style::default()
+        },
+        Content::Panel,
+        Look::default(),
+    )?;
+    tree.set_clip_children(scroll, true)?;
+    let paragraph = tree.add(
+        Some(scroll),
+        NodeKind::Leaf,
+        Style {
+            preferred: Size::new(width, 0.0),
+            shrink: 0.0,
+            ..Style::default()
+        },
+        Content::Paragraph {
+            text: text.to_owned(),
+            style: role.style(),
+        },
+        Look {
+            text: role.color(),
+            ..Look::default()
+        },
+    )?;
+    Ok((scroll, paragraph))
+}
 
 /// Settings screen.
 #[derive(Default)]
@@ -585,6 +701,19 @@ pub struct Settings {
     cancel_game_logs: Option<WidgetId>,
     support_dismiss_button: Option<WidgetId>,
     support_result: Option<WidgetId>,
+    metrics_summary: Option<WidgetId>,
+    metrics_summary_width: f32,
+    metrics_refresh_button: Option<WidgetId>,
+    metrics_consent_button: Option<WidgetId>,
+    metrics_preview_button: Option<WidgetId>,
+    metrics_preview_dialog: Option<WidgetId>,
+    metrics_preview_scroll: Option<WidgetId>,
+    metrics_preview_scroll_y: i32,
+    metrics_preview_text: Option<WidgetId>,
+    metrics_preview_send_button: Option<WidgetId>,
+    metrics_preview_close: Option<WidgetId>,
+    metrics_preview_body: Option<String>,
+    metrics_upload_pending: bool,
     include_game_logs: bool,
     report_pending: bool,
     backup_input: Option<WidgetId>,
@@ -1037,6 +1166,37 @@ impl Screen for Settings {
             crate::strings::t("Проверка окружения ещё не запускалась."),
             Text::Note,
         )?);
+        style::label(
+            cx.tree,
+            support,
+            crate::strings::t("МЕТРИКИ ПРОИЗВОДИТЕЛЬНОСТИ"),
+            Text::Heading,
+        )?;
+        let window_width = f32::from(u16::try_from(cx.tree.size().0).unwrap_or(u16::MAX));
+        self.metrics_summary_width = (window_width - 600.0).clamp(260.0, 720.0);
+        self.metrics_summary = Some(cx.tree.add(
+            Some(support),
+            NodeKind::Leaf,
+            Style {
+                preferred: Size::new(self.metrics_summary_width, 0.0),
+                shrink: 0.0,
+                ..Style::default()
+            },
+            Content::Paragraph {
+                text: performance_summary_text(),
+                style: Text::Note.style(),
+            },
+            Look {
+                text: Text::Note.color(),
+                ..Look::default()
+            },
+        )?);
+        self.metrics_refresh_button = Some(style::button(
+            cx.tree,
+            support,
+            crate::strings::t("Обновить сводку"),
+            Button::Secondary,
+        )?);
         self.section_panels.push(support);
 
         let dialog_host = cx.tree.overlay_host().unwrap_or(host);
@@ -1096,7 +1256,81 @@ impl Screen for Settings {
             crate::strings::t("Отправить обезличенные журналы и отчёт окружения. Сохранения не отправляются."),
             Text::Note,
         )?;
+        self.metrics_consent_button = Some(style::button(
+            cx.tree,
+            reports,
+            if self.settings.send_metrics {
+                crate::strings::t("Отдельная передача метрик: ВКЛ")
+            } else {
+                crate::strings::t("Отдельная передача метрик: ВЫКЛ")
+            },
+            Button::Secondary,
+        )?);
+        self.metrics_preview_button = Some(style::button(
+            cx.tree,
+            reports,
+            crate::strings::t("Предпросмотр агрегата"),
+            Button::Secondary,
+        )?);
+        style::label(
+            cx.tree,
+            reports,
+            crate::strings::t("Сейвы, пути и имена файлов в агрегат не входят."),
+            Text::Note,
+        )?;
         self.section_panels.push(reports);
+
+        let (window_width, window_height) = cx.tree.size();
+        let dialog_width = f32::from(u16::try_from(window_width.saturating_sub(48).clamp(320, 920)).unwrap_or(920));
+        let dialog_height = f32::from(u16::try_from(window_height.saturating_sub(48).clamp(300, 680)).unwrap_or(680));
+        let dialog_padding = crate::theme::CARD_PADDING;
+        let preview_width = (dialog_width - dialog_padding * 2.0 - 8.0).max(240.0);
+        let preview_height = (dialog_height - 170.0).max(100.0);
+        let metrics_preview_dialog = style::card(cx.tree, dialog_host)?;
+        self.metrics_preview_dialog = Some(metrics_preview_dialog);
+        cx.tree.set_style(
+            metrics_preview_dialog,
+            Style {
+                min: Size::new(280.0, 300.0),
+                preferred: Size::new(dialog_width, dialog_height),
+                max: Size::new(920.0, 680.0),
+                padding: Edges::all(dialog_padding),
+                gap: Size::new(0.0, crate::theme::CONTROL_GAP),
+                align_items: Align::Stretch,
+                align_self: Some(Align::Center),
+                shrink: 1.0,
+                ..Style::default()
+            },
+        )?;
+        style::label(
+            cx.tree,
+            metrics_preview_dialog,
+            crate::strings::t("ПРЕДПРОСМОТР АГРЕГАТА"),
+            Text::Heading,
+        )?;
+        let (preview_scroll, preview_text) = scrollable_paragraph(
+            cx.tree,
+            metrics_preview_dialog,
+            "",
+            Text::Note,
+            preview_width,
+            preview_height,
+        )?;
+        self.metrics_preview_scroll = Some(preview_scroll);
+        self.metrics_preview_text = Some(preview_text);
+        self.metrics_preview_send_button = Some(style::button(
+            cx.tree,
+            metrics_preview_dialog,
+            crate::strings::t("Отправить агрегат"),
+            Button::Secondary,
+        )?);
+        self.metrics_preview_close = Some(style::button(
+            cx.tree,
+            metrics_preview_dialog,
+            crate::strings::t("Закрыть"),
+            Button::Secondary,
+        )?);
+        cx.tree.set_visible(metrics_preview_dialog, false)?;
 
         let about = style::card(cx.tree, content)?;
         style::label(cx.tree, about, crate::strings::t("О ПРОГРАММЕ"), Text::Heading)?;
@@ -1132,6 +1366,27 @@ impl Screen for Settings {
         message: &Message<AppMessage>,
         clicked: Option<WidgetId>,
     ) -> Result<()> {
+        if let Message::Window(WindowEvent::Wheel { delta }) = message {
+            if self
+                .metrics_preview_dialog
+                .is_some_and(|dialog| cx.tree.dialog() == Some(dialog))
+            {
+                if let Some(scroll) = self.metrics_preview_scroll {
+                    let content_height = cx.tree.content_height(scroll)?;
+                    let viewport = cx.tree.rect(scroll)?;
+                    let viewport_height = f32::from(u16::try_from(viewport.height).unwrap_or(u16::MAX));
+                    let limit = format!("{:.0}", (content_height - viewport_height).max(0.0))
+                        .parse::<i32>()
+                        .unwrap_or(0);
+                    self.metrics_preview_scroll_y = self
+                        .metrics_preview_scroll_y
+                        .saturating_add(delta.saturating_mul(48))
+                        .clamp(0, limit);
+                    cx.tree.set_scroll_y(scroll, self.metrics_preview_scroll_y)?;
+                    return Ok(());
+                }
+            }
+        }
         self.sync_backup_directory(cx.tree);
         if clicked.is_some() && clicked == self.game_logs_button {
             if self.include_game_logs {
@@ -1203,6 +1458,90 @@ impl Screen for Settings {
                 cx.tree.set_text(result, &report.replace('\n', " · "))?;
             }
             cx.status = Some(crate::strings::t("Проверка окружения завершена.").to_owned());
+        }
+        if clicked.is_some() && clicked == self.metrics_refresh_button {
+            if let Some(summary) = self.metrics_summary {
+                cx.tree.set_text(summary, &performance_summary_text())?;
+            }
+        }
+        if clicked.is_some() && clicked == self.metrics_consent_button {
+            self.settings.send_metrics = !self.settings.send_metrics;
+            if let Some(button) = self.metrics_consent_button {
+                cx.tree.set_text(
+                    button,
+                    crate::strings::t(if self.settings.send_metrics {
+                        "Отдельная передача метрик: ВКЛ"
+                    } else {
+                        "Отдельная передача метрик: ВЫКЛ"
+                    }),
+                )?;
+            }
+            match save_setting(
+                sse_app::settings_writer::SettingsPatch::MetricsConsent(self.settings.send_metrics),
+                cx.proxy.cloned(),
+            ) {
+                Ok(()) => cx.status = Some(crate::strings::t("Сохраняю…").to_owned()),
+                Err(error) => cx.status = Some(tr("Не удалось сохранить настройки: {0}", &[&error])),
+            }
+        }
+        if clicked.is_some() && clicked == self.metrics_preview_button {
+            if let (Some(dialog), Some(preview_text)) = (self.metrics_preview_dialog, self.metrics_preview_text) {
+                let preview = sse_app::metrics::upload_preview();
+                self.metrics_preview_body = Some(preview.clone());
+                cx.tree.set_text(preview_text, &preview)?;
+                self.metrics_preview_scroll_y = 0;
+                if let Some(scroll) = self.metrics_preview_scroll {
+                    cx.tree.set_scroll_y(scroll, 0)?;
+                }
+                cx.tree.open_dialog(dialog)?;
+            }
+        }
+        if clicked.is_some()
+            && clicked == self.metrics_preview_send_button
+            && self
+                .metrics_preview_dialog
+                .is_some_and(|dialog| cx.tree.dialog() == Some(dialog))
+        {
+            if self.metrics_upload_pending {
+                cx.status = Some(crate::strings::t("Отправка метрик уже выполняется.").to_owned());
+            } else if !self.settings.send_metrics {
+                cx.status =
+                    Some(crate::strings::t("Сначала включите отдельное согласие на передачу метрик.").to_owned());
+            } else if let (Some(proxy), Some(preview)) = (cx.proxy.cloned(), self.metrics_preview_body.clone()) {
+                self.metrics_upload_pending = true;
+                if let Some(button) = self.metrics_preview_send_button {
+                    cx.tree.set_text(button, crate::strings::t("Отправляю агрегат…"))?;
+                }
+                let task_proxy = proxy.clone();
+                if let Err(error) = sse_app::tasks::try_spawn_named_detached("metrics-upload", move || {
+                    let result = sse_app::metrics::upload_aggregate_preview(true, &preview).map_err(|error| {
+                        sse_app::diagnostics::error(&format!("metrics upload: {error}"));
+                        error.to_string()
+                    });
+                    let _ = task_proxy.send(AppMessage::ToScreen(
+                        ScreenId::Settings,
+                        Box::new(MetricsUploadFinished { result }),
+                    ));
+                }) {
+                    self.metrics_upload_pending = false;
+                    if let Some(button) = self.metrics_preview_send_button {
+                        cx.tree.set_text(button, crate::strings::t("Отправить агрегат"))?;
+                    }
+                    cx.status = Some(tr("Не удалось запустить отправку: {0}", &[&error]));
+                } else {
+                    cx.status = Some(crate::strings::t("Отправляю агрегат…").to_owned());
+                }
+            } else {
+                cx.status = Some(crate::strings::t("Предпросмотр агрегата недоступен.").to_owned());
+            }
+        }
+        if clicked.is_some()
+            && clicked == self.metrics_preview_close
+            && self
+                .metrics_preview_dialog
+                .is_some_and(|dialog| cx.tree.dialog() == Some(dialog))
+        {
+            cx.tree.close_dialog()?;
         }
         if clicked.is_some() && clicked == self.support_save_button {
             if self.report_pending {
@@ -1389,6 +1728,16 @@ impl Screen for Settings {
             }
         }
         if let Message::User(AppMessage::ToScreen(_, payload)) = message {
+            if let Some(MetricsUploadFinished { result }) = payload.downcast_ref::<MetricsUploadFinished>() {
+                self.metrics_upload_pending = false;
+                if let Some(button) = self.metrics_preview_send_button {
+                    cx.tree.set_text(button, crate::strings::t("Отправить агрегат"))?;
+                }
+                cx.status = Some(match result {
+                    Ok(()) => crate::strings::t("Метрики отправлены.").to_owned(),
+                    Err(error) => tr("Не удалось отправить метрики: {0}", &[error]),
+                });
+            }
             if let Some(DiagnosticReportFinished { result }) = payload.downcast_ref::<DiagnosticReportFinished>() {
                 self.report_pending = false;
                 if let Some(button) = self.support_save_button {
@@ -1406,7 +1755,7 @@ impl Screen for Settings {
 
 #[cfg(test)]
 mod tests {
-    use super::{style, Settings};
+    use super::{scrollable_paragraph, style, Settings, Text};
     use crate::glyphs::{Face, Fonts, TextStyle};
     use crate::layout::{NodeKind, Style};
     use crate::raster::Color;
@@ -1424,6 +1773,58 @@ mod tests {
             crate::strings::t_in("uk", "Выберите ячейку, чтобы увидеть причину уровня поддержки."),
             crate::strings::t_in("ru", "Выберите ячейку, чтобы увидеть причину уровня поддержки.")
         );
+    }
+
+    #[test]
+    fn metrics_preview_is_multiline_and_scrolls_through_the_cached_payload() -> sse_core::Result<()> {
+        use crate::event_loop::{Message, WindowEvent};
+        use crate::screens::{Context, Screen};
+
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let root = tree.add(None, NodeKind::Stack, Style::default(), Content::Panel, Look::default())?;
+        let dialog = tree.add(
+            Some(root),
+            NodeKind::Column,
+            Style {
+                preferred: crate::layout::Size::new(600.0, 360.0),
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        let body = format!(
+            "{{\"schema\":1,\"sessions\":1,\"samples\":[{}]}}",
+            "1234567890,".repeat(450)
+        );
+        let (scroll, preview) = scrollable_paragraph(&mut tree, dialog, &body, Text::Note, 520.0, 180.0)?;
+        tree.resize(720, 500);
+        tree.update_layout()?;
+        let before = tree.rect(preview)?;
+        let viewport = tree.rect(scroll)?;
+        assert!(tree.content_height(scroll)? > f32::from(u16::try_from(viewport.height).unwrap_or(u16::MAX)));
+        tree.open_dialog(dialog)?;
+
+        let mut screen = Settings {
+            metrics_preview_dialog: Some(dialog),
+            metrics_preview_scroll: Some(scroll),
+            metrics_preview_text: Some(preview),
+            metrics_preview_body: Some(body),
+            ..Settings::default()
+        };
+        let message = Message::Window(WindowEvent::Wheel { delta: 3 });
+        let mut app = sse_app::AppState::new();
+        let mut context = Context {
+            tree: &mut tree,
+            proxy: None,
+            status: None,
+            app: &mut app,
+        };
+        screen.message(&mut context, &message, None)?;
+        context.tree.update_layout()?;
+
+        assert_eq!(screen.metrics_preview_scroll_y, 144);
+        assert!(context.tree.rect(preview)?.y < before.y);
+        Ok(())
     }
 
     #[test]

@@ -3026,6 +3026,7 @@ impl Shell {
         if index == self.selected || index >= self.screens.len() {
             return Ok(());
         }
+        sse_app::metrics::begin_screen_switch();
         if tree.dialog_open() {
             let _ = tree.close_dialog()?;
         }
@@ -3046,7 +3047,8 @@ impl Shell {
         tree.set_scroll_y(self.content, 0)?;
         // The previous screen's pixels must not survive where the new one draws nothing.
         tree.damage_all();
-        self.show(tree, index)
+        self.show(tree, index)?;
+        Ok(())
     }
 
     /// Shows the section's tabs, highlights the selected section and tab, and keeps the library for the save screens.

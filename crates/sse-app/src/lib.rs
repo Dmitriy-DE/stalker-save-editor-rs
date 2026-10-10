@@ -3,6 +3,7 @@
 //! Owner: Gemini (G8). No UI dependencies.
 
 pub mod diagnostics;
+pub mod metrics;
 pub mod paths;
 pub mod save_session;
 pub mod settings;

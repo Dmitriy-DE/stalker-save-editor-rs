@@ -2,6 +2,109 @@
 
 use std::process::{Child, Command};
 
+/// Returns this process's peak resident memory in bytes where the operating system exposes it.
+#[must_use]
+pub fn peak_resident_memory_bytes() -> Option<u64> {
+    #[cfg(target_os = "linux")]
+    {
+        let status = std::fs::read_to_string("/proc/self/status").ok()?;
+        let value = status.lines().find_map(|line| line.strip_prefix("VmHWM:"))?;
+        let kib = value.split_whitespace().next()?.parse::<u64>().ok()?;
+        Some(kib.saturating_mul(1024))
+    }
+    #[cfg(windows)]
+    {
+        #[repr(C)]
+        #[derive(Default)]
+        struct ProcessMemoryCountersEx {
+            cb: u32,
+            page_fault_count: u32,
+            peak_working_set_size: usize,
+            working_set_size: usize,
+            quota_peak_paged_pool_usage: usize,
+            quota_paged_pool_usage: usize,
+            quota_peak_non_paged_pool_usage: usize,
+            quota_non_paged_pool_usage: usize,
+            pagefile_usage: usize,
+            peak_pagefile_usage: usize,
+            private_usage: usize,
+        }
+
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn GetCurrentProcess() -> *mut std::ffi::c_void;
+            fn K32GetProcessMemoryInfo(
+                process: *mut std::ffi::c_void,
+                counters: *mut ProcessMemoryCountersEx,
+                size: u32,
+            ) -> i32;
+        }
+
+        let mut counters = ProcessMemoryCountersEx {
+            cb: u32::try_from(std::mem::size_of::<ProcessMemoryCountersEx>()).ok()?,
+            ..ProcessMemoryCountersEx::default()
+        };
+        let buffer_size = counters.cb;
+        // SAFETY: GetCurrentProcess returns a pseudo-handle for this process; counters is a valid writable
+        // PROCESS_MEMORY_COUNTERS_EX buffer whose cb field carries its exact size.
+        let succeeded = unsafe { K32GetProcessMemoryInfo(GetCurrentProcess(), &mut counters, buffer_size) };
+        if succeeded == 0 {
+            return None;
+        }
+        u64::try_from(counters.peak_working_set_size).ok()
+    }
+    #[cfg(target_os = "macos")]
+    {
+        #[repr(C)]
+        #[derive(Default)]
+        struct TimeValue {
+            _seconds: i32,
+            _microseconds: i32,
+        }
+
+        #[repr(C)]
+        #[derive(Default)]
+        struct MachTaskBasicInfo {
+            _virtual_size: u64,
+            _resident_size: u64,
+            resident_size_max: u64,
+            _user_time: TimeValue,
+            _system_time: TimeValue,
+            _policy: i32,
+            _suspend_count: i32,
+        }
+
+        #[link(name = "System")]
+        unsafe extern "C" {
+            static mach_task_self_: u32;
+            fn task_info(task: u32, flavor: i32, info: *mut i32, count: *mut u32) -> i32;
+        }
+
+        const MACH_TASK_BASIC_INFO: i32 = 20;
+        let mut info = MachTaskBasicInfo::default();
+        let word_count = std::mem::size_of::<MachTaskBasicInfo>().checked_div(std::mem::size_of::<i32>())?;
+        let mut count = u32::try_from(word_count).ok()?;
+        // SAFETY: info is sized as mach_task_basic_info_data_t; count is its word count, and mach_task_self_
+        // names the current process task.
+        let status = unsafe {
+            task_info(
+                mach_task_self_,
+                MACH_TASK_BASIC_INFO,
+                (&mut info as *mut MachTaskBasicInfo).cast::<i32>(),
+                &mut count,
+            )
+        };
+        if status != 0 {
+            return None;
+        }
+        Some(info.resident_size_max)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+    {
+        None
+    }
+}
+
 /// Owns the process group or job object for one worker child.
 pub struct ProcessTree {
     platform: platform::ProcessTree,

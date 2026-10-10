@@ -949,6 +949,8 @@ fn diagnostics_zip_at(log_directory: &Path, games: &[DiagnosticGame], include_ga
         "save-editor.log.1",
         "save-editor.log.2",
         "save-editor.log.3",
+        "metrics.jsonl",
+        "metrics.jsonl.1",
     ] {
         if let Some(data) = read_diagnostic_file(&log_directory.join(name), log_directory, PART_BYTES) {
             let archive_name = if name == CRASH_FILE {
@@ -1590,6 +1592,14 @@ mod tests {
             "startup C:\\Users\\Alice\\Documents\\secret.sav\n",
         )?;
         fs::write(
+            app_logs.join("metrics.jsonl"),
+            "{\"event\":\"save_read\",\"format\":\"stalker-cop\",\"size_bucket\":\"64-256-KiB\",\"ms\":12}\n",
+        )?;
+        fs::write(
+            app_logs.join("metrics.jsonl.1"),
+            "{\"event\":\"first_frame\",\"ms\":91}\n",
+        )?;
+        fs::write(
             xray.join("appdata").join("logs").join("xray_1.log"),
             "xray diagnostic\n",
         )?;
@@ -1625,6 +1635,8 @@ mod tests {
         assert!(names.contains(&"report/environment.txt"));
         assert!(names.contains(&"report/games.txt"));
         assert!(names.contains(&"application/save-editor.log"));
+        assert!(names.contains(&"application/metrics.jsonl"));
+        assert!(names.contains(&"application/metrics.jsonl.1"));
         assert!(!names.iter().any(|name| name.starts_with("game-logs/")));
         let environment = entries
             .iter()

@@ -41,6 +41,8 @@ pub struct AppSettings {
     pub navigation_collapsed: Option<bool>,
     /// Whether telemetry/crash reports are allowed. Default is `false` until the user opts in.
     pub send_reports: bool,
+    /// Whether aggregate performance metrics may be uploaded. Default is `false`.
+    pub send_metrics: bool,
     /// Whether the user has seen the first-run notice about reports. Default is `false`.
     pub reports_notice_shown: bool,
     /// Timestamp of last sent report in UTC (ISO 8601 string, e.g. "2026-10-03T12:00:00Z").
@@ -61,6 +63,7 @@ impl Default for AppSettings {
             ui_scale_percent: 0,
             navigation_collapsed: None,
             send_reports: false,
+            send_metrics: false,
             reports_notice_shown: false,
             last_report_utc: None,
         }
@@ -159,6 +162,11 @@ impl AppSettings {
                                 settings.send_reports = val;
                             }
                         }
+                        "send_metrics" => {
+                            if let Some(val) = parse_optional_bool(&mut reader)? {
+                                settings.send_metrics = val;
+                            }
+                        }
                         "reports_notice_shown" => {
                             if let Some(val) = parse_optional_bool(&mut reader)? {
                                 settings.reports_notice_shown = val;
@@ -244,6 +252,9 @@ impl AppSettings {
 
         writer.key("send_reports")?;
         writer.bool(self.send_reports)?;
+
+        writer.key("send_metrics")?;
+        writer.bool(self.send_metrics)?;
 
         writer.key("reports_notice_shown")?;
         writer.bool(self.reports_notice_shown)?;
