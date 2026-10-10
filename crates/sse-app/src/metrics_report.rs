@@ -4,7 +4,7 @@
 //! Summaries are read one by one; a file that is not a valid schema-1 summary is skipped with a warning.
 //! Percentiles cannot be merged exactly from per-upload summaries, so the report says how each one is combined.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
 use sse_codecs::json::{Event, Reader};
@@ -20,6 +20,8 @@ pub const UNKNOWN_OS: &str = "не указана";
 pub struct Summary {
     /// Operating-system category, when the summary carries one.
     pub os: Option<String>,
+    /// Application version that produced the summary, when the summary carries one.
+    pub version: Option<String>,
     /// Sessions covered by this upload.
     pub sessions: u64,
     /// Average first-frame time in milliseconds.
@@ -212,6 +214,7 @@ pub fn parse_summary(bytes: &[u8]) -> Result<Summary, String> {
         .collect();
     Ok(Summary {
         os: root.field("os").and_then(Value::text).map(str::to_owned),
+        version: root.field("version").and_then(Value::text).map(str::to_owned),
         sessions,
         first_frame_avg_ms: root.field("first_frame_avg_ms").and_then(Value::number),
         screen_switch: triplet(root.field("screen_switch_ms")),
@@ -227,6 +230,8 @@ pub fn parse_summary(bytes: &[u8]) -> Result<Summary, String> {
 pub struct OsGroup {
     /// Number of uploads read for this group.
     pub uploads: u64,
+    /// Application versions seen in this group, sorted; uploads without a version are not listed.
+    pub versions: BTreeSet<String>,
     /// Sessions summed over the uploads.
     pub sessions: u64,
     /// Session-weighted average first-frame time.
@@ -319,6 +324,7 @@ fn group(summaries: &[Summary]) -> OsGroup {
             entry.2 = entry.2.max(operation.max_ms);
         }
     }
+    out.versions = summaries.iter().filter_map(|s| s.version.clone()).collect();
     out.first_frame_avg_ms = (frame_sessions > 0.0).then(|| frame_total / frame_sessions);
     out.screen_switch_p50 = median(summaries.iter().filter_map(|s| s.screen_switch.p50).collect());
     out.screen_switch_p95 = largest(summaries.iter().filter_map(|s| s.screen_switch.p95));
@@ -348,6 +354,10 @@ pub fn render(report: &Report) -> String {
             "\n== ОС: {os} · отправок: {} · сессий: {}",
             group.uploads, group.sessions
         );
+        if !group.versions.is_empty() {
+            let versions = group.versions.iter().map(String::as_str).collect::<Vec<_>>().join(", ");
+            let _ = writeln!(out, "версии: {versions}");
+        }
         let _ = writeln!(out, "первый кадр (среднее): {}", cell(group.first_frame_avg_ms));
         let _ = writeln!(
             out,
@@ -385,7 +395,7 @@ mod tests {
     use super::{build_report, parse_summary, render, UNKNOWN_OS};
 
     fn summary(os: Option<&str>, sessions: u64, first: f64, switch: (f64, f64, f64), memory: u64) -> String {
-        let os_field = os.map_or_else(String::new, |os| format!("\"os\":\"{os}\","));
+        let os_field = os.map_or_else(String::new, |os| format!("\"os\":\"{os}\",\"version\":\"9.9.9\","));
         format!(
             "{{{os_field}\"schema\":1,\"sessions\":{sessions},\"first_frame_avg_ms\":{first},\
              \"screen_switch_ms\":{{\"p50\":{},\"p95\":{},\"max\":{}}},\
@@ -405,6 +415,7 @@ mod tests {
             Err(reason) => panic!("valid summary refused: {reason}"),
         };
         assert_eq!(parsed.os.as_deref(), Some("windows"));
+        assert_eq!(parsed.version.as_deref(), Some("9.9.9"));
         assert_eq!(parsed.sessions, 2);
         assert_eq!(parsed.screen_switch.p95, Some(40.0));
         assert_eq!(parsed.save_operations.len(), 1);
@@ -457,6 +468,7 @@ mod tests {
         assert!(report.groups.contains_key(UNKNOWN_OS));
         let text = render(&report);
         assert!(text.contains("== ОС: windows"));
+        assert!(text.contains("версии: 9.9.9"));
         assert!(text.contains("сейв read · soc · small: операций 8"));
     }
 
