@@ -17,6 +17,7 @@ use sse_storage::discovery::{SaveDirectoryLocator, SaveSlot, SaveSlotDiscovery};
 use sse_storage::transaction::{self, BackupEntry, BackupStatus};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const MAXIMUM_VISIBLE_ENTRIES: usize = 12;
@@ -209,6 +210,26 @@ struct SemanticSnapshot {
     items: BTreeMap<String, ItemQuantity>,
 }
 
+/// Result of the last full backup check, valid while the backup folder listing is unchanged.
+#[derive(Default)]
+struct BackupListCache {
+    directory: PathBuf,
+    fingerprint: Vec<(std::ffi::OsString, u64, Option<SystemTime>)>,
+    entries: Vec<transaction::BackupEntry>,
+}
+
+/// Name, size and modification time of every file in the backup folder, or `None` if it cannot be read.
+fn backup_fingerprint(directory: &Path) -> Option<Vec<(std::ffi::OsString, u64, Option<SystemTime>)>> {
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(directory).ok()? {
+        let entry = entry.ok()?;
+        let metadata = entry.metadata().ok()?;
+        files.push((entry.file_name(), metadata.len(), metadata.modified().ok()));
+    }
+    files.sort();
+    Some(files)
+}
+
 /// One S3 screen instance.
 pub struct HistoryScreen {
     id: ScreenId,
@@ -226,6 +247,7 @@ pub struct HistoryScreen {
     rows: Vec<ResultRow>,
     actions: Vec<ActionButton>,
     backup_entries: Option<Vec<BackupEntry>>,
+    backup_cache: Arc<Mutex<Option<BackupListCache>>>,
     save_entries: Option<Vec<SaveSlot>>,
     page: usize,
     compare_selection: Vec<PathBuf>,
@@ -330,6 +352,7 @@ impl HistoryScreen {
             rows: Vec::new(),
             actions: Vec::new(),
             backup_entries: None,
+            backup_cache: Arc::default(),
             save_entries: None,
             page: 0,
             compare_selection: Vec::new(),
@@ -462,14 +485,13 @@ impl HistoryScreen {
         };
         let id = self.id;
         let backup_directory = self.workspace.backup_directory();
+        let backup_cache = Arc::clone(&self.backup_cache);
         self.workspace.spawn("history-refresh", move |context| {
             if context.is_cancelled() {
                 return;
             }
             let result = match id {
-                ScreenId::Backups => HistoryResult::Backups(
-                    transaction::list_backups(&backup_directory).map_err(|error| error.to_string()),
-                ),
+                ScreenId::Backups => HistoryResult::Backups(list_backups_cached(&backup_directory, &backup_cache)),
                 ScreenId::Compare | ScreenId::Timeline | ScreenId::SaveDoctor => {
                     HistoryResult::Saves(discover_saves().map_err(|error| error.to_string()))
                 }
@@ -2145,6 +2167,31 @@ pub(super) fn format_system_time(value: SystemTime) -> String {
         seconds_of_day % 3_600 / 60,
         seconds_of_day % 60
     )
+}
+
+/// Full backup checks hash and verify every copy, so they run again only when the folder listing changed.
+fn list_backups_cached(
+    directory: &Path,
+    cache: &Mutex<Option<BackupListCache>>,
+) -> std::result::Result<Vec<transaction::BackupEntry>, String> {
+    let fingerprint = backup_fingerprint(directory);
+    if let (Some(fingerprint), Ok(guard)) = (&fingerprint, cache.lock()) {
+        if let Some(cached) = guard
+            .as_ref()
+            .filter(|cached| cached.directory == directory && &cached.fingerprint == fingerprint)
+        {
+            return Ok(cached.entries.clone());
+        }
+    }
+    let entries = transaction::list_backups(directory).map_err(|error| error.to_string())?;
+    if let (Some(fingerprint), Ok(mut guard)) = (fingerprint, cache.lock()) {
+        *guard = Some(BackupListCache {
+            directory: directory.to_path_buf(),
+            fingerprint,
+            entries: entries.clone(),
+        });
+    }
+    Ok(entries)
 }
 
 fn has_pending_edits_for_selected_source(app: &sse_app::AppState, source: &Path) -> bool {
@@ -3865,5 +3912,49 @@ mod tests {
             format_system_time(UNIX_EPOCH + Duration::from_secs(86_400)),
             "02.01.1970 00:00:00"
         );
+    }
+}
+
+#[cfg(test)]
+mod backup_cache_tests {
+    use super::{backup_fingerprint, list_backups_cached};
+    use std::sync::Mutex;
+
+    fn scratch_directory(name: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        let directory = std::env::temp_dir().join(format!("sse-r4-045-{name}-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap_or_else(|error| panic!("scratch folder: {error}"));
+        directory
+    }
+
+    #[test]
+    fn backup_fingerprint_changes_when_a_file_is_added_or_resized() -> std::io::Result<()> {
+        let directory = scratch_directory("fingerprint");
+        let before = backup_fingerprint(&directory).unwrap_or_default();
+        std::fs::write(directory.join("copy.bin"), b"abc")?;
+        let after = backup_fingerprint(&directory).unwrap_or_default();
+        assert_ne!(before, after, "a new file must invalidate the cached check");
+        std::fs::write(directory.join("copy.bin"), b"abcdef")?;
+        assert_ne!(after, backup_fingerprint(&directory).unwrap_or_default());
+        let _ = std::fs::remove_dir_all(directory);
+        Ok(())
+    }
+
+    #[test]
+    fn an_unchanged_folder_reuses_the_cached_check() -> std::io::Result<()> {
+        let directory = scratch_directory("reuse");
+        let cache = Mutex::new(None);
+        let first = list_backups_cached(&directory, &cache).unwrap_or_default();
+        let second = list_backups_cached(&directory, &cache).unwrap_or_default();
+        assert_eq!(first, second);
+        let stored = cache
+            .lock()
+            .ok()
+            .and_then(|guard| guard.as_ref().map(|cached| cached.directory.clone()));
+        assert_eq!(stored.as_deref(), Some(directory.as_path()));
+        let _ = std::fs::remove_dir_all(directory);
+        Ok(())
     }
 }
