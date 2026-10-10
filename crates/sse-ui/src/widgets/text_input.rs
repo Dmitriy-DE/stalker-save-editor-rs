@@ -162,6 +162,11 @@ impl TextInput {
         self.model.paste(c)
     }
 
+    /// Reason the last paste inserted nothing, taken once.
+    pub fn take_paste_refusal(&mut self) -> Option<crate::edit::PasteRefusal> {
+        self.model.take_paste_refusal()
+    }
+
     /// Cut the current selection through the platform clipboard.
     pub fn cut<C: Clipboard>(&mut self, c: &mut C) -> Result<bool> {
         self.model.cut(c)
