@@ -2,3 +2,5 @@
 /oracle-out
 /dist/
 *.swp
+__pycache__/
+*.pyc

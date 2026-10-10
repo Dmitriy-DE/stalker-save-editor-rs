@@ -119,7 +119,9 @@ def main() -> int:
     before = snapshot_roots(protected_roots)
     temporary_root = Path(tempfile.gettempdir()).resolve()
     if any(is_within(temporary_root, root) for _, root in protected_roots):
-        temporary_root = protected_roots[0][1].parent
+        # Creating the isolated folder beside the real data would write into the protected area; refuse instead.
+        print("temporary directory is inside a protected app-data tree; set TMPDIR outside it", file=sys.stderr)
+        return 2
 
     status = 1
     try:
