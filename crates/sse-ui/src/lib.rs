@@ -18,6 +18,7 @@ pub mod locale;
 /// macOS window adapter over the safe `sse-sys` window API.
 #[cfg(any(target_os = "macos", test))]
 pub mod macos_window;
+pub mod menu_music;
 /// SVG path data, flattening, strokes and the 28 interface icons (X25).
 pub mod path;
 /// Pure game-process matching and Windows busy-file warning helpers for save writes (K29).
