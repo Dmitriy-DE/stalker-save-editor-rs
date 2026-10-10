@@ -49,7 +49,7 @@ pub trait ProcessRunner {
 
     /// Checks if a command or binary is available to execute.
     fn has_command(&self, program: &str) -> bool {
-        find_in_path(program).is_some()
+        trusted_program(program).is_some()
     }
 }
 
@@ -59,7 +59,10 @@ pub struct SystemProcessRunner;
 
 impl ProcessRunner for SystemProcessRunner {
     fn run(&mut self, program: &str, args: &[&str]) -> Result<i32> {
-        let mut cmd = Command::new(program);
+        // Only system locations are trusted: a PATH entry must not decide which installer runs.
+        let resolved = trusted_program(program)
+            .ok_or_else(|| Error::Refused(format!("{program} is not installed in a system directory")))?;
+        let mut cmd = Command::new(resolved);
         cmd.args(args);
         let status = cmd.status().map_err(Error::from)?;
         Ok(status.code().unwrap_or(-1))
@@ -364,13 +367,29 @@ pub fn install_artifact(
     ))
 }
 
-fn find_in_path(executable_name: &str) -> Option<std::path::PathBuf> {
-    let path_var = std::env::var_os("PATH")?;
-    for dir in std::env::split_paths(&path_var) {
-        let candidate = dir.join(executable_name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
+/// Directories searched for system helpers (`pkexec`, `apt-get`, `xdg-open`, `open`). `PATH` is not used.
+const TRUSTED_SYSTEM_DIRECTORIES: &[&str] = &["/usr/bin", "/bin"];
+
+/// Resolves a bare helper name inside [`TRUSTED_SYSTEM_DIRECTORIES`]. Names with separators are refused.
+fn trusted_program(program: &str) -> Option<std::path::PathBuf> {
+    if program.is_empty() || program.contains(['/', '\\']) {
+        return None;
     }
-    None
+    TRUSTED_SYSTEM_DIRECTORIES
+        .iter()
+        .map(|dir| std::path::Path::new(dir).join(program))
+        .find(|candidate| candidate.is_file())
+}
+
+#[cfg(test)]
+mod trusted_program_tests {
+    use super::trusted_program;
+
+    #[test]
+    fn helper_lookup_ignores_unknown_names_and_explicit_paths() {
+        assert!(trusted_program("sse-no-such-helper-7f3a").is_none());
+        assert!(trusted_program("").is_none());
+        assert!(trusted_program("../usr/bin/sh").is_none());
+        assert!(trusted_program("/usr/bin/sh").is_none());
+    }
 }
