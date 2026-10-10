@@ -72,7 +72,10 @@ pub(super) fn s2_info_lines(save: &sse_s2::S2Save, packed: &[u8]) -> Vec<String>
         format!("Packed: {}", save.container().packed_size()),
         format!("Raw: {}", save.container().image().len()),
         format!("SHA256: {}", sse_codecs::sha256::sha256_hex(packed)),
-        format!("Money: {}", save.money()),
+        match save.money() {
+            Ok(money) => format!("Money: {money}"),
+            Err(error) => format!("Money: unreadable ({error})"),
+        },
         format!("Owned handles: {}", index.owned_handles().len()),
         format!("Grid handles parsed/total: {}", index.grid_handle_count()),
         format!("Grid cells: {}", index.grid_cells().len()),

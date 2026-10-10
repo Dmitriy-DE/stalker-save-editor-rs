@@ -1971,7 +1971,7 @@ fn semantic_snapshot(packed: &[u8]) -> std::result::Result<SemanticSnapshot, Str
     if let Ok(save) = sse_s2::S2Save::from_bytes(packed) {
         let mut snapshot = SemanticSnapshot {
             game: "stalker2".to_owned(),
-            money: save.money(),
+            money: save.money().map_err(|error| error.to_string())?,
             items: BTreeMap::new(),
         };
         for item in save.items() {
@@ -2078,7 +2078,9 @@ fn diagnose_packed(packed: &[u8], format_id: Option<&str>) -> std::result::Resul
                 let items = save.items();
                 let stored_crc = format!("{:08X}", container.stored_crc32());
                 let computed_crc = format!("{:08X}", container.computed_crc32());
-                let money = save.money().to_string();
+                let money = save
+                    .money()
+                    .map_or_else(|error| error.to_string(), |value| value.to_string());
                 let item_count = items.len();
                 let stash = crate::strings::t(if save.stash().is_ok() {
                     "найден"
