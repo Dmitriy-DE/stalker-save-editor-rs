@@ -4779,12 +4779,16 @@ fn encyclopedia_game(game: &str) -> Option<sse_content::CompanionGame> {
     }
 }
 
-struct EncyclopediaClipboard;
+/// In-application buffer for the encyclopedia search field, kept on the screen between keys, as the other
+/// screens keep theirs. Copy and paste work inside the app; the system clipboard is not connected anywhere.
+#[derive(Default)]
+struct EncyclopediaClipboard(String);
 impl crate::edit::Clipboard for EncyclopediaClipboard {
     fn read_text(&mut self) -> Result<String> {
-        Ok(String::new())
+        Ok(self.0.clone())
     }
-    fn write_text(&mut self, _text: &str) -> Result<()> {
+    fn write_text(&mut self, text: &str) -> Result<()> {
+        text.clone_into(&mut self.0);
         Ok(())
     }
 }
@@ -4877,6 +4881,7 @@ impl EncyclopediaResult {
 
 #[derive(Default)]
 struct Encyclopedia {
+    clipboard: String,
     status: Option<WidgetId>,
     search_label: Option<WidgetId>,
     rows: Vec<WidgetId>,
@@ -5237,9 +5242,9 @@ impl Screen for Encyclopedia {
                     _ => crate::edit::Key::Character(text.unwrap_or('\0')),
                 };
                 let typed = text.map(|character| character.to_string());
-                let mut clipboard = EncyclopediaClipboard;
-                if let Some(search) = self.search.as_mut() {
-                    let changed = search.key(
+                let mut clipboard = EncyclopediaClipboard(std::mem::take(&mut self.clipboard));
+                let outcome = match self.search.as_mut() {
+                    Some(search) => search.key(
                         key,
                         crate::edit::Modifiers {
                             ctrl: *ctrl,
@@ -5247,10 +5252,12 @@ impl Screen for Encyclopedia {
                         },
                         typed.as_deref(),
                         &mut clipboard,
-                    )?;
-                    if changed {
-                        self.apply_search(cx)?;
-                    }
+                    ),
+                    None => Ok(false),
+                };
+                self.clipboard = clipboard.0;
+                if outcome? {
+                    self.apply_search(cx)?;
                 }
             }
         }
@@ -5773,6 +5780,24 @@ mod encyclopedia_cache_tests {
         assert_eq!(
             encyclopedia_cache_directory(),
             sse_app::paths::default_data_directory().join("catalog-cache")
+        );
+    }
+}
+
+#[cfg(test)]
+mod encyclopedia_clipboard_tests {
+    use super::EncyclopediaClipboard;
+    use crate::edit::Clipboard;
+
+    #[test]
+    fn copied_text_is_pasted_back_inside_the_app() {
+        let mut clipboard = EncyclopediaClipboard::default();
+        clipboard
+            .write_text("АК-74")
+            .unwrap_or_else(|error| panic!("{error:?}"));
+        assert_eq!(
+            clipboard.read_text().unwrap_or_else(|error| panic!("{error:?}")),
+            "АК-74"
         );
     }
 }
