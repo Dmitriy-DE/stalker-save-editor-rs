@@ -276,6 +276,11 @@ pub fn download_artifact(
             }
             existing_part = Some(partial);
         }
+        Ok(metadata) if metadata.file_type().is_file() => {
+            // A partial larger than this artifact cannot be resumed. It is our own temporary file, so drop it
+            // and download again instead of failing on every attempt until someone deletes it by hand.
+            std::fs::remove_file(&part_path).map_err(Error::from)?;
+        }
         Ok(_) => return Err(Error::Refused("partial download path is not a regular file".to_owned())),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(Error::from(error)),

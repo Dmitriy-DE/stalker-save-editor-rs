@@ -926,3 +926,38 @@ fn update_service_end_to_end_flow() {
     assert_eq!(service.current_version(), "1.0.0");
     assert_eq!(service.installation().target, "linux");
 }
+
+#[test]
+fn oversized_partial_from_a_republished_package_is_replaced_not_refused() {
+    let payload = b"0123456789abcdef".to_vec();
+    let artifact = UpdateArtifact {
+        target: "linux-x86_64".to_string(),
+        architecture: "x86_64".to_string(),
+        kind: "portable".to_string(),
+        file: "SaveEditor-linux-x86_64.tar.gz".to_string(),
+        size: u64::try_from(payload.len()).unwrap(),
+        sha256: sse_codecs::sha256::sha256_hex(&payload),
+        url: "https://updates.test/SaveEditor-linux-x86_64.tar.gz".to_string(),
+        release_version: String::new(),
+    };
+    let temp = TempDir::new("oversized-part-test");
+    let destination = temp.path.join(&artifact.file);
+    // A partial left by an older, larger build published under the same file name.
+    fs::write(
+        temp.path.join(format!(".{}.part", artifact.file)),
+        vec![b'x'; payload.len() * 2],
+    )
+    .unwrap();
+    let mut fetch = InterruptOnceFetch {
+        body: payload.clone(),
+        requested_ranges: Vec::new(),
+        fail_first_response: false,
+    };
+
+    assert_eq!(
+        download_artifact(&mut fetch, &artifact, &destination, None).unwrap(),
+        destination
+    );
+    assert_eq!(fetch.requested_ranges, vec![0]);
+    assert_eq!(fs::read(&destination).unwrap(), payload);
+}
