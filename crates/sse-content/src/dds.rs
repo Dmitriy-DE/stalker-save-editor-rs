@@ -158,6 +158,12 @@ fn decode_uncompressed(header: &[u8], payload: &[u8], width: usize, height: usiz
         .and_then(|p| p.checked_mul(4))
         .ok_or_else(|| Error::damaged("Image size overflow"))?;
     let mut rgba = vec![0u8; total_bytes];
+    let channels = [
+        Channel::new(red_mask),
+        Channel::new(green_mask),
+        Channel::new(blue_mask),
+        Channel::new(alpha_mask),
+    ];
 
     for y in 0..height {
         let row_start = y
@@ -180,11 +186,12 @@ fn decode_uncompressed(header: &[u8], payload: &[u8], width: usize, height: usiz
                 )
                 .ok_or_else(|| Error::damaged("DDS pixel data is truncated."))?;
 
-            let mut value = 0u32;
-            for (idx, &b) in pixel_bytes.iter().enumerate() {
-                let shift = u32::try_from(idx).unwrap_or(0).wrapping_mul(8);
-                value |= (u32::from(b)) << shift;
+            // 24-bit pixels are zero-extended; both widths are at most four bytes.
+            let mut value_bytes = [0u8; 4];
+            if let Some(dst) = value_bytes.get_mut(..bytes_per_pixel) {
+                dst.copy_from_slice(pixel_bytes);
             }
+            let value = u32::from_le_bytes(value_bytes);
 
             let out_idx = y
                 .checked_mul(width)
@@ -192,11 +199,11 @@ fn decode_uncompressed(header: &[u8], payload: &[u8], width: usize, height: usiz
                 .and_then(|p| p.checked_mul(4))
                 .ok_or_else(|| Error::damaged("index overflow"))?;
 
-            let r = extract_channel(value, red_mask);
-            let g = extract_channel(value, green_mask);
-            let b = extract_channel(value, blue_mask);
+            let r = channels[0].extract(value);
+            let g = channels[1].extract(value);
+            let b = channels[2].extract(value);
             let a = if alpha_mask != 0 {
-                extract_channel(value, alpha_mask)
+                channels[3].extract(value)
             } else {
                 255
             };
@@ -407,6 +414,61 @@ fn rgb565(val: u16) -> (u32, u32, u32) {
     (r, g, b)
 }
 
+/// One colour channel of an uncompressed mask, with its shift and scale worked out once per image.
+#[derive(Clone, Copy)]
+struct Channel {
+    mask: u32,
+    shift: u32,
+    maximum: u32,
+    /// Output for every raw value when the channel is at most 8 bits wide; empty otherwise.
+    table: Option<[u8; 256]>,
+}
+
+impl Channel {
+    fn new(mask: u32) -> Self {
+        let width_bits = mask.count_ones();
+        let maximum = if width_bits >= 32 {
+            0xFFFF_FFFFu32
+        } else {
+            (1u32 << width_bits).wrapping_sub(1)
+        };
+        let shift = mask.trailing_zeros();
+        let table = (width_bits <= 8 && maximum != 0).then(|| {
+            let mut table = [0u8; 256];
+            for (raw, slot) in (0u32..).zip(table.iter_mut()) {
+                *slot = scale(raw, maximum);
+            }
+            table
+        });
+        Self {
+            mask,
+            shift,
+            maximum,
+            table,
+        }
+    }
+
+    /// Same result as [`extract_channel`], without recomputing the mask per pixel.
+    fn extract(self, value: u32) -> u8 {
+        if self.mask == 0 || self.maximum == 0 {
+            return 0;
+        }
+        let raw = (value & self.mask) >> self.shift;
+        match &self.table {
+            Some(table) => table.get(usize::try_from(raw).unwrap_or(0)).copied().unwrap_or(0),
+            None => scale(raw, self.maximum),
+        }
+    }
+}
+
+/// Scales a raw channel value to 0..=255 with rounding.
+fn scale(raw: u32, maximum: u32) -> u8 {
+    let half_max = maximum / 2;
+    let numer = raw.wrapping_mul(255).wrapping_add(half_max);
+    u8::try_from(numer.checked_div(maximum).unwrap_or(0)).unwrap_or(0)
+}
+
+#[cfg(test)]
 fn extract_channel(value: u32, mask: u32) -> u8 {
     if mask == 0 {
         return 0;
@@ -426,4 +488,34 @@ fn extract_channel(value: u32, mask: u32) -> u8 {
     let numer = raw.wrapping_mul(255).wrapping_add(half_max);
     let div = numer.checked_div(maximum).unwrap_or(0);
     u8::try_from(div).unwrap_or(0)
+}
+
+#[cfg(test)]
+mod channel_table_tests {
+    use super::{extract_channel, Channel};
+
+    #[test]
+    fn table_and_division_agree_for_every_raw_value() {
+        // Masks at 1..=8 bits use the lookup table; 9..=16 bits use the division path.
+        for width in 1_u32..=16 {
+            for shift in [0_u32, 3] {
+                let mask = ((1_u32 << width) - 1) << shift;
+                let channel = Channel::new(mask);
+                let limit = 1_u32 << width;
+                for raw in 0..limit {
+                    let value = raw << shift;
+                    assert_eq!(
+                        channel.extract(value),
+                        extract_channel(value, mask),
+                        "width {width} shift {shift} raw {raw}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn zero_mask_is_zero() {
+        assert_eq!(Channel::new(0).extract(0xFFFF_FFFF), 0);
+    }
 }
