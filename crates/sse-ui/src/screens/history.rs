@@ -1479,8 +1479,18 @@ impl HistoryScreen {
                                     cx.tree.set_text(description, SAVE_WHILE_GAME_RUNNING_WARNING)?;
                                 }
                                 if let Some(continue_button) = self.confirm_restore {
-                                    cx.tree
-                                        .set_text(continue_button, crate::strings::t("Всё равно сохранить"))?;
+                                    // The label names the real action: a restore or a quest repair does not "save".
+                                    let label =
+                                        match self.pending_guarded_operation.as_ref().map(|(_, operation)| operation) {
+                                            Some(GuardedHistoryOperation::QuestRepair { .. }) => {
+                                                crate::strings::t("Всё равно исправить")
+                                            }
+                                            Some(GuardedHistoryOperation::Restore { .. }) => {
+                                                crate::strings::t("Всё равно восстановить")
+                                            }
+                                            None => crate::strings::t("Всё равно сохранить"),
+                                        };
+                                    cx.tree.set_text(continue_button, label)?;
                                     cx.tree.set_enabled(continue_button, true)?;
                                 }
                                 self.set_summary(cx.tree, SAVE_WHILE_GAME_RUNNING_WARNING)?;
@@ -3100,6 +3110,23 @@ mod tests {
         assert!(super::has_pending_edits_for_selected_source(&app, &source));
         app.discard_draft(&source_sha256);
         assert!(!super::has_pending_edits_for_selected_source(&app, &source));
+        Ok(())
+    }
+
+    #[test]
+    fn quest_repair_gate_leaves_the_pending_draft_in_place() -> sse_core::Result<()> {
+        let source = PathBuf::from("/saves/slot.sav");
+        let source_sha256 = "ef".repeat(32);
+        let mut app = sse_app::AppState::new();
+        app.set_current_save_identity(source.clone(), source_sha256.clone());
+        let mut draft = sse_storage::drafts::DraftPlan::empty(&source_sha256)?;
+        draft.money = Some(7);
+        app.set_draft(draft);
+
+        // The repair handler returns before it starts a write when the gate is closed. The gate
+        // only reads state, so the draft that the user has not saved is still there afterwards.
+        assert!(super::has_pending_edits_for_selected_source(&app, &source));
+        assert!(app.has_draft(&source_sha256), "the gate must not discard unsaved edits");
         Ok(())
     }
 
