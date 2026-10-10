@@ -855,7 +855,7 @@ mod tests {
         let fixture = br#"{"operation":"list","appId":41700,"fileName":null}"#;
         for end in 0..fixture.len() {
             if let Some(prefix) = fixture.get(..end) {
-                let _ = std::panic::catch_unwind(|| parse_request(prefix));
+                assert!(std::panic::catch_unwind(|| parse_request(prefix)).is_ok());
             }
         }
         for bit in 0..fixture.len().saturating_mul(8) {
@@ -863,7 +863,7 @@ mod tests {
             if let Some(byte) = changed.get_mut(bit / 8) {
                 *byte ^= 1_u8.checked_shl(u32::try_from(bit % 8).unwrap_or(0)).unwrap_or(0);
             }
-            let _ = std::panic::catch_unwind(|| parse_request(&changed));
+            assert!(std::panic::catch_unwind(|| parse_request(&changed)).is_ok());
         }
         let mut seed = 0x4b35_u64;
         for _ in 0..2_000 {

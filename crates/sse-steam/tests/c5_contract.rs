@@ -398,7 +398,7 @@ fn unavailable_cloud_format_verifier_fails_closed_before_write() {
 }
 
 #[test]
-fn public_cloud_write_api_cannot_be_enabled_by_a_boolean() {
+fn unavailable_verifier_blocks_write_even_when_enabled() {
     let artifacts = temp_dir("verified");
     let mut api = ScriptedSteamApi::default();
     let remote_name = "_appdata_/savedgames/save.sav";
