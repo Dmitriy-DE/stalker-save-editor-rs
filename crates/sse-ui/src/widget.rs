@@ -1318,12 +1318,21 @@ impl Tree {
                 look.border = Some((Color::rgba(214, 166, 45, 255), 2.0));
             }
             let padding = node.style.padding;
-            let mut content = node.content.clone();
-            if let Content::Input { text, .. } = &mut content {
-                if let Some(composition) = self.input_composition.as_ref().filter(|value| value.widget == id) {
-                    *text = overlay_composition(text, composition.start, composition.end, &composition.text);
+            // Only an input with an active composition needs its own copy; everything else paints the node in place.
+            let composed = match (
+                &node.content,
+                self.input_composition.as_ref().filter(|value| value.widget == id),
+            ) {
+                (Content::Input { text, .. }, Some(composition)) => {
+                    let mut content = node.content.clone();
+                    if let Content::Input { text: shown, .. } = &mut content {
+                        *shown = overlay_composition(text, composition.start, composition.end, &composition.text);
+                    }
+                    Some(content)
                 }
-            }
+                _ => None,
+            };
+            let content: &Content = composed.as_ref().unwrap_or(&node.content);
             let previous_clip = surface.replace_clip(clipped_area);
             let state = PaintState {
                 hovered,
@@ -1337,7 +1346,7 @@ impl Tree {
                 rect,
                 padding,
                 &look,
-                &content,
+                content,
                 state,
             );
             surface.replace_clip(previous_clip);
