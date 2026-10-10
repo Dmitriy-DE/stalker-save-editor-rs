@@ -295,17 +295,7 @@ impl ToolkitProfileService {
             .unwrap_or("")
             .to_string();
 
-        let game_str = val.get("game").and_then(|v| v.as_str()).unwrap_or("soc");
-
-        let game = match game_str {
-            "cs" => GameTarget::ClearSky,
-            "cop" => GameTarget::CallOfPripyat,
-            "soc_ee" => GameTarget::ShadowOfChernobylEnhancedEdition,
-            "cs_ee" => GameTarget::ClearSkyEnhancedEdition,
-            "cop_ee" => GameTarget::CallOfPripyatEnhancedEdition,
-            "s2" => GameTarget::Stalker2,
-            _ => GameTarget::ShadowOfChernobyl,
-        };
+        let game = game_target_from_field(&val)?;
 
         let mut target_fix_ids = Vec::new();
         if let Some(ids_arr) = val.get("target_fix_ids").and_then(|v| v.as_array()) {
@@ -423,6 +413,33 @@ fn write_private_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
             .map_err(|error| Error::System(error.to_string()))?;
     }
     Ok(())
+}
+
+/// Reads the `game` field of a stored profile or snapshot. A missing field means SoC (legacy files).
+///
+/// # Errors
+/// Returns [`Error::Damaged`] for a non-string or unknown game name instead of silently choosing another game.
+pub(crate) fn game_target_from_field(value: &sse_catalog::JsonValue) -> Result<GameTarget> {
+    let name = match value.get("game") {
+        None => "soc",
+        Some(field) => field
+            .as_str()
+            .ok_or_else(|| Error::damaged("Profile or snapshot 'game' must be a string"))?,
+    };
+    game_target_from_name(name).ok_or_else(|| Error::damaged(format!("Unknown game '{name}'")))
+}
+
+fn game_target_from_name(name: &str) -> Option<GameTarget> {
+    match name {
+        "soc" => Some(GameTarget::ShadowOfChernobyl),
+        "cs" => Some(GameTarget::ClearSky),
+        "cop" => Some(GameTarget::CallOfPripyat),
+        "soc_ee" => Some(GameTarget::ShadowOfChernobylEnhancedEdition),
+        "cs_ee" => Some(GameTarget::ClearSkyEnhancedEdition),
+        "cop_ee" => Some(GameTarget::CallOfPripyatEnhancedEdition),
+        "s2" => Some(GameTarget::Stalker2),
+        _ => None,
+    }
 }
 
 fn game_target_str(target: GameTarget) -> &'static str {

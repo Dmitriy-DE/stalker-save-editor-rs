@@ -17,7 +17,7 @@ use crate::models::{
 };
 
 const CATALOG_DATA: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/data_game-fixes.json.deflate"));
-static ALL_FIXES: OnceLock<Vec<GameFixDefinition>> = OnceLock::new();
+static ALL_FIXES: OnceLock<std::result::Result<Vec<GameFixDefinition>, String>> = OnceLock::new();
 static CATALOG_DATA_JSON: JsonAssetCache = OnceLock::new();
 
 /// Shipped game fixes catalogue.
@@ -32,7 +32,22 @@ impl GameFixCatalog {
     /// Returns all catalogue definitions, including generated Enhanced Edition variants.
     #[must_use]
     pub fn all() -> &'static [GameFixDefinition] {
-        ALL_FIXES.get_or_init(|| load_catalog().unwrap_or_default())
+        match ALL_FIXES.get_or_init(|| load_catalog().map_err(|e| e.to_string())) {
+            Ok(fixes) => fixes.as_slice(),
+            Err(_) => &[],
+        }
+    }
+
+    /// Returns the reason the embedded catalog failed to load, or `None` when it loaded.
+    ///
+    /// When this is `Some`, [`GameFixCatalog::all`] is empty; callers that show the catalog should report this text.
+    #[must_use]
+    pub fn load_error() -> Option<&'static str> {
+        ALL_FIXES
+            .get_or_init(|| load_catalog().map_err(|e| e.to_string()))
+            .as_ref()
+            .err()
+            .map(String::as_str)
     }
 
     /// Returns all fixes available for a game.

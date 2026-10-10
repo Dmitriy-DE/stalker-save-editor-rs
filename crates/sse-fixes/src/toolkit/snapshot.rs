@@ -382,17 +382,7 @@ fn deserialize_snapshot(bytes: &[u8]) -> Result<ToolkitSnapshot> {
 
     let timestamp_epoch = json_val.get("timestamp_epoch").and_then(|v| v.as_u64()).unwrap_or(0);
 
-    let game_str = json_val.get("game").and_then(|v| v.as_str()).unwrap_or("soc");
-
-    let game = match game_str {
-        "cs" => GameTarget::ClearSky,
-        "cop" => GameTarget::CallOfPripyat,
-        "soc_ee" => GameTarget::ShadowOfChernobylEnhancedEdition,
-        "cs_ee" => GameTarget::ClearSkyEnhancedEdition,
-        "cop_ee" => GameTarget::CallOfPripyatEnhancedEdition,
-        "s2" => GameTarget::Stalker2,
-        _ => GameTarget::ShadowOfChernobyl,
-    };
+    let game = super::profile::game_target_from_field(&json_val)?;
 
     let mut installed_fixes = Vec::new();
     if let Some(fixes_arr) = json_val.get("installed_fixes").and_then(|v| v.as_array()) {
