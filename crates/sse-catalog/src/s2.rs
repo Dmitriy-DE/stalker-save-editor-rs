@@ -153,19 +153,6 @@ impl Stalker2ItemCatalog {
             .filter(|s| !s.is_empty())
     }
 
-    /// Resolves item description with language fallback (requested -> "en").
-    #[must_use]
-    pub fn description(&self, sid: Option<&str>, language: &str) -> Option<&str> {
-        let key = self.canonical_sid(sid)?;
-        let item = self.data.get("items")?.get(key)?;
-        let descriptions = item.get("descriptions")?;
-        descriptions
-            .get(language)
-            .or_else(|| descriptions.get("en"))
-            .and_then(JsonValue::as_str)
-            .filter(|s| !s.is_empty())
-    }
-
     /// Resolves icon relative path, or family fallback.
     #[must_use]
     pub fn icon(&self, sid: Option<&str>) -> Option<&str> {
@@ -248,20 +235,10 @@ impl Stalker2ArmorUpgrades {
         armors
     }
 
-    /// Finds an armor upgrade by its save prototype SID.
-    #[must_use]
-    pub fn find_armor(sid: &str) -> Option<&'static Stalker2ArmorUpgrade> {
-        let map = EMBEDDED_S2_ARMOR_MAP.get_or_init(Self::load_armors);
-        map.get(sid)
-    }
-
     /// Number of registered armor upgrades.
     #[must_use]
     pub fn count() -> usize {
-        if let Some(map) = EMBEDDED_S2_ARMOR_MAP.get() {
-            return map.len();
-        }
-        670
+        EMBEDDED_S2_ARMOR_MAP.get_or_init(Self::load_armors).len()
     }
 }
 
