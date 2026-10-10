@@ -1200,6 +1200,7 @@ mod tests {
         fs::create_dir_all(&directory).expect("create temporary metrics directory");
         configure_log_directory(Some(directory.clone()));
 
+        end_session();
         start_session();
         record_first_frame();
         record_screen_switch(Duration::from_millis(7));
@@ -1259,7 +1260,8 @@ mod tests {
         assert!(!preview.contains("save.sav"));
 
         configure_log_directory(None);
-        fs::remove_dir_all(directory).expect("remove temporary metrics directory");
+        // Cleanup is best effort: a writer that still held a batch for this folder may recreate it.
+        let _ = fs::remove_dir_all(directory);
     }
 
     #[test]
@@ -1288,6 +1290,7 @@ mod tests {
         fs::create_dir_all(&directory).expect("create temporary metrics directory");
         configure_log_directory(Some(directory.clone()));
 
+        end_session();
         start_session();
         begin_screen_switch();
         std::thread::sleep(Duration::from_millis(5));
@@ -1297,7 +1300,8 @@ mod tests {
         let summary = recent_sessions().into_iter().next().expect("session recorded");
         assert!(summary.screen_switch.is_some_and(|samples| samples.max_ms >= 1));
         configure_log_directory(None);
-        fs::remove_dir_all(directory).expect("remove temporary metrics directory");
+        // Cleanup is best effort: a writer that still held a batch for this folder may recreate it.
+        let _ = fs::remove_dir_all(directory);
     }
 
     #[test]
@@ -1333,7 +1337,8 @@ mod tests {
                 < 100
         );
         configure_log_directory(None);
-        fs::remove_dir_all(directory).expect("remove temporary metrics directory");
+        // Cleanup is best effort: a writer that still held a batch for this folder may recreate it.
+        let _ = fs::remove_dir_all(directory);
     }
 
     #[test]
@@ -1365,6 +1370,7 @@ mod tests {
             MAX_METRICS_BYTES - 8
         );
         configure_log_directory(None);
-        fs::remove_dir_all(directory).expect("remove temporary metrics directory");
+        // Cleanup is best effort: a writer that still held a batch for this folder may recreate it.
+        let _ = fs::remove_dir_all(directory);
     }
 }
