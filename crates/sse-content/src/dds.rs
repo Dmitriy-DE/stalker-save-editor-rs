@@ -2,6 +2,7 @@
 //!
 //! Provides image cropping for extracting item icons from texture atlases.
 
+use sse_core::fields::read_u32;
 use sse_core::{Error, Result};
 
 /// An RGBA8 image decoded from a DDS file.
@@ -70,8 +71,8 @@ impl DdsImage {
             return Err(Error::damaged("Not a DDS image."));
         }
 
-        let height_u32 = read_u32_le(data, 12)?;
-        let width_u32 = read_u32_le(data, 16)?;
+        let height_u32 = read_u32(data, 12)?;
+        let width_u32 = read_u32(data, 16)?;
         if height_u32 == 0 || width_u32 == 0 {
             return Err(Error::damaged("DDS dimensions are invalid."));
         }
@@ -84,7 +85,7 @@ impl DdsImage {
         let width = usize::try_from(width_u32).map_err(|_| Error::damaged("DDS dimensions are invalid."))?;
         let height = usize::try_from(height_u32).map_err(|_| Error::damaged("DDS dimensions are invalid."))?;
 
-        let pixel_flags = read_u32_le(data, 80)?;
+        let pixel_flags = read_u32(data, 80)?;
         let payload = data.get(Self::HEADER_SIZE..).unwrap_or(&[]);
 
         if (pixel_flags & 0x4) != 0 {
@@ -103,7 +104,7 @@ impl DdsImage {
 }
 
 fn decode_uncompressed(header: &[u8], payload: &[u8], width: usize, height: usize) -> Result<Vec<u8>> {
-    let bits = read_u32_le(header, 88)?;
+    let bits = read_u32(header, 88)?;
     if bits != 24 && bits != 32 {
         return Err(Error::damaged("Unsupported uncompressed DDS pixel size."));
     }
@@ -113,7 +114,7 @@ fn decode_uncompressed(header: &[u8], payload: &[u8], width: usize, height: usiz
         .checked_mul(bytes_per_pixel)
         .ok_or_else(|| Error::damaged("DDS pitch calculation overflow"))?;
 
-    let mut stored_pitch = read_u32_le(header, 20)? as usize;
+    let mut stored_pitch = read_u32(header, 20)? as usize;
     if stored_pitch == 0 {
         stored_pitch = minimum_pitch;
     }
@@ -131,10 +132,10 @@ fn decode_uncompressed(header: &[u8], payload: &[u8], width: usize, height: usiz
         return Err(Error::damaged("DDS pixel data is truncated."));
     }
 
-    let red_mask = read_u32_le(header, 92)?;
-    let green_mask = read_u32_le(header, 96)?;
-    let blue_mask = read_u32_le(header, 100)?;
-    let alpha_mask = read_u32_le(header, 104)?;
+    let red_mask = read_u32(header, 92)?;
+    let green_mask = read_u32(header, 96)?;
+    let blue_mask = read_u32(header, 100)?;
+    let alpha_mask = read_u32(header, 104)?;
 
     for &mask in &[red_mask, green_mask, blue_mask, alpha_mask] {
         if mask != 0 {
@@ -425,12 +426,4 @@ fn extract_channel(value: u32, mask: u32) -> u8 {
     let numer = raw.wrapping_mul(255).wrapping_add(half_max);
     let div = numer.checked_div(maximum).unwrap_or(0);
     u8::try_from(div).unwrap_or(0)
-}
-
-fn read_u32_le(data: &[u8], offset: usize) -> Result<u32> {
-    let end = offset.checked_add(4).ok_or_else(|| Error::damaged("overflow"))?;
-    let slice = data
-        .get(offset..end)
-        .ok_or_else(|| Error::damaged("truncated header"))?;
-    Ok(u32::from_le_bytes(slice.try_into().unwrap_or([0; 4])))
 }

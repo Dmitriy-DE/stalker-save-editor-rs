@@ -1,3 +1,4 @@
+use sse_core::fields::{read_u16, read_u32};
 use sse_core::{Error, Result};
 
 const SIGNATURE: u32 = 0x504D_444D;
@@ -720,18 +721,6 @@ fn read_u8(data: &[u8], offset: usize) -> Result<u8> {
     data.get(offset)
         .copied()
         .ok_or_else(|| Error::damaged("byte read beyond minidump"))
-}
-
-fn read_u16(data: &[u8], offset: usize) -> Result<u16> {
-    let bytes = checked_range(data, offset, 2, "u16")?;
-    let array = <[u8; 2]>::try_from(bytes).map_err(|_| Error::damaged("invalid u16 bytes"))?;
-    Ok(u16::from_le_bytes(array))
-}
-
-fn read_u32(data: &[u8], offset: usize) -> Result<u32> {
-    let bytes = checked_range(data, offset, 4, "u32")?;
-    let array = <[u8; 4]>::try_from(bytes).map_err(|_| Error::damaged("invalid u32 bytes"))?;
-    Ok(u32::from_le_bytes(array))
 }
 
 fn read_u64(data: &[u8], offset: usize) -> Result<u64> {
