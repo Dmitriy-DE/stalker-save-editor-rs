@@ -1920,6 +1920,23 @@
     "zh-CN": "无法使用更新：{0}",
     "zh-TW": "無法使用更新：{0}"
   },
+  "Показаны первые {0}.": {
+    "ru": "Показаны первые {0}.",
+    "uk": "Показано перші {0}.",
+    "en": "Showing the first {0}.",
+    "de": "Es werden die ersten {0} angezeigt.",
+    "fr": "Affichage des {0} premiers.",
+    "it": "Mostrati i primi {0}.",
+    "es": "Se muestran los primeros {0}.",
+    "pl": "Pokazano pierwsze {0}.",
+    "cs": "Zobrazeno prvních {0}.",
+    "pt-BR": "Mostrando os primeiros {0}.",
+    "tr": "İlk {0} gösteriliyor.",
+    "ja": "最初の {0} 件を表示しています。",
+    "ko": "처음 {0}개를 표시합니다.",
+    "zh-CN": "显示前 {0} 个。",
+    "zh-TW": "顯示前 {0} 個。"
+  },
   "Всё равно восстановить": {
     "ru": "Всё равно восстановить",
     "uk": "Усе одно відновити",
