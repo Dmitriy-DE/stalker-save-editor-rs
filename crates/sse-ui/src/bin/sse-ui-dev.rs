@@ -82,18 +82,22 @@ fn main() -> std::process::ExitCode {
 
 fn screenshot(args: &[String]) -> Result<()> {
     let path = args.get(1).ok_or_else(|| {
-        Error::Refused("usage: --screenshot OUT.png [WxH] [NAV] [--open SAVE] [--add-item] [--discover]".to_owned())
+        Error::Refused(
+            "usage: --screenshot OUT.png [WxH] [NAV] [--open SAVE] [--add-item] [--discover] [--wait]".to_owned(),
+        )
     })?;
     let mut size: Option<(u32, u32)> = None;
     let mut nav: Option<usize> = None;
     let mut open_save = None;
     let mut add_item = false;
     let mut discover = false;
+    let mut wait = false;
     let mut index = 2;
     while index < args.len() {
         match args.get(index).map(String::as_str) {
             Some("--add-item") => add_item = true,
             Some("--discover") => discover = true,
+            Some("--wait") => wait = true,
             Some("--open") => {
                 index = index.saturating_add(1);
                 open_save = Some(
@@ -154,6 +158,33 @@ fn screenshot(args: &[String]) -> Result<()> {
     }
     if let Some(id) = nav.and_then(|i| ScreenId::ALL.get(i)) {
         shell.open(&mut tree, *id)?;
+    }
+    if wait {
+        // The screen's own background results (its list, loaded for the open save) come back as messages to it.
+        if let (Some(receiver), Some(id)) = (loader.as_ref(), nav.and_then(|i| ScreenId::ALL.get(i))) {
+            let deadline = Instant::now()
+                .checked_add(Duration::from_secs(60))
+                .ok_or_else(|| Error::System("invalid screenshot wait deadline".to_owned()))?;
+            loop {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    return Err(Error::System("timed out waiting for the screen's data".to_owned()));
+                }
+                let message = receiver
+                    .recv_timeout(remaining)
+                    .map_err(|error| Error::System(format!("screen data failed: {error}")))?;
+                let finished = matches!(&message, Message::User(AppMessage::ToScreen(screen, _)) if screen == id);
+                shell.message(&mut tree, &message, None);
+                if finished {
+                    // Results can come in more than one part (the first one before the game's folder is known):
+                    // the frame waits until the screen has been quiet for a moment.
+                    while let Ok(later) = receiver.recv_timeout(Duration::from_secs(2)) {
+                        shell.message(&mut tree, &later, None);
+                    }
+                    break;
+                }
+            }
+        }
     }
     if discover {
         // Background search (a save is open) is awaited: the result comes back to the screen as a message.
