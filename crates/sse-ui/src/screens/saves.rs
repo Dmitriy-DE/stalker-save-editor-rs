@@ -7299,7 +7299,8 @@ pub(super) fn build_list_side(
     let status = paragraph(cx.tree, inspector, "", Text::Note)?;
     cx.tree.set_visible(detail, false)?;
     cx.tree.set_visible(status, false)?;
-    spacer(cx, inspector)?;
+    // The actions follow the description directly, not the panel's bottom edge: a growing spacer pushed them below
+    // the window at 1366×768, where the list screens cannot show them without scrolling.
     let actions = style::row(cx.tree, inspector)?;
     cx.tree.set_visible(actions, false)?;
     Ok(ListSide {
