@@ -643,6 +643,24 @@ mod tests {
     }
 
     #[test]
+    fn truncated_body_is_an_error_not_a_short_output() {
+        // Declares 4 KiB of output but carries no bit stream after the header.
+        let mut bytes = 4096_u32.to_le_bytes().to_vec();
+        bytes.extend_from_slice(&[0, 0]);
+        assert!(matches!(decode(&bytes), Err(Error::Damaged(_))));
+    }
+
+    #[test]
+    fn arbitrary_bodies_never_panic() {
+        // Not a reference vector: only checks that malformed bodies end in Ok or Err, never a panic.
+        for seed in 0_u8..64 {
+            let mut bytes = 256_u32.to_le_bytes().to_vec();
+            bytes.extend((0_u8..200).map(|i| i.wrapping_mul(seed).wrapping_add(seed)));
+            let _ = decode(&bytes);
+        }
+    }
+
+    #[test]
     fn descramble_is_deterministic() {
         let input = b"archive header";
         assert_eq!(descramble(input, false), descramble(input, false));
