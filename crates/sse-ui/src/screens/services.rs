@@ -94,27 +94,61 @@ fn workshop_state_text(state: sse_companion::workshop::WorkshopInstallState) -> 
 
 fn open_workshop_url(url: &str) -> std::result::Result<(), String> {
     #[cfg(target_os = "windows")]
-    let mut command = {
-        let mut command = Command::new("rundll32.exe");
-        command.args(["url.dll,FileProtocolHandler", url]);
-        command
-    };
+    let mut command = Command::new({
+        let system_root = std::env::var_os("SystemRoot")
+            .ok_or_else(|| "SystemRoot is unavailable; cannot locate trusted rundll32.exe".to_owned())?;
+        let helper = PathBuf::from(system_root).join("System32/rundll32.exe");
+        resolve_trusted_helper(&[helper])?
+    });
     #[cfg(target_os = "macos")]
-    let mut command = {
-        let mut command = Command::new("open");
-        command.arg(url);
-        command
-    };
-    #[cfg(all(unix, not(target_os = "macos")))]
-    let mut command = {
-        let mut command = Command::new("xdg-open");
-        command.arg(url);
-        command
-    };
-    #[cfg(not(any(target_os = "windows", target_os = "macos", unix)))]
+    let mut command = Command::new(resolve_trusted_helper(&[PathBuf::from("/usr/bin/open")])?);
+    #[cfg(target_os = "linux")]
+    let mut command = Command::new(resolve_trusted_helper(&[
+        PathBuf::from("/usr/bin/xdg-open"),
+        PathBuf::from("/bin/xdg-open"),
+    ])?);
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     return Err("Opening Steam Workshop links is unsupported on this platform".to_owned());
-    #[cfg(any(target_os = "windows", target_os = "macos", unix))]
-    command.spawn().map(|_| ()).map_err(|error| error.to_string())
+    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+    {
+        #[cfg(target_os = "windows")]
+        command.args(["url.dll,FileProtocolHandler", url]);
+        #[cfg(not(target_os = "windows"))]
+        command.arg(url);
+        command.spawn().map(|_| ()).map_err(|error| error.to_string())
+    }
+}
+
+fn resolve_trusted_helper(candidates: &[PathBuf]) -> std::result::Result<PathBuf, String> {
+    candidates
+        .iter()
+        .find(|candidate| candidate.is_file())
+        .cloned()
+        .ok_or_else(|| "No trusted system browser helper was found".to_owned())
+}
+
+#[cfg(test)]
+mod workshop_opener_tests {
+    use super::resolve_trusted_helper;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn missing_system_helper_is_refused_with_a_clear_error() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let missing = std::env::temp_dir().join(format!("sse-no-workshop-helper-{nonce}"));
+
+        let result = resolve_trusted_helper(&[missing]);
+        assert!(
+            matches!(
+                &result,
+                Err(error) if error.contains("No trusted system browser helper was found")
+            ),
+            "missing helper should return a clear refusal: {result:?}"
+        );
+    }
 }
 
 fn companion_root(game: &str, root: &Path) -> std::result::Result<PathBuf, String> {
