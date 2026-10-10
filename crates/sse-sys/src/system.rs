@@ -180,12 +180,15 @@ fn running_processes_impl() -> io::Result<Vec<String>> {
 mod windows_enumeration_tests {
     #[test]
     fn running_processes_lists_the_current_process() {
-        let names = super::running_processes().unwrap();
-        let current = std::env::current_exe().unwrap();
-        let file_name = current.file_name().unwrap().to_string_lossy().to_string();
+        let file_name = std::env::current_exe()
+            .ok()
+            .and_then(|path| path.file_name().map(|name| name.to_string_lossy().to_string()));
+        let names = super::running_processes();
         assert!(
-            names.iter().any(|name| name.eq_ignore_ascii_case(&file_name)),
-            "{names:?}"
+            file_name.as_deref().is_some_and(|file| names
+                .as_ref()
+                .is_ok_and(|list| list.iter().any(|name| name.eq_ignore_ascii_case(file)))),
+            "{names:?} {file_name:?}"
         );
     }
 }
