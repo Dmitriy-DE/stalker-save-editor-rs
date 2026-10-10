@@ -2515,7 +2515,25 @@ fn restored_output_path(source: &Path) -> PathBuf {
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |duration| duration.as_secs());
-    restored_output_path_at(source, timestamp)
+    first_free_restored_path(restored_output_path_at(source, timestamp))
+}
+
+/// The restored copy must not overwrite an earlier one made in the same second: add `_2`, `_3`, … until the name is free.
+fn first_free_restored_path(candidate: PathBuf) -> PathBuf {
+    if !candidate.exists() {
+        return candidate;
+    }
+    let stem = candidate.file_stem().unwrap_or_default().to_string_lossy().into_owned();
+    let extension = candidate
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("sav")
+        .to_owned();
+    let directory = candidate.parent().map(Path::to_path_buf).unwrap_or_default();
+    (2_u32..=1_000)
+        .map(|index| directory.join(format!("{stem}_{index}.{extension}")))
+        .find(|path| !path.exists())
+        .unwrap_or(candidate)
 }
 
 fn restored_output_path_at(source: &Path, timestamp: u64) -> PathBuf {
@@ -3043,6 +3061,29 @@ mod tests {
             restored_output_path_at(Path::new("/save/game_slot.scs"), 123),
             Path::new("/save/game_slot_restored_123.scs")
         );
+    }
+
+    #[test]
+    fn a_second_restore_in_the_same_second_gets_a_new_name_instead_of_failing() -> sse_core::Result<()> {
+        let directory = std::env::temp_dir().join(format!("sse-restore-name-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory)?;
+        let source = directory.join("slot.sav");
+        let first = super::first_free_restored_path(restored_output_path_at(&source, 123));
+        std::fs::write(&first, b"first copy")?;
+
+        let second = super::first_free_restored_path(restored_output_path_at(&source, 123));
+
+        let _ = std::fs::remove_dir_all(&directory);
+        assert_eq!(
+            first.file_name().map(|name| name.to_string_lossy().into_owned()),
+            Some("slot_restored_123.sav".to_owned())
+        );
+        assert_eq!(
+            second.file_name().map(|name| name.to_string_lossy().into_owned()),
+            Some("slot_restored_123_2.sav".to_owned())
+        );
+        Ok(())
     }
 
     #[test]
