@@ -2658,7 +2658,7 @@ mod tests {
     }
 
     #[test]
-    fn s2_stack_writer_refuses_a_handle_outside_the_owned_list() {
+    fn s2_stack_writer_refuses_a_handle_that_is_not_uniquely_owned() {
         let parsed = S2Save::from_bytes(WRITER_S2_STACK_SOURCE);
         assert!(parsed.is_ok());
         let Ok(mut parsed) = parsed else { return };

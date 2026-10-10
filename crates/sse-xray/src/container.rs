@@ -434,7 +434,7 @@ mod tests {
                 *byte ^= u8::try_from(seed % 256).unwrap_or_default().max(1);
             }
             if let Ok(container) = Container::read(&mutated) {
-                assert!(container.image().len() <= 512 * 1024 * 1024);
+                assert!(container.image().len() <= 256 * 1024 * 1024);
             }
         }
     }
