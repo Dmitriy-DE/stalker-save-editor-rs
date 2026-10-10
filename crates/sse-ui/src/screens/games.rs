@@ -5756,7 +5756,10 @@ mod s2_mods_guard_tests {
         let Err(running) = toggle_s2_mods_guarded(missing, &FixedProbe(true)) else {
             panic!("a running game must not toggle");
         };
-        assert!(idle.contains("not a valid"), "idle probe reaches the installation check: {idle}");
+        assert!(
+            idle.contains("not a valid"),
+            "idle probe reaches the installation check: {idle}"
+        );
         assert_ne!(running, idle, "running probe must refuse before the installation check");
     }
 }
