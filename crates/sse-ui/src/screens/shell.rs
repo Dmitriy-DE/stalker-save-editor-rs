@@ -979,6 +979,7 @@ pub struct Shell {
     open_file_dialog: WidgetId,
     open_path_widget: WidgetId,
     open_confirm: WidgetId,
+    open_browse: WidgetId,
     open_cancel: WidgetId,
     open_path_input: TextInput,
     open_path_clipboard: ShellClipboard,
@@ -2058,6 +2059,7 @@ impl Shell {
         )?;
         let open_actions = style::row(tree, open_file_dialog)?;
         let open_cancel = style::button(tree, open_actions, "Отмена", style::Button::Secondary)?;
+        let open_browse = style::button(tree, open_actions, "Обзор…", style::Button::Secondary)?;
         let open_confirm = style::button(tree, open_actions, "Открыть", style::Button::Primary)?;
         tree.set_enabled(open_confirm, false)?;
         tree.set_visible(open_file_dialog, false)?;
@@ -2114,6 +2116,7 @@ impl Shell {
             open_file_dialog,
             open_path_widget,
             open_confirm,
+            open_browse,
             open_cancel,
             open_path_input,
             open_path_clipboard: ShellClipboard::default(),
@@ -3778,6 +3781,12 @@ impl Shell {
         if clicked.is_some() && clicked == Some(self.open_cancel) {
             self.close_open_file_dialog(tree)?;
             self.open_return_screen = None;
+            return Ok(Flow::Continue);
+        }
+        if clicked.is_some() && clicked == Some(self.open_browse) {
+            // The same system picker as the top bar's «Открыть»; the typed path dialog only serves the rest.
+            self.close_open_file_dialog(tree)?;
+            self.show_open_file_dialog(tree)?;
             return Ok(Flow::Continue);
         }
         if clicked.is_some() && clicked == Some(self.open_confirm) {
