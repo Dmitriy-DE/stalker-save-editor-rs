@@ -679,6 +679,15 @@ MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEugfpzNXArEpRIoUsxrmG6KWIWMFc\n\
 DuEkmd6oGnQq6qsZmILc2fYC0wfqEMk/NB88BSFAC1N6fmziJf11RVtlLQ==\n\
 -----END PUBLIC KEY-----\n";
 
+    /// Built from the stdlib-generated SubjectPublicKeyInfo; off curve case.
+    const OFF_CURVE_PEM: &str = "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEaxfR8uEsQkf4vOblY6RA8ncDfYEt\n6zOg9KE5RdiYwpZP40Li/hp/m47n60p8D54WK84zV2sxXs7LtkBoN79R9g==\n-----END PUBLIC KEY-----\n";
+
+    /// Built from the stdlib-generated SubjectPublicKeyInfo; infinity case.
+    const INFINITY_PEM: &str = "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEAAAAAAAAAAAAAAAAAAAAAAAAAAAA\nAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==\n-----END PUBLIC KEY-----\n";
+
+    /// Built from the stdlib-generated SubjectPublicKeyInfo; coord not reduced case.
+    const COORD_NOT_REDUCED_PEM: &str = "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE/////wAAAAEAAAAAAAAAAAAAAAD/\n//////////////9P40Li/hp/m47n60p8D54WK84zV2sxXs7LtkBoN79R9Q==\n-----END PUBLIC KEY-----\n";
+
     const RELEASE_DIGEST: [u8; 32] = [
         0xFC, 0x25, 0x8D, 0xD2, 0x76, 0x1A, 0x9E, 0x9F, 0x9A, 0xD6, 0x70, 0xF5, 0x4E, 0xCC, 0x24, 0x56, 0x0E, 0xDB,
         0x12, 0x1D, 0x12, 0x27, 0x18, 0x05, 0x1A, 0xA7, 0x03, 0x8E, 0xFC, 0x07, 0x28, 0xEA,
@@ -709,6 +718,17 @@ DuEkmd6oGnQq6qsZmILc2fYC0wfqEMk/NB88BSFAC1N6fmziJf11RVtlLQ==\n\
         0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xBC, 0xE6,
         0xFA, 0xAD, 0xA7, 0x17, 0x9E, 0x84, 0xF3, 0xB9, 0xCA, 0xC2, 0xFC, 0x63, 0x25, 0x51,
     ];
+
+    #[test]
+    fn from_pem_refuses_keys_that_are_not_valid_p256_points() {
+        assert!(
+            PublicKey::from_pem(PUBLIC_KEY).is_ok(),
+            "control: the release key parses"
+        );
+        assert!(PublicKey::from_pem(OFF_CURVE_PEM).is_err(), "point not on the curve");
+        assert!(PublicKey::from_pem(INFINITY_PEM).is_err(), "point at infinity");
+        assert!(PublicKey::from_pem(COORD_NOT_REDUCED_PEM).is_err(), "x >= p");
+    }
 
     #[test]
     fn signature_components_outside_one_to_n_minus_one_are_rejected() {
