@@ -240,6 +240,17 @@ fn static_polish_manifest_label_keeps_software_term() {
 }
 
 #[test]
+fn static_czech_game_and_save_labels_use_their_contextual_meanings() {
+    assert_eq!(t_in("cs", "включён"), "zahrnutý");
+    assert_eq!(t_in("cs", "ИГРЫ И ИНСТРУМЕНТЫ"), "HRY A NÁSTROJE");
+    assert_eq!(t_in("cs", "СОСТОЯНИЕ БЕЗ МАНИФЕСТА"), "STAV BEZ MANIFESTU");
+    assert_eq!(
+        t_in("cs", "Сохранения появятся после выбора папок в настройках."),
+        "Uložené pozice se objeví po výběru složek v nastavení."
+    );
+}
+
+#[test]
 fn static_polish_companion_controls_keep_product_name() {
     assert_eq!(
         t_in("pl", "Состояние и управление компаньоном"),
