@@ -642,7 +642,7 @@ impl GamesOverview {
                 let last = start.saturating_add(self.page_size).min(total);
                 tr(
                     crate::strings::current_language(),
-                    "{0}–{1} из {2}",
+                    "Показано {0}–{1} из {2}",
                     &[&start.saturating_add(1), &last, &total],
                 )
             };
