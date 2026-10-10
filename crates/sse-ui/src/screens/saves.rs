@@ -507,6 +507,7 @@ impl Workspace {
                 store.save(journal).map(|_| ())
             })()
             .map_err(|error| error.to_string());
+            drop(_write);
             let _ = proxy.send(AppMessage::ToScreen(
                 ScreenId::Inventory,
                 Box::new(DraftPersisted(result)),
@@ -566,6 +567,7 @@ impl Workspace {
                 .into_iter()
                 .try_for_each(|journal| store.save(journal).map(|_| ()))
                 .map_err(|error| error.to_string());
+            drop(_write);
             let _ = proxy.send(AppMessage::ToScreen(
                 ScreenId::Inventory,
                 Box::new(DraftPersisted(result)),
@@ -10576,6 +10578,100 @@ mod tests {
         assert!(sse_storage::transaction::list_backups(&temp.0.join("s2-backups"))?
             .iter()
             .any(|entry| entry.status == sse_storage::transaction::BackupStatus::Verified));
+        Ok(())
+    }
+
+    #[test]
+    fn switching_a_to_b_and_back_shows_an_edit_whose_write_was_delayed() -> sse_core::Result<()> {
+        let temp = TempDirectory::new();
+        let bytes: &[u8] = include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-source.sav");
+        let save_a = temp.0.join("a.sav");
+        let save_b = temp.0.join("b.sav");
+        fs::write(&save_a, bytes)?;
+        fs::write(&save_b, bytes)?;
+        let expected_a = fs::canonicalize(&save_a)?;
+        let workspace = Workspace::with_draft_directory(temp.0.join("drafts"));
+        let (proxy, receiver) = channel_pair::<AppMessage>();
+        let mut overview = Overview::new(workspace.clone());
+        let mut app = sse_app::AppState::new();
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let wait = std::time::Duration::from_secs(10);
+
+        // Load A and wait for it to be the selected save.
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: Some(&proxy),
+            status: None,
+            app: &mut app,
+        };
+        overview.build(&mut cx, host)?;
+        assert!(overview.open_save(&mut cx, &save_a)?);
+        let loaded = receiver
+            .recv_timeout(wait)
+            .map_err(|error| Error::System(error.to_string()))?;
+        overview.message(&mut cx, &loaded, None)?;
+        let sha_a = sse_codecs::sha256::sha256_hex(bytes);
+        assert_eq!(cx.app.current_save(), Some(expected_a.as_path()));
+
+        // Edit A and hold the draft writer so its write is still pending.
+        let mut plan = DraftPlan::empty(&sha_a)?;
+        plan.money = Some(1234);
+        let journal = DraftJournal::new(vec![plan], 0)?;
+        let blocker = workspace
+            .draft_write_lock
+            .lock()
+            .map_err(|_| Error::System("lock poisoned".to_owned()))?;
+        workspace.persist_draft(journal, &mut cx);
+        // Switching now must wait for the write, not read the old journal.
+        overview.open_save(&mut cx, &save_b)?;
+        assert_eq!(
+            cx.status.as_deref(),
+            Some(crate::strings::t("Дождитесь записи черновика, затем смените сейв."))
+        );
+        assert!(!workspace.is_loading());
+
+        // Release the writer and wait until its completion has been delivered.
+        drop(blocker);
+        loop {
+            let message = receiver
+                .recv_timeout(wait)
+                .map_err(|error| Error::System(error.to_string()))?;
+            if let Message::User(AppMessage::ToScreen(ScreenId::Inventory, payload)) = &message {
+                if payload.downcast_ref::<super::DraftPersisted>().is_some() {
+                    break;
+                }
+            }
+        }
+        assert!(
+            !workspace.draft_writes_pending(),
+            "the write guard is released before the reply"
+        );
+
+        // A -> B -> A: the second switch to A reads the journal that was just written.
+        assert!(overview.open_save(&mut cx, &save_b)?);
+        let to_b = receiver
+            .recv_timeout(wait)
+            .map_err(|error| Error::System(error.to_string()))?;
+        overview.message(&mut cx, &to_b, None)?;
+        assert!(overview.open_save(&mut cx, &save_a)?);
+        let back_to_a = receiver
+            .recv_timeout(wait)
+            .map_err(|error| Error::System(error.to_string()))?;
+        overview.message(&mut cx, &back_to_a, None)?;
+
+        assert_eq!(cx.app.current_save(), Some(expected_a.as_path()));
+        assert_eq!(
+            workspace.lock().pending_money,
+            Some(1234),
+            "returning to A must show the edit that was in flight when the switch was attempted"
+        );
         Ok(())
     }
 
