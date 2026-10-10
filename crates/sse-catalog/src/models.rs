@@ -71,8 +71,9 @@ impl ItemDefinition {
             return Err(Error::damaged("Item source must not be empty."));
         }
         if let Some(w) = unit_weight {
-            if w < 0.0 {
-                return Err(Error::damaged("Item weight must not be negative."));
+            // NaN and infinity fail `w < 0.0` silently, so finiteness must be checked explicitly.
+            if !w.is_finite() || w < 0.0 {
+                return Err(Error::damaged("Item weight must be a finite, non-negative number."));
             }
         }
 

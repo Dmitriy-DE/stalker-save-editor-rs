@@ -450,8 +450,7 @@ impl CatalogBundleWriter {
         ];
 
         let root = JsonValue::Object(root_entries);
-        let serialized = root.to_string();
-        Ok(serialized.into_bytes())
+        Ok(root.to_indented_string()?.into_bytes())
     }
 }
 

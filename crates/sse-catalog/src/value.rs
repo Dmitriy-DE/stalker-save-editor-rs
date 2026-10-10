@@ -142,23 +142,21 @@ impl JsonValue {
     }
 
     /// Formats this JSON value as an indented string.
-    #[must_use]
-    pub fn to_indented_string(&self) -> String {
+    ///
+    /// # Errors
+    /// Returns [`Error::Damaged`] when the value cannot be written as JSON, for example a non-finite number.
+    pub fn to_indented_string(&self) -> Result<String> {
         let mut writer = Writer::indented();
-        if self.write_to(&mut writer).is_err() {
-            return String::new();
-        }
-        writer
-            .finish()
-            .ok()
-            .and_then(|b| String::from_utf8(b).ok())
-            .unwrap_or_default()
+        self.write_to(&mut writer)?;
+        let bytes = writer.finish()?;
+        String::from_utf8(bytes).map_err(|_| Error::damaged("JSON writer produced invalid UTF-8"))
     }
 }
 
 impl fmt::Display for JsonValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.to_indented_string())
+        let text = self.to_indented_string().map_err(|_| fmt::Error)?;
+        f.write_str(&text)
     }
 }
 
