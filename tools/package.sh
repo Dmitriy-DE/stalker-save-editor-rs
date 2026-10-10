@@ -30,6 +30,7 @@ Targets:
   aarch64-apple-darwin
   x86_64-apple-darwin
 
+The Windows portable archive is built on Windows with tools/package-windows-portable.ps1 (MSVC); the GNU target is not shipped.
 The optional Windows installer is built on Windows with
   tools/package-windows-installer.ps1
 
@@ -382,7 +383,7 @@ main() {
     fi
 
     if (( selected == 0 )); then
-        targets=(x86_64-unknown-linux-gnu x86_64-pc-windows-gnu aarch64-apple-darwin x86_64-apple-darwin)
+        targets=(x86_64-unknown-linux-gnu aarch64-apple-darwin x86_64-apple-darwin)
     fi
 
     local failures=0 target

@@ -35,17 +35,6 @@ jobs:
           fi
       - run: cargo build --release -p sse-cli
 
-      - name: Install shipped Windows GNU target
-        if: matrix.os == 'ubuntu-24.04'
-        run: |
-          rustup target add x86_64-pc-windows-gnu
-          sudo apt-get update
-          sudo apt-get install -y gcc-mingw-w64-x86-64
-
-      - name: Compile tests for shipped Windows GNU target
-        if: matrix.os == 'ubuntu-24.04'
-        run: cargo test --locked --workspace --target x86_64-pc-windows-gnu --no-run
-
       - name: Check declared Rust 1.85 MSRV
         if: matrix.os == 'ubuntu-24.04'
         run: |
@@ -146,7 +135,7 @@ jobs:
       matrix:
         include:
           - os: ubuntu-24.04
-            targets: x86_64-unknown-linux-gnu x86_64-pc-windows-gnu
+            targets: x86_64-unknown-linux-gnu
           - os: macos-14
             targets: aarch64-apple-darwin x86_64-apple-darwin
     runs-on: ${{ matrix.os }}
@@ -168,6 +157,29 @@ jobs:
           name: packages-${{ runner.os }}
           path: dist/
           retention-days: 30
+          if-no-files-found: error
+          include-hidden-files: true
+
+  windows-portable:
+    # The portable Windows archive is built with MSVC, the same target the Windows tests run; no GNU build ships.
+    # It runs on every PR so a packaging break shows before a release; the archive is only uploaded, never published.
+    needs: check
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@fb523f40495206854c36b250850817ae0f83e3d1 # 1.99.0
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: Build portable Windows archive
+        shell: pwsh
+        run: ./tools/package-windows-portable.ps1
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: packages-Windows-portable
+          path: |
+            dist/SaveEditor-windows-x86_64.zip
+            dist/SaveEditor-windows-x86_64.zip.sha256
+            dist/.package-metadata/windows-x86_64.tsv
+          retention-days: 7
           if-no-files-found: error
           include-hidden-files: true
 
@@ -198,7 +210,7 @@ jobs:
   release-manifest:
     # Assemble release metadata only after all package builders passed check.
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
-    needs: [packages, windows-installer]
+    needs: [packages, windows-portable, windows-installer]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
