@@ -72,7 +72,8 @@ fn run(mut pcm: Vec<i16>, channels: u8, rate: u32, volume: f32) {
     if unsafe { waveOutOpen(&mut handle, WAVE_MAPPER, &format, 0, 0, 0) } != 0 || handle.is_null() {
         return;
     }
-    let mut header = WaveHdr {
+    // The header lives on the heap: if WinMM still holds it after the retries, it must outlive this function.
+    let mut header = Box::new(WaveHdr {
         data: pcm.as_mut_ptr().cast(),
         buffer_length: byte_len,
         bytes_recorded: 0,
@@ -81,18 +82,20 @@ fn run(mut pcm: Vec<i16>, channels: u8, rate: u32, volume: f32) {
         loops: 0,
         next: ptr::null_mut(),
         reserved: 0,
-    };
+    });
     // SAFETY: the PCM vector and header stay alive until the prepared header is released below.
-    if unsafe { waveOutPrepareHeader(handle, &mut header, header_size) } == 0 {
+    if unsafe { waveOutPrepareHeader(handle, &mut *header, header_size) } == 0 {
         // SAFETY: the prepared header and its PCM buffer remain live for the duration of playback.
-        let written = unsafe { waveOutWrite(handle, &mut header, header_size) } == 0;
+        let written = unsafe { waveOutWrite(handle, &mut *header, header_size) } == 0;
         let mut released = false;
+        let mut unprepared = false;
         if written {
             for _ in 0..500 {
                 // SAFETY: handle/header are the same live objects passed to prepare/write.
-                let result = unsafe { waveOutUnprepareHeader(handle, &mut header, header_size) };
+                let result = unsafe { waveOutUnprepareHeader(handle, &mut *header, header_size) };
                 if result == 0 {
                     released = true;
+                    unprepared = true;
                     break;
                 }
                 if result != WAVERR_STILLPLAYING {
@@ -106,14 +109,21 @@ fn run(mut pcm: Vec<i16>, channels: u8, rate: u32, volume: f32) {
             let _ = unsafe { waveOutReset(handle) };
             for _ in 0..50 {
                 // SAFETY: reset has returned the buffer; retry until WinMM releases the prepared header.
-                let result = unsafe { waveOutUnprepareHeader(handle, &mut header, header_size) };
+                let result = unsafe { waveOutUnprepareHeader(handle, &mut *header, header_size) };
                 if result == 0 {
+                    unprepared = true;
                     break;
                 }
                 if result != WAVERR_STILLPLAYING {
                     break;
                 }
                 thread::sleep(Duration::from_millis(1));
+            }
+            if !unprepared {
+                // WinMM may still read the header and the PCM buffer. Keep both alive instead of freeing them.
+                std::mem::forget(header);
+                std::mem::forget(pcm);
+                return;
             }
         }
     }
