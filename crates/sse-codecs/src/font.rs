@@ -14,6 +14,9 @@ const MAX_POINTS: usize = 1_000_000;
 const MAX_COMPOSITE_DEPTH: usize = 8;
 const MAX_CFF_STACK: usize = 48;
 const MAX_CFF_SUBR_DEPTH: usize = 10;
+// Subroutine depth alone does not bound work: each level may call several subroutines. This caps the
+// charstring tokens one glyph may execute, far above any real glyph and far below an exponential walk.
+const MAX_CFF_OPERATIONS: usize = 1_000_000;
 const MAX_CFF_FDS: usize = 512;
 const MAX_GVAR_TUPLES: usize = 4_095;
 const MAX_VARIATION_AXES: usize = 32;
@@ -1339,6 +1342,7 @@ fn outline_cff(data: &[u8], cff: &CffState, glyph: u16, sink: &mut impl OutlineS
         y: 0.0,
         hints: 0,
         contour_open: false,
+        operations: 0,
     };
     let result = interpreter.run(charstring, 0)?;
     if result == Type2Exit::Return {
@@ -1366,6 +1370,7 @@ struct Type2Interpreter<'a, 'b, S: OutlineSink> {
     y: f32,
     hints: usize,
     contour_open: bool,
+    operations: usize,
 }
 
 impl<S: OutlineSink> Type2Interpreter<'_, '_, S> {
@@ -1375,6 +1380,10 @@ impl<S: OutlineSink> Type2Interpreter<'_, '_, S> {
         }
         let mut position = 0_usize;
         while position < code.len() {
+            self.operations = checked_add(self.operations, 1)?;
+            if self.operations > MAX_CFF_OPERATIONS {
+                return Err(Error::damaged("CFF charstring work exceeds limit"));
+            }
             let byte = *code
                 .get(position)
                 .ok_or_else(|| Error::damaged("CFF charstring byte missing"))?;
@@ -3405,5 +3414,76 @@ mod hvar_tests {
                 let _ = advance_of(&font, 'H');
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod cff_budget_tests {
+    use super::{checked_add, outline_cff, CffIndex, CffPrivate, CffState, OutlineSink};
+    use sse_core::Error;
+
+    struct NullSink;
+
+    impl OutlineSink for NullSink {
+        fn move_to(&mut self, _x: f32, _y: f32) {}
+        fn line_to(&mut self, _x: f32, _y: f32) {}
+        fn quad_to(&mut self, _cx: f32, _cy: f32, _x: f32, _y: f32) {}
+        fn cubic_to(&mut self, _c1x: f32, _c1y: f32, _c2x: f32, _c2y: f32, _x: f32, _y: f32) {}
+        fn close(&mut self) {}
+    }
+
+    /// Appends a one-byte-offset INDEX holding `objects` to `data` and describes it.
+    fn index_of(data: &mut Vec<u8>, objects: &[Vec<u8>]) -> CffIndex {
+        let offsets = data.len();
+        let mut offset = 1_usize;
+        data.push(u8::try_from(offset).unwrap_or(u8::MAX));
+        for object in objects {
+            offset = checked_add(offset, object.len()).unwrap_or(usize::MAX);
+            data.push(u8::try_from(offset).unwrap_or(u8::MAX));
+        }
+        let object_data = data.len();
+        for object in objects {
+            data.extend_from_slice(object);
+        }
+        CffIndex {
+            count: objects.len(),
+            offsets,
+            data: object_data,
+            end: data.len(),
+            off_size: 1,
+        }
+    }
+
+    #[test]
+    fn subroutine_fan_out_within_the_depth_limit_is_refused_by_the_work_budget() {
+        // Subroutine k calls subroutine k+1 eight times. The depth stays within the limit of 10, so only
+        // the work budget stops an 8^9 walk. Operand bytes encode index + 107 - 107 (32 is index 0).
+        let mut subrs: Vec<Vec<u8>> = Vec::new();
+        for level in 0..9_usize {
+            let call = u8::try_from(level + 1 + 32).unwrap_or(u8::MAX);
+            // Eight calls, then `return` (11) so each body hands control back to its caller.
+            let mut body: Vec<u8> = (0..8).flat_map(|_| [call, 10_u8]).collect();
+            body.push(11);
+            subrs.push(body);
+        }
+        subrs.push(vec![11_u8]);
+
+        let mut data = Vec::new();
+        let char_strings = index_of(&mut data, &[vec![32_u8, 10_u8]]);
+        let local_subrs = index_of(&mut data, &subrs);
+        let global_subrs = index_of(&mut data, &[]);
+        let cff = CffState {
+            char_strings,
+            global_subrs,
+            private: Some(CffPrivate {
+                local_subrs: Some(local_subrs),
+            }),
+            fd_array: Vec::new(),
+            fd_select_offset: None,
+            fd_select_end: 0,
+        };
+
+        let result = outline_cff(&data, &cff, 0, &mut NullSink);
+        assert!(matches!(result, Err(Error::Damaged(_))), "{result:?}");
     }
 }
