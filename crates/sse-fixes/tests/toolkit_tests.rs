@@ -637,3 +637,25 @@ fn profile_rejects_unknown_game_instead_of_defaulting_to_shadow() {
     let text = br#"{"name":"Typo","game":"clearsky"}"#;
     assert!(ToolkitProfileService::deserialize_profile(text).is_err());
 }
+
+struct S2RunningProbe;
+
+impl sse_fixes::running_game::GameRunningProbe for S2RunningProbe {
+    fn is_game_running(&self, _game: GameTarget) -> sse_core::Result<bool> {
+        Ok(true)
+    }
+}
+
+#[test]
+fn stalker2_mod_toggle_is_refused_while_the_game_is_running() {
+    let fixture = ToolkitTestFixture::new(GameTarget::Stalker2, "1643320");
+    let paks_dir = fixture.root.join("Stalker2").join("Content").join("Paks");
+
+    fs::create_dir_all(paks_dir.join("~mods")).unwrap();
+    fs::write(paks_dir.join("~mods").join("a.pak"), b"mod").unwrap();
+
+    let result = Stalker2ModToggle::toggle_while_not_running(&fixture.root, &S2RunningProbe);
+    assert!(result.is_err());
+    assert!(paks_dir.join("~mods").join("a.pak").is_file());
+    assert!(!paks_dir.join("~mods.disabled").exists());
+}

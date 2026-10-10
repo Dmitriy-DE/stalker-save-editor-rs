@@ -3,8 +3,6 @@
 //! The process list is read through `sse_sys::system::running_processes`. The name rules mirror the
 //! save-editor process guard in `sse-ui`; keep them in sync when executable names change.
 
-use std::sync::Arc;
-
 use sse_core::{Error, Result};
 
 use crate::models::GameTarget;
@@ -63,7 +61,7 @@ pub fn game_process_matches(game: GameTarget, process_name: &str) -> bool {
 }
 
 /// Fails with [`Error::Refused`] when the game for `game` is running, or when that cannot be checked.
-pub(crate) fn ensure_game_not_running(probe: &Arc<dyn GameRunningProbe>, game: GameTarget) -> Result<()> {
+pub(crate) fn ensure_game_not_running(probe: &dyn GameRunningProbe, game: GameTarget) -> Result<()> {
     if probe.is_game_running(game)? {
         return Err(Error::Refused(
             "Close the game before changing its files; it may overwrite them.".to_string(),
