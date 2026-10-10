@@ -726,3 +726,47 @@ fn default_crash_reader_extracts_exception_and_faulting_module_from_a_minidump()
     assert_eq!(analysis.faulting_module_offset.as_deref(), Some("xrCore.dll+0x1B944"));
     assert!(analysis.summary.contains("0x80000003"));
 }
+
+#[test]
+fn repair_skips_broken_states_that_need_a_separate_game_fix() {
+    let facts = [
+        QuestNpcVitals {
+            section: "esc_wolf".to_owned(),
+            is_dead: true,
+        },
+        QuestNpcVitals {
+            section: "gar_digger_quester".to_owned(),
+            is_dead: true,
+        },
+    ];
+    let states = evaluate_quest_facts("stalker-cs", Some(&[]), &facts);
+    let wolf = states.iter().find(|state| state.id == "cs.wolf-dead");
+    assert_eq!(wolf.map(|state| state.status), Some(QuestTaskStatus::Broken));
+    assert!(wolf.is_some_and(|state| state.needs_preventing_fix));
+
+    let portions = super::repairable_info_portions(&states);
+
+    assert!(portions
+        .iter()
+        .any(|portion| portion == "gar_flea_market_stop_quest_line"));
+    assert!(!portions.iter().any(|portion| portion == "esc_wolf_dead"));
+}
+
+#[test]
+fn two_creature_records_for_one_quest_npc_stay_unknown() {
+    let facts = [
+        QuestNpcVitals {
+            section: "gar_digger_quester".to_owned(),
+            is_dead: false,
+        },
+        QuestNpcVitals {
+            section: "gar_digger_quester".to_owned(),
+            is_dead: true,
+        },
+    ];
+    let states = evaluate_quest_facts("stalker-cs", Some(&[]), &facts);
+    let digger = states.iter().find(|state| state.id == "cs.wild-napr-dead");
+
+    assert_eq!(digger.map(|state| state.reason), Some("npc-ambiguous"));
+    assert_eq!(digger.map(|state| state.status), Some(QuestTaskStatus::Unknown));
+}

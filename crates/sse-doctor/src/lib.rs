@@ -416,16 +416,22 @@ fn evaluate_quest_rule(
             "The task cancellation flag is already set.",
         )
     } else {
-        let mut npc_found = false;
+        let mut npc_found = 0_usize;
         let mut npc_alive = false;
         for vitals in npc_vitals
             .iter()
             .filter(|vitals| vitals.section.eq_ignore_ascii_case(rule.npc_section))
         {
-            npc_found = true;
+            npc_found = npc_found.saturating_add(1);
             npc_alive |= !vitals.is_dead;
         }
-        if !npc_found {
+        if npc_found > 1 {
+            (
+                QuestTaskStatus::Unknown,
+                "npc-ambiguous",
+                "More than one creature record matches the quest NPC; the save does not identify which one is the quest giver.",
+            )
+        } else if npc_found == 0 {
             (
                 QuestTaskStatus::Unknown,
                 "npc-missing",
@@ -547,14 +553,7 @@ pub fn prepare_quest_repair(data: &[u8]) -> Result<Option<SaveBuffer>> {
     if report.status == SaveDoctorStatus::Error {
         return Err(Error::damaged(report.summary));
     }
-    let info_portions = report
-        .states
-        .iter()
-        .filter(|state| state.status == QuestTaskStatus::Broken)
-        .filter_map(|state| state.missing_info.map(str::to_owned))
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
+    let info_portions = repairable_info_portions(&report.states);
     if info_portions.is_empty() {
         return Ok(None);
     }
@@ -567,6 +566,19 @@ pub fn prepare_quest_repair(data: &[u8]) -> Result<Option<SaveBuffer>> {
     )?;
     verify_quest_repair(prepared.as_slice())?;
     Ok(Some(prepared))
+}
+
+/// Info portions to add: broken states whose flag works without a separate game fix, each once.
+///
+/// A state that `needs_preventing_fix` stays broken after the flag is added, so it is never repaired here.
+fn repairable_info_portions(states: &[QuestTaskState]) -> Vec<String> {
+    states
+        .iter()
+        .filter(|state| state.status == QuestTaskStatus::Broken && !state.needs_preventing_fix)
+        .filter_map(|state| state.missing_info.map(str::to_owned))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 /// Verifies that a written save parses and no evidence-backed quest remains broken.
