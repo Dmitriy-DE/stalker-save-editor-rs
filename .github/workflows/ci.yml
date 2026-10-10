@@ -146,12 +146,32 @@ jobs:
         shell: bash
         run: |
           for t in ${{ matrix.targets }}; do rustup target add "$t"; done
-          if [ "${{ runner.os }}" = "Linux" ]; then sudo apt-get update && sudo apt-get install -y mingw-w64; fi
+          if [ "${{ runner.os }}" = "Linux" ]; then sudo apt-get update && sudo apt-get install -y mingw-w64 squashfs-tools; fi
       - name: Package
         shell: bash
+        env:
+          # Builds the pinned AppImage (tools/package.sh checks the SHA-256 of each downloaded tool).
+          SSE_BUILD_APPIMAGE: "1"
         run: |
           args=""; for t in ${{ matrix.targets }}; do args="$args --target $t"; done
           tools/package.sh $args
+      - name: Verify AppImage
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="dist/SaveEditor-linux-x86_64.AppImage"
+          test -s "$app"
+          work="$(mktemp -d)"
+          cp "$app" "$work/app.AppImage"
+          chmod 0755 "$work/app.AppImage"
+          # --appimage-extract needs no FUSE, so it works on the CI runner.
+          (cd "$work" && ./app.AppImage --appimage-extract >/dev/null)
+          root="$work/squashfs-root"
+          for f in AppRun usr/bin/stalker-save usr/bin/sse-shell stalker-save-editor.desktop stalker-save-editor.svg; do
+            test -e "$root/$f" || { echo "AppImage is missing $f"; exit 1; }
+          done
+          "$root/usr/bin/stalker-save" version
       - name: Stage Enhanced Edition Workshop packages
         if: runner.os == 'Linux'
         shell: bash

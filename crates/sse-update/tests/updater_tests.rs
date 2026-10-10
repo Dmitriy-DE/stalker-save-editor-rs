@@ -961,3 +961,11 @@ fn oversized_partial_from_a_republished_package_is_replaced_not_refused() {
     assert_eq!(fetch.requested_ranges, vec![0]);
     assert_eq!(fs::read(&destination).unwrap(), payload);
 }
+
+#[test]
+fn linux_appimage_artifact_is_registered_for_the_updater() {
+    assert_eq!(
+        sse_update::platform::artifact_key("linux", "x86_64", "appimage"),
+        Some("linux-appimage-x86_64")
+    );
+}

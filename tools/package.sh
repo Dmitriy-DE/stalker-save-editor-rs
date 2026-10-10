@@ -10,6 +10,14 @@ DIST_DIR="${PROJECT_ROOT}/dist"
 METADATA_DIR="${DIST_DIR}/.package-metadata"
 DOWNLOAD_BASE_URL="${DOWNLOAD_BASE_URL:-https://save-editor-downloads.save-editor.workers.dev}"
 SSE_PACKAGE_STAGE=""
+# Pinned AppImage tooling (versions and SHA-256 taken from the GitHub release metadata).
+# Fetched only when SSE_BUILD_APPIMAGE=1 (CI), and refused on any hash mismatch.
+APPIMAGETOOL_VERSION="1.9.1"
+APPIMAGETOOL_URL="https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage"
+APPIMAGETOOL_SHA256="ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0"
+APPIMAGE_RUNTIME_VERSION="20251108"
+APPIMAGE_RUNTIME_URL="https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64"
+APPIMAGE_RUNTIME_SHA256="2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d"
 
 export CARGO_TARGET_DIR="${TARGET_CACHE}"
 
@@ -120,6 +128,7 @@ record_artifact() {
     [[ "${size}" =~ ^[0-9]+$ ]] && (( size > 0 && size <= 2147483648 )) || die "artifact size is outside G5 limits: ${artifact}"
     case "${key}" in
         linux-x86_64|windows-x86_64|windows-installer-x86_64|linux-deb-amd64) maximum_size=31457280 ;;
+        linux-appimage-x86_64) maximum_size=52428800 ;;
         macos-arm64|macos-x86_64) maximum_size=36700160 ;;
         *) die "no packaging size budget is defined for ${key}" ;;
     esac
@@ -212,6 +221,61 @@ EOF
     local deb_name="stalker-save-editor_${VERSION}_amd64.deb"
     (cd "${stage}" && ar rcsD "${DIST_DIR}/${deb_name}" debian-binary control.tar.gz data.tar.gz)
     record_artifact linux-deb-amd64 linux-deb-amd64 x86_64 package "${DIST_DIR}/${deb_name}"
+
+    if [[ "${SSE_BUILD_APPIMAGE:-0}" == 1 ]]; then
+        build_appimage "${cli}" "${shell_bin}" "${stage}"
+    fi
+}
+
+# Downloads a pinned tool once; a missing or mismatched hash is a hard failure, never a silent fallback.
+fetch_pinned() {
+    local url="$1" expected="$2" dest="$3"
+    if [[ -f "${dest}" && "$(sha256_file "${dest}")" == "${expected}" ]]; then
+        return 0
+    fi
+    need_command curl
+    local partial="${dest}.partial"
+    rm -f -- "${partial}"
+    curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location -o "${partial}" "${url}" \
+        || die "download failed: ${url}"
+    if [[ "$(sha256_file "${partial}")" != "${expected}" ]]; then
+        rm -f -- "${partial}"
+        die "SHA-256 mismatch for ${url}; refusing to use it"
+    fi
+    mv -f -- "${partial}" "${dest}"
+    chmod 0755 "${dest}"
+}
+
+# Builds the AppDir from the same binaries as the portable archive and packs it with the pinned appimagetool.
+build_appimage() {
+    local cli="$1" shell_bin="$2" stage="$3"
+    need_command mksquashfs
+    local tools="${TARGET_CACHE}/appimage-tools"
+    mkdir -p "${tools}"
+    local tool="${tools}/appimagetool-${APPIMAGETOOL_VERSION}-x86_64.AppImage"
+    local runtime="${tools}/type2-runtime-${APPIMAGE_RUNTIME_VERSION}-x86_64"
+    fetch_pinned "${APPIMAGETOOL_URL}" "${APPIMAGETOOL_SHA256}" "${tool}"
+    fetch_pinned "${APPIMAGE_RUNTIME_URL}" "${APPIMAGE_RUNTIME_SHA256}" "${runtime}"
+
+    local appdir="${stage}/AppDir"
+    mkdir -p "${appdir}/usr/bin"
+    cp "${cli}" "${appdir}/usr/bin/stalker-save"
+    cp "${shell_bin}" "${appdir}/usr/bin/sse-shell"
+    cp "${PROJECT_ROOT}/packaging/linux/stalker-save-editor.desktop" "${appdir}/stalker-save-editor.desktop"
+    cp "${PROJECT_ROOT}/packaging/icons/stalker-save-editor.svg" "${appdir}/stalker-save-editor.svg"
+    cp "${PROJECT_ROOT}/packaging/icons/stalker-save-editor.svg" "${appdir}/.DirIcon"
+    printf '%s\n' '#!/bin/sh' 'HERE="$(dirname "$(readlink -f "$0")")"' 'exec "$HERE/usr/bin/sse-shell" "$@"' >"${appdir}/AppRun"
+    chmod 0755 "${appdir}/AppRun" "${appdir}/usr/bin/stalker-save" "${appdir}/usr/bin/sse-shell"
+
+    local out="${DIST_DIR}/SaveEditor-linux-x86_64.AppImage"
+    rm -f -- "${out}"
+    # No FUSE on CI runners: extract-and-run; the runtime is pinned so appimagetool downloads nothing itself.
+    ARCH=x86_64 SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
+        "${tool}" --appimage-extract-and-run --runtime-file "${runtime}" "${appdir}" "${out}" \
+        || die "appimagetool failed"
+    [[ -s "${out}" ]] || die "appimagetool did not produce ${out}"
+    chmod 0755 "${out}"
+    record_artifact linux-appimage-x86_64 linux-appimage-x86_64 x86_64 appimage "${out}"
 }
 
 build_windows() {
@@ -330,7 +394,7 @@ write_manifest() {
         printf '  "artifacts": {\n'
         write_artifact_group required windows-x86_64 linux-x86_64 linux-deb-amd64
         printf '  },\n  "optional_artifacts": {\n'
-        write_artifact_group optional windows-installer-x86_64 macos-arm64 macos-x86_64
+        write_artifact_group optional windows-installer-x86_64 macos-arm64 macos-x86_64 linux-appimage-x86_64
         printf '  }\n}\n'
     } >"${temporary}"
     mv "${temporary}" "${DIST_DIR}/latest.json"
