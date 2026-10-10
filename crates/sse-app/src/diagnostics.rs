@@ -1101,11 +1101,45 @@ fn read_diagnostic_file(path: &Path, root: &Path, maximum: usize) -> Option<Vec<
     file.seek(SeekFrom::Start(length.saturating_sub(maximum_u64))).ok()?;
     let mut data = Vec::with_capacity(usize::try_from(length.min(maximum_u64)).ok()?);
     file.take(maximum_u64).read_to_end(&mut data).ok()?;
-    // Only text is redacted; binary files (minidumps, raw memory) could carry paths and secrets the
-    // redaction cannot see, so they are left out of the archive instead of copied raw.
-    let text = std::str::from_utf8(&data).ok()?;
-    let redacted = redact(text);
+    // Binary files (minidumps, raw memory) can carry paths and secrets the redaction cannot see, so they
+    // are left out of the archive. A NUL byte marks binary; X-Ray logs are Windows-1251 text and are kept.
+    if data.contains(&0) {
+        return None;
+    }
+    let text = match std::str::from_utf8(&data) {
+        Ok(text) => text.to_owned(),
+        Err(_) => decode_windows_1251_text(&data),
+    };
+    let redacted = redact(&text);
     Some(tail_utf8(&redacted, maximum).as_bytes().to_vec())
+}
+
+/// Windows-1251 code points for bytes 0x80..=0xFF (the same table `sse-content` uses for X-Ray text).
+const CP1251_HIGH: [u16; 128] = [
+    1026, 1027, 8218, 1107, 8222, 8230, 8224, 8225, 8364, 8240, 1033, 8249, 1034, 1036, 1035, 1039, 1106, 8216, 8217,
+    8220, 8221, 8226, 8211, 8212, 65533, 8482, 1113, 8250, 1114, 1116, 1115, 1119, 160, 1038, 1118, 1032, 164, 1168,
+    166, 167, 1025, 169, 1028, 171, 172, 173, 174, 1031, 176, 177, 1030, 1110, 1169, 181, 182, 183, 1105, 8470, 1108,
+    187, 1112, 1029, 1109, 1111, 1040, 1041, 1042, 1043, 1044, 1045, 1046, 1047, 1048, 1049, 1050, 1051, 1052, 1053,
+    1054, 1055, 1056, 1057, 1058, 1059, 1060, 1061, 1062, 1063, 1064, 1065, 1066, 1067, 1068, 1069, 1070, 1071, 1072,
+    1073, 1074, 1075, 1076, 1077, 1078, 1079, 1080, 1081, 1082, 1083, 1084, 1085, 1086, 1087, 1088, 1089, 1090, 1091,
+    1092, 1093, 1094, 1095, 1096, 1097, 1098, 1099, 1100, 1101, 1102, 1103,
+];
+
+fn decode_windows_1251_text(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|&byte| {
+            if byte < 0x80 {
+                char::from(byte)
+            } else {
+                let code = CP1251_HIGH
+                    .get(usize::from(byte.saturating_sub(0x80)))
+                    .copied()
+                    .unwrap_or(65533);
+                char::from_u32(u32::from(code)).unwrap_or('\u{FFFD}')
+            }
+        })
+        .collect()
 }
 
 fn single_line(value: &str) -> String {
@@ -1126,6 +1160,22 @@ mod tests {
     use super::*;
     use sse_codecs::inflate::inflate_raw;
     use sse_sys::fetch::Response;
+
+    #[test]
+    fn windows_1251_xray_log_is_kept_and_transcoded_to_utf8() -> Result<()> {
+        let root = std::env::temp_dir().join(format!("sse-diag-cp1251-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root)?;
+        let path = root.join("xray_1.log");
+        // "Ошибка" in Windows-1251 followed by ASCII; not valid UTF-8.
+        fs::write(&path, [0xce_u8, 0xf8, 0xe8, 0xe1, 0xea, 0xe0, b' ', b'x', b'\n'])?;
+
+        let kept = read_diagnostic_file(&path, &root, PART_BYTES);
+        let _ = fs::remove_dir_all(&root);
+        let text = String::from_utf8(kept.unwrap_or_default()).unwrap_or_default();
+        assert!(text.contains("Ошибка x"), "{text:?}");
+        Ok(())
+    }
 
     #[test]
     fn binary_game_dumps_are_left_out_of_the_diagnostics_archive() -> Result<()> {
@@ -1637,7 +1687,8 @@ mod tests {
         let entries = sse_codecs::zip::read(&archive, 4 * 1024 * 1024)?;
         assert!(entries.iter().any(|entry| entry.name.ends_with("/xray_0.log")));
         assert!(entries.iter().any(|entry| entry.name.ends_with("/game.log")));
-        assert!(entries.iter().any(|entry| entry.name.ends_with("/crash.dmp")));
+        // Binary minidumps are never copied raw into the archive (see `read_diagnostic_file`).
+        assert!(!entries.iter().any(|entry| entry.name.ends_with("/crash.dmp")));
         let xray_log = entries
             .iter()
             .find(|entry| entry.name.ends_with("/xray_0.log"))
