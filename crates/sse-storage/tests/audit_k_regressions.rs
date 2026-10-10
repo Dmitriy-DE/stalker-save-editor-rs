@@ -391,7 +391,7 @@ fn crash_child() {
 }
 #[test]
 fn process_interruptions_preserve_whole_source_at_every_step() {
-    for step in 1..=13 {
+    for step in 1..=12 {
         let t = Temp::new();
         let source = t.0.join("saves/test.sav");
         fs::write(&source, OLD).unwrap();
@@ -420,7 +420,7 @@ fn interrupted_replacement_must_allow_recovery_of_intact_backup() {
     let status = std::process::Command::new(std::env::current_exe().unwrap())
         .args(["--exact", "crash_child", "--ignored"])
         .env("AUDIT_K_CRASH_ROOT", &t.0)
-        .env("AUDIT_K_CRASH_STEP", "13")
+        .env("AUDIT_K_CRASH_STEP", "12")
         .status()
         .unwrap();
     assert_eq!(status.code(), Some(86));

@@ -1229,14 +1229,7 @@ fn replace_with_file_system_and_operation_and_checks<P, V>(
 
         files.copy_permissions(&source_path, &temporary_output)?;
 
-        // Check after metadata copying, which can give another writer time to change the save.
-        let current_source = files.read_all(&source_path)?;
-        let current_hash = sha256::sha256_hex(&current_source);
-        if current_hash != expected_source_sha256 {
-            return Err(Error::Refused(format!(
-                "Source changed before replacement: expected {expected_source_sha256}, found {current_hash}."
-            )));
-        }
+        // The source is checked again immediately before the rename, after metadata copying, by `replace_if_sha256_matches`.
         files.replace_if_sha256_matches(&temporary_output, &source_path, expected_source_sha256)?;
         source_replaced = true;
         files.sync_directory(source_directory)?;
@@ -2542,7 +2535,7 @@ mod tests {
         let journal = std::str::from_utf8(&journal)?;
         assert!(journal.contains("\"status\":\"verified\""));
         assert!(journal.contains(&format!("\"source_sha256\":\"{source_hash}\"")));
-        assert_eq!(fs.operation_count(), 13);
+        assert_eq!(fs.operation_count(), 12);
         Ok(())
     }
 
@@ -2589,7 +2582,7 @@ mod tests {
         let source_hash = sse_codecs::sha256::sha256_hex(source_bytes);
         let (source, backup_directory) = fake_paths();
 
-        for failure_step in 1..=13 {
+        for failure_step in 1..=12 {
             let fs = MemoryFs::new(&source, source_bytes, Some(failure_step));
             assert!(replace_with_file_system(&fs, &source, &source_hash, output_bytes, &backup_directory).is_err());
             assert_eq!(
