@@ -313,7 +313,8 @@ jobs:
           SOURCE_DATE_EPOCH: "1700000000"
         run: |
           set -euo pipefail
-          tools/apt-repo.sh dist rehearsal/apt
+          # Outputs go outside the checkout: package.sh refuses a dirty source tree.
+          tools/apt-repo.sh dist "$RUNNER_TEMP/rehearsal/apt"
       - name: Build release manifest like the release job
         env:
           DOWNLOAD_BASE_URL: https://rehearsal.invalid/sse
