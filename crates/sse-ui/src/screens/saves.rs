@@ -151,8 +151,6 @@ const INVENTORY_COUNT_WIDTH: f32 = 76.0;
 const INVENTORY_STEPPER_WIDTH: f32 = 64.0;
 const ADD_ITEM_PAGE_SIZE: usize = 8;
 const MAXIMUM_STASH_ROWS: usize = 10;
-/// Transition rows per page: six rows fit the 1366×768 window with the pager under them.
-const TRANSITION_PAGE_SIZE: usize = 6;
 const MAXIMUM_UPGRADE_ROWS: usize = 16;
 const MAX_BROWSER_SAVE_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_BROWSER_FILENAME_BYTES: usize = 240;
@@ -7001,7 +6999,7 @@ impl Factions {
         };
         let Some(selected) = selected else {
             self.faction_keys.clear();
-            self.set_text(cx, "Сначала выберите сейв на экране «Обзор».")?;
+            self.set_text(cx, t("Сначала выберите сейв на экране «Обзор»."))?;
             return self.set_controls_visible(cx, false);
         };
         if self.last_path.as_ref() != Some(&selected.slot.path) {
@@ -7309,7 +7307,7 @@ impl Stashes {
         }
         self.set_status(cx, "")?;
         let Some(selected) = selected else {
-            self.set_text(cx, "Сначала выберите сейв на экране «Обзор».")?;
+            self.set_text(cx, t("Сначала выберите сейв на экране «Обзор»."))?;
             return Ok(());
         };
         if self.last_path.as_ref() != Some(&selected.slot.path) {
@@ -7828,28 +7826,65 @@ impl Screen for Stashes {
 }
 
 /// Parsed level-changer destinations in the selected save.
+/// Transition rows the list can hold at most.
+const TRANSITION_ROWS: usize = 12;
+/// Height of one list row with its gap.
+const TRANSITION_ROW_PITCH: f32 = 50.0;
+/// Window height the list does not get: the shell's top and bottom, the panel's padding, header, note and pager.
+const TRANSITION_CHROME: f32 = 393.0;
+
+/// Rows that fit the window height, from one to [`TRANSITION_ROWS`].
+fn transition_page_size(window_height: f32) -> usize {
+    let available = window_height - TRANSITION_CHROME;
+    let mut rows = 0_usize;
+    while rows < TRANSITION_ROWS {
+        let next = f32::from(u16::try_from(rows.saturating_add(1)).unwrap_or(u16::MAX));
+        if next * TRANSITION_ROW_PITCH > available {
+            break;
+        }
+        rows = rows.saturating_add(1);
+    }
+    rows.max(1)
+}
+
+/// Window size in pixels as floats: (width, height).
+fn window_pixels(tree: &Tree) -> (f32, f32) {
+    let (width, height) = tree.size();
+    (
+        f32::from(u16::try_from(width).unwrap_or(u16::MAX)),
+        f32::from(u16::try_from(height).unwrap_or(u16::MAX)),
+    )
+}
+
 struct Transitions {
     workspace: Workspace,
     text: Option<WidgetId>,
     status: Option<WidgetId>,
+    count: Option<WidgetId>,
+    side: Option<WidgetId>,
+    detail: Option<WidgetId>,
     confirmation: Option<WidgetId>,
     confirmation_actions: Option<WidgetId>,
     confirm: Option<WidgetId>,
     cancel: Option<WidgetId>,
-    rows: Vec<TransitionRow>,
+    move_here: Option<WidgetId>,
     pages: Option<WidgetId>,
     previous: Option<WidgetId>,
     page_range: Option<WidgetId>,
     next: Option<WidgetId>,
+    rows: Vec<TransitionRow>,
     page: usize,
+    selected: Option<u16>,
     pending_confirmation: Option<u16>,
     last_path: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy)]
 struct TransitionRow {
-    row: WidgetId,
-    label: WidgetId,
+    stack: WidgetId,
+    card: WidgetId,
+    title: WidgetId,
+    meta: WidgetId,
     select: WidgetId,
     handle: Option<u16>,
 }
@@ -7860,56 +7895,73 @@ impl Transitions {
             workspace,
             text: None,
             status: None,
+            count: None,
+            side: None,
+            detail: None,
             confirmation: None,
             confirmation_actions: None,
             confirm: None,
             cancel: None,
-            rows: Vec::new(),
+            move_here: None,
             pages: None,
             previous: None,
             page_range: None,
             next: None,
+            rows: Vec::new(),
             page: 0,
+            selected: None,
             pending_confirmation: None,
             last_path: None,
         }
     }
 
     fn render(&mut self, cx: &mut Context<'_>) -> Result<()> {
-        let (selected, pending) = {
+        let (selected_save, pending) = {
             let state = self.workspace.lock();
             (state.selected.clone(), state.pending_relocation)
         };
+        let (window_width, window_height) = window_pixels(cx.tree);
+        let page_size = transition_page_size(window_height);
+        let compact = window_width < 1600.0;
+        if let Some(side) = self.side {
+            cx.tree.set_style(side, side_column_style(compact, false))?;
+        }
         for row in &mut self.rows {
             row.handle = None;
-            cx.tree.set_visible(row.row, false)?;
+            cx.tree.set_visible(row.stack, false)?;
         }
-        if let Some(id) = self.confirmation {
+        for id in [
+            self.pages,
+            self.confirmation,
+            self.confirmation_actions,
+            self.confirm,
+            self.cancel,
+        ]
+        .into_iter()
+        .flatten()
+        {
             cx.tree.set_visible(id, false)?;
         }
-        if let Some(id) = self.confirmation_actions {
-            cx.tree.set_visible(id, false)?;
+        if let Some(id) = self.move_here {
+            cx.tree.set_enabled(id, false)?;
         }
-        if let Some(id) = self.confirm {
-            cx.tree.set_visible(id, false)?;
+        if let Some(id) = self.count {
+            cx.tree.set_text(id, "0")?;
         }
-        if let Some(id) = self.cancel {
-            cx.tree.set_visible(id, false)?;
-        }
-        if let Some(id) = self.pages {
-            cx.tree.set_visible(id, false)?;
-        }
-        let Some(selected) = selected else {
-            self.set_text(cx, "Сначала выберите сейв на экране «Обзор».")?;
+        let Some(selected) = selected_save else {
+            self.set_text(cx, t("Сначала выберите сейв на экране «Обзор»."))?;
+            self.set_detail(cx, t("Сначала выберите сейв на экране «Обзор»."))?;
             self.set_status(cx, "")?;
             return Ok(());
         };
         if self.last_path.as_ref() != Some(&selected.slot.path) {
             self.last_path = Some(selected.slot.path.clone());
             self.pending_confirmation = None;
+            self.selected = None;
         }
         let SaveData::Xray { save, .. } = &selected.data else {
-            self.set_text(cx, "Перенос персонажа поддерживается только для X-Ray сейвов.")?;
+            self.set_text(cx, t("Перенос персонажа поддерживается только для X-Ray сейвов."))?;
+            self.set_detail(cx, t("Перенос персонажа поддерживается только для X-Ray сейвов."))?;
             self.set_status(cx, "")?;
             return Ok(());
         };
@@ -7924,7 +7976,9 @@ impl Transitions {
             && !self.workspace.is_saving()
             && !self.workspace.is_restoring();
         let destination_count = destinations.len();
-        let page_size = TRANSITION_PAGE_SIZE;
+        if let Some(id) = self.count {
+            cx.tree.set_text(id, &destination_count.to_string())?;
+        }
         let pages = destination_count
             .saturating_add(page_size.saturating_sub(1))
             .checked_div(page_size)
@@ -7936,14 +7990,15 @@ impl Transitions {
         } else {
             "Перенос персонажа не поддерживается этим форматом или временно занят."
         });
-        self.set_text(
-            cx,
-            &tr(
-                "{0} подтверждённых переходов. {1}",
-                &[&destination_count, &availability],
-            ),
-        )?;
-        for (row, (handle, destination)) in self.rows.iter_mut().zip(destinations.iter().skip(start)) {
+        self.set_text(cx, availability)?;
+        if let Some(id) = self.pages {
+            cx.tree.set_visible(id, destination_count > page_size)?;
+        }
+        for (row, (handle, destination)) in self
+            .rows
+            .iter_mut()
+            .zip(destinations.iter().skip(start).take(page_size))
+        {
             let position = destination.dest_position.map_or_else(
                 || t("позиция неизвестна").to_owned(),
                 |point| format!("x {:.1}, y {:.1}, z {:.1}", point.x, point.y, point.z),
@@ -7954,25 +8009,36 @@ impl Transitions {
                 ""
             });
             cx.tree.set_text(
-                row.label,
-                &tr(
-                    "{0} → {1} · {2} · id 0x{3}{4}",
-                    &[
-                        &t(&destination.dest_level_name),
-                        &t(&destination.dest_level_point_name),
-                        &position,
-                        &format!("{handle:04X}"),
-                        &staged_suffix,
-                    ],
+                row.title,
+                &format!(
+                    "{} → {}",
+                    t(&destination.dest_level_name),
+                    t(&destination.dest_level_point_name)
                 ),
             )?;
-            cx.tree.set_visible(row.row, true)?;
-            cx.tree.set_visible(row.select, pending != Some(*handle))?;
-            cx.tree.set_enabled(row.select, can_relocate)?;
+            cx.tree.set_text(
+                row.meta,
+                &tr(
+                    "{0} · id 0x{1}{2}",
+                    &[&position, &format!("{handle:04X}"), &staged_suffix],
+                ),
+            )?;
+            let chosen = self.selected == Some(*handle);
+            cx.tree.set_look(
+                row.card,
+                if chosen {
+                    Look {
+                        fill: Some(style::d2::argb(crate::theme::d2::ACCENT_TINT)),
+                        border: Some((style::d2::argb(crate::theme::d2::ACCENT), 1.0)),
+                        radius: crate::theme::d2::RADIUS_BADGE,
+                        ..Look::default()
+                    }
+                } else {
+                    Look::default()
+                },
+            )?;
+            cx.tree.set_visible(row.stack, true)?;
             row.handle = Some(*handle);
-        }
-        if let Some(id) = self.pages {
-            cx.tree.set_visible(id, destination_count > page_size)?;
         }
         if let Some(id) = self.previous {
             cx.tree.set_enabled(id, self.page > 0)?;
@@ -7992,6 +8058,41 @@ impl Transitions {
         if !can_relocate {
             self.pending_confirmation = None;
         }
+        let chosen = self
+            .selected
+            .and_then(|handle| destinations.iter().find(|(candidate, _)| *candidate == handle));
+        match chosen {
+            Some((handle, destination)) => {
+                let position = destination.dest_position.map_or_else(
+                    || t("позиция неизвестна").to_owned(),
+                    |point| format!("x {:.1}, y {:.1}, z {:.1}", point.x, point.y, point.z),
+                );
+                let title = format!(
+                    "{} → {}",
+                    t(&destination.dest_level_name),
+                    t(&destination.dest_level_point_name)
+                );
+                let staged_suffix = t(if pending == Some(*handle) {
+                    " · в черновике"
+                } else {
+                    ""
+                });
+                let meta = tr(
+                    "{0} · id 0x{1}{2}",
+                    &[&position, &format!("{handle:04X}"), &staged_suffix],
+                );
+                if let Some(id) = self.detail {
+                    cx.tree.set_text(id, &format!("{title}\n{meta}"))?;
+                }
+                if let Some(id) = self.move_here {
+                    cx.tree.set_enabled(id, can_relocate && pending.is_none())?;
+                }
+            }
+            None => {
+                self.selected = None;
+                self.set_detail(cx, t("Переход не выбран. Выберите строку слева."))?;
+            }
+        }
         if let Some(handle) = self.pending_confirmation {
             if let Some((_, destination)) = destinations.iter().find(|(candidate, _)| *candidate == handle) {
                 if let Some(id) = self.confirmation {
@@ -8004,13 +8105,10 @@ impl Transitions {
                     )?;
                     cx.tree.set_visible(id, true)?;
                 }
-                if let Some(id) = self.confirm {
-                    cx.tree.set_visible(id, true)?;
-                }
-                if let Some(id) = self.cancel {
-                    cx.tree.set_visible(id, true)?;
-                }
-                if let Some(id) = self.confirmation_actions {
+                for id in [self.confirm, self.cancel, self.confirmation_actions]
+                    .into_iter()
+                    .flatten()
+                {
                     cx.tree.set_visible(id, true)?;
                 }
             } else {
@@ -8035,6 +8133,13 @@ impl Transitions {
 
     fn set_text(&self, cx: &mut Context<'_>, text: &str) -> Result<()> {
         if let Some(id) = self.text {
+            cx.tree.set_text(id, t(text))?;
+        }
+        Ok(())
+    }
+
+    fn set_detail(&self, cx: &mut Context<'_>, text: &str) -> Result<()> {
+        if let Some(id) = self.detail {
             cx.tree.set_text(id, t(text))?;
         }
         Ok(())
@@ -8125,52 +8230,192 @@ impl Screen for Transitions {
     }
 
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
-        let card = style::card(cx.tree, host)?;
-        style::label(cx.tree, card, "ПЕРЕХОДЫ", Text::Heading)?;
-        self.text = Some(style::label(
-            cx.tree,
-            card,
-            "Выберите сейв на экране «Обзор».",
-            Text::Body,
-        )?);
-        self.status = Some(style::label(cx.tree, card, "", Text::Note)?);
-        self.confirmation = Some(style::label(cx.tree, card, "", Text::Body)?);
-        if let Some(confirmation) = self.confirmation {
-            cx.tree.set_visible(confirmation, false)?;
-        }
-        let actions = style::row(cx.tree, card)?;
-        self.confirmation_actions = Some(actions);
-        self.confirm = Some(style::button(cx.tree, actions, "Подтвердить перенос", Button::Primary)?);
-        self.cancel = Some(style::button(cx.tree, actions, "Отмена", Button::Secondary)?);
-        cx.tree.set_visible(actions, false)?;
-        for _ in 0..TRANSITION_PAGE_SIZE {
-            let row = style::row(cx.tree, card)?;
-            let label = style::label(cx.tree, row, "", Text::Body)?;
-            // The text takes the free width, so every “Перенести сюда…” button ends on the same edge.
-            cx.tree.set_style(
-                label,
+        let (window_width, _) = window_pixels(cx.tree);
+        let body = cx.tree.add(
+            Some(host),
+            NodeKind::Row,
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: Size::new(0.0, 0.0),
+                gap: Size::new(crate::theme::CONTROL_GAP + 6.0, 0.0),
+                align_items: crate::layout::Align::Stretch,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        // The list panel takes the room left by the side column; its bottom is on the library's bottom edge.
+        let list_panel = style::d2::panel(cx.tree, body)?;
+        cx.tree.set_style(
+            list_panel,
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: Size::new(0.0, 0.0),
+                preferred: Size::new(0.0, 0.0),
+                padding: crate::layout::Edges::all(crate::theme::d2::PANEL_PADDING.0),
+                gap: Size::new(0.0, 8.0),
+                align_items: crate::layout::Align::Stretch,
+                ..Style::default()
+            },
+        )?;
+        let header = style::row(cx.tree, list_panel)?;
+        style::d2::panel_title(cx.tree, header, t("ПЕРЕХОДЫ"))?;
+        self.count = Some(style::d2::badge(cx.tree, header, "0", style::d2::BadgeKind::Installed)?);
+        self.text = Some(style::label(cx.tree, list_panel, "", Text::Note)?);
+        let list = cx.tree.add(
+            Some(list_panel),
+            NodeKind::Column,
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: Size::new(0.0, 0.0),
+                align_items: crate::layout::Align::Stretch,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        for _ in 0..TRANSITION_ROWS {
+            // Gaps are bottom margins: a hidden row would otherwise keep a gap of its own.
+            let stack = cx.tree.add(
+                Some(list),
+                NodeKind::Stack,
                 Style {
-                    grow: 1.0,
+                    shrink: 0.0,
+                    align_items: crate::layout::Align::Stretch,
+                    margin: crate::layout::Edges {
+                        bottom: 4.0,
+                        ..crate::layout::Edges::default()
+                    },
+                    ..Style::default()
+                },
+                Content::Panel,
+                Look::default(),
+            )?;
+            let card = cx.tree.add(
+                Some(stack),
+                NodeKind::Row,
+                Style {
+                    min: Size::new(0.0, 46.0),
+                    padding: crate::layout::Edges {
+                        left: 12.0,
+                        top: 4.0,
+                        right: 12.0,
+                        bottom: 4.0,
+                    },
+                    gap: Size::new(12.0, 0.0),
+                    align_items: crate::layout::Align::Center,
                     shrink: 0.0,
                     ..Style::default()
                 },
+                Content::Panel,
+                Look::default(),
             )?;
-            let select = style::button(cx.tree, row, "Перенести сюда…", Button::Secondary)?;
-            cx.tree.set_visible(row, false)?;
+            let text_column = cx.tree.add(
+                Some(card),
+                NodeKind::Column,
+                Style {
+                    grow: 1.0,
+                    shrink: 1.0,
+                    min: Size::new(0.0, 0.0),
+                    gap: Size::new(0.0, 2.0),
+                    align_items: crate::layout::Align::Stretch,
+                    ..Style::default()
+                },
+                Content::Panel,
+                Look::default(),
+            )?;
+            let title = style::label(cx.tree, text_column, "", Text::Body)?;
+            let meta = style::label(cx.tree, text_column, "", Text::Note)?;
+            // The select button is last, so it covers the card and takes the clicks.
+            let select = style::button(cx.tree, stack, "", Button::Secondary)?;
+            cx.tree.set_look(select, Look::default())?;
+            cx.tree.set_visible(stack, false)?;
             self.rows.push(TransitionRow {
-                row,
-                label,
+                stack,
+                card,
+                title,
+                meta,
                 select,
                 handle: None,
             });
         }
-        // The same pager as the inventory table: arrows and the range of the rows shown.
-        let pages = style::row(cx.tree, card)?;
+        // The pager sits under the list, as in the library: arrows and the range of the rows shown.
+        let pages = style::row(cx.tree, list_panel)?;
         self.pages = Some(pages);
         self.previous = Some(library_icon_button(cx.tree, pages, Icon::D2ArrowLeft)?);
         self.page_range = Some(style::label(cx.tree, pages, "", Text::Note)?);
         self.next = Some(library_icon_button(cx.tree, pages, Icon::D2ArrowRight)?);
         cx.tree.set_visible(pages, false)?;
+        // The side column holds the chosen transition and the one action on it.
+        let side = cx.tree.add(
+            Some(body),
+            NodeKind::Column,
+            side_column_style(window_width < 1600.0, false),
+            Content::Panel,
+            Look::default(),
+        )?;
+        self.side = Some(side);
+        let inspector = style::d2::panel(cx.tree, side)?;
+        cx.tree.set_style(
+            inspector,
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: Size::new(0.0, 0.0),
+                preferred: Size::new(0.0, 0.0),
+                padding: crate::layout::Edges::all(crate::theme::d2::PANEL_PADDING.0),
+                gap: Size::new(0.0, 8.0),
+                align_items: crate::layout::Align::Stretch,
+                ..Style::default()
+            },
+        )?;
+        cx.tree.set_clip_children(inspector, true)?;
+        style::d2::panel_title(cx.tree, inspector, t("ВЫБРАННЫЙ ПЕРЕХОД"))?;
+        let detail = paragraph(cx.tree, inspector, "Переход не выбран.", Text::Body)?;
+        // Four lines are reserved: a long level or point name wraps at the narrow side column.
+        cx.tree.set_style(
+            detail,
+            Style {
+                min: Size::new(0.0, 96.0),
+                preferred: Size::new(0.0, 96.0),
+                shrink: 0.0,
+                ..Style::default()
+            },
+        )?;
+        self.detail = Some(detail);
+        self.status = Some(style::label(cx.tree, inspector, "", Text::Note)?);
+        self.confirmation = Some(style::label(cx.tree, inspector, "", Text::Body)?);
+        if let Some(confirmation) = self.confirmation {
+            cx.tree.set_visible(confirmation, false)?;
+        }
+        let actions = style::row(cx.tree, inspector)?;
+        self.confirmation_actions = Some(actions);
+        self.confirm = Some(style::button(cx.tree, actions, "Подтвердить перенос", Button::Primary)?);
+        self.cancel = Some(style::button(cx.tree, actions, "Отмена", Button::Secondary)?);
+        cx.tree.set_visible(actions, false)?;
+        // Spacer: pushes the one action to the bottom of the panel.
+        cx.tree.add(
+            Some(inspector),
+            NodeKind::Column,
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: Size::new(0.0, 0.0),
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        self.move_here = Some(style::d2::button(
+            cx.tree,
+            inspector,
+            t("Перенести сюда…"),
+            style::d2::ButtonKind::Primary,
+            style::d2::ButtonSize::Normal,
+        )?);
         self.render(cx)
     }
 
@@ -8181,9 +8426,13 @@ impl Screen for Transitions {
     fn message(
         &mut self,
         cx: &mut Context<'_>,
-        _message: &Message<AppMessage>,
+        message: &Message<AppMessage>,
         clicked: Option<WidgetId>,
     ) -> Result<()> {
+        // The number of rows follows the window height, so a resize renders the list again.
+        if let Message::Window(crate::event_loop::WindowEvent::Resized { .. }) = message {
+            return self.render(cx);
+        }
         if clicked.is_some() && clicked == self.confirm {
             return self.confirm_relocation(cx);
         }
@@ -8199,13 +8448,21 @@ impl Screen for Transitions {
             self.page = self.page.saturating_add(1);
             return self.render(cx);
         }
+        if clicked.is_some() && clicked == self.move_here {
+            if let Some(handle) = self.selected {
+                self.pending_confirmation = Some(handle);
+                return self.render(cx);
+            }
+            return Ok(());
+        }
         if let Some(handle) = self
             .rows
             .iter()
             .find(|row| clicked.is_some() && clicked == Some(row.select))
             .and_then(|row| row.handle)
         {
-            self.pending_confirmation = Some(handle);
+            self.selected = Some(handle);
+            self.pending_confirmation = None;
             return self.render(cx);
         }
         Ok(())
