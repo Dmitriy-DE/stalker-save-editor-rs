@@ -2820,6 +2820,37 @@ fn grow_style() -> Style {
     }
 }
 
+/// Sentence case for a note written in capitals: its words in lower case (a path keeps its case), the first letter up.
+fn sentence_case(text: &str) -> String {
+    let words: Vec<String> = text
+        .split(' ')
+        .map(|word| {
+            let capitals = word.chars().any(char::is_alphabetic)
+                && word.chars().all(|c| !c.is_alphabetic() || c.is_uppercase())
+                && !word.contains('/')
+                && !word.contains('\\');
+            if capitals {
+                word.to_lowercase()
+            } else {
+                word.to_owned()
+            }
+        })
+        .collect();
+    // Each sentence starts with a capital letter.
+    words
+        .join(" ")
+        .split(". ")
+        .map(|sentence| {
+            let mut chars = sentence.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(". ")
+}
+
 /// Look of a state badge in the fix list: the state's colours from the theme.
 fn badge_look(kind: FixBadge) -> Look {
     let colours = match kind {
@@ -2873,6 +2904,11 @@ fn paragraph_leaf(tree: &mut Tree, parent: WidgetId, text: &str, role: Text) -> 
 struct GameFixes {
     compact: bool,
     details_scroll: Option<WidgetId>,
+    details_title: Option<WidgetId>,
+    details_key: Option<WidgetId>,
+    details_badge: Option<WidgetId>,
+    details_thumb: Option<WidgetId>,
+    details_offset: i32,
     right_column: Option<WidgetId>,
     top_card: Option<WidgetId>,
     categories: Option<WidgetId>,
@@ -3111,7 +3147,38 @@ impl GameFixes {
                     })
             })
             .unwrap_or_else(|| crate::strings::t_in(language, "ВЫБЕРИТЕ ИСПРАВЛЕНИЕ").to_owned());
-        cx.tree.set_text(detail, &text)
+        // The first line of the text is the fix's title and key; the rest is its body.
+        let (head, body) = text.split_once('\n').unwrap_or((text.as_str(), ""));
+        let item = self
+            .selected
+            .as_deref()
+            .and_then(|id| self.items.iter().find(|item| item.id == id));
+        if let Some(item) = item {
+            if let Some(title) = self.details_title {
+                // The title is one line: it is shortened with an ellipsis to the card's inner width.
+                let details_width = if cx.tree.size().0 < 1600 { 340.0 } else { 440.0 };
+                let width = details_width - 2.0 * theme::d2::PANEL_PADDING.0;
+                let heading = crate::strings::t_in(language, &item.title).to_uppercase();
+                let heading = {
+                    let metrics = cx.tree.fonts().metrics(Text::Heading.style());
+                    text::ellipsize_end(&heading, width, &metrics)
+                };
+                cx.tree.set_text(title, &heading)?;
+            }
+            if let Some(key) = self.details_key {
+                cx.tree.set_text(key, &item.id)?;
+            }
+            if let Some(badge) = self.details_badge {
+                cx.tree.set_text(badge, crate::strings::t_in(language, &item.status))?;
+                cx.tree.set_look(badge, badge_look(item.badge))?;
+            }
+            cx.tree.set_text(detail, body)
+        } else {
+            for id in [self.details_title, self.details_key].into_iter().flatten() {
+                cx.tree.set_text(id, "")?;
+            }
+            cx.tree.set_text(detail, head)
+        }
     }
 
     fn render(&mut self, cx: &mut Context<'_>) -> Result<()> {
@@ -3240,6 +3307,15 @@ impl GameFixes {
             };
             cx.tree.set_text(id, &text)?;
         }
+        self.sync_details_thumb(cx)?;
+        // The left block's notes are sentence case, as the other explanations; their paths keep their case.
+        for id in [self.compatibility, self.categories].into_iter().flatten() {
+            let text = cx.tree.text(id)?.to_owned();
+            let next = sentence_case(&text);
+            if next != text {
+                cx.tree.set_text(id, &next)?;
+            }
+        }
         // The actions need a selected fix: without one they are off.
         let has_selection = self.selected.is_some();
         for id in [self.install, self.remove].into_iter().flatten() {
@@ -3285,6 +3361,46 @@ impl GameFixes {
         // The new cap changes the layout of the card and of the parts under it: settle it before they are read.
         cx.tree.update_layout()?;
         Ok(cap)
+    }
+
+    /// How far the details' text can scroll: its height less the height of the area it shows (0 when it fits).
+    fn details_limit(&self, tree: &mut crate::widget::Tree) -> Result<f32> {
+        let Some(scroll) = self.details_scroll else {
+            return Ok(0.0);
+        };
+        let viewport = f32::from(u16::try_from(tree.rect(scroll)?.height).unwrap_or(0));
+        let content = tree.content_height(scroll)?;
+        Ok((content - viewport).max(0.0))
+    }
+
+    /// Sizes and places the thumb of the details scroll: it shows where the text is, and only when the text overflows.
+    fn sync_details_thumb(&self, cx: &mut Context<'_>) -> Result<()> {
+        let (Some(scroll), Some(thumb)) = (self.details_scroll, self.details_thumb) else {
+            return Ok(());
+        };
+        let limit = self.details_limit(cx.tree)?;
+        if limit <= 0.0 {
+            return cx.tree.set_visible(thumb, false);
+        }
+        let viewport = f32::from(u16::try_from(cx.tree.rect(scroll)?.height).unwrap_or(0));
+        let content = viewport + limit;
+        let thumb_height = (viewport * viewport / content).clamp(24.0, viewport.max(24.0));
+        let offset = (self.details_offset as f32).clamp(0.0, limit);
+        let top = offset / limit * (viewport - thumb_height).max(0.0);
+        cx.tree.set_style(
+            thumb,
+            Style {
+                shrink: 0.0,
+                min: crate::layout::Size::new(8.0, thumb_height),
+                preferred: crate::layout::Size::new(8.0, thumb_height),
+                margin: crate::layout::Edges {
+                    top,
+                    ..crate::layout::Edges::default()
+                },
+                ..Style::default()
+            },
+        )?;
+        cx.tree.set_visible(thumb, true)
     }
 
     /// Caps the details' scroll at the room the right column has below the details card's top: the presets' card and
@@ -3348,6 +3464,10 @@ impl GameFixes {
             return Ok(());
         }
         self.selected = Some(fix_id.to_owned());
+        self.details_offset = 0;
+        if let Some(scroll) = self.details_scroll {
+            cx.tree.set_scroll_y(scroll, 0)?;
+        }
         self.intent = None;
         if self.confirm_card.is_some_and(|card| cx.tree.dialog() == Some(card)) {
             let _ = cx.tree.close_dialog()?;
@@ -3646,9 +3766,42 @@ impl Screen for GameFixes {
             },
         )?;
         self.details_card = Some(details);
+        // The fix's title, its id and status, then its text; the text scrolls with a thumb at its right.
+        self.details_title = Some(style::label(cx.tree, details, "", Text::Heading)?);
+        let key_row = style::row(cx.tree, details)?;
+        cx.tree.set_style(
+            key_row,
+            Style {
+                shrink: 0.0,
+                gap: crate::layout::Size::new(8.0, 0.0),
+                align_items: crate::layout::Align::Center,
+                ..Style::default()
+            },
+        )?;
+        self.details_key = Some(style::label(cx.tree, key_row, "", Text::Note)?);
+        self.details_badge = Some(style::d2::badge(
+            cx.tree,
+            key_row,
+            crate::strings::t("НЕ УСТАНОВЛЕНО"),
+            style::d2::BadgeKind::NotInstalled,
+        )?);
+        let body_row = cx.tree.add(
+            Some(details),
+            NodeKind::Row,
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: crate::layout::Size::new(0.0, 0.0),
+                gap: crate::layout::Size::new(8.0, 0.0),
+                align_items: crate::layout::Align::Stretch,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
         // The details scroll inside a height capped to the room the right column has.
         let details_scroll = cx.tree.add(
-            Some(details),
+            Some(body_row),
             NodeKind::Scroll {
                 horizontal: false,
                 vertical: true,
@@ -3672,6 +3825,36 @@ impl Screen for GameFixes {
             crate::strings::t("ВЫБЕРИТЕ ИСПРАВЛЕНИЕ"),
             Text::Body,
         )?);
+        // The thumb of the details scroll: a bar at the right, sized and placed by render.
+        let track = cx.tree.add(
+            Some(body_row),
+            NodeKind::Column,
+            Style {
+                shrink: 0.0,
+                min: crate::layout::Size::new(8.0, 0.0),
+                preferred: crate::layout::Size::new(8.0, 0.0),
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        self.details_thumb = Some(cx.tree.add(
+            Some(track),
+            NodeKind::Leaf,
+            Style {
+                shrink: 0.0,
+                min: crate::layout::Size::new(8.0, 24.0),
+                preferred: crate::layout::Size::new(8.0, 24.0),
+                ..Style::default()
+            },
+            Content::Panel,
+            Look {
+                fill: Some(style::d2::argb(theme::d2::BORDER_METAL)),
+                radius: 3.0,
+                ..Look::default()
+            },
+        )?);
+        cx.tree.set_visible(self.details_thumb.unwrap_or(track), false)?;
         // The two actions stack with 8 px between them, at the card's full width.
         let actions = cx.tree.add(
             Some(details),
@@ -3786,6 +3969,19 @@ impl Screen for GameFixes {
             return Ok(());
         }
         if let Message::Window(WindowEvent::Wheel { delta }) = message {
+            if let Some(scroll) = self
+                .details_scroll
+                .filter(|_| self.details_limit(cx.tree).is_ok_and(|limit| limit > 0.0))
+            {
+                // The limit in whole pixels, from its rounded text.
+                let limit: i32 = format!("{:.0}", self.details_limit(cx.tree)?).parse().unwrap_or(0);
+                self.details_offset = self
+                    .details_offset
+                    .saturating_add(delta.saturating_mul(24))
+                    .clamp(0, limit);
+                cx.tree.set_scroll_y(scroll, self.details_offset)?;
+                return Ok(());
+            }
             if let Some(scroll) = self.list_scroll {
                 self.scroll_y = self.scroll_y.saturating_add(delta.saturating_mul(48)).max(0);
                 cx.tree.set_scroll_y(scroll, self.scroll_y)?;
@@ -4091,6 +4287,15 @@ impl Screen for GameFixes {
                             let _ = cx.tree.close_dialog()?;
                         }
                         self.items.clone_from(items);
+                        // The search is over: the status line says whether the game's installation was found.
+                        cx.status = Some(
+                            crate::strings::t(if directory.is_some() {
+                                "Установка найдена"
+                            } else {
+                                "Не выбрана"
+                            })
+                            .to_owned(),
+                        );
                         let selection = selected_fix
                             .as_deref()
                             .or(self.selected.as_deref())
