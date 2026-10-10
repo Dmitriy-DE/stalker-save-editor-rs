@@ -2767,10 +2767,17 @@ impl Shell {
     fn handle_wizard_action(&mut self, tree: &mut Tree, action: super::wizard::WizardAction) -> Result<()> {
         match action {
             super::wizard::WizardAction::Navigate(target) => self.open(tree, target),
-            super::wizard::WizardAction::DirectoryAdded => {
-                tree.set_text(self.status, crate::strings::t("Папка добавлена в список поиска."))?;
-                self.refresh_library_after_wizard(tree)
-            }
+            super::wizard::WizardAction::AddDirectory(path) => self.begin_wizard_task(
+                tree,
+                crate::strings::t("Добавляю папку…"),
+                super::wizard::WizardTaskKind::AddDirectory,
+                move || {
+                    super::wizard::Wizard::save_directory(path)
+                        .map(super::wizard::WizardWorkResult::DirectoryAdded)
+                        .map_err(|error| error.to_string())
+                },
+                false,
+            ),
             super::wizard::WizardAction::AutoSearch => self.begin_wizard_task(
                 tree,
                 crate::strings::t("Ищу папки с сохранениями…"),
@@ -2825,6 +2832,14 @@ impl Shell {
             }
             Ok(super::wizard::WizardWorkResult::Directory(None)) => {
                 tree.set_text(self.status, crate::strings::t("Выбор папки отменён."))?;
+            }
+            Ok(super::wizard::WizardWorkResult::DirectoryAdded(true)) => {
+                self.wizard.clear_directory_input(tree)?;
+                tree.set_text(self.status, crate::strings::t("Папка добавлена в список поиска."))?;
+                self.refresh_library_after_wizard(tree)?;
+            }
+            Ok(super::wizard::WizardWorkResult::DirectoryAdded(false)) => {
+                tree.set_text(self.status, crate::strings::t("Эта папка уже в списке поиска."))?;
             }
             Err(error) => {
                 tree.set_text(self.status, &tr("{0}: {1}", &[&finished.kind.failure_prefix(), &error]))?;

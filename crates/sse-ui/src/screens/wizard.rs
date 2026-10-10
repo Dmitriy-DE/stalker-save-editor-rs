@@ -20,11 +20,11 @@ impl Clipboard for EmptyClipboard {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum WizardAction {
     AutoSearch,
     Browse,
-    DirectoryAdded,
+    AddDirectory(PathBuf),
     Navigate(ScreenId),
 }
 
@@ -32,6 +32,7 @@ pub(super) enum WizardAction {
 pub(super) enum WizardTaskKind {
     AutoSearch,
     Browse,
+    AddDirectory,
 }
 
 impl WizardTaskKind {
@@ -45,6 +46,7 @@ impl WizardTaskKind {
             match self {
                 Self::AutoSearch => "Не удалось найти папки с сохранениями",
                 Self::Browse => "Не удалось открыть выбор папки",
+                Self::AddDirectory => "Не удалось добавить папку",
             },
         )
     }
@@ -54,6 +56,8 @@ impl WizardTaskKind {
 pub(super) enum WizardWorkResult {
     AutoSearch(usize),
     Directory(Option<PathBuf>),
+    /// `true` when the folder was added; `false` when it was already in the search list.
+    DirectoryAdded(bool),
 }
 
 pub(super) struct WizardTaskFinished {
@@ -278,7 +282,22 @@ impl Wizard {
         }
         Ok(())
     }
-    fn save_directory(path: PathBuf) -> Result<bool> {
+    /// Clears the path field after a folder was added.
+    pub(super) fn clear_directory_input(&mut self, tree: &mut Tree) -> Result<()> {
+        self.input = TextInput::new(
+            "",
+            EditConfig {
+                mode: FieldMode::SingleLine,
+                max_graphemes: 4096,
+                history_limit: 16,
+                filter: InputFilter::Any,
+            },
+        )?;
+        tree.set_text(self.path_input, crate::strings::t("Путь к папке с сейвами…"))
+    }
+
+    /// Adds a save folder through the settings writer. Runs on a worker thread, never on the interface thread.
+    pub(super) fn save_directory(path: PathBuf) -> Result<bool> {
         let settings_path = sse_app::default_settings_path();
         let mut settings = sse_app::AppSettings::load(&settings_path)?;
         let directories = settings.save_directories.get_or_insert_with(Vec::new);
@@ -365,18 +384,8 @@ impl Wizard {
         if clicked.is_some() && clicked == Some(self.add) {
             let path = self.input.text();
             let trimmed = path.trim();
-            if !trimmed.is_empty() && Self::save_directory(PathBuf::from(trimmed))? {
-                self.input = TextInput::new(
-                    "",
-                    EditConfig {
-                        mode: FieldMode::SingleLine,
-                        max_graphemes: 4096,
-                        history_limit: 16,
-                        filter: InputFilter::Any,
-                    },
-                )?;
-                tree.set_text(self.path_input, crate::strings::t("Путь к папке с сейвами…"))?;
-                return Ok(Some(WizardAction::DirectoryAdded));
+            if !trimmed.is_empty() {
+                return Ok(Some(WizardAction::AddDirectory(PathBuf::from(trimmed))));
             }
         }
         if clicked.is_some() && clicked == Some(self.browse) {
@@ -631,6 +640,37 @@ mod tests {
         assert_eq!(finished.request, 41);
         assert_eq!(finished.kind, WizardTaskKind::AutoSearch);
         assert_eq!(finished.result, Ok(WizardWorkResult::AutoSearch(3)));
+        Ok(())
+    }
+
+    #[test]
+    fn add_click_returns_a_deferred_directory_request_without_writing() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let root = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let mut wizard = Wizard::build(&mut tree, root)?;
+        let add = wizard.add;
+        let mut status = None;
+        wizard.set_directory_input(&mut tree, std::path::PathBuf::from("/tmp/r4-006-saves"))?;
+
+        let action = wizard.message(&mut tree, &Message::User(AppMessage::Tick(0)), Some(add), &mut status)?;
+
+        assert_eq!(
+            action,
+            Some(WizardAction::AddDirectory(std::path::PathBuf::from(
+                "/tmp/r4-006-saves"
+            ))),
+            "adding a folder must run as a worker task, not inside the click handler"
+        );
+        assert_eq!(
+            WizardTaskKind::AddDirectory.failure_prefix_in("en"),
+            "Could not add folder"
+        );
         Ok(())
     }
 
