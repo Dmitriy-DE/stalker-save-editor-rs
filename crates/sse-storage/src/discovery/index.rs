@@ -17,7 +17,7 @@
 //!   - `detection_error`: optional length-prefixed string (`0xFFFF` if `None`)
 
 use crate::discovery::locator::{normalize_full_path, resolve_entry_path, resolve_links, SaveDirectoryCandidate};
-use crate::discovery::slot::{has_save_extension, is_non_slot_file, sort_newest_first, SaveSlot};
+use crate::discovery::slot::{absorb_worker_result, has_save_extension, is_non_slot_file, sort_newest_first, SaveSlot};
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
@@ -88,6 +88,7 @@ impl LibraryIndexEntry {
 #[derive(Debug, Clone, Default)]
 pub struct LibraryIndex {
     entries: HashMap<PathBuf, LibraryIndexEntry>,
+    scan_failures: Vec<String>,
 }
 
 impl LibraryIndex {
@@ -96,6 +97,7 @@ impl LibraryIndex {
     pub fn new() -> Self {
         Self {
             entries: HashMap::new(),
+            scan_failures: Vec::new(),
         }
     }
 
@@ -176,7 +178,10 @@ impl LibraryIndex {
             return None;
         }
 
-        Some(Self { entries })
+        Some(Self {
+            entries,
+            scan_failures: Vec::new(),
+        })
     }
 
     /// Serializes the library index to raw bytes.
@@ -231,6 +236,11 @@ impl LibraryIndex {
         Ok(())
     }
 
+    /// Returns the scan worker failures recorded since the last call, and clears them.
+    pub fn take_scan_failures(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.scan_failures)
+    }
+
     /// Looks up a cached entry by matching path, file size, modification time, and header hash.
     #[must_use]
     pub fn lookup(&self, path: &Path, size: u64, mtime: SystemTime, header_hash: u64) -> Option<&LibraryIndexEntry> {
@@ -268,6 +278,7 @@ impl LibraryIndex {
     /// Discovers save slots using warm index revalidation when possible.
     #[must_use]
     pub fn scan_with_index(&mut self, candidates: &[SaveDirectoryCandidate]) -> Vec<SaveSlot> {
+        self.scan_failures.clear();
         let mut searched_identities = std::collections::HashSet::new();
         let mut seen = std::collections::HashSet::new();
         let mut found_files = Vec::new();
@@ -366,25 +377,29 @@ impl LibraryIndex {
                 std::thread::scope(|s| {
                     let mut handles = Vec::with_capacity(chunks.len());
                     for chunk in chunks {
-                        handles.push(s.spawn(move || {
-                            let mut local = Vec::with_capacity(chunk.len());
-                            for target in chunk {
-                                local.push(scan_single_index_entry(
-                                    &target.path,
-                                    &target.candidate_game_id,
-                                    &target.candidate_release_id,
-                                    target.size,
-                                    target.mtime,
-                                ));
-                            }
-                            local
-                        }));
+                        let expected = chunk.len();
+                        handles.push((
+                            expected,
+                            s.spawn(move || {
+                                let mut local = Vec::with_capacity(chunk.len());
+                                for target in chunk {
+                                    local.push(scan_single_index_entry(
+                                        &target.path,
+                                        &target.candidate_game_id,
+                                        &target.candidate_release_id,
+                                        target.size,
+                                        target.mtime,
+                                    ));
+                                }
+                                local
+                            }),
+                        ));
                     }
-                    for handle in handles {
-                        if let Ok(mut batch) = handle.join() {
-                            new_entries.append(&mut batch);
-                        }
+                    let mut failures = Vec::new();
+                    for (expected, handle) in handles {
+                        absorb_worker_result(&mut new_entries, &mut failures, expected, handle.join());
                     }
+                    self.scan_failures.extend(failures);
                 });
             }
 
