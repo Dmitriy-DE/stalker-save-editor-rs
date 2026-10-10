@@ -168,14 +168,59 @@ fn static_polish_game_default_label_preserves_value_meaning() {
 }
 
 #[test]
-fn static_polish_level_changer_label_preserves_registry_source() {
-    assert_eq!(
-        t_in(
-            "pl",
-            "Объекты переходов между локациями (Level Changers) из реестра X-Ray."
+fn static_level_changer_descriptions_name_xray_registry_source_across_locales() {
+    let expected = [
+        (
+            "ru",
+            "Объекты переходов между локациями (Level Changers) из реестра X-Ray.",
         ),
-        "Przejścia między lokacjami (Level Changers) z rejestru X-Ray."
-    );
+        (
+            "uk",
+            "Об'єкти переходів між локаціями (Level Changers) із реєстру X-Ray.",
+        ),
+        ("en", "Level changers between locations, from the X-Ray registry."),
+        ("de", "Übergänge zwischen Orten (Level Changer) aus der X-Ray-Registry."),
+        (
+            "fr",
+            "Transitions entre lieux (level changers) issues du registre X-Ray.",
+        ),
+        ("it", "Transizioni tra luoghi (level changer) dal registro X-Ray."),
+        (
+            "es",
+            "Transiciones entre ubicaciones (level changers) del registro de X-Ray.",
+        ),
+        ("pl", "Przejścia między lokacjami (Level Changers) z rejestru X-Ray."),
+        ("cs", "Přechody mezi lokacemi (level changers) z registru X-Ray."),
+        (
+            "pt-BR",
+            "Transições entre locais (level changers) do registro do X-Ray.",
+        ),
+        (
+            "tr",
+            "X-Ray kayıt defterinden alınan konumlar arası geçiş nesneleri (level changer).",
+        ),
+        (
+            "ja",
+            "ロケーション間の移動地点（level changer）はX-Rayレジストリから取得。",
+        ),
+        (
+            "ko",
+            "지역 간 이동 지점(level changer)은 X-Ray 레지스트리에서 가져옵니다.",
+        ),
+        ("zh-CN", "地点之间的转换点（level changer）来自 X-Ray 注册表。"),
+        ("zh-TW", "地點之間的轉換點（level changer）來自 X-Ray 登錄檔。"),
+    ];
+
+    for (language, value) in expected {
+        assert_eq!(
+            t_in(
+                language,
+                "Объекты переходов между локациями (Level Changers) из реестра X-Ray."
+            ),
+            value,
+            "{language}"
+        );
+    }
 }
 
 #[test]
@@ -216,4 +261,30 @@ fn static_polish_transition_placement_note_uses_natural_save_wording() {
         ),
         "Tylko miejsca, w których gra sama umieszcza postać po przejściu. Zapis następuje od razu po utworzeniu kopii zapasowej. Nie sprawdzono tego jeszcze w grze."
     );
+}
+
+#[test]
+fn static_brazilian_portuguese_level_changer_description_names_xray_registry() {
+    assert_eq!(
+        t_in(
+            "pt-BR",
+            "Объекты переходов между локациями (Level Changers) из реестра X-Ray."
+        ),
+        "Transições entre locais (level changers) do registro do X-Ray."
+    );
+}
+
+#[test]
+fn static_player_inventory_title_uses_singular_owner_across_locales() {
+    let expected = [
+        ("fr", "Inventaire du joueur"),
+        ("it", "Inventario del giocatore"),
+        ("es", "Inventario del jugador"),
+        ("cs", "Inventář hráče"),
+        ("pt-BR", "Inventário do jogador"),
+    ];
+
+    for (language, value) in expected {
+        assert_eq!(t_in(language, "Инвентарь игрока"), value, "{language}");
+    }
 }

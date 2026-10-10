@@ -1153,7 +1153,7 @@
  "Объединять одинаковые": "Aynıları grupla",
  "Объект 0x{0:X4}": "Nesne 0x{0:X4}",
  "Объекты инвентаря": "Envanter nesneleri",
- "Объекты переходов между локациями (Level Changers) из реестра X-Ray.": "Konumlar arası geçişler (level changer), kayıttan okundu.",
+ "Объекты переходов между локациями (Level Changers) из реестра X-Ray.": "X-Ray kayıt defterinden alınan konumlar arası geçiş nesneleri (level changer).",
  "Обычно ничего менять не нужно — редактор находит всё автоматически.": "Genellikle bir şey değiştirmen gerekmez — düzenleyici her şeyi otomatik bulur.",
  "Одинаковые предметы показываются одной строкой. Выключи, чтобы изменить или удалить один из них.": "Aynı eşyalar tek satırda gösterilir. Birini değiştirmek veya silmek için kapat.",
  "Одинаковых предметов: {0}": "Aynı eşyalar: {0}",
