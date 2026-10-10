@@ -37,6 +37,8 @@ pub enum SettingsPatch {
     BackupDirectory(Option<PathBuf>),
     /// Set whether crash and telemetry reports may be sent.
     SendReports(bool),
+    /// Set whether aggregate performance metrics may be uploaded.
+    MetricsConsent(bool),
     /// Add directories to the save discovery list; paths already listed (ignoring case and spaces) are skipped.
     AddSaveDirectories(Vec<PathBuf>),
 }
@@ -139,6 +141,7 @@ fn apply_patch(settings: &mut AppSettings, patch: SettingsPatch) {
         SettingsPatch::SoundVolume(value) => settings.sound_volume = value,
         SettingsPatch::BackupDirectory(value) => settings.backup_directory = value,
         SettingsPatch::SendReports(value) => settings.send_reports = value,
+        SettingsPatch::MetricsConsent(value) => settings.send_metrics = value,
         SettingsPatch::AddSaveDirectories(paths) => {
             let directories = settings.save_directories.get_or_insert_with(Vec::new);
             for path in paths {
@@ -204,12 +207,14 @@ mod tests {
         send(SettingsPatch::AddSaveDirectories(vec![PathBuf::from("SAVES-A ")]));
         send(SettingsPatch::Language(Some("en".to_owned())));
         send(SettingsPatch::SoundVolume(40));
+        send(SettingsPatch::MetricsConsent(true));
         drop(tx);
         worker.join().expect("settings writer thread exits");
 
         let saved = AppSettings::load(&path).expect("load settings");
         assert_eq!(saved.language.as_deref(), Some("en"));
         assert_eq!(saved.sound_volume, 40);
+        assert!(saved.send_metrics);
         assert_eq!(saved.save_directories, Some(vec![PathBuf::from("saves-a")]));
         let _ = fs::remove_dir_all(directory);
     }

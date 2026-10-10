@@ -29,7 +29,10 @@ fn main() -> std::process::ExitCode {
                 std::env::consts::OS,
                 std::env::consts::ARCH
             ));
-            window()
+            sse_app::metrics::start_session();
+            let result = window();
+            sse_app::metrics::end_session();
+            result
         }
     };
     if let Err(error) = result {

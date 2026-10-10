@@ -9,6 +9,7 @@ use crate::widget::Tree;
 use sse_core::Result;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 /// Platform-independent window input.
 #[derive(Clone, Debug, PartialEq)]
@@ -230,10 +231,18 @@ pub fn run<U, A: App<U>, P: Present>(
 ) -> Result<Stats> {
     let mut stats = Stats::default();
     let mut frame: Vec<u32> = Vec::new();
+    let mut scrolling_until: Option<Instant> = None;
     while let Some(first) = backend.wait_for_message(receiver)? {
         stats.wakes = stats.wakes.saturating_add(1);
         let mut next = Some(first);
         while let Some(message) = next {
+            if matches!(&message, Message::Window(WindowEvent::Wheel { delta }) if *delta != 0) {
+                scrolling_until = Some(
+                    Instant::now()
+                        .checked_add(Duration::from_millis(200))
+                        .unwrap_or_else(Instant::now),
+                );
+            }
             if matches!(
                 &message,
                 Message::Window(WindowEvent::PointerMoved { .. } | WindowEvent::Button { button: 1, .. })
@@ -260,7 +269,16 @@ pub fn run<U, A: App<U>, P: Present>(
         if rects.is_empty() {
             continue;
         }
+        let frame_started = Instant::now();
         backend.present(&frame, stride, width, height, &rects)?;
+        sse_app::metrics::record_first_frame();
+        sse_app::metrics::record_environment(width, height, tree.scale());
+        sse_app::metrics::sample_peak_memory();
+        if scrolling_until.is_some_and(|deadline| Instant::now() <= deadline) {
+            sse_app::metrics::record_scroll_frame(frame_started.elapsed());
+        } else {
+            scrolling_until = None;
+        }
         stats.frames = stats.frames.saturating_add(1);
         for rect in &rects {
             stats.pixels = stats

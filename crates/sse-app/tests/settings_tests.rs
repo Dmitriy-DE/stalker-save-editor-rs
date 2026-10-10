@@ -33,6 +33,7 @@ fn default_settings_start_with_reports_disabled() {
     assert_eq!(settings.ui_scale_percent, 0);
     assert_eq!(settings.navigation_collapsed, None);
     assert!(!settings.send_reports);
+    assert!(!settings.send_metrics);
     assert!(!settings.reports_notice_shown);
     assert_eq!(settings.last_report_utc, None);
 }
@@ -51,6 +52,7 @@ fn round_trip_settings_json() {
         ui_scale_percent: 125,
         navigation_collapsed: Some(true),
         send_reports: false,
+        send_metrics: true,
         reports_notice_shown: true,
         last_report_utc: Some("2026-10-04T00:30:00Z".to_owned()),
     };
@@ -69,6 +71,7 @@ fn round_trip_settings_json() {
     assert!(json_str.contains("\"ui_scale_percent\": 125"));
     assert!(json_str.contains("\"navigation_collapsed\": true"));
     assert!(json_str.contains("\"send_reports\": false"));
+    assert!(json_str.contains("\"send_metrics\": true"));
     assert!(json_str.contains("\"reports_notice_shown\": true"));
     assert!(json_str.contains("\"last_report_utc\": \"2026-10-04T00:30:00Z\""));
 

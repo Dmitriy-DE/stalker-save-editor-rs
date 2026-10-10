@@ -522,6 +522,7 @@ fn save_all_settings(
         SettingsPatch::MusicEnabled(settings.music_enabled),
         SettingsPatch::SoundVolume(settings.sound_volume),
         SettingsPatch::SendReports(settings.send_reports),
+        SettingsPatch::MetricsConsent(settings.send_metrics),
     ];
     for patch in patches {
         save_setting(patch, proxy.clone())?;
@@ -565,6 +566,74 @@ struct DiagnosticReportFinished {
 
 /// Result of the background folder dialog for the backup directory; `None` means the user cancelled.
 struct PickedBackupDirectory(std::result::Result<Option<PathBuf>, String>);
+struct MetricsUploadFinished {
+    result: std::result::Result<(), String>,
+}
+
+fn performance_summary_text() -> String {
+    let sessions = sse_app::metrics::recent_sessions();
+    if sessions.is_empty() {
+        return crate::strings::t("Метрики появятся после первого сеанса редактора.").to_owned();
+    }
+    sessions
+        .iter()
+        .enumerate()
+        .map(|(index, session)| {
+            let switch = session.screen_switch.map_or_else(
+                || "—".to_owned(),
+                |value| tr("{0}/{1}/{2} мс", &[&value.p50_ms, &value.p95_ms, &value.max_ms]),
+            );
+            let scroll = session.scrolling_frame.map_or_else(
+                || "—".to_owned(),
+                |value| tr("{0}/{1}/{2} мс", &[&value.p50_ms, &value.p95_ms, &value.max_ms]),
+            );
+            let memory = session
+                .peak_memory_bytes
+                .map_or_else(|| "—".to_owned(), |bytes| (bytes / (1024 * 1024)).to_string());
+            let (width, height) = session.resolution.unwrap_or_default();
+            let scale = session.scale_percent.map_or_else(|| "—".to_owned(), |value| value.to_string());
+            let os = session.operating_system.unwrap_or("—");
+            let saves = if session.save_operations.is_empty() {
+                "—".to_owned()
+            } else {
+                session
+                    .save_operations
+                    .iter()
+                    .take(3)
+                    .map(|operation| {
+                        let label = if operation.operation == "read" {
+                            crate::strings::t("Чтение")
+                        } else {
+                            crate::strings::t("Запись")
+                        };
+                        tr(
+                            "{0} {1}/{2}: {3} мс ×{4}",
+                            &[
+                                &label,
+                                &operation.format,
+                                &operation.size_bucket,
+                                &operation.average_ms,
+                                &operation.count,
+                            ],
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
+            let first_frame = session
+                .first_frame_ms
+                .map_or_else(|| "—".to_owned(), |value| value.to_string());
+            let discovery = session
+                .save_discovery_ms
+                .map_or_else(|| "—".to_owned(), |value| value.to_string());
+            tr(
+                "Сеанс {0}: первый кадр {1} мс; переключения экранов p50/p95/макс {2}; прокрутка p50/p95/макс {3}; поиск сейвов {4} мс; пик памяти {5} МиБ; среда {6}, {7}×{8}, масштаб {9}%; чтение/запись: {10}.",
+                &[&index.saturating_add(1), &first_frame, &switch, &scroll, &discovery, &memory, &os, &width, &height, &scale, &saves],
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
 
 /// Settings screen.
 #[derive(Default)]
@@ -585,6 +654,16 @@ pub struct Settings {
     cancel_game_logs: Option<WidgetId>,
     support_dismiss_button: Option<WidgetId>,
     support_result: Option<WidgetId>,
+    metrics_summary: Option<WidgetId>,
+    metrics_refresh_button: Option<WidgetId>,
+    metrics_consent_button: Option<WidgetId>,
+    metrics_preview_button: Option<WidgetId>,
+    metrics_preview_dialog: Option<WidgetId>,
+    metrics_preview_text: Option<WidgetId>,
+    metrics_preview_send_button: Option<WidgetId>,
+    metrics_preview_close: Option<WidgetId>,
+    metrics_preview_body: Option<String>,
+    metrics_upload_pending: bool,
     include_game_logs: bool,
     report_pending: bool,
     backup_input: Option<WidgetId>,
@@ -1037,6 +1116,19 @@ impl Screen for Settings {
             crate::strings::t("Проверка окружения ещё не запускалась."),
             Text::Note,
         )?);
+        style::label(
+            cx.tree,
+            support,
+            crate::strings::t("МЕТРИКИ ПРОИЗВОДИТЕЛЬНОСТИ"),
+            Text::Heading,
+        )?;
+        self.metrics_summary = Some(style::label(cx.tree, support, &performance_summary_text(), Text::Note)?);
+        self.metrics_refresh_button = Some(style::button(
+            cx.tree,
+            support,
+            crate::strings::t("Обновить сводку"),
+            Button::Secondary,
+        )?);
         self.section_panels.push(support);
 
         let dialog_host = cx.tree.overlay_host().unwrap_or(host);
@@ -1096,7 +1188,52 @@ impl Screen for Settings {
             crate::strings::t("Отправить обезличенные журналы и отчёт окружения. Сохранения не отправляются."),
             Text::Note,
         )?;
+        self.metrics_consent_button = Some(style::button(
+            cx.tree,
+            reports,
+            if self.settings.send_metrics {
+                crate::strings::t("Отдельная передача метрик: ВКЛ")
+            } else {
+                crate::strings::t("Отдельная передача метрик: ВЫКЛ")
+            },
+            Button::Secondary,
+        )?);
+        self.metrics_preview_button = Some(style::button(
+            cx.tree,
+            reports,
+            crate::strings::t("Предпросмотр агрегата"),
+            Button::Secondary,
+        )?);
+        style::label(
+            cx.tree,
+            reports,
+            crate::strings::t("Сейвы, пути и имена файлов в агрегат не входят."),
+            Text::Note,
+        )?;
         self.section_panels.push(reports);
+
+        let metrics_preview_dialog = style::card(cx.tree, dialog_host)?;
+        self.metrics_preview_dialog = Some(metrics_preview_dialog);
+        style::label(
+            cx.tree,
+            metrics_preview_dialog,
+            crate::strings::t("ПРЕДПРОСМОТР АГРЕГАТА"),
+            Text::Heading,
+        )?;
+        self.metrics_preview_text = Some(style::label(cx.tree, metrics_preview_dialog, "", Text::Note)?);
+        self.metrics_preview_send_button = Some(style::button(
+            cx.tree,
+            metrics_preview_dialog,
+            crate::strings::t("Отправить агрегат"),
+            Button::Secondary,
+        )?);
+        self.metrics_preview_close = Some(style::button(
+            cx.tree,
+            metrics_preview_dialog,
+            crate::strings::t("Закрыть"),
+            Button::Secondary,
+        )?);
+        cx.tree.set_visible(metrics_preview_dialog, false)?;
 
         let about = style::card(cx.tree, content)?;
         style::label(cx.tree, about, crate::strings::t("О ПРОГРАММЕ"), Text::Heading)?;
@@ -1203,6 +1340,86 @@ impl Screen for Settings {
                 cx.tree.set_text(result, &report.replace('\n', " · "))?;
             }
             cx.status = Some(crate::strings::t("Проверка окружения завершена.").to_owned());
+        }
+        if clicked.is_some() && clicked == self.metrics_refresh_button {
+            if let Some(summary) = self.metrics_summary {
+                cx.tree.set_text(summary, &performance_summary_text())?;
+            }
+        }
+        if clicked.is_some() && clicked == self.metrics_consent_button {
+            self.settings.send_metrics = !self.settings.send_metrics;
+            if let Some(button) = self.metrics_consent_button {
+                cx.tree.set_text(
+                    button,
+                    crate::strings::t(if self.settings.send_metrics {
+                        "Отдельная передача метрик: ВКЛ"
+                    } else {
+                        "Отдельная передача метрик: ВЫКЛ"
+                    }),
+                )?;
+            }
+            match save_setting(
+                sse_app::settings_writer::SettingsPatch::MetricsConsent(self.settings.send_metrics),
+                cx.proxy.cloned(),
+            ) {
+                Ok(()) => cx.status = Some(crate::strings::t("Сохраняю…").to_owned()),
+                Err(error) => cx.status = Some(tr("Не удалось сохранить настройки: {0}", &[&error])),
+            }
+        }
+        if clicked.is_some() && clicked == self.metrics_preview_button {
+            if let (Some(dialog), Some(preview_text)) = (self.metrics_preview_dialog, self.metrics_preview_text) {
+                let preview = sse_app::metrics::upload_preview();
+                self.metrics_preview_body = Some(preview.clone());
+                cx.tree.set_text(preview_text, &preview)?;
+                cx.tree.open_dialog(dialog)?;
+            }
+        }
+        if clicked.is_some()
+            && clicked == self.metrics_preview_send_button
+            && self
+                .metrics_preview_dialog
+                .is_some_and(|dialog| cx.tree.dialog() == Some(dialog))
+        {
+            if self.metrics_upload_pending {
+                cx.status = Some(crate::strings::t("Отправка метрик уже выполняется.").to_owned());
+            } else if !self.settings.send_metrics {
+                cx.status =
+                    Some(crate::strings::t("Сначала включите отдельное согласие на передачу метрик.").to_owned());
+            } else if let (Some(proxy), Some(preview)) = (cx.proxy.cloned(), self.metrics_preview_body.clone()) {
+                self.metrics_upload_pending = true;
+                if let Some(button) = self.metrics_preview_send_button {
+                    cx.tree.set_text(button, crate::strings::t("Отправляю агрегат…"))?;
+                }
+                let task_proxy = proxy.clone();
+                if let Err(error) = sse_app::tasks::try_spawn_named_detached("metrics-upload", move || {
+                    let result = sse_app::metrics::upload_aggregate_preview(true, &preview).map_err(|error| {
+                        sse_app::diagnostics::error(&format!("metrics upload: {error}"));
+                        error.to_string()
+                    });
+                    let _ = task_proxy.send(AppMessage::ToScreen(
+                        ScreenId::Settings,
+                        Box::new(MetricsUploadFinished { result }),
+                    ));
+                }) {
+                    self.metrics_upload_pending = false;
+                    if let Some(button) = self.metrics_preview_send_button {
+                        cx.tree.set_text(button, crate::strings::t("Отправить агрегат"))?;
+                    }
+                    cx.status = Some(tr("Не удалось запустить отправку: {0}", &[&error]));
+                } else {
+                    cx.status = Some(crate::strings::t("Отправляю агрегат…").to_owned());
+                }
+            } else {
+                cx.status = Some(crate::strings::t("Предпросмотр агрегата недоступен.").to_owned());
+            }
+        }
+        if clicked.is_some()
+            && clicked == self.metrics_preview_close
+            && self
+                .metrics_preview_dialog
+                .is_some_and(|dialog| cx.tree.dialog() == Some(dialog))
+        {
+            cx.tree.close_dialog()?;
         }
         if clicked.is_some() && clicked == self.support_save_button {
             if self.report_pending {
@@ -1389,6 +1606,16 @@ impl Screen for Settings {
             }
         }
         if let Message::User(AppMessage::ToScreen(_, payload)) = message {
+            if let Some(MetricsUploadFinished { result }) = payload.downcast_ref::<MetricsUploadFinished>() {
+                self.metrics_upload_pending = false;
+                if let Some(button) = self.metrics_preview_send_button {
+                    cx.tree.set_text(button, crate::strings::t("Отправить агрегат"))?;
+                }
+                cx.status = Some(match result {
+                    Ok(()) => crate::strings::t("Метрики отправлены.").to_owned(),
+                    Err(error) => tr("Не удалось отправить метрики: {0}", &[error]),
+                });
+            }
             if let Some(DiagnosticReportFinished { result }) = payload.downcast_ref::<DiagnosticReportFinished>() {
                 self.report_pending = false;
                 if let Some(button) = self.support_save_button {

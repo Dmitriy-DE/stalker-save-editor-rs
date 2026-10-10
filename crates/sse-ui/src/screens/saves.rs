@@ -21,6 +21,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Instant;
 
 fn t(key: &str) -> &str {
     crate::strings::t(key)
@@ -705,8 +706,16 @@ enum SaveData {
 
 impl LoadedSave {
     fn read(slot: SaveSlot) -> Result<Self> {
-        let packed = SaveBuffer::read(&slot.path)?;
-        Self::from_buffer(slot, packed)
+        let started = Instant::now();
+        let size_bytes = std::fs::metadata(&slot.path).map_or(0, |metadata| metadata.len());
+        let result = SaveBuffer::read(&slot.path).and_then(|packed| Self::from_buffer(slot, packed));
+        let format = result
+            .as_ref()
+            .ok()
+            .and_then(|save| save.slot.format_id.as_deref())
+            .unwrap_or("unknown");
+        sse_app::metrics::record_save_read(format, size_bytes, started.elapsed());
+        result
     }
 
     #[cfg(test)]
@@ -935,9 +944,11 @@ pub(super) fn start_discovery(workspace: &Workspace, cx: &mut Context<'_>) {
         if context.is_cancelled() {
             return;
         }
+        let discovery_started = Instant::now();
         let discovery_options = super::save_directory_discovery_options();
         let candidates = SaveDirectoryLocator::find_candidate_directories(Some(&discovery_options));
         let mut result = SaveSlotDiscovery::discover(&candidates);
+        sse_app::metrics::record_save_discovery(discovery_started.elapsed());
         for failure in &result.worker_failures {
             sse_app::diagnostics::warn(failure);
         }
@@ -4697,6 +4708,8 @@ impl Inventory {
         };
         let source_path = selected.slot.path.clone();
         let log_path = source_path.clone();
+        let save_format = selected.slot.format_id.as_deref().unwrap_or("unknown").to_owned();
+        let save_size_bytes = std::fs::metadata(&source_path).map_or(0, |metadata| metadata.len());
         let backup_directory = self.workspace.backup_directory();
         if let Some(status) = self.status {
             cx.tree.set_text(status, t("Сохранение…"))?;
@@ -4707,8 +4720,10 @@ impl Inventory {
                 sse_app::diagnostics::save_write_cancelled(&source_path);
                 Err(t("Сохранение отменено.").to_owned())
             } else {
+                let write_started = Instant::now();
                 let result = commit_save_edits(&selected, &edits, &stash_moves, &backup_directory)
                     .map_err(|error| error.to_string());
+                sse_app::metrics::record_save_write(&save_format, save_size_bytes, write_started.elapsed());
                 match &result {
                     Ok(_) => sse_app::diagnostics::save_write_succeeded(&source_path),
                     Err(error) => sse_app::diagnostics::save_write_failed(&source_path, error),
