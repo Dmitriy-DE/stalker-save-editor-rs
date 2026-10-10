@@ -55,7 +55,12 @@ impl Node {
     }
 
     fn insert_reference_style(&mut self, key: String, value: Value) {
-        if let Some((_, existing)) = self.children.iter_mut().find(|(candidate, _)| candidate == &key) {
+        // Same comparison as `get`: `Path` and `path` are one key, and the later value wins.
+        if let Some((_, existing)) = self
+            .children
+            .iter_mut()
+            .find(|(candidate, _)| candidate.eq_ignore_ascii_case(&key))
+        {
             *existing = value;
         } else {
             self.children.push((key, value));
@@ -242,6 +247,14 @@ fn read_object(tokens: &[Token], position: &mut usize, expect_close: bool, depth
 #[cfg(test)]
 mod tests {
     use super::{parse, Value};
+
+    #[test]
+    fn keys_differing_only_in_case_are_one_entry_and_the_later_value_wins() {
+        let node = parse(r#""root" { "Path" "first" "path" "second" }"#).unwrap_or_else(|error| panic!("{error:?}"));
+        let root = node.get_object("root").unwrap_or_else(|| panic!("missing root"));
+        assert_eq!(root.children().len(), 1);
+        assert_eq!(root.get_string("PATH"), Some("second"));
+    }
 
     #[test]
     fn library_folders_fixture_shape() {
