@@ -1659,6 +1659,14 @@ impl HistoryScreen {
                         )?;
                         return Ok(());
                     };
+                    // The repair rewrites the save and reloads it, which drops unsaved edits of the same save.
+                    if has_pending_edits_for_selected_source(cx.app, &path) {
+                        self.set_summary(
+                            cx.tree,
+                            crate::strings::t("Сначала сохраните или сбросьте черновик выбранного сейва."),
+                        )?;
+                        return Ok(());
+                    }
                     if !self.start_process_check(
                         cx,
                         GuardedHistoryOperation::QuestRepair {
@@ -3053,6 +3061,23 @@ mod tests {
             restored_output_path_at(Path::new("/save/game_slot.scs"), 123),
             Path::new("/save/game_slot_restored_123.scs")
         );
+    }
+
+    #[test]
+    fn quest_repair_is_blocked_for_the_selected_save_with_pending_draft_edits() -> sse_core::Result<()> {
+        let source = PathBuf::from("/saves/slot.sav");
+        let source_sha256 = "cd".repeat(32);
+        let mut app = sse_app::AppState::new();
+        app.set_current_save_identity(source.clone(), source_sha256.clone());
+        let mut draft = sse_storage::drafts::DraftPlan::empty(&source_sha256)?;
+        draft.money = Some(42);
+        app.set_draft(draft);
+
+        // The repair checks the same predicate as the in-place restore before it starts.
+        assert!(super::has_pending_edits_for_selected_source(&app, &source));
+        app.discard_draft(&source_sha256);
+        assert!(!super::has_pending_edits_for_selected_source(&app, &source));
+        Ok(())
     }
 
     #[test]
