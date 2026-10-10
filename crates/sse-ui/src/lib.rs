@@ -13,7 +13,6 @@ pub mod golden;
 /// Measure-and-arrange layout over an arena (X26).
 pub mod layout;
 /// Virtual list and table model (X28).
-pub mod list;
 /// Numbers, sizes, dates and plural forms in the 15 interface languages (X23).
 pub mod locale;
 /// macOS window adapter over the safe `sse-sys` window API.
