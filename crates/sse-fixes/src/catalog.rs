@@ -582,31 +582,37 @@ mod code_page_tests {
     }
 
     fn parse(code_page: &str) -> Result<GameFixDefinition> {
-        let json = definition_with_code_page(code_page);
-        let value = parse_json(&json).expect("test JSON is valid");
+        let value = parse_json(&definition_with_code_page(code_page))?;
         parse_definition(&value)
     }
 
     #[test]
-    fn a_supported_code_page_is_kept() {
-        let definition = parse("1251").expect("1251 is supported");
-        assert_eq!(definition.text_patches[0].code_page, 1251);
+    fn a_supported_code_page_is_kept() -> Result<()> {
+        let definition = parse("1251")?;
+        assert!(definition
+            .text_patches
+            .first()
+            .is_some_and(|patch| patch.code_page == 1251));
+        Ok(())
     }
 
     #[test]
-    fn a_missing_code_page_defaults_to_latin_1() {
+    fn a_missing_code_page_defaults_to_latin_1() -> Result<()> {
         let json = definition_with_code_page("28591").replace(r#""codePage": 28591"#, r#""note": 0"#);
-        let value = parse_json(&json).expect("test JSON is valid");
-        let definition = parse_definition(&value).expect("missing codePage is accepted");
-        assert_eq!(definition.text_patches[0].code_page, 28591);
+        let definition = parse_definition(&parse_json(&json)?)?;
+        assert!(definition
+            .text_patches
+            .first()
+            .is_some_and(|patch| patch.code_page == 28591));
+        Ok(())
     }
 
     #[test]
     fn an_unknown_code_page_is_refused_not_replaced() {
-        let refused = parse("1252").expect_err("1252 is not a supported patch code page");
+        let result = parse("1252");
         assert!(
-            matches!(&refused, Error::Damaged(message) if message.contains("codePage 1252")),
-            "unexpected error: {refused:?}"
+            matches!(&result, Err(Error::Damaged(message)) if message.contains("codePage 1252")),
+            "1252 must be refused with a damaged-input error"
         );
     }
 
