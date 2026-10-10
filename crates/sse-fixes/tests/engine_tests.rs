@@ -457,6 +457,57 @@ fn interrupted_transaction_is_recovered_to_original_state() {
 }
 
 #[test]
+fn a_stuck_transaction_for_one_fix_does_not_block_installing_another() {
+    let fixture = TestFixture::new(GameTarget::ClearSky, "11450472");
+    let relative_path = "gamedata/scripts/task.script";
+    fixture.write_file(relative_path, b"local state = 1\n");
+    // The other fix's file was changed by something else after its interrupted install.
+    fixture.write_file("gamedata/scripts/stuck.script", b"local state = 9\n");
+
+    let state_dir = fixture.root.join(".save-editor-game-fixes").join("cs.test.stuck");
+    fs::create_dir_all(state_dir.join("backups")).unwrap();
+    let before_sha = sse_codecs::sha256::sha256_hex(b"local state = 1\n");
+    let after_sha = sse_codecs::sha256::sha256_hex(b"local state = 2\n");
+    let journal_json = format!(
+        r#"{{
+  "schemaVersion": 1,
+  "kind": "install",
+  "freshState": true,
+  "files": [
+    {{
+      "relativePath": "gamedata/scripts/stuck.script",
+      "beforeSha256": "{before_sha}",
+      "afterSha256": "{after_sha}",
+      "backupPath": "backups/file-0000.before",
+      "targetExistedBefore": true
+    }}
+  ]
+}}"#
+    );
+    fs::write(state_dir.join("transaction.json"), journal_json).unwrap();
+
+    let definition = make_test_definition(
+        "cs.test.safe",
+        relative_path,
+        "local state = 1\n",
+        "local state = 2\n",
+        "11450472",
+    );
+    let engine = GameFixEngine::with_synthetic(true);
+
+    let installed = engine.install(&definition, &fixture.root);
+    assert!(
+        installed.is_ok(),
+        "install must not wait for another fix's stuck journal: {installed:?}"
+    );
+    assert_eq!(fixture.read_file_string(relative_path), "local state = 2\n");
+    assert_eq!(
+        fixture.read_file_string("gamedata/scripts/stuck.script"),
+        "local state = 9\n"
+    );
+}
+
+#[test]
 fn update_reapplies_new_version_and_updates_manifest() {
     let fixture = TestFixture::new(GameTarget::ClearSky, "11450472");
     let relative_path = "gamedata/scripts/task.script";

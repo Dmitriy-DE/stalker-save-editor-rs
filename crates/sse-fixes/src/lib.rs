@@ -20,10 +20,10 @@ pub use extractor::GameFileExtractor;
 pub use fs_util::AtomicFileWriter;
 pub use identify::identify_game;
 pub use models::{
-    FileOverlayOperation, GameFixCategory, GameFixDefinition, GameFixFailure, GameFixImplementationType,
-    GameFixInstallResult, GameFixInstalledInfo, GameFixJournal, GameFixManifest, GameFixMaturity, GameFixPreset,
-    GameFixPresetResult, GameFixSaveCompatibility, GameFixState, GameFixUninstallCheck, GameFixVerificationState,
-    GameTarget, ManagedGameFile, SpawnEditKind, SpawnEditOperation, TextPatchOperation,
+    FileOverlayOperation, GameFixCategory, GameFixDefinition, GameFixImplementationType, GameFixInstallResult,
+    GameFixInstalledInfo, GameFixJournal, GameFixManifest, GameFixMaturity, GameFixPreset, GameFixPresetResult,
+    GameFixSaveCompatibility, GameFixState, GameFixUninstallCheck, GameFixVerificationState, GameTarget,
+    ManagedGameFile, SpawnEditKind, SpawnEditOperation, TextPatchOperation,
 };
 pub use store::GameFixContentStore;
 #[cfg(test)]

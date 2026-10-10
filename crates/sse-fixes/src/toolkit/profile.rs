@@ -479,7 +479,7 @@ pub(crate) fn reconcile_fixes(
     Ok((installed, uninstalled))
 }
 
-fn game_target_str(target: GameTarget) -> &'static str {
+pub(super) fn game_target_str(target: GameTarget) -> &'static str {
     match target {
         GameTarget::ShadowOfChernobyl => "soc",
         GameTarget::ClearSky => "cs",

@@ -11,7 +11,7 @@ use crate::catalog::GameFixCatalog;
 use crate::engine::GameFixEngine;
 use crate::fs_util::{check_no_links, AtomicFileWriter};
 use crate::models::GameTarget;
-use crate::toolkit::profile::json_escape;
+use crate::toolkit::profile::{game_target_str, json_escape};
 use crate::toolkit::s2_mods::{ModToggleStatus, Stalker2ModToggle};
 use crate::toolkit::user_ltx::ManagedUserLtxSettings;
 use sse_core::{Error, Result};
@@ -122,7 +122,7 @@ impl ToolkitSnapshotService {
 
         let hash_input = format!(
             "{}:{}:{}:{:?}:{:?}:{:?}:{}",
-            game_target_name(game),
+            game_target_str(game),
             snapshot_label,
             now_epoch,
             installed_fixes,
@@ -290,25 +290,13 @@ fn check_companion_installed(game: GameTarget, game_directory: &Path) -> bool {
         .is_file()
 }
 
-fn game_target_name(target: GameTarget) -> &'static str {
-    match target {
-        GameTarget::ShadowOfChernobyl => "soc",
-        GameTarget::ClearSky => "cs",
-        GameTarget::CallOfPripyat => "cop",
-        GameTarget::ShadowOfChernobylEnhancedEdition => "soc_ee",
-        GameTarget::ClearSkyEnhancedEdition => "cs_ee",
-        GameTarget::CallOfPripyatEnhancedEdition => "cop_ee",
-        GameTarget::Stalker2 => "s2",
-    }
-}
-
 fn serialize_snapshot(snapshot: &ToolkitSnapshot) -> String {
     let mut out = String::with_capacity(1024);
     out.push_str("{\n");
     out.push_str(&format!("  \"id\": \"{}\",\n", json_escape(&snapshot.id)));
     out.push_str(&format!("  \"label\": \"{}\",\n", json_escape(&snapshot.label)));
     out.push_str(&format!("  \"timestamp_epoch\": {},\n", snapshot.timestamp_epoch));
-    out.push_str(&format!("  \"game\": \"{}\",\n", game_target_name(snapshot.game)));
+    out.push_str(&format!("  \"game\": \"{}\",\n", game_target_str(snapshot.game)));
     out.push_str("  \"installed_fixes\": [\n");
     for (i, f) in snapshot.installed_fixes.iter().enumerate() {
         let comma = if i.saturating_add(1) == snapshot.installed_fixes.len() {

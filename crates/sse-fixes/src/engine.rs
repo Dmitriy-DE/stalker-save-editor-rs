@@ -201,7 +201,7 @@ impl GameFixEngine {
         validate_definition(definition)?;
         let fix_dir = get_fix_directory(game_dir, &definition.id);
         check_no_links(game_dir, &fix_dir)?;
-        let _ = self.recover_interrupted(game_dir)?;
+        refuse_if_own_transaction_is_stuck(game_dir, &definition.id)?;
 
         let (is_installation, steam_build_id) = identify_game(definition.game, game_dir);
         if !is_installation {
@@ -498,7 +498,7 @@ impl GameFixEngine {
         validate_definition(definition)?;
         let manifest_path = get_manifest_path(game_dir, &definition.id);
         check_no_links(game_dir, &manifest_path)?;
-        let _ = self.recover_interrupted(game_dir)?;
+        refuse_if_own_transaction_is_stuck(game_dir, &definition.id)?;
 
         if !manifest_path.is_file() {
             return self.install(definition, game_dir);
@@ -606,7 +606,7 @@ impl GameFixEngine {
             let game = read_manifest(&manifest_path, fix_id)?.game;
             ensure_game_not_running(self.process_probe.as_ref(), game)?;
         }
-        let _ = self.recover_interrupted(game_dir)?;
+        refuse_if_own_transaction_is_stuck(game_dir, fix_id)?;
 
         if !manifest_path.is_file() {
             return Ok(GameFixInstallResult {
@@ -964,34 +964,11 @@ impl GameFixEngine {
     /// # Errors
     /// Returns [`Error::System`] or [`Error::Damaged`] on corrupted journal.
     pub fn recover_interrupted(&self, game_dir: &Path) -> Result<Vec<String>> {
-        let state_dir = game_dir.join(STATE_DIRECTORY_NAME);
-        if !state_dir.is_dir() {
-            return Ok(Vec::new());
+        let (recovered, blocked) = recover_each_interrupted(game_dir)?;
+        match blocked.into_iter().next() {
+            Some((_, error)) => Err(error),
+            None => Ok(recovered),
         }
-        check_no_links(game_dir, &state_dir)?;
-
-        let mut recovered = Vec::new();
-        let entries = fs::read_dir(&state_dir)
-            .map_err(|error| Error::System(format!("Failed to read Game Fix state directory: {error}")))?;
-
-        for entry in entries {
-            let entry =
-                entry.map_err(|error| Error::System(format!("Failed to read Game Fix state entry: {error}")))?;
-            let path = entry.path();
-            if path.is_dir() {
-                if let Some(id) = path.file_name().and_then(|n| n.to_str()) {
-                    if is_valid_id(id) {
-                        check_no_links(game_dir, &path)?;
-                        if finish_interrupted_transaction(game_dir, id)? {
-                            recovered.push(id.to_string());
-                        }
-                    }
-                }
-            }
-        }
-
-        recovered.sort();
-        Ok(recovered)
     }
 
     /// Returns every normalized path managed by a definition.
@@ -1792,6 +1769,57 @@ fn delete_journal_checked(game_dir: &Path, fix_dir: &Path) -> Result<()> {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(Error::System(format!("Failed to clear Game Fix journal: {error}"))),
+    }
+}
+
+/// Recovered fix ids, and the reason each other fix could not be recovered.
+type RecoveryOutcome = (Vec<String>, Vec<(String, Error)>);
+
+/// Recovers every interrupted transaction, so one fix's stuck journal does not stop the others.
+///
+/// Structural problems with the state directory itself are still errors.
+fn recover_each_interrupted(game_dir: &Path) -> Result<RecoveryOutcome> {
+    let state_dir = game_dir.join(STATE_DIRECTORY_NAME);
+    if !state_dir.is_dir() {
+        return Ok((Vec::new(), Vec::new()));
+    }
+    check_no_links(game_dir, &state_dir)?;
+
+    let mut recovered = Vec::new();
+    let mut blocked = Vec::new();
+    let entries = fs::read_dir(&state_dir)
+        .map_err(|error| Error::System(format!("Failed to read Game Fix state directory: {error}")))?;
+
+    for entry in entries {
+        let entry = entry.map_err(|error| Error::System(format!("Failed to read Game Fix state entry: {error}")))?;
+        let path = entry.path();
+        if path.is_dir() {
+            if let Some(id) = path.file_name().and_then(|n| n.to_str()) {
+                if is_valid_id(id) {
+                    check_no_links(game_dir, &path)?;
+                    match finish_interrupted_transaction(game_dir, id) {
+                        Ok(true) => recovered.push(id.to_string()),
+                        Ok(false) => {}
+                        Err(error) => blocked.push((id.to_string(), error)),
+                    }
+                }
+            }
+        }
+    }
+
+    recovered.sort();
+    blocked.sort_by(|left, right| left.0.cmp(&right.0));
+    Ok((recovered, blocked))
+}
+
+/// Refuses an operation on `fix_id` only when that fix's own interrupted transaction cannot be recovered.
+///
+/// Other fixes' stuck journals stay on disk for their own operation to report.
+fn refuse_if_own_transaction_is_stuck(game_dir: &Path, fix_id: &str) -> Result<()> {
+    let (_, blocked) = recover_each_interrupted(game_dir)?;
+    match blocked.into_iter().find(|(id, _)| id == fix_id) {
+        Some((_, error)) => Err(error),
+        None => Ok(()),
     }
 }
 
