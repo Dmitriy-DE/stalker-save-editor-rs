@@ -11,6 +11,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 const MAXIMUM_DRAFT_BYTES: usize = 2 * 1024 * 1024;
 const MAXIMUM_HISTORY_STEPS: usize = 100;
+/// Process-wide counter for the names of set-aside draft files; uniqueness is what matters, not order. It holds no
+/// draft data.
 static NEXT_DRAFT_ID: AtomicU64 = AtomicU64::new(1);
 const LEGACY_PLAN_FIELDS: &[&str] = &[
     "adds",

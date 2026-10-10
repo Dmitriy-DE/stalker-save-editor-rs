@@ -32,6 +32,7 @@ const HEADER_SAMPLE_BYTES: usize = 4096;
 const MINIMUM_INDEX_ENTRY_BYTES: usize = 40;
 const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0100_0000_01b3;
+/// Process-wide counter for temporary index file names; uniqueness is what matters. It holds no index data.
 static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 /// Single entry cached inside the library index.

@@ -10,6 +10,8 @@ use std::time::SystemTime;
 
 const MAXIMUM_FILE_SIZE: u64 = 536_870_912; // 512 MiB, the largest file discovery reads
 const XRAY_MAGIC: u32 = 0xFFFF_FFFF;
+/// Serializes reads of whole Enhanced Edition files during discovery, so at most one full file is held in memory at a
+/// time. The lock guards no data.
 static FULL_XRAY_EE_DETECTION_LOCK: Mutex<()> = Mutex::new(());
 
 /// Represents a single discovered save slot file.
