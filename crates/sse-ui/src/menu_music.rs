@@ -4,7 +4,10 @@
 //! game archives) when a game is known, decoded once, and handed to a [`MusicSink`]. Without an install,
 //! without the file, or with a file that does not decode, the result is silence and never an error.
 
+use std::path::Path;
+
 use sse_codecs::vorbis;
+use sse_content::{CompanionGame, GameFileTree};
 
 /// Upper bound on decoded samples per channel group: a little over ten minutes of 48 kHz stereo.
 const MAXIMUM_TRACK_SAMPLES: usize = 48_000 * 60 * 12;
@@ -180,6 +183,28 @@ impl MusicPlayer {
     }
 }
 
+/// Reads and decodes the menu track of the installed game `game_id`. Returns `None` for an unknown game,
+/// a missing install, a missing file or an undecodable file, so the caller stays silent.
+#[must_use]
+pub fn load_track(game_id: &str, game_directory: &Path) -> Option<Track> {
+    let (family, game) = match game_id {
+        "soc" | "stalker-soc" | "stalker-soc-ee" => ("soc", CompanionGame::ShadowOfChernobyl),
+        "cs" | "clear_sky" | "stalker-cs" | "stalker-cs-ee" => ("clear_sky", CompanionGame::ClearSky),
+        "cop" | "stalker-cop" | "stalker-cop-ee" => ("cop", CompanionGame::CallOfPripyat),
+        _ => return None,
+    };
+    let paths = music_paths(family)?;
+    let wanted = |path: &str| {
+        let lower = path.to_ascii_lowercase();
+        paths.iter().any(|candidate| lower.ends_with(candidate))
+    };
+    let tree = GameFileTree::load_simple(game, game_directory, wanted, true).ok()?;
+    decode_track(family, |relative| {
+        let file = tree.files.iter().find(|(path, _)| path.to_ascii_lowercase().ends_with(relative))?.1;
+        file.read().ok()
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -287,5 +312,11 @@ mod tests {
         let mut sink = Recorder::default();
         player.sync(&state, None, &mut sink);
         assert!(sink.events.is_empty());
+    }
+
+    #[test]
+    fn an_unknown_game_or_missing_install_gives_no_track() {
+        assert!(load_track("stalker2", Path::new(".")).is_none());
+        assert!(load_track("cop", Path::new("/nonexistent/sse-test-install")).is_none());
     }
 }
