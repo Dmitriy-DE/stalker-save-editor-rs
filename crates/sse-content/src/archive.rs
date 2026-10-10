@@ -27,6 +27,42 @@ pub type HeaderDecoder = Arc<dyn Fn(&[u8]) -> Result<Vec<Vec<u8>>> + Send + Sync
 /// Entry decompressor function type: takes compressed entry bytes and expected uncompressed size.
 pub type EntryDecoder = Arc<dyn Fn(&[u8], usize) -> Result<Vec<u8>> + Send + Sync>;
 
+/// The one X-Ray header decoder shared by lint, the companion installer and every other reader.
+///
+/// The header is tried as plain LZHUF and as LZHUF after either regional descrambler.
+/// Only a single distinct decoded table is accepted: when two readings decode to different
+/// tables, the header is refused, so no caller can silently pick a different archive layout.
+pub fn xray_header_decoder() -> HeaderDecoder {
+    Arc::new(|data: &[u8]| {
+        let mut candidates = Vec::new();
+        if let Ok(decoded) = sse_codecs::lzhuf::decode(data) {
+            candidates.push(decoded);
+        }
+        for world_wide in [true, false] {
+            let descrambled = sse_codecs::lzhuf::descramble(data, world_wide);
+            if let Ok(decoded) = sse_codecs::lzhuf::decode(&descrambled) {
+                candidates.push(decoded);
+            }
+        }
+        select_unique_header_candidate(candidates)
+    })
+}
+
+/// Keeps the single distinct decoded header table, or refuses when there is none or several differ.
+pub fn select_unique_header_candidate(mut candidates: Vec<Vec<u8>>) -> Result<Vec<Vec<u8>>> {
+    if candidates.is_empty() {
+        return Err(Error::damaged("X-Ray archive header could not be decoded"));
+    }
+    candidates.sort();
+    candidates.dedup();
+    if candidates.len() != 1 {
+        return Err(Error::damaged(
+            "X-Ray archive header decryption is ambiguous: candidates differ",
+        ));
+    }
+    Ok(candidates)
+}
+
 /// Trait for positional reads without moving an internal file pointer.
 pub trait ReadAt: Send + Sync {
     /// Returns the length of the readable resource in bytes.
@@ -536,5 +572,29 @@ mod bounds_tests {
     #[test]
     fn unknown_archive_length_is_an_error_not_an_empty_archive() {
         assert!(matches!(read_entries(&UnknownLength, None), Err(Error::System(_))));
+    }
+}
+
+#[cfg(test)]
+mod header_decoder_tests {
+    use super::*;
+
+    #[test]
+    fn one_distinct_header_table_is_kept() {
+        let kept = select_unique_header_candidate(vec![vec![1, 2, 3], vec![1, 2, 3]])
+            .unwrap_or_else(|error| panic!("identical readings must be accepted: {error:?}"));
+        assert_eq!(kept, vec![vec![1, 2, 3]]);
+    }
+
+    #[test]
+    fn differing_header_tables_are_refused_for_every_caller() {
+        let result = select_unique_header_candidate(vec![vec![1, 2, 3], vec![9, 9]]);
+        assert!(result.is_err(), "an ambiguous header must not pick either reading");
+    }
+
+    #[test]
+    fn a_header_that_decodes_nowhere_is_refused() {
+        assert!(select_unique_header_candidate(Vec::new()).is_err());
+        assert!(xray_header_decoder()(&[0xFF, 0x00, 0x13]).is_err());
     }
 }

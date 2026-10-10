@@ -9,7 +9,10 @@ pub mod file_tree;
 pub mod ltx;
 pub mod preview;
 pub mod string_tables;
-pub use archive::{EntryDecoder, HeaderDecoder, ReadAt, XRayArchive, XRayArchiveEntry};
+pub use archive::{
+    select_unique_header_candidate, xray_header_decoder, EntryDecoder, HeaderDecoder, ReadAt, XRayArchive,
+    XRayArchiveEntry,
+};
 pub use dds::{DdsImage, RgbaImage};
 pub use encoding::{decode_archive_name, decode_text, decode_windows_1250, decode_windows_1251};
 pub use file_tree::{collect_files_recursive, CompanionArchiveLocator, CompanionGame, GameFile, GameFileTree};

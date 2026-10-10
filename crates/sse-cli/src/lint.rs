@@ -4,7 +4,9 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use sse_content::{collect_files_recursive, CompanionGame, EntryDecoder, GameFile, GameFileTree, HeaderDecoder};
+use sse_content::{
+    collect_files_recursive, xray_header_decoder, CompanionGame, EntryDecoder, GameFile, GameFileTree, HeaderDecoder,
+};
 use sse_core::ExitCode;
 use sse_lint::{LintEngine, LintOptions, LintSeverity};
 
@@ -137,34 +139,11 @@ pub fn run_lint(args: &[String]) -> ExitCode {
 ///
 /// Entry data is always LZO1x-compressed when `compressed_size != uncompressed_size`.
 fn make_archive_decoders() -> (HeaderDecoder, EntryDecoder) {
-    let header_decoder: HeaderDecoder = Arc::new(|data: &[u8]| -> sse_core::Result<Vec<Vec<u8>>> {
-        let mut candidates: Vec<Vec<u8>> = Vec::new();
-
-        // Try plain LZHUF first (CoP resources/*.db and others)
-        if let Ok(decoded) = sse_codecs::lzhuf::decode(data) {
-            candidates.push(decoded);
-        }
-
-        // Try scramble-then-LZHUF (SoC gamedata.db*, CS gamedata)
-        for world_wide in [true, false] {
-            let descrambled = sse_codecs::lzhuf::descramble(data, world_wide);
-            if let Ok(decoded) = sse_codecs::lzhuf::decode(&descrambled) {
-                candidates.push(decoded);
-            }
-        }
-
-        if candidates.is_empty() {
-            Err(sse_core::Error::damaged("X-Ray archive header could not be decoded"))
-        } else {
-            Ok(candidates)
-        }
-    });
-
     let entry_decoder: EntryDecoder = Arc::new(|data: &[u8], expected_size: usize| -> sse_core::Result<Vec<u8>> {
         sse_codecs::lzo1x::decompress(data, expected_size)
     });
 
-    (header_decoder, entry_decoder)
+    (xray_header_decoder(), entry_decoder)
 }
 
 /// Loads a [`GameFileTree`] from a game directory.
