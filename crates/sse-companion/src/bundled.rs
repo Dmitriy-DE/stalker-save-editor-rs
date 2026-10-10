@@ -1,7 +1,7 @@
 //! Statically embedded companion payloads copied from the reference mod tree.
 use std::path::Path;
 
-use crate::installer::{InstallError, PayloadFile};
+use crate::installer::{quote, InstallError, PayloadFile};
 
 /// Bundled game target for X-Ray installation and Enhanced Edition archive staging.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -541,25 +541,6 @@ fn game_id(game: Game) -> &'static str {
         Game::ClearSky => "cs",
         Game::CallOfPripyat => "cop",
     }
-}
-
-fn quote(value: &str) -> String {
-    let mut output = String::from("\"");
-    for character in value.chars() {
-        match character {
-            '"' => output.push_str("\\\""),
-            '\\' => output.push_str("\\\\"),
-            '\n' => output.push_str("\\n"),
-            '\r' => output.push_str("\\r"),
-            '\t' => output.push_str("\\t"),
-            control if control <= '\u{1f}' => {
-                output.push_str(&format!("\\u{:04x}", u32::from(control)));
-            }
-            other => output.push(other),
-        }
-    }
-    output.push('"');
-    output
 }
 
 fn encode_windows_1251(bytes: &[u8]) -> Result<Vec<u8>, InstallError> {

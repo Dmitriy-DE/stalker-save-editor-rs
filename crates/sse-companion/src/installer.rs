@@ -1345,7 +1345,8 @@ fn serialize_manifest(manifest: &Manifest) -> String {
     output
 }
 
-fn quote(value: &str) -> String {
+/// Encodes one JSON string; shared by the manifest writer and the bundled package metadata.
+pub(crate) fn quote(value: &str) -> String {
     let mut output = String::from("\"");
     for character in value.chars() {
         match character {
