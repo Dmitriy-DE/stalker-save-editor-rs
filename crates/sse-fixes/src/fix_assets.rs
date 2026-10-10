@@ -63,12 +63,12 @@ fn is_sha256_hex(value: &str) -> bool {
 /// and a body whose SHA-256 differs. Network failures are returned as they are.
 pub fn download_fix_asset(fetch: &mut dyn Fetch, content_sha256: &str) -> Result<Vec<u8>> {
     if !is_sha256_hex(content_sha256) {
-        return Err(Error::damaged("Адрес файла исправления не похож на SHA-256"));
+        return Err(Error::damaged("Fix file address is not a SHA-256 hash"));
     }
     let url = fix_asset_url(content_sha256);
     if !is_official_https_url(&url) {
         return Err(Error::Refused(
-            "Файл исправления можно скачать только с сервера обновлений по HTTPS".to_owned(),
+            "Fix files can only be downloaded over HTTPS from the official server".to_owned(),
         ));
     }
 
@@ -88,17 +88,17 @@ pub fn download_fix_asset(fetch: &mut dyn Fetch, content_sha256: &str) -> Result
 
     if response.final_url != url {
         return Err(Error::Refused(
-            "Скачивание файла исправления перенаправлено на другой адрес; установка отменена".to_owned(),
+            "Fix file download was redirected to another address; install cancelled".to_owned(),
         ));
     }
     if too_large {
         return Err(Error::damaged(
-            "Файл исправления больше допустимого размера; установка отменена",
+            "Fix file is larger than the allowed size; install cancelled",
         ));
     }
     if !sha256_hex(&body).eq_ignore_ascii_case(content_sha256) {
         return Err(Error::damaged(
-            "Скачанный файл исправления не совпадает с каталогом (SHA-256); установка отменена",
+            "Downloaded fix file does not match the catalogue SHA-256; install cancelled",
         ));
     }
     Ok(body)
@@ -190,12 +190,12 @@ mod tests {
 
     fn definition_with(content_sha256: &str) -> Result<GameFixDefinition> {
         let mut definition = crate::catalog::GameFixCatalog::try_get("cs.ai.limansk-bridge-model")
-            .ok_or_else(|| Error::damaged("bridge fix is not catalogued"))?
+            .ok_or_else(|| Error::damaged("fix is not catalogued"))?
             .clone();
         let overlay = definition
             .overlays
             .first_mut()
-            .ok_or_else(|| Error::damaged("bridge fix has no overlay"))?;
+            .ok_or_else(|| Error::damaged("fix has no overlay"))?;
         overlay.content_sha256 = content_sha256.to_owned();
         Ok(definition)
     }
@@ -273,6 +273,19 @@ mod tests {
         fetch.routes.insert(url.clone(), (404, url, Vec::new()));
 
         assert!(download_fix_asset(&mut fetch, &sha).is_err());
+    }
+
+    /// Manual run: downloads the real bridge model from the official server and checks its hash.
+    /// `cargo test -p sse-fixes --lib real_fix_asset_download -- --ignored --nocapture`
+    #[test]
+    #[ignore = "manual run against the live download server"]
+    fn real_fix_asset_download_matches_the_catalogue_hash() -> Result<()> {
+        let sha = "0986c216d1549ca8de1a377a3b20368dc4a5428d3d563abab8a5588f1f57e78a";
+        let mut fetch = fix_asset_fetch_config();
+        let bytes = download_fix_asset(&mut fetch, sha)?;
+        println!("downloaded {} bytes, sha256 {}", bytes.len(), sha256_hex(&bytes));
+        assert_eq!(sha256_hex(&bytes), sha);
+        Ok(())
     }
 
     #[test]
