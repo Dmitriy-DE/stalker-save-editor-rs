@@ -12,7 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::catalog::GameFixCatalog;
 use crate::engine::GameFixEngine;
-use crate::models::{GameFixState, GameTarget};
+use crate::models::{GameFixDefinition, GameFixState, GameTarget};
 use crate::toolkit::s2_mods::{ModToggleStatus, Stalker2ModToggle};
 use crate::toolkit::snapshot::ToolkitSnapshotService;
 use crate::toolkit::user_ltx::ManagedUserLtxSettings;
@@ -173,13 +173,19 @@ impl ToolkitProfileService {
         let currently_installed = engine.list_installed(game_directory, None)?;
         let current_ids: Vec<String> = currently_installed.into_iter().map(|f| f.id).collect();
 
-        let (installed, uninstalled) =
-            reconcile_fixes(engine, game_directory, &current_ids, &profile.target_fix_ids, |id| {
+        let (installed, uninstalled) = reconcile_fixes(
+            engine,
+            game_directory,
+            &current_ids,
+            &profile.target_fix_ids,
+            GameFixCatalog::try_get,
+            |id| {
                 format!(
                     "Fix '{id}' specified in profile '{}' not found in catalog",
                     profile.name
                 )
-            })?;
+            },
+        )?;
 
         // 3. Apply user.ltx overrides
         let user_ltx_changes = if !profile.user_ltx_overrides.is_empty() {
@@ -430,17 +436,19 @@ fn game_target_from_name(name: &str) -> Option<GameTarget> {
 
 /// Moves the installed fixes from `current_ids` to `target_ids`.
 ///
-/// New fixes are installed first. If one fails, only the fixes installed by this call are rolled back, so the
-/// previously installed fixes are untouched. Fixes that are no longer wanted are removed only after every install
-/// succeeded. Returns `(installed, uninstalled)`.
+/// New fixes are installed first. Fixes that are no longer wanted are removed only after every install
+/// succeeded. If any step fails, the switch is undone: fixes removed by this call are installed again from
+/// `definition_of`, and fixes installed by this call are removed, so the game is left as it was before the call.
+/// Returns `(installed, uninstalled)`.
 ///
 /// # Errors
-/// Returns the install error (or a refusal for unknown catalog ids), with any failed rollback reported with it.
-pub(crate) fn reconcile_fixes(
+/// Returns the failing step's error, with any failed undo step reported with it.
+pub(crate) fn reconcile_fixes<'d>(
     engine: &GameFixEngine,
     game_directory: &Path,
     current_ids: &[String],
     target_ids: &[String],
+    definition_of: impl Fn(&str) -> Option<&'d GameFixDefinition>,
     missing_message: impl Fn(&str) -> String,
 ) -> Result<(Vec<String>, Vec<String>)> {
     let mut installed: Vec<String> = Vec::new();
@@ -448,35 +456,65 @@ pub(crate) fn reconcile_fixes(
         if current_ids.contains(target_id) {
             continue;
         }
-        let Some(definition) = GameFixCatalog::try_get(target_id) else {
+        let Some(definition) = definition_of(target_id) else {
             return Err(Error::Refused(missing_message(target_id)));
         };
         if let Err(error) = engine.install(definition, game_directory) {
-            let mut rollback_failures = Vec::new();
-            for id in installed.iter().rev() {
-                if let Err(rollback_error) = engine.uninstall(id, game_directory) {
-                    rollback_failures.push(format!("{id} ({rollback_error})"));
-                }
-            }
-            if rollback_failures.is_empty() {
-                return Err(error);
-            }
-            return Err(Error::System(format!(
-                "Fix switch failed: {error}; rollback incomplete, still installed: {}",
-                rollback_failures.join("; ")
-            )));
+            let undo_failures = undo_fix_switch(engine, game_directory, &installed, &[], &definition_of);
+            return Err(fix_switch_error(error, undo_failures));
         }
         installed.push(target_id.clone());
     }
 
     let mut uninstalled: Vec<String> = Vec::new();
     for cur_id in current_ids {
-        if !target_ids.contains(cur_id) {
-            engine.uninstall(cur_id, game_directory)?;
-            uninstalled.push(cur_id.clone());
+        if target_ids.contains(cur_id) {
+            continue;
         }
+        if let Err(error) = engine.uninstall(cur_id, game_directory) {
+            let undo_failures = undo_fix_switch(engine, game_directory, &installed, &uninstalled, &definition_of);
+            return Err(fix_switch_error(error, undo_failures));
+        }
+        uninstalled.push(cur_id.clone());
     }
     Ok((installed, uninstalled))
+}
+
+/// Undoes a partly applied fix switch: removes `installed` (newest first), then reinstalls `uninstalled`
+/// (newest first). Returns one message per step that could not be undone.
+fn undo_fix_switch<'d>(
+    engine: &GameFixEngine,
+    game_directory: &Path,
+    installed: &[String],
+    uninstalled: &[String],
+    definition_of: &impl Fn(&str) -> Option<&'d GameFixDefinition>,
+) -> Vec<String> {
+    let mut failures = Vec::new();
+    for id in installed.iter().rev() {
+        if let Err(undo_error) = engine.uninstall(id, game_directory) {
+            failures.push(format!("{id} is still installed ({undo_error})"));
+        }
+    }
+    for id in uninstalled.iter().rev() {
+        let Some(definition) = definition_of(id) else {
+            failures.push(format!("{id} was removed and is not in the catalog to restore it"));
+            continue;
+        };
+        if let Err(undo_error) = engine.install(definition, game_directory) {
+            failures.push(format!("{id} was removed and could not be restored ({undo_error})"));
+        }
+    }
+    failures
+}
+
+fn fix_switch_error(error: Error, undo_failures: Vec<String>) -> Error {
+    if undo_failures.is_empty() {
+        return error;
+    }
+    Error::System(format!(
+        "Fix switch failed: {error}; undo incomplete: {}",
+        undo_failures.join("; ")
+    ))
 }
 
 pub(super) fn game_target_str(target: GameTarget) -> &'static str {
@@ -570,5 +608,143 @@ mod storage_tests {
             Some("Toolkit profiles currently support X-Ray managed providers only.")
         );
         let _ = fs::remove_dir_all(root);
+    }
+}
+
+#[cfg(test)]
+mod reconcile_tests {
+    use super::reconcile_fixes;
+    use crate::engine::GameFixEngine;
+    use crate::models::{
+        GameFixCategory, GameFixDefinition, GameFixImplementationType, GameFixMaturity, GameFixSaveCompatibility,
+        GameFixVerificationState, GameTarget, TextPatchOperation,
+    };
+    use std::collections::HashMap;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+
+    fn game_root() -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "sse-reconcile-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
+
+    /// A ClearSky install folder with the X-Ray marker and an app manifest on a supported build.
+    fn make_game(root: &Path) -> sse_core::Result<()> {
+        fs::create_dir_all(root.join("gamedata/configs")).map_err(sse_core::Error::from)?;
+        fs::write(
+            root.join("fsgame.ltx"),
+            "; fsgame marker\n$game_data$ = false| false| $fs_root$| gamedata\\\n",
+        )
+        .map_err(sse_core::Error::from)?;
+        let app_id = GameTarget::ClearSky.steam_app_id().unwrap_or(0);
+        let acf = format!("\"AppState\"\n{{\n\t\"appid\"\t\t\"{app_id}\"\n\t\"buildid\"\t\t\"11450472\"\n}}\n");
+        fs::write(root.join(format!("appmanifest_{app_id}.acf")), acf).map_err(sse_core::Error::from)?;
+        for name in ["a", "b", "c"] {
+            fs::write(root.join(format!("gamedata/configs/{name}.ltx")), format!("old-{name}"))
+                .map_err(sse_core::Error::from)?;
+        }
+        Ok(())
+    }
+
+    fn fix(id: &str, name: &str) -> GameFixDefinition {
+        GameFixDefinition {
+            id: id.to_string(),
+            game: GameTarget::ClearSky,
+            version: "1.0.0".to_string(),
+            title: format!("Synthetic fix {id}"),
+            supported_steam_build_ids: vec!["11450472".to_string()],
+            category: GameFixCategory::Essential,
+            maturity: GameFixMaturity::Validated,
+            depends_on: vec![],
+            conflicts_with: vec![],
+            text_patches: vec![TextPatchOperation {
+                relative_path: format!("gamedata/configs/{name}.ltx"),
+                expected_text: format!("old-{name}"),
+                replacement_text: format!("new-{name}"),
+                code_page: 28591,
+                expected_file_sha256: None,
+                retail_only: false,
+            }],
+            source: "test".to_string(),
+            problem: "test".to_string(),
+            description: "test".to_string(),
+            implementation: GameFixImplementationType::ExactTextReplacement,
+            requires_new_game: false,
+            save_compatibility: GameFixSaveCompatibility::ExistingSaves,
+            verification_state: GameFixVerificationState::RetailFilesVerified,
+            detection_method: "test".to_string(),
+            references: vec![],
+            overlays: vec![],
+            spawn_edits: vec![],
+        }
+    }
+
+    fn installed_ids(engine: &GameFixEngine, root: &Path) -> sse_core::Result<Vec<String>> {
+        let mut ids: Vec<String> = engine.list_installed(root, None)?.into_iter().map(|f| f.id).collect();
+        ids.sort();
+        Ok(ids)
+    }
+
+    #[test]
+    fn a_failed_removal_puts_back_the_fixes_it_already_removed() -> sse_core::Result<()> {
+        let root = game_root();
+        make_game(&root)?;
+        let engine = GameFixEngine::with_synthetic(true);
+        let definitions: HashMap<String, GameFixDefinition> =
+            [fix("test.a", "a"), fix("test.b", "b"), fix("test.c", "c")]
+                .into_iter()
+                .map(|d| (d.id.clone(), d))
+                .collect();
+        let lookup = |id: &str| definitions.get(id);
+
+        // Installed before the switch: A and B. The switch wants only C.
+        reconcile_fixes(
+            &engine,
+            &root,
+            &[],
+            &["test.a".to_string(), "test.b".to_string()],
+            lookup,
+            |id| id.to_string(),
+        )?;
+        // Someone edits B's file after install: removing B will be refused.
+        fs::write(root.join("gamedata/configs/b.ltx"), "edited by hand").map_err(sse_core::Error::from)?;
+
+        let current = vec!["test.a".to_string(), "test.b".to_string()];
+        let Err(error) = reconcile_fixes(&engine, &root, &current, &["test.c".to_string()], lookup, |id| {
+            id.to_string()
+        }) else {
+            return Err(sse_core::Error::System("removing B must fail".to_string()));
+        };
+
+        let message = error.to_string();
+        assert!(
+            !message.contains("undo incomplete"),
+            "undo should be complete: {message}"
+        );
+        // Back to the starting point: A and B installed, C not installed, A's file restored to its installed text.
+        assert_eq!(
+            installed_ids(&engine, &root)?,
+            vec!["test.a".to_string(), "test.b".to_string()]
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("gamedata/configs/a.ltx")).map_err(sse_core::Error::from)?,
+            "new-a"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("gamedata/configs/c.ltx")).map_err(sse_core::Error::from)?,
+            "old-c"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("gamedata/configs/b.ltx")).map_err(sse_core::Error::from)?,
+            "edited by hand"
+        );
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
     }
 }

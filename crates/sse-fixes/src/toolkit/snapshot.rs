@@ -239,10 +239,14 @@ impl ToolkitSnapshotService {
         let current_ids: Vec<String> = current_installed.into_iter().map(|f| f.id).collect();
         let target_ids: Vec<String> = snapshot.installed_fixes.iter().map(|f| f.fix_id.clone()).collect();
 
-        let (installed, uninstalled) =
-            super::profile::reconcile_fixes(engine, game_directory, &current_ids, &target_ids, |id| {
-                format!("Fix '{id}' required by snapshot is not available in catalog")
-            })?;
+        let (installed, uninstalled) = super::profile::reconcile_fixes(
+            engine,
+            game_directory,
+            &current_ids,
+            &target_ids,
+            GameFixCatalog::try_get,
+            |id| format!("Fix '{id}' required by snapshot is not available in catalog"),
+        )?;
 
         // 2. Reconcile user.ltx
         let user_ltx_updates_count = if !snapshot.managed_user_ltx.is_empty() {

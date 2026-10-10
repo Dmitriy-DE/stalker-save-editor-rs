@@ -565,3 +565,61 @@ fn parse_definition(val: &JsonValue) -> Result<GameFixDefinition> {
         spawn_edits,
     })
 }
+
+#[cfg(test)]
+mod code_page_tests {
+    use super::*;
+
+    /// One minimal definition with a single text patch whose `codePage` is the given JSON fragment.
+    fn definition_with_code_page(code_page: &str) -> String {
+        format!(
+            r#"{{"id": "test.codepage", "game": "ClearSky", "version": "1.0.0", "title": "t",
+            "supportedSteamBuildIds": ["11450472"], "category": "Essential", "maturity": "Validated",
+            "dependsOn": [], "conflictsWith": [], "source": "test", "textPatches": [{{
+            "relativePath": "gamedata/configs/a.ltx", "expectedText": "a", "replacementText": "b",
+            "codePage": {code_page}}}]}}"#
+        )
+    }
+
+    fn parse(code_page: &str) -> Result<GameFixDefinition> {
+        let value = parse_json(&definition_with_code_page(code_page))?;
+        parse_definition(&value)
+    }
+
+    #[test]
+    fn a_supported_code_page_is_kept() -> Result<()> {
+        let definition = parse("1251")?;
+        assert!(definition
+            .text_patches
+            .first()
+            .is_some_and(|patch| patch.code_page == 1251));
+        Ok(())
+    }
+
+    #[test]
+    fn a_missing_code_page_defaults_to_latin_1() -> Result<()> {
+        let json = definition_with_code_page("28591").replace(r#""codePage": 28591"#, r#""note": 0"#);
+        let definition = parse_definition(&parse_json(&json)?)?;
+        assert!(definition
+            .text_patches
+            .first()
+            .is_some_and(|patch| patch.code_page == 28591));
+        Ok(())
+    }
+
+    #[test]
+    fn an_unknown_code_page_is_refused_not_replaced() {
+        let result = parse("1252");
+        assert!(
+            matches!(&result, Err(Error::Damaged(message)) if message.contains("codePage 1252")),
+            "1252 must be refused with a damaged-input error"
+        );
+    }
+
+    #[test]
+    fn a_code_page_that_is_not_an_integer_is_refused() {
+        assert!(parse("\"1251\"").is_err());
+        assert!(parse("-1").is_err());
+        assert!(parse("4294967297").is_err());
+    }
+}
