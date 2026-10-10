@@ -343,6 +343,15 @@ pub enum AppMessage {
     EditorAction(EditorAction),
     /// UI sound clips decoded from the selected game's files by a worker.
     SoundLoaded(String, Box<crate::sound::GameUiSounds>),
+    /// Menu music track decoded from the selected game's files by a worker; `None` when it is unavailable.
+    MusicLoaded(String, Box<Option<crate::menu_music::Track>>),
+    /// Menu music switch or volume changed on the settings screen; applied at once, saved only on request.
+    MusicSettings {
+        /// Whether menu music is switched on.
+        enabled: bool,
+        /// Menu music volume in percent.
+        volume: u32,
+    },
     /// Durable settings-write result delivered by the settings writer.
     SettingsWriteFinished(std::result::Result<(), String>),
 }
@@ -371,6 +380,8 @@ impl std::fmt::Debug for AppMessage {
             Self::ToScreen(id, _) => write!(f, "ToScreen({id:?})"),
             Self::EditorAction(action) => write!(f, "EditorAction({action:?})"),
             Self::SoundLoaded(game, _) => write!(f, "SoundLoaded({game})"),
+            Self::MusicLoaded(game, _) => write!(f, "MusicLoaded({game})"),
+            Self::MusicSettings { enabled, volume } => write!(f, "MusicSettings({enabled}, {volume})"),
             Self::SettingsWriteFinished(result) => write!(f, "SettingsWriteFinished({})", result.is_ok()),
         }
     }

@@ -154,25 +154,27 @@ pub trait MusicSink {
     fn stop(&mut self);
 }
 
-/// Brings the sink in line with the state, starting or stopping only on a change.
+/// Brings the sink in line with the state. A volume change restarts the track at the new level.
 #[derive(Debug, Default)]
 pub struct MusicPlayer {
     playing: bool,
+    started_volume: Option<u8>,
 }
 
 impl MusicPlayer {
-    /// Applies `state` to `sink`; `track` is the loaded track when one exists.
+    /// Starts, stops or restarts the sink so that it matches `state` and `track`.
     pub fn sync(&mut self, state: &MusicState, track: Option<&Track>, sink: &mut dyn MusicSink) {
-        match (state.should_play(), track) {
-            (true, Some(track)) if !self.playing => {
-                sink.start(track, state.volume_percent());
-                self.playing = true;
-            }
-            (false, _) | (true, None) if self.playing => {
-                sink.stop();
-                self.playing = false;
-            }
-            _ => {}
+        let volume = state.volume_percent();
+        let wanted = if state.should_play() { track } else { None };
+        if self.playing && (wanted.is_none() || self.started_volume != Some(volume)) {
+            sink.stop();
+            self.playing = false;
+            self.started_volume = None;
+        }
+        if let (false, Some(track)) = (self.playing, wanted) {
+            sink.start(track, volume);
+            self.playing = true;
+            self.started_volume = Some(volume);
         }
     }
 
@@ -180,6 +182,89 @@ impl MusicPlayer {
     #[must_use]
     pub const fn is_playing(&self) -> bool {
         self.playing
+    }
+}
+
+/// The native output used for menu music: a looping, stoppable stream from `sse_sys`.
+#[derive(Default)]
+pub struct SystemMusicSink {
+    playback: Option<sse_sys::output::LoopingPlayback>,
+}
+
+impl MusicSink for SystemMusicSink {
+    fn start(&mut self, track: &Track, volume: u8) {
+        let level = f32::from(volume.min(100)) / 100.0;
+        self.playback = sse_sys::output::start_music(track.samples.clone(), track.channels, track.rate, level);
+    }
+
+    fn stop(&mut self) {
+        self.playback = None;
+    }
+}
+
+/// Menu music as the shell holds it: settings, focus, the track of the selected game and the output.
+#[derive(Default)]
+pub struct MusicHost {
+    state: MusicState,
+    player: MusicPlayer,
+    sink: SystemMusicSink,
+    track: Option<Track>,
+    track_game: Option<String>,
+}
+
+impl MusicHost {
+    /// Starts from the saved switch and volume, with the window focused and no track yet.
+    #[must_use]
+    pub fn new(enabled: bool, volume: u32) -> Self {
+        let mut host = Self::default();
+        host.set_settings(enabled, volume);
+        host.state.set_focused(true);
+        host
+    }
+
+    /// The game whose track is loaded or being loaded.
+    #[must_use]
+    pub fn track_game(&self) -> Option<&str> {
+        self.track_game.as_deref()
+    }
+
+    /// Makes `game` the one whose track counts. Returns `true` when its track must be loaded now.
+    pub fn select_game(&mut self, game: Option<&str>) -> bool {
+        if self.track_game.as_deref() == game {
+            return false;
+        }
+        self.track_game = game.map(str::to_owned);
+        self.track = None;
+        self.state.set_track_available(false);
+        game.is_some()
+    }
+
+    /// Stores a loaded track; `None` keeps music silent for this game.
+    pub fn set_track(&mut self, track: Option<Track>) {
+        self.state.set_track_available(track.is_some());
+        self.track = track;
+    }
+
+    /// Applies the switch and volume from the settings screen at once.
+    pub fn set_settings(&mut self, enabled: bool, volume: u32) {
+        self.state.set_enabled(enabled);
+        self.state.set_volume(u8::try_from(volume.min(100)).unwrap_or(100));
+    }
+
+    /// Records whether the window has focus. Music stops while it is not focused.
+    pub fn set_focused(&mut self, focused: bool) {
+        self.state.set_focused(focused);
+    }
+
+    /// Brings the output in line with the current state.
+    pub fn sync(&mut self) {
+        self.player.sync(&self.state, self.track.as_ref(), &mut self.sink);
+    }
+
+    /// Stops the output for good, for example when the window closes.
+    pub fn stop(&mut self) {
+        self.sink.stop();
+        self.player = MusicPlayer::default();
     }
 }
 
@@ -198,7 +283,27 @@ pub fn load_track(game_id: &str, game_directory: &Path) -> Option<Track> {
         let lower = path.to_ascii_lowercase();
         paths.iter().any(|candidate| lower.ends_with(candidate))
     };
-    let tree = GameFileTree::load_simple(game, game_directory, wanted, true).ok()?;
+    // Enhanced Editions name their index file after the game (fsgame_soc.ltx), so try that name first.
+    let fsgame: &[&str] = match family {
+        "soc" => &["fsgame_soc.ltx", "fsgame.ltx"],
+        "clear_sky" => &["fsgame_cs.ltx", "fsgame.ltx"],
+        _ => &["fsgame_cop.ltx", "fsgame.ltx"],
+    };
+    // Game archives are compressed: the header needs the X-Ray decoder and the entries need LZO.
+    let entry_decoder: sse_content::EntryDecoder =
+        std::sync::Arc::new(|data: &[u8], expected: usize| sse_codecs::lzo1x::decompress(data, expected));
+    let tree = GameFileTree::load(
+        game,
+        game_directory,
+        wanted,
+        Some(fsgame),
+        true,
+        true,
+        false,
+        Some(sse_content::xray_header_decoder()),
+        Some(entry_decoder),
+    )
+    .ok()?;
     decode_track(family, |relative| {
         let file = tree
             .files
@@ -309,6 +414,20 @@ mod tests {
     }
 
     #[test]
+    fn a_volume_change_restarts_the_track_at_the_new_level() {
+        let mut state = MusicState::default();
+        state.set_track_available(true);
+        state.set_enabled(true);
+        let mut player = MusicPlayer::default();
+        let mut sink = Recorder::default();
+        player.sync(&state, Some(&track()), &mut sink);
+        state.set_volume(30);
+        player.sync(&state, Some(&track()), &mut sink);
+        assert_eq!(sink.events, vec!["start", "stop", "start"]);
+        assert_eq!(sink.volumes, vec![80, 30]);
+    }
+
+    #[test]
     fn no_track_means_no_start_and_no_error() {
         let mut state = MusicState::default();
         state.set_enabled(true);
@@ -322,5 +441,27 @@ mod tests {
     fn an_unknown_game_or_missing_install_gives_no_track() {
         assert!(load_track("stalker2", Path::new(".")).is_none());
         assert!(load_track("cop", Path::new("/nonexistent/sse-test-install")).is_none());
+    }
+
+    /// Reads the real menu track of an installed game. Run by hand, read-only:
+    /// `SSE_GAME_ID=soc SSE_GAME_DIR=/path/to/install cargo test -p sse-ui --lib real_install_track -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "needs an installed game named by SSE_GAME_ID and SSE_GAME_DIR"]
+    fn real_install_track_decodes() {
+        let (Ok(game), Ok(dir)) = (std::env::var("SSE_GAME_ID"), std::env::var("SSE_GAME_DIR")) else {
+            panic!("set SSE_GAME_ID and SSE_GAME_DIR");
+        };
+        let Some(track) = load_track(&game, Path::new(&dir)) else {
+            panic!("no menu track could be read for {game}");
+        };
+        let frames = track.samples.len() / usize::from(track.channels.max(1));
+        eprintln!(
+            "TRACK {game}: channels {}, rate {} Hz, {} frames, {:.1} s",
+            track.channels,
+            track.rate,
+            frames,
+            frames as f64 / f64::from(track.rate.max(1))
+        );
+        assert!(!track.samples.is_empty());
     }
 }
