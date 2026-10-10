@@ -181,6 +181,26 @@ where
     });
 }
 
+/// Like [`spawn_named_detached`], but reports a failure to start the thread to the caller.
+///
+/// When the thread cannot be started, `work` is dropped without running and the task name is released.
+///
+/// # Errors
+/// Returns the I/O error reported by the operating system when the thread cannot be created.
+pub fn try_spawn_named_detached<F>(name: &'static str, work: F) -> std::io::Result<()>
+where
+    F: FnOnce() + Send + 'static,
+{
+    let guard = NamedTaskGuard::enter(name);
+    thread::Builder::new()
+        .name(format!("sse-{name}"))
+        .spawn(move || {
+            let _guard = guard;
+            work();
+        })
+        .map(|_| ())
+}
+
 /// Returns whether any worker with this task name is currently executing.
 #[must_use]
 pub fn named_task_active(name: &str) -> bool {
@@ -383,5 +403,39 @@ impl TaskManager {
 impl Drop for TaskManager {
     fn drop(&mut self) {
         self.cancel_all();
+    }
+}
+
+#[cfg(test)]
+mod try_spawn_tests {
+    use super::{named_task_active, try_spawn_named_detached};
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    #[test]
+    fn try_spawn_runs_work_and_releases_the_name_when_it_finishes() -> std::io::Result<()> {
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        try_spawn_named_detached("r4-003-try-spawn", move || {
+            let _ = started_tx.send(());
+            let _ = release_rx.recv_timeout(Duration::from_secs(5));
+        })?;
+        started_rx
+            .recv_timeout(Duration::from_secs(5))
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
+        assert!(
+            named_task_active("r4-003-try-spawn"),
+            "the name is held while the work runs"
+        );
+        let _ = release_tx.send(());
+        for _ in 0..500 {
+            if !named_task_active("r4-003-try-spawn") {
+                return Ok(());
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        Err(std::io::Error::other(
+            "the name was not released after the work finished",
+        ))
     }
 }

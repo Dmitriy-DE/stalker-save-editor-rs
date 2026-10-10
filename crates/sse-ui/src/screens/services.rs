@@ -1669,8 +1669,8 @@ impl Updates {
             self.busy = false;
             return;
         };
-        sse_app::tasks::spawn_named_detached("companion-read", move || {
-            let result = (|| {
+        if let Err(error) = sse_app::tasks::try_spawn_named_detached("companion-read", move || {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let detected = sse_update::UpdateInstallationDetector::detect(None, None, None)
                     .map_err(|e| format!("Updates are not available: {e}"))?;
                 let service = sse_update::UpdateService::new(env!("CARGO_PKG_VERSION"), detected);
@@ -1684,12 +1684,19 @@ impl Updates {
                 }
                 let version = check.manifest.as_ref().map_or_else(String::new, |m| m.version.clone());
                 Ok((check.state, version, check.artifact))
-            })();
+            }))
+            .unwrap_or_else(|_| Err(t("Ошибка").to_owned()));
             proxy.send(AppMessage::ToScreen(
                 ScreenId::Updates,
                 Box::new(UpdateReply::Checked(result)),
             ));
-        });
+        }) {
+            self.busy = false;
+            if let Some(id) = self.status {
+                let _ = cx.tree.set_text(id, &tr("Ошибка сервера обновлений: {0}", &[&error]));
+            }
+            cx.status = Some(error.to_string());
+        }
     }
 
     fn download(&mut self, cx: &mut Context<'_>) {
@@ -1708,8 +1715,8 @@ impl Updates {
             self.busy = false;
             return;
         };
-        sse_app::tasks::spawn_named_detached("companion-write", move || {
-            let result = (|| {
+        if let Err(error) = sse_app::tasks::try_spawn_named_detached("companion-write", move || {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let detected =
                     sse_update::UpdateInstallationDetector::detect(None, None, None).map_err(|e| e.to_string())?;
                 let service = sse_update::UpdateService::new(env!("CARGO_PKG_VERSION"), detected);
@@ -1728,12 +1735,19 @@ impl Updates {
                     .download(&mut fetch, &artifact, &path, Some(&mut progress))
                     .map_err(|e| e.to_string())?;
                 Ok((artifact, path))
-            })();
+            }))
+            .unwrap_or_else(|_| Err(t("Ошибка").to_owned()));
             proxy.send(AppMessage::ToScreen(
                 ScreenId::Updates,
                 Box::new(UpdateReply::Downloaded(result)),
             ));
-        });
+        }) {
+            self.busy = false;
+            if let Some(id) = self.status {
+                let _ = cx.tree.set_text(id, &tr("Ошибка скачивания: {0}", &[&error]));
+            }
+            cx.status = Some(error.to_string());
+        }
     }
 
     fn install(&mut self, cx: &mut Context<'_>) {
@@ -1752,8 +1766,8 @@ impl Updates {
             self.busy = false;
             return;
         };
-        sse_app::tasks::spawn_named_detached("companion-write", move || {
-            let result = (|| {
+        if let Err(error) = sse_app::tasks::try_spawn_named_detached("companion-write", move || {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let detected =
                     sse_update::UpdateInstallationDetector::detect(None, None, None).map_err(|e| e.to_string())?;
                 let service = sse_update::UpdateService::new(env!("CARGO_PKG_VERSION"), detected);
@@ -1762,12 +1776,19 @@ impl Updates {
                     .install(&artifact, &path, &mut runner)
                     .map_err(|e| e.to_string())?;
                 Ok(done)
-            })();
+            }))
+            .unwrap_or_else(|_| Err(t("Ошибка").to_owned()));
             proxy.send(AppMessage::ToScreen(
                 ScreenId::Updates,
                 Box::new(UpdateReply::Installed(result)),
             ));
-        });
+        }) {
+            self.busy = false;
+            if let Some(id) = self.status {
+                let _ = cx.tree.set_text(id, &tr("Ошибка запуска установки: {0}", &[&error]));
+            }
+            cx.status = Some(error.to_string());
+        }
     }
 }
 
