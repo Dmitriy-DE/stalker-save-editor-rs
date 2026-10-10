@@ -233,7 +233,11 @@ build_windows() {
     cp "${shell_bin}" "${stage}/sse-shell.exe"
     cp "${PROJECT_ROOT}/packaging/icons/stalker-save-editor.svg" "${stage}/stalker-save-editor.svg"
     write_build_manifest "${stage}/BUILD_MANIFEST.json" windows x86_64 portable
-    (cd "${stage}" && zip -q "${DIST_DIR}/SaveEditor-windows-x86_64.zip" stalker-save.exe sse-shell.exe stalker-save-editor.svg BUILD_MANIFEST.json)
+    # Fixed entry order, fixed mtimes and no extra attributes make the zip byte-reproducible.
+    # A stale archive is removed first, because `zip` would otherwise update it in place.
+    touch -d "@${SOURCE_DATE_EPOCH}" "${stage}/stalker-save.exe" "${stage}/sse-shell.exe" "${stage}/stalker-save-editor.svg" "${stage}/BUILD_MANIFEST.json"
+    rm -f -- "${DIST_DIR}/SaveEditor-windows-x86_64.zip"
+    (cd "${stage}" && zip -q -X -D "${DIST_DIR}/SaveEditor-windows-x86_64.zip" stalker-save.exe sse-shell.exe stalker-save-editor.svg BUILD_MANIFEST.json)
     record_artifact windows-x86_64 windows-x86_64 x86_64 portable "${DIST_DIR}/SaveEditor-windows-x86_64.zip"
 }
 
