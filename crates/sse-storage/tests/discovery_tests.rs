@@ -1067,6 +1067,7 @@ fn an_s2_container_larger_than_the_header_sample_is_identified_by_its_whole_file
     assert_eq!(result.slots[0].format_id.as_deref(), Some("stalker2"));
 }
 
+#[test]
 fn xray_fixtures_get_the_same_format_id_from_discovery_and_from_the_reader() {
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/synthetic");
     let mut checked = 0_usize;
