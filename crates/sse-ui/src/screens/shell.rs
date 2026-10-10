@@ -31,6 +31,10 @@ const SAVE_LIBRARY_PAGE_SIZE: usize = 8;
 const LIBRARY_PREVIEW_WIDTH: u32 = 96;
 const LIBRARY_PREVIEW_HEIGHT: u32 = 54;
 const LIBRARY_ROW_HEIGHT: f32 = 70.0;
+/// Gap between the library's rows (the list's own gap).
+const LIBRARY_ROW_GAP: f32 = 4.0;
+/// A row's full height: its 8 px of padding above and below, and the gap after it.
+const LIBRARY_ROW_PITCH: f32 = LIBRARY_ROW_HEIGHT + 16.0 + LIBRARY_ROW_GAP;
 const LIBRARY_PREVIEW_CACHE_ENTRIES: usize = 32;
 const MAX_OPENED_SAVE_FILES: usize = 512;
 
@@ -990,6 +994,9 @@ pub struct Shell {
     library_status: WidgetId,
     library_rows: Vec<LibraryRow>,
     library_page: usize,
+    /// The list's rows on a page: as many as the window's height leaves room for (at most the slots built).
+    library_visible_rows: usize,
+    library_list: WidgetId,
     library_previews: LibraryPreviewState,
     library_workspace: super::saves::Workspace,
     reports_banner: WidgetId,
@@ -1139,6 +1146,20 @@ fn library_preview_style(width: f32, height: f32) -> Style {
 }
 
 /// Library panel width by window width: 220 under 1100 of the middle column, 340 from 2200, 248 when compact, 300 otherwise.
+/// Rows of the save library that fit a list of `height` pixels, from one to the slots built.
+fn library_rows_that_fit(height: f32) -> usize {
+    let mut rows = 0_usize;
+    while rows < SAVE_LIBRARY_PAGE_SIZE {
+        let next = f32::from(u16::try_from(rows.saturating_add(1)).unwrap_or(u16::MAX));
+        let needed = next * LIBRARY_ROW_PITCH;
+        if needed > height {
+            break;
+        }
+        rows = rows.saturating_add(1);
+    }
+    rows.max(1)
+}
+
 fn library_panel_width(window_width: u32) -> f32 {
     let middle_width = window_width.saturating_sub(244);
     if middle_width < 1100 {
@@ -2108,6 +2129,8 @@ impl Shell {
             library_status,
             library_rows,
             library_page: 0,
+            library_visible_rows: SAVE_LIBRARY_PAGE_SIZE,
+            library_list,
             library_previews: LibraryPreviewState::default(),
             library_workspace,
             reports_banner,
@@ -3543,6 +3566,7 @@ impl Shell {
             self.render_library(tree)?;
         }
         if let Message::Window(WindowEvent::Resized { width, .. }) = message {
+            self.fit_library_rows(tree)?;
             self.sync_navigation_width(tree, *width)?;
             self.art.sync(tree, self.sidebar)?;
             let sidebar_width = if self.nav_collapsed { 64 } else { 248 };
@@ -3822,7 +3846,7 @@ impl Shell {
         if let Some(offset) = clicked.and_then(|id| self.library_rows.iter().position(|row| row.select == id)) {
             let index = self
                 .library_page
-                .saturating_mul(SAVE_LIBRARY_PAGE_SIZE)
+                .saturating_mul(self.library_visible_rows)
                 .saturating_add(offset);
             let (_, _, slots) = self.library_workspace.library_snapshot();
             if let Some(slot) = slots.get(index) {
@@ -4071,15 +4095,33 @@ impl Shell {
         Ok(Flow::Continue)
     }
 
+    /// Sets the rows per page from the list's measured height, so the rows never run into the pager or squeeze the search.
+    fn fit_library_rows(&mut self, tree: &mut Tree) -> Result<()> {
+        tree.update_layout()?;
+        let height = f32::from(u16::try_from(tree.rect(self.library_list)?.height).unwrap_or(0));
+        let rows = library_rows_that_fit(height);
+        if rows != self.library_visible_rows {
+            self.library_visible_rows = rows;
+            self.library_page = 0;
+            self.render_library(tree)?;
+        }
+        Ok(())
+    }
+
     fn render_library(&mut self, tree: &mut Tree) -> Result<()> {
         let (scanning, error, slots) = self.library_workspace.library_snapshot();
         let query = self.library_workspace.search_query();
         self.library_search.show(tree, &query)?;
-        let pages = slots.len().saturating_add(SAVE_LIBRARY_PAGE_SIZE - 1) / SAVE_LIBRARY_PAGE_SIZE;
+        let per_page = self.library_visible_rows.max(1);
+        let pages = slots
+            .len()
+            .saturating_add(per_page.saturating_sub(1))
+            .checked_div(per_page)
+            .unwrap_or(0);
         self.library_page = self.library_page.min(pages.saturating_sub(1));
         tree.set_text(self.library_count, &slots.len().to_string())?;
-        let start = self.library_page.saturating_mul(SAVE_LIBRARY_PAGE_SIZE);
-        let visible_slots: Vec<SaveSlot> = slots.iter().skip(start).take(SAVE_LIBRARY_PAGE_SIZE).cloned().collect();
+        let start = self.library_page.saturating_mul(per_page);
+        let visible_slots: Vec<SaveSlot> = slots.iter().skip(start).take(per_page).cloned().collect();
         let selected_path = self.app.current_save();
         let rows = self.library_rows.clone();
         for (offset, library_row) in rows.iter().enumerate() {
@@ -4162,7 +4204,7 @@ impl Shell {
         tree.set_text(self.library_status, &status)?;
         tree.set_visible(self.library_status, !status.is_empty())?;
         tree.set_visible(self.library_pager, !slots.is_empty())?;
-        let last = start.saturating_add(SAVE_LIBRARY_PAGE_SIZE).min(slots.len());
+        let last = start.saturating_add(per_page).min(slots.len());
         tree.set_text(
             self.library_pages,
             &crate::strings::tr_in(
@@ -4899,6 +4941,33 @@ mod tests {
         assert!(left & 0x00ff_0000 > 0x00c8_0000);
         assert!(right & 0x0000_00ff > 0x0000_00c8);
         Ok(())
+    }
+
+    #[test]
+    fn library_rows_fit_the_list_and_every_save_has_a_page_for_6_and_20_saves() {
+        use super::{library_rows_that_fit, LIBRARY_ROW_PITCH, SAVE_LIBRARY_PAGE_SIZE};
+        // The rows never need more height than the list has, so they cannot run into the pager or squeeze the search.
+        for height in [0.0_f32, 60.0, 140.0, 300.0, 444.0, 520.0, 600.0, 760.0, 1000.0] {
+            let rows = library_rows_that_fit(height);
+            assert!(
+                (1..=SAVE_LIBRARY_PAGE_SIZE).contains(&rows),
+                "rows out of range at {height}"
+            );
+            if height >= 70.0 {
+                let needed = rows as f32 * LIBRARY_ROW_PITCH;
+                assert!(needed <= height, "{rows} rows need {needed} px in {height} px");
+            }
+        }
+        // Six and twenty saves: the pages cover every save, and the last page is never empty.
+        for (saves, height) in [(6_usize, 768.0_f32), (6, 1080.0), (20, 768.0), (20, 1080.0)] {
+            let per_page = library_rows_that_fit(height);
+            let pages = saves.saturating_add(per_page - 1) / per_page;
+            assert!(
+                pages * per_page >= saves,
+                "{saves} saves do not fit {pages} pages of {per_page}"
+            );
+            assert!((pages - 1) * per_page < saves, "an empty page for {saves} saves");
+        }
     }
 
     #[test]
@@ -5733,9 +5802,14 @@ mod tests {
                 Some(shell.library_next),
             )?;
             shell.render_library(&mut tree)?;
+            // The window's height now sets the rows per page; the pages still cover all nine saves.
+            let per_page = shell.library_visible_rows;
             assert_eq!(shell.library_page, 1);
-            assert_eq!(tree.text(shell.library_pages)?, "9–9 из 9");
-            assert!(!tree.is_enabled(shell.library_next)?);
+            assert_eq!(
+                tree.text(shell.library_pages)?,
+                format!("{}–{} из 9", per_page + 1, (per_page * 2).min(9))
+            );
+            assert!(tree.is_enabled(shell.library_next)?);
             assert!(tree.is_enabled(shell.library_previous)?);
 
             shell.handle(

@@ -1083,7 +1083,8 @@ impl HistoryScreen {
             set_row_text(
                 cx.tree,
                 row,
-                &format!("{} · {}", quest_title(state.id), quest_detail(state)),
+                // The result lines are written in sentence case; the quest titles are kept in capitals in the source.
+                &super::games::sentence_case(&format!("{} · {}", quest_title(state.id), quest_detail(state))),
             )?;
             cx.tree.set_visible(row.button, false)?;
             cx.tree.set_visible(row.secondary_button, false)?;
