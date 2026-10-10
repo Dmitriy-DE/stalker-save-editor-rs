@@ -488,8 +488,11 @@ impl Screen for Companion {
     }
     fn shown(&mut self, cx: &mut Context<'_>) -> Result<()> {
         self.intent = None;
-        if self.confirm_card.is_some() {
-            cx.tree.close_dialog().ok();
+        // Close only this screen's own confirmation: another dialog may be open, and its close must not be lost.
+        if let Some(card) = self.confirm_card {
+            if cx.tree.dialog() == Some(card) {
+                cx.tree.close_dialog()?;
+            }
         }
         self.load_hotkeys(cx, false)?;
         if let Some(button) = self.toggle_hotkeys {
