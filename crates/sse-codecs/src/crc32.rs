@@ -35,19 +35,37 @@ const TABLE: [u32; 256] = [
 /// Computes IEEE CRC-32 (polynomial `0xEDB88320`).
 #[must_use]
 pub fn crc32(data: &[u8]) -> u32 {
-    let mut crc = 0xFFFF_FFFF_u32;
+    !crc32_update(0xFFFF_FFFF, data)
+}
+
+/// Continues an IEEE CRC-32 over `data` from the un-inverted state `crc` (start with `0xFFFF_FFFF`).
+/// Invert the final state once to obtain the CRC.
+#[must_use]
+pub fn crc32_update(mut crc: u32, data: &[u8]) -> u32 {
     for byte in data.iter().copied() {
         let low = u8::try_from(crc & 0xFF).unwrap_or_default();
         let index = usize::from(low ^ byte);
         let table = TABLE.get(index).copied().unwrap_or_default();
         crc = crc.checked_shr(8).unwrap_or_default() ^ table;
     }
-    !crc
+    crc
 }
 
 #[cfg(test)]
 mod tests {
     use super::crc32;
+
+    #[test]
+    fn chained_updates_equal_the_one_shot_crc() {
+        use super::crc32_update;
+        let data: Vec<u8> = (0..300_u32).map(|i| u8::try_from(i % 251).unwrap_or(0)).collect();
+        let one_shot = crc32(&data);
+        for split in [0_usize, 1, 7, 128, 299, 300] {
+            let (head, tail) = data.split_at(split);
+            let chained = !crc32_update(crc32_update(0xFFFF_FFFF, head), tail);
+            assert_eq!(chained, one_shot, "split {split}");
+        }
+    }
 
     #[test]
     fn standard_vector() {
