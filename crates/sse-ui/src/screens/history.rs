@@ -1790,7 +1790,11 @@ fn clone_report(report: &CompareReport) -> CompareReport {
 fn discover_saves() -> sse_core::Result<Vec<SaveSlot>> {
     let discovery_options = super::save_directory_discovery_options();
     let candidates = SaveDirectoryLocator::find_candidate_directories(Some(&discovery_options));
-    Ok(SaveSlotDiscovery::discover(&candidates).slots)
+    let result = SaveSlotDiscovery::discover(&candidates);
+    for failure in &result.worker_failures {
+        sse_app::diagnostics::warn(failure);
+    }
+    Ok(result.slots)
 }
 
 fn game_family(slot: &SaveSlot) -> String {

@@ -40,6 +40,25 @@ pub struct SaveDiscoveryResult {
     pub slots: Vec<SaveSlot>,
     /// Unique directory paths searched during discovery.
     pub searched_paths: Vec<PathBuf>,
+    /// One description per scan worker that failed; the save files it covered are not in `slots`.
+    pub worker_failures: Vec<String>,
+}
+
+/// Adds one worker's batch to `out`, or records that the worker failed.
+///
+/// A failed worker's saves are missing from the result, so the failure is kept for the caller to report.
+pub(crate) fn absorb_worker_result<T>(
+    out: &mut Vec<T>,
+    failures: &mut Vec<String>,
+    expected: usize,
+    result: std::thread::Result<Vec<T>>,
+) {
+    match result {
+        Ok(mut batch) => out.append(&mut batch),
+        Err(_) => failures.push(format!(
+            "a save scan worker failed; {expected} save file(s) were not identified"
+        )),
+    }
 }
 
 pub(crate) const HEADER_SAMPLE_BYTES: usize = 4096;
@@ -130,6 +149,7 @@ impl SaveSlotDiscovery {
             return SaveDiscoveryResult {
                 slots: Vec::new(),
                 searched_paths,
+                worker_failures: Vec::new(),
             };
         }
 
@@ -146,6 +166,7 @@ impl SaveSlotDiscovery {
             .max(1);
 
         let mut slots = Vec::with_capacity(found_files.len());
+        let mut worker_failures = Vec::new();
 
         if num_workers <= 1 {
             for target in &found_files {
@@ -160,29 +181,35 @@ impl SaveSlotDiscovery {
             std::thread::scope(|s| {
                 let mut handles = Vec::with_capacity(chunks.len());
                 for chunk in chunks {
-                    handles.push(s.spawn(move || {
-                        let mut local_slots = Vec::with_capacity(chunk.len());
-                        for target in chunk {
-                            local_slots.push(scan_single_slot(
-                                &target.path,
-                                &target.candidate_game_id,
-                                &target.candidate_release_id,
-                            ));
-                        }
-                        local_slots
-                    }));
+                    let expected = chunk.len();
+                    handles.push((
+                        expected,
+                        s.spawn(move || {
+                            let mut local_slots = Vec::with_capacity(chunk.len());
+                            for target in chunk {
+                                local_slots.push(scan_single_slot(
+                                    &target.path,
+                                    &target.candidate_game_id,
+                                    &target.candidate_release_id,
+                                ));
+                            }
+                            local_slots
+                        }),
+                    ));
                 }
-                for handle in handles {
-                    if let Ok(mut batch) = handle.join() {
-                        slots.append(&mut batch);
-                    }
+                for (expected, handle) in handles {
+                    absorb_worker_result(&mut slots, &mut worker_failures, expected, handle.join());
                 }
             });
         }
 
         sort_newest_first(&mut slots);
 
-        SaveDiscoveryResult { slots, searched_paths }
+        SaveDiscoveryResult {
+            slots,
+            searched_paths,
+            worker_failures,
+        }
     }
 }
 
@@ -568,5 +595,26 @@ mod tests {
         });
 
         assert_eq!(peak.load(Ordering::SeqCst), 1);
+    }
+}
+
+#[cfg(test)]
+mod worker_failure_tests {
+    use super::absorb_worker_result;
+
+    #[test]
+    fn a_failed_worker_is_reported_and_its_batch_is_not_invented() {
+        let mut out: Vec<u8> = vec![1];
+        let mut failures = Vec::new();
+        absorb_worker_result(&mut out, &mut failures, 3, Ok(vec![2, 3]));
+        assert_eq!(out, vec![1, 2, 3]);
+        assert!(failures.is_empty());
+
+        let panicked: std::thread::Result<Vec<u8>> = Err(Box::new("worker panicked"));
+        absorb_worker_result(&mut out, &mut failures, 4, panicked);
+        assert_eq!(out, vec![1, 2, 3]);
+        assert_eq!(failures.len(), 1);
+        let message = failures.first().map_or("", String::as_str);
+        assert!(message.contains("4 save file(s)"), "{message}");
     }
 }
