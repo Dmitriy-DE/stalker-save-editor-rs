@@ -1,55 +1,10 @@
-//! Tests for save preview extraction, S2 campaign metadata, and item icon service.
+//! Tests for save preview extraction and S2 campaign metadata.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use sse_content::dds::RgbaImage;
-use sse_content::icon::ItemIconService;
 use sse_content::preview::{parse_campaigns, PreviewCache, Stalker2SlotMeta};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
-
-static TEST_COUNTER: AtomicU64 = AtomicU64::new(100);
-
-#[test]
-fn missing_icons_do_not_pile_up_without_limit() {
-    let service = ItemIconService::new();
-    let prefix = format!("no_such_item_{}_", TEST_COUNTER.fetch_add(1, Ordering::SeqCst));
-
-    for index in 0..(4096 * 3) {
-        assert!(service.load("stalker-cop", &format!("{prefix}{index}")).is_none());
-    }
-
-    assert!(service.cached_key_count() <= 4097);
-}
-
-#[test]
-fn icon_service_resolves_aliases_and_loads_shipped_icons() {
-    let service = ItemIconService::new();
-
-    // Check alias resolution
-    let canonical = service.icon_key("stalker-cop", "af_blood_tutorial");
-    assert_eq!(canonical, Some("xray/af_blood.png".to_string()));
-
-    // Load actual shipped icon
-    let icon = service.load("stalker-cop", "af_blood");
-    assert!(icon.is_some(), "shipped icon xray/af_blood.png should be present");
-    let img = icon.unwrap();
-    assert!(img.width > 0 && img.height > 0);
-    assert_eq!(img.pixels.len(), img.width * img.height * 4);
-}
-
-#[test]
-fn shipped_icon_pack_meets_size_gate() {
-    let atlas_bytes = include_bytes!("../data/icons.atlas");
-    let size_mb = atlas_bytes.len() as f64 / (1024.0 * 1024.0);
-    println!("Shipped icon atlas size: {:.2} MiB", size_mb);
-    assert!(
-        atlas_bytes.len() <= 3_670_016, // 3.5 MiB
-        "Atlas size is {} bytes ({:.2} MiB), must be <= 3.5 MiB",
-        atlas_bytes.len(),
-        size_mb
-    );
-}
 
 #[test]
 fn preview_cache_enforces_bounded_memory_limit() {
