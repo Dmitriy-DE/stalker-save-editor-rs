@@ -297,7 +297,7 @@ impl GameContentService {
             pos = pos.saturating_add(chunk_len);
         }
 
-        let adler = adler32(&raw_scanlines);
+        let adler = sse_codecs::inflate::adler32(&raw_scanlines);
         zlib_stream.extend_from_slice(&adler.to_be_bytes());
 
         write_chunk(&mut out, b"IDAT", &zlib_stream);
@@ -306,16 +306,6 @@ impl GameContentService {
         write_chunk(&mut out, b"IEND", &[]);
         out
     }
-}
-
-fn adler32(data: &[u8]) -> u32 {
-    let mut s1 = 1u32;
-    let mut s2 = 0u32;
-    for &b in data {
-        s1 = (s1.saturating_add(u32::from(b))) % 65521;
-        s2 = (s2.saturating_add(s1)) % 65521;
-    }
-    (s2 << 16) | s1
 }
 
 fn write_chunk(output: &mut Vec<u8>, chunk_type: &[u8; 4], data: &[u8]) {

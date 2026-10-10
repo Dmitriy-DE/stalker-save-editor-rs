@@ -609,27 +609,54 @@ fn ensure_growth(current: usize, additional: usize, maximum: usize) -> Result<()
     Ok(())
 }
 
-fn adler32(data: &[u8]) -> u32 {
+/// Adler-32 as used by zlib. The modulus is applied once per 5552-byte block, the largest block for
+/// which the running sums cannot overflow `u32`, instead of once per byte.
+#[must_use]
+pub fn adler32(data: &[u8]) -> u32 {
     const MODULUS: u32 = 65_521;
+    const BLOCK: usize = 5_552;
     let mut a = 1_u32;
     let mut b = 0_u32;
-    for byte in data.iter().copied() {
-        a = a
-            .checked_add(u32::from(byte))
-            .unwrap_or_default()
-            .checked_rem(MODULUS)
-            .unwrap_or_default();
-        b = b
-            .checked_add(a)
-            .unwrap_or_default()
-            .checked_rem(MODULUS)
-            .unwrap_or_default();
+    for block in data.chunks(BLOCK) {
+        for byte in block {
+            a = a.wrapping_add(u32::from(*byte));
+            b = b.wrapping_add(a);
+        }
+        a %= MODULUS;
+        b %= MODULUS;
     }
     b.checked_shl(16).unwrap_or_default() | a
 }
 
 #[cfg(test)]
 mod tests {
+    use super::adler32;
+
+    #[test]
+    fn adler32_matches_the_standard_vectors() {
+        assert_eq!(adler32(b""), 1);
+        assert_eq!(adler32(b"Wikipedia"), 0x11E6_0398);
+    }
+
+    #[test]
+    fn adler32_block_boundaries_match_a_per_byte_reference() {
+        fn reference(data: &[u8]) -> u32 {
+            let (mut a, mut b) = (1_u64, 0_u64);
+            for byte in data {
+                a = (a + u64::from(*byte)) % 65_521;
+                b = (b + a) % 65_521;
+            }
+            u32::try_from((b << 16) | a).unwrap_or(0)
+        }
+        let data: Vec<u8> = (0..20_000_u32)
+            .map(|i| u8::try_from(i.wrapping_mul(31) % 251).unwrap_or(0))
+            .collect();
+        for len in [0_usize, 1, 5_551, 5_552, 5_553, 11_104, 20_000] {
+            let prefix = data.get(..len).unwrap_or(&[]);
+            assert_eq!(adler32(prefix), reference(prefix), "length {len}");
+        }
+    }
+
     use super::inflate_zlib;
     use sse_core::Error;
 
