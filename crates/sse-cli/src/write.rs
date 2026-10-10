@@ -140,8 +140,20 @@ fn prepare_and_export(arguments: &[String]) -> Result<(), WriteFailure> {
     };
 
     match command {
-        "set-money" => options.money = positional_money,
+        "set-money" => {
+            if options.money.is_some() {
+                return Err(WriteFailure::Usage(
+                    "set-money takes MONEY once: remove the --money option.".to_owned(),
+                ));
+            }
+            options.money = positional_money;
+        }
         "set-stack" => {
+            if !options.stacks.is_empty() {
+                return Err(WriteFailure::Usage(
+                    "set-stack takes HANDLE and COUNT once: remove the --stack option.".to_owned(),
+                ));
+            }
             options.stacks.clear();
             options.stack_order.clear();
             let (handle, count) = positional_stack
@@ -634,6 +646,11 @@ fn parse_write_options(arguments: &[String], mut index: usize, options: &mut Wri
             .get(index)
             .map(String::as_str)
             .ok_or_else(|| WriteFailure::Usage(format!("Missing value after {option}.")))?;
+        if value.starts_with("--") {
+            return Err(WriteFailure::Usage(format!(
+                "Missing value after {option}: got {value}."
+            )));
+        }
         index = index
             .checked_add(1)
             .ok_or_else(|| WriteFailure::Usage("write option index overflow".to_owned()))?;
@@ -1393,6 +1410,54 @@ mod write_tests {
 
         assert_eq!(result, 3);
         assert!(!output.exists());
+    }
+
+    #[test]
+    fn repeated_money_or_stack_options_are_refused_not_dropped() {
+        let temporary = TempDirectory::new();
+        let source = temporary.0.join("source.sav");
+        fs::write(
+            &source,
+            include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-source.sav"),
+        )
+        .expect("write source fixture");
+        let both_money = vec![
+            "set-money".to_owned(),
+            source.display().to_string(),
+            "100".to_owned(),
+            "--money".to_owned(),
+            "5".to_owned(),
+        ];
+        let both_stack = vec![
+            "set-stack".to_owned(),
+            source.display().to_string(),
+            "0x1234".to_owned(),
+            "9".to_owned(),
+            "--stack".to_owned(),
+            "0x1234=3".to_owned(),
+        ];
+        assert_eq!(run(&both_money), 2);
+        assert_eq!(run(&both_stack), 2);
+    }
+
+    #[test]
+    fn option_value_that_looks_like_an_option_is_refused() {
+        let temporary = TempDirectory::new();
+        let source = temporary.0.join("source.sav");
+        fs::write(
+            &source,
+            include_bytes!("../../../fixtures/synthetic/writer-money/xray-money-soc-source.sav"),
+        )
+        .expect("write source fixture");
+        let args = vec![
+            "edit".to_owned(),
+            source.display().to_string(),
+            "--money".to_owned(),
+            "5".to_owned(),
+            "--backup-dir".to_owned(),
+            "--in-place".to_owned(),
+        ];
+        assert_eq!(run(&args), 2);
     }
 
     #[test]
