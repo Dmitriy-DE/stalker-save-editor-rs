@@ -27,9 +27,11 @@ impl CatalogBundleReader {
     #[must_use]
     pub fn load_embedded() -> &'static HashMap<String, CatalogBundle> {
         EMBEDDED_BUNDLES.get_or_init(|| {
-            embedded_json::get_json(EMBEDDED_CATALOGS_RAW, &EMBEDDED_CATALOGS_JSON)
-                .and_then(Self::load)
-                .unwrap_or_default()
+            let parsed = embedded_json::get_json(EMBEDDED_CATALOGS_RAW, &EMBEDDED_CATALOGS_JSON).and_then(Self::load);
+            // A broken bundled asset must fail loudly in debug and test builds; release builds keep the
+            // empty fallback so the application still starts without the names.
+            debug_assert!(parsed.is_ok(), "embedded catalog bundle failed to parse");
+            parsed.unwrap_or_default()
         })
     }
 

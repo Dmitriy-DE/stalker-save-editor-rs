@@ -61,9 +61,10 @@ impl OfficialNamesCatalog {
     #[must_use]
     pub fn load_embedded() -> &'static Self {
         EMBEDDED_OFFICIAL_NAMES.get_or_init(|| {
-            embedded_json::get_json(EMBEDDED_NAMES_RAW, &EMBEDDED_NAMES_JSON)
-                .and_then(Self::load)
-                .unwrap_or(Self { data: JsonValue::Null })
+            let parsed = embedded_json::get_json(EMBEDDED_NAMES_RAW, &EMBEDDED_NAMES_JSON).and_then(Self::load);
+            // Fails loudly in debug and test builds; release keeps the empty fallback.
+            debug_assert!(parsed.is_ok(), "embedded official names catalog failed to parse");
+            parsed.unwrap_or(Self { data: JsonValue::Null })
         })
     }
 
