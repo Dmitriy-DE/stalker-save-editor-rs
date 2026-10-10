@@ -1101,12 +1101,11 @@ fn read_diagnostic_file(path: &Path, root: &Path, maximum: usize) -> Option<Vec<
     file.seek(SeekFrom::Start(length.saturating_sub(maximum_u64))).ok()?;
     let mut data = Vec::with_capacity(usize::try_from(length.min(maximum_u64)).ok()?);
     file.take(maximum_u64).read_to_end(&mut data).ok()?;
-    if let Ok(text) = std::str::from_utf8(&data) {
-        let redacted = redact(text);
-        Some(tail_utf8(&redacted, maximum).as_bytes().to_vec())
-    } else {
-        Some(data)
-    }
+    // Only text is redacted; binary files (minidumps, raw memory) could carry paths and secrets the
+    // redaction cannot see, so they are left out of the archive instead of copied raw.
+    let text = std::str::from_utf8(&data).ok()?;
+    let redacted = redact(text);
+    Some(tail_utf8(&redacted, maximum).as_bytes().to_vec())
 }
 
 fn single_line(value: &str) -> String {
@@ -1127,6 +1126,30 @@ mod tests {
     use super::*;
     use sse_codecs::inflate::inflate_raw;
     use sse_sys::fetch::Response;
+
+    #[test]
+    fn binary_game_dumps_are_left_out_of_the_diagnostics_archive() -> Result<()> {
+        let root = std::env::temp_dir().join(format!("sse-diag-binary-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let game_logs = root.join("game/Saved/Crashes");
+        fs::create_dir_all(&game_logs)?;
+        fs::write(
+            game_logs.join("crash.dmp"),
+            [0x4d_u8, 0x44, 0x4d, 0x50, 0xff, 0xfe, 0x00, 0x80],
+        )?;
+        fs::write(game_logs.join("crash.log"), b"Error: C:\\Users\\alice\\x\n")?;
+        let games = vec![DiagnosticGame {
+            title: "S.T.A.L.K.E.R. 2".to_owned(),
+            install_directory: root.join("game"),
+            is_stalker2: true,
+        }];
+        let archive = diagnostics_zip_at(&root.join("logs"), &games, true);
+        let _ = fs::remove_dir_all(&root);
+        let bytes = archive?;
+        let names = String::from_utf8_lossy(&bytes);
+        assert!(!names.contains("crash.dmp"), "binary dump must not be archived");
+        Ok(())
+    }
 
     #[test]
     fn automatic_report_is_saved_atomically_with_no_leftover_file() -> Result<()> {
