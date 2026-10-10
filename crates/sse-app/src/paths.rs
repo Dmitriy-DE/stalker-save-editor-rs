@@ -144,9 +144,12 @@ mod tests {
 
     #[test]
     fn test_executables_default_app_data_and_logs_to_temporary_root() -> sse_core::Result<()> {
+        // A test that panicked while holding the gate poisons it; the log directory it set may still be
+        // configured. Recover the gate and clear that state before checking the default location.
         let _guard = crate::diagnostics::LOG_DIRECTORY_TEST_GATE
             .lock()
-            .map_err(|_| sse_core::Error::System("log directory test gate poisoned".to_owned()))?;
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        crate::diagnostics::configure_log_directory(None);
         let data_directory = default_data_directory();
         let data_is_in_temp_dir = env::temp_dir()
             .canonicalize()
