@@ -13,6 +13,7 @@ use sse_steam::cloud::XRaySaveFormatVerifier;
 use sse_steam::worker::WorkerSteamApi;
 use sse_steam::{cloud::PreparedEdit, cloud::SteamCloudWriteTransaction, cloud::WriteStatus};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -73,11 +74,47 @@ fn hotkey_label(language: &str, action: sse_companion::hotkeys::HotkeyAction) ->
 
 fn xray_game(game: &str) -> Option<sse_companion::bundled::Game> {
     match game {
-        "soc" | "stalker-soc" => Some(sse_companion::bundled::Game::ShadowOfChernobyl),
-        "cs" | "clear_sky" | "stalker-cs" => Some(sse_companion::bundled::Game::ClearSky),
-        "cop" | "stalker-cop" => Some(sse_companion::bundled::Game::CallOfPripyat),
+        "soc" | "stalker-soc" | "soc-ee" | "stalker-soc-ee" => Some(sse_companion::bundled::Game::ShadowOfChernobyl),
+        "cs" | "clear_sky" | "stalker-cs" | "cs-ee" | "stalker-cs-ee" => Some(sse_companion::bundled::Game::ClearSky),
+        "cop" | "stalker-cop" | "cop-ee" | "stalker-cop-ee" => Some(sse_companion::bundled::Game::CallOfPripyat),
         _ => None,
     }
+}
+
+fn workshop_state_text(state: sse_companion::workshop::WorkshopInstallState) -> &'static str {
+    use sse_companion::workshop::WorkshopInstallState as State;
+    t(match state {
+        State::NotPublished => "Пакет Steam Workshop ещё не опубликован",
+        State::NotSteamInstall => "Папка игры вне Steam; доступна локальная установка компаньона",
+        State::NotSubscribed => "Не подписан на пакет Steam Workshop",
+        State::UpToDate => "Пакет Steam Workshop установлен и актуален",
+        State::Outdated => "Пакет Steam Workshop устарел или повреждён",
+    })
+}
+
+fn open_workshop_url(url: &str) -> std::result::Result<(), String> {
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut command = Command::new("rundll32.exe");
+        command.args(["url.dll,FileProtocolHandler", url]);
+        command
+    };
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut command = Command::new("open");
+        command.arg(url);
+        command
+    };
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut command = {
+        let mut command = Command::new("xdg-open");
+        command.arg(url);
+        command
+    };
+    #[cfg(not(any(target_os = "windows", target_os = "macos", unix)))]
+    return Err("Opening Steam Workshop links is unsupported on this platform".to_owned());
+    #[cfg(any(target_os = "windows", target_os = "macos", unix))]
+    command.spawn().map(|_| ()).map_err(|error| error.to_string())
 }
 
 fn companion_root(game: &str, root: &Path) -> std::result::Result<PathBuf, String> {
@@ -173,10 +210,17 @@ fn system_time_timestamp(value: Option<SystemTime>) -> Option<i64> {
 
 #[derive(Debug)]
 enum CompanionReply {
-    Status(std::result::Result<Option<String>, String>),
+    Status(std::result::Result<CompanionStatus, String>),
+    WorkshopOpened(std::result::Result<(), String>),
     Protocol(&'static str, std::result::Result<String, String>),
     Changed(std::result::Result<String, String>),
     Hotkeys(std::result::Result<String, String>),
+}
+
+#[derive(Debug)]
+struct CompanionStatus {
+    local_version: Option<String>,
+    workshop: Option<sse_companion::workshop::WorkshopInstallState>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -189,6 +233,9 @@ struct CompanionIntent {
 #[derive(Default)]
 struct Companion {
     status: Option<WidgetId>,
+    workshop_card: Option<WidgetId>,
+    workshop_status: Option<WidgetId>,
+    subscribe_workshop: Option<WidgetId>,
     version: Option<WidgetId>,
     latency: Option<WidgetId>,
     path: Option<WidgetId>,
@@ -212,9 +259,38 @@ struct Companion {
     confirm_write: Option<WidgetId>,
     confirm_cancel: Option<WidgetId>,
     intent: Option<CompanionIntent>,
+    host: Option<WidgetId>,
 }
 
 impl Companion {
+    fn build_workshop_card(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
+        let workshop = style::card(cx.tree, host)?;
+        self.workshop_card = Some(workshop);
+        style::label(cx.tree, workshop, t("STEAM WORKSHOP"), Text::Heading)?;
+        self.workshop_status = Some(style::label(
+            cx.tree,
+            workshop,
+            t("Пакет Steam Workshop ещё не опубликован"),
+            Text::Note,
+        )?);
+        style::label(
+            cx.tree,
+            workshop,
+            t("Для игр вне Steam доступна локальная установка компаньона выше."),
+            Text::Note,
+        )?;
+        self.subscribe_workshop = Some(style::button(
+            cx.tree,
+            workshop,
+            t("ПОДПИСАТЬСЯ В STEAM"),
+            Button::Primary,
+        )?);
+        if let Some(button) = self.subscribe_workshop {
+            cx.tree.set_enabled(button, false)?;
+        }
+        Ok(())
+    }
+
     fn selected(&self, cx: &Context<'_>) -> std::result::Result<(String, PathBuf), String> {
         let game = cx
             .app
@@ -250,7 +326,17 @@ impl Companion {
         let Some(proxy) = cx.proxy.cloned() else { return };
         let selected = self.selected(cx);
         if let Err(error) = sse_app::tasks::try_spawn_named_detached("companion-read", move || {
-            let result = selected.and_then(|(g, d)| companion_root(&g, &d).map(|r| installed_version(&r)));
+            let result = selected.and_then(|(game, directory)| {
+                let root = companion_root(&game, &directory)?;
+                let local_version = installed_version(&root);
+                let workshop = sse_companion::workshop::package_for_release(&game).map(|package| {
+                    sse_companion::workshop::inspect_ee_install(&directory, package, env!("CARGO_PKG_VERSION"))
+                });
+                Ok(CompanionStatus {
+                    local_version,
+                    workshop,
+                })
+            });
             proxy.send(AppMessage::ToScreen(
                 ScreenId::Companion,
                 Box::new(CompanionReply::Status(result)),
@@ -336,6 +422,7 @@ impl Screen for Companion {
         t("Мод-компаньон, версия и горячие клавиши")
     }
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
+        self.host = Some(host);
         let language = crate::strings::current_language();
         let card = style::card(cx.tree, host)?;
         style::label(cx.tree, card, t("МОД-КОМПАНЬОН"), Text::Heading)?;
@@ -518,6 +605,25 @@ impl Screen for Companion {
         for (id, _, _) in &self.s2_commands {
             cx.tree.set_enabled(*id, s2)?;
         }
+        let workshop_package = cx
+            .app
+            .selected_game()
+            .and_then(sse_companion::workshop::package_for_release);
+        if workshop_package.is_some() && self.workshop_card.is_none() {
+            if let Some(host) = self.host {
+                self.build_workshop_card(cx, host)?;
+            }
+        }
+        if let Some(card) = self.workshop_card {
+            cx.tree.set_visible(card, workshop_package.is_some())?;
+        }
+        if let Some(button) = self.subscribe_workshop {
+            let has_published_id = workshop_package
+                .and_then(|package| package.published_file_id)
+                .and_then(sse_companion::workshop::workshop_page_url)
+                .is_some();
+            cx.tree.set_enabled(button, has_published_id)?;
+        }
         self.refresh(cx);
         Ok(())
     }
@@ -527,6 +633,26 @@ impl Screen for Companion {
         message: &Message<AppMessage>,
         clicked: Option<WidgetId>,
     ) -> Result<()> {
+        if clicked.is_some() && clicked == self.subscribe_workshop {
+            let url = self
+                .selected(cx)
+                .ok()
+                .and_then(|(game, _)| sse_companion::workshop::package_for_release(&game))
+                .and_then(|package| package.published_file_id)
+                .and_then(sse_companion::workshop::workshop_page_url);
+            if let Some(url) = url {
+                let Some(proxy) = cx.proxy.cloned() else { return Ok(()) };
+                sse_app::tasks::spawn_named_detached("open-companion-workshop", move || {
+                    let result = open_workshop_url(&url);
+                    proxy.send(AppMessage::ToScreen(
+                        ScreenId::Companion,
+                        Box::new(CompanionReply::WorkshopOpened(result)),
+                    ));
+                });
+                cx.status = Some(t("Открываю страницу Steam Workshop…").to_owned());
+            }
+            return Ok(());
+        }
         if clicked.is_some() && clicked == self.refresh_button {
             self.refresh(cx);
             return Ok(());
@@ -750,11 +876,11 @@ impl Screen for Companion {
         if let Message::User(AppMessage::ToScreen(ScreenId::Companion, payload)) = message {
             if let Some(reply) = payload.downcast_ref::<CompanionReply>() {
                 match reply {
-                    CompanionReply::Status(Ok(version)) => {
+                    CompanionReply::Status(Ok(status)) => {
                         if let Some(id) = self.status {
                             cx.tree.set_text(
                                 id,
-                                if version.is_some() {
+                                if status.local_version.is_some() {
                                     t("УСТАНОВЛЕН (ОЖИДАНИЕ ИГРЫ)")
                                 } else {
                                     t("НЕ УСТАНОВЛЕН")
@@ -762,13 +888,15 @@ impl Screen for Companion {
                             )?;
                         }
                         if let Some(id) = self.version {
-                            cx.tree
-                                .set_text(id, &tr("Версия мода: {0}", &[&version.as_deref().unwrap_or("—")]))?;
+                            cx.tree.set_text(
+                                id,
+                                &tr("Версия мода: {0}", &[&status.local_version.as_deref().unwrap_or("—")]),
+                            )?;
                         }
                         if let Some(id) = self.install {
                             cx.tree.set_text(
                                 id,
-                                if version.is_some() {
+                                if status.local_version.is_some() {
                                     t("ОБНОВИТЬ")
                                 } else {
                                     t("УСТАНОВИТЬ")
@@ -778,6 +906,15 @@ impl Screen for Companion {
                         if let (Some(id), Ok((_, dir))) = (self.path, self.selected(cx)) {
                             cx.tree.set_text(id, &tr("Путь установки: {0}", &[&dir.display()]))?;
                         }
+                        if let (Some(id), Some(workshop)) = (self.workshop_status, status.workshop) {
+                            cx.tree.set_text(id, workshop_state_text(workshop))?;
+                        }
+                    }
+                    CompanionReply::WorkshopOpened(Ok(())) => {
+                        cx.status = Some(t("Страница Steam Workshop открыта").to_owned());
+                    }
+                    CompanionReply::WorkshopOpened(Err(error)) => {
+                        cx.status = Some(tr("Не удалось открыть Steam Workshop: {0}", &[error]));
                     }
                     CompanionReply::Status(Err(e)) => {
                         if let Some(id) = self.status {

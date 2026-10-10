@@ -70,8 +70,10 @@ fn main() -> std::process::ExitCode {
         Some("--bench-save") => bench_save(&args),
         Some("--ci-budget") => ci_budget(),
         Some("--ci-i18n-buttons") => ci_i18n_buttons(),
+        Some("--package-ee") => package_ee(&args),
         _ => Err(Error::Refused(
-            "usage: sse-ui-dev --screenshot|--bench|--ci-budget|--ci-i18n-buttons".to_owned(),
+            "usage: sse-ui-dev --screenshot|--bench|--ci-budget|--ci-i18n-buttons|--package-ee <soc|cs|cop> <dir>"
+                .to_owned(),
         )),
     };
     if let Err(error) = result {
@@ -79,6 +81,37 @@ fn main() -> std::process::ExitCode {
         return std::process::ExitCode::FAILURE;
     }
     std::process::ExitCode::SUCCESS
+}
+
+fn package_ee(args: &[String]) -> Result<()> {
+    if args.len() != 3 {
+        return Err(Error::Refused("usage: --package-ee <soc|cs|cop> <dir>".to_owned()));
+    }
+    let (game, game_name, code) = match args.get(1).map(String::as_str) {
+        Some("soc") => (
+            sse_companion::bundled::Game::ShadowOfChernobyl,
+            "Shadow of Chernobyl",
+            "SOC",
+        ),
+        Some("cs") => (sse_companion::bundled::Game::ClearSky, "Clear Sky", "CS"),
+        Some("cop") => (sse_companion::bundled::Game::CallOfPripyat, "Call of Pripyat", "COP"),
+        _ => return Err(Error::Refused("--package-ee expects soc, cs, or cop".to_owned())),
+    };
+    let output = args
+        .get(2)
+        .map(PathBuf::from)
+        .ok_or_else(|| Error::Refused("--package-ee requires an output directory".to_owned()))?;
+    sse_companion::bundled::stage_enhanced_edition(
+        &output,
+        game,
+        env!("CARGO_PKG_VERSION"),
+        "Dmitriy-DE",
+        &format!("Save Editor Companion — {game_name} Enhanced Edition"),
+        &format!("Enhanced Edition Workshop package for S.T.A.L.K.E.R.: {game_name}."),
+    )
+    .map_err(|error| Error::System(error.to_string()))?;
+    println!("Staged {code} Enhanced Edition package at {}", output.display());
+    Ok(())
 }
 
 fn screenshot(args: &[String]) -> Result<()> {
