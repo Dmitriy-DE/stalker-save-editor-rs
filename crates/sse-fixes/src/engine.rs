@@ -1610,10 +1610,13 @@ fn serialize_manifest(manifest: &GameFixManifest) -> Vec<u8> {
     let mut json = String::new();
     json.push_str("{\n");
     json.push_str(&format!("  \"schemaVersion\": {},\n", manifest.schema_version));
-    json.push_str(&format!("  \"fixId\": \"{}\",\n", manifest.fix_id));
+    json.push_str(&format!("  \"fixId\": {},\n", escape_json_str(&manifest.fix_id)));
     json.push_str(&format!("  \"game\": \"{}\",\n", manifest.game.json_name()));
-    json.push_str(&format!("  \"steamBuildId\": \"{}\",\n", manifest.steam_build_id));
-    json.push_str(&format!("  \"version\": \"{}\",\n", manifest.version));
+    json.push_str(&format!(
+        "  \"steamBuildId\": {},\n",
+        escape_json_str(&manifest.steam_build_id)
+    ));
+    json.push_str(&format!("  \"version\": {},\n", escape_json_str(&manifest.version)));
     json.push_str(&format!("  \"title\": {},\n", escape_json_str(&manifest.title)));
     json.push_str(&format!("  \"problem\": {},\n", escape_json_str(&manifest.problem)));
     json.push_str(&format!(
@@ -1658,8 +1661,8 @@ fn serialize_manifest(manifest: &GameFixManifest) -> Vec<u8> {
     json.push_str("  \"dependsOn\": [\n");
     for (i, d) in manifest.depends_on.iter().enumerate() {
         json.push_str(&format!(
-            "    \"{}\"{}",
-            d,
+            "    {}{}",
+            escape_json_str(d),
             if i.saturating_add(1) < manifest.depends_on.len() {
                 ",\n"
             } else {
@@ -1672,8 +1675,8 @@ fn serialize_manifest(manifest: &GameFixManifest) -> Vec<u8> {
     json.push_str("  \"conflictsWith\": [\n");
     for (i, c) in manifest.conflicts_with.iter().enumerate() {
         json.push_str(&format!(
-            "    \"{}\"{}",
-            c,
+            "    {}{}",
+            escape_json_str(c),
             if i.saturating_add(1) < manifest.conflicts_with.len() {
                 ",\n"
             } else {
@@ -1689,10 +1692,19 @@ fn serialize_manifest(manifest: &GameFixManifest) -> Vec<u8> {
     json.push_str("  \"files\": [\n");
     for (i, f) in manifest.files.iter().enumerate() {
         json.push_str("    {\n");
-        json.push_str(&format!("      \"relativePath\": \"{}\",\n", f.relative_path));
-        json.push_str(&format!("      \"beforeSha256\": \"{}\",\n", f.before_sha256));
-        json.push_str(&format!("      \"afterSha256\": \"{}\",\n", f.after_sha256));
-        json.push_str(&format!("      \"backupPath\": \"{}\",\n", f.backup_path));
+        json.push_str(&format!(
+            "      \"relativePath\": {},\n",
+            escape_json_str(&f.relative_path)
+        ));
+        json.push_str(&format!(
+            "      \"beforeSha256\": {},\n",
+            escape_json_str(&f.before_sha256)
+        ));
+        json.push_str(&format!(
+            "      \"afterSha256\": {},\n",
+            escape_json_str(&f.after_sha256)
+        ));
+        json.push_str(&format!("      \"backupPath\": {},\n", escape_json_str(&f.backup_path)));
         json.push_str(&format!("      \"targetExistedBefore\": {}\n", f.target_existed_before));
         json.push_str(&format!(
             "    }}{}",

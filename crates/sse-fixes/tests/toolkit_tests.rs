@@ -631,3 +631,9 @@ fn profile_with_refused_setting_leaves_installed_fixes_untouched() {
         .collect();
     assert_eq!(ids, vec!["cs.test.keep2".to_string()]);
 }
+
+#[test]
+fn profile_rejects_unknown_game_instead_of_defaulting_to_shadow() {
+    let text = br#"{"name":"Typo","game":"clearsky"}"#;
+    assert!(ToolkitProfileService::deserialize_profile(text).is_err());
+}

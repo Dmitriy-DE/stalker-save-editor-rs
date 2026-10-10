@@ -371,3 +371,9 @@ fn fixes_already_fixed_in_enhanced_edition_get_no_variant() {
     ids.dedup();
     assert_eq!(total, ids.len());
 }
+
+#[test]
+fn embedded_catalog_reports_successful_load() {
+    assert!(GameFixCatalog::load_error().is_none());
+    assert!(!GameFixCatalog::all().is_empty());
+}

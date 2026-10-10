@@ -592,3 +592,18 @@ fn all_spawn_refuses_custom_data_outside_latin1_instead_of_writing_question_mark
     };
     assert!(AllSpawnEditor::apply(&original, &[edit]).is_err());
 }
+
+#[test]
+fn manifest_with_quote_in_relative_path_is_written_as_valid_json() {
+    let fixture = TestFixture::new(GameTarget::ClearSky, "11450472");
+    let relative_path = "gamedata/scripts/q\"uote.script";
+    fixture.write_file(relative_path, b"quote = 1\n");
+    let definition = make_test_definition("cs.test.quote", relative_path, "quote = 1\n", "quote = 2\n", "11450472");
+
+    let engine = GameFixEngine::with_synthetic(true);
+    engine.install(&definition, &fixture.root).unwrap();
+
+    let installed = engine.list_installed(&fixture.root, None).unwrap();
+    assert_eq!(installed.len(), 1);
+    assert_eq!(installed[0].id, "cs.test.quote");
+}
