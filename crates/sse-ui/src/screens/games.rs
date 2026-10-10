@@ -6106,3 +6106,43 @@ mod game_doctor_tests {
         assert!(meta.contains(&details[2]) && meta.contains(&details[3]) && meta.contains(&details[4]));
     }
 }
+
+/// R4-053: what one «Энциклопедия» show costs in the background, measured on each installed X-Ray game.
+/// Reads the installations only; the catalog cache goes to a temporary folder, not the user's data.
+#[cfg(test)]
+mod r4_053_encyclopedia_show_cost {
+    use super::*;
+    use std::time::Instant;
+
+    fn companion(target: GameTarget) -> Option<sse_content::CompanionGame> {
+        match target {
+            GameTarget::ShadowOfChernobyl | GameTarget::ShadowOfChernobylEnhancedEdition => {
+                Some(sse_content::CompanionGame::ShadowOfChernobyl)
+            }
+            GameTarget::ClearSky | GameTarget::ClearSkyEnhancedEdition => Some(sse_content::CompanionGame::ClearSky),
+            GameTarget::CallOfPripyat | GameTarget::CallOfPripyatEnhancedEdition => {
+                Some(sse_content::CompanionGame::CallOfPripyat)
+            }
+            GameTarget::Stalker2 => None,
+        }
+    }
+
+    #[test]
+    #[ignore = "reads installed games (read-only); run with --ignored --nocapture"]
+    fn encyclopedia_show_cost_per_install() {
+        let cache = std::env::temp_dir().join(format!("sse-r4-053-cache-{}", std::process::id()));
+        for install in discover_game_installations() {
+            let Some(game) = companion(install.target) else {
+                continue;
+            };
+            let mut times = Vec::new();
+            for _ in 0..2 {
+                let started = Instant::now();
+                let loaded = sse_catalog::GameContentService::load(game, &install.directory, &cache, "ru");
+                times.push((started.elapsed(), loaded.map(|content| content.is_some())));
+            }
+            eprintln!("R4-053 {}: {:?}", install.title, times);
+        }
+        let _ = std::fs::remove_dir_all(&cache);
+    }
+}
