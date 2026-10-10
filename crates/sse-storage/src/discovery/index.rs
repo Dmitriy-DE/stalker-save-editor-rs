@@ -17,7 +17,7 @@
 //!   - `detection_error`: optional length-prefixed string (`0xFFFF` if `None`)
 
 use crate::discovery::locator::{normalize_full_path, resolve_entry_path, resolve_links, SaveDirectoryCandidate};
-use crate::discovery::slot::SaveSlot;
+use crate::discovery::slot::{has_save_extension, is_non_slot_file, sort_newest_first, SaveSlot};
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
@@ -291,11 +291,7 @@ impl LibraryIndex {
                     continue;
                 };
 
-                let lower = name.to_ascii_lowercase();
-                if lower == "campaignssave.sav"
-                    || lower == "analyticsdata.sav"
-                    || !(lower.ends_with(".sav") || lower.ends_with(".scop") || lower.ends_with(".scs"))
-                {
+                if is_non_slot_file(name) || !has_save_extension(name) {
                     continue;
                 }
 
@@ -397,14 +393,7 @@ impl LibraryIndex {
             }
         }
 
-        slots.sort_by(|left, right| {
-            let mtime_order = right.last_write_time_utc.cmp(&left.last_write_time_utc);
-            if mtime_order != std::cmp::Ordering::Equal {
-                mtime_order
-            } else {
-                left.path.cmp(&right.path)
-            }
-        });
+        sort_newest_first(&mut slots);
 
         slots
     }

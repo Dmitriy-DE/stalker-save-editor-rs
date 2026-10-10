@@ -2412,7 +2412,7 @@ fn remove_file_if_exists(path: &Path) -> Result<()> {
     }
 }
 
-fn sync_directory(directory: Option<&Path>) -> Result<()> {
+pub(crate) fn sync_directory(directory: Option<&Path>) -> Result<()> {
     #[cfg(unix)]
     if let Some(directory) = directory {
         File::open(directory)?.sync_all()?;
