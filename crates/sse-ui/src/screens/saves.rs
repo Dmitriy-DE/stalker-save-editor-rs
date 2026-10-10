@@ -3620,8 +3620,21 @@ impl Inventory {
                         .map_or_else(|| format!("{:.0}%", value * 100.0), |pending| format!("{pending}%"))
                 })
                 .unwrap_or_else(|| t("нет шкалы состояния / износа").to_owned());
-            cx.tree
-                .set_text(id, &tr!("Состояние / прочность: {shown}", shown = shown))?;
+            let enhanced_durability = match &selected.data {
+                SaveData::Xray { save, .. } => {
+                    matches!(save.format(), sse_xray::Format::SocEe | sse_xray::Format::CsEe)
+                        && writer::capability(save.format(), writer::ChangeKind::EditDurability)
+                            != writer::Capability::Unsupported
+                }
+                _ => false,
+            };
+            let text = tr!("Состояние / прочность: {shown}", shown = shown);
+            if enhanced_durability {
+                let note = t("Не проверено в игре для Enhanced Edition. Перед записью создаётся резервная копия.");
+                cx.tree.set_text(id, &format!("{text}\n{note}"))?;
+            } else {
+                cx.tree.set_text(id, &text)?;
+            }
         }
         if let Some(id) = self.inspector_placement {
             cx.tree.set_visible(id, true)?;

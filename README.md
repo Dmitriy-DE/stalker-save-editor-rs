@@ -32,17 +32,20 @@ reference:
 | Ammunition stacks | Verified | Experimental |
 | Add items | Verified | Experimental |
 | Remove items | Verified | Experimental |
-| Equipment condition | Experimental | Unsupported |
+| Equipment condition | Experimental | Shadow of Chernobyl EE, Clear Sky EE: Experimental (not loaded in the game yet); Call of Pripyat EE: Unsupported |
 | Item placement | Experimental | Unsupported |
 | Actor faction | Experimental | Unsupported |
 | Faction relations | Experimental | Unsupported |
 | Move items to or from a stash | Experimental | Unsupported |
 | Info portions | Experimental | Unsupported |
 | Relocate actor | Experimental | Unsupported |
-| Upgrades | Clear Sky, Call of Pripyat: Experimental; Shadow of Chernobyl: Unsupported | Unsupported |
+| Upgrades | Clear Sky, Call of Pripyat: Experimental; Shadow of Chernobyl: not in the game | Unsupported (the editor has no upgrade catalog for these) |
 
 *Verified* means the reference fixtures confirm the field. It does not mean a game has loaded the result.
+*Experimental (not loaded in the game yet)* means the edit is allowed, is checked by the writer and by a read-back, and has not been loaded in the game.
 *Experimental* means the reference allows the edit with experimental status. *Unsupported* means the editor refuses it.
+
+Stalker 2: moving items from a confirmed stash to the backpack is enabled, with the same backup and read-back checks.
 
 ### Game fixes
 

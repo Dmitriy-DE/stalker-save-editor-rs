@@ -70,6 +70,9 @@ pub const fn capability(format: crate::Format, kind: ChangeKind) -> Capability {
         (Cs | Cop, EditUpgrades) => Experimental,
         (Soc, EditUpgrades) => Unsupported,
         (SocEe | CsEe | CopEe, AddItems | EditMoney | EditStacks | RemoveItems) => Experimental,
+        // Durability passed every EE copy for Shadow of Chernobyl and Clear Sky. Call of Pripyat EE failed the
+        // byte-exact restore on 7 of 12 copies (the UPDATE condition byte is re-encoded), so it stays unsupported.
+        (SocEe | CsEe, EditDurability) => Experimental,
         (
             SocEe | CsEe | CopEe,
             EditDurability | EditPlacement | EditPlayerFaction | EditRelations | EditUpgrades | EditInfoPortions
@@ -4177,8 +4180,16 @@ mod tests {
             ] {
                 assert_eq!(capability(format, kind), Capability::Experimental);
             }
+        }
+        for format in [Format::SocEe, Format::CsEe] {
+            assert_eq!(capability(format, ChangeKind::EditDurability), Capability::Experimental);
+        }
+        assert_eq!(
+            capability(Format::CopEe, ChangeKind::EditDurability),
+            Capability::Unsupported
+        );
+        for format in [Format::SocEe, Format::CsEe, Format::CopEe] {
             for kind in [
-                ChangeKind::EditDurability,
                 ChangeKind::EditPlacement,
                 ChangeKind::EditPlayerFaction,
                 ChangeKind::EditRelations,
