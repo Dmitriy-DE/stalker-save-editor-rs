@@ -28,6 +28,7 @@ fn default_settings_start_with_reports_disabled() {
     assert!(settings.sound_enabled);
     assert_eq!(settings.sound_volume, 80);
     assert!(!settings.music_enabled);
+    assert_eq!(settings.music_volume, 80);
     assert_eq!(settings.theme_id, "zone");
     assert_eq!(settings.accent_id, "amber");
     assert_eq!(settings.ui_scale_percent, 0);
@@ -47,6 +48,7 @@ fn round_trip_settings_json() {
         sound_enabled: false,
         sound_volume: 45,
         music_enabled: true,
+        music_volume: 35,
         theme_id: "stalker".to_owned(),
         accent_id: "emerald".to_owned(),
         ui_scale_percent: 125,

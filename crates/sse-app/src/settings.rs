@@ -31,6 +31,8 @@ pub struct AppSettings {
     pub sound_volume: u32,
     /// Whether music playback is enabled. Default is `false`.
     pub music_enabled: bool,
+    /// Menu music volume in percent (0..100). Default is `80`.
+    pub music_volume: u32,
     /// Selected visual theme ID. Default is `"zone"`.
     pub theme_id: String,
     /// Selected visual accent ID. Default is `"amber"`.
@@ -58,6 +60,7 @@ impl Default for AppSettings {
             sound_enabled: true,
             sound_volume: 80,
             music_enabled: false,
+            music_volume: 80,
             theme_id: "zone".to_owned(),
             accent_id: "amber".to_owned(),
             ui_scale_percent: 0,
@@ -133,6 +136,11 @@ impl AppSettings {
                         "music_enabled" => {
                             if let Some(val) = parse_optional_bool(&mut reader)? {
                                 settings.music_enabled = val;
+                            }
+                        }
+                        "music_volume" => {
+                            if let Some(val) = parse_optional_u32(&mut reader)? {
+                                settings.music_volume = val.min(100);
                             }
                         }
                         "theme_id" => {
@@ -233,6 +241,9 @@ impl AppSettings {
 
         writer.key("music_enabled")?;
         writer.bool(self.music_enabled)?;
+
+        writer.key("music_volume")?;
+        writer.u64(u64::from(self.music_volume))?;
 
         writer.key("theme_id")?;
         writer.string(&self.theme_id)?;

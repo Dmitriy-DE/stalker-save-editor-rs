@@ -558,6 +558,7 @@ fn save_all_settings(
         SettingsPatch::BackupDirectory(settings.backup_directory.clone()),
         SettingsPatch::SoundEnabled(settings.sound_enabled),
         SettingsPatch::MusicEnabled(settings.music_enabled),
+        SettingsPatch::MusicVolume(settings.music_volume),
         SettingsPatch::SoundVolume(settings.sound_volume),
         SettingsPatch::SendReports(settings.send_reports),
         SettingsPatch::MetricsConsent(settings.send_metrics),
@@ -741,6 +742,7 @@ pub struct Settings {
     sound_button: Option<WidgetId>,
     music_button: Option<WidgetId>,
     volume_button: Option<WidgetId>,
+    music_volume_button: Option<WidgetId>,
     reports_button: Option<WidgetId>,
     send_report_button: Option<WidgetId>,
     support_check_button: Option<WidgetId>,
@@ -790,6 +792,17 @@ pub struct Settings {
 }
 
 impl Settings {
+    /// Sends the switch and volume to the shell so that menu music follows them at once; saving is separate.
+    fn apply_music_now(&self, cx: &mut Context<'_>) {
+        if let Some(proxy) = cx.proxy {
+            let _ = proxy.send(AppMessage::MusicSettings {
+                enabled: self.settings.music_enabled,
+                volume: self.settings.music_volume,
+            });
+        }
+        cx.status = Some(crate::strings::t("Музыка применена; «Сохранить настройки» запомнит выбор.").to_owned());
+    }
+
     /// Starts the system folder dialog. On macOS it must run on the interface thread; elsewhere it runs in the
     /// background so the window keeps painting. Cancelling leaves the field and the settings unchanged.
     fn browse_backup_directory(&mut self, cx: &mut Context<'_>) -> Result<()> {
@@ -1047,6 +1060,12 @@ impl Screen for Settings {
             } else {
                 crate::strings::t("Музыка меню: ВЫКЛ")
             },
+            Button::Secondary,
+        )?);
+        self.music_volume_button = Some(style::button(
+            cx.tree,
+            sound,
+            &tr("Громкость музыки: {0}%", &[&self.settings.music_volume]),
             Button::Secondary,
         )?);
         self.volume_button = Some(style::button(
@@ -1489,8 +1508,20 @@ impl Screen for Settings {
         }
         if clicked.is_some() && clicked == self.music_button {
             self.settings.music_enabled = !self.settings.music_enabled;
-            cx.status =
-                Some(crate::strings::t("Музыка изменена; нажмите «Сохранить настройки», чтобы применить.").to_owned());
+            self.apply_music_now(cx);
+        }
+        if clicked.is_some() && clicked == self.music_volume_button {
+            self.settings.music_volume = self
+                .settings
+                .music_volume
+                .saturating_add(10)
+                .checked_rem(110)
+                .unwrap_or(0);
+            if let Some(button) = self.music_volume_button {
+                cx.tree
+                    .set_text(button, &tr("Громкость музыки: {0}%", &[&self.settings.music_volume]))?;
+            }
+            self.apply_music_now(cx);
         }
         if clicked.is_some() && clicked == self.volume_button {
             self.settings.sound_volume = self

@@ -8,9 +8,22 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 /// Frames written per chunk. At 48 kHz this is about 85 ms, which bounds the delay before a stop.
 pub const CHUNK_FRAMES: usize = 4096;
+
+/// How long `frames` frames last at `rate` hertz. Sinks sleep this long after each chunk so the device is not
+/// filled far ahead of the listener.
+#[must_use]
+pub fn chunk_duration(frames: usize, rate: u32) -> Duration {
+    let frames = u64::try_from(frames).unwrap_or(u64::MAX);
+    let micros = frames
+        .saturating_mul(1_000_000)
+        .checked_div(u64::from(rate.max(1)))
+        .unwrap_or(0);
+    Duration::from_micros(micros)
+}
 
 /// Receives interleaved signed-16 samples in order, one chunk per call.
 pub trait ChunkSink: Send + 'static {

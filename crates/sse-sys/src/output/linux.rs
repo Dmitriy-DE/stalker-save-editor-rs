@@ -1,4 +1,5 @@
 use super::scaled_sample;
+use super::stream::{chunk_duration, ChunkSink};
 use sse_core::{Error, Result};
 use std::{
     env, fs,
@@ -10,6 +11,8 @@ use std::{
 
 const COMMAND_REPLY: u32 = 2;
 const COMMAND_CREATE_PLAYBACK_STREAM: u32 = 3;
+const COMMAND_DELETE_PLAYBACK_STREAM: u32 = 4;
+const COMMAND_SET_CLIENT_NAME: u32 = 9;
 const COMMAND_AUTH: u32 = 8;
 const COMMAND_DRAIN_PLAYBACK_STREAM: u32 = 12;
 const PROTOCOL_VERSION: u32 = 12;
@@ -25,7 +28,7 @@ pub trait PulseTransport {
     fn receive_exact(&mut self, bytes: &mut [u8]) -> Result<()>;
 }
 
-struct SocketTransport(UnixStream);
+pub(super) struct SocketTransport(UnixStream);
 
 impl PulseTransport for SocketTransport {
     fn send(&mut self, bytes: &[u8]) -> Result<()> {
@@ -60,7 +63,10 @@ impl Tags {
     }
 
     fn arbitrary(&mut self, value: &[u8]) {
+        // Tag, then the length as a bare big-endian u32 (no tag of its own), then the data.
         self.bytes.push(b'x');
+        let length = u32::try_from(value.len()).unwrap_or(u32::MAX);
+        self.bytes.extend_from_slice(&length.to_be_bytes());
         self.bytes.extend_from_slice(value);
     }
 
@@ -69,10 +75,11 @@ impl Tags {
     }
 
     fn sample_spec(&mut self, channels: u8, rate: u32) {
+        // Tag, format (3 = signed 16-bit little-endian), channel count, then the rate as a bare big-endian u32.
         self.bytes.push(b'a');
         self.bytes.push(3);
-        self.bytes.extend_from_slice(&rate.to_be_bytes());
         self.bytes.push(channels);
+        self.bytes.extend_from_slice(&rate.to_be_bytes());
     }
 
     fn channel_map(&mut self, channels: u8) {
@@ -181,7 +188,10 @@ fn reply_for<T: PulseTransport>(transport: &mut T, wanted_tag: u32) -> Result<Ve
             continue;
         }
         if command != COMMAND_REPLY {
-            return Err(Error::System(format!("PulseAudio rejected command {wanted_tag}")));
+            let code = tagged_u32(&body, &mut offset).unwrap_or(u32::MAX);
+            return Err(Error::System(format!(
+                "PulseAudio rejected command {wanted_tag} with error {code}"
+            )));
         }
         return Ok(body.get(offset..).unwrap_or_default().to_vec());
     }
@@ -206,6 +216,18 @@ fn auth<T: PulseTransport>(transport: &mut T, cookie: &[u8; 256]) -> Result<()> 
     if server_version < 8 {
         return Err(Error::Refused("PulseAudio protocol older than v8".to_owned()));
     }
+    Ok(())
+}
+
+/// Names this connection so the server can show and manage it; clients send this before creating streams.
+fn set_client_name<T: PulseTransport>(transport: &mut T, name: &str) -> Result<()> {
+    let mut tail = Tags::default();
+    // Property list: key, length of the value, then the value as arbitrary bytes; the list ends with a null.
+    tail.string(Some("application.name"));
+    tail.u32(u32::try_from(name.len()).unwrap_or(u32::MAX));
+    tail.arbitrary(name.as_bytes());
+    tail.string(None);
+    let _ = send_command(transport, COMMAND_SET_CLIENT_NAME, 3, tail)?;
     Ok(())
 }
 
@@ -301,6 +323,81 @@ pub(super) fn play(pcm: Vec<i16>, channels: u8, rate: u32, volume: f32) {
     let _ = run(&pcm, channels, rate, volume);
 }
 
+/// One PulseAudio playback stream on its own connection, fed chunk by chunk for looping music.
+pub(super) struct MusicStream<T: PulseTransport = SocketTransport> {
+    transport: T,
+    stream_index: u32,
+    channel: u32,
+    channels: u8,
+    rate: u32,
+}
+
+impl MusicStream {
+    /// Connects, authenticates and creates the stream. Failure means no music, never a panic.
+    pub(super) fn open(channels: u8, rate: u32, volume: f32) -> Result<Self> {
+        let path = socket_path().ok_or_else(|| Error::System("PulseAudio runtime socket is unavailable".to_owned()))?;
+        let stream = UnixStream::connect(&path)?;
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(3)));
+        let _ = stream.set_write_timeout(Some(Duration::from_secs(3)));
+        establish(SocketTransport(stream), &cookie(), channels, rate, volume)
+    }
+}
+
+/// Authenticates over `transport` and creates a playback stream on it.
+fn establish<T: PulseTransport>(
+    mut transport: T,
+    cookie: &[u8; 256],
+    channels: u8,
+    rate: u32,
+    volume: f32,
+) -> Result<MusicStream<T>> {
+    auth(&mut transport, cookie)?;
+    set_client_name(&mut transport, "S.T.A.L.K.E.R. Save Editor UI")?;
+    let (stream_index, channel) = create_stream(&mut transport, channels, rate, volume)?;
+    Ok(MusicStream {
+        transport,
+        stream_index,
+        channel,
+        channels,
+        rate,
+    })
+}
+
+impl<T: PulseTransport + Send + 'static> ChunkSink for MusicStream<T> {
+    fn write(&mut self, samples: &[i16]) -> bool {
+        let mut bytes = Vec::with_capacity(samples.len().saturating_mul(2));
+        for sample in samples {
+            bytes.extend_from_slice(&sample.to_le_bytes());
+        }
+        for chunk in bytes.chunks(32 * 1024) {
+            let Ok(frame) = memblock(self.channel, chunk) else {
+                return false;
+            };
+            if self.transport.send(&frame).is_err() {
+                return false;
+            }
+        }
+        let frames = samples.len().checked_div(usize::from(self.channels)).unwrap_or(0);
+        std::thread::sleep(chunk_duration(frames, self.rate));
+        true
+    }
+}
+
+impl<T: PulseTransport> Drop for MusicStream<T> {
+    fn drop(&mut self) {
+        // The server removes the stream from the mixer when it is deleted; the connection then closes.
+        let _ = delete_stream(&mut self.transport, self.stream_index);
+    }
+}
+
+/// Removes a playback stream by index, so that it leaves the mixer.
+fn delete_stream<T: PulseTransport>(transport: &mut T, stream_index: u32) -> Result<()> {
+    let mut tail = Tags::default();
+    tail.u32(stream_index);
+    let _ = send_command(transport, COMMAND_DELETE_PLAYBACK_STREAM, 4, tail)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -347,7 +444,7 @@ mod tests {
         assert_eq!(tags.bytes.get(0..5), Some(&[b'L', 1, 2, 3, 4][..]));
         assert_eq!(tags.bytes.get(5..8), Some(&[b't', b'x', 0][..]));
         assert_eq!(tags.bytes.get(8), Some(&b'1'));
-        assert_eq!(tags.bytes.get(9..16), Some(&[b'a', 3, 0, 0, 0xbb, 0x80, 2][..]));
+        assert_eq!(tags.bytes.get(9..16), Some(&[b'a', 3, 2, 0, 0, 0xbb, 0x80][..]));
     }
 
     #[test]
@@ -370,8 +467,9 @@ mod tests {
         assert!(first
             .windows(5)
             .any(|window| { window == [b'L', 0, 0, 0, u8::try_from(COMMAND_AUTH).unwrap_or_default(),] }));
-        assert!(first.windows(257).any(|window| {
-            window.first() == Some(&b'x') && window.get(1..).is_some_and(|value| value.iter().all(|byte| *byte == 7))
+        assert!(first.windows(261).any(|window| {
+            window.get(..5) == Some(&[b'x', 0, 0, 1, 0][..])
+                && window.get(5..).is_some_and(|value| value.iter().all(|byte| *byte == 7))
         }));
     }
 
@@ -406,5 +504,47 @@ mod tests {
             .copy_from_slice(&u32::MAX.to_be_bytes());
         fake.recv.extend(header);
         assert!(matches!(read_frame(&mut fake), Err(Error::Refused(_))));
+    }
+
+    #[test]
+    fn music_chunks_are_written_as_memblocks_on_the_created_channel() {
+        let mut tail = Tags::default();
+        tail.u32(41);
+        tail.u32(7);
+        let mut auth_reply = Tags::default();
+        auth_reply.u32(PROTOCOL_VERSION);
+        let mut fake = Fake::default();
+        fake.recv.extend(control_frame(COMMAND_REPLY, 1, &auth_reply.bytes));
+        fake.recv.extend(control_frame(COMMAND_REPLY, 3, &[]));
+        fake.recv.extend(control_frame(COMMAND_REPLY, 2, &tail.bytes));
+        let Ok(mut stream) = establish(fake, &[0u8; 256], 1, 48_000, 0.5) else {
+            panic!("stream is created on a valid reply");
+        };
+        assert!(stream.write(&[1, 2, 3]));
+        let frame = stream.transport.sent.last().cloned().unwrap_or_default();
+        assert_eq!(
+            frame.get(4..8),
+            Some(&7u32.to_be_bytes()[..]),
+            "memblock goes to the created channel"
+        );
+        assert_eq!(
+            frame.get(20..),
+            Some(&[1, 0, 2, 0, 3, 0][..]),
+            "samples are little-endian"
+        );
+    }
+
+    #[test]
+    fn deleting_a_stream_sends_its_index_with_the_delete_command() {
+        let mut fake = Fake::default();
+        fake.recv.extend(control_frame(COMMAND_REPLY, 4, &[]));
+        assert!(delete_stream(&mut fake, 41).is_ok());
+        let frame = fake.sent.first().cloned().unwrap_or_default();
+        // Payload after the 20-byte header: tagged command, tagged request tag, then tagged stream index.
+        assert_eq!(
+            frame.get(21..25),
+            Some(&COMMAND_DELETE_PLAYBACK_STREAM.to_be_bytes()[..])
+        );
+        assert_eq!(frame.get(30..35), Some(&[b'L', 0, 0, 0, 41][..]));
     }
 }
