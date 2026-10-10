@@ -1066,3 +1066,27 @@ fn an_s2_container_larger_than_the_header_sample_is_identified_by_its_whole_file
     assert_eq!(result.slots.len(), 1);
     assert_eq!(result.slots[0].format_id.as_deref(), Some("stalker2"));
 }
+
+#[test]
+fn xray_fixtures_get_the_same_format_id_from_discovery_and_from_the_reader() {
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/synthetic");
+    let mut checked = 0_usize;
+    for entry in fs::read_dir(&fixtures).expect("read synthetic fixtures") {
+        let path = entry.expect("fixture entry").path();
+        let is_xray = path
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy().starts_with("xray-"));
+        if !is_xray || path.extension().is_none_or(|extension| extension != "sav") {
+            continue;
+        }
+        let bytes = fs::read(&path).expect("read X-Ray fixture");
+        let reader = sse_xray::Save::read(&bytes).expect("X-Ray fixture should read");
+        let (format_id, _, _) = sse_storage::discovery::detect_format(&bytes);
+        assert_eq!(format_id.as_deref(), Some(reader.format().id()), "{}", path.display());
+        checked = checked.saturating_add(1);
+    }
+    assert!(
+        checked >= 6,
+        "the reference X-Ray fixtures should be checked, found {checked}"
+    );
+}
