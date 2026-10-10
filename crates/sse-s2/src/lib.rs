@@ -152,12 +152,16 @@ impl S2Save {
             .chain(index.grid_cells.iter().map(|cell| cell.handle))
             .collect::<HashSet<_>>();
         referenced_handles.remove(&u32::MAX);
+        // Object records never lie inside the inventory header, backpack grid or stash block.
+        // Without this span, handle lists and grid cells there can look like a second record.
+        let mut excluded = None;
         if !index.is_legacy {
             if let Ok(stash) = S2StashLayout::locate(container.image(), &index) {
                 referenced_handles.extend(stash.live_handles().iter().copied());
+                excluded = Some(index.owned_count_offset..stash.grid_end_offset);
             }
         }
-        let objects = S2ObjectIndex::build(container.image(), index.is_legacy, &referenced_handles)?;
+        let objects = S2ObjectIndex::build(container.image(), index.is_legacy, &referenced_handles, excluded)?;
         let names = S2NameTables::locate(container.image(), &objects, index.is_legacy)?;
         let (unresolved_handles, warnings) = collect_inventory_warnings(container.image(), &index, &objects)?;
         Ok(Self {
@@ -403,7 +407,7 @@ pub fn transfer_stash_items_to_backpack(
     let mut refused = Vec::new();
     for &handle in handles {
         let source = current.as_ref().unwrap_or(save);
-        let listed = source.stash()?.live_handles().contains(&handle);
+        let listed = source.stash_items()?.iter().any(|item| item.handle == handle);
         if !listed || !is_marked_stash_owned(source, handle) {
             skipped.push(handle);
             continue;
@@ -726,7 +730,12 @@ struct S2ObjectIndex {
 }
 
 impl S2ObjectIndex {
-    fn build(raw: &[u8], legacy: bool, referenced_handles: &HashSet<u32>) -> Result<Self> {
+    fn build(
+        raw: &[u8],
+        legacy: bool,
+        referenced_handles: &HashSet<u32>,
+        excluded: Option<std::ops::Range<usize>>,
+    ) -> Result<Self> {
         let record_shift = if legacy { 3_usize } else { 0 };
         let marker_offset = 18_usize
             .checked_sub(record_shift)
@@ -751,6 +760,9 @@ impl S2ObjectIndex {
             let Some(record_offset) = marker_position.checked_sub(marker_offset) else {
                 continue;
             };
+            if excluded.as_ref().is_some_and(|span| span.contains(&record_offset)) {
+                continue;
+            }
             if raw.len().saturating_sub(record_offset) < 36 {
                 continue;
             }
@@ -3238,7 +3250,7 @@ mod tests {
             for (label, transfer) in [("one", &one), ("all", &all)] {
                 let packed = transfer.packed.clone().unwrap_or_else(|| source.clone());
                 let after = S2Save::from_bytes(&packed)?;
-                let stash_after = after.stash()?.live_handles().len();
+                let stash_after = after.stash_items()?.len();
                 let backpack_before = before.items().len();
                 let backpack_after = after.items().len();
                 let counts_ok = stash_after + transfer.moved.len() == stash.len()
@@ -4415,5 +4427,37 @@ mod tests {
             S2StashLayout::locate(&hostile, &player),
             Err(Error::Damaged(_))
         ));
+    }
+}
+
+#[cfg(test)]
+mod object_span_tests {
+    use super::*;
+
+    /// Minimal object-like candidate at `offset`: handle, marker 0x38 at +18, count 1 at +19, weight 1.0 at +24.
+    fn candidate_bytes(handle: u32, offset: usize) -> Vec<u8> {
+        let mut raw = vec![0_u8; offset + 64];
+        raw[offset..offset + 4].copy_from_slice(&handle.to_le_bytes());
+        raw[offset + 18] = 0x38;
+        raw[offset + 19..offset + 23].copy_from_slice(&1_u32.to_le_bytes());
+        raw[offset + 24..offset + 28].copy_from_slice(&1.0_f32.to_le_bytes());
+        raw
+    }
+
+    #[test]
+    fn candidates_inside_the_excluded_span_are_not_object_records() -> Result<()> {
+        let handle = 0x3000_1234;
+        let raw = candidate_bytes(handle, 100);
+        let referenced = HashSet::from([handle]);
+
+        let kept = S2ObjectIndex::build(&raw, false, &referenced, None)?;
+        assert_eq!(kept.candidates(handle).len(), 1);
+
+        let excluded = S2ObjectIndex::build(&raw, false, &referenced, Some(90..200))?;
+        assert!(excluded.candidates(handle).is_empty());
+
+        let outside = S2ObjectIndex::build(&raw, false, &referenced, Some(200..300))?;
+        assert_eq!(outside.candidates(handle).len(), 1);
+        Ok(())
     }
 }
