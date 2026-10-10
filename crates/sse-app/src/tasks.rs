@@ -175,10 +175,13 @@ where
     F: FnOnce() + Send + 'static,
 {
     let guard = NamedTaskGuard::enter(name);
-    let _ = thread::Builder::new().name(format!("sse-{name}")).spawn(move || {
+    if let Err(error) = thread::Builder::new().name(format!("sse-{name}")).spawn(move || {
         let _guard = guard;
         work();
-    });
+    }) {
+        // The work never runs; leave a record so the failure is not silent.
+        crate::diagnostics::error(&format!("detached task '{name}' failed to start: {error}"));
+    }
 }
 
 /// Returns whether any worker with this task name is currently executing.
@@ -289,6 +292,8 @@ impl TaskManager {
 
         let sender = self.event_sender.clone();
         let named_guard = NamedTaskGuard::enter(name);
+        // Hold the table lock across spawn and insert, so a poll cannot see the finished thread before its entry.
+        let mut tasks_lock = self.tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let join_handle = thread::Builder::new()
             .name(format!("sse-worker-{name}"))
             .spawn(move || {
@@ -329,7 +334,6 @@ impl TaskManager {
                 error
             })?;
 
-        let mut tasks_lock = self.tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         tasks_lock.insert(task_id, (cancellation.clone(), join_handle));
 
         Ok(TaskHandle { task_id, cancellation })
