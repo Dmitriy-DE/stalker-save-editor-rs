@@ -1,7 +1,7 @@
 //! S5: companion, achievements, Steam Cloud, and editor updates.
 
 use super::games::GameTarget;
-use super::saves::{build_list_side, show_list_row, ListRow, ListSide, Workspace};
+use super::saves::{build_list_side, show_list_row, sync_side_widths, ListRow, ListSide, Workspace};
 use super::style::{self, Button, Text};
 use super::{AppMessage, Context, Screen, ScreenId};
 use crate::event_loop::{Message, WindowEvent};
@@ -16,8 +16,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
-const ROWS: usize = 8;
 
 fn t_in<'a>(language: &str, key: &'a str) -> &'a str {
     crate::strings::t_in(language, key)
@@ -1075,7 +1073,7 @@ fn offered_artifact(
 #[derive(Default)]
 struct Achievements {
     status: Option<WidgetId>,
-    rows: Vec<WidgetId>,
+    list: Option<ListSide>,
     items: Vec<Achievement>,
     selected: Option<String>,
     set: Option<WidgetId>,
@@ -1107,24 +1105,50 @@ impl Achievements {
         }
     }
     fn render(&mut self, cx: &mut Context<'_>) -> Result<()> {
-        // rows[i] shows items[i] and a click on rows[i] selects items[i]; the list has no header row.
-        for (i, row) in self.rows.iter().copied().enumerate() {
-            if let Some(a) = self.items.get(i) {
-                cx.tree.set_visible(row, true)?;
-                cx.tree.set_text(
+        let Some(list) = self.list.as_ref() else { return Ok(()) };
+        let chosen = self
+            .selected
+            .as_deref()
+            .and_then(|name| self.items.iter().position(|item| item.name == name));
+        // rows[i] shows items[i]; a click on it selects items[i] (see message).
+        for (i, row) in list.rows.iter().copied().enumerate() {
+            match self.items.get(i) {
+                Some(a) => show_list_row(
+                    cx.tree,
                     row,
                     &format!("{} {}", if a.achieved { "✓" } else { "○" }, clip(&a.display_name)),
-                )?;
-            } else {
-                cx.tree.set_visible(row, false)?;
+                    &clip(&a.description),
+                    chosen == Some(i),
+                )?,
+                None => cx.tree.set_visible(row.stack, false)?,
             }
+        }
+        cx.tree.set_text(list.count, &self.items.len().to_string())?;
+        let shown = chosen.is_some();
+        for id in &list.kv_rows {
+            cx.tree.set_visible(*id, shown)?;
+        }
+        cx.tree.set_visible(list.empty, !shown)?;
+        if let Some(a) = chosen.and_then(|index| self.items.get(index)) {
+            let status = if a.achieved {
+                t("Получено")
+            } else {
+                t("Не получено")
+            };
+            let values = [clip(&a.display_name), clip(&a.description), status.to_owned()];
+            for (value, text) in list.kv_values.iter().zip(values.iter()) {
+                cx.tree.set_text(*value, text)?;
+            }
+        }
+        for id in [self.set, self.clear].into_iter().flatten() {
+            cx.tree.set_enabled(id, shown)?;
         }
         if let Some(id) = self.status {
             let count = self.items.len();
             let mut text = tr("Загружено {0} достижений.", &[&count]);
-            if count > ROWS {
+            if count > list.rows.len() {
                 text.push(' ');
-                text.push_str(&tr("Показаны первые {0}.", &[&ROWS]));
+                text.push_str(&tr("Показаны первые {0}.", &[&list.rows.len()]));
             }
             cx.tree.set_text(id, &text)?;
         }
@@ -1140,7 +1164,7 @@ impl Achievements {
             cx.tree
                 .set_text(id, &tr("{0} из {1} получено ({2}%)", &[&got, &total, &percent]))?;
         }
-        Ok(())
+        sync_side_widths(cx.tree, list)
     }
 }
 
@@ -1153,29 +1177,57 @@ impl Screen for Achievements {
     }
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
         let card = style::card(cx.tree, host)?;
-        style::label(cx.tree, card, t("ДОСТИЖЕНИЯ STEAM"), Text::Heading)?;
         style::label(
             cx.tree,
             card,
             t("Steam доступен / недоступен определяется рабочим процессом Steam."),
             Text::Note,
         )?;
-        self.status = Some(style::label(cx.tree, card, t("Запрос достижений..."), Text::Note)?);
         self.progress = Some(style::label(cx.tree, card, t("0 из 0 получено (0%)"), Text::Value)?);
-        self.refresh = Some(style::button(cx.tree, card, t("ОБНОВИТЬ"), Button::Secondary)?);
-        for _ in 0..ROWS {
-            let r = style::button(cx.tree, card, "", Button::Secondary)?;
-            cx.tree.set_visible(r, false)?;
-            self.rows.push(r);
-        }
-        let row = style::row(cx.tree, card)?;
-        self.set = Some(style::button(cx.tree, row, t("ПОЛУЧИТЬ"), Button::Primary)?);
-        self.clear = Some(style::button(
+        // The list of achievements to the left, the chosen one and its actions to the right.
+        let keys = [t("Название"), t("Описание"), t("Статус")].map(str::to_owned);
+        let list = build_list_side(
+            cx,
+            host,
+            t("ДОСТИЖЕНИЯ STEAM"),
+            t("ВЫБРАННОЕ ДОСТИЖЕНИЕ"),
+            &keys,
+            (t("Достижение не выбрано."), t("Запрос достижений...")),
+            Some(t("ОБНОВИТЬ")),
+        )?;
+        let inspector = cx.tree.children(list.side).first().copied().unwrap_or(host);
+        cx.tree.set_visible(list.actions, false)?;
+        let stacked = cx.tree.add(
+            Some(inspector),
+            NodeKind::Column,
+            Style {
+                gap: Size::new(0.0, crate::theme::CONTROL_GAP),
+                align_items: crate::layout::Align::Stretch,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        self.set = Some(style::d2::button(
             cx.tree,
-            row,
-            crate::strings::t("СНЯТЬ"),
-            Button::Secondary,
+            stacked,
+            t("ПОЛУЧИТЬ"),
+            style::d2::ButtonKind::Primary,
+            style::d2::ButtonSize::Normal,
         )?);
+        self.clear = Some(style::d2::button(
+            cx.tree,
+            stacked,
+            t("СНЯТЬ"),
+            style::d2::ButtonKind::Secondary,
+            style::d2::ButtonSize::Normal,
+        )?);
+        for id in [self.set, self.clear].into_iter().flatten() {
+            cx.tree.set_enabled(id, false)?;
+        }
+        self.refresh = list.action_button;
+        self.status = Some(list.note);
+        self.list = Some(list);
         let confirm = style::card(cx.tree, host)?;
         self.confirm_card = Some(confirm);
         style::label(cx.tree, confirm, t("ПОДТВЕРЖДЕНИЕ ДОСТИЖЕНИЯ"), Text::Heading)?;
@@ -1206,14 +1258,20 @@ impl Screen for Achievements {
             self.load(cx);
             return Ok(());
         }
-        for (i, row) in self.rows.iter().copied().enumerate() {
-            if clicked == Some(row) && self.items.get(i).is_some() {
+        let row_index = clicked.and_then(|id| {
+            self.list
+                .as_ref()
+                .and_then(|list| list.rows.iter().position(|row| row.select == id))
+        });
+        if let Some(i) = row_index {
+            if self.items.get(i).is_some() {
                 self.selected = self.items.get(i).map(|a| a.name.clone());
                 self.intent = None;
                 if self.confirm_card.is_some_and(|card| cx.tree.dialog() == Some(card)) {
                     let _ = cx.tree.close_dialog()?;
                 }
                 cx.status = self.items.get(i).map(|a| a.description.clone());
+                self.render(cx)?;
             }
         }
         let change = if clicked.is_none() {
@@ -2543,5 +2601,70 @@ mod game_directory_tests {
             None,
             &directories
         ));
+    }
+}
+
+#[cfg(test)]
+mod achievement_list_tests {
+    use super::{Achievement, Achievements, Context, Message, Screen};
+    use crate::event_loop::WindowEvent;
+    use sse_core::Result;
+
+    fn achievement(name: &str, achieved: bool) -> Achievement {
+        Achievement {
+            name: name.to_owned(),
+            display_name: format!("Title {name}"),
+            description: format!("Description {name}"),
+            hidden: false,
+            achieved,
+            unlock_time: 0,
+        }
+    }
+
+    #[test]
+    fn a_row_selects_its_achievement_and_the_side_actions_follow_that_choice() -> Result<()> {
+        // Nothing is read from Steam here: the list is filled directly. Choosing a row enables both side actions.
+        let fonts = crate::glyphs::Fonts::bundled()?;
+        let mut tree = crate::widget::Tree::new(fonts, crate::screens::style::rgb(crate::theme::BG_BASE));
+        let host = tree.add(
+            None,
+            crate::layout::NodeKind::Column,
+            crate::layout::Style::default(),
+            crate::widget::Content::Panel,
+            crate::widget::Look::default(),
+        )?;
+        let mut app = sse_app::AppState::new();
+        let mut screen = Achievements::default();
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: None,
+            status: None,
+            app: &mut app,
+        };
+        screen.build(&mut cx, host)?;
+        let set = screen.set.ok_or_else(|| sse_core::Error::damaged("no set action"))?;
+        let clear = screen
+            .clear
+            .ok_or_else(|| sse_core::Error::damaged("no clear action"))?;
+        assert!(
+            !cx.tree.is_enabled(set)? && !cx.tree.is_enabled(clear)?,
+            "actions are on before a choice"
+        );
+        screen.items = vec![achievement("first", false), achievement("second", true)];
+        screen.render(&mut cx)?;
+        let select = screen
+            .list
+            .as_ref()
+            .and_then(|list| list.rows.get(1))
+            .map(|row| row.select)
+            .ok_or_else(|| sse_core::Error::damaged("no row for the second achievement"))?;
+        let pointer = Message::Window(WindowEvent::PointerLeft);
+        screen.message(&mut cx, &pointer, Some(select))?;
+        assert_eq!(screen.selected.as_deref(), Some("second"));
+        assert!(
+            cx.tree.is_enabled(set)? && cx.tree.is_enabled(clear)?,
+            "actions stay off after a choice"
+        );
+        Ok(())
     }
 }

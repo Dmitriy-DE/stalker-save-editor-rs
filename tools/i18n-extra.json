@@ -2582,5 +2582,39 @@
     "ko": "프로필 이름",
     "zh-CN": "配置名称",
     "zh-TW": "設定檔名稱"
+  },
+  "Достижение не выбрано.": {
+    "ru": "Достижение не выбрано.",
+    "uk": "Досягнення не вибрано.",
+    "en": "No achievement selected.",
+    "de": "Kein Erfolg ausgewählt.",
+    "fr": "Aucun succès sélectionné.",
+    "it": "Nessun obiettivo selezionato.",
+    "es": "Ningún logro seleccionado.",
+    "pl": "Nie wybrano osiągnięcia.",
+    "cs": "Úspěch není vybrán.",
+    "pt-BR": "Nenhuma conquista selecionada.",
+    "tr": "Başarım seçilmedi.",
+    "ja": "実績が選択されていません。",
+    "ko": "선택된 업적이 없습니다.",
+    "zh-CN": "未选择成就。",
+    "zh-TW": "未選取成就。"
+  },
+  "ВЫБРАННОЕ ДОСТИЖЕНИЕ": {
+    "ru": "ВЫБРАННОЕ ДОСТИЖЕНИЕ",
+    "uk": "ОБРАНЕ ДОСЯГНЕННЯ",
+    "en": "SELECTED ACHIEVEMENT",
+    "de": "GEWÄHLTER ERFOLG",
+    "fr": "SUCCÈS CHOISI",
+    "it": "OBIETTIVO SCELTO",
+    "es": "LOGRO ELEGIDO",
+    "pl": "WYBRANE OSIĄGNIĘCIE",
+    "cs": "VYBRANÝ ÚSPĚCH",
+    "pt-BR": "CONQUISTA SELECIONADA",
+    "tr": "SEÇİLEN BAŞARIM",
+    "ja": "選択した実績",
+    "ko": "선택한 업적",
+    "zh-CN": "所选成就",
+    "zh-TW": "所選成就"
   }
 }
