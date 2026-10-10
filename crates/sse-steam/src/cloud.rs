@@ -10,6 +10,8 @@ use crate::api::{SteamApi, SteamError, WriteFailure, WriteStage};
 
 /// Maximum bytes accepted in a cloud file frame.
 pub const MAX_CLOUD_FILE_BYTES: usize = 64 * 1024 * 1024;
+/// Upper bound for the verified-image cache of one verifier; the cache is cleared when it is full.
+const MAX_VERIFIED_IMAGES: usize = 8;
 const PERSISTED_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const PERSISTED_TIMEOUT: Duration = Duration::from_secs(120);
 
@@ -115,6 +117,16 @@ pub struct XRaySaveFormatVerifier {
     verified_images: HashSet<(u32, [u8; 32])>,
 }
 
+impl XRaySaveFormatVerifier {
+    /// Caches one verified image; the cache is bounded so a long session cannot grow it without limit.
+    fn remember(&mut self, app_id: u32, digest: [u8; 32]) {
+        if self.verified_images.len() >= MAX_VERIFIED_IMAGES {
+            self.verified_images.clear();
+        }
+        self.verified_images.insert((app_id, digest));
+    }
+}
+
 impl verifier_sealed::Sealed for XRaySaveFormatVerifier {}
 
 impl SaveFormatVerifier for XRaySaveFormatVerifier {
@@ -143,7 +155,7 @@ impl SaveFormatVerifier for XRaySaveFormatVerifier {
                 "RemoteStorage write payload is not a save for the selected release.",
             ));
         }
-        self.verified_images.insert((app_id, digest));
+        self.remember(app_id, digest);
         Ok(())
     }
 }
@@ -388,6 +400,22 @@ fn uncertain_receipt(
         journal_path,
         output_sha256,
         reason: Some(reason),
+    }
+}
+
+#[cfg(test)]
+mod verified_cache_tests {
+    use super::{XRaySaveFormatVerifier, MAX_VERIFIED_IMAGES};
+
+    #[test]
+    fn verified_image_cache_stays_bounded() {
+        let mut verifier = XRaySaveFormatVerifier::default();
+        for index in 0..(MAX_VERIFIED_IMAGES * 3) {
+            let mut digest = [0_u8; 32];
+            digest[0] = u8::try_from(index).unwrap_or_default();
+            verifier.remember(4_500, digest);
+            assert!(verifier.verified_images.len() <= MAX_VERIFIED_IMAGES);
+        }
     }
 }
 

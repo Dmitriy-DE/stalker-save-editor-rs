@@ -223,23 +223,31 @@ pub fn find_auto_cloud_root(
             return root.canonicalize().ok().or_else(|| Some(root.to_path_buf()));
         }
     }
+    // Several Proton profiles with a Stalker2 folder are ambiguous: refuse rather than pick by directory order.
+    let mut found: Vec<PathBuf> = Vec::new();
     for library in steam_libraries {
         let users = library
             .join("steamapps/compatdata")
             .join(STALKER_2_APP_ID.to_string())
             .join("pfx/drive_c/users");
         let Ok(entries) = fs::read_dir(users) else { continue };
-        for entry in entries {
-            let Ok(entry) = entry else { continue };
+        for entry in entries.flatten() {
             let user = entry.path();
             for candidate in [user.join("Local Settings/Application Data"), user.join("AppData/Local")] {
                 if candidate.join("Stalker2").is_dir() {
-                    return candidate.canonicalize().ok().or(Some(candidate));
+                    let resolved = candidate.canonicalize().unwrap_or(candidate);
+                    if !found.contains(&resolved) {
+                        found.push(resolved);
+                    }
                 }
             }
         }
     }
-    None
+    if found.len() == 1 {
+        found.into_iter().next()
+    } else {
+        None
+    }
 }
 
 /// Resolves a safe `Stalker2/` remote name beneath an Auto-Cloud root.
@@ -446,5 +454,31 @@ fn push_unique(paths: &mut Vec<PathBuf>, seen: &mut Vec<PathBuf>, path: PathBuf)
     if !seen.contains(&path) {
         seen.push(path.clone());
         paths.push(path);
+    }
+}
+
+#[cfg(test)]
+mod auto_cloud_root_ambiguity_tests {
+    use super::{find_auto_cloud_root, STALKER_2_APP_ID};
+    use std::fs;
+
+    #[test]
+    fn two_proton_profiles_with_a_stalker2_folder_are_ambiguous() {
+        let library = std::env::temp_dir().join(format!("sse-autocloud-ambiguous-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&library);
+        for user in ["alice", "bob"] {
+            let folder = library
+                .join("steamapps/compatdata")
+                .join(STALKER_2_APP_ID.to_string())
+                .join("pfx/drive_c/users")
+                .join(user)
+                .join("AppData/Local/Stalker2");
+            assert!(fs::create_dir_all(folder).is_ok());
+        }
+
+        let found = find_auto_cloud_root(STALKER_2_APP_ID, None, vec![library.clone()]);
+
+        let _ = fs::remove_dir_all(&library);
+        assert_eq!(found, None);
     }
 }
