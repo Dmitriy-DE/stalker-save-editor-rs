@@ -691,7 +691,7 @@ fn process_check_prompt(result: &std::result::Result<bool, String>) -> Option<(S
 
 enum SaveData {
     Xray {
-        save: Save,
+        save: Box<Save>,
         inventory: Vec<InventoryItem>,
     },
     Stalker2 {
@@ -779,7 +779,10 @@ impl LoadedSave {
             info,
             parameters,
             integrity,
-            data: SaveData::Xray { save, inventory },
+            data: SaveData::Xray {
+                save: Box::new(save),
+                inventory,
+            },
         })
     }
 

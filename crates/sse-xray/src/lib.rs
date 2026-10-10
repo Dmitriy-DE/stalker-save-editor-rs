@@ -3,7 +3,11 @@
 pub mod container;
 pub mod level_changer;
 pub mod save;
+pub mod statistics;
+pub mod weather;
 pub mod writer;
 
 pub use level_changer::{LevelChangerDestination, Vector3};
 pub use save::{format_id_for_versions, Format, InventoryItem, RegistryObject, Save};
+pub use statistics::Kills;
+pub use weather::Weather;
