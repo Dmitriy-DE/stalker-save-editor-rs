@@ -3,12 +3,19 @@ use sse_companion::workshop::{inspect_ee_install, EnhancedEditionPackage, Worksh
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+static TEMP_DIR_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 fn temp_dir() -> Result<PathBuf, Box<dyn Error>> {
     let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
-    let path = std::env::temp_dir().join(format!("sse-workshop-test-{}-{nonce}", std::process::id()));
-    fs::create_dir_all(&path)?;
+    temp_dir_with_identity(nonce, TEMP_DIR_SEQUENCE.fetch_add(1, Ordering::Relaxed))
+}
+
+fn temp_dir_with_identity(nonce: u128, sequence: u64) -> Result<PathBuf, Box<dyn Error>> {
+    let path = std::env::temp_dir().join(format!("sse-workshop-test-{}-{nonce}-{sequence}", std::process::id()));
+    fs::create_dir(&path)?;
     Ok(path)
 }
 
@@ -40,6 +47,16 @@ fn workshop_ids_stay_unpublished_until_the_owner_sets_them() {
     assert!(EE_WORKSHOP_PACKAGES
         .iter()
         .all(|package| package.published_file_id.is_none()));
+}
+
+#[test]
+fn temporary_workshop_directories_remain_unique_when_the_clock_collides() -> Result<(), Box<dyn Error>> {
+    let first = temp_dir_with_identity(42, 0)?;
+    let second = temp_dir_with_identity(42, 1)?;
+    assert_ne!(first, second);
+    fs::remove_dir_all(first)?;
+    fs::remove_dir_all(second)?;
+    Ok(())
 }
 
 #[test]
