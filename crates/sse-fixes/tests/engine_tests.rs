@@ -710,3 +710,50 @@ fn game_process_names_match_their_game_only() {
     assert!(!game_process_matches(GameTarget::ClearSky, "XR_3DA.exe"));
     assert!(!game_process_matches(GameTarget::Stalker2, "xrEngine.exe"));
 }
+
+/// Reports a running game from the `running_from`-th check on (zero-based), so a fault can land on a later step.
+struct RunningFromCheck {
+    checks: std::sync::atomic::AtomicUsize,
+    running_from: usize,
+}
+
+impl sse_fixes::running_game::GameRunningProbe for RunningFromCheck {
+    fn is_game_running(&self, _game: GameTarget) -> sse_core::Result<bool> {
+        let index = self.checks.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(index >= self.running_from)
+    }
+}
+
+#[test]
+fn failed_preset_reports_fixes_that_could_not_be_rolled_back() {
+    let fixture = TestFixture::new(GameTarget::ClearSky, "11450472");
+    let file1 = "gamedata/scripts/first.script";
+    let file2 = "gamedata/scripts/second.script";
+    fixture.write_file(file1, b"first = 1\n");
+    fixture.write_file(file2, b"second = 1\n");
+
+    let fix1 = make_test_definition("cs.test.p1", file1, "first = 1\n", "first = 2\n", "11450472");
+    let fix2 = make_test_definition("cs.test.p2", file2, "second = 1\n", "second = 2\n", "11450472");
+
+    // Check 0 lets fix 1 install; check 1 (fix 2's install) and check 2 (rollback of fix 1) see a running game.
+    let probe = RunningFromCheck {
+        checks: std::sync::atomic::AtomicUsize::new(0),
+        running_from: 1,
+    };
+    let engine = GameFixEngine::with_synthetic(true).with_process_probe(std::sync::Arc::new(probe));
+    let error = engine
+        .apply_fixes(
+            GameTarget::ClearSky,
+            GameFixPreset::Recommended,
+            &[&fix1, &fix2],
+            &fixture.root,
+        )
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("still installed"), "{error}");
+    assert!(error.contains("cs.test.p1"), "{error}");
+    let installed = engine.list_installed(&fixture.root, None).unwrap();
+    assert_eq!(installed.len(), 1);
+    assert_eq!(installed[0].id, "cs.test.p1");
+}
