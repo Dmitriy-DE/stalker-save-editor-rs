@@ -175,7 +175,47 @@ fn is_symlink_or_reparse(path: &Path) -> bool {
     let Ok(meta) = fs::symlink_metadata(path) else {
         return false;
     };
-    meta.file_type().is_symlink()
+    if meta.file_type().is_symlink() {
+        return true;
+    }
+    // Junctions and other mount points are reparse points but not symlinks, so `is_symlink` misses them.
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+#[cfg(all(test, windows))]
+mod reparse_point_tests {
+    use super::is_symlink_or_reparse;
+    use std::fs;
+
+    #[test]
+    fn a_junction_is_treated_as_a_link_but_a_plain_directory_is_not() -> std::io::Result<()> {
+        let root = std::env::temp_dir().join(format!("sse-junction-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let target = root.join("target");
+        let junction = root.join("junction");
+        fs::create_dir_all(&target)?;
+        let status = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&junction)
+            .arg(&target)
+            .status()?;
+        let plain_is_link = is_symlink_or_reparse(&target);
+        let junction_is_link = status.success() && is_symlink_or_reparse(&junction);
+        let _ = fs::remove_dir_all(&root);
+        assert!(status.success(), "mklink /J must create the junction for this test");
+        assert!(!plain_is_link);
+        assert!(junction_is_link);
+        Ok(())
+    }
 }
 
 #[cfg(test)]

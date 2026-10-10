@@ -711,6 +711,15 @@ fn game_process_names_match_their_game_only() {
     assert!(!game_process_matches(GameTarget::Stalker2, "xrEngine.exe"));
 }
 
+#[test]
+fn native_linux_game_process_names_match_their_game() {
+    use sse_fixes::running_game::game_process_matches;
+    // Native Linux builds run without the .exe suffix; the name is the engine executable's name.
+    assert!(game_process_matches(GameTarget::ShadowOfChernobyl, "xr_3da"));
+    assert!(game_process_matches(GameTarget::ClearSky, "/opt/stalker/xrEngine"));
+    assert!(!game_process_matches(GameTarget::ClearSky, "xr_3da"));
+}
+
 /// Reports a running game from the `running_from`-th check on (zero-based), so a fault can land on a later step.
 struct RunningFromCheck {
     checks: std::sync::atomic::AtomicUsize,

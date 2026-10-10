@@ -182,11 +182,11 @@ fn decode_local_file_url(output: &[u8]) -> Result<Vec<u8>> {
         if byte == b'%' {
             let high = encoded_path
                 .get(index.saturating_add(1))
-                .and_then(|value| hex_nibble(*value))
+                .and_then(|value| crate::hex_util::hex_nibble(*value))
                 .ok_or_else(|| sse_core::Error::Refused("native folder picker returned an invalid URL".to_owned()))?;
             let low = encoded_path
                 .get(index.saturating_add(2))
-                .and_then(|value| hex_nibble(*value))
+                .and_then(|value| crate::hex_util::hex_nibble(*value))
                 .ok_or_else(|| sse_core::Error::Refused("native folder picker returned an invalid URL".to_owned()))?;
             decoded.push((high << 4) | low);
             index = index.saturating_add(3);
@@ -196,16 +196,6 @@ fn decode_local_file_url(output: &[u8]) -> Result<Vec<u8>> {
         }
     }
     Ok(decoded)
-}
-
-#[cfg(target_os = "linux")]
-fn hex_nibble(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => byte.checked_sub(b'0'),
-        b'a'..=b'f' => byte.checked_sub(b'a').and_then(|value| value.checked_add(10)),
-        b'A'..=b'F' => byte.checked_sub(b'A').and_then(|value| value.checked_add(10)),
-        _ => None,
-    }
 }
 
 #[cfg(all(test, target_os = "linux"))]

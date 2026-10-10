@@ -44,12 +44,14 @@ pub fn game_process_matches(game: GameTarget, process_name: &str) -> bool {
     let executable = process_name.trim().rsplit(['/', '\\']).next().unwrap_or("").trim();
     match game {
         GameTarget::ShadowOfChernobyl | GameTarget::ShadowOfChernobylEnhancedEdition => {
-            executable.eq_ignore_ascii_case("XR_3DA.exe")
+            executable.eq_ignore_ascii_case("XR_3DA.exe") || executable.eq_ignore_ascii_case("xr_3da")
         }
         GameTarget::ClearSky
         | GameTarget::ClearSkyEnhancedEdition
         | GameTarget::CallOfPripyat
-        | GameTarget::CallOfPripyatEnhancedEdition => executable.eq_ignore_ascii_case("xrEngine.exe"),
+        | GameTarget::CallOfPripyatEnhancedEdition => {
+            executable.eq_ignore_ascii_case("xrEngine.exe") || executable.eq_ignore_ascii_case("xrEngine")
+        }
         GameTarget::Stalker2 => {
             executable.eq_ignore_ascii_case("Stalker2-Win64-")
                 || (executable
