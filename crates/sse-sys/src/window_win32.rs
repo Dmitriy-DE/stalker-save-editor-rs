@@ -378,12 +378,9 @@ impl Win32Window {
         let color = unsafe { w::CreateBitmap(wi, hi, 1, 32, bgra.as_ptr().cast()) };
         let mask = vec![
             0u8;
-            usize::try_from(height).unwrap_or_default().saturating_mul(
-                usize::try_from(width.saturating_add(7))
-                    .unwrap_or_default()
-                    .checked_div(8)
-                    .unwrap_or(0)
-            )
+            usize::try_from(height)
+                .unwrap_or_default()
+                .saturating_mul(mono_mask_row_bytes(width))
         ];
         // SAFETY: CreateBitmap copies the live monochrome mask bytes during the call.
         let mono = unsafe { w::CreateBitmap(wi, hi, 1, 1, mask.as_ptr().cast()) };
@@ -1369,4 +1366,22 @@ pub fn choose_directory() -> Result<Option<std::path::PathBuf>> {
         ));
     }
     Ok(Some(path))
+}
+
+/// Bytes per row of a monochrome mask for `CreateBitmap`, which pads each row to a multiple of 2 bytes (WORD).
+fn mono_mask_row_bytes(width: u32) -> usize {
+    let words = width.saturating_add(15).checked_div(16).unwrap_or(0);
+    usize::try_from(words).unwrap_or_default().saturating_mul(2)
+}
+
+#[cfg(test)]
+mod mono_mask_tests {
+    use super::mono_mask_row_bytes;
+
+    #[test]
+    fn mask_rows_are_padded_to_word_boundaries() {
+        assert_eq!(mono_mask_row_bytes(16), 2);
+        assert_eq!(mono_mask_row_bytes(17), 4);
+        assert_eq!(mono_mask_row_bytes(64), 8);
+    }
 }
