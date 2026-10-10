@@ -3151,7 +3151,10 @@ mod tests {
         for size in 0..32_usize {
             let source = vec![0_u8; size];
             let mut out = vec![0_u8; 1024];
-            let _ = decompress_into(&source, &mut out);
+            assert!(
+                decompress_into(&source, &mut out).is_err(),
+                "{size}-byte zero stream must be refused"
+            );
         }
     }
 }
