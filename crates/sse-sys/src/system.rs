@@ -129,12 +129,12 @@ fn running_processes_impl() -> io::Result<Vec<String>> {
         executable: [0; 260],
     };
     let mut names = Vec::new();
-    // SAFETY: snapshot is valid and entry has the documented size and writable
-    // storage required by Process32FirstW.
     // ERROR_NO_MORE_FILES marks the normal end of the list. Any other failure must not look like an
     // empty list, because an empty list means "game not running" to the process guard.
     const ERROR_NO_MORE_FILES: i32 = 18;
     let mut enumeration_error: Option<io::Error> = None;
+    // SAFETY: snapshot is valid and entry has the documented size and writable
+    // storage required by Process32FirstW.
     let mut ok = unsafe { Process32FirstW(snapshot, &mut entry) } != 0;
     if !ok {
         let error = io::Error::last_os_error();
