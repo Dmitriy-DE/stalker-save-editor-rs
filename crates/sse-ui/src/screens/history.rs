@@ -246,6 +246,8 @@ pub struct HistoryScreen {
     side_action: Option<WidgetId>,
     side_secondary: Option<WidgetId>,
     side_actions: Option<WidgetId>,
+    /// The side panel's key–value lines for each backup row on the page: file, time, status, size, path.
+    backup_details: Vec<[String; 5]>,
 }
 
 impl HistoryScreen {
@@ -256,6 +258,7 @@ impl HistoryScreen {
             side_action: None,
             side_secondary: None,
             side_actions: None,
+            backup_details: Vec::new(),
             id,
             subtitle,
             workspace,
@@ -680,6 +683,7 @@ impl HistoryScreen {
 
     fn render_backups_page(&mut self, cx: &mut Context<'_>) -> Result<()> {
         let rows = self.page_rows(cx.tree);
+        self.backup_details.clear();
         let (visible, total, restorable, pages) = match self.backup_entries.as_ref() {
             Some(entries) => {
                 let total = entries.len();
@@ -715,15 +719,35 @@ impl HistoryScreen {
                 break;
             };
             cx.tree.set_visible(slot.row, true)?;
-            // The journal's name starts with the save's time (…_20261010T041157…): it tells the copies apart.
-            let stamp = entry
-                .journal_path
-                .file_stem()
-                .and_then(|stem| stem.to_str())
-                .and_then(|stem| stem.split('_').nth(1))
-                .map(|stamp| stamp.chars().take(15).collect::<String>())
-                .unwrap_or_default();
-            set_row_text(cx.tree, slot, &format!("{file} · {status} · {stamp}"))?;
+            // The time and size are the backup file's own; the path is the save's, cut to fit the panel.
+            let metadata = std::fs::metadata(&entry.backup_path).ok();
+            let time = metadata
+                .as_ref()
+                .and_then(|metadata| metadata.modified().ok())
+                .map_or_else(|| crate::strings::t("дата неизвестна").to_owned(), format_system_time);
+            let size = metadata.as_ref().map_or(0, |metadata| metadata.len());
+            let source = truncate(&entry.source_path.to_string_lossy(), 48);
+            if self.backup_details.len() <= row_index {
+                self.backup_details.resize_with(row_index.saturating_add(1), || {
+                    [
+                        String::new(),
+                        String::new(),
+                        String::new(),
+                        String::new(),
+                        String::new(),
+                    ]
+                });
+            }
+            if let Some(detail) = self.backup_details.get_mut(row_index) {
+                *detail = [
+                    file.clone(),
+                    time.clone(),
+                    status.to_owned(),
+                    format!("{size} B"),
+                    source,
+                ];
+            }
+            set_row_text(cx.tree, slot, &format!("{file} · {status} · {time}"))?;
             cx.tree.set_visible(slot.button, false)?;
             cx.tree.set_visible(slot.secondary_button, false)?;
             if matches!(entry.status, BackupStatus::Verified | BackupStatus::Interrupted)
@@ -1158,7 +1182,14 @@ impl HistoryScreen {
                 crate::strings::t("Обновить"),
             ),
         };
-        let keys = [crate::strings::t("Файл"), crate::strings::t("Подробности")].map(str::to_owned);
+        let keys = [
+            crate::strings::t("Файл"),
+            crate::strings::t("Время"),
+            crate::strings::t("Статус"),
+            crate::strings::t("Размер"),
+            crate::strings::t("Путь"),
+        ]
+        .map(str::to_owned);
         let list = build_list_side(
             cx,
             host,
@@ -1290,15 +1321,26 @@ impl HistoryScreen {
         };
         let title = tree.text(row.label)?.to_owned();
         let detail = tree.text(row.meta)?.to_owned();
-        if let Some(value) = list.kv_values.first() {
-            tree.set_text(*value, &title)?;
+        if let Some(fields) = self.backup_details.get(index).filter(|_| self.id == ScreenId::Backups) {
+            // A backup shows its own record: the file, time, status, size and path, one key–value line each.
+            for (value, text) in list.kv_values.iter().zip(fields.iter()) {
+                tree.set_text(*value, text)?;
+            }
+            for id in &list.kv_rows {
+                tree.set_visible(*id, true)?;
+            }
+            tree.set_visible(list.detail, false)?;
+        } else {
+            if let Some(value) = list.kv_values.first() {
+                tree.set_text(*value, &title)?;
+            }
+            // The file name is the key line; the details wrap in the paragraph below it, inside the panel.
+            for (position, id) in list.kv_rows.iter().enumerate() {
+                tree.set_visible(*id, position == 0)?;
+            }
+            tree.set_text(list.detail, &detail)?;
+            tree.set_visible(list.detail, true)?;
         }
-        // The file name is the key line; the details wrap in the paragraph below it, inside the panel.
-        for (index, id) in list.kv_rows.iter().enumerate() {
-            tree.set_visible(*id, index == 0)?;
-        }
-        tree.set_text(list.detail, &detail)?;
-        tree.set_visible(list.detail, true)?;
         tree.set_visible(list.empty, false)?;
         // The entry's buttons sit in a hidden host, so their own visibility is not enough: an action exists when the
         // screen offers it for this row.

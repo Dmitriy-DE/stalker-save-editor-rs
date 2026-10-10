@@ -282,6 +282,11 @@ impl Default for Workspace {
 }
 
 impl Workspace {
+    /// Number of saves the last search found; zero before a search has finished.
+    pub(super) fn discovered_count(&self) -> usize {
+        self.lock().discovery.as_ref().map_or(0, |result| result.slots.len())
+    }
+
     #[cfg(test)]
     fn with_draft_directory(directory: PathBuf) -> Self {
         Self::with_paths(
@@ -7127,7 +7132,8 @@ pub(super) fn build_list_side(
     style::d2::panel_title(cx.tree, header, title)?;
     spacer(cx, header)?;
     let action_button = match action {
-        Some(label) => Some(style::button(cx.tree, header, label, Button::Primary)?),
+        // A header action is secondary: the screen's main action is the one primary button of the side panel.
+        Some(label) => Some(style::button(cx.tree, header, label, Button::Secondary)?),
         None => None,
     };
     let count = style::label(cx.tree, header, "0", Text::Note)?;

@@ -3457,6 +3457,21 @@ impl Shell {
             }
             return Ok(Flow::Continue);
         }
+        // The save search answers with an empty message: its line then shows the count instead of "searching".
+        if let Message::User(AppMessage::ToScreen(ScreenId::Overview, payload)) = message {
+            if payload.is::<()>() {
+                let searching = crate::strings::t("Ищу сейвы в обнаруженных каталогах…");
+                if tree.text(self.status).is_ok_and(|text| text == searching) {
+                    let count = self.library_workspace.discovered_count();
+                    let line = crate::strings::tr_in(
+                        Some(crate::strings::current_language()),
+                        "Найдено сейвов: {0}",
+                        &[&count],
+                    );
+                    tree.set_text(self.status, &line)?;
+                }
+            }
+        }
         if let Message::User(AppMessage::ToScreen(ScreenId::Overview, payload)) = message {
             if let Some(baked) = payload.downcast_ref::<ArtBaked>() {
                 self.art.finish(tree, self.sidebar, baked)?;
