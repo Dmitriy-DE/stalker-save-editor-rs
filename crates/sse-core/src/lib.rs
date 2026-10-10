@@ -11,6 +11,7 @@ mod cursor;
 mod error;
 
 pub mod fields;
+pub mod limits;
 pub mod ranges;
 
 pub use buffer::SaveBuffer;
