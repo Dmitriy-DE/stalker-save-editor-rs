@@ -3019,6 +3019,49 @@ mod tests {
     }
 
     #[test]
+    fn stash_move_reparses_from_zero_with_consistent_counts_and_untouched_other_items() -> Result<(), Error> {
+        let before = S2Save::from_bytes(WRITER_S2_STASH_PACKED_SOURCE)?;
+        let stash_before = before.stash_items()?;
+        let moved = stash_before
+            .first()
+            .ok_or_else(|| Error::damaged("fixture has no stash item"))?
+            .clone();
+        let packed = before.write_changes(&[S2Change::MoveStashToBackpack { handle: moved.handle }])?;
+
+        // A fresh read re-checks the container CRC and unpacked size and rebuilds every count from the bytes.
+        let after = S2Save::from_bytes(&packed)?;
+        assert!(after.unresolved_handles().is_empty());
+        assert_eq!(after.stash_items()?.len() + 1, stash_before.len());
+        assert_eq!(after.items().len(), before.items().len() + 1);
+
+        let placed = after
+            .items()
+            .into_iter()
+            .find(|item| item.handle == moved.handle)
+            .ok_or_else(|| Error::damaged("moved item is missing from the backpack"))?;
+        assert_eq!(placed.kind_code, moved.kind_code);
+        assert_eq!(placed.count, moved.count);
+        assert_eq!(placed.type_key, moved.type_key);
+
+        for item in before.items().iter().filter(|item| item.handle != moved.handle) {
+            let found = after
+                .items()
+                .into_iter()
+                .find(|candidate| candidate.handle == item.handle)
+                .ok_or_else(|| Error::damaged("an untouched backpack item disappeared"))?;
+            assert_eq!(found.kind_code, item.kind_code);
+            assert_eq!(found.count, item.count);
+            assert_eq!(found.type_key, item.type_key);
+            assert_eq!(found.total_weight.to_bits(), item.total_weight.to_bits());
+            assert_eq!(found.display_name, item.display_name);
+            assert_eq!(found.modules, item.modules);
+            assert_eq!(found.upgrades, item.upgrades);
+            assert_eq!(found.cells, item.cells);
+        }
+        Ok(())
+    }
+
+    #[test]
     fn s2_kind_eight_stack_cannot_be_reduced_to_one() {
         let mut raw = SYNTHETIC_RAW.to_vec();
         let parsed = S2Save::from_bytes(SYNTHETIC_SAVE);
