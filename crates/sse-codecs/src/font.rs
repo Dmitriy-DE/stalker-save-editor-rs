@@ -1445,6 +1445,13 @@ impl<S: OutlineSink> Type2Interpreter<'_, '_, S> {
                     self.escape(op)?;
                 }
                 14 => {
+                    // Four or five operands are the seac accent composition. The outliner does not draw it, so
+                    // refuse rather than drop the accent and return a base glyph without it.
+                    if matches!(self.stack.len(), 4 | 5) {
+                        return Err(Error::Refused(
+                            "CFF endchar with seac accent operands is not supported".to_owned(),
+                        ));
+                    }
                     self.stack.clear();
                     return Ok(Type2Exit::End);
                 }
@@ -3502,6 +3509,70 @@ mod cff_budget_tests {
 
         let result = outline_cff(&data, &cff, 0, &mut NullSink);
         assert!(matches!(result, Err(Error::Damaged(_))), "{result:?}");
+    }
+}
+
+#[cfg(test)]
+mod cff_endchar_tests {
+    use super::{checked_add, outline_cff, CffIndex, CffState, OutlineSink};
+    use sse_core::Error;
+
+    struct NullSink;
+
+    impl OutlineSink for NullSink {
+        fn move_to(&mut self, _x: f32, _y: f32) {}
+        fn line_to(&mut self, _x: f32, _y: f32) {}
+        fn quad_to(&mut self, _cx: f32, _cy: f32, _x: f32, _y: f32) {}
+        fn cubic_to(&mut self, _c1x: f32, _c1y: f32, _c2x: f32, _c2y: f32, _x: f32, _y: f32) {}
+        fn close(&mut self) {}
+    }
+
+    /// Writes a one-glyph CharStrings INDEX holding `charstring` and returns the CFF state for it.
+    fn single_glyph(data: &mut Vec<u8>, charstring: &[u8]) -> CffState {
+        let end = checked_add(1, charstring.len()).unwrap_or(usize::MAX);
+        let offsets = data.len();
+        data.extend_from_slice(&[1, u8::try_from(end).unwrap_or(u8::MAX)]);
+        let object_data = data.len();
+        data.extend_from_slice(charstring);
+        let char_strings = CffIndex {
+            count: 1,
+            offsets,
+            data: object_data,
+            end: data.len(),
+            off_size: 1,
+        };
+        let empty = CffIndex {
+            count: 0,
+            offsets: data.len(),
+            data: data.len(),
+            end: data.len(),
+            off_size: 1,
+        };
+        CffState {
+            char_strings,
+            global_subrs: empty,
+            private: None,
+            fd_array: Vec::new(),
+            fd_select_offset: None,
+            fd_select_end: 0,
+        }
+    }
+
+    #[test]
+    fn plain_endchar_still_ends_the_glyph() {
+        let mut data = Vec::new();
+        // endchar (14) with no operands.
+        let cff = single_glyph(&mut data, &[14]);
+        assert!(outline_cff(&data, &cff, 0, &mut NullSink).is_ok());
+    }
+
+    #[test]
+    fn endchar_with_seac_operands_is_refused_not_silently_dropped() {
+        // Four operands (0, 0, 1, 2 encoded as 139 + value) then endchar: an accent composition.
+        let mut data = Vec::new();
+        let cff = single_glyph(&mut data, &[139, 139, 140, 141, 14]);
+        let result = outline_cff(&data, &cff, 0, &mut NullSink);
+        assert!(matches!(result, Err(Error::Refused(_))), "{result:?}");
     }
 }
 
