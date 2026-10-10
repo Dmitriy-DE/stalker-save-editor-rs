@@ -2,9 +2,24 @@
 
 use sse_app::tasks::{TaskEvent, TaskManager};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
+
+static TASK_DIAGNOSTICS_TEST_GATE: Mutex<()> = Mutex::new(());
+
+fn read_expected_crash_marker(path: &std::path::Path) -> std::io::Result<Option<String>> {
+    let marker = match std::fs::read_to_string(path) {
+        Ok(marker) => marker,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    if marker.contains("Unhandled panic") && marker.contains("<home>/private.sav") {
+        Ok(Some(marker))
+    } else {
+        Ok(None)
+    }
+}
 
 #[test]
 fn task_execution_and_completion() -> std::io::Result<()> {
@@ -116,7 +131,41 @@ fn task_cancellation_honored() -> std::io::Result<()> {
 }
 
 #[test]
+fn crash_marker_poll_waits_for_the_complete_expected_panic() -> std::io::Result<()> {
+    let path = std::env::temp_dir().join(format!("sse-panic-marker-readiness-{}", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::write(&path, "")?;
+    assert!(
+        read_expected_crash_marker(&path)?.is_none(),
+        "an empty marker is still being written"
+    );
+
+    std::fs::write(&path, "Unhandled panic\npartial payload")?;
+    assert!(
+        read_expected_crash_marker(&path)?.is_none(),
+        "a partial marker must not satisfy the poll"
+    );
+
+    std::fs::write(&path, "Unhandled panic\n/home/alice/private.sav")?;
+    assert!(
+        read_expected_crash_marker(&path)?.is_none(),
+        "an unredacted partial marker is not the expected completed result"
+    );
+
+    std::fs::write(&path, "2026-10-10 Unhandled panic\n<home>/private.sav")?;
+    let marker = read_expected_crash_marker(&path)?
+        .ok_or_else(|| std::io::Error::other("complete redacted panic marker was not accepted"))?;
+    assert!(marker.contains("Unhandled panic"));
+    assert!(marker.contains("<home>/private.sav"));
+    std::fs::remove_file(path)?;
+    Ok(())
+}
+
+#[test]
 fn task_failure_reporting() -> std::io::Result<()> {
+    let _test_guard = TASK_DIAGNOSTICS_TEST_GATE
+        .lock()
+        .map_err(|_| std::io::Error::other("task diagnostics test gate poisoned"))?;
     let log_directory = std::env::temp_dir().join(format!("sse-task-failure-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&log_directory);
     sse_app::diagnostics::configure_log_directory(Some(log_directory.clone()));
@@ -150,7 +199,7 @@ fn task_failure_reporting() -> std::io::Result<()> {
     let mut panic_marker = String::new();
     // The marker is written from the panicking worker thread; slow CI runners need more than 0.5 s.
     for _ in 0..500 {
-        if let Ok(marker) = std::fs::read_to_string(log_directory.join("last-crash.txt")) {
+        if let Some(marker) = read_expected_crash_marker(&log_directory.join("last-crash.txt"))? {
             panic_marker = marker;
             break;
         }
@@ -180,6 +229,13 @@ fn task_failure_reporting() -> std::io::Result<()> {
 
 #[test]
 fn panicked_task_sends_a_terminal_failure_event() -> std::io::Result<()> {
+    let _test_guard = TASK_DIAGNOSTICS_TEST_GATE
+        .lock()
+        .map_err(|_| std::io::Error::other("task diagnostics test gate poisoned"))?;
+    let log_directory = std::env::temp_dir().join(format!("sse-task-panicked-terminal-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&log_directory);
+    sse_app::diagnostics::configure_log_directory(Some(log_directory.clone()));
+
     let manager = TaskManager::new();
     let handle = manager.spawn("panicking_terminal", |_ctx| -> Result<(), String> {
         panic!("intentional task panic");
@@ -206,6 +262,8 @@ fn panicked_task_sends_a_terminal_failure_event() -> std::io::Result<()> {
         failure.as_deref(),
         Some("background task panicked: intentional task panic")
     );
+    sse_app::diagnostics::configure_log_directory(None);
+    let _ = std::fs::remove_dir_all(log_directory);
     Ok(())
 }
 

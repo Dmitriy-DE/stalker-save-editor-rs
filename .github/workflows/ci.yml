@@ -152,6 +152,13 @@ jobs:
         run: |
           args=""; for t in ${{ matrix.targets }}; do args="$args --target $t"; done
           tools/package.sh $args
+      - name: Stage Enhanced Edition Workshop packages
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          cargo run --release -p sse-ui --bin sse-ui-dev -- --package-ee soc dist/steam-workshop/stalker-soc-ee
+          cargo run --release -p sse-ui --bin sse-ui-dev -- --package-ee cs dist/steam-workshop/stalker-cs-ee
+          cargo run --release -p sse-ui --bin sse-ui-dev -- --package-ee cop dist/steam-workshop/stalker-cop-ee
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: packages-${{ runner.os }}

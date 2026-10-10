@@ -12,6 +12,8 @@ pub mod hotkeys;
 pub mod installer;
 /// File-based request/reply protocol used by the in-game Lua mod.
 pub mod protocol;
+/// Steam Workshop IDs and read-only install detection for Enhanced Edition companions.
+pub mod workshop;
 
 /// Maximum accepted mod or protocol text file size.
 pub const MAX_COMPANION_FILE_BYTES: usize = 1024 * 1024;
