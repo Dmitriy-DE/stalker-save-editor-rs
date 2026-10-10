@@ -659,3 +659,37 @@ fn stalker2_mod_toggle_is_refused_while_the_game_is_running() {
     assert!(paks_dir.join("~mods").join("a.pak").is_file());
     assert!(!paks_dir.join("~mods.disabled").exists());
 }
+
+#[test]
+fn failed_profile_switch_keeps_the_previously_installed_fix() {
+    let fixture = ToolkitTestFixture::new(GameTarget::ClearSky, "11450472");
+    let script = "gamedata/scripts/keep_switch.script";
+    fixture.write_file(script, b"val = 10\n");
+    let engine = GameFixEngine::with_synthetic(true);
+    let keep = make_synthetic_fix("cs.test.keep4", script, "val = 10\n", "val = 20\n", "11450472");
+    engine.install(&keep, &fixture.root).unwrap();
+
+    // A catalog fix cannot install on this fixture (no game files), so the switch must fail.
+    let catalog_id = sse_fixes::GameFixCatalog::for_game(GameTarget::ClearSky)
+        .first()
+        .map(|definition| definition.id.clone())
+        .expect("ClearSky catalog has fixes");
+    let profile = ToolkitProfile {
+        name: "Switch".to_string(),
+        description: String::new(),
+        game: GameTarget::ClearSky,
+        target_fix_ids: vec![catalog_id],
+        user_ltx_overrides: BTreeMap::new(),
+        s2_mods_enabled: None,
+    };
+    let catalog = sse_fixes::GameFixCatalog;
+    assert!(ToolkitProfileService::apply_profile(&fixture.root, &profile, &engine, &catalog).is_err());
+
+    let ids: Vec<String> = engine
+        .list_installed(&fixture.root, None)
+        .unwrap()
+        .into_iter()
+        .map(|f| f.id)
+        .collect();
+    assert_eq!(ids, vec!["cs.test.keep4".to_string()]);
+}
