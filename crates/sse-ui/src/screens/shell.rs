@@ -4317,8 +4317,14 @@ fn thumbnail_image(image: sse_content::RgbaImage) -> Option<ImageData> {
     ImageData::new(LIBRARY_PREVIEW_WIDTH, LIBRARY_PREVIEW_HEIGHT, pixels).ok()
 }
 
+/// Waits for a running save write before the window closes, for at most five seconds.
+///
+/// The interface thread must not wait indefinitely: a write that outlives the bound is left to finish
+/// on its own, and the close proceeds with a warning in the log.
 fn wait_for_save_io(session: &sse_app::SaveSession) {
-    session.wait_until_idle();
+    if !session.wait_until_idle_for(std::time::Duration::from_secs(5)) {
+        sse_app::diagnostics::warn("a save write did not finish within 5 seconds of the window closing");
+    }
 }
 
 impl App<AppMessage> for Shell {
