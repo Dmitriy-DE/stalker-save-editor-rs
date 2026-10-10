@@ -2,6 +2,8 @@
 
 use std::path::Path;
 
+use sse_content::GameFile;
+
 use sse_sys::output::{Output, SystemOutput};
 
 /// Short UI feedback sound selected from the installed game's own assets.
@@ -20,7 +22,20 @@ struct Clip {
     samples: Vec<i16>,
     channels: u8,
     rate: u32,
+    /// The file name the clip came from, one of the candidates of its cue.
+    source: &'static str,
 }
+
+/// Files that may stand in for each cue, in order of preference. The menu files exist in the Enhanced Editions
+/// and some originals; the inventory sounds are in every release, so an original install still gets cues.
+const SELECT: &[&str] = &["menu_select.ogg", "inv_slot.ogg"];
+const SWITCH: &[&str] = &["menu_switch.ogg", "inv_belt.ogg"];
+const DECLINE: &[&str] = &[
+    "menu_decline.ogg",
+    "inv_close.ogg",
+    "inv_properties.ogg",
+    "inv_ruck.ogg",
+];
 
 /// Decoded and cached game-native UI sound clips.
 #[derive(Clone, Default)]
@@ -30,8 +45,19 @@ pub struct GameUiSounds {
     decline: Option<Clip>,
 }
 
+/// The first candidate file present in `names` (lower-cased paths), with the path that matched it.
+fn pick<'a>(names: &[&'a str], candidates: &[&'static str]) -> Option<(&'static str, &'a str)> {
+    candidates.iter().find_map(|candidate| {
+        names
+            .iter()
+            .copied()
+            .find(|name| *name == *candidate || name.ends_with(&format!("/{candidate}")))
+            .map(|name| (*candidate, name))
+    })
+}
+
 impl GameUiSounds {
-    /// Loads known menu cues from loose files or X-Ray archives without network access.
+    /// Loads cues from loose files or X-Ray archives without network access.
     #[must_use]
     pub fn load(game_id: &str, game_directory: &Path) -> Self {
         let Some(audio) = crate::game_audio::audio_game(game_id) else {
@@ -39,47 +65,46 @@ impl GameUiSounds {
         };
         let wanted = |path: &str| {
             let lower = path.to_ascii_lowercase();
-            lower.ends_with("menu_select.ogg")
-                || lower.ends_with("menu_switch.ogg")
-                || lower.ends_with("menu_decline.ogg")
+            SELECT
+                .iter()
+                .chain(SWITCH)
+                .chain(DECLINE)
+                .any(|name| lower == *name || lower.ends_with(&format!("/{name}")))
         };
         let Some(tree) = crate::game_audio::read_game_files(audio, game_directory, wanted) else {
             return Self::default();
         };
-        let mut sounds = Self::default();
-        for (path, file) in tree.files {
-            let lower = path.to_ascii_lowercase();
-            let Ok(bytes) = file.read() else { continue };
-            let Ok(pcm) = sse_codecs::vorbis::decode(&bytes, 2_000_000) else {
-                continue;
-            };
-            let clip = Clip {
+        let files: std::collections::BTreeMap<String, &GameFile> = tree
+            .files
+            .iter()
+            .map(|(path, file)| (path.to_ascii_lowercase(), file))
+            .collect();
+        let names: Vec<&str> = files.keys().map(String::as_str).collect();
+        let clip = |candidates: &[&'static str]| -> Option<Clip> {
+            let (source, name) = pick(&names, candidates)?;
+            let bytes = files.get(name)?.read().ok()?;
+            let pcm = sse_codecs::vorbis::decode(&bytes, 2_000_000).ok()?;
+            Some(Clip {
                 samples: pcm.samples,
                 channels: pcm.channels,
                 rate: pcm.rate,
-            };
-            if lower.ends_with("menu_select.ogg") {
-                sounds.select = Some(clip);
-            } else if lower.ends_with("menu_switch.ogg") {
-                sounds.switch = Some(clip);
-            } else if lower.ends_with("menu_decline.ogg") {
-                sounds.decline = Some(clip);
-            }
+                source,
+            })
+        };
+        Self {
+            select: clip(SELECT),
+            switch: clip(SWITCH),
+            decline: clip(DECLINE),
         }
-        sounds
     }
 
-    /// Names of the cues the installed game supplied, in cue order.
+    /// The file each loaded cue came from, in cue order (select, switch, decline).
     #[must_use]
     pub fn loaded_cues(&self) -> Vec<&'static str> {
-        [
-            (self.select.is_some(), "menu_select.ogg"),
-            (self.switch.is_some(), "menu_switch.ogg"),
-            (self.decline.is_some(), "menu_decline.ogg"),
-        ]
-        .into_iter()
-        .filter_map(|(present, name)| present.then_some(name))
-        .collect()
+        [&self.select, &self.switch, &self.decline]
+            .into_iter()
+            .filter_map(|clip| clip.as_ref().map(|clip| clip.source))
+            .collect()
     }
 
     /// Plays a cached cue when the installed game supplied it.
@@ -109,6 +134,37 @@ mod tests {
         };
         let sounds = GameUiSounds::load(&game, Path::new(&dir));
         eprintln!("CUES {game}: {:?}", sounds.loaded_cues());
+    }
+
+    #[test]
+    fn a_menu_file_beats_the_inventory_fallback_and_a_missing_one_falls_through() {
+        let menu = ["sounds/interface/menu_select.ogg", "sounds/interface/inv_slot.ogg"];
+        assert_eq!(
+            pick(&menu, SELECT),
+            Some(("menu_select.ogg", "sounds/interface/menu_select.ogg"))
+        );
+        let original = ["sounds/interface/inv_slot.ogg", "sounds/interface/inv_belt.ogg"];
+        assert_eq!(
+            pick(&original, SELECT),
+            Some(("inv_slot.ogg", "sounds/interface/inv_slot.ogg"))
+        );
+        assert_eq!(
+            pick(&original, SWITCH),
+            Some(("inv_belt.ogg", "sounds/interface/inv_belt.ogg"))
+        );
+        // Decline falls through its list: no close sound, so properties.
+        let no_close = ["sounds/interface/inv_properties.ogg", "sounds/interface/inv_ruck.ogg"];
+        assert_eq!(
+            pick(&no_close, DECLINE),
+            Some(("inv_properties.ogg", "sounds/interface/inv_properties.ogg"))
+        );
+    }
+
+    #[test]
+    fn a_name_that_only_ends_the_same_way_is_not_a_cue() {
+        let names = ["sounds/interface/xinv_slot.ogg", "sounds/interface/inv_slot.ogg.bak"];
+        assert_eq!(pick(&names, SELECT), None);
+        assert_eq!(pick(&[], DECLINE), None);
     }
 
     #[test]
