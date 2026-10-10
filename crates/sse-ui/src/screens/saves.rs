@@ -2527,7 +2527,7 @@ fn add_candidates(selected: &LoadedSave, removed: &BTreeSet<u32>) -> Vec<AddCand
 
 /// Style of the right-hand column. While the add panel is open the column has no gaps: the hidden inspector would
 /// otherwise keep a gap above the panel, and the panel gives its bottom margin instead.
-fn side_column_style(compact: bool, add_open: bool) -> Style {
+pub(super) fn side_column_style(compact: bool, add_open: bool) -> Style {
     let width = side_column_width(compact);
     Style {
         preferred: Size::new(width, 0.0),

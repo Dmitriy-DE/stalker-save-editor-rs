@@ -2650,5 +2650,39 @@
     "ko": "선택한 업적",
     "zh-CN": "所选成就",
     "zh-TW": "所選成就"
+  },
+  "ДЕЙСТВИЯ КОМПАНЬОНА": {
+    "ru": "ДЕЙСТВИЯ КОМПАНЬОНА",
+    "uk": "ДІЇ КОМПАНЬЙОНА",
+    "en": "COMPANION ACTIONS",
+    "de": "COMPANION-AKTIONEN",
+    "fr": "ACTIONS DU COMPAGNON",
+    "it": "AZIONI DEL COMPAGNO",
+    "es": "ACCIONES DEL COMPAÑERO",
+    "pl": "DZIAŁANIA KOMPANIONA",
+    "cs": "AKCE KOMPANIONA",
+    "pt-BR": "AÇÕES DO COMPANHEIRO",
+    "tr": "YOLDAŞ EYLEMLERİ",
+    "ja": "コンパニオンの操作",
+    "ko": "동료 작업",
+    "zh-CN": "伙伴操作",
+    "zh-TW": "夥伴操作"
+  },
+  "Меню в игре: Esc → F1 или КПК компаньона. Хук создаёт распакованный скрипт в gamedata/scripts; установка через приложение справа.": {
+    "ru": "Меню в игре: Esc → F1 или КПК компаньона. Хук создаёт распакованный скрипт в gamedata/scripts; установка через приложение справа.",
+    "uk": "Меню в грі: Esc → F1 або КПК компаньйона. Хук створює розпакований скрипт у gamedata/scripts; встановлення через застосунок праворуч.",
+    "en": "In-game menu: Esc → F1 or the companion PDA. The hook creates an unpacked script in gamedata/scripts; install through the app on the right.",
+    "de": "Menü im Spiel: Esc → F1 oder der Kompanion-PDA. Der Hook erstellt ein entpacktes Skript in gamedata/scripts; Installation über die App rechts.",
+    "fr": "Menu en jeu : Échap → F1 ou le PDA du compagnon. Le hook crée un script décompressé dans gamedata/scripts ; installation via l’application à droite.",
+    "it": "Menu di gioco: Esc → F1 o il PDA del compagno. L’hook crea uno script non compresso in gamedata/scripts; installazione tramite l’app a destra.",
+    "es": "Menú en el juego: Esc → F1 o el PDA del compañero. El hook crea un script descomprimido en gamedata/scripts; instalación desde la app a la derecha.",
+    "pl": "Menu w grze: Esc → F1 lub PDA towarzysza. Hook tworzy rozpakowany skrypt w gamedata/scripts; instalacja w aplikacji po prawej.",
+    "cs": "Menu ve hře: Esc → F1 nebo PDA společníka. Hook vytvoří rozbalený skript v gamedata/scripts; instalace v aplikaci vpravo.",
+    "pt-BR": "Menu no jogo: Esc → F1 ou o PDA do companheiro. O hook cria um script descompactado em gamedata/scripts; instalação pelo aplicativo à direita.",
+    "tr": "Oyun içi menü: Esc → F1 veya yoldaşın PDA’sı. Kanca gamedata/scripts içinde açılmış bir betik oluşturur; kurulum uygulama üzerinden sağda.",
+    "ja": "ゲーム内メニュー: Esc → F1 またはコンパニオンのPDA。フックは gamedata/scripts に展開済みスクリプトを作成します。インストールは右側のアプリから。",
+    "ko": "게임 내 메뉴: Esc → F1 또는 동료의 PDA. 후크는 gamedata/scripts에 압축 해제된 스크립트를 만듭니다. 설치는 오른쪽의 앱에서 합니다.",
+    "zh-CN": "游戏内菜单：Esc → F1 或伙伴 PDA。钩子会在 gamedata/scripts 中创建解包脚本；安装通过右侧的应用进行。",
+    "zh-TW": "遊戲內選單：Esc → F1 或夥伴 PDA。鉤子會在 gamedata/scripts 中建立解包腳本；安裝透過右側的應用程式進行。"
   }
 }
