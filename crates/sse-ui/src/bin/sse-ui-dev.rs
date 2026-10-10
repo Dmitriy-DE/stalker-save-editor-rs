@@ -496,7 +496,9 @@ fn bench_save(args: &[String]) -> Result<()> {
     if !shell.open_save(&mut tree, Path::new(save_path))? {
         return Err(Error::Refused("could not start background save loading".to_owned()));
     }
-    let deadline = Instant::now() + Duration::from_secs(60);
+    let deadline = Instant::now()
+        .checked_add(Duration::from_secs(60))
+        .unwrap_or_else(Instant::now);
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
         let message = receiver
@@ -549,8 +551,10 @@ fn bench_save(args: &[String]) -> Result<()> {
     tree.paint(&mut frame, stride)?;
     let mut worst_move = Duration::ZERO;
     for step in 0..200_i32 {
-        let x = 40 + (step.saturating_mul(5) % i32::try_from(width).unwrap_or(1));
-        let y = 40 + (step.saturating_mul(3) % i32::try_from(height).unwrap_or(1));
+        let span_x = i32::try_from(width).unwrap_or(1).max(1);
+        let span_y = i32::try_from(height).unwrap_or(1).max(1);
+        let x = 40_i32.saturating_add(step.saturating_mul(5).checked_rem(span_x).unwrap_or(0));
+        let y = 40_i32.saturating_add(step.saturating_mul(3).checked_rem(span_y).unwrap_or(0));
         let started = Instant::now();
         tree.pointer_moved(x, y);
         worst_move = worst_move.max(started.elapsed());
