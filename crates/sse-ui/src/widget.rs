@@ -218,6 +218,8 @@ struct Node {
     visible: bool,
     enabled: bool,
     scroll_y: i32,
+    /// A vertically scrolling viewport: built as a vertical scroll node, or positioned by `set_scroll_y`.
+    scroll_viewport: bool,
     clip_children: bool,
     tooltip: Option<String>,
 }
@@ -449,6 +451,7 @@ impl Tree {
         look: Look,
     ) -> Result<WidgetId> {
         let measured = self.text_style(&content, style);
+        let scroll_viewport = matches!(kind, NodeKind::Scroll { vertical: true, .. });
         let layout = self.layout.add(kind, measured)?;
         match parent {
             Some(owner) => {
@@ -469,6 +472,7 @@ impl Tree {
             visible: true,
             enabled: true,
             scroll_y: 0,
+            scroll_viewport,
             clip_children: false,
             tooltip: None,
         });
@@ -647,8 +651,17 @@ impl Tree {
         Ok(overflowing)
     }
 
-    /// Visible buttons and inputs that are cut off: partly outside the nearest clipping ancestor, or running into the
-    /// status line at `limit_y`. Returns their text (or "input") for each such node.
+    /// Visible buttons and inputs that are cut off with no way to bring them back, each as "reason: text" (the
+    /// text of an input is "input").
+    ///
+    /// Every clipping ancestor is looked at, not only the nearest one. A viewport that scrolls vertically (a vertical
+    /// scroll node, or one that [`Tree::set_scroll_y`] has positioned) may cut a node at its top or bottom edge: scrolling brings the node
+    /// back, as long as the node is not taller than the viewport. Everything else is a defect:
+    ///
+    /// - `cross-axis`: a scrolling viewport cuts the node on the left or right, where it cannot scroll;
+    /// - `taller than viewport`: the node can never be shown whole in its scrolling viewport;
+    /// - `container`: a clipping panel that does not scroll cuts the node;
+    /// - `status line`: the part of the node that stays visible runs across the status line at `limit_y`.
     ///
     /// # Errors
     /// Returns an error when layout cannot be updated.
@@ -667,20 +680,36 @@ impl Tree {
                 _ => continue,
             };
             let (x0, y0, x1, y1) = edges(node.rect);
-            // Icon buttons are the sidebar's own column, which runs down past the status line by design.
-            let runs_into_status = !matches!(node.content, Content::IconButton { .. }) && y0 < limit_y && y1 > limit_y;
-            let mut cut = runs_into_status;
+            // What is left of the node on screen after the vertical cuts of its scrolling viewports.
+            let (mut visible_top, mut visible_bottom) = (y0, y1);
+            let mut reason = None;
             let mut ancestor = node.parent;
             while let Some(parent) = ancestor.and_then(|parent| self.nodes.get(parent.0)) {
                 if parent.clip_children {
                     let (cx0, cy0, cx1, cy1) = edges(parent.rect);
-                    cut |= x0 < cx0 || y0 < cy0 || x1 > cx1 || y1 > cy1;
-                    break;
+                    let cut_across = x0 < cx0 || x1 > cx1;
+                    let cut_along = y0 < cy0 || y1 > cy1;
+                    if parent.scroll_viewport {
+                        if cut_across {
+                            reason.get_or_insert("cross-axis");
+                        } else if cut_along && y1.saturating_sub(y0) > cy1.saturating_sub(cy0) {
+                            reason.get_or_insert("taller than viewport");
+                        }
+                        visible_top = visible_top.max(cy0);
+                        visible_bottom = visible_bottom.min(cy1);
+                    } else if cut_across || cut_along {
+                        reason.get_or_insert("container");
+                    }
                 }
                 ancestor = parent.parent;
             }
-            if cut {
-                clipped.push(name);
+            // Icon buttons are the sidebar's own column, which runs down past the status line by design.
+            if !matches!(node.content, Content::IconButton { .. }) && visible_top < limit_y && visible_bottom > limit_y
+            {
+                reason.get_or_insert("status line");
+            }
+            if let Some(reason) = reason {
+                clipped.push(format!("{reason}: {name}"));
             }
         }
         Ok(clipped)
@@ -1052,6 +1081,7 @@ impl Tree {
     pub fn set_scroll_y(&mut self, id: WidgetId, offset: i32) -> Result<()> {
         let node = self.node_mut(id)?;
         let offset = offset.max(0);
+        node.scroll_viewport = true;
         if node.scroll_y != offset {
             node.scroll_y = offset;
             self.needs_layout = true;
@@ -2182,6 +2212,123 @@ mod tests {
             ring.to_u32(),
             "a mouse click must not draw the ring"
         );
+        Ok(())
+    }
+
+    /// A 200×200 window holding one 200×100 clipping viewport with five buttons of `button` size laid out by
+    /// `body`; nothing shrinks, so what does not fit is cut.
+    fn viewport_tree(kind: NodeKind, body: NodeKind, button: Size) -> sse_core::Result<(Tree, WidgetId)> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let root = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let fixed = Size::new(200.0, 100.0);
+        let viewport = tree.add(
+            Some(root),
+            kind,
+            Style {
+                min: fixed,
+                preferred: fixed,
+                max: fixed,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        tree.set_clip_children(viewport, true)?;
+        let body = tree.add(
+            Some(viewport),
+            body,
+            Style {
+                shrink: 0.0,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        for index in 0..5 {
+            tree.add(
+                Some(body),
+                NodeKind::Leaf,
+                Style {
+                    min: button,
+                    preferred: button,
+                    shrink: 0.0,
+                    ..Style::default()
+                },
+                Content::Button {
+                    text: format!("B{index}"),
+                    style: TextStyle::new(Face::Body, 14.0),
+                },
+                Look::default(),
+            )?;
+        }
+        tree.resize(200, 200);
+        Ok((tree, viewport))
+    }
+
+    const VERTICAL_SCROLL: NodeKind = NodeKind::Scroll {
+        horizontal: false,
+        vertical: true,
+        offset_x: 0.0,
+        offset_y: 0.0,
+    };
+
+    #[test]
+    fn buttons_below_the_fold_of_a_scrolling_viewport_are_not_clipped() -> sse_core::Result<()> {
+        let (mut tree, viewport) = viewport_tree(VERTICAL_SCROLL, NodeKind::Column, Size::new(100.0, 40.0))?;
+        // The third button straddles the viewport's bottom edge, the last two are entirely below it.
+        assert_eq!(tree.clipped_interactive_nodes(1_000)?, Vec::<String>::new());
+        // Scrolled, the first buttons are cut by the top edge instead: still reachable.
+        tree.set_scroll_y(viewport, 50)?;
+        assert_eq!(tree.clipped_interactive_nodes(1_000)?, Vec::<String>::new());
+        Ok(())
+    }
+
+    #[test]
+    fn a_plain_clipping_panel_that_cuts_buttons_is_reported() -> sse_core::Result<()> {
+        let (mut tree, viewport) = viewport_tree(NodeKind::Column, NodeKind::Column, Size::new(100.0, 40.0))?;
+        assert_eq!(
+            tree.clipped_interactive_nodes(1_000)?,
+            ["container: B2", "container: B3", "container: B4"]
+        );
+        // The same panel positioned as a scrolling viewport can bring them back.
+        tree.set_scroll_y(viewport, 0)?;
+        assert_eq!(tree.clipped_interactive_nodes(1_000)?, Vec::<String>::new());
+        Ok(())
+    }
+
+    #[test]
+    fn a_scrolling_viewport_cannot_excuse_a_cut_across_its_axis() -> sse_core::Result<()> {
+        // A row of five 100-wide buttons in a 200-wide viewport that only scrolls vertically.
+        let (mut tree, _) = viewport_tree(VERTICAL_SCROLL, NodeKind::Row, Size::new(100.0, 40.0))?;
+        assert_eq!(
+            tree.clipped_interactive_nodes(1_000)?,
+            ["cross-axis: B2", "cross-axis: B3", "cross-axis: B4"]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_button_taller_than_its_scrolling_viewport_is_reported() -> sse_core::Result<()> {
+        let (mut tree, _) = viewport_tree(VERTICAL_SCROLL, NodeKind::Column, Size::new(100.0, 120.0))?;
+        let clipped = tree.clipped_interactive_nodes(1_000)?;
+        assert_eq!(clipped.first().map(String::as_str), Some("taller than viewport: B0"));
+        Ok(())
+    }
+
+    #[test]
+    fn the_status_line_rule_looks_at_what_the_viewport_leaves_visible() -> sse_core::Result<()> {
+        let (mut tree, _) = viewport_tree(VERTICAL_SCROLL, NodeKind::Column, Size::new(100.0, 40.0))?;
+        // The viewport ends at y=100. A status line at 110 lies inside the third button's box (80..120), but that
+        // part of the button is already scrolled out of sight.
+        assert_eq!(tree.clipped_interactive_nodes(110)?, Vec::<String>::new());
+        // A status line at 60 runs across the visible second button (40..80).
+        assert_eq!(tree.clipped_interactive_nodes(60)?, ["status line: B1"]);
         Ok(())
     }
 }
