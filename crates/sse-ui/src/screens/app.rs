@@ -963,6 +963,18 @@ impl Screen for Settings {
                 .push(style::button(cx.tree, sections, label, Button::Secondary)?);
         }
         let content = style::card(cx.tree, settings_root)?;
+        cx.tree.set_style(
+            content,
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: Size::new(0.0, 0.0),
+                padding: Edges::all(crate::theme::CARD_PADDING),
+                gap: Size::new(0.0, crate::theme::CONTROL_GAP),
+                align_items: Align::Stretch,
+                ..Style::default()
+            },
+        )?;
 
         let general = style::card(cx.tree, content)?;
         style::label(cx.tree, general, crate::strings::t("ОБЩИЕ"), Text::Heading)?;
