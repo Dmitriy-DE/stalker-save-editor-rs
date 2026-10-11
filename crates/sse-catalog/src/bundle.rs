@@ -35,6 +35,13 @@ impl CatalogBundleReader {
         })
     }
 
+    /// The bundled catalog of a save format id. An Enhanced Edition has no catalog of its own: its saves hold the
+    /// items of the original release, so it uses that release's bundle.
+    #[must_use]
+    pub fn for_format(format_id: &str) -> Option<&'static CatalogBundle> {
+        Self::load_embedded().get(release_for_format(format_id))
+    }
+
     /// Loads all catalog bundles from a JSON payload.
     ///
     /// # Errors
@@ -453,6 +460,17 @@ impl CatalogBundleWriter {
 
         let root = JsonValue::Object(root_entries);
         Ok(root.to_indented_string()?.into_bytes())
+    }
+}
+
+/// The release whose catalog serves a save format id: Enhanced Editions map to their original release.
+#[must_use]
+pub fn release_for_format(format_id: &str) -> &str {
+    match format_id {
+        "stalker-soc-ee" => "stalker-soc",
+        "stalker-cs-ee" => "stalker-cs",
+        "stalker-cop-ee" => "stalker-cop",
+        other => other,
     }
 }
 

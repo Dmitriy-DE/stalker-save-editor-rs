@@ -2535,7 +2535,7 @@ fn add_candidates(selected: &LoadedSave, removed: &BTreeSet<u32>) -> Vec<AddCand
     if writer::capability(save.format(), writer::ChangeKind::AddItems) == writer::Capability::Unsupported {
         return Vec::new();
     }
-    let Some(catalog) = sse_catalog::CatalogBundleReader::load_embedded().get(save.format().id()) else {
+    let Some(catalog) = sse_catalog::CatalogBundleReader::for_format(save.format().id()) else {
         return Vec::new();
     };
     let mut candidates = catalog
@@ -3728,8 +3728,7 @@ impl Inventory {
                     .unwrap_or_default();
                 let options = item
                     .and_then(|item| {
-                        sse_catalog::CatalogBundleReader::load_embedded()
-                            .get(save.format().id())
+                        sse_catalog::CatalogBundleReader::for_format(save.format().id())
                             .and_then(|bundle| bundle.upgrades.as_ref())
                             .map(|catalog| catalog.for_item(&item.section))
                     })
@@ -4444,8 +4443,7 @@ impl Inventory {
             return Ok(());
         };
         if writer::capability(save.format(), writer::ChangeKind::AddItems) == writer::Capability::Unsupported
-            || sse_catalog::CatalogBundleReader::load_embedded()
-                .get(save.format().id())
+            || sse_catalog::CatalogBundleReader::for_format(save.format().id())
                 .and_then(|bundle| bundle.items.resolve(item_key))
                 .is_none()
             || !inventory.iter().any(|item| item.section == item_key)
@@ -4501,8 +4499,7 @@ impl Inventory {
             _ => return Ok(()),
         };
         if writer::capability(save.format(), writer::ChangeKind::EditUpgrades) == writer::Capability::Unsupported
-            || !sse_catalog::CatalogBundleReader::load_embedded()
-                .get(save.format().id())
+            || !sse_catalog::CatalogBundleReader::for_format(save.format().id())
                 .and_then(|bundle| bundle.upgrades.as_ref())
                 .is_some_and(|catalog| {
                     catalog
@@ -5188,7 +5185,7 @@ fn prepare_save_edits(
                     "adding items is not supported for this X-Ray format".to_owned(),
                 ));
             }
-            let catalog = sse_catalog::CatalogBundleReader::load_embedded().get(save.format().id());
+            let catalog = sse_catalog::CatalogBundleReader::for_format(save.format().id());
             let mut used_object_ids: BTreeSet<u16> =
                 save.registry_objects().iter().map(|object| object.object_id).collect();
             for request in &edits.adds {
@@ -5664,8 +5661,7 @@ fn verify_requested_values(
             (SaveData::Xray { save: before, .. }, SaveData::Xray { save: after, .. }) => (before, after),
             _ => return Err(Error::Refused("faction edits require an X-Ray read-back".to_owned())),
         };
-        let bundle = sse_catalog::CatalogBundleReader::load_embedded()
-            .get(original_save.format().id())
+        let bundle = sse_catalog::CatalogBundleReader::for_format(original_save.format().id())
             .and_then(|bundle| bundle.factions.as_ref())
             .ok_or_else(|| Error::Refused("faction catalog is unavailable for read-back".to_owned()))?;
         let actual_relations = verified_save
@@ -7599,7 +7595,7 @@ impl Factions {
             )?;
             return self.hide_list(cx);
         }
-        let bundle = sse_catalog::CatalogBundleReader::load_embedded().get(save.format().id());
+        let bundle = sse_catalog::CatalogBundleReader::for_format(save.format().id());
         let Some(catalog) = bundle.and_then(|bundle| bundle.factions.as_ref()) else {
             self.faction_keys.clear();
             self.set_text(cx, "Каталог фракций для этого формата недоступен.")?;
@@ -7722,7 +7718,7 @@ impl Factions {
                 cx.status = Some(t("Отношения актёра не подтверждены индексом сохранения.").to_owned());
                 return Ok(());
             }
-            let bundle = sse_catalog::CatalogBundleReader::load_embedded().get(save.format().id());
+            let bundle = sse_catalog::CatalogBundleReader::for_format(save.format().id());
             let faction = bundle
                 .and_then(|bundle| bundle.factions.as_ref())
                 .and_then(|catalog| catalog.resolve(&key).ok());
@@ -8200,7 +8196,7 @@ impl Stashes {
         let can_move = xray_change_supported(save, writer::ChangeKind::MoveItems)
             && !self.workspace.is_saving()
             && !self.workspace.is_restoring();
-        let catalog = sse_catalog::CatalogBundleReader::load_embedded().get(save.format().id());
+        let catalog = sse_catalog::CatalogBundleReader::for_format(save.format().id());
         let Some(catalog) = catalog else {
             self.set_text(cx, "Каталог предметов для этой игры недоступен.")?;
             return self.hide_list(cx);
