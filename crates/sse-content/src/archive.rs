@@ -48,6 +48,11 @@ pub fn xray_header_decoder() -> HeaderDecoder {
     })
 }
 
+/// LZO entry decoder for X-Ray archives whose entries are stored as LZO streams.
+pub fn xray_entry_decoder() -> EntryDecoder {
+    Arc::new(|data: &[u8], expected_size: usize| sse_codecs::lzo1x::decompress(data, expected_size))
+}
+
 /// Keeps the single distinct decoded header table, or refuses when there is none or several differ.
 pub fn select_unique_header_candidate(mut candidates: Vec<Vec<u8>>) -> Result<Vec<Vec<u8>>> {
     if candidates.is_empty() {

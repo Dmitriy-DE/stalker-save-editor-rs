@@ -10,8 +10,8 @@ pub mod ltx;
 pub mod preview;
 pub mod string_tables;
 pub use archive::{
-    select_unique_header_candidate, xray_header_decoder, EntryDecoder, HeaderDecoder, ReadAt, XRayArchive,
-    XRayArchiveEntry,
+    select_unique_header_candidate, xray_entry_decoder, xray_header_decoder, EntryDecoder, HeaderDecoder, ReadAt,
+    XRayArchive, XRayArchiveEntry,
 };
 pub use dds::{DdsImage, RgbaImage};
 pub use encoding::{decode_archive_name, decode_text, decode_windows_1250, decode_windows_1251};
