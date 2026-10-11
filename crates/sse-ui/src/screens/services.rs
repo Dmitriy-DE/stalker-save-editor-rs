@@ -556,7 +556,12 @@ impl Screen for Companion {
             t("Связь / Задержка: Нет ответа"),
             Text::Note,
         )?);
-        self.path = Some(style::label(cx.tree, state, t("Путь установки: —"), Text::Note)?);
+        self.path = Some(super::saves::paragraph(
+            cx.tree,
+            state,
+            t("Путь установки: —"),
+            Text::Note,
+        )?);
         self.install = Some(style::d2::button(
             cx.tree,
             state,

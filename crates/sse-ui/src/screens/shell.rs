@@ -1664,7 +1664,8 @@ impl Shell {
         library_search.build(tree, library)?;
         let library_refresh = library_icon_button(tree, library_actions, Icon::D2Updates)?;
         tree.set_tooltip(library_refresh, crate::strings::t("Обновить"))?;
-        let library_status = style::label(tree, library, "Ищу сейвы…", Text::Note)?;
+        // A paragraph wraps the empty-state hint inside the side panel instead of running past its edge.
+        let library_status = super::saves::paragraph(tree, library, "Ищу сейвы…", Text::Note)?;
         let library_list = tree.add(
             Some(library),
             NodeKind::Column,
@@ -1772,7 +1773,7 @@ impl Shell {
                     shrink: 1.0,
                     ..Style::default()
                 },
-                Content::Label {
+                Content::Paragraph {
                     text: String::new(),
                     style: TextStyle::new(Face::Body, 12.0),
                 },

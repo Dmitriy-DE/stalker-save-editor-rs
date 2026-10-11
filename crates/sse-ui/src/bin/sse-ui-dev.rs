@@ -70,10 +70,11 @@ fn main() -> std::process::ExitCode {
         Some("--bench-save") => bench_save(&args),
         Some("--ci-budget") => ci_budget(),
         Some("--ci-i18n-buttons") => ci_i18n_buttons(),
+        Some("--ci-text-overflow") => ci_text_overflow(&args),
         Some("--package-ee") => package_ee(&args),
         Some("--metrics-report") => metrics_report(&args),
         _ => Err(Error::Refused(
-            "usage: sse-ui-dev --screenshot|--bench|--ci-budget|--ci-i18n-buttons|--package-ee <soc|cs|cop> <dir>|--metrics-report <dir>"
+            "usage: sse-ui-dev --screenshot|--bench|--ci-budget|--ci-i18n-buttons|--ci-text-overflow [SAVE]|--package-ee <soc|cs|cop> <dir>|--metrics-report <dir>"
                 .to_owned(),
         )),
     };
@@ -472,6 +473,146 @@ fn ci_i18n_buttons() -> Result<()> {
     }
     println!("ellipsized_buttons_total={}", clipped.len());
     ensure_buttons_fit(&clipped)
+}
+
+/// Screens whose overflow is being fixed in another change; the list must be emptied once that lands.
+const TEXT_OVERFLOW_PENDING: [ScreenId; 2] = [ScreenId::Encyclopedia, ScreenId::Capabilities];
+
+/// Section buttons of the settings screen, by their source captions.
+const SETTINGS_SECTIONS: [&str; 9] = [
+    "ОБЩИЕ",
+    "ИНТЕРФЕЙС",
+    "ЗВУК",
+    "ПУТИ",
+    "ОБНОВЛЕНИЯ",
+    "БЭКАПЫ",
+    "ПОДДЕРЖКА",
+    "ОТЧЁТЫ",
+    "ВЕРСИЯ",
+];
+
+/// Known findings that need a layout change of the whole inventory screen (the side column is taller than the window
+/// at 1366×768, so the pinned action row is pushed down). Remove each entry when that change lands.
+const TEXT_OVERFLOW_KNOWN: [(ScreenId, &str); 4] = [
+    (ScreenId::Inventory, "УДАЛИТЬ ПРЕДМЕТ"),
+    (ScreenId::Inventory, "+ ДОБАВИТЬ ПРЕДМЕТ"),
+    (ScreenId::Inventory, "GEGENSTAND ENTFERNEN"),
+    (ScreenId::Inventory, "+ GEGENSTAND HINZUFÜGEN"),
+];
+
+/// Opens `path` in the shell the way the screenshot command does and waits until the overview has it.
+fn open_save_for_check(
+    tree: &mut Tree,
+    shell: &mut Shell,
+    path: &str,
+) -> Result<std::sync::mpsc::Receiver<Message<AppMessage>>> {
+    let (proxy, receiver) = channel_pair::<AppMessage>();
+    shell.set_proxy(proxy);
+    if !shell.open_save(tree, Path::new(path))? {
+        return Err(Error::Refused("could not start background save loading".to_owned()));
+    }
+    let deadline = Instant::now()
+        .checked_add(Duration::from_secs(15))
+        .ok_or_else(|| Error::System("invalid save-load deadline".to_owned()))?;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(Error::System("timed out loading the check save".to_owned()));
+        }
+        let message = receiver
+            .recv_timeout(remaining)
+            .map_err(|error| Error::System(format!("check save load failed: {error}")))?;
+        let finished = matches!(&message, Message::User(AppMessage::ToScreen(ScreenId::Overview, _)));
+        shell.message(tree, &message, None);
+        if finished {
+            if shell.app().current_save().is_none() {
+                return Err(Error::Damaged("check save could not be read".to_owned()));
+            }
+            return Ok(receiver);
+        }
+    }
+}
+
+/// Language, screen, window size and the text that does not fit.
+type TextOverflow = (String, ScreenId, u32, u32, String);
+
+fn ci_text_overflow(args: &[String]) -> Result<()> {
+    let save = args.get(1).cloned();
+    const SIZES: [(u32, u32); 2] = [(1366, 768), (1920, 1080)];
+    const LANGUAGES: [&str; 4] = ["ru", "en", "de", "ja"];
+    let previous = std::env::var_os("STALKER_EDITOR_LANG");
+    let scan = (|| -> Result<Vec<TextOverflow>> {
+        let mut overflowing = Vec::new();
+        for language in LANGUAGES {
+            std::env::set_var("STALKER_EDITOR_LANG", language);
+            for (width, height) in SIZES {
+                let mut tree = Tree::new(Fonts::bundled()?, rgb(BG_BASE));
+                let mut shell = Shell::build(&mut tree, None)?;
+                tree.resize(width, height);
+                let _ = shell.message(
+                    &mut tree,
+                    &Message::Window(sse_ui::event_loop::WindowEvent::Resized { width, height }),
+                    None,
+                );
+                let mut frame = vec![0_u32; usize::try_from(width.saturating_mul(height)).unwrap_or(0)];
+                let loader = match save.as_deref() {
+                    Some(path) => Some(open_save_for_check(&mut tree, &mut shell, path)?),
+                    None => None,
+                };
+                for id in ScreenId::ALL {
+                    if TEXT_OVERFLOW_PENDING.contains(&id) {
+                        continue;
+                    }
+                    shell.open(&mut tree, id)?;
+                    if let Some(receiver) = loader.as_ref() {
+                        // Screens fill their lists from messages after opening; drain them until things go quiet.
+                        while let Ok(message) = receiver.recv_timeout(Duration::from_millis(300)) {
+                            shell.message(&mut tree, &message, None);
+                        }
+                    }
+                    tree.paint(&mut frame, width as usize)?;
+                    if id == ScreenId::Settings {
+                        // Every settings section is its own panel of text, so each one is opened and checked too.
+                        for section in SETTINGS_SECTIONS {
+                            if !shell.press_button(&mut tree, section)? {
+                                return Err(Error::Refused(format!("the settings screen has no section {section}")));
+                            }
+                            tree.paint(&mut frame, width as usize)?;
+                            overflowing.extend(
+                                tree.overflowing_text_labels()?.into_iter().map(|text| {
+                                    (language.to_owned(), id, width, height, format!("[{section}] {text}"))
+                                }),
+                            );
+                        }
+                    }
+                    overflowing.extend(
+                        tree.overflowing_text_labels()?
+                            .into_iter()
+                            .filter(|text| !TEXT_OVERFLOW_KNOWN.contains(&(id, text.as_str())))
+                            .map(|text| (language.to_owned(), id, width, height, text)),
+                    );
+                }
+            }
+        }
+        Ok(overflowing)
+    })();
+    if let Some(value) = previous.as_ref() {
+        std::env::set_var("STALKER_EDITOR_LANG", value);
+    } else {
+        std::env::remove_var("STALKER_EDITOR_LANG");
+    }
+    let overflowing = scan?;
+    for (language, screen, width, height, text) in &overflowing {
+        println!("overflow language={language} screen={screen:?} size={width}x{height} text={text:?}");
+    }
+    println!("overflowing_text_total={}", overflowing.len());
+    if overflowing.is_empty() {
+        return Ok(());
+    }
+    Err(Error::Refused(format!(
+        "{} text labels do not fit their box or stick out of their parent",
+        overflowing.len()
+    )))
 }
 
 fn ci_budget() -> Result<()> {

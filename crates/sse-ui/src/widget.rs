@@ -608,6 +608,45 @@ impl Tree {
         Ok(labels)
     }
 
+    /// One-line texts (labels and buttons) that do not fit their own box or stick out of their parent's box.
+    ///
+    /// These never wrap, so a too-wide text is cut or runs into a neighbour.
+    /// Returns the text of each such label; an empty list means every label fits.
+    ///
+    /// # Errors
+    /// Returns an error when layout cannot be updated.
+    pub fn overflowing_text_labels(&mut self) -> Result<Vec<String>> {
+        self.update_layout()?;
+        let mut overflowing = Vec::new();
+        for index in 0..self.nodes.len() {
+            let id = WidgetId(index);
+            if !self.shown(id) {
+                continue;
+            }
+            let Some(node) = self.nodes.get(index) else { continue };
+            let (text, style, icon_inset) = match &node.content {
+                Content::Label { text, style } | Content::Button { text, style } => (text, *style, 0.0),
+                Content::IconButton { text, style, .. } if !text.is_empty() => (text, *style, 24.0),
+                _ => continue,
+            };
+            // Symbol-only texts (steppers, scroll marks) are glyphs drawn in a fixed box, not words that can run out.
+            if !text.chars().any(char::is_alphanumeric) {
+                continue;
+            }
+            let available =
+                u32_to_f32(node.rect.width) - node.style.padding.left - node.style.padding.right - icon_inset;
+            let too_wide = self.fonts.measure(text, style) > available.max(0.0) + 0.5;
+            let outside_parent = node
+                .parent
+                .and_then(|parent| self.nodes.get(parent.0))
+                .is_some_and(|parent| !rect_contains(parent.rect, node.rect));
+            if too_wide || outside_parent {
+                overflowing.push(text.clone());
+            }
+        }
+        Ok(overflowing)
+    }
+
     /// Width of one line of text in pixels, for sizing controls to their labels.
     #[must_use]
     pub fn measure_text(&self, text: &str, style: TextStyle) -> f32 {
@@ -1649,6 +1688,12 @@ fn edges(rect: Rect) -> (i64, i64, i64, i64) {
         x.saturating_add(i64::from(rect.width)),
         y.saturating_add(i64::from(rect.height)),
     )
+}
+
+fn rect_contains(outer: Rect, inner: Rect) -> bool {
+    let (ox0, oy0, ox1, oy1) = edges(outer);
+    let (ix0, iy0, ix1, iy1) = edges(inner);
+    ox0 <= ix0 && oy0 <= iy0 && ix1 <= ox1 && iy1 <= oy1
 }
 
 fn touches(a: Rect, b: Rect) -> bool {

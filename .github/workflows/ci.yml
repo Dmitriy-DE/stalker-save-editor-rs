@@ -53,6 +53,14 @@ jobs:
           set -o pipefail
           python3 tools/check_data_isolation.py -- cargo run --release -p sse-ui --bin sse-ui-dev -- --ci-i18n-buttons | tee target/i18n-qa/buttons.txt
 
+      - name: Text overflow layout report
+        if: matrix.os == 'ubuntu-24.04'
+        shell: bash
+        run: |
+          mkdir -p target/i18n-qa
+          set -o pipefail
+          python3 tools/check_data_isolation.py -- cargo run --release -p sse-ui --bin sse-ui-dev -- --ci-text-overflow fixtures/synthetic/xray-clear-sky.sav | tee target/i18n-qa/overflow.txt
+
       - name: Rust UI source localization guard
         if: matrix.os == 'ubuntu-24.04'
         run: |
