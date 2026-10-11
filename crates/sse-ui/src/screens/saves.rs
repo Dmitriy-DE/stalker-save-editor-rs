@@ -5105,6 +5105,7 @@ struct S2MoveOutcome {
     puts_refused: BTreeSet<u32>,
 }
 
+#[cfg(test)]
 fn prepare_save_edits(
     selected: &LoadedSave,
     edits: &PendingInventoryEdits,
@@ -11192,6 +11193,179 @@ mod tests {
             },
         )
         .is_err());
+        Ok(())
+    }
+
+    /// Draft → disk → reload for one S2 stash edit, so the request comes from the stored journal.
+    fn draft_stash_request(
+        dir: &std::path::Path,
+        source_sha256: &str,
+        takes: Vec<u32>,
+        puts: Vec<u32>,
+    ) -> sse_core::Result<(BTreeSet<u32>, BTreeSet<u32>)> {
+        let mut plan = DraftPlan::empty(source_sha256)?;
+        plan.s2_stash_takes = takes;
+        plan.s2_stash_puts = puts;
+        let store = sse_storage::drafts::DraftStore::new(dir);
+        store.save(DraftJournal::new(vec![plan], 0)?)?;
+        let restored = store
+            .load(source_sha256)?
+            .ok_or_else(|| Error::damaged("S2 stash draft did not reload"))?;
+        let current = restored
+            .current()
+            .ok_or_else(|| Error::damaged("S2 stash draft has no current plan"))?;
+        Ok((
+            current.s2_stash_takes.iter().copied().collect(),
+            current.s2_stash_puts.iter().copied().collect(),
+        ))
+    }
+
+    /// Manual service round trip on copies of real S2 saves: a take through a draft, then a put back, then a compare.
+    /// `SSE_S2_COPY_DIR=<copies> XDG_DATA_HOME=<tmp> XDG_CONFIG_HOME=<tmp> STALKER_SAVE_EDITOR_DATA=<tmp> \
+    ///   cargo test -p sse-ui real_copies_stash_service_round_trip -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "manual round trip on copies of real S2 saves (SSE_S2_COPY_DIR)"]
+    fn real_copies_stash_service_round_trip() -> sse_core::Result<()> {
+        let dir =
+            std::env::var("SSE_S2_COPY_DIR").map_err(|_| Error::Refused("SSE_S2_COPY_DIR is not set".to_owned()))?;
+        let temp = TempDirectory::new();
+        let mut paths = fs::read_dir(&dir)?
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|path| path.extension().is_some_and(|ext| ext == "sav"))
+            .collect::<Vec<_>>();
+        paths.sort();
+        let (mut consistent, mut inconsistent, mut refused, mut skipped) = (0_usize, 0_usize, 0_usize, 0_usize);
+        println!("| save | stash items | result | detail |");
+        println!("|---|---|---|---|");
+        for (index, source) in paths.iter().enumerate() {
+            let name = source
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            if index > 0 {
+                // Each save is about 5 MB and two backups are made per save; drop the previous one before the next.
+                let previous = index - 1;
+                let _ = fs::remove_dir_all(temp.0.join(format!("work-{previous}")));
+                let _ = fs::remove_dir_all(temp.0.join(format!("backups-{previous}")));
+            }
+            let work_dir = temp.0.join(format!("work-{index}"));
+            fs::create_dir_all(&work_dir)?;
+            let work = work_dir.join(&name);
+            fs::copy(source, &work)?;
+            // Backups must sit outside the save folder, so they go into their own folder.
+            let backup = temp.0.join(format!("backups-{index}"));
+            fs::create_dir_all(&backup)?;
+            let path_string = work.to_string_lossy().into_owned();
+            let loaded = match LoadedSave::read(fixture_slot(&path_string, "stalker2", "stalker2")) {
+                Ok(loaded) => loaded,
+                Err(error) => {
+                    skipped += 1;
+                    println!("| {name} | - | skipped | read: {error} |");
+                    continue;
+                }
+            };
+            let (stash_before, inventory_before) = match &loaded.data {
+                super::SaveData::Stalker2 {
+                    inventory,
+                    stash_items,
+                    save,
+                } => {
+                    if save.index().is_legacy() {
+                        skipped += 1;
+                        println!("| {name} | - | skipped | game 1.0.x layout is not editable |");
+                        continue;
+                    }
+                    let stash = match stash_items {
+                        Some(Ok(items)) => items.iter().map(|item| item.handle).collect::<BTreeSet<u32>>(),
+                        _ => BTreeSet::new(),
+                    };
+                    (
+                        stash,
+                        inventory.iter().map(|item| item.handle).collect::<BTreeSet<u32>>(),
+                    )
+                }
+                super::SaveData::Xray { .. } => {
+                    skipped += 1;
+                    println!("| {name} | - | skipped | X-Ray save |");
+                    continue;
+                }
+            };
+            let Some(&handle) = stash_before.iter().next() else {
+                skipped += 1;
+                println!("| {name} | 0 | skipped | no confirmed stash items |");
+                continue;
+            };
+            let sha = loaded.source_sha256.clone();
+            let draft_dir = temp.0.join(format!("drafts-{index}"));
+            let (takes, _) = draft_stash_request(&draft_dir, &sha, vec![handle], Vec::new())?;
+            let taken = match commit_save_edits_to(
+                &loaded,
+                &PendingInventoryEdits::default(),
+                &S2StashMoves {
+                    takes,
+                    ..Default::default()
+                },
+                &backup,
+            ) {
+                Ok((taken, _)) => taken,
+                Err(error) => {
+                    refused += 1;
+                    println!("| {name} | {} | refused (take) | {error} |", stash_before.len());
+                    continue;
+                }
+            };
+            let (_, puts) = draft_stash_request(&draft_dir, &sha, Vec::new(), vec![handle])?;
+            let back = match commit_save_edits_to(
+                &taken,
+                &PendingInventoryEdits::default(),
+                &S2StashMoves {
+                    puts,
+                    ..Default::default()
+                },
+                &backup,
+            ) {
+                Ok((back, _)) => back,
+                Err(error) => {
+                    inconsistent += 1;
+                    println!(
+                        "| {name} | {} | inconsistent (put back) | {error} |",
+                        stash_before.len()
+                    );
+                    continue;
+                }
+            };
+            let (stash_after, inventory_after) = match &back.data {
+                super::SaveData::Stalker2 { save, inventory, .. } => (
+                    save.stash_items()?
+                        .iter()
+                        .map(|item| item.handle)
+                        .collect::<BTreeSet<u32>>(),
+                    inventory.iter().map(|item| item.handle).collect::<BTreeSet<u32>>(),
+                ),
+                super::SaveData::Xray { .. } => return Err(Error::damaged("S2 read-back parsed as X-Ray")),
+            };
+            if stash_after == stash_before && inventory_after == inventory_before {
+                consistent += 1;
+                println!(
+                    "| {name} | {} | consistent | take and put back, same stash and backpack |",
+                    stash_before.len()
+                );
+            } else {
+                inconsistent += 1;
+                println!(
+                    "| {name} | {} | inconsistent | stash {} → {}, backpack {} → {} |",
+                    stash_before.len(),
+                    stash_before.len(),
+                    stash_after.len(),
+                    inventory_before.len(),
+                    inventory_after.len()
+                );
+            }
+        }
+        println!(
+            "files={} consistent={consistent} inconsistent={inconsistent} refused={refused} skipped={skipped}",
+            paths.len()
+        );
         Ok(())
     }
 
