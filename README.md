@@ -108,7 +108,10 @@ anything is downloaded. Downloads and platform installs are handled by the insta
 
 ### Web
 
-`sse-web` hosts the same editor shell in a browser. The build script is `tools/build-web.sh`.
+`sse-web` hosts the same editor shell in a browser. The build script is `tools/build-web.sh`: it writes
+`web/sse_web.wasm` (refused above 5 MiB) and `web/item-icons.bin`. The item pictures are not compiled into the
+browser build; the page fetches that file after the editor has started and shows empty icon frames until it
+arrives. The whole `web/` folder is what gets served; CI uploads it as the `web` artifact.
 
 ## Install
 

@@ -8,12 +8,15 @@ rust-version.workspace = true
 [features]
 default = ["native-ui"]
 native-ui = [
+    "embedded-item-icons",
     "dep:sse-companion",
     "dep:sse-fixes",
     "dep:sse-lint",
     "dep:sse-steam",
     "dep:sse-update",
 ]
+# Compiles the item icon pack into the binary. Off in the browser build, which fetches the pack as a file.
+embedded-item-icons = []
 
 [[bin]]
 name = "sse-shell"

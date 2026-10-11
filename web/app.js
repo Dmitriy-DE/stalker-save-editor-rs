@@ -186,6 +186,25 @@ function maybeDownload() {
   }
 }
 
+// The item pictures are a separate file so the editor starts without waiting for them. Until they arrive, and
+// when they cannot be fetched, items show the same empty frame as an item without a picture.
+async function loadItemIcons() {
+  if (typeof api?.sse_web_item_icons !== "function") return;
+  try {
+    const response = await fetch("./item-icons.bin");
+    if (!response.ok) throw new Error(`could not load item icons (${response.status})`);
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (closed || bytes.byteLength === 0) return;
+    const pointer = copyToWasm(bytes);
+    if (!pointer) throw new Error("could not allocate item icon buffer");
+    const result = api.sse_web_item_icons(pointer, bytes.byteLength);
+    if (result !== 0) throw new Error(`item icon file was refused (${result})`);
+    scheduleFrame();
+  } catch (error) {
+    console.warn("Item icons are unavailable", error);
+  }
+}
+
 function scheduleFrame() {
   if (pendingFrame) return;
   pendingFrame = true;
@@ -319,6 +338,7 @@ try {
   status.hidden = true;
   canvas.focus();
   resize();
+  loadItemIcons();
 } catch (error) {
   status.textContent = `Editor could not start: ${error.message}`;
 }
