@@ -351,159 +351,228 @@ fn grapheme_break_at(chars: &[(usize, char)], i: usize) -> bool {
     true
 }
 
-/// A conservative UAX #14 boundary predicate used by the UI line wrapper.
-/// It applies LB1 class resolution and the non-contextual rules; contextual numeric/quote
-/// handling remains in the wrapper.
+/// The UAX #14 (Unicode 17) boundary verdict for two adjacent code points: `true` when a break is allowed
+/// between them.
+///
+/// Every rule that the two code points decide on their own is applied in the order of the standard, after LB1
+/// class resolution. Rules that look further than the pair are answered the way they resolve with no further
+/// context:
+///
+/// - LB15b, LB15c: a space before a quotation mark or a decimal separator breaks or not by what follows it;
+/// - LB19a: a quotation mark between two East Asian characters may break, everywhere else it does not;
+/// - LB20a, LB21a: a hyphen starting a word, or following a Hebrew letter, holds on to the next letter;
+/// - LB25: closing punctuation and solidus inside a number;
+/// - LB28a: a virama between two aksaras, and an aksara before a final consonant;
+/// - LB30a: regional indicators pair up from the start of their run, and the wrapper only asks at grapheme
+///   boundaries, where every pair is already complete.
 #[must_use]
 pub fn line_break_pair(left: char, right: char) -> bool {
-    let a = resolve_line(line_break_class(left));
-    let b = resolve_line(line_break_class(right));
-    if a == LineBreakClass::Cr && b == LineBreakClass::Lf {
+    use LineBreakClass as C;
+    let a = resolve_line(left);
+    let b = resolve_line(right);
+    // LB4, LB5: hard breaks.
+    if a == C::Cr && b == C::Lf {
         return false;
     }
-    if matches!(
-        a,
-        LineBreakClass::Bk | LineBreakClass::Cr | LineBreakClass::Lf | LineBreakClass::Nl
-    ) {
+    if matches!(a, C::Bk | C::Cr | C::Lf | C::Nl) {
         return true;
     }
-    if matches!(
-        b,
-        LineBreakClass::Bk
-            | LineBreakClass::Cr
-            | LineBreakClass::Lf
-            | LineBreakClass::Nl
-            | LineBreakClass::Sp
-            | LineBreakClass::Zw
-    ) {
+    // LB6, LB7.
+    if matches!(b, C::Bk | C::Cr | C::Lf | C::Nl | C::Sp | C::Zw) {
         return false;
     }
-    if a == LineBreakClass::Zwj {
+    // LB8, LB8a.
+    if a == C::Zw {
+        return true;
+    }
+    if a == C::Zwj {
         return false;
     }
-    if a == LineBreakClass::Wj || b == LineBreakClass::Wj || a == LineBreakClass::Gl {
+    // LB9: a combining mark or joiner attaches to whatever precedes it, except a space.
+    if matches!(b, C::Cm | C::Zwj) && a != C::Sp {
         return false;
     }
-    if b == LineBreakClass::Gl
-        && !matches!(
-            a,
-            LineBreakClass::Sp | LineBreakClass::Ba | LineBreakClass::Hy | LineBreakClass::Hh
-        )
-    {
+    // LB10: a mark with no base behaves as a letter.
+    let a = if a == C::Cm { C::Al } else { a };
+    let b = if matches!(b, C::Cm | C::Zwj) { C::Al } else { b };
+    // LB11, LB12, LB12a.
+    if a == C::Wj || b == C::Wj || a == C::Gl {
         return false;
     }
-    if matches!(
-        b,
-        LineBreakClass::Ex
-            | LineBreakClass::Cl
-            | LineBreakClass::Cp
-            | LineBreakClass::Sy
-            | LineBreakClass::Is
-            | LineBreakClass::Ba
-            | LineBreakClass::Hh
-            | LineBreakClass::Hy
-            | LineBreakClass::Ns
-            | LineBreakClass::In
-    ) {
+    if b == C::Gl && !matches!(a, C::Sp | C::Ba | C::Hy | C::Hh) {
         return false;
     }
-    if a == LineBreakClass::Bb {
+    // LB13, LB14, LB15d.
+    if matches!(b, C::Cl | C::Cp | C::Ex | C::Sy) || a == C::Op || b == C::Is {
         return false;
     }
-    if matches!(
-        (a, b),
-        (LineBreakClass::Al | LineBreakClass::Hl, LineBreakClass::Nu)
-            | (LineBreakClass::Nu, LineBreakClass::Al | LineBreakClass::Hl)
-    ) {
+    // LB17.
+    if a == C::B2 && b == C::B2 {
         return false;
     }
-    if matches!(a, LineBreakClass::Pr) && matches!(b, LineBreakClass::Id | LineBreakClass::Eb | LineBreakClass::Em) {
+    // LB18.
+    if a == C::Sp {
+        return true;
+    }
+    // LB19, and LB19a outside an East Asian context.
+    if a == C::Qu || b == C::Qu {
         return false;
     }
-    if matches!(a, LineBreakClass::Id | LineBreakClass::Eb | LineBreakClass::Em) && b == LineBreakClass::Po {
+    // LB20.
+    if a == C::Cb || b == C::Cb {
+        return true;
+    }
+    // LB21, LB21b, LB22.
+    if matches!(b, C::Ba | C::Hh | C::Hy | C::Ns | C::In) || a == C::Bb {
         return false;
     }
-    if matches!(a, LineBreakClass::Pr | LineBreakClass::Po) && matches!(b, LineBreakClass::Al | LineBreakClass::Hl) {
+    if a == C::Sy && b == C::Hl {
         return false;
     }
-    if matches!(a, LineBreakClass::Al | LineBreakClass::Hl) && matches!(b, LineBreakClass::Pr | LineBreakClass::Po) {
+    let letter = |class| matches!(class, C::Al | C::Hl);
+    // LB23.
+    if letter(a) && b == C::Nu || a == C::Nu && letter(b) {
         return false;
     }
-    if a == LineBreakClass::Hy && b == LineBreakClass::Nu || a == LineBreakClass::Is && b == LineBreakClass::Nu {
+    // LB23a.
+    let ideograph = |class| matches!(class, C::Id | C::Eb | C::Em);
+    if a == C::Pr && ideograph(b) || ideograph(a) && b == C::Po {
         return false;
     }
-    if a == LineBreakClass::Nu
-        && matches!(
-            b,
-            LineBreakClass::Nu | LineBreakClass::Sy | LineBreakClass::Is | LineBreakClass::Pr | LineBreakClass::Po
-        )
-    {
+    // LB24.
+    let affix = |class| matches!(class, C::Pr | C::Po);
+    if affix(a) && letter(b) || letter(a) && affix(b) {
         return false;
     }
-    if a == LineBreakClass::Jl
-        && matches!(
-            b,
-            LineBreakClass::Jl | LineBreakClass::Jv | LineBreakClass::H2 | LineBreakClass::H3
-        )
-    {
+    // LB25.
+    if matches!(a, C::Pr | C::Po | C::Hy | C::Is | C::Nu) && b == C::Nu || a == C::Nu && affix(b) {
         return false;
     }
-    if matches!(a, LineBreakClass::Jv | LineBreakClass::H2) && matches!(b, LineBreakClass::Jv | LineBreakClass::Jt) {
+    // LB26.
+    if a == C::Jl && matches!(b, C::Jl | C::Jv | C::H2 | C::H3) {
         return false;
     }
-    if matches!(a, LineBreakClass::Jt | LineBreakClass::H3) && b == LineBreakClass::Jt {
+    if matches!(a, C::Jv | C::H2) && matches!(b, C::Jv | C::Jt) {
         return false;
     }
-    if matches!(
-        a,
-        LineBreakClass::Jl | LineBreakClass::Jv | LineBreakClass::Jt | LineBreakClass::H2 | LineBreakClass::H3
-    ) && b == LineBreakClass::Po
-    {
+    if matches!(a, C::Jt | C::H3) && b == C::Jt {
         return false;
     }
-    if a == LineBreakClass::Pr
-        && matches!(
-            b,
-            LineBreakClass::Jl | LineBreakClass::Jv | LineBreakClass::Jt | LineBreakClass::H2 | LineBreakClass::H3
-        )
-    {
+    // LB27.
+    let hangul = |class| matches!(class, C::Jl | C::Jv | C::Jt | C::H2 | C::H3);
+    if hangul(a) && b == C::Po || a == C::Pr && hangul(b) {
         return false;
     }
-    if matches!(a, LineBreakClass::Al | LineBreakClass::Hl) && matches!(b, LineBreakClass::Al | LineBreakClass::Hl) {
+    // LB28.
+    if letter(a) && letter(b) {
         return false;
     }
-    if a == LineBreakClass::Ap && matches!(b, LineBreakClass::Ak | LineBreakClass::As) {
+    // LB28a.
+    let aksara = |class, character| matches!(class, C::Ak | C::As) || character == DOTTED_CIRCLE;
+    if a == C::Ap && aksara(b, right) || aksara(a, left) && matches!(b, C::Vf | C::Vi) {
         return false;
     }
-    if matches!(a, LineBreakClass::Ak | LineBreakClass::As)
-        && matches!(
-            b,
-            LineBreakClass::Vf | LineBreakClass::Vi | LineBreakClass::Ak | LineBreakClass::As
-        )
-    {
+    // LB29.
+    if a == C::Is && letter(b) {
         return false;
     }
-    if a == LineBreakClass::Is && matches!(b, LineBreakClass::Al | LineBreakClass::Hl) {
+    // LB30.
+    let word = |class| matches!(class, C::Al | C::Hl | C::Nu);
+    if word(a) && b == C::Op && !is_east_asian_bracket(right) || a == C::Cp && !is_east_asian_bracket(left) && word(b) {
         return false;
     }
-    if matches!(a, LineBreakClass::Al | LineBreakClass::Hl | LineBreakClass::Nu) && b == LineBreakClass::Op {
+    // LB30b.
+    if b == C::Em && (a == C::Eb || is_unassigned_pictographic(left)) {
         return false;
     }
-    if a == LineBreakClass::Cp && matches!(b, LineBreakClass::Al | LineBreakClass::Hl | LineBreakClass::Nu) {
-        return false;
-    }
-    if a == LineBreakClass::Eb && b == LineBreakClass::Em {
-        return false;
-    }
+    // LB31.
     true
 }
-fn resolve_line(c: LineBreakClass) -> LineBreakClass {
-    match c {
-        LineBreakClass::Ai | LineBreakClass::Sg | LineBreakClass::Xx | LineBreakClass::Sa => LineBreakClass::Al,
+
+/// The character whose class decides a break after `cluster`: LB9 makes trailing combining marks take the
+/// class of their base, while a trailing joiner keeps its own rule (LB8a).
+#[must_use]
+pub fn line_break_base(cluster: &str) -> Option<char> {
+    let last = cluster.chars().next_back()?;
+    if resolve_line(last) != LineBreakClass::Cm {
+        return Some(last);
+    }
+    let base = cluster
+        .chars()
+        .rev()
+        .find(|character| !matches!(resolve_line(*character), LineBreakClass::Cm | LineBreakClass::Zwj));
+    match base {
+        Some(base)
+            if !matches!(
+                resolve_line(base),
+                LineBreakClass::Bk
+                    | LineBreakClass::Cr
+                    | LineBreakClass::Lf
+                    | LineBreakClass::Nl
+                    | LineBreakClass::Sp
+                    | LineBreakClass::Zw
+            ) =>
+        {
+            Some(base)
+        }
+        _ => Some(last),
+    }
+}
+
+const DOTTED_CIRCLE: char = '\u{25cc}';
+
+/// LB1 resolution of a code point's class.
+fn resolve_line(character: char) -> LineBreakClass {
+    match line_break_class(character) {
+        LineBreakClass::Ai | LineBreakClass::Sg | LineBreakClass::Xx => LineBreakClass::Al,
+        LineBreakClass::Sa if is_complex_context_mark(character) => LineBreakClass::Cm,
+        LineBreakClass::Sa => LineBreakClass::Al,
         LineBreakClass::Cj => LineBreakClass::Ns,
-        LineBreakClass::Cm | LineBreakClass::Zwj => LineBreakClass::Al,
         other => other,
     }
+}
+
+/// Whether a Line_Break=SA code point has General_Category Mn or Mc, which LB1 resolves to CM.
+///
+/// The table carries no General_Category, so this is derived from Grapheme_Cluster_Break: Extend and
+/// SpacingMark cover the marks, apart from the two SARA AM letters that are SpacingMark without being marks and
+/// the spacing marks that UAX #29 leaves out of SpacingMark.
+fn is_complex_context_mark(character: char) -> bool {
+    match u32::from(character) {
+        0x0e33 | 0x0eb3 => false,
+        0x102b..=0x102c
+        | 0x1038
+        | 0x1062..=0x1064
+        | 0x1067..=0x106d
+        | 0x1083
+        | 0x1087..=0x108c
+        | 0x108f
+        | 0x109a..=0x109c
+        | 0x1a61
+        | 0x1a63..=0x1a64
+        | 0xaa7b
+        | 0xaa7d
+        | 0x11720..=0x11721 => true,
+        _ => matches!(
+            grapheme_class(character),
+            GraphemeClass::Extend | GraphemeClass::SpacingMark
+        ),
+    }
+}
+
+/// Whether an OP or CP code point has East_Asian_Width F, W or H, which exempts it from LB30. Every such
+/// bracket lives in one of these blocks, and every OP or CP code point in them is wide or halfwidth.
+fn is_east_asian_bracket(character: char) -> bool {
+    matches!(
+        u32::from(character),
+        0x2329..=0x232a | 0x3000..=0x303f | 0xfe10..=0xfe6f | 0xff00..=0xffef
+    )
+}
+
+/// Extended_Pictographic code points that are unassigned (LB30b). Line_Break=XX is the default of unassigned
+/// code points outside the ideographic ranges, and no assigned XX code point is pictographic.
+fn is_unassigned_pictographic(character: char) -> bool {
+    line_break_class(character) == LineBreakClass::Xx && is_extended_pictographic(character)
 }
 
 #[cfg(test)]
@@ -539,30 +608,65 @@ mod tests {
             }
         }
     }
-    /// Class pairs where [`line_break_pair`] disagrees with the official two-code-point cases.
+    /// Class pairs where [`line_break_pair`] disagrees with the official two-code-point cases, grouped by the
+    /// rule that decides them from more than the pair itself.
     ///
-    /// Each entry is `Left>Right` with the corpus verdict: `÷` break allowed, `×` break forbidden. The predicate
-    /// is a pairwise approximation of UAX #14, so these are real differences from the standard, recorded here so
-    /// that the comparison below is exact: a new disagreement or a silently fixed one fails the test.
-    const KNOWN_PAIR_DIVERGENCES: &str = "\
-        Ai>Op÷ Ai>Qu× Ak>Ak÷ Ak>As÷ Ak>Cm× Ak>Qu× Ak>Sa× Ak>Zwj× Al>Op÷ Al>Qu× Al>Vf× Al>Vi× Ap>Al× Ap>Cm× \
-        Ap>Qu× Ap>Sa× Ap>Zwj× As>Ak÷ As>As÷ As>Cm× As>Qu× As>Sa× As>Zwj× B2>B2× B2>Cm× B2>Qu× B2>Sa× B2>Zwj× \
-        Ba>Cm× Ba>Qu× Ba>Sa× Ba>Zwj× Bb>Cb÷ Cb>Ba÷ Cb>Cj÷ Cb>Cm× Cb>Hh÷ Cb>Hy÷ Cb>In÷ Cb>Ns÷ Cb>Qu× Cb>Sa× \
-        Cb>Zwj× Cj>Cm× Cj>Qu× Cj>Sa× Cj>Zwj× Cl>Cm× Cl>Qu× Cl>Sa× Cl>Zwj× Cm>Op÷ Cm>Qu× Cp>Qu× Eb>Cm× Eb>Qu× \
-        Eb>Sa× Eb>Zwj× Em>Cm× Em>Qu× Em>Sa× Em>Zwj× Ex>Cm× Ex>Qu× Ex>Sa× Ex>Zwj× H2>Cm× H2>Qu× H2>Sa× \
-        H2>Zwj× H3>Cm× H3>Qu× H3>Sa× H3>Zwj× Hh>Ai× Hh>Al× Hh>Cm× Hh>Hl× Hh>Qu× Hh>Sa× Hh>Xx× Hh>Zwj× Hl>Op÷ \
-        Hl>Qu× Hy>Ai× Hy>Al× Hy>Cm× Hy>Hl× Hy>Qu× Hy>Sa× Hy>Xx× Hy>Zwj× Id>Cm× Id>Em× Id>Qu× Id>Sa× Id>Zwj× \
-        In>Cm× In>Qu× In>Sa× In>Zwj× Is>Qu× Jl>Cm× Jl>Qu× Jl>Sa× Jl>Zwj× Jt>Cm× Jt>Qu× Jt>Sa× Jt>Zwj× Jv>Cm× \
-        Jv>Qu× Jv>Sa× Jv>Zwj× Ns>Cm× Ns>Qu× Ns>Sa× Ns>Zwj× Nu>Op÷ Nu>Qu× Op>Ai× Op>Ak× Op>Al× Op>Ap× Op>As× \
-        Op>B2× Op>Bb× Op>Cb× Op>Cm× Op>Eb× Op>Em× Op>H2× Op>H3× Op>Hl× Op>Id× Op>Jl× Op>Jt× Op>Jv× Op>Nu× \
-        Op>Op× Op>Po× Op>Pr× Op>Qu× Op>Ri× Op>Sa× Op>Vf× Op>Vi× Op>Xx× Op>Zwj× Po>Nu× Po>Qu× Pr>Nu× Pr>Qu× \
-        Qu>Ai× Qu>Ak× Qu>Al× Qu>Ap× Qu>As× Qu>B2× Qu>Bb× Qu>Cb× Qu>Cm× Qu>Eb× Qu>Em× Qu>H2× Qu>H3× Qu>Hl× \
-        Qu>Id× Qu>Jl× Qu>Jt× Qu>Jv× Qu>Nu× Qu>Op× Qu>Po× Qu>Pr× Qu>Qu× Qu>Ri× Qu>Sa× Qu>Vf× Qu>Vi× Qu>Xx× \
-        Qu>Zwj× Ri>Cm× Ri>Qu× Ri>Ri× Ri>Sa× Ri>Zwj× Sa>Op÷ Sa>Qu× Sp>Ba÷ Sp>Cj÷ Sp>Hh÷ Sp>Hy÷ Sp>In÷ Sp>Ns÷ \
-        Sp>Qu× Sy>Cm× Sy>Hl× Sy>Qu× Sy>Sa× Sy>Zwj× Vf>Cm× Vf>Qu× Vf>Sa× Vf>Zwj× Vi>Cm× Vi>Qu× Vi>Sa× Vi>Zwj× \
-        Xx>Em× Xx>Op÷ Xx>Qu× Zw>Ba÷ Zw>Cj÷ Zw>Cl÷ Zw>Cp÷ Zw>Ex÷ Zw>Gl÷ Zw>Hh÷ Zw>Hy÷ Zw>In÷ Zw>Is÷ Zw>Ns÷ \
-        Zw>Sy÷ Zw>Wj÷ Zwj>Ak× Zwj>Ap× Zwj>As× Zwj>B2× Zwj>Bb× Zwj>Cb× Zwj>Eb× Zwj>Em× Zwj>H2× Zwj>H3× \
-        Zwj>Id× Zwj>Jl× Zwj>Jt× Zwj>Jv× Zwj>Qu× Zwj>Ri× Zwj>Vf× Zwj>Vi×";
+    /// Each entry is `Left>Right` with the corpus verdict: `÷` break allowed, `×` break forbidden. The comparison
+    /// below is exact: a new disagreement or a silently fixed one fails the test.
+    const KNOWN_PAIR_DIVERGENCES: &[(&str, &str)] = &[
+        (
+            "LB20a: a hyphen holds on to the letter after it only at the start of a word; the corpus pair starts \
+             the text, a pair inside a line follows a word",
+            "Hh>Ai× Hh>Al× Hh>Hl× Hh>Sa× Hh>Xx× Hy>Ai× Hy>Al× Hy>Hl× Hy>Sa× Hy>Xx×",
+        ),
+        (
+            "LB30b: an unassigned pictographic code point of an ideographic block needs General_Category=Cn, \
+             which the table does not carry; assigned ID code points break before a modifier",
+            "Id>Em×",
+        ),
+        (
+            "LB30a: regional indicators pair up counted from the start of their run",
+            "Ri>Ri×",
+        ),
+        (
+            "LB15b: a closing quotation mark stays with the space before it only when the text ends or closing \
+             punctuation follows",
+            "Sp>Qu×",
+        ),
+    ];
+
+    #[test]
+    fn line_break_base_skips_marks_but_keeps_a_trailing_joiner() {
+        assert_eq!(line_break_base("e\u{301}"), Some('e'));
+        assert_eq!(line_break_base("-\u{301}\u{308}"), Some('-'));
+        assert_eq!(line_break_base("\u{301}"), Some('\u{301}'));
+        assert_eq!(line_break_base("\u{1f468}\u{200d}"), Some('\u{200d}'));
+        assert_eq!(line_break_base(""), None);
+        // LB9 through the base: a hyphen with a mark still breaks before a letter, a letter with a mark does not.
+        assert!(line_break_pair('-', 'a'));
+        assert!(!line_break_pair('e', 'a'));
+    }
+
+    #[test]
+    fn line_break_pair_applies_the_pairwise_rules_in_order() {
+        // LB8 before LB13, LB20 before LB21, LB18 before LB21.
+        assert!(line_break_pair('\u{200b}', ')'));
+        assert!(line_break_pair('\u{fffc}', '-'));
+        assert!(line_break_pair(' ', '-'));
+        // LB9, LB14, LB19, LB25.
+        assert!(!line_break_pair(')', '\u{308}'));
+        assert!(!line_break_pair('(', '\u{4e00}'));
+        assert!(!line_break_pair('\u{4e00}', '"'));
+        assert!(!line_break_pair('$', '1'));
+        assert!(!line_break_pair('1', '%'));
+        // LB30 does not hold a letter to a wide bracket.
+        assert!(!line_break_pair('a', '('));
+        assert!(line_break_pair('a', '\u{3008}'));
+        // LB28a: aksaras break apart unless a virama or the dotted circle joins them.
+        assert!(line_break_pair('\u{1b05}', '\u{1b05}'));
+        assert!(!line_break_pair('\u{1b05}', '\u{1b44}'));
+        assert!(!line_break_pair('\u{25cc}', '\u{1b44}'));
+    }
 
     #[test]
     fn official_unicode17_line_break_pairs_match_the_corpus_verdicts() {
@@ -598,14 +702,15 @@ mod tests {
             }
         }
         assert!(cases > 19_000);
-        assert!(checked > 4_000);
-        assert!(
-            agreed.saturating_mul(100) > checked.saturating_mul(85),
-            "{agreed} of {checked}"
-        );
-        let found = diverged.into_iter().collect::<Vec<_>>().join(" ");
+        assert_eq!((agreed, checked), (4_783, 4_806), "agreeing two-code-point cases");
+        let mut known = KNOWN_PAIR_DIVERGENCES
+            .iter()
+            .flat_map(|(_, pairs)| pairs.split_whitespace())
+            .collect::<Vec<_>>();
+        known.sort_unstable();
         assert_eq!(
-            found, KNOWN_PAIR_DIVERGENCES,
+            diverged.iter().map(String::as_str).collect::<Vec<_>>(),
+            known,
             "pairwise verdicts changed against the official corpus"
         );
     }
