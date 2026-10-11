@@ -788,6 +788,59 @@ pub mod d2 {
     }
 }
 
+/// A vertical scroll region that fills the rest of `parent` and clips what scrolls out of it.
+///
+/// Returns the region and the column inside it that holds the content. A screen whose content can be taller than
+/// the window puts its content here, so the wheel scrolls it and the content never draws over the row below.
+///
+/// # Errors
+/// Returns an error when a node cannot be added.
+pub fn scroll_body(tree: &mut Tree, parent: WidgetId) -> Result<(WidgetId, WidgetId)> {
+    let scroll = tree.add(
+        Some(parent),
+        NodeKind::Scroll {
+            horizontal: false,
+            vertical: true,
+            offset_x: 0.0,
+            offset_y: 0.0,
+        },
+        Style {
+            grow: 1.0,
+            shrink: 1.0,
+            min: Size::new(0.0, 0.0),
+            ..Style::default()
+        },
+        Content::Panel,
+        Look::default(),
+    )?;
+    tree.set_clip_children(scroll, true)?;
+    let body = tree.add(
+        Some(scroll),
+        NodeKind::Column,
+        Style {
+            gap: Size::new(0.0, theme::CONTROL_GAP),
+            align_items: Align::Stretch,
+            ..Style::default()
+        },
+        Content::Panel,
+        Look::default(),
+    )?;
+    Ok((scroll, body))
+}
+
+/// Moves a scroll region by a wheel step and returns the new offset, limited to what the content overflows.
+///
+/// # Errors
+/// Returns an error when the region's rectangle or content height cannot be read.
+pub fn scroll_wheel(tree: &mut Tree, scroll: WidgetId, offset: i32, delta: i32) -> Result<i32> {
+    let viewport = f32::from(u16::try_from(tree.rect(scroll)?.height).unwrap_or(0));
+    let overflow = (tree.content_height(scroll)? - viewport).max(0.0);
+    let limit: i32 = format!("{overflow:.0}").parse().unwrap_or(0);
+    let next = offset.saturating_add(delta.saturating_mul(24)).clamp(0, limit);
+    tree.set_scroll_y(scroll, next)?;
+    Ok(next)
+}
+
 #[cfg(test)]
 mod localization_tests {
     use super::localized_static_text;

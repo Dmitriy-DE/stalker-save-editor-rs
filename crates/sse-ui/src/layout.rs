@@ -1681,6 +1681,46 @@ mod tests {
     }
 
     #[test]
+    fn scroll_region_shrinks_so_a_footer_after_it_stays_in_the_window() -> Result<(), Error> {
+        // A column window with a tall scrollable body and a footer after it: the footer must sit inside the window.
+        let mut layout = Layout::new();
+        let root = layout.add(NodeKind::Column, Style::default())?;
+        let scroll = layout.add(
+            NodeKind::Scroll {
+                horizontal: false,
+                vertical: true,
+                offset_x: 0.0,
+                offset_y: 0.0,
+            },
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: Size::new(0.0, 0.0),
+                ..Style::default()
+            },
+        )?;
+        let body = layout.add(NodeKind::Leaf, fixed(100.0, 2000.0))?;
+        layout.append_child(scroll, body)?;
+        let mut footer_style = fixed(100.0, 40.0);
+        footer_style.shrink = 0.0;
+        let footer = layout.add(NodeKind::Leaf, footer_style)?;
+        layout.append_child(root, scroll)?;
+        layout.append_child(root, footer)?;
+        // 1366x768 and 1920x1080 windows: the content area is the window less the status bar (40 px).
+        for window_height in [728.0_f32, 1040.0] {
+            layout.arrange(root, Rect::new(0.0, 0.0, 1366.0, window_height), 1.0, &mut measure_text)?;
+            let footer_rect = layout.rect(footer)?;
+            assert!(
+                footer_rect.bottom() <= window_height + 0.5,
+                "footer must stay inside the window"
+            );
+            rect_close(footer_rect, Rect::new(0.0, window_height - 40.0, 100.0, 40.0));
+            rect_close(layout.rect(scroll)?, Rect::new(0.0, 0.0, 1366.0, window_height - 40.0));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn column_margin_padding_gap_and_alignment() -> Result<(), Error> {
         let mut layout = Layout::new();
         let root_style = Style {

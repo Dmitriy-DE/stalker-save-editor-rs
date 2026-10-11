@@ -441,6 +441,12 @@ pub trait Screen {
     /// Which screen this is.
     fn id(&self) -> ScreenId;
 
+    /// True when the screen is laid out to the visible height of the window instead of its natural height, so that
+    /// its own scroll region and a footer below it stay inside the window. The wheel then goes to the screen.
+    fn fills_window(&self) -> bool {
+        false
+    }
+
     /// One-line description under the title.
     fn subtitle(&self) -> &str;
 

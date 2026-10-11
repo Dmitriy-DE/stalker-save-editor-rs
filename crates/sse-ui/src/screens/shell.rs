@@ -3115,6 +3115,42 @@ impl Shell {
         self.select(tree, index)
     }
 
+    /// True when the selected screen asks to fill the window height.
+    fn selected_fills_window(&self) -> bool {
+        self.screens
+            .get(self.selected)
+            .is_some_and(|screen| screen.fills_window())
+    }
+
+    /// Bounds the selected screen's host to the visible height of the content area when the screen fills the window.
+    /// The page then does not scroll; the screen's own region scrolls and keeps its footer in view.
+    fn fit_host(&self, tree: &mut Tree, index: usize) -> Result<()> {
+        let Some(host) = self.hosts.get(index).copied().flatten() else {
+            return Ok(());
+        };
+        let fills = self.screens.get(index).is_some_and(|screen| screen.fills_window());
+        let style = if fills {
+            let visible = tree.rect(self.content)?.height as f32;
+            Style {
+                grow: 1.0,
+                shrink: 0.0,
+                max: Size::new(f32::INFINITY, visible),
+                gap: Size::new(0.0, 16.0),
+                align_items: Align::Stretch,
+                ..Style::default()
+            }
+        } else {
+            Style {
+                grow: 1.0,
+                shrink: 0.0,
+                gap: Size::new(0.0, 16.0),
+                align_items: Align::Stretch,
+                ..Style::default()
+            }
+        };
+        tree.set_style(host, style)
+    }
+
     fn prepare(&mut self, tree: &mut Tree, index: usize) -> Result<()> {
         let (Some(screen), Some(slot)) = (self.screens.get_mut(index), self.hosts.get_mut(index)) else {
             return Ok(());
@@ -3150,6 +3186,7 @@ impl Shell {
 
     fn show(&mut self, tree: &mut Tree, index: usize) -> Result<()> {
         self.prepare(tree, index)?;
+        self.fit_host(tree, index)?;
         let (Some(screen), Some(slot)) = (self.screens.get_mut(index), self.hosts.get_mut(index)) else {
             return Ok(());
         };
@@ -3625,6 +3662,7 @@ impl Shell {
         }
         if let Message::Window(WindowEvent::Resized { width, .. }) = message {
             self.fit_library_rows(tree)?;
+            self.fit_host(tree, self.selected)?;
             self.sync_navigation_width(tree, *width)?;
             self.art.sync(tree, self.sidebar)?;
             let sidebar_width = if self.nav_collapsed { 64 } else { 248 };
@@ -3725,7 +3763,7 @@ impl Shell {
             tree.set_text(self.status, crate::strings::t("Сохраняю…"))?;
             return Ok(Flow::Continue);
         }
-        if let Message::Window(WindowEvent::Wheel { delta }) = message {
+        if let (Message::Window(WindowEvent::Wheel { delta }), false) = (message, self.selected_fills_window()) {
             let viewport = tree.rect(self.content)?;
             let content_height = tree.content_height(self.content)?;
             self.scroll.set_extent(content_height, viewport.height as f32);

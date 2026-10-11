@@ -2070,6 +2070,8 @@ struct Environment {
     /// Scroll region that holds the whole tab, so the lower actions stay reachable on short windows.
     tab_scroll: Option<WidgetId>,
     tab_offset: i32,
+    /// Row below the scroll region: the new-profile name and its save button.
+    footer: Option<WidgetId>,
     status: Option<WidgetId>,
     lines: Vec<WidgetId>,
     snapshot: Option<WidgetId>,
@@ -2275,6 +2277,10 @@ impl Screen for Environment {
     fn id(&self) -> ScreenId {
         ScreenId::Environment
     }
+
+    fn fills_window(&self) -> bool {
+        true
+    }
     fn subtitle(&self) -> &str {
         crate::strings::t(
             "Здесь создаются, восстанавливаются и применяются снимки и профили; файлы игры меняются только по кнопкам",
@@ -2311,7 +2317,22 @@ impl Screen for Environment {
             Content::Panel,
             Look::default(),
         )?;
+        cx.tree.set_clip_children(scroll, true)?;
         self.tab_scroll = Some(scroll);
+        // The save action stays below the scroll region, inside the window: it is never cut off by the status bar.
+        // One row: the name field and the save button, so the row stays as short as the window needs.
+        let footer = style::row(cx.tree, outer)?;
+        cx.tree.set_style(
+            footer,
+            Style {
+                gap: crate::layout::Size::new(crate::theme::CONTROL_GAP, 0.0),
+                align_items: crate::layout::Align::Center,
+                min: crate::layout::Size::new(0.0, crate::theme::BUTTON_HEIGHT),
+                shrink: 0.0,
+                ..Style::default()
+            },
+        )?;
+        self.footer = Some(footer);
         let card = style::card(cx.tree, host)?;
         style::label(cx.tree, card, crate::strings::t("СРЕДА ИГРЫ"), Text::Heading)?;
         self.status = Some(style::label(
@@ -2407,11 +2428,10 @@ impl Screen for Environment {
             Look::default(),
         )?;
         // A new profile is named here and saved from the current state, so it needs no chosen item.
-        style::label(cx.tree, profile_actions, crate::strings::t("Имя профиля"), Text::Note)?;
-        self.profile_name = Some(style::input(cx.tree, profile_actions, "")?);
+        self.profile_name = Some(style::input(cx.tree, footer, crate::strings::t("Имя профиля"))?);
         self.save_profile = Some(style::d2::button(
             cx.tree,
-            profile_actions,
+            footer,
             crate::strings::t("СОХРАНИТЬ ТЕКУЩЕЕ СОСТОЯНИЕ"),
             style::d2::ButtonKind::Primary,
             style::d2::ButtonSize::Normal,
