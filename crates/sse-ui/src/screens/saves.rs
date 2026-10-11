@@ -2494,7 +2494,6 @@ fn fill_item_row(tree: &mut Tree, row: &ItemControls, cells: &ItemCells<'_>, com
     tree.set_visible(row.row, true)?;
     tree.set_visible(row.icon_frame, true)?;
     tree.set_visible(row.icon, cells.icon.is_some())?;
-    tree.set_visible(row.icon_placeholder, cells.icon.is_none())?;
     tree.set_image(row.icon, cells.icon.clone())?;
     tree.set_text(row.label, cells.name)?;
     tree.set_text(row.key, cells.key)?;
@@ -2551,7 +2550,6 @@ struct ItemControls {
     row: WidgetId,
     icon_frame: WidgetId,
     icon: WidgetId,
-    icon_placeholder: WidgetId,
     label: WidgetId,
     key: WidgetId,
     place: WidgetId,
@@ -2775,9 +2773,20 @@ fn add_panel_style(bottom_margin: f32) -> Style {
     }
 }
 
-/// Width a candidate's text may take: the side column less the panel padding and the button's 16 px insets.
+/// Text style of a candidate's name: the one `style::button` gives its label.
+const ADD_CANDIDATE_NAME_STYLE: TextStyle = TextStyle::new(crate::glyphs::Face::Heading, 14.0);
+/// Inset of a candidate's text from each side of its button.
+const ADD_CANDIDATE_INSET: f32 = 16.0;
+/// Gap between a candidate's icon and its button.
+const ADD_CANDIDATE_ICON_GAP: f32 = 8.0;
+
+/// Width a candidate's text may take: the side column less the panel padding, the icon with its gap and the
+/// button's insets.
 fn add_candidate_text_width(compact: bool) -> f32 {
-    side_column_width(compact) - 2.0 * crate::theme::d2::PANEL_PADDING.0 - 32.0
+    side_column_width(compact)
+        - 2.0 * crate::theme::d2::PANEL_PADDING.0
+        - (ITEM_ICON_SIZE + ADD_CANDIDATE_ICON_GAP)
+        - 2.0 * ADD_CANDIDATE_INSET
 }
 
 /// `text`, shortened with an ellipsis at its end until it fits in `max_width` pixels.
@@ -2805,7 +2814,7 @@ fn px_i64(value: i64) -> f32 {
 }
 
 /// Width of the inspector's column: the right-hand column of the inventory.
-fn side_column_width(compact: bool) -> f32 {
+pub(super) fn side_column_width(compact: bool) -> f32 {
     if compact {
         296.0
     } else {
@@ -4635,7 +4644,7 @@ impl Inventory {
                 };
                 // The name is shortened to the button's width; the key and reason wrap under it.
                 let width = add_candidate_text_width(self.compact);
-                let name = fit_text(cx.tree, &candidate.display_name, Text::Body.style(), width);
+                let name = fit_text(cx.tree, &candidate.display_name, ADD_CANDIDATE_NAME_STYLE, width);
                 cx.tree.set_text(*widget, &name)?;
                 let key_line = fit_text(
                     cx.tree,
@@ -6561,7 +6570,8 @@ impl Screen for Inventory {
                 Look::default(),
             )?;
             cx.tree.set_visible(icon, false)?;
-            let icon_placeholder = style::label(cx.tree, icon_frame, "◇", Text::Body)?;
+            // No icon: the frame stays empty, as in the stash and add lists (the bundled faces have no glyph to stand
+            // in for one).
             let label = style::label(cx.tree, content, "", Text::Body)?;
             set_column_style(cx.tree, label, 2.0, 0.0)?;
             let key = style::label(cx.tree, content, "", Text::Note)?;
@@ -6598,7 +6608,6 @@ impl Screen for Inventory {
                 row: stack,
                 icon_frame,
                 icon,
-                icon_placeholder,
                 label,
                 key,
                 place,
@@ -6848,7 +6857,7 @@ impl Screen for Inventory {
                 Some(slot),
                 NodeKind::Row,
                 Style {
-                    gap: Size::new(8.0, 0.0),
+                    gap: Size::new(ADD_CANDIDATE_ICON_GAP, 0.0),
                     align_items: crate::layout::Align::Center,
                     ..Style::default()
                 },
@@ -6869,12 +6878,19 @@ impl Screen for Inventory {
             )?;
             cx.tree.set_visible(icon, false)?;
             let widget = style::button(cx.tree, line, "", Button::Secondary)?;
+            // The insets keep the name clear of the selection bar on the button's left edge.
             cx.tree.set_style(
                 widget,
                 Style {
                     grow: 1.0,
                     shrink: 1.0,
                     min: Size::new(0.0, 0.0),
+                    padding: crate::layout::Edges {
+                        left: ADD_CANDIDATE_INSET,
+                        top: 0.0,
+                        right: ADD_CANDIDATE_INSET,
+                        bottom: 0.0,
+                    },
                     ..Style::default()
                 },
             )?;
@@ -6885,9 +6901,9 @@ impl Screen for Inventory {
                 Style {
                     shrink: 0.0,
                     padding: crate::layout::Edges {
-                        left: 16.0 + ITEM_ICON_SIZE + 8.0,
+                        left: ITEM_ICON_SIZE + ADD_CANDIDATE_ICON_GAP + ADD_CANDIDATE_INSET,
                         top: 0.0,
-                        right: 16.0,
+                        right: ADD_CANDIDATE_INSET,
                         bottom: 0.0,
                     },
                     ..Style::default()
