@@ -5595,6 +5595,94 @@ fn prepare_save_edits_with_outcome(
     }
 }
 
+/// Read-back checks for the S2 stash moves the writer reported. An empty outcome checks nothing.
+fn verify_s2_moves(original: &LoadedSave, selected: &LoadedSave, outcome: &S2MoveOutcome) -> Result<()> {
+    if *outcome == S2MoveOutcome::default() {
+        return Ok(());
+    }
+    for handle in &outcome.takes_applied {
+        let before = match &original.data {
+            SaveData::Stalker2 { stash_items, .. } => stash_items
+                .as_ref()
+                .ok_or_else(|| Error::damaged("original S2 stash is unavailable for read-back verification"))?
+                .as_ref()
+                .map_err(|error| Error::damaged(error.clone()))?
+                .iter()
+                .find(|item| item.handle == *handle)
+                .ok_or_else(|| Error::damaged("requested S2 stash item is missing from the original save"))?,
+            SaveData::Xray { .. } => {
+                return Err(Error::Refused(
+                    "S2 stash transfer cannot be verified against an X-Ray save".to_owned(),
+                ))
+            }
+        };
+        let SaveData::Stalker2 { save, inventory, .. } = &selected.data else {
+            return Err(Error::Refused(
+                "S2 stash transfer cannot be verified against an X-Ray read-back".to_owned(),
+            ));
+        };
+        let after_stash = save.stash_items()?;
+        let mut matching_items = inventory.iter().filter(|item| item.handle == *handle);
+        let Some(after) = matching_items.next() else {
+            return Err(Error::damaged("saved stash transfer differs after read-back"));
+        };
+        let after_x = after
+            .x
+            .ok_or_else(|| Error::damaged("moved S2 item has no read-back grid position"))?;
+        let after_y = after
+            .y
+            .ok_or_else(|| Error::damaged("moved S2 item has no read-back grid position"))?;
+        if after_stash.iter().any(|item| item.handle == *handle)
+            || matching_items.next().is_some()
+            || after.count != before.count
+            || after.total_weight.to_bits() != before.total_weight.to_bits()
+            || after.kind_code != before.kind_code
+            || after.type_key != before.type_key
+            || after.display_name != before.display_name
+            || after.width != Some(before.width)
+            || after.height != Some(before.height)
+            || normalized_s2_grid_shape(&before.cells, before.x, before.y)
+                != normalized_s2_grid_shape(&after.cells, after_x, after_y)
+        {
+            return Err(Error::damaged(
+                "saved stash item identity or contents differ after read-back",
+            ));
+        }
+    }
+    // An applied take must leave the item in the backpack only, an applied put in the stash only. A refused move
+    // must leave the item where it was. An item missing from both lists, or present
+    // in both, is a failed read-back, even when the writer reported success.
+    let SaveData::Stalker2 { save, inventory, .. } = &selected.data else {
+        return Err(Error::Refused(
+            "S2 stash transfer cannot be verified against an X-Ray read-back".to_owned(),
+        ));
+    };
+    let stash_handles = save.stash_items()?.iter().map(|item| item.handle).collect::<Vec<_>>();
+    let backpack_handles = inventory.iter().map(|item| item.handle).collect::<Vec<_>>();
+    let count = |list: &[u32], handle: u32| list.iter().filter(|candidate| **candidate == handle).count();
+    for handle in outcome.takes_applied.iter().chain(&outcome.takes_refused) {
+        let applied = outcome.takes_applied.contains(handle);
+        let in_backpack = count(&backpack_handles, *handle) == usize::from(applied);
+        let in_stash = count(&stash_handles, *handle) == usize::from(!applied);
+        if !(in_stash && in_backpack) {
+            return Err(Error::damaged(format!(
+                "S2 stash item 0x{handle:08X} differs after read-back"
+            )));
+        }
+    }
+    for handle in outcome.puts_applied.iter().chain(&outcome.puts_refused) {
+        let applied = outcome.puts_applied.contains(handle);
+        let in_stash = count(&stash_handles, *handle) == usize::from(applied);
+        let in_backpack = count(&backpack_handles, *handle) == usize::from(!applied);
+        if !(in_stash && in_backpack) {
+            return Err(Error::damaged(format!(
+                "S2 backpack item 0x{handle:08X} differs after read-back"
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn verify_requested_values(
     original: &LoadedSave,
     selected: &LoadedSave,
@@ -5721,55 +5809,7 @@ fn verify_requested_values(
             verified_handles.insert(added_item.handle);
         }
     }
-    for handle in &outcome.takes_applied {
-        let before = match &original.data {
-            SaveData::Stalker2 { stash_items, .. } => stash_items
-                .as_ref()
-                .ok_or_else(|| Error::damaged("original S2 stash is unavailable for read-back verification"))?
-                .as_ref()
-                .map_err(|error| Error::damaged(error.clone()))?
-                .iter()
-                .find(|item| item.handle == *handle)
-                .ok_or_else(|| Error::damaged("requested S2 stash item is missing from the original save"))?,
-            SaveData::Xray { .. } => {
-                return Err(Error::Refused(
-                    "S2 stash transfer cannot be verified against an X-Ray save".to_owned(),
-                ))
-            }
-        };
-        let SaveData::Stalker2 { save, inventory, .. } = &selected.data else {
-            return Err(Error::Refused(
-                "S2 stash transfer cannot be verified against an X-Ray read-back".to_owned(),
-            ));
-        };
-        let after_stash = save.stash_items()?;
-        let mut matching_items = inventory.iter().filter(|item| item.handle == *handle);
-        let Some(after) = matching_items.next() else {
-            return Err(Error::damaged("saved stash transfer differs after read-back"));
-        };
-        let after_x = after
-            .x
-            .ok_or_else(|| Error::damaged("moved S2 item has no read-back grid position"))?;
-        let after_y = after
-            .y
-            .ok_or_else(|| Error::damaged("moved S2 item has no read-back grid position"))?;
-        if after_stash.iter().any(|item| item.handle == *handle)
-            || matching_items.next().is_some()
-            || after.count != before.count
-            || after.total_weight.to_bits() != before.total_weight.to_bits()
-            || after.kind_code != before.kind_code
-            || after.type_key != before.type_key
-            || after.display_name != before.display_name
-            || after.width != Some(before.width)
-            || after.height != Some(before.height)
-            || normalized_s2_grid_shape(&before.cells, before.x, before.y)
-                != normalized_s2_grid_shape(&after.cells, after_x, after_y)
-        {
-            return Err(Error::damaged(
-                "saved stash item identity or contents differ after read-back",
-            ));
-        }
-    }
+    verify_s2_moves(original, selected, outcome)?;
     if !edits.faction_relations.is_empty() {
         let (original_save, verified_save) = match (&original.data, &selected.data) {
             (SaveData::Xray { save: before, .. }, SaveData::Xray { save: after, .. }) => (before, after),
@@ -5795,48 +5835,6 @@ fn verify_requested_values(
                     "faction relation '{key}' differs after read-back"
                 )));
             }
-        }
-    }
-    // An applied take must leave the item in the backpack only, an applied put in the stash only. A refused move
-    // must leave the item where it was. An item missing from both lists, or present
-    // in both, is a failed read-back, even when the writer reported success.
-    let SaveData::Stalker2 { save, inventory, .. } = &selected.data else {
-        if outcome.takes_applied.is_empty()
-            && outcome.takes_refused.is_empty()
-            && outcome.puts_applied.is_empty()
-            && outcome.puts_refused.is_empty()
-        {
-            return Ok(());
-        }
-        return Err(Error::Refused(
-            "S2 stash transfer cannot be verified against an X-Ray read-back".to_owned(),
-        ));
-    };
-    // A save with no stash moves has nothing to read back here; it must not require a stash block.
-    if *outcome == S2MoveOutcome::default() {
-        return Ok(());
-    }
-    let stash_handles = save.stash_items()?.iter().map(|item| item.handle).collect::<Vec<_>>();
-    let backpack_handles = inventory.iter().map(|item| item.handle).collect::<Vec<_>>();
-    let count = |list: &[u32], handle: u32| list.iter().filter(|candidate| **candidate == handle).count();
-    for handle in outcome.takes_applied.iter().chain(&outcome.takes_refused) {
-        let applied = outcome.takes_applied.contains(handle);
-        let in_backpack = count(&backpack_handles, *handle) == usize::from(applied);
-        let in_stash = count(&stash_handles, *handle) == usize::from(!applied);
-        if !(in_stash && in_backpack) {
-            return Err(Error::damaged(format!(
-                "S2 stash item 0x{handle:08X} differs after read-back"
-            )));
-        }
-    }
-    for handle in outcome.puts_applied.iter().chain(&outcome.puts_refused) {
-        let applied = outcome.puts_applied.contains(handle);
-        let in_stash = count(&stash_handles, *handle) == usize::from(applied);
-        let in_backpack = count(&backpack_handles, *handle) == usize::from(!applied);
-        if !(in_stash && in_backpack) {
-            return Err(Error::damaged(format!(
-                "S2 backpack item 0x{handle:08X} differs after read-back"
-            )));
         }
     }
     if !edits.stash_takes.is_empty() || !edits.stash_puts.is_empty() {
@@ -11445,6 +11443,45 @@ mod tests {
             },
         )
         .is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn xray_stash_put_that_did_not_reach_the_box_fails_readback() -> sse_core::Result<()> {
+        let source = include_bytes!("../../../../fixtures/synthetic/xray-stashes/xray-stash-cop-source.sav");
+        let original = load_xray(source, "stash-cop-source.sav", "stalker-cop", "cop")?;
+        let mut edits = PendingInventoryEdits::default();
+        edits.stash_puts.insert(9029, 0x1234);
+        // The save is unchanged, so the put never reached its box: the X-Ray check must still run and fail.
+        assert!(super::verify_requested_values(&original, &original, &edits, &S2MoveOutcome::default()).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn xray_relocation_that_did_not_happen_fails_readback() -> sse_core::Result<()> {
+        let source = include_bytes!("../../../../fixtures/synthetic/xray-stashes/xray-stash-cop-source.sav");
+        let original = load_xray(source, "stash-cop-source.sav", "stalker-cop", "cop")?;
+        let edits = PendingInventoryEdits {
+            relocate_to: Some(0x1234),
+            ..Default::default()
+        };
+        // The actor is still where it was, so the relocation check after the stash checks must fail.
+        assert!(super::verify_requested_values(&original, &original, &edits, &S2MoveOutcome::default()).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn s2_save_without_stash_moves_still_runs_the_relocation_check() -> sse_core::Result<()> {
+        let original_bytes = include_bytes!("../../../../fixtures/synthetic/writer-s2-stash/s2-stash-source.sav");
+        let slot = fixture_slot("stash.sav", "stalker2", "stalker2");
+        let original = LoadedSave::from_bytes(slot, original_bytes)?;
+        // The relocation check comes after the S2 stash block. An empty outcome must not skip it, so a relocation
+        // edit on an S2 save still fails the X-Ray-only check.
+        let edits = PendingInventoryEdits {
+            relocate_to: Some(0x1234),
+            ..Default::default()
+        };
+        assert!(super::verify_requested_values(&original, &original, &edits, &S2MoveOutcome::default()).is_err());
         Ok(())
     }
 
