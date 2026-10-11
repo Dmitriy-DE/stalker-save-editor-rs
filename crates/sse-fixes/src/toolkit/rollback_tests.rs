@@ -121,10 +121,15 @@ fn profile(overrides: &[(&str, &str)]) -> ToolkitProfile {
     }
 }
 
-fn read_only(dir: &Path, read_only: bool) {
-    use std::os::unix::fs::PermissionsExt;
-    let mode = if read_only { 0o555 } else { 0o755 };
-    fs::set_permissions(dir, fs::Permissions::from_mode(mode)).unwrap();
+/// Puts a folder where `user.ltx` must be written: any write to that path fails on every platform.
+fn block_settings(root: &Path) {
+    let path = root.join("_appdata_").join("user.ltx");
+    let _ = fs::remove_file(&path);
+    fs::create_dir_all(&path).unwrap();
+}
+
+fn unblock_settings(root: &Path) {
+    let _ = fs::remove_dir(root.join("_appdata_").join("user.ltx"));
 }
 
 #[test]
@@ -139,10 +144,10 @@ fn failed_settings_step_restores_the_installed_fix_and_the_files() {
     let definitions = [fix.clone()];
     let resolve = |id: &str| definitions.iter().find(|d| d.id == id);
 
-    read_only(&install.root.join("_appdata_"), true);
+    block_settings(&install.root);
     let result =
         ToolkitProfileService::apply_profile_with(&install.root, &profile(&[("mouse_sens", "2")]), &engine, &resolve);
-    read_only(&install.root.join("_appdata_"), false);
+    unblock_settings(&install.root);
     let message = result.unwrap_err().to_string();
 
     assert!(
@@ -195,19 +200,19 @@ fn failed_restore_puts_back_the_state_before_the_restore() {
     fs::write(install.root.join("_appdata_/user.ltx"), b"mouse_sens = 1\n").unwrap();
     let snapshot =
         ToolkitSnapshotService::create_snapshot(&install.root, GameTarget::ClearSky, &engine, Some("keep")).unwrap();
-    // The state now: the fix is removed and the managed value is 3. The settings folder is read-only, so the restore
-    // cannot write the value 1 back.
+    // The state now: the fix is removed and no user.ltx file exists. The restore must write the managed value
+    // back, and the settings path is blocked, so that write fails. The rollback then has nothing to write.
     engine.uninstall(&fix.id, &install.root).unwrap();
-    fs::write(install.root.join("_appdata_/user.ltx"), b"mouse_sens = 3\n").unwrap();
+    fs::remove_file(install.root.join("_appdata_/user.ltx")).unwrap();
+    block_settings(&install.root);
     let before = game_files(&install.root);
     let definitions = [fix.clone()];
     let resolve = |id: &str| definitions.iter().find(|d| d.id == id);
 
-    read_only(&install.root.join("_appdata_"), true);
     let result = ToolkitSnapshotService::restore_snapshot_with(&install.root, &engine, &resolve, &snapshot.id);
-    read_only(&install.root.join("_appdata_"), false);
+    unblock_settings(&install.root);
 
-    assert!(result.is_err(), "the read-only settings folder must fail the restore");
+    assert!(result.is_err(), "the blocked settings path must fail the restore");
     assert_eq!(
         game_files(&install.root),
         before,
