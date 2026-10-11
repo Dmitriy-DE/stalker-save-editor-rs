@@ -15,3 +15,5 @@ if [ "$wasm_bytes" -gt "$max_wasm_bytes" ]; then
 fi
 cp "$wasm_file" "$repo_root/web/sse_web.wasm"
 printf 'Browser shell: %s bytes (%s)\n' "$wasm_bytes" "$repo_root/web/sse_web.wasm"
+# The item pictures are not compiled into the browser shell; it fetches them from this file after it starts.
+python3 "$repo_root/tools/pack_item_icons.py" "$repo_root/crates/sse-ui/assets/item-icons" "$repo_root/web/item-icons.bin"

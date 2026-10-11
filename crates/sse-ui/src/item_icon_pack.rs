@@ -1,8 +1,12 @@
 //! Item icon pack shipped with the editor (copied from the C# desktop `Assets/Icons`).
 //! Generated list: one `include_bytes!` per PNG. Provenance and licences: `assets/item-icons/PROVENANCE.json`
 //! and `docs/THIRD_PARTY_ASSETS.md`.
+//!
+//! The pictures are compiled in only with the `embedded-item-icons` feature (every desktop build). The browser
+//! build leaves them out and receives the same pack as a separate file (`tools/pack_item_icons.py`).
 
 /// Relative icon path (`xray/<key>.png`, `s2/<key>.png`) and its PNG bytes.
+#[cfg(feature = "embedded-item-icons")]
 pub static PACK: &[(&str, &[u8])] = &[
     (
         "xray/af_ameba_mica.png",

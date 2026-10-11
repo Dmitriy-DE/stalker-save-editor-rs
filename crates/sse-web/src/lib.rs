@@ -3,9 +3,10 @@
 use sse_core::{Error, Result};
 use sse_ui::event_loop::{self, Flow, Message, WindowEvent};
 use sse_ui::glyphs::Fonts;
+use sse_ui::item_icons;
 use sse_ui::screens::shell::Shell;
 use sse_ui::screens::style::rgb;
-use sse_ui::screens::{AppMessage, BrowserDownload, BrowserFileBridge};
+use sse_ui::screens::{AppMessage, BrowserDownload, BrowserFileBridge, ScreenId};
 use sse_ui::theme::BG_BASE;
 use sse_ui::widget::Tree;
 
@@ -134,6 +135,8 @@ impl WebRuntime {
         let mut tree = Tree::new(Fonts::bundled()?, rgb(BG_BASE));
         let file_bridge = BrowserFileBridge::new();
         let shell = Shell::build_for_browser(&mut tree, file_bridge.clone())?;
+        // The browser has no worker threads: an item icon is decoded where a screen asks for it.
+        item_icons::set_inline_decode(true);
         Ok(Self {
             tree,
             shell,
@@ -162,6 +165,22 @@ impl WebRuntime {
         Ok(())
     }
 
+    /// Takes the item icon pack file the browser fetched after the shell started and draws the item lists again.
+    /// Returns how many pictures the pack holds.
+    ///
+    /// Until this succeeds every item shows the empty frame of an item without an icon.
+    ///
+    /// # Errors
+    /// Refuses a file that is not a well-formed icon pack; the screens stay as they were.
+    pub fn install_item_icons(&mut self, bytes: Vec<u8>) -> Result<usize> {
+        let count = item_icons::install_pack(bytes)?;
+        for screen in [ScreenId::Inventory, ScreenId::Stashes, ScreenId::Encyclopedia] {
+            let ready = AppMessage::ToScreen(screen, Box::new(item_icons::IconsReady));
+            event_loop::dispatch(&mut self.tree, &mut self.shell, &Message::User(ready));
+        }
+        Ok(count)
+    }
+
     /// Records that browser file selection ended without a file.
     pub fn cancel_browser_file_selection(&mut self) {
         self.shell
@@ -186,6 +205,12 @@ impl WebRuntime {
         if self.pending_download.is_none() {
             self.pending_download = self.file_bridge.take_download();
         }
+    }
+
+    /// Takes the edited copy that is waiting to be downloaded, when the editor has prepared one.
+    pub fn take_download(&mut self) -> Option<BrowserDownload> {
+        self.capture_download();
+        self.pending_download.take()
     }
 
     fn pending_download(&mut self) -> Option<&BrowserDownload> {
@@ -456,6 +481,21 @@ mod wasm_abi {
         })
     }
 
+    pub(super) fn item_icons(bytes: Vec<u8>) -> u32 {
+        RUNTIME.with(|runtime| {
+            let Ok(mut runtime) = runtime.try_borrow_mut() else {
+                return RUNTIME_UNAVAILABLE;
+            };
+            let Some(runtime) = runtime.as_mut() else {
+                return RUNTIME_UNAVAILABLE;
+            };
+            match runtime.install_item_icons(bytes) {
+                Ok(_) => CONTINUE,
+                Err(_) => FILE_REJECTED,
+            }
+        })
+    }
+
     pub(super) fn clear_download() {
         RUNTIME.with(|runtime| {
             if let Ok(mut runtime) = runtime.try_borrow_mut() {
@@ -483,5 +523,6 @@ pub fn register_browser_callbacks() {
         download_bytes_ptr: wasm_abi::download_bytes_ptr,
         download_bytes_len: wasm_abi::download_bytes_len,
         clear_download: wasm_abi::clear_download,
+        item_icons: wasm_abi::item_icons,
     });
 }
