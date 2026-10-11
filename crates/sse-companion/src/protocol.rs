@@ -120,6 +120,11 @@ impl CompanionClient {
             return Err(ProtocolError::Invalid("protocol timeout must be positive".to_owned()));
         }
         let formatted = format_command(command, arguments)?;
+        // Every argument is checked before the command file exists: a refused call must leave nothing the game
+        // could still pick up and run.
+        if Instant::now().checked_add(timeout).is_none() {
+            return Err(ProtocolError::Invalid("protocol timeout is too large".to_owned()));
+        }
         let _gate = self
             .send_gate
             .lock()
@@ -144,9 +149,8 @@ impl CompanionClient {
         drop(temporary);
         publish_command(&temporary_path, &command_path)?;
 
-        let deadline = Instant::now()
-            .checked_add(timeout)
-            .ok_or_else(|| ProtocolError::Invalid("protocol timeout is too large".to_owned()))?;
+        // The command is published from here on: every exit below removes it or returns its reply.
+        let published = Instant::now();
         loop {
             if reply_path.exists() {
                 if let Ok(bytes) = read_reply_bytes(&reply_path) {
@@ -158,7 +162,7 @@ impl CompanionClient {
                     }
                 }
             }
-            let remaining = deadline.saturating_duration_since(Instant::now());
+            let remaining = timeout.saturating_sub(published.elapsed());
             if remaining.is_zero() {
                 remove_owned_command(&command_path, line.as_bytes());
                 return Err(ProtocolError::Invalid(format!(
@@ -484,6 +488,41 @@ mod reader_tests {
     fn temporary_file() -> PathBuf {
         let index = NEXT.fetch_add(1, Ordering::Relaxed);
         std::env::temp_dir().join(format!("sse-c6-reply-{}-{index}", std::process::id()))
+    }
+
+    #[test]
+    fn refused_timeout_leaves_no_command_file_behind() {
+        let directory = temporary_file();
+        let client = super::CompanionClient::new(directory.clone());
+
+        for timeout in [std::time::Duration::MAX, std::time::Duration::ZERO] {
+            let result = client.give("bandage", 1, timeout);
+            assert!(
+                matches!(result, Err(ProtocolError::Invalid(_))),
+                "{timeout:?}: {result:?}"
+            );
+            assert!(!directory.join(super::COMMAND_FILE).exists(), "{timeout:?}");
+            assert!(!directory.join(super::TEMP_COMMAND_FILE).exists(), "{timeout:?}");
+        }
+        // An invalid argument is refused before anything is written as well.
+        assert!(client
+            .give("bad section", 1, std::time::Duration::from_millis(10))
+            .is_err());
+        assert!(!directory.join(super::COMMAND_FILE).exists());
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn timed_out_command_is_removed_after_it_was_published() {
+        let directory = temporary_file();
+        let client = super::CompanionClient::new(directory.clone());
+
+        let result = client.give("bandage", 1, std::time::Duration::from_millis(20));
+
+        assert!(matches!(result, Err(ProtocolError::Invalid(message)) if message.contains("timed out")));
+        assert!(!directory.join(super::COMMAND_FILE).exists());
+        assert!(!directory.join(super::TEMP_COMMAND_FILE).exists());
+        let _ = fs::remove_dir_all(directory);
     }
 
     #[test]

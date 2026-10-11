@@ -968,10 +968,21 @@ fn diagnostics_zip_at(log_directory: &Path, games: &[DiagnosticGame], include_ga
     if include_game_logs {
         let mut total_game_bytes = 0_usize;
         let mut file_count = 0_usize;
+        let mut omitted_dumps = String::new();
         'games: for (game_index, game) in ordered_games.iter().enumerate() {
             for (archive_name, path) in game_log_paths(game, game_index) {
                 if file_count >= MAX_DIAGNOSTIC_GAME_LOG_FILES || total_game_bytes >= MAX_DIAGNOSTIC_GAME_LOG_BYTES {
                     break 'games;
+                }
+                if is_dump_path(&path) {
+                    // A dump is process memory: only its name and size are reported, never its bytes.
+                    if let Ok(metadata) = fs::symlink_metadata(&path) {
+                        if metadata.file_type().is_file() {
+                            file_count = file_count.saturating_add(1);
+                            omitted_dumps.push_str(&format!("{archive_name}\t{} bytes\n", metadata.len()));
+                        }
+                    }
+                    continue;
                 }
                 let remaining = MAX_DIAGNOSTIC_GAME_LOG_BYTES.saturating_sub(total_game_bytes);
                 let maximum = remaining.min(PART_BYTES);
@@ -988,6 +999,12 @@ fn diagnostics_zip_at(log_directory: &Path, games: &[DiagnosticGame], include_ga
                     data,
                 });
             }
+        }
+        if !omitted_dumps.is_empty() {
+            entries.push(Entry {
+                name: OMITTED_DUMPS_ENTRY.to_owned(),
+                data: omitted_dumps.into_bytes(),
+            });
         }
     }
 
@@ -1084,8 +1101,18 @@ fn safe_archive_segment(value: &str) -> String {
     }
 }
 
+/// Archive entry listing crash dumps by name and size; their contents are never archived.
+const OMITTED_DUMPS_ENTRY: &str = "game-logs/omitted-dumps.txt";
+
+/// Whether the file is a crash dump by extension (`.dmp`, `.mdmp`), whatever its bytes look like.
+fn is_dump_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("dmp") || extension.eq_ignore_ascii_case("mdmp"))
+}
+
 fn read_diagnostic_file(path: &Path, root: &Path, maximum: usize) -> Option<Vec<u8>> {
-    if maximum == 0 {
+    if maximum == 0 || is_dump_path(path) {
         return None;
     }
     let root = fs::canonicalize(root).ok()?;
@@ -1198,8 +1225,66 @@ mod tests {
         let archive = diagnostics_zip_at(&root.join("logs"), &games, true);
         let _ = fs::remove_dir_all(&root);
         let bytes = archive?;
-        let names = String::from_utf8_lossy(&bytes);
-        assert!(!names.contains("crash.dmp"), "binary dump must not be archived");
+        let entries = sse_codecs::zip::read(&bytes, 4 * 1024 * 1024)?;
+        assert!(
+            !entries.iter().any(|entry| entry.name.contains("crash.dmp")),
+            "binary dump must not be archived"
+        );
+        assert!(!entries
+            .iter()
+            .any(|entry| entry.data.windows(4).any(|window| window == [0x4d, 0x44, 0x4d, 0x50])));
+        Ok(())
+    }
+
+    #[test]
+    fn dumps_without_nul_bytes_are_listed_by_name_and_size_only() -> Result<()> {
+        let root = std::env::temp_dir().join(format!("sse-diag-text-dump-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let game_logs = root.join("game/Saved/Crashes");
+        fs::create_dir_all(&game_logs)?;
+        // No NUL byte anywhere: the old "binary means NUL" test let these through with their contents.
+        let secret = b"MDMP token=hunter2 heap-of-the-crashed-process";
+        fs::write(game_logs.join("UE-crash.dmp"), secret)?;
+        fs::write(game_logs.join("Second.MDMP"), secret)?;
+        fs::write(game_logs.join("crash.log"), b"Error: plain log line\n")?;
+        let games = vec![DiagnosticGame {
+            title: "S.T.A.L.K.E.R. 2".to_owned(),
+            install_directory: root.join("game"),
+            is_stalker2: true,
+        }];
+        let direct = read_diagnostic_file(&game_logs.join("UE-crash.dmp"), &root.join("game"), PART_BYTES);
+        let archive = diagnostics_zip_at(&root.join("logs"), &games, true);
+        let _ = fs::remove_dir_all(&root);
+
+        assert!(direct.is_none(), "a dump is never read as text");
+        let entries = sse_codecs::zip::read(&archive?, 4 * 1024 * 1024)?;
+        for entry in &entries {
+            let lower = entry.name.to_ascii_lowercase();
+            assert!(!lower.ends_with(".dmp") && !lower.ends_with(".mdmp"), "{}", entry.name);
+            let text = String::from_utf8_lossy(&entry.data);
+            assert!(
+                !text.contains("hunter2") && !text.contains("heap-of-the-crashed"),
+                "{}",
+                entry.name
+            );
+        }
+        let listing = entries
+            .iter()
+            .find(|entry| entry.name == OMITTED_DUMPS_ENTRY)
+            .map(|entry| String::from_utf8_lossy(&entry.data).into_owned())
+            .unwrap_or_default();
+        let size = secret.len();
+        assert!(
+            listing.contains(&format!("game-logs/00/crashes/UE-crash.dmp\t{size} bytes")),
+            "{listing:?}"
+        );
+        assert!(
+            listing.contains(&format!("game-logs/00/crashes/Second.MDMP\t{size} bytes")),
+            "{listing:?}"
+        );
+        assert!(entries
+            .iter()
+            .any(|entry| entry.name == "game-logs/00/crashes/crash.log"));
         Ok(())
     }
 
