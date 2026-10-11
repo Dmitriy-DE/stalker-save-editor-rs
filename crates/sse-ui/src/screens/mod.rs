@@ -352,6 +352,13 @@ pub enum AppMessage {
         /// Menu music volume in percent.
         volume: u32,
     },
+    /// UI sound switch and volume saved on the settings screen; the shell applies them at once.
+    SoundSettings {
+        /// Whether UI sound effects are switched on.
+        enabled: bool,
+        /// UI sound volume in percent.
+        volume: u32,
+    },
     /// Durable settings-write result delivered by the settings writer.
     SettingsWriteFinished(std::result::Result<(), String>),
 }
@@ -382,6 +389,7 @@ impl std::fmt::Debug for AppMessage {
             Self::SoundLoaded(game, _) => write!(f, "SoundLoaded({game})"),
             Self::MusicLoaded(game, _) => write!(f, "MusicLoaded({game})"),
             Self::MusicSettings { enabled, volume } => write!(f, "MusicSettings({enabled}, {volume})"),
+            Self::SoundSettings { enabled, volume } => write!(f, "SoundSettings({enabled}, {volume})"),
             Self::SettingsWriteFinished(result) => write!(f, "SettingsWriteFinished({})", result.is_ok()),
         }
     }
