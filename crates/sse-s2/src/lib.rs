@@ -52,6 +52,11 @@ pub enum S2Change {
         /// Unique item handle owned by the stash.
         handle: u32,
     },
+    /// Move a backpack item into the first fitting stash cells, using an empty stash slot.
+    MoveBackpackToStash {
+        /// Unique item handle owned by the backpack.
+        handle: u32,
+    },
 }
 
 /// One S2 container's unpacked image and integrity metadata.
@@ -1767,12 +1772,17 @@ fn apply_changes_with_items(
     }
     if changes
         .iter()
-        .filter(|change| matches!(change, S2Change::MoveStashToBackpack { .. }))
+        .filter(|change| {
+            matches!(
+                change,
+                S2Change::MoveStashToBackpack { .. } | S2Change::MoveBackpackToStash { .. }
+            )
+        })
         .count()
         > 1
     {
         return Err(Error::Refused(
-            "one S2 edit batch may move at most one stash item".to_owned(),
+            "one S2 edit batch may move at most one item between backpack and stash".to_owned(),
         ));
     }
 
@@ -1783,6 +1793,7 @@ fn apply_changes_with_items(
     let mut image = save.container.image().to_vec();
     let mut changed_ranges = Vec::with_capacity(changes.len().saturating_add(3));
     let mut stash_move = None;
+    let mut backpack_move = None;
 
     for change in changes {
         match *change {
@@ -1875,6 +1886,7 @@ fn apply_changes_with_items(
                 });
             }
             S2Change::MoveStashToBackpack { handle } => stash_move = Some(handle),
+            S2Change::MoveBackpackToStash { handle } => backpack_move = Some(handle),
         }
     }
 
@@ -1882,8 +1894,202 @@ fn apply_changes_with_items(
         let stash = save.stash()?;
         move_stash_item_to_backpack(save, &stash, handle, &mut image, &mut changed_ranges)?;
     }
+    if let Some(handle) = backpack_move {
+        move_backpack_item_to_stash(save, handle, &mut image, &mut changed_ranges)?;
+    }
     changed_ranges.sort_unstable_by_key(|range| (range.before.start, range.after.start));
     Ok((image, changed_ranges))
+}
+
+/// Moves a backpack item into free stash cells, the reverse of [`move_stash_item_to_backpack`].
+///
+/// The backpack slot becomes an empty `u32::MAX` slot, and the stash slot is taken from an existing
+/// empty `u32::MAX` slot (real saves contain such slots in both lists). The stash grid grows by the
+/// footprint, and the backpack grid shrinks by the same number of bytes, so the image length is unchanged.
+/// Not confirmed in game; the caller must create a backup and verify the result by reading it back.
+fn move_backpack_item_to_stash(
+    save: &S2Save,
+    handle: u32,
+    image: &mut Vec<u8>,
+    changed_ranges: &mut Vec<ChangedRange>,
+) -> Result<()> {
+    if !save.unresolved_handles.is_empty() {
+        return Err(Error::Refused(
+            "S2 backpack move requires a fully resolved inventory".to_owned(),
+        ));
+    }
+    if save.index.is_legacy {
+        return Err(Error::Refused(
+            "S2 backpack move is not supported for game 1.0.x saves".to_owned(),
+        ));
+    }
+    let record = save
+        .objects
+        .unique(handle)
+        .ok_or_else(|| Error::Refused("S2 backpack item handle is missing or ambiguous".to_owned()))?;
+    let owned_positions = save
+        .index
+        .owned_handles
+        .iter()
+        .enumerate()
+        .filter(|(_, owned)| **owned == handle)
+        .map(|(position, _)| position)
+        .collect::<Vec<_>>();
+    let [owned_position] = owned_positions.as_slice() else {
+        return Err(Error::Refused(
+            "S2 backpack handle is not owned exactly once".to_owned(),
+        ));
+    };
+    let stash = save.stash()?;
+    if stash.live_handles().contains(&handle) {
+        return Err(Error::Refused("S2 backpack item is already in the stash".to_owned()));
+    }
+    if !is_known_kind(record.kind_code) {
+        return Err(Error::Refused(
+            "S2 backpack item kind is not confirmed editable".to_owned(),
+        ));
+    }
+    if read_u8(image, record.record_offset.saturating_add(15))? != 0
+        || read_u8(image, record.record_offset.saturating_add(28))? & 0x08 != 0
+    {
+        return Err(Error::Refused(
+            "S2 backpack object is not marked as a backpack item".to_owned(),
+        ));
+    }
+    // Grid entries must be exactly the 8-byte records between grid_offset and grid_end_offset.
+    if save.index.grid_end_offset
+        != save
+            .index
+            .grid_offset
+            .saturating_add(save.index.grid_count.saturating_mul(8))
+        || save.index.grid_cells.len() != save.index.grid_count
+    {
+        return Err(Error::Refused("S2 backpack grid layout is not confirmed".to_owned()));
+    }
+    let backpack_cells = save
+        .index
+        .grid_cells
+        .iter()
+        .enumerate()
+        .filter(|(_, cell)| cell.handle == handle)
+        .map(|(index, cell)| (index, *cell))
+        .collect::<Vec<_>>();
+    if backpack_cells.is_empty() {
+        return Err(Error::Refused("S2 backpack item footprint is missing".to_owned()));
+    }
+    let unique_positions = backpack_cells
+        .iter()
+        .map(|(_, cell)| (cell.x, cell.y))
+        .collect::<HashSet<_>>();
+    if unique_positions.len() != backpack_cells.len() {
+        return Err(Error::Refused(
+            "S2 backpack item footprint contains duplicate cells".to_owned(),
+        ));
+    }
+    let min_x = backpack_cells.iter().map(|(_, cell)| cell.x).min().unwrap_or_default();
+    let max_x = backpack_cells.iter().map(|(_, cell)| cell.x).max().unwrap_or_default();
+    let min_y = backpack_cells.iter().map(|(_, cell)| cell.y).min().unwrap_or_default();
+    let max_y = backpack_cells.iter().map(|(_, cell)| cell.y).max().unwrap_or_default();
+    let width = max_x.saturating_sub(min_x).saturating_add(1);
+    let height = max_y.saturating_sub(min_y).saturating_add(1);
+    if width == 0 || height == 0 || width > GRID_WIDTH || height > 128 {
+        return Err(Error::Refused("S2 backpack item does not fit the stash".to_owned()));
+    }
+    let footprint = backpack_cells.len();
+    let offsets = backpack_cells
+        .iter()
+        .map(|(_, cell)| (cell.x.saturating_sub(min_x), cell.y.saturating_sub(min_y)))
+        .collect::<Vec<_>>();
+    let occupied = stash
+        .grid_cells
+        .iter()
+        .map(|cell| (cell.x, cell.y))
+        .collect::<HashSet<_>>();
+    let (place_x, place_y) = first_free_placement(&occupied, &offsets, width, height)
+        .ok_or_else(|| Error::Refused("S2 stash has no fitting free cells".to_owned()))?;
+    let empty_slot = stash
+        .owned_handles
+        .iter()
+        .position(|owned| *owned == u32::MAX)
+        .ok_or_else(|| Error::Refused("S2 stash has no empty slot for the item".to_owned()))?;
+    let new_stash_grid_count = stash
+        .grid_count
+        .checked_add(footprint)
+        .filter(|count| *count <= MAXIMUM_GRID_CELLS && *count <= usize::from(u16::MAX))
+        .ok_or_else(|| Error::Refused("S2 stash grid-cell limit would be exceeded".to_owned()))?;
+    let removed_bytes = footprint
+        .checked_mul(8)
+        .ok_or_else(|| Error::damaged("S2 backpack grid byte count overflows"))?;
+    let new_backpack_grid_count = save
+        .index
+        .grid_count
+        .checked_sub(footprint)
+        .ok_or_else(|| Error::damaged("S2 backpack grid count underflows"))?;
+
+    // In-place writes use pre-image offsets, so they run before any byte is removed or inserted.
+    let owned_slot_offset = save
+        .index
+        .owned_handles_offset
+        .checked_add(owned_position.saturating_mul(4))
+        .ok_or_else(|| Error::damaged("S2 backpack owned slot offset overflows"))?;
+    write_u32_at(image, owned_slot_offset, u32::MAX)?;
+    let stash_slot_offset = stash
+        .owned_handles_offset
+        .checked_add(empty_slot.saturating_mul(4))
+        .ok_or_else(|| Error::damaged("S2 stash slot offset overflows"))?;
+    write_u32_at(image, stash_slot_offset, handle)?;
+    write_u16_at(
+        image,
+        save.index.grid_count_offset,
+        u16::try_from(new_backpack_grid_count).map_err(|_| Error::damaged("S2 grid count does not fit u16"))?,
+    )?;
+    write_u16_at(
+        image,
+        stash.grid_count_offset,
+        u16::try_from(new_stash_grid_count).map_err(|_| Error::damaged("S2 stash grid count does not fit u16"))?,
+    )?;
+    let flags_offset = record.record_offset.saturating_add(28);
+    let flags = read_u8(image, flags_offset)?;
+    write_u16_at(image, record.record_offset.saturating_add(11), place_x)?;
+    write_u16_at(image, record.record_offset.saturating_add(13), place_y)?;
+    write_u8_at(image, record.record_offset.saturating_add(15), 1)?;
+    write_u8_at(image, flags_offset, flags | 0x08)?;
+
+    // Remove the backpack grid entries from the last index down, so earlier offsets stay valid.
+    let backpack_span_start = save.index.owned_count_offset;
+    for (cell_index, _) in backpack_cells.iter().rev() {
+        let start = save
+            .index
+            .grid_offset
+            .checked_add(cell_index.saturating_mul(8))
+            .ok_or_else(|| Error::damaged("S2 backpack cell removal offset overflows"))?;
+        remove_bytes(image, start, 8)?;
+    }
+    // The stash grid end moved left by the removed bytes; the new cells are appended there.
+    let stash_insert = stash
+        .grid_end_offset
+        .checked_sub(removed_bytes)
+        .ok_or_else(|| Error::damaged("S2 stash insertion offset underflows"))?;
+    let mut added = Vec::with_capacity(removed_bytes);
+    for &(dx, dy) in &offsets {
+        added.extend_from_slice(&handle.to_le_bytes());
+        added.extend_from_slice(&place_x.saturating_add(dx).to_le_bytes());
+        added.extend_from_slice(&place_y.saturating_add(dy).to_le_bytes());
+    }
+    insert_bytes(image, stash_insert, &added)?;
+
+    // Length is unchanged; the span and the record bytes are the changed areas.
+    let span = backpack_span_start..stash.grid_end_offset;
+    changed_ranges.push(ChangedRange {
+        before: span.clone(),
+        after: span,
+    });
+    let record_range = record.record_offset.saturating_add(11)..record.record_offset.saturating_add(29);
+    changed_ranges.push(ChangedRange {
+        before: record_range.clone(),
+        after: record_range,
+    });
+    Ok(())
 }
 
 /// Returns the first backpack origin where every cell of the item's footprint is free.
@@ -2303,6 +2509,25 @@ fn verify_changes_readback_with_items(
                 named.insert(handle);
             }
             S2Change::SetDurability { handle, .. } => {
+                named.insert(handle);
+            }
+            S2Change::MoveBackpackToStash { handle } => {
+                if verified.index.owned_handles().contains(&handle) {
+                    return Err(damaged("moved item still owned by the backpack"));
+                }
+                if verified
+                    .stash()?
+                    .live_handles()
+                    .iter()
+                    .filter(|owned| **owned == handle)
+                    .count()
+                    != 1
+                {
+                    return Err(damaged("moved item is not owned exactly once by the stash"));
+                }
+                if verified.unresolved_handles.contains(&handle) {
+                    return Err(damaged("moved item has unresolved stash cells"));
+                }
                 named.insert(handle);
             }
             S2Change::MoveStashToBackpack { handle } => {
@@ -3210,6 +3435,123 @@ mod tests {
             .items()
             .iter()
             .any(|backpack_item| backpack_item.handle == item.handle));
+        Ok(())
+    }
+
+    #[test]
+    fn backpack_item_moves_back_to_stash_and_reads_back() -> Result<(), Error> {
+        let original = S2Save::from_bytes(&pack_raw(WRITER_S2_STASH_SOURCE))?;
+        let handle = 0x3000_0010;
+        let moved = S2Save::from_bytes(&original.write_changes(&[S2Change::MoveStashToBackpack { handle }])?)?;
+        let back = S2Save::from_bytes(&moved.write_changes(&[S2Change::MoveBackpackToStash { handle }])?)?;
+
+        let mut before_backpack = original
+            .items()
+            .iter()
+            .map(|item| (item.handle, item.count))
+            .collect::<Vec<_>>();
+        let mut after_backpack = back
+            .items()
+            .iter()
+            .map(|item| (item.handle, item.count))
+            .collect::<Vec<_>>();
+        before_backpack.sort_unstable();
+        after_backpack.sort_unstable();
+        assert_eq!(after_backpack, before_backpack);
+
+        let mut before_stash = original
+            .stash_items()?
+            .iter()
+            .map(|item| item.handle)
+            .collect::<Vec<_>>();
+        let mut after_stash = back.stash_items()?.iter().map(|item| item.handle).collect::<Vec<_>>();
+        before_stash.sort_unstable();
+        after_stash.sort_unstable();
+        assert_eq!(after_stash, before_stash);
+        assert!(back.unresolved_handles.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn backpack_move_refuses_an_item_that_is_not_a_backpack_item() -> Result<(), Error> {
+        let save = S2Save::from_bytes(&pack_raw(WRITER_S2_STASH_SOURCE))?;
+        let result = save.write_changes(&[S2Change::MoveBackpackToStash { handle: 0x3000_0010 }]);
+        assert!(result.is_err());
+        Ok(())
+    }
+
+    /// Manual round trip on copies: `SSE_S2_COPY_DIR=<copies> cargo test -p sse-s2 real_copies_backpack_round_trip -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "manual round trip on copies of real S2 saves (SSE_S2_COPY_DIR)"]
+    fn real_copies_backpack_round_trip() -> Result<(), Error> {
+        let dir =
+            std::env::var("SSE_S2_COPY_DIR").map_err(|_| Error::Refused("SSE_S2_COPY_DIR is not set".to_owned()))?;
+        let mut paths: Vec<_> = std::fs::read_dir(&dir)
+            .map_err(|error| Error::System(error.to_string()))?
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .collect();
+        paths.sort();
+        let mut inconsistent = 0_usize;
+        let mut checked = 0_usize;
+        for path in &paths {
+            let raw = std::fs::read(path).map_err(|error| Error::System(error.to_string()))?;
+            let Ok(original) = S2Save::from_bytes(&raw) else {
+                println!("{} skipped (unreadable)", path.display());
+                continue;
+            };
+            if original.index.is_legacy || !original.unresolved_handles.is_empty() {
+                println!("{} skipped (legacy or unresolved)", path.display());
+                continue;
+            }
+            let Some(&handle) = original.stash()?.live_handles().first() else {
+                println!("{} skipped (empty stash)", path.display());
+                continue;
+            };
+            checked += 1;
+            let forward = original.write_changes(&[S2Change::MoveStashToBackpack { handle }]);
+            let back = match forward {
+                Ok(bytes) => {
+                    let moved = S2Save::from_bytes(&bytes)?;
+                    moved.write_changes(&[S2Change::MoveBackpackToStash { handle }])
+                }
+                Err(error) => Err(error),
+            };
+            let verdict = match back.and_then(|bytes| S2Save::from_bytes(&bytes)) {
+                Ok(after) => {
+                    let mut before_items = original
+                        .items()
+                        .iter()
+                        .map(|item| (item.handle, item.count))
+                        .collect::<Vec<_>>();
+                    let mut after_items = after
+                        .items()
+                        .iter()
+                        .map(|item| (item.handle, item.count))
+                        .collect::<Vec<_>>();
+                    before_items.sort_unstable();
+                    after_items.sort_unstable();
+                    let mut before_stash = original
+                        .stash_items()?
+                        .iter()
+                        .map(|item| item.handle)
+                        .collect::<Vec<_>>();
+                    let mut after_stash = after.stash_items()?.iter().map(|item| item.handle).collect::<Vec<_>>();
+                    before_stash.sort_unstable();
+                    after_stash.sort_unstable();
+                    if before_items == after_items && before_stash == after_stash {
+                        "consistent".to_owned()
+                    } else {
+                        "INCONSISTENT".to_owned()
+                    }
+                }
+                Err(error) => format!("refused: {error}"),
+            };
+            if verdict == "INCONSISTENT" {
+                inconsistent += 1;
+            }
+            println!("{} handle=0x{handle:08X} {verdict}", path.display());
+        }
+        println!("files={checked} inconsistent={inconsistent}");
         Ok(())
     }
 
