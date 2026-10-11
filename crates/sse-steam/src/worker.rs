@@ -971,16 +971,27 @@ mod tests {
         path
     }
 
+    /// Writes an executable worker script without ever holding a write descriptor to it in this process.
+    ///
+    /// Tests run on parallel threads and each `fork` copies every open descriptor until its `exec`. A script written
+    /// here could therefore still be open for writing in another test's child when it is started, and the kernel
+    /// answers that with "Text file busy" (`ETXTBSY`). A system shell writes the file instead: it holds the only
+    /// write descriptor and has closed it and exited before this function returns.
     #[cfg(unix)]
     fn worker_script(directory: &std::path::Path, script: &str) -> std::path::PathBuf {
         use std::os::unix::fs::PermissionsExt;
         let path = directory.join("worker");
-        assert!(std::fs::write(&path, script).is_ok());
-        let permissions = std::fs::metadata(&path).map(|metadata| metadata.permissions());
-        assert!(permissions.is_ok_and(|mut value| {
-            value.set_mode(0o755);
-            std::fs::set_permissions(&path, value).is_ok()
-        }));
+        let status = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg("umask 077 && printf %s \"$1\" > \"$2\" && chmod 755 \"$2\"")
+            .arg("sh")
+            .arg(script)
+            .arg(&path)
+            .stdin(std::process::Stdio::null())
+            .status();
+        assert!(status.is_ok_and(|status| status.success()));
+        assert_eq!(std::fs::read_to_string(&path).ok().as_deref(), Some(script));
+        assert!(std::fs::metadata(&path).is_ok_and(|metadata| metadata.permissions().mode() & 0o777 == 0o755));
         path
     }
 
