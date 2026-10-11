@@ -1925,11 +1925,11 @@
   },
   "{0} шт.": {
     "uk": "{0} шт.",
-    "fr": "{0} pcs"
+    "fr": "{0} pièces"
   },
   "{0} шт. ({1})": {
     "uk": "{0} шт. ({1})",
-    "fr": "{0} pcs ({1})"
+    "fr": "{0} pièces ({1})"
   },
   "АРТ.": {
     "ru": "АРТ.",
@@ -2362,7 +2362,7 @@
   },
   "Планка": {
     "uk": "Планка",
-    "fr": "Rail"
+    "fr": "Barre"
   },
   "Платформа": {
     "uk": "Платформа"
@@ -2471,7 +2471,7 @@
   "СТАТУС": {
     "uk": "СТАТУС",
     "de": "STATUS",
-    "pl": "STATUS",
+    "pl": "STAN",
     "cs": "STAV"
   },
   "Сайга Д-12": {
@@ -2490,27 +2490,27 @@
     "uk": "Слот",
     "de": "Slot",
     "it": "Slot",
-    "pl": "Slot",
-    "cs": "Slot"
+    "pl": "Miejsce",
+    "cs": "Pozice"
   },
   "Слот {0}": {
     "uk": "Слот {0}",
     "de": "Slot {0}",
     "it": "Slot {0}",
-    "pl": "Slot {0}",
-    "cs": "Slot {0}"
+    "pl": "Miejsce {0}",
+    "cs": "Pozice {0}"
   },
   "Слот: {0}": {
     "uk": "Слот: {0}",
     "de": "Slot: {0}",
     "it": "Slot: {0}",
-    "pl": "Slot: {0}",
-    "cs": "Slot: {0}"
+    "pl": "Miejsce: {0}",
+    "cs": "Pozice: {0}"
   },
   "Статус": {
     "uk": "Статус",
     "de": "Status",
-    "pl": "Status",
+    "pl": "Stan",
     "cs": "Stav"
   },
   "Статус Steam Cloud: {0}": {
@@ -2519,13 +2519,13 @@
   "Статус: {0}": {
     "uk": "Статус: {0}",
     "de": "Status: {0}",
-    "pl": "Status: {0}",
+    "pl": "Stan: {0}",
     "cs": "Stav: {0}"
   },
   "Статус<br>{0}": {
     "uk": "Статус<br>{0}",
     "de": "Status<br>{0}",
-    "pl": "Status<br>{0}",
+    "pl": "Stan<br>{0}",
     "cs": "Stav<br>{0}"
   },
   "Ствол": {
@@ -3589,7 +3589,7 @@
     "en": "Snapshot",
     "de": "Snapshot",
     "fr": "Instantané",
-    "it": "Snapshot",
+    "it": "Istantanea",
     "es": "Instantánea",
     "pl": "Migawka",
     "cs": "Snímek",
@@ -5137,7 +5137,7 @@
     "de": "{0} · Fehler: {1}",
     "fr": "{0} · erreur : {1}",
     "it": "{0} · errore: {1}",
-    "es": "{0} · error: {1}",
+    "es": "{0} · fallo: {1}",
     "pl": "{0} · błąd: {1}",
     "cs": "{0} · chyba: {1}",
     "pt-BR": "{0} · erro: {1}",
@@ -6302,20 +6302,20 @@
     "cs": "Vodka"
   },
   "ГРУППИРОВКА": {
-    "fr": "FACTION"
+    "fr": "GROUPEMENT"
   },
   "ГРУППИРОВКА*": {
-    "fr": "FACTION*"
+    "fr": "GROUPEMENT*"
   },
   "Громкость": {
     "fr": "Volume",
     "it": "Volume"
   },
   "Группировка": {
-    "fr": "Faction"
+    "fr": "Groupement"
   },
   "Группировка {0}": {
-    "fr": "Faction {0}"
+    "fr": "Groupement {0}"
   },
   "ДЕЙСТВИЕ": {
     "fr": "ACTION"
@@ -6333,49 +6333,49 @@
     "fr": "Source"
   },
   "Куда перенести": {
-    "fr": "Destination"
+    "fr": "Vers"
   },
   "ОШИБКА: {0}": {
-    "es": "Error: {0}"
+    "es": "FALLO: {0}"
   },
   "Госпиталь": {
     "es": "Hospital"
   },
   "МОЖНО ИЗМЕНИТЬ": {
-    "es": "EDITABLE"
+    "es": "MODIFICABLE"
   },
   "МОЖНО ИЗМЕНЯТЬ": {
-    "es": "EDITABLE"
+    "es": "MODIFICABLE"
   },
   "Можно изменять": {
-    "es": "Editable"
+    "es": "Modificable"
   },
   "ОБЩИЕ": {
-    "es": "GENERAL"
+    "es": "GENERALES"
   },
   "ОСНОВНОЕ": {
-    "es": "GENERAL"
+    "es": "PRINCIPAL"
   },
   "ПНВ": {
     "it": "Visore"
   },
   "Данные": {
-    "cs": "Data"
+    "cs": "Údaje"
   },
   "Идентификатор Binance: 434350727": {
     "cs": "ID Binance: 434350727"
   },
   "РЕЗЕРВНАЯ КОПИЯ": {
-    "it": "BACKUP"
+    "it": "COPIA DI BACKUP"
   },
   "Резервная копия": {
-    "it": "Backup"
+    "it": "Copia di backup"
   },
   "ОШИБКА": {
-    "es": "ERROR"
+    "es": "FALLO"
   },
   "Ошибка": {
-    "es": "Error"
+    "es": "Fallo"
   },
   "ЭКСПЕРИМЕНТАЛЬНО": {
     "es": "EXPERIMENTAL"
@@ -6387,10 +6387,10 @@
     "es": "Experimental"
   },
   "ошибка: ": {
-    "es": "error: "
+    "es": "fallo: "
   },
   "редактируется": {
-    "es": "editable"
+    "es": "modificable"
   },
   "ЛОКАЛЬНЫЙ": {
     "fr": "LOCAL",
@@ -6413,10 +6413,10 @@
     "fr": "TRANSITIONS"
   },
   "РАЗДЕЛЫ": {
-    "fr": "SECTIONS"
+    "fr": "RUBRIQUES"
   },
   "РАСХ.": {
-    "fr": "CONS.",
+    "fr": "CONSO.",
     "es": "CONS.",
     "it": "CONS."
   },
@@ -6424,7 +6424,7 @@
     "fr": "PARENT"
   },
   "Разделы": {
-    "fr": "Sections"
+    "fr": "Rubriques"
   },
   "ФРАКЦИИ": {
     "fr": "FACTIONS"
@@ -6433,7 +6433,7 @@
     "fr": "Factions"
   },
   "группировка": {
-    "fr": "faction"
+    "fr": "groupement"
   },
   "сталкеров {0} · мутантов {1}": {
     "fr": "stalkers {0} · mutants {1}"
@@ -8790,10 +8790,10 @@
     "en": "Steam Cloud: {0} B · {1}",
     "de": "Steam Cloud: {0} B · {1}",
     "fr": "Steam Cloud : {0} o · {1}",
-    "it": "Steam Cloud: {0} B · {1}",
+    "it": "Cloud Steam: {0} B · {1}",
     "es": "Steam Cloud: {0} B · {1}",
-    "pl": "Steam Cloud: {0} B · {1}",
-    "cs": "Steam Cloud: {0} B · {1}",
+    "pl": "Chmura Steam: {0} B · {1}",
+    "cs": "Cloud na Steamu: {0} B · {1}",
     "pt-BR": "Nuvem Steam: {0} B · {1}",
     "tr": "Steam Bulutu: {0} B · {1}",
     "ja": "Steam クラウド: {0} B · {1}",
@@ -8807,10 +8807,10 @@
     "en": "Steam Cloud: —",
     "de": "Steam Cloud: —",
     "fr": "Steam Cloud : —",
-    "it": "Steam Cloud: —",
+    "it": "Cloud Steam: —",
     "es": "Steam Cloud: —",
-    "pl": "Steam Cloud: —",
-    "cs": "Steam Cloud: —",
+    "pl": "Chmura Steam: —",
+    "cs": "Cloud na Steamu: —",
     "pt-BR": "Nuvem Steam: —",
     "tr": "Steam Bulutu: —",
     "ja": "Steam クラウド: —",
@@ -9437,7 +9437,7 @@
     "de": "Fehler: {0}",
     "fr": "Erreur : {0}",
     "it": "Errore: {0}",
-    "es": "Error: {0}",
+    "es": "Fallo: {0}",
     "pl": "Błąd: {0}",
     "cs": "Chyba: {0}",
     "pt-BR": "Erro: {0}",
@@ -10948,7 +10948,7 @@
     "uk": "РОЗМІЩЕННЯ",
     "en": "PLACEMENT",
     "de": "PLATZIERUNG",
-    "fr": "PLACEMENT",
+    "fr": "EMPLACEMENT",
     "it": "POSIZIONAMENTO",
     "es": "UBICACIÓN",
     "pl": "UMIEJSCOWIENIE",
@@ -12805,7 +12805,7 @@
     "it": "Sperim.",
     "es": "Exper.",
     "pl": "Eksperym.",
-    "cs": "Experim.",
+    "cs": "Exp.",
     "pt-BR": "Exper.",
     "tr": "Deneysel",
     "ja": "実験的",
@@ -12971,7 +12971,7 @@
     "uk": "угруповання · {0}",
     "en": "faction · {0}",
     "de": "Fraktion · {0}",
-    "fr": "faction · {0}",
+    "fr": "groupement · {0}",
     "it": "fazione · {0}",
     "es": "facción · {0}",
     "pl": "frakcja · {0}",
@@ -13211,7 +13211,7 @@
     "de": "Fehler",
     "fr": "erreur",
     "it": "errore",
-    "es": "error",
+    "es": "fallo",
     "pl": "błąd",
     "cs": "chyba",
     "pt-BR": "erro",
@@ -13622,7 +13622,7 @@
   },
   "Бэкап ": {
     "de": "Backup ",
-    "it": "Backup "
+    "it": "Copia di backup "
   },
   "ВЕРСИЯ": {
     "de": "VERSION",
@@ -13692,8 +13692,8 @@
   },
   "Импорт": {
     "de": "Importieren",
-    "pl": "Import",
-    "cs": "Import"
+    "pl": "Importuj",
+    "cs": "Importovat"
   },
   "Имя: {0}": {
     "de": "Name: {0}"
@@ -13716,8 +13716,8 @@
   },
   "МОДЫ": {
     "de": "MODS",
-    "fr": "MODS",
-    "es": "MODS"
+    "fr": "MODIFICATIONS",
+    "es": "MODIFICACIONES"
   },
   "Малахит": {
     "de": "Malachit",
@@ -13737,8 +13737,8 @@
   },
   "Моды": {
     "de": "Mods",
-    "fr": "Mods",
-    "es": "Mods"
+    "fr": "Modifications",
+    "es": "Modificaciones"
   },
   "Монолит": {
     "de": "Monolith"
@@ -13767,8 +13767,8 @@
   "ОБЛАКО": {
     "de": "CLOUD",
     "fr": "CLOUD",
-    "it": "CLOUD",
-    "cs": "CLOUD"
+    "it": "NUVOLA",
+    "cs": "OBLAK"
   },
   "ОБНОВЛЕНИЯ": {
     "de": "UPDATES"
