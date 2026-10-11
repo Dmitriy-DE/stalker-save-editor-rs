@@ -27,6 +27,11 @@ impl HotkeyBinding {
                 "hotkey binding must have a non-zero ID and A-Z key".to_owned(),
             ));
         }
+        // Windows registers hotkeys by a signed 32-bit ID; refusing a larger one here keeps every backend from
+        // meeting it half-way through a registration.
+        if i32::try_from(self.id).is_err() {
+            return Err(Error::Refused("hotkey binding ID is too large".to_owned()));
+        }
         if !self.control && !self.alt && !self.shift {
             return Err(Error::Refused(
                 "hotkey binding requires at least one modifier".to_owned(),
@@ -34,6 +39,34 @@ impl HotkeyBinding {
         }
         Ok(self)
     }
+}
+
+/// Acquires every item in order, or none: when one acquisition fails, the ones already made are released.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn acquire_each<T: Copy>(items: &[T], mut acquire: impl FnMut(T) -> bool, mut release: impl FnMut(T)) -> bool {
+    for (index, item) in items.iter().copied().enumerate() {
+        if !acquire(item) {
+            for held in items.iter().copied().take(index).rev() {
+                release(held);
+            }
+            return false;
+        }
+    }
+    true
+}
+
+/// Applies a grab (`true`) or a release (`false`). A grab that reports failure is undone by a release, so no
+/// part of it stays held.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn apply_or_roll_back(grab: bool, mut apply: impl FnMut(bool) -> bool) -> bool {
+    if !grab {
+        return apply(false);
+    }
+    if apply(true) {
+        return true;
+    }
+    let _ = apply(false);
+    false
 }
 
 /// A platform hotkey session. Bindings are grabbed only while an X-Ray game window has focus.
@@ -94,7 +127,7 @@ fn is_game_name(name: &str) -> bool {
 
 #[cfg(target_os = "windows")]
 mod platform {
-    use super::{is_game_name, HotkeyBinding};
+    use super::{acquire_each, is_game_name, HotkeyBinding};
     use sse_core::Result;
     use std::ffi::c_void;
     use std::ptr;
@@ -207,7 +240,8 @@ mod platform {
                 }
                 return true;
             }
-            let mut done = Vec::new();
+            // Every ID is converted before anything is registered, so a bad one cannot leave earlier hotkeys held.
+            let mut native = Vec::with_capacity(self.bindings.len());
             for binding in &self.bindings {
                 let Ok(id) = i32::try_from(binding.id) else {
                     return false;
@@ -222,17 +256,19 @@ mod platform {
                 if binding.shift {
                     modifiers |= MOD_SHIFT;
                 }
-                // SAFETY: null HWND registers on this helper thread; ID and virtual-key values are checked.
-                if unsafe { RegisterHotKey(ptr::null_mut(), id, modifiers, u32::from(binding.key)) } == 0 {
-                    for registered in done {
-                        // SAFETY: registered IDs were successfully acquired by this helper thread above.
-                        let _ = unsafe { UnregisterHotKey(ptr::null_mut(), registered) };
-                    }
-                    return false;
-                }
-                done.push(id);
+                native.push((id, modifiers, u32::from(binding.key)));
             }
-            true
+            acquire_each(
+                &native,
+                |(id, modifiers, key)| {
+                    // SAFETY: null HWND registers on this helper thread; ID and virtual-key values are checked.
+                    unsafe { RegisterHotKey(ptr::null_mut(), id, modifiers, key) != 0 }
+                },
+                |(id, _, _)| {
+                    // SAFETY: the ID was successfully registered by this helper thread just above.
+                    let _ = unsafe { UnregisterHotKey(ptr::null_mut(), id) };
+                },
+            )
         }
     }
 
@@ -272,7 +308,7 @@ mod platform {
 
 #[cfg(target_os = "linux")]
 mod platform {
-    use super::{is_game_name, HotkeyBinding};
+    use super::{apply_or_roll_back, is_game_name, HotkeyBinding};
     use sse_core::{Error, Result};
     use std::ffi::{c_char, c_int, c_uint, c_ulong, c_void, CStr};
     use std::mem::ManuallyDrop;
@@ -492,7 +528,12 @@ mod platform {
             }
         }
 
+        /// Grabs or releases every binding. A grab that the server refused for any key is released in full.
         fn set_grabbed(&self, grab: bool) -> bool {
+            apply_or_roll_back(grab, |grab| self.apply_grabs(grab))
+        }
+
+        fn apply_grabs(&self, grab: bool) -> bool {
             LAST_X_ERROR.store(0, Ordering::Release);
             for binding in &self.bindings {
                 for extra in [0, LOCK_MASK, MOD2_MASK, LOCK_MASK | MOD2_MASK] {
@@ -619,7 +660,73 @@ mod platform {
 
 #[cfg(test)]
 mod tests {
-    use super::is_game_name;
+    use super::{acquire_each, apply_or_roll_back, is_game_name, HotkeyBinding, HotkeySession};
+    use std::cell::RefCell;
+
+    #[test]
+    fn a_failed_acquisition_releases_everything_acquired_before_it() {
+        let log = RefCell::new(Vec::new());
+        let acquired = acquire_each(
+            &[1, 2, 3, 4],
+            |id| {
+                log.borrow_mut().push(format!("+{id}"));
+                id != 3
+            },
+            |id| log.borrow_mut().push(format!("-{id}")),
+        );
+        assert!(!acquired);
+        assert_eq!(log.into_inner(), ["+1", "+2", "+3", "-2", "-1"]);
+
+        let log = RefCell::new(Vec::new());
+        assert!(acquire_each(
+            &[1, 2],
+            |id| {
+                log.borrow_mut().push(id);
+                true
+            },
+            |_| log.borrow_mut().push(0)
+        ));
+        assert_eq!(log.into_inner(), [1, 2]);
+    }
+
+    #[test]
+    fn a_refused_grab_is_released_in_full() {
+        let calls = RefCell::new(Vec::new());
+        let failing = |grab: bool| {
+            calls.borrow_mut().push(grab);
+            !grab
+        };
+        assert!(!apply_or_roll_back(true, failing));
+        assert_eq!(*calls.borrow(), [true, false], "the partial grab is undone");
+
+        calls.borrow_mut().clear();
+        assert!(apply_or_roll_back(true, |grab| {
+            calls.borrow_mut().push(grab);
+            true
+        }));
+        assert!(apply_or_roll_back(false, |grab| {
+            calls.borrow_mut().push(grab);
+            true
+        }));
+        assert_eq!(*calls.borrow(), [true, false]);
+    }
+
+    #[test]
+    fn binding_id_outside_the_native_range_is_refused_on_entry() {
+        let binding = |id: u32| HotkeyBinding {
+            id,
+            key: b'G',
+            control: true,
+            alt: false,
+            shift: false,
+        };
+        assert!(binding(1).validate().is_ok());
+        assert!(binding(u32::try_from(i32::MAX).unwrap_or(1)).validate().is_ok());
+        assert!(binding(0).validate().is_err());
+        assert!(binding(u32::MAX).validate().is_err());
+        // Refused before any native backend is opened or any key is registered.
+        assert!(HotkeySession::open(&[binding(1), binding(u32::MAX)]).is_err());
+    }
 
     #[test]
     fn matches_xray_process_and_window_names_only() {
