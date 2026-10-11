@@ -6048,3 +6048,77 @@ mod tests {
         ))
     }
 }
+
+#[cfg(test)]
+mod relation_round_trip_tests {
+    use super::*;
+
+    /// Relation edit of a known faction on copies of real saves. The check is the decoded image: after the undo it must
+    /// be byte-identical to the original. The packed file is not compared, because the writer stores the container
+    /// uncompressed (the same for every edit, see PR #543).
+    /// `SSE_SOC_COPY_DIR=<copies> cargo test -p sse-xray soc_relations_round_trip_on_real_saves -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "needs SSE_SOC_COPY_DIR pointing at copies of real save files (ToT, Clear Sky, Call of Pripyat)"]
+    fn soc_relations_round_trip_on_real_saves() -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let root = std::env::var("SSE_SOC_COPY_DIR")?;
+        let mut paths: Vec<_> = std::fs::read_dir(&root)?
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|path| path.extension().is_some_and(|ext| ext == "sav" || ext == "scop"))
+            .collect();
+        paths.sort();
+        let (mut measured, mut failures) = (0_usize, Vec::new());
+        for path in paths {
+            let original = std::fs::read(&path)?;
+            let Ok(save) = Save::read(&original) else { continue };
+            let Some(factions) = CatalogBundleReader::for_format(save.format().id()).and_then(|b| b.factions.as_ref())
+            else {
+                continue;
+            };
+            let relations = save.actor_relations().unwrap_or_default();
+            let Some(&(id, old)) = relations.iter().find(|(id, _)| factions.resolve_numeric(*id).is_some()) else {
+                continue;
+            };
+            let key = factions.resolve_numeric(id).map(|f| f.key.clone()).unwrap_or_default();
+            let new = (old + 50).clamp(
+                factions.goodwill_min().unwrap_or(-5000),
+                factions.goodwill_max().unwrap_or(5000),
+            );
+            let set = |from: i32, to: i32| {
+                ChangeSet::new(vec![Change::SetFactionRelation {
+                    target_object: save.actor_id(),
+                    faction_key: key.clone(),
+                    old_value: Some(from),
+                    new_value: to,
+                }])
+            };
+            measured += 1;
+            let name = path.display().to_string();
+            let outcome = (|| -> std::result::Result<(), String> {
+                let edited =
+                    apply_with_catalog(&save, &set(old, new), Some(factions), None).map_err(|e| e.to_string())?;
+                let after = Save::read(edited.as_slice()).map_err(|e| e.to_string())?;
+                let readback = after.actor_relations().unwrap_or_default();
+                if readback.iter().find(|(i, _)| *i == id).map(|(_, v)| *v) != Some(new) {
+                    return Err("edited goodwill does not read back".to_owned());
+                }
+                let back =
+                    apply_with_catalog(&after, &set(new, old), Some(factions), None).map_err(|e| e.to_string())?;
+                let restored = Save::read(back.as_slice()).map_err(|e| e.to_string())?;
+                if restored.raw_image() != save.raw_image() {
+                    return Err("undo does not restore the decoded image".to_owned());
+                }
+                Ok(())
+            })();
+            if let Err(reason) = outcome {
+                failures.push(format!("{name}: {reason}"));
+            }
+        }
+        assert!(measured > 0, "no applicable saves found under SSE_SOC_COPY_DIR");
+        assert!(
+            failures.is_empty(),
+            "relation round trip failed:\n{}",
+            failures.join("\n")
+        );
+        Ok(())
+    }
+}
