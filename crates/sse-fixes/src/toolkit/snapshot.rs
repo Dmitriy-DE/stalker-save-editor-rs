@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use crate::catalog::GameFixCatalog;
 use crate::engine::GameFixEngine;
 use crate::fs_util::{check_no_links, AtomicFileWriter};
-use crate::models::GameTarget;
+use crate::models::{GameFixDefinition, GameTarget};
 use crate::toolkit::profile::{game_target_str, json_escape};
 use crate::toolkit::s2_mods::{ModToggleStatus, Stalker2ModToggle};
 use crate::toolkit::user_ltx::ManagedUserLtxSettings;
@@ -221,11 +221,49 @@ impl ToolkitSnapshotService {
         _catalog: &GameFixCatalog,
         snapshot_id: &str,
     ) -> Result<SnapshotRestoreReport> {
+        Self::restore_snapshot_with(game_directory, engine, &GameFixCatalog::try_get, snapshot_id)
+    }
+
+    /// Restores a snapshot with the fix definitions supplied by the caller. A snapshot of the state before the restore
+    /// is taken first; if the restore fails, that state is put back.
+    pub(crate) fn restore_snapshot_with<'d>(
+        game_directory: &Path,
+        engine: &GameFixEngine,
+        definition_of: &dyn Fn(&str) -> Option<&'d GameFixDefinition>,
+        snapshot_id: &str,
+    ) -> Result<SnapshotRestoreReport> {
+        let snapshot = Self::get_snapshot(game_directory, snapshot_id)?;
+        let before = Self::create_snapshot(
+            game_directory,
+            snapshot.game,
+            engine,
+            Some(&format!("Pre-restore snapshot before '{snapshot_id}'")),
+        )?;
+        match Self::restore_steps(game_directory, engine, definition_of, snapshot_id) {
+            Ok(report) => Ok(report),
+            Err(error) => Err(Self::rollback_failed(
+                game_directory,
+                engine,
+                definition_of,
+                &before.id,
+                error,
+                "Restore",
+            )),
+        }
+    }
+
+    /// The restore steps without any snapshot handling: fixes, then user.ltx, then S2 mods.
+    pub(crate) fn restore_steps<'d>(
+        game_directory: &Path,
+        engine: &GameFixEngine,
+        definition_of: &dyn Fn(&str) -> Option<&'d GameFixDefinition>,
+        snapshot_id: &str,
+    ) -> Result<SnapshotRestoreReport> {
         let snapshot = Self::get_snapshot(game_directory, snapshot_id)?;
 
         // Refuse before any change: a snapshot that cannot be fully restored must not uninstall fixes first.
         for fix in &snapshot.installed_fixes {
-            if GameFixCatalog::try_get(&fix.fix_id).is_none() {
+            if definition_of(&fix.fix_id).is_none() {
                 return Err(Error::Refused(format!(
                     "Fix '{}' required by snapshot is not available in catalog",
                     fix.fix_id
@@ -244,7 +282,7 @@ impl ToolkitSnapshotService {
             game_directory,
             &current_ids,
             &target_ids,
-            GameFixCatalog::try_get,
+            |id| definition_of(id),
             |id| format!("Fix '{id}' required by snapshot is not available in catalog"),
         )?;
 
@@ -279,6 +317,27 @@ impl ToolkitSnapshotService {
             user_ltx_updates_count,
             s2_mods_toggled,
         })
+    }
+
+    /// Puts back the snapshot taken before a failed change. When that fails too, the error says what was applied and
+    /// where the snapshot is, so the owner can restore it by hand. Technical details go to the message only.
+    pub(crate) fn rollback_failed<'d>(
+        game_directory: &Path,
+        engine: &GameFixEngine,
+        definition_of: &dyn Fn(&str) -> Option<&'d GameFixDefinition>,
+        snapshot_id: &str,
+        error: Error,
+        what: &str,
+    ) -> Error {
+        match Self::restore_steps(game_directory, engine, definition_of, snapshot_id) {
+            Ok(_) => Error::Refused(format!(
+                "{what} was not applied and the game was returned to snapshot {snapshot_id}: {error}"
+            )),
+            Err(restore_error) => Error::Refused(format!(
+                "{what} was not applied ({error}); returning to snapshot {snapshot_id} also failed ({restore_error}). The game may be partly changed. The snapshot is kept in {}: restore it by hand.",
+                Self::snapshots_dir(game_directory).display()
+            )),
+        }
     }
 }
 

@@ -147,12 +147,22 @@ impl ToolkitProfileService {
         game_directory: &Path,
         profile: &ToolkitProfile,
         engine: &GameFixEngine,
-        catalog: &GameFixCatalog,
+        _catalog: &GameFixCatalog,
+    ) -> Result<ProfileApplyResult> {
+        Self::apply_profile_with(game_directory, profile, engine, &GameFixCatalog::try_get)
+    }
+
+    /// Same as [`Self::apply_profile`], with the fix definitions supplied by the caller (tests use synthetic fixes).
+    pub(crate) fn apply_profile_with<'d>(
+        game_directory: &Path,
+        profile: &ToolkitProfile,
+        engine: &GameFixEngine,
+        definition_of: &dyn Fn(&str) -> Option<&'d GameFixDefinition>,
     ) -> Result<ProfileApplyResult> {
         ensure_xray_profile(profile.game)?;
         // Refuse before any change: a profile that cannot be fully applied must not uninstall fixes first.
         for target_id in &profile.target_fix_ids {
-            if GameFixCatalog::try_get(target_id).is_none() {
+            if definition_of(target_id).is_none() {
                 return Err(Error::Refused(format!(
                     "Fix '{target_id}' specified in profile '{}' not found in catalog",
                     profile.name
@@ -181,7 +191,7 @@ impl ToolkitProfileService {
                 game_directory,
                 &current_ids,
                 &profile.target_fix_ids,
-                GameFixCatalog::try_get,
+                |id| definition_of(id),
                 |id| {
                     format!(
                         "Fix '{id}' specified in profile '{}' not found in catalog",
@@ -218,12 +228,13 @@ impl ToolkitProfileService {
         let (installed, uninstalled, user_ltx_changes) = match steps() {
             Ok(done) => done,
             Err(error) => {
-                return Err(rollback_after_failed_switch(
+                return Err(ToolkitSnapshotService::rollback_failed(
                     game_directory,
                     engine,
-                    catalog,
+                    definition_of,
                     &pre_snapshot.id,
                     error,
+                    "Profile",
                 ));
             }
         };
@@ -460,26 +471,6 @@ fn game_target_from_name(name: &str) -> Option<GameTarget> {
 ///
 /// # Errors
 /// Returns the failing step's error, with any failed undo step reported with it.
-/// Restores the pre-switch snapshot after a failed profile switch. When the restore fails too, the error says what
-/// was applied and where the snapshot is, so the owner can restore it by hand.
-fn rollback_after_failed_switch(
-    game_directory: &Path,
-    engine: &GameFixEngine,
-    catalog: &GameFixCatalog,
-    snapshot_id: &str,
-    error: Error,
-) -> Error {
-    match ToolkitSnapshotService::restore_snapshot(game_directory, engine, catalog, snapshot_id) {
-        Ok(_) => Error::Refused(format!(
-            "Profile was not applied and the game was returned to snapshot {snapshot_id}: {error}"
-        )),
-        Err(restore_error) => Error::Refused(format!(
-            "Profile was not applied ({error}); returning to snapshot {snapshot_id} also failed ({restore_error}). The game may be partly changed. The snapshot is kept in the snapshots folder of {}: restore it by hand.",
-            game_directory.display()
-        )),
-    }
-}
-
 pub(crate) fn reconcile_fixes<'d>(
     engine: &GameFixEngine,
     game_directory: &Path,

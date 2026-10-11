@@ -9,6 +9,9 @@ pub mod s2_mods;
 pub mod snapshot;
 pub mod user_ltx;
 
+#[cfg(test)]
+mod rollback_tests;
+
 pub use audit::{AuditItem, FileClassification, ToolkitAuditReport, ToolkitInstallAudit};
 pub use profile::{ProfileApplyResult, StoredToolkitProfile, ToolkitProfile, ToolkitProfileService};
 pub use s2_mods::{ModToggleResult, ModToggleStatus, Stalker2ModToggle};
