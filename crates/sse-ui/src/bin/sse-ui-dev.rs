@@ -527,8 +527,7 @@ fn ci_i18n_buttons() -> Result<()> {
 const CLIPPED_RULE_ENFORCED: bool = false;
 
 /// Section buttons of the settings screen, by their source captions.
-const SETTINGS_SECTIONS: [&str; 9] = [
-    "ОБЩИЕ",
+const SETTINGS_SECTIONS: [&str; 8] = [
     "ИНТЕРФЕЙС",
     "ЗВУК",
     "ПУТИ",
