@@ -314,8 +314,13 @@ impl Default for Workspace {
 
 impl Workspace {
     /// Number of saves the last search found; zero before a search has finished.
+    /// The number the library list shows without a filter, so the footer and the list agree.
     pub(super) fn discovered_count(&self) -> usize {
-        self.lock().discovery.as_ref().map_or(0, |result| result.slots.len())
+        let state = self.lock();
+        library_slots(&state)
+            .iter()
+            .filter(|slot| slot.detection_error.is_none())
+            .count()
     }
 
     #[cfg(test)]
@@ -886,9 +891,14 @@ fn save_info(slot: &SaveSlot) -> String {
 
 fn save_integrity(slot: &SaveSlot, source_sha256: &str, bytes_read: usize, crc_status: &str, format: &str) -> String {
     let modified = display_file_time(slot.last_write_time_utc, false, true);
+    // A 64-character hash does not fit the narrow side panel on one line, so it wraps after 32 characters.
+    let wrapped_sha256 = match (source_sha256.get(..32), source_sha256.get(32..)) {
+        (Some(first), Some(second)) if !second.is_empty() => format!("{first}\n{second}"),
+        _ => source_sha256.to_owned(),
+    };
     tr(
         "Размер файла: {0} байт · Изменён: {1} UTC\nSHA-256: {2}\nCRC: {3} · Формат: {4} · Сборка игры: —",
-        &[&bytes_read, &modified, &source_sha256, &crc_status, &format],
+        &[&bytes_read, &modified, &wrapped_sha256, &crc_status, &format],
     )
 }
 
@@ -3647,8 +3657,12 @@ impl Inventory {
                     DraftPlacement::Slot(slot) => tr("Слот {0}", &[slot]),
                 };
             }
-            cx.tree
-                .set_text(id, &tr!("Размещение: {placement}", placement = placement))?;
+            let placement_text = if placement == t("Размещение не прочитано") {
+                placement.to_owned()
+            } else {
+                tr!("Размещение: {placement}", placement = placement)
+            };
+            cx.tree.set_text(id, &placement_text)?;
         }
         let upgrades = state
             .pending_upgrades
@@ -9954,6 +9968,20 @@ mod tests {
             Some(&75)
         );
         Ok(())
+    }
+
+    #[test]
+    fn integrity_wraps_the_sha256_so_it_fits_the_side_panel() {
+        let slot = fixture_slot("save.sav", "stalker-cs", "clear_sky");
+        let sha = "a".repeat(32) + &"b".repeat(32);
+        let text = super::save_integrity(&slot, &sha, 10, "ok", "stalker-cs");
+        let line = text
+            .lines()
+            .find(|line| line.starts_with("SHA-256: "))
+            .unwrap_or_default();
+        assert_eq!(line, format!("SHA-256: {}", "a".repeat(32)));
+        assert!(text.contains(&"b".repeat(32)));
+        assert!(text.lines().all(|line| line.chars().count() <= 60));
     }
 
     #[test]
