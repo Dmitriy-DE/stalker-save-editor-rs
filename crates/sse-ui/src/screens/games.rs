@@ -5257,9 +5257,10 @@ impl Encyclopedia {
         sse_app::tasks::spawn_named_detached("game-read", move || {
             let cache = encyclopedia_cache_directory();
             let result = (|| {
-                let content = sse_catalog::GameContentService::load(game, &directory, &cache, "ru")
-                    .map_err(|e| e.to_string())?
-                    .ok_or_else(|| "catalog_not_built".to_owned())?;
+                let content =
+                    sse_catalog::GameContentService::load(game, &directory, &cache, crate::strings::current_language())
+                        .map_err(|e| e.to_string())?
+                        .ok_or_else(|| "catalog_not_built".to_owned())?;
                 let bundle = content.bundle();
                 let mut entries = Vec::new();
                 for item in bundle.items.items() {
@@ -6195,7 +6196,6 @@ mod game_doctor_tests {
 #[cfg(test)]
 mod r4_053_encyclopedia_show_cost {
     use super::*;
-    use std::time::Instant;
 
     fn companion(target: GameTarget) -> Option<sse_content::CompanionGame> {
         match target {
@@ -6211,21 +6211,46 @@ mod r4_053_encyclopedia_show_cost {
     }
 
     #[test]
-    #[ignore = "reads installed games (read-only); run with --ignored --nocapture"]
-    fn encyclopedia_show_cost_per_install() {
-        let cache = std::env::temp_dir().join(format!("sse-r4-053-cache-{}", std::process::id()));
+    #[ignore = "reads installed games (read-only) and a temp cache; run with --ignored --nocapture"]
+    #[allow(clippy::expect_used)]
+    fn installed_catalog_builds_for_every_install() {
+        let cache = std::env::temp_dir().join(format!("sse-installed-catalog-{}", std::process::id()));
+        let mut rows = Vec::new();
         for install in discover_game_installations() {
             let Some(game) = companion(install.target) else {
                 continue;
             };
-            let mut times = Vec::new();
-            for _ in 0..2 {
-                let started = Instant::now();
-                let loaded = sse_catalog::GameContentService::load(game, &install.directory, &cache, "ru");
-                times.push((started.elapsed(), loaded.map(|content| content.is_some())));
-            }
-            eprintln!("R4-053 {}: {:?}", install.title, times);
+            let content = sse_catalog::GameContentService::load(
+                game,
+                &install.directory,
+                &cache,
+                crate::strings::current_language(),
+            )
+            .expect("content load must not fail")
+            .unwrap_or_else(|| panic!("{}: installed catalog was not built", install.title));
+            let bundle = content.bundle();
+            let status = content.status();
+            let unnamed = bundle
+                .items
+                .items()
+                .iter()
+                .filter(|item| item.display_name.as_deref().is_none_or(|name| name.trim().is_empty()))
+                .count();
+            assert!(
+                status.item_count > 0,
+                "{}: no items in the installed catalog",
+                install.title
+            );
+            rows.push(format!(
+                "{} | {} | {} | {} | {}",
+                install.title, status.item_count, status.upgrade_count, status.faction_count, unnamed
+            ));
         }
         let _ = std::fs::remove_dir_all(&cache);
+        eprintln!("INSTALLED-CATALOG game | items | upgrades | factions | unnamed items");
+        for row in &rows {
+            eprintln!("INSTALLED-CATALOG {row}");
+        }
+        assert!(!rows.is_empty(), "no installed games were discovered");
     }
 }
