@@ -608,6 +608,84 @@ impl Tree {
         Ok(labels)
     }
 
+    /// One-line texts (labels and buttons) that do not fit their own box or stick out of their parent's box.
+    ///
+    /// These never wrap, so a too-wide text is cut or runs into a neighbour.
+    /// Returns the text of each such label; an empty list means every label fits.
+    ///
+    /// # Errors
+    /// Returns an error when layout cannot be updated.
+    pub fn overflowing_text_labels(&mut self) -> Result<Vec<String>> {
+        self.update_layout()?;
+        let mut overflowing = Vec::new();
+        for index in 0..self.nodes.len() {
+            let id = WidgetId(index);
+            if !self.shown(id) {
+                continue;
+            }
+            let Some(node) = self.nodes.get(index) else { continue };
+            let (text, style, icon_inset) = match &node.content {
+                Content::Label { text, style } | Content::Button { text, style } => (text, *style, 0.0),
+                Content::IconButton { text, style, .. } if !text.is_empty() => (text, *style, 24.0),
+                _ => continue,
+            };
+            // Symbol-only texts (steppers, scroll marks) are glyphs drawn in a fixed box, not words that can run out.
+            if !text.chars().any(char::is_alphanumeric) {
+                continue;
+            }
+            let available =
+                u32_to_f32(node.rect.width) - node.style.padding.left - node.style.padding.right - icon_inset;
+            let too_wide = self.fonts.measure(text, style) > available.max(0.0) + 0.5;
+            let outside_parent = node
+                .parent
+                .and_then(|parent| self.nodes.get(parent.0))
+                .is_some_and(|parent| !rect_contains(parent.rect, node.rect));
+            if too_wide || outside_parent {
+                overflowing.push(text.clone());
+            }
+        }
+        Ok(overflowing)
+    }
+
+    /// Visible buttons and inputs that are cut off: partly outside the nearest clipping ancestor, or running into the
+    /// status line at `limit_y`. Returns their text (or "input") for each such node.
+    ///
+    /// # Errors
+    /// Returns an error when layout cannot be updated.
+    pub fn clipped_interactive_nodes(&mut self, limit_y: i64) -> Result<Vec<String>> {
+        self.update_layout()?;
+        let mut clipped = Vec::new();
+        for index in 0..self.nodes.len() {
+            let id = WidgetId(index);
+            if !self.shown(id) {
+                continue;
+            }
+            let Some(node) = self.nodes.get(index) else { continue };
+            let name = match &node.content {
+                Content::Button { text, .. } | Content::IconButton { text, .. } if !text.is_empty() => text.clone(),
+                Content::Input { .. } => "input".to_owned(),
+                _ => continue,
+            };
+            let (x0, y0, x1, y1) = edges(node.rect);
+            // Icon buttons are the sidebar's own column, which runs down past the status line by design.
+            let runs_into_status = !matches!(node.content, Content::IconButton { .. }) && y0 < limit_y && y1 > limit_y;
+            let mut cut = runs_into_status;
+            let mut ancestor = node.parent;
+            while let Some(parent) = ancestor.and_then(|parent| self.nodes.get(parent.0)) {
+                if parent.clip_children {
+                    let (cx0, cy0, cx1, cy1) = edges(parent.rect);
+                    cut |= x0 < cx0 || y0 < cy0 || x1 > cx1 || y1 > cy1;
+                    break;
+                }
+                ancestor = parent.parent;
+            }
+            if cut {
+                clipped.push(name);
+            }
+        }
+        Ok(clipped)
+    }
+
     /// Width of one line of text in pixels, for sizing controls to their labels.
     #[must_use]
     pub fn measure_text(&self, text: &str, style: TextStyle) -> f32 {
@@ -907,6 +985,12 @@ impl Tree {
             }
         }
         self.restyle(id)
+    }
+
+    /// The parent of a widget, or `None` for the root.
+    #[must_use]
+    pub fn parent(&self, id: WidgetId) -> Option<WidgetId> {
+        self.nodes.get(id.0).and_then(|node| node.parent)
     }
 
     /// Direct children of a widget, in the order they were added.
@@ -1649,6 +1733,12 @@ fn edges(rect: Rect) -> (i64, i64, i64, i64) {
         x.saturating_add(i64::from(rect.width)),
         y.saturating_add(i64::from(rect.height)),
     )
+}
+
+fn rect_contains(outer: Rect, inner: Rect) -> bool {
+    let (ox0, oy0, ox1, oy1) = edges(outer);
+    let (ix0, iy0, ix1, iy1) = edges(inner);
+    ox0 <= ix0 && oy0 <= iy0 && ix1 <= ox1 && iy1 <= oy1
 }
 
 fn touches(a: Rect, b: Rect) -> bool {

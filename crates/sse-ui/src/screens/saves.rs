@@ -209,6 +209,8 @@ const MAXIMUM_UPGRADE_ROWS: usize = 16;
 const MAX_BROWSER_SAVE_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_BROWSER_FILENAME_BYTES: usize = 240;
 const S2_LEGACY_EDIT_REFUSAL: &str = "This save was written by game version 1.0.x. It can be read, but its layout is not supported for editing; load it in the current game and save again.";
+/// Width the category labels may take on one row in the inventory's centre column, with their padding and gaps.
+const INVENTORY_CHIP_ROW_BUDGET: f32 = 600.0;
 const INVENTORY_CATEGORIES: [&str; 8] = [
     "ВСЕ",
     "ОРУЖИЕ",
@@ -3524,9 +3526,14 @@ impl Inventory {
                     cx.tree.set_visible(id, has_changes)?;
                 }
                 if let Some(id) = self.status {
+                    // The "ready" line only describes a draft that has changes; an empty draft gets the neutral line.
                     cx.tree.set_text(
                         id,
-                        t("Изменения подготовлены. Сохранение создаст бэкап, запишет файл и повторно его прочитает."),
+                        if has_changes {
+                            t("Изменения подготовлены. Сохранение создаст бэкап, запишет файл и повторно его прочитает.")
+                        } else {
+                            t("Изменения пока не подготовлены.")
+                        },
                     )?;
                 }
             }
@@ -6225,20 +6232,53 @@ impl Screen for Inventory {
         self.search = Some(TextInput::new("", inventory_search_config())?);
         self.clear_search = Some(style::button(cx.tree, filters, "Очистить", Button::Secondary)?);
         self.search_count = Some(style::label(cx.tree, filters, "Найдено: 0", Text::Note)?);
+        // One row while the labels fit the centre column (every language but German at 1366 px); two rows otherwise,
+        // so the list keeps its rows at 1366×768.
+        let category_style = Text::Note.style();
+        let category_width: f32 = INVENTORY_CATEGORIES
+            .iter()
+            .map(|category| cx.tree.measure_text(t(category), category_style) + 12.0)
+            .sum::<f32>()
+            + 4.0 * INVENTORY_CATEGORIES.len() as f32;
+        let chip_row_count = if category_width <= INVENTORY_CHIP_ROW_BUDGET {
+            1
+        } else {
+            2
+        };
         let chips = cx.tree.add(
             Some(inventory),
-            NodeKind::Row,
+            NodeKind::Column,
             Style {
-                gap: Size::new(4.0, 0.0),
-                align_items: crate::layout::Align::Center,
+                gap: Size::new(0.0, 4.0),
+                align_items: crate::layout::Align::Stretch,
                 ..Style::default()
             },
             Content::Panel,
             Look::default(),
         )?;
-        for category in INVENTORY_CATEGORIES {
-            let id = cx.tree.add(
+        let mut chip_rows = Vec::with_capacity(chip_row_count);
+        for _ in 0..chip_row_count {
+            chip_rows.push(cx.tree.add(
                 Some(chips),
+                NodeKind::Row,
+                Style {
+                    gap: Size::new(4.0, 0.0),
+                    align_items: crate::layout::Align::Center,
+                    ..Style::default()
+                },
+                Content::Panel,
+                Look::default(),
+            )?);
+        }
+        let per_row = INVENTORY_CATEGORIES.len().div_ceil(chip_row_count);
+        for (index, category) in INVENTORY_CATEGORIES.into_iter().enumerate() {
+            let id = cx.tree.add(
+                Some(
+                    chip_rows
+                        .get(index.checked_div(per_row).unwrap_or(0))
+                        .copied()
+                        .unwrap_or(chips),
+                ),
                 NodeKind::Leaf,
                 Style {
                     min: crate::layout::Size::new(0.0, 28.0),
@@ -6390,6 +6430,24 @@ impl Screen for Inventory {
             set_fixed_column_style(cx.tree, stepper, INVENTORY_STEPPER_WIDTH)?;
             let decrease = style::button(cx.tree, stepper, "−", Button::Secondary)?;
             let increase = style::button(cx.tree, stepper, "+", Button::Secondary)?;
+            // The two steppers share the fixed 64 px column; their own padding must not push the pair past its edge.
+            for id in [decrease, increase] {
+                cx.tree.set_style(
+                    id,
+                    Style {
+                        grow: 1.0,
+                        shrink: 1.0,
+                        min: Size::new(0.0, 0.0),
+                        padding: crate::layout::Edges {
+                            left: 2.0,
+                            top: 0.0,
+                            right: 2.0,
+                            bottom: 0.0,
+                        },
+                        ..Style::default()
+                    },
+                )?;
+            }
             self.rows.push(ItemControls {
                 row: stack,
                 label,
@@ -6405,10 +6463,18 @@ impl Screen for Inventory {
         }
         let pages = style::row(cx.tree, inventory)?;
         self.previous = Some(library_icon_button(cx.tree, pages, Icon::D2ArrowLeft)?);
-        self.page_range = Some(style::label(cx.tree, pages, "", Text::Note)?);
+        let page_range = style::label(cx.tree, pages, "", Text::Note)?;
+        cx.tree.set_style(
+            page_range,
+            Style {
+                shrink: 0.0,
+                ..Style::default()
+            },
+        )?;
+        self.page_range = Some(page_range);
         self.next = Some(library_icon_button(cx.tree, pages, Icon::D2ArrowRight)?);
         self.export = Some(style::button(cx.tree, inventory, "Сохранить", Button::Primary)?);
-        let status = style::label(cx.tree, pages, "Изменения пока не подготовлены.", Text::Note)?;
+        let status = paragraph(cx.tree, pages, "Изменения пока не подготовлены.", Text::Note)?;
         cx.tree.set_style(
             status,
             Style {
@@ -6483,12 +6549,7 @@ impl Screen for Inventory {
         )?;
         self.inspector_summary = Some(inspector_summary);
         self.inspector_condition_heading = Some(style::label(cx.tree, inspector, "ПРОЧНОСТЬ", Text::Heading)?);
-        self.inspector_condition = Some(style::label(
-            cx.tree,
-            inspector,
-            "Состояние / прочность: —",
-            Text::Value,
-        )?);
+        self.inspector_condition = Some(paragraph(cx.tree, inspector, "Состояние / прочность: —", Text::Value)?);
         let condition_row = style::row(cx.tree, inspector)?;
         for (percent, label) in [(100_u8, "100%"), (75, "75%"), (50, "50%")] {
             let button = style::button(cx.tree, condition_row, label, Button::Secondary)?;
@@ -6791,6 +6852,7 @@ impl Screen for Inventory {
             },
         )?;
         self.actions_panel = Some(actions);
+        // Two equal buttons share the panel width on one row at every window size.
         let edit_actions = cx.tree.add(
             Some(actions),
             NodeKind::Row,

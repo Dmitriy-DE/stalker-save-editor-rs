@@ -1783,7 +1783,7 @@ impl Shell {
                     shrink: 1.0,
                     ..Style::default()
                 },
-                Content::Label {
+                Content::Paragraph {
                     text: String::new(),
                     style: TextStyle::new(Face::Body, 12.0),
                 },
@@ -2519,6 +2519,14 @@ impl Shell {
         &mut self.app
     }
 
+    /// Top edge of the status line: everything above it is the content area.
+    ///
+    /// # Errors
+    /// Returns an error when the status line is not in the tree.
+    pub fn status_line_top(&self, tree: &Tree) -> Result<i64> {
+        Ok(i64::from(tree.rect(self.status)?.y))
+    }
+
     /// Installs the event proxy after a headless shell has been built.
     pub fn set_proxy(&mut self, proxy: Proxy<AppMessage>) {
         self.proxy = Some(proxy);
@@ -3143,7 +3151,14 @@ impl Shell {
             tree.update_layout()?;
             let area = tree.rect(self.content)?;
             let top = i64::from(tree.rect(host)?.y);
-            let bottom = i64::from(area.y).saturating_add(i64::from(area.height));
+            // The status line is a bar of its own: the content must end where that bar starts, not where its text does.
+            let content_bottom = i64::from(area.y).saturating_add(i64::from(area.height));
+            let bar_top = tree
+                .parent(self.status)
+                .map(|bar| tree.rect(bar).map(|rect| i64::from(rect.y)))
+                .transpose()?
+                .unwrap_or(content_bottom);
+            let bottom = content_bottom.min(bar_top);
             let visible = u32::try_from(bottom.saturating_sub(top).max(0)).unwrap_or(0) as f32;
             Style {
                 grow: 1.0,
