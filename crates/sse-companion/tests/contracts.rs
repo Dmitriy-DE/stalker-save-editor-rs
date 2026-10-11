@@ -593,20 +593,22 @@ fn enhanced_edition_staging_writes_archive_and_reference_metadata() -> Result<()
     let parent = temp_dir("sse-companion-ee");
     let output = parent.join("package");
     let started = Instant::now();
-    sse_companion::bundled::stage_enhanced_edition(
-        &output,
-        sse_companion::bundled::Game::CallOfPripyat,
-        "1.0.0",
-        "Save Editor Team",
-        "Save Editor Companion",
-        "Companion mod",
-    )?;
+    let game = sse_companion::bundled::Game::CallOfPripyat;
+    sse_companion::bundled::stage_enhanced_edition(&output, game, "1.0.0", "Save Editor Team", None)?;
     let staging_elapsed = started.elapsed();
     let metadata = fs::read_to_string(output.join("desc.json"))?;
     assert!(metadata.contains("\"game\": \"cop\""));
-    assert!(metadata.contains("\"package_file\": \"save_editor_companion_cop.xrp\""));
+    assert!(metadata.contains("\"package_file\": \"upload/save_editor_companion_cop.pack\""));
     assert!(metadata.contains("\"game_code\": \"COP\""));
-    let archive_bytes = fs::read(output.join("save_editor_companion_cop.xrp"))?;
+    assert!(metadata.contains("\"preview\": \"preview.png\""));
+    assert!(metadata.contains("\"starts_in_game\": false"));
+    assert!(output.join("NOT-READY.txt").is_file());
+    // GSC's uploader takes a folder with nothing but `.pack` and `.mp4` files.
+    let uploaded = fs::read_dir(output.join("upload"))?
+        .map(|entry| entry.map(|entry| entry.file_name().to_string_lossy().into_owned()))
+        .collect::<Result<Vec<_>, _>>()?;
+    assert_eq!(uploaded, ["save_editor_companion_cop.pack"]);
+    let archive_bytes = fs::read(output.join("upload/save_editor_companion_cop.pack"))?;
     eprintln!(
         "EE staging sample: elapsed_us={}, archive_bytes={}",
         staging_elapsed.as_micros(),
@@ -617,19 +619,64 @@ fn enhanced_edition_staging_writes_archive_and_reference_metadata() -> Result<()
         .entries()
         .iter()
         .any(|entry| entry.name == "gamedata/scripts/save_editor_companion.script"));
-    for expected in sse_companion::bundled::payloads(sse_companion::bundled::Game::CallOfPripyat)? {
+    for expected in sse_companion::bundled::payloads(game)? {
         assert_eq!(archive.read_file(&expected.relative_path)?, expected.bytes);
     }
-    assert!(sse_companion::bundled::stage_enhanced_edition(
-        &output,
-        sse_companion::bundled::Game::CallOfPripyat,
-        "1.0.0",
-        "author",
-        "title",
-        "desc",
-    )
-    .is_err());
+    assert!(sse_companion::bundled::stage_enhanced_edition(&output, game, "1.0.0", "author", None).is_err());
+
+    // With the files that start the mod the package is ready and carries them in the archive.
+    let hooked_output = parent.join("hooked");
+    let mut hooked = sse_companion::bundled::ee_payloads(game)?;
+    hooked.push(sse_companion::installer::PayloadFile::new(
+        "gamedata/scripts/bind_stalker.script",
+        b"hooked".to_vec(),
+    ));
+    sse_companion::bundled::stage_enhanced_edition(&hooked_output, game, "1.0.0", "author", Some(hooked))?;
+    assert!(!hooked_output.join("NOT-READY.txt").exists());
+    assert!(fs::read_to_string(hooked_output.join("desc.json"))?.contains("\"starts_in_game\": true"));
+    let hooked_bytes = fs::read(hooked_output.join("upload/save_editor_companion_cop.pack"))?;
+    let hooked_archive = sse_content::XRayArchive::from_slice(&hooked_bytes, None, None)?;
+    assert_eq!(
+        hooked_archive.read_file("gamedata/scripts/bind_stalker.script")?,
+        b"hooked"
+    );
     let _ = fs::remove_dir_all(parent);
+    Ok(())
+}
+
+#[test]
+fn workshop_listing_is_complete_for_every_enhanced_edition() -> Result<(), Box<dyn std::error::Error>> {
+    use sse_companion::bundled::Game;
+    for (game, name, config_folder) in [
+        (Game::ShadowOfChernobyl, "Shadow of Chornobyl", "gamedata/config/"),
+        (Game::ClearSky, "Clear Sky", "gamedata/configs/"),
+        (Game::CallOfPripyat, "Call of Prypiat", "gamedata/configs/"),
+    ] {
+        let listing = sse_companion::bundled::workshop_listing(game);
+        assert!(listing.title.contains(name));
+        assert!(!listing.short_description.contains('\n') && !listing.short_description.contains('"'));
+        assert!(listing.description.contains(name) && !listing.description.contains("{game"));
+        assert!(listing
+            .description
+            .contains("github.com/Dmitriy-DE/stalker-save-editor-rs"));
+        assert!(listing
+            .description
+            .contains("not made, endorsed or supported by GSC Game World"));
+        assert!(listing
+            .description
+            .contains("не создан, не одобрен и не поддерживается GSC Game World"));
+        assert!(listing.changelog.contains("2.0.0"));
+        // PNG, square, at least 512 pixels, under 1 MB; the JPEG twin under 1 MB too.
+        let preview = sse_codecs::png::decode(listing.preview_png)?;
+        assert!(preview.width == preview.height && preview.width >= 512);
+        assert!(listing.preview_png.len() < 1_000_000 && listing.preview_jpg.len() < 1_000_000);
+        assert!(listing.preview_jpg.starts_with(&[0xFF, 0xD8]));
+        // Each game reads the mod's configs from its own config folder.
+        assert!(sse_companion::bundled::ee_payloads(game)?
+            .iter()
+            .filter(|file| file.relative_path.contains("/misc/save_editor_companion.ltx"))
+            .all(|file| file.relative_path.starts_with(config_folder)));
+    }
     Ok(())
 }
 

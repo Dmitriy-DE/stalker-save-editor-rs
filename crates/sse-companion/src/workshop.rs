@@ -1,6 +1,11 @@
 //! Steam Workshop package identifiers and read-only installation status checks.
 use std::path::{Path, PathBuf};
 
+use crate::bundled::Game;
+
+/// Largest subscribed archive that is read for the status check.
+const MAX_ARCHIVE_BYTES: u64 = 64 * 1024 * 1024;
+
 /// Workshop package metadata for one Enhanced Edition companion.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EnhancedEditionPackage {
@@ -10,6 +15,8 @@ pub struct EnhancedEditionPackage {
     pub published_file_id: Option<&'static str>,
     /// X-Ray archive that must be present in the subscribed item directory.
     pub archive_name: &'static str,
+    /// The game whose bundled mod files the archive carries.
+    pub game: Game,
 }
 
 /// Three Enhanced Edition Workshop slots, intentionally unpublished until the owner assigns IDs.
@@ -17,17 +24,20 @@ pub const EE_WORKSHOP_PACKAGES: [EnhancedEditionPackage; 3] = [
     EnhancedEditionPackage {
         app_id: 2_427_410,
         published_file_id: None,
-        archive_name: "save_editor_companion_soc.xrp",
+        archive_name: "save_editor_companion_soc.pack",
+        game: Game::ShadowOfChernobyl,
     },
     EnhancedEditionPackage {
         app_id: 2_427_420,
         published_file_id: None,
-        archive_name: "save_editor_companion_cs.xrp",
+        archive_name: "save_editor_companion_cs.pack",
+        game: Game::ClearSky,
     },
     EnhancedEditionPackage {
         app_id: 2_427_430,
         published_file_id: None,
-        archive_name: "save_editor_companion_cop.xrp",
+        archive_name: "save_editor_companion_cop.pack",
+        game: Game::CallOfPripyat,
     },
 ];
 
@@ -40,9 +50,9 @@ pub enum WorkshopInstallState {
     NotSteamInstall,
     /// The item directory does not exist for the selected Steam app.
     NotSubscribed,
-    /// The subscribed descriptor and expected archive match the running package version.
+    /// The subscribed archive carries every mod file of this editor, byte for byte.
     UpToDate,
-    /// The item exists, but its descriptor, version, or archive does not match.
+    /// The item exists, but its archive is missing, unreadable, or carries other mod files.
     Outdated,
 }
 
@@ -58,12 +68,11 @@ pub fn package_for_release(release: &str) -> Option<&'static EnhancedEditionPack
 }
 
 /// Read-only status check for the Workshop package belonging to the selected game install.
+///
+/// A subscribed item holds only the archive (GSC's uploader takes nothing but `.pack` and `.mp4` files), so the
+/// check opens the archive and compares the mod files in it with the ones this editor ships.
 #[must_use]
-pub fn inspect_ee_install(
-    install_directory: &Path,
-    package: &EnhancedEditionPackage,
-    expected_version: &str,
-) -> WorkshopInstallState {
+pub fn inspect_ee_install(install_directory: &Path, package: &EnhancedEditionPackage) -> WorkshopInstallState {
     let Some(steamapps) = steamapps_root(install_directory) else {
         return WorkshopInstallState::NotSteamInstall;
     };
@@ -83,32 +92,34 @@ pub fn inspect_ee_install(
     if !item_metadata.file_type().is_dir() {
         return WorkshopInstallState::Outdated;
     }
-
-    let descriptor = item_directory.join("desc.json");
-    let Ok(metadata) = std::fs::symlink_metadata(&descriptor) else {
-        return WorkshopInstallState::Outdated;
-    };
-    if !metadata.file_type().is_file() || metadata.len() > 64 * 1024 {
-        return WorkshopInstallState::Outdated;
-    }
-    let Ok(bytes) = std::fs::read(&descriptor) else {
-        return WorkshopInstallState::Outdated;
-    };
-    let Some((version, archive_name)) = descriptor_fields(&bytes) else {
-        return WorkshopInstallState::Outdated;
-    };
-    let archive = item_directory.join(&archive_name);
-    let Ok(archive_metadata) = std::fs::symlink_metadata(archive) else {
-        return WorkshopInstallState::Outdated;
-    };
-    if !archive_metadata.file_type().is_file() || archive_name != package.archive_name {
-        return WorkshopInstallState::Outdated;
-    }
-    if version == expected_version {
+    if archive_carries_shipped_files(&item_directory.join(package.archive_name), package.game) {
         WorkshopInstallState::UpToDate
     } else {
         WorkshopInstallState::Outdated
     }
+}
+
+fn archive_carries_shipped_files(archive_path: &Path, game: Game) -> bool {
+    let Ok(metadata) = std::fs::symlink_metadata(archive_path) else {
+        return false;
+    };
+    if !metadata.file_type().is_file() || metadata.len() > MAX_ARCHIVE_BYTES {
+        return false;
+    }
+    let Ok(bytes) = std::fs::read(archive_path) else {
+        return false;
+    };
+    let Ok(archive) = sse_content::XRayArchive::from_slice(&bytes, None, None) else {
+        return false;
+    };
+    let Ok(shipped) = crate::bundled::ee_payloads(game) else {
+        return false;
+    };
+    shipped.iter().all(|file| {
+        archive
+            .read_file(&file.relative_path)
+            .is_ok_and(|found| found == file.bytes)
+    })
 }
 
 /// Build a Steam Community URL only for a positive numeric published item ID.
@@ -137,35 +148,4 @@ fn steamapps_root(install_directory: &Path) -> Option<PathBuf> {
         }
         Some(steamapps.to_path_buf())
     })
-}
-
-fn descriptor_fields(bytes: &[u8]) -> Option<(String, String)> {
-    let mut reader = sse_codecs::json::Reader::new(bytes);
-    let mut version = None;
-    let mut package_file = None;
-    loop {
-        let event = match reader.next_event() {
-            Ok(Some(event)) => event,
-            Ok(None) => break,
-            Err(_) => return None,
-        };
-        if let sse_codecs::json::Event::Key(key) = event {
-            match key.as_str() {
-                "version" => match reader.next_event() {
-                    Ok(Some(sse_codecs::json::Event::String(value))) => version = Some(value.into_owned()),
-                    _ => return None,
-                },
-                "package_file" => match reader.next_event() {
-                    Ok(Some(sse_codecs::json::Event::String(value))) => package_file = Some(value.into_owned()),
-                    _ => return None,
-                },
-                _ => {
-                    if reader.skip_value().is_err() {
-                        return None;
-                    }
-                }
-            }
-        }
-    }
-    Some((version?, package_file?))
 }

@@ -99,7 +99,8 @@ See [docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md).
 - Steam Cloud writes are explicit transactions that check the file hash first. An uncertain write is never retried
   automatically.
 - Reads achievements.
-- Builds Steam Workshop packages for the Enhanced Editions (developer tool `sse-ui-dev --package-ee`).
+- Builds Steam Workshop packages for the Enhanced Editions (developer tool `sse-ui-dev --package-ee`,
+  [docs/WORKSHOP.md](docs/WORKSHOP.md)). Not uploaded yet and not checked in a game.
 
 ### Updates
 

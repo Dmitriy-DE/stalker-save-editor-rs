@@ -37,10 +37,25 @@ fn developer_binary_stages_enhanced_edition_packages() {
         "package staging failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(output_dir.join("save_editor_companion_cs.xrp").is_file());
+    assert!(output_dir.join("upload/save_editor_companion_cs.pack").is_file());
+    let uploaded: Vec<_> = std::fs::read_dir(output_dir.join("upload"))
+        .expect("upload folder exists")
+        .collect();
+    assert_eq!(
+        uploaded.len(),
+        1,
+        "the uploaded folder holds the archive and nothing else"
+    );
+    assert!(output_dir.join("preview.png").is_file());
+    assert!(output_dir.join("listing/description.txt").is_file());
+    assert!(
+        output_dir.join("NOT-READY.txt").is_file(),
+        "a package staged without the game's own files must say it does not start in the game"
+    );
     let descriptor = std::fs::read_to_string(output_dir.join("desc.json")).expect("descriptor exists");
     assert!(descriptor.contains("\"game\": \"cs\""));
     assert!(descriptor.contains("\"published_file_id\": 0"));
+    assert!(descriptor.contains("\"starts_in_game\": false"));
     assert!(descriptor.contains(&format!("\"version\": \"{}\"", env!("CARGO_PKG_VERSION"))));
     assert!(data_dir.is_dir(), "dev binary should use the isolated data directory");
     std::fs::remove_dir_all(root).expect("temporary package should be removed");

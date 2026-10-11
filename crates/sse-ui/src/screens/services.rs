@@ -408,9 +408,8 @@ impl Companion {
             let result = selected.and_then(|(game, directory)| {
                 let root = companion_root(&game, &directory)?;
                 let local_version = installed_version(&root);
-                let workshop = sse_companion::workshop::package_for_release(&game).map(|package| {
-                    sse_companion::workshop::inspect_ee_install(&directory, package, env!("CARGO_PKG_VERSION"))
-                });
+                let workshop = sse_companion::workshop::package_for_release(&game)
+                    .map(|package| sse_companion::workshop::inspect_ee_install(&directory, package));
                 Ok(CompanionStatus {
                     local_version,
                     workshop,
