@@ -32,8 +32,8 @@ reference:
 | Ammunition stacks | Verified | Experimental |
 | Add items | Verified | Experimental |
 | Remove items | Verified | Experimental |
-| Equipment condition | Experimental | Shadow of Chernobyl EE: Experimental (not loaded in the game yet); Clear Sky EE and Call of Pripyat EE: Unsupported (waiting for saves) |
-| Item placement | Experimental | Unsupported |
+| Equipment condition | Experimental | Shadow of Chernobyl EE, Clear Sky EE: Experimental (not loaded in the game yet); Call of Pripyat EE: Unsupported (one UPDATE byte changes on restore) |
+| Item placement | Experimental | Call of Pripyat EE: Experimental (not loaded in the game yet); Shadow of Chernobyl EE, Clear Sky EE: Unsupported (no slot item with a proven base slot in the copies checked) |
 | Actor faction | Experimental | Unsupported |
 | Faction relations | Experimental | Unsupported |
 | Move items to or from a stash | Experimental | Unsupported |
