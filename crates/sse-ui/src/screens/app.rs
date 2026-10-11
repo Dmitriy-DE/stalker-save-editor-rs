@@ -542,9 +542,12 @@ fn repaint_theme(tree: &mut crate::widget::Tree, old: crate::theme::Theme, new: 
     pairs.extend(old.colors.state.into_iter().zip(new.colors.state));
     pairs.push((old.colors.selection, new.colors.selection));
     pairs.push((old.colors.focus_ring, new.colors.focus_ring));
-    for (from, to) in pairs {
-        tree.replace_color(style::rgb(from), style::rgb(to));
-    }
+    let pairs: Vec<_> = pairs
+        .into_iter()
+        .map(|(from, to)| (style::rgb(from), style::rgb(to)))
+        .collect();
+    // One pass over the old colours: a colour the new theme shares with another slot is not repainted twice.
+    tree.replace_colors(&pairs);
     tree.damage_all();
 }
 
@@ -1959,6 +1962,97 @@ mod tests {
     use crate::screens::saves::Workspace;
     use crate::widget::{Content, Look, Tree};
     use std::path::PathBuf;
+
+    #[test]
+    fn theme_switch_repaints_every_button_state() -> sse_core::Result<()> {
+        use crate::widget::DisabledLook;
+
+        let old = crate::theme::palette("zone", "amber");
+        let new = crate::theme::palette("zone", "blue");
+        let [accent, dim, hover, _] = old.colors.accent.map(style::rgb);
+        let [new_accent, new_dim, new_hover, _] = new.colors.accent.map(style::rgb);
+        let ring = style::rgb(old.colors.focus_ring);
+        let new_ring = style::rgb(new.colors.focus_ring);
+        assert!(accent != new_accent && dim != new_dim && hover != new_hover && ring != new_ring);
+        let untouched = Color::rgba(1, 2, 3, 255);
+
+        // Every colour field of a button state holds an accent colour of the old theme.
+        let look = |accent: Color, dim: Color, hover: Color, ring: Color| Look {
+            fill: Some(accent),
+            hover_fill: Some(hover),
+            pressed_fill: Some(dim),
+            border: Some((accent, 1.0)),
+            accent_bar: Some((accent, 3.0)),
+            text: accent,
+            hover_text: Some(hover),
+            hover_border: Some((hover, 1.0)),
+            pressed_border: Some((dim, 1.0)),
+            pressed_text: Some(dim),
+            focus_ring: Some((ring, 2.0, 2.0)),
+            disabled: Some(DisabledLook {
+                fill: dim,
+                border: accent,
+                text: hover,
+            }),
+            ..Look::default()
+        };
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let button = tree.add(
+            Some(host),
+            NodeKind::Leaf,
+            Style::default(),
+            Content::Button {
+                text: "OK".to_owned(),
+                style: TextStyle::new(Face::Heading, 14.0),
+            },
+            look(accent, dim, hover, ring),
+        )?;
+        let other = tree.add(
+            Some(host),
+            NodeKind::Leaf,
+            Style::default(),
+            Content::Panel,
+            look(untouched, untouched, untouched, untouched),
+        )?;
+
+        super::repaint_theme(&mut tree, old, new);
+
+        assert_eq!(*tree.look(button)?, look(new_accent, new_dim, new_hover, new_ring));
+        assert_eq!(
+            *tree.look(other)?,
+            look(untouched, untouched, untouched, untouched),
+            "colours outside the palette stay as they were"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn several_colours_are_replaced_in_one_pass_without_chaining() -> sse_core::Result<()> {
+        let [a, b, c] = [1_u8, 2, 3].map(|value| Color::rgba(value, value, value, 255));
+        let mut tree = Tree::new(Fonts::bundled()?, a);
+        let add = |tree: &mut Tree, parent: Option<crate::widget::WidgetId>, fill: Color| {
+            let look = Look {
+                fill: Some(fill),
+                ..Look::default()
+            };
+            tree.add(parent, NodeKind::Column, Style::default(), Content::Panel, look)
+        };
+        let first = add(&mut tree, None, a)?;
+        let second = add(&mut tree, Some(first), b)?;
+
+        tree.replace_colors(&[(a, b), (b, c)]);
+
+        assert_eq!(tree.look(first)?.fill, Some(b));
+        assert_eq!(tree.look(second)?.fill, Some(c));
+        Ok(())
+    }
 
     #[test]
     fn startup_appearance_applies_saved_theme_accent_and_scale() -> sse_core::Result<()> {
