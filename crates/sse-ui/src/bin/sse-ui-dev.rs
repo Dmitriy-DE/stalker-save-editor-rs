@@ -516,10 +516,7 @@ const SETTINGS_SECTIONS: [&str; 9] = [
 
 /// Known findings that need a layout change of the whole inventory screen (the side column is taller than the window
 /// at 1366×768, so the pinned action row is pushed down). Remove each entry when that change lands.
-const TEXT_OVERFLOW_KNOWN: [(ScreenId, &str); 5] = [
-    // Capabilities matrix row name: the cell is narrow and labels are vertically centred, which a wrapping paragraph
-    // cannot do yet. Remove when the matrix layout changes.
-    (ScreenId::Capabilities, "Upgrades und Modifikationen"),
+const TEXT_OVERFLOW_KNOWN: [(ScreenId, &str); 4] = [
     (ScreenId::Inventory, "УДАЛИТЬ ПРЕДМЕТ"),
     (ScreenId::Inventory, "+ ДОБАВИТЬ ПРЕДМЕТ"),
     (ScreenId::Inventory, "GEGENSTAND ENTFERNEN"),
