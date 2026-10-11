@@ -1935,7 +1935,7 @@
     "ru": "АРТ.",
     "uk": "АРТ.",
     "en": "ART.",
-    "de": "ART.",
+    "de": "Art.",
     "fr": "ART.",
     "it": "ART.",
     "es": "ART.",
@@ -1984,11 +1984,11 @@
   },
   "Апгрейд": {
     "uk": "Апгрейд",
-    "de": "Upgrade"
+    "de": "Verbesserung"
   },
   "Аптечка": {
     "uk": "Аптечка",
-    "de": "Medkit"
+    "de": "Medizinkasten"
   },
   "Артефакт": {
     "uk": "Артефакт"
@@ -2056,7 +2056,9 @@
     "es": "Guarda",
     "it": "Guardia",
     "pl": "Straż",
-    "cs": "Stráž"
+    "cs": "Stráž",
+    "pt-BR": "Ala",
+    "tr": "Koğuş"
   },
   "Ветеран": {
     "uk": "Ветеран",
@@ -2140,7 +2142,7 @@
     "ru": "Журнал: {0}",
     "uk": "Журнал: {0}",
     "en": "Journal: {0}",
-    "de": "Journal: {0}",
+    "de": "Tagebuch: {0}",
     "fr": "Journal : {0}",
     "it": "Registro: {0}",
     "es": "Diario: {0}",
@@ -2207,7 +2209,7 @@
     "ru": "КВЕСТ",
     "uk": "КВЕСТ",
     "en": "QUEST",
-    "de": "QUEST",
+    "de": "AUFTRAG",
     "fr": "QUÊTE",
     "it": "MISSIONE",
     "es": "MISIÓN",
@@ -2286,12 +2288,12 @@
     "uk": "Назад"
   },
   "Нейтрал": {
-    "uk": "Нейтрал",
+    "uk": "Нейтральний",
     "de": "Neutral",
     "es": "Neutral"
   },
   "Нейтрал (0)": {
-    "uk": "Нейтрал (0)",
+    "uk": "Нейтральний (0)",
     "de": "Neutral (0)",
     "es": "Neutral (0)"
   },
@@ -2329,7 +2331,8 @@
     "uk": "ПОГОДА"
   },
   "ПРЕДМЕТ": {
-    "uk": "ПРЕДМЕТ"
+    "uk": "ПРЕДМЕТ",
+    "pt-BR": "OBJETO"
   },
   "ПРОБЛЕМА": {
     "uk": "ПРОБЛЕМА",
@@ -2388,7 +2391,8 @@
     "uk": "Пояс"
   },
   "Предмет": {
-    "uk": "Предмет"
+    "uk": "Предмет",
+    "pt-BR": "Objeto"
   },
   "Предмет {0}": {
     "ru": "Предмет {0}",
@@ -2400,7 +2404,7 @@
     "es": "Objeto {0}",
     "pl": "Przedmiot {0}",
     "cs": "Předmět {0}",
-    "pt-BR": "Item {0}",
+    "pt-BR": "Objeto {0}",
     "tr": "Eşya {0}",
     "ja": "アイテム {0}",
     "ko": "아이템 {0}",
@@ -2470,9 +2474,10 @@
   },
   "СТАТУС": {
     "uk": "СТАТУС",
-    "de": "STATUS",
+    "de": "ZUSTAND",
     "pl": "STAN",
-    "cs": "STAV"
+    "cs": "STAV",
+    "pt-BR": "ESTADO"
   },
   "Сайга Д-12": {
     "uk": "Сайга Д-12",
@@ -2488,45 +2493,50 @@
   },
   "Слот": {
     "uk": "Слот",
-    "de": "Slot",
+    "de": "Platz",
     "it": "Slot",
     "pl": "Miejsce",
-    "cs": "Pozice"
+    "cs": "Pozice",
+    "pt-BR": "Espaço"
   },
   "Слот {0}": {
     "uk": "Слот {0}",
-    "de": "Slot {0}",
+    "de": "Platz {0}",
     "it": "Slot {0}",
     "pl": "Miejsce {0}",
-    "cs": "Pozice {0}"
+    "cs": "Pozice {0}",
+    "pt-BR": "Espaço {0}"
   },
   "Слот: {0}": {
     "uk": "Слот: {0}",
-    "de": "Slot: {0}",
+    "de": "Platz: {0}",
     "it": "Slot: {0}",
     "pl": "Miejsce: {0}",
     "cs": "Pozice: {0}"
   },
   "Статус": {
     "uk": "Статус",
-    "de": "Status",
+    "de": "Zustand",
     "pl": "Stan",
-    "cs": "Stav"
+    "cs": "Stav",
+    "pt-BR": "Estado"
   },
   "Статус Steam Cloud: {0}": {
     "uk": "Статус Steam Cloud: {0}"
   },
   "Статус: {0}": {
     "uk": "Статус: {0}",
-    "de": "Status: {0}",
+    "de": "Zustand: {0}",
     "pl": "Stan: {0}",
-    "cs": "Stav: {0}"
+    "cs": "Stav: {0}",
+    "pt-BR": "Estado: {0}"
   },
   "Статус<br>{0}": {
     "uk": "Статус<br>{0}",
-    "de": "Status<br>{0}",
+    "de": "Zustand<br>{0}",
     "pl": "Stan<br>{0}",
-    "cs": "Stav<br>{0}"
+    "cs": "Stav<br>{0}",
+    "pt-BR": "Estado<br>{0}"
   },
   "Ствол": {
     "uk": "Ствол"
@@ -2598,7 +2608,12 @@
     "es": "Ucraniano",
     "it": "Ucraino",
     "pl": "Ukraiński",
-    "cs": "Ukrajinština"
+    "cs": "Ukrajinština",
+    "tr": "Ukraynaca",
+    "ja": "ウクライナ語",
+    "ko": "우크라이나어",
+    "zh-CN": "乌克兰语",
+    "zh-TW": "烏克蘭語"
   },
   "Файл": {
     "uk": "Файл",
@@ -2675,7 +2690,8 @@
     "uk": "пояс"
   },
   "предмет": {
-    "uk": "предмет"
+    "uk": "предмет",
+    "pt-BR": "objeto"
   },
   "предмет 0x{0}": {
     "ru": "предмет 0x{0}",
@@ -2687,7 +2703,7 @@
     "es": "objeto 0x{0}",
     "pl": "przedmiot 0x{0}",
     "cs": "předmět 0x{0}",
-    "pt-BR": "item 0x{0}",
+    "pt-BR": "objeto 0x{0}",
     "tr": "eşya 0x{0}",
     "ja": "アイテム 0x{0}",
     "ko": "아이템 0x{0}",
@@ -3587,13 +3603,13 @@
     "ru": "Снимок",
     "uk": "Знімок",
     "en": "Snapshot",
-    "de": "Snapshot",
+    "de": "Momentaufnahme",
     "fr": "Instantané",
     "it": "Istantanea",
     "es": "Instantánea",
     "pl": "Migawka",
     "cs": "Snímek",
-    "pt-BR": "Snapshot",
+    "pt-BR": "Instantâneo",
     "tr": "Anlık görüntü",
     "ja": "スナップショット",
     "ko": "스냅샷",
@@ -8602,7 +8618,7 @@
     "ru": "Облако Steam: {0} Б · {1}",
     "uk": "Хмара Steam: {0} Б · {1}",
     "en": "Steam Cloud: {0} B · {1}",
-    "de": "Steam Cloud: {0} B · {1}",
+    "de": "Steam-Cloud: {0} B · {1}",
     "fr": "Steam Cloud : {0} o · {1}",
     "it": "Cloud Steam: {0} B · {1}",
     "es": "Steam Cloud: {0} B · {1}",
@@ -8619,7 +8635,7 @@
     "ru": "Облако Steam: —",
     "uk": "Хмара Steam: —",
     "en": "Steam Cloud: —",
-    "de": "Steam Cloud: —",
+    "de": "Steam-Cloud: —",
     "fr": "Steam Cloud : —",
     "it": "Cloud Steam: —",
     "es": "Steam Cloud: —",
@@ -10778,13 +10794,13 @@
     "ru": "РЕЗЕРВНОЕ КОПИРОВАНИЕ",
     "uk": "РЕЗЕРВНЕ КОПІЮВАННЯ",
     "en": "BACKUPS",
-    "de": "BACKUPS",
+    "de": "SICHERUNGEN",
     "fr": "SAUVEGARDES",
     "it": "BACKUP",
     "es": "COPIAS",
     "pl": "KOPIE",
     "cs": "ZÁLOHY",
-    "pt-BR": "BACKUPS",
+    "pt-BR": "CÓPIAS DE SEGURANÇA",
     "tr": "YEDEKLEME",
     "ja": "バックアップ",
     "ko": "백업",
@@ -11209,7 +11225,7 @@
     "es": "PARTIDAS",
     "pl": "ZAPISY",
     "cs": "ULOŽENÉ HRY",
-    "pt-BR": "SAVES",
+    "pt-BR": "SALVAMENTOS",
     "tr": "KAYITLAR",
     "ja": "セーブ",
     "ko": "세이브",
@@ -12053,13 +12069,13 @@
     "ru": "Статус:        ",
     "uk": "Стан:        ",
     "en": "Status:        ",
-    "de": "Status:        ",
+    "de": "Zustand:        ",
     "fr": "État :        ",
     "it": "Stato:        ",
     "es": "Estado:        ",
     "pl": "Stan:        ",
     "cs": "Stav:        ",
-    "pt-BR": "Status:        ",
+    "pt-BR": "Estado:        ",
     "tr": "Durum:        ",
     "ja": "状態:        ",
     "ko": "상태:        ",
@@ -12614,7 +12630,7 @@
     "ru": "Эксперим.",
     "uk": "Експерим.",
     "en": "Experim.",
-    "de": "Experim.",
+    "de": "Exp.",
     "fr": "Expérim.",
     "it": "Sperim.",
     "es": "Exper.",
@@ -13164,7 +13180,7 @@
     "es": "partida",
     "pl": "zapis",
     "cs": "uložená hra",
-    "pt-BR": "save",
+    "pt-BR": "salvamento",
     "tr": "kayıt",
     "ja": "セーブ",
     "ko": "세이브",
@@ -13429,21 +13445,23 @@
     "cs": "S.T.A.L.K.E.R.: Clear Sky (20510)"
   },
   "Апгрейды": {
-    "de": "Upgrades"
+    "de": "Verbesserungen"
   },
   "БЭКАПЫ": {
-    "de": "BACKUPS"
+    "de": "SICHERUNGEN",
+    "pt-BR": "CÓPIAS DE SEGURANÇA"
   },
   "Бэкап ": {
-    "de": "Backup ",
-    "it": "Copia di backup "
+    "de": "Sicherung ",
+    "it": "Copia di backup ",
+    "pt-BR": "Cópia de segurança "
   },
   "ВЕРСИЯ": {
     "de": "VERSION",
     "fr": "VERSION"
   },
   "Детали: {0}": {
-    "de": "Details: {0}"
+    "de": "Einzelheiten: {0}"
   },
   "Дикий остров": {
     "de": "Wilde Insel",
@@ -13476,7 +13494,7 @@
     "cs": "CoP EE"
   },
   "Залесье": {
-    "de": "Залесье",
+    "de": "Saliss",
     "fr": "Zalessye",
     "es": "Zalissya",
     "it": "Zalissya",
@@ -13519,7 +13537,7 @@
     "it": "Scintilla"
   },
   "Исправления": {
-    "de": "Fixes"
+    "de": "Korrekturen"
   },
   "Лиманск": {
     "de": "Limansk",
@@ -13529,9 +13547,10 @@
     "cs": "Limansk"
   },
   "МОДЫ": {
-    "de": "MODS",
+    "de": "MODIFIKATIONEN",
     "fr": "MODIFICATIONS",
-    "es": "MODIFICACIONES"
+    "es": "MODIFICACIONES",
+    "pt-BR": "MODIFICAÇÕES"
   },
   "Малахит": {
     "de": "Malachit",
@@ -13550,9 +13569,10 @@
     "cs": "Menší zóna"
   },
   "Моды": {
-    "de": "Mods",
+    "de": "Modifikationen",
     "fr": "Modifications",
-    "es": "Modificaciones"
+    "es": "Modificaciones",
+    "pt-BR": "Modificações"
   },
   "Монолит": {
     "de": "Monolith"
@@ -13585,16 +13605,16 @@
     "cs": "OBLAK"
   },
   "ОБНОВЛЕНИЯ": {
-    "de": "UPDATES"
+    "de": "AKTUALISIERUNGEN"
   },
   "Подробнее": {
     "de": "Mehr"
   },
   "Подробности": {
-    "de": "Details"
+    "de": "Einzelheiten"
   },
   "Подробности: {0}": {
-    "de": "Details: {0}"
+    "de": "Einzelheiten: {0}"
   },
   "Позиция": {
     "de": "Position",
@@ -13609,7 +13629,8 @@
     "cs": "Pripjať"
   },
   "Резервное копирование": {
-    "de": "Backups"
+    "de": "Sicherungen",
+    "pt-BR": "Cópias de segurança"
   },
   "Рыжий лес": {
     "de": "Roter Wald",
@@ -13658,7 +13679,13 @@
     "es": "Planta química",
     "it": "Impianto chimico",
     "pl": "Zakład chemiczny",
-    "cs": "Chemická továrna"
+    "cs": "Chemická továrna",
+    "pt-BR": "Usina Química",
+    "tr": "Kimya Fabrikası",
+    "ja": "化学工場",
+    "ko": "화학 공장",
+    "zh-CN": "化工厂",
+    "zh-TW": "化工廠"
   },
   "Цементный завод": {
     "de": "Zementwerk",
@@ -13666,7 +13693,13 @@
     "es": "Fábrica de cemento",
     "it": "Fabbrica di cemento",
     "pl": "Cementownia",
-    "cs": "Cementárna"
+    "cs": "Cementárna",
+    "pt-BR": "Fábrica de Cimento",
+    "tr": "Çimento Fabrikası",
+    "ja": "セメント工場",
+    "ko": "시멘트 공장",
+    "zh-CN": "水泥厂",
+    "zh-TW": "水泥廠"
   },
   "Чистое Небо": {
     "de": "Clear Sky",
@@ -13725,7 +13758,8 @@
     "fr": "Vodka",
     "es": "Vodka",
     "it": "Vodka",
-    "cs": "Vodka"
+    "cs": "Vodka",
+    "pt-BR": "Vodca"
   },
   "ГРУППИРОВКА": {
     "fr": "GROUPEMENT"
@@ -13792,10 +13826,12 @@
     "cs": "ID Binance: 434350727"
   },
   "РЕЗЕРВНАЯ КОПИЯ": {
-    "it": "COPIA DI BACKUP"
+    "it": "COPIA DI BACKUP",
+    "pt-BR": "CÓPIA DE SEGURANÇA"
   },
   "Резервная копия": {
-    "it": "Copia di backup"
+    "it": "Copia di backup",
+    "pt-BR": "Cópia de segurança"
   },
   "ОШИБКА": {
     "es": "FALLO"
@@ -13844,7 +13880,8 @@
   "РАСХ.": {
     "fr": "CONSO.",
     "es": "CONS.",
-    "it": "CONS."
+    "it": "CONS.",
+    "pt-BR": "CONSUMO"
   },
   "РОДИТЕЛЬ": {
     "fr": "PARENT"
@@ -13863,6 +13900,146 @@
   },
   "сталкеров {0} · мутантов {1}": {
     "fr": "stalkers {0} · mutants {1}"
+  },
+  "{0} · сохранения": {
+    "pt-BR": "{0} · salvamentos"
+  },
+  "РЕЗЕРВНЫЕ КОПИИ": {
+    "pt-BR": "CÓPIAS DE SEGURANÇA"
+  },
+  "СОХРАНЕНИЯ": {
+    "pt-BR": "SALVAMENTOS"
+  },
+  "май": {
+    "tr": "Mayıs"
+  },
+  "мар": {
+    "tr": "Mart"
+  },
+  "Сохранений: {0}": {
+    "pt-BR": "Salvamentos: {0}"
+  },
+  "сохранения: {0}": {
+    "pt-BR": "salvamentos: {0}"
+  },
+  "Перенести всё в тайник": {
+    "ru": "Перенести всё в тайник",
+    "uk": "Перенести все до тайника",
+    "en": "Transfer all to stash",
+    "de": "Alles ins Versteck verschieben",
+    "fr": "Tout transférer vers la cache",
+    "it": "Sposta tutto nel nascondiglio",
+    "es": "Trasladar todo al alijo",
+    "pl": "Przenieś wszystko do skrytki",
+    "cs": "Přesunout vše do úkrytu",
+    "pt-BR": "Transferir tudo para o esconderijo",
+    "tr": "Tümünü zulaya aktar",
+    "ja": "すべて隠し場所へ移動",
+    "ko": "모두 은닉처로 이동",
+    "zh-CN": "全部移入藏匿处",
+    "zh-TW": "全部移入藏匿處"
+  },
+  "{0} будет перенесён в тайник при сохранении.": {
+    "ru": "{0} будет перенесён в тайник при сохранении.",
+    "uk": "{0} буде перенесено до тайника під час збереження.",
+    "en": "{0} will be moved to the stash on save.",
+    "de": "{0} wird beim Speichern ins Versteck verschoben.",
+    "fr": "{0} sera déplacé dans la cache à l'enregistrement.",
+    "it": "{0} sarà spostato nel nascondiglio al salvataggio.",
+    "es": "{0} se moverá al alijo al guardar.",
+    "pl": "{0} zostanie przeniesiony do skrytki przy zapisie.",
+    "cs": "{0} bude při uložení přesunut do úkrytu.",
+    "pt-BR": "{0} será movido para o esconderijo ao salvar.",
+    "tr": "{0} kayıtta zulaya taşınacak.",
+    "ja": "{0} は保存時に隠し場所へ移動します。",
+    "ko": "{0}은(는) 저장 시 은닉처로 이동됩니다.",
+    "zh-CN": "{0} 将在保存时移入藏匿处。",
+    "zh-TW": "{0} 將在儲存時移入藏匿處。"
+  },
+  "Перенос {0} в тайник отменён.": {
+    "ru": "Перенос {0} в тайник отменён.",
+    "uk": "Перенесення {0} до тайника скасовано.",
+    "en": "Transfer of {0} to the stash cancelled.",
+    "de": "Übertragung von {0} ins Versteck abgebrochen.",
+    "fr": "Transfert de {0} vers la cache annulé.",
+    "it": "Trasferimento di {0} nel nascondiglio annullato.",
+    "es": "Traslado de {0} al alijo cancelado.",
+    "pl": "Anulowano przeniesienie {0} do skrytki.",
+    "cs": "Přesun {0} do úkrytu zrušen.",
+    "pt-BR": "Transferência de {0} para o esconderijo cancelada.",
+    "tr": "{0} zulaya aktarımı iptal edildi.",
+    "ja": "{0} の隠し場所への移動を取り消しました。",
+    "ko": "{0}의 은닉처 이동을 취소했습니다.",
+    "zh-CN": "已取消将 {0} 移入藏匿处。",
+    "zh-TW": "已取消將 {0} 移入藏匿處。"
+  },
+  "Отмечено для переноса в тайник: {0}.": {
+    "ru": "Отмечено для переноса в тайник: {0}.",
+    "uk": "Позначено для переносу до тайника: {0}.",
+    "en": "Marked for transfer to the stash: {0}.",
+    "de": "Zum Verschieben ins Versteck markiert: {0}.",
+    "fr": "Marqués pour le transfert vers la cache : {0}.",
+    "it": "Segnati per il trasferimento nel nascondiglio: {0}.",
+    "es": "Marcados para trasladar al alijo: {0}.",
+    "pl": "Oznaczono do przeniesienia do skrytki: {0}.",
+    "cs": "Označeno k přesunu do úkrytu: {0}.",
+    "pt-BR": "Marcados para transferir ao esconderijo: {0}.",
+    "tr": "Zulaya aktarılmak üzere işaretlendi: {0}.",
+    "ja": "隠し場所への移動対象に設定: {0}",
+    "ko": "은닉처 이동 대상으로 표시: {0}",
+    "zh-CN": "已标记为移入藏匿处：{0}",
+    "zh-TW": "已標記為移入藏匿處：{0}"
+  },
+  "{0} · кол-во {1} · вес {2} · ячейки {3} · 0x{4}": {
+    "ru": "{0} · кол-во {1} · вес {2} · ячейки {3} · 0x{4}",
+    "uk": "{0} · кільк. {1} · вага {2} · комірки {3} · 0x{4}",
+    "en": "{0} · count {1} · weight {2} · cells {3} · 0x{4}",
+    "de": "{0} · Anz. {1} · Gew. {2} · Felder {3} · 0x{4}",
+    "fr": "{0} · nombre {1} · poids {2} · cases {3} · 0x{4}",
+    "it": "{0} · qtà {1} · peso {2} · celle {3} · 0x{4}",
+    "es": "{0} · cant. {1} · peso {2} · celdas {3} · 0x{4}",
+    "pl": "{0} · ilość {1} · waga {2} · pola {3} · 0x{4}",
+    "cs": "{0} · počet {1} · hmotnost {2} · buňky {3} · 0x{4}",
+    "pt-BR": "{0} · qtd. {1} · peso {2} · células {3} · 0x{4}",
+    "tr": "{0} · adet {1} · ağırlık {2} · hücre {3} · 0x{4}",
+    "ja": "{0} · 数量 {1} · 重量 {2} · セル {3} · 0x{4}",
+    "ko": "{0} · 수량 {1} · 무게 {2} · 칸 {3} · 0x{4}",
+    "zh-CN": "{0} · 数量 {1} · 重量 {2} · 格子 {3} · 0x{4}",
+    "zh-TW": "{0} · 數量 {1} · 重量 {2} · 格子 {3} · 0x{4}"
+  },
+  "Перенос в тайник не проверен в игре. Перед записью создаётся резервная копия.": {
+    "ru": "Перенос в тайник не проверен в игре. Перед записью создаётся резервная копия.",
+    "uk": "Перенесення до тайника не перевірено в грі. Перед записом створюється резервна копія.",
+    "en": "Transfer to the stash is not verified in the game. A backup is made before writing.",
+    "de": "Übertragung ins Versteck im Spiel nicht geprüft. Vor dem Schreiben wird eine Sicherungskopie erstellt.",
+    "fr": "Transfert vers la cache non vérifié dans le jeu. Une sauvegarde est créée avant l’écriture.",
+    "it": "Trasferimento nel nascondiglio non verificato nel gioco. Prima della scrittura viene creata una copia di backup.",
+    "es": "Traslado al alijo no verificado en el juego. Antes de escribir se crea una copia de seguridad.",
+    "pl": "Przeniesienie do skrytki nie sprawdzone w grze. Przed zapisem tworzona jest kopia zapasowa.",
+    "cs": "Přesun do úkrytu ve hře neověřen. Před zápisem se vytvoří záložní kopie.",
+    "pt-BR": "Transferência para o esconderijo não verificada no jogo. Uma cópia de segurança é criada antes da gravação.",
+    "tr": "Zulaya aktarma oyunda doğrulanmadı. Yazmadan önce yedek kopya oluşturulur.",
+    "ja": "隠し場所への移動はゲーム内で未検証です。書き込み前にバックアップを作成します。",
+    "ko": "은닉처 이동은 게임에서 확인되지 않았습니다. 쓰기 전에 백업을 만듭니다.",
+    "zh-CN": "移入藏匿处未在游戏中验证。写入前会创建备份。",
+    "zh-TW": "移入藏匿處未在遊戲中驗證。寫入前會建立備份。"
+  },
+  "В тайник: перенесено {0}, отказано {1}.": {
+    "ru": "В тайник: перенесено {0}, отказано {1}.",
+    "uk": "В тайник: перенесено {0}, відмовлено {1}.",
+    "en": "To stash: moved {0}, refused {1}.",
+    "de": "In das Versteck: verschoben {0}, abgelehnt {1}.",
+    "fr": "Vers la cache : déplacé {0}, refusé {1}.",
+    "it": "Nel nascondiglio: spostati {0}, rifiutati {1}.",
+    "es": "Al alijo: trasladados {0}, rechazados {1}.",
+    "pl": "Do skrytki: przeniesiono {0}, odrzucono {1}.",
+    "cs": "Do úkrytu: přesunuto {0}, odmítnuto {1}.",
+    "pt-BR": "Para o esconderijo: movidos {0}, recusados {1}.",
+    "tr": "Zulaya: aktarılan {0}, reddedilen {1}.",
+    "ja": "隠し場所へ: 移動 {0}、拒否 {1}。",
+    "ko": "은닉처로: 이동 {0}, 거부 {1}.",
+    "zh-CN": "移入藏匿处：已移动 {0}，已拒绝 {1}。",
+    "zh-TW": "移入藏匿處：已移動 {0}，已拒絕 {1}。"
   },
   "Деньги: {0} RU · Объектов инвентаря: {1} · Тайников: —\nИгровое время: {2} · Персонаж: {3} · Здоровье: {4}\nРанг: {5} · Репутация: {6} · Задания: {7} (последнее получено: {8}) · Убито (люди / монстры): {9} · Погода: {10}": {
     "ru": "Деньги: {0} RU · Объектов инвентаря: {1} · Тайников: —\nИгровое время: {2} · Персонаж: {3} · Здоровье: {4}\nРанг: {5} · Репутация: {6} · Задания: {7} (последнее получено: {8}) · Убито (люди / монстры): {9} · Погода: {10}",
@@ -13897,5 +14074,73 @@
     "ko": "돈: {0} RU · 인벤토리 객체: {1} · 은닉처: —\n게임 시간: {2} · 캐릭터: — · 체력: —\n계급: — · 평판: — · 퀘스트: — · 처치: — · 날씨: —",
     "zh-CN": "金钱：{0} RU · 库存对象：{1} · 藏匿点：—\n游戏时间：{2} · 角色：— · 生命值：—\n等级：— · 声望：— · 任务：— · 击杀：— · 天气：—",
     "zh-TW": "金錢：{0} RU · 庫存物件：{1} · 藏匿點：—\n遊戲時間：{2} · 角色：— · 生命值：—\n等級：— · 聲望：— · 任務：— · 擊殺：— · 天氣：—"
+  },
+  "пасмурно": {
+    "ru": "пасмурно",
+    "uk": "похмуро",
+    "en": "Overcast",
+    "de": "Bedeckt",
+    "fr": "Couvert",
+    "it": "Coperto",
+    "es": "Nublado",
+    "pl": "Pochmurnie",
+    "cs": "Zataženo",
+    "pt-BR": "Nublado",
+    "tr": "Kapalı",
+    "ja": "曇天",
+    "ko": "흐림",
+    "zh-CN": "阴沉",
+    "zh-TW": "陰沉"
+  },
+  "шторм": {
+    "ru": "шторм",
+    "uk": "буря",
+    "en": "Storm",
+    "de": "Sturm",
+    "fr": "Tempête",
+    "it": "Tempesta",
+    "es": "Tormenta",
+    "pl": "Sztorm",
+    "cs": "Bouře",
+    "pt-BR": "Tempestade",
+    "tr": "Fırtına",
+    "ja": "嵐",
+    "ko": "폭풍",
+    "zh-CN": "风暴",
+    "zh-TW": "風暴"
+  },
+  "гром": {
+    "ru": "гром",
+    "uk": "грім",
+    "en": "Thunder",
+    "de": "Donner",
+    "fr": "Tonnerre",
+    "it": "Tuono",
+    "es": "Trueno",
+    "pl": "Grzmot",
+    "cs": "Hrom",
+    "pt-BR": "Trovão",
+    "tr": "Gök gürültüsü",
+    "ja": "雷鳴",
+    "ko": "천둥",
+    "zh-CN": "雷声",
+    "zh-TW": "雷聲"
+  },
+  "Деньги: {0} RU · Предметов: {1} · Тайников: —\nИгровое время: {2} · Персонаж: — · Здоровье: —\nРанг: — · Репутация: — · Задания: — · Убито: — · Погода: —": {
+    "ru": "Деньги: {0} RU · Предметов: {1} · Тайников: —\nИгровое время: {2} · Персонаж: — · Здоровье: —\nРанг: — · Репутация: — · Задания: — · Убито: — · Погода: —",
+    "uk": "Гроші: {0} RU · Предмети: {1} · Сховки: —\nІгровий час: {2} · Персонаж: — · Здоров’я: —\nРанг: — · Репутація: — · Завдання: — · Убивства: — · Погода: —",
+    "en": "Money: {0} RU · Items: {1} · Stashes: —\nGame time: {2} · Character: — · Health: —\nRank: — · Reputation: — · Quests: — · Kills: — · Weather: —",
+    "de": "Geld: {0} RU · Gegenstände: {1} · Verstecke: —\nSpielzeit: {2} · Charakter: — · Gesundheit: —\nRang: — · Ansehen: — · Aufgaben: — · Abschüsse: — · Wetter: —",
+    "fr": "Argent : {0} RU · Objets : {1} · Caches : —\nTemps de jeu : {2} · Personnage : — · Santé : —\nRang : — · Réputation : — · Quêtes : — · Tués : — · Météo : —",
+    "it": "Denaro: {0} RU · Oggetti: {1} · Depositi: —\nTempo di gioco: {2} · Personaggio: — · Salute: —\nGrado: — · Reputazione: — · Missioni: — · Uccisioni: — · Meteo: —",
+    "es": "Dinero: {0} RU · Objetos: {1} · Alijos: —\nTiempo de juego: {2} · Personaje: — · Salud: —\nRango: — · Reputación: — · Misiones: — · Bajas: — · Clima: —",
+    "pl": "Pieniądze: {0} RU · Przedmioty: {1} · Schowki: —\nCzas gry: {2} · Postać: — · Zdrowie: —\nRanga: — · Reputacja: — · Zadania: — · Zabójstwa: — · Pogoda: —",
+    "cs": "Peníze: {0} RU · Předměty: {1} · Úschovny: —\nHerní čas: {2} · Postava: — · Zdraví: —\nHodnost: — · Reputace: — · Úkoly: — · Zabití: — · Počasí: —",
+    "pt-BR": "Dinheiro: {0} RU · Itens: {1} · Esconderijos: —\nTempo de jogo: {2} · Personagem: — · Saúde: —\nPatente: — · Reputação: — · Missões: — · Abates: — · Clima: —",
+    "tr": "Para: {0} RU · Eşya: {1} · Zula: —\nOyun zamanı: {2} · Karakter: — · Sağlık: —\nRütbe: — · İtibar: — · Görevler: — · Öldürme: — · Hava: —",
+    "ja": "所持金: {0} RU · アイテム: {1} · 隠し場所: —\nゲーム時間: {2} · キャラクター: — · 体力: —\nランク: — · 評判: — · クエスト: — · 討伐: — · 天候: —",
+    "ko": "돈: {0} RU · 아이템: {1} · 은닉처: —\n게임 시간: {2} · 캐릭터: — · 체력: —\n계급: — · 평판: — · 퀘스트: — · 처치: — · 날씨: —",
+    "zh-CN": "金钱：{0} RU · 物品：{1} · 藏匿点：—\n游戏时间：{2} · 角色：— · 生命值：—\n等级：— · 声望：— · 任务：— · 击杀：— · 天气：—",
+    "zh-TW": "金錢：{0} RU · 物品：{1} · 藏匿點：—\n遊戲時間：{2} · 角色：— · 生命值：—\n等級：— · 聲望：— · 任務：— · 擊殺：— · 天氣：—"
   }
 }

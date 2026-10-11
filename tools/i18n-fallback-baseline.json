@@ -1,11 +1,11 @@
 {
   "uk": {
     "english": 0,
-    "russian": 163
+    "russian": 0
   },
   "de": {
-    "english": 88,
-    "russian": 1
+    "english": 0,
+    "russian": 0
   },
   "fr": {
     "english": 0,
@@ -28,27 +28,27 @@
     "russian": 0
   },
   "pt-BR": {
-    "english": 118,
+    "english": 0,
     "russian": 0
   },
   "tr": {
-    "english": 75,
+    "english": 0,
     "russian": 0
   },
   "ja": {
-    "english": 60,
+    "english": 0,
     "russian": 0
   },
   "ko": {
-    "english": 59,
+    "english": 0,
     "russian": 0
   },
   "zh-CN": {
-    "english": 54,
+    "english": 0,
     "russian": 0
   },
   "zh-TW": {
-    "english": 54,
+    "english": 0,
     "russian": 0
   }
 }

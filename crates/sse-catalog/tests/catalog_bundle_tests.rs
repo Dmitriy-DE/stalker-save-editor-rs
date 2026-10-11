@@ -128,3 +128,21 @@ fn round_trip_writer_reproduces_bundle() {
     assert_eq!(reloaded_cop.items.items().len(), cop.items.items().len());
     assert_eq!(reloaded_cop.items.resolve("wpn_pm").unwrap().key, "wpn_pm");
 }
+
+#[test]
+fn enhanced_editions_use_the_original_release_catalog() {
+    use sse_catalog::bundle::release_for_format;
+    for (edition, original) in [
+        ("stalker-soc-ee", "stalker-soc"),
+        ("stalker-cs-ee", "stalker-cs"),
+        ("stalker-cop-ee", "stalker-cop"),
+    ] {
+        assert_eq!(release_for_format(edition), original);
+        assert!(
+            CatalogBundleReader::for_format(edition).is_some(),
+            "{edition} needs the original catalog"
+        );
+    }
+    assert_eq!(release_for_format("stalker-cop"), "stalker-cop");
+    assert!(CatalogBundleReader::for_format("stalker-unknown").is_none());
+}

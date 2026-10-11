@@ -558,3 +558,59 @@ fn draft_plans_refuse_detach_and_stack_handles_outside_the_item_range() {
     stack.stack_counts.insert(0, 2);
     assert!(DraftJournal::new(vec![stack], 0).is_err());
 }
+
+#[test]
+fn schema_six_roundtrips_s2_stash_puts_across_a_restart() {
+    let directory = TemporaryDirectory::new();
+    let source_sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let mut plan = DraftPlan::empty(source_sha256).expect("valid empty plan");
+    plan.s2_stash_puts.extend([0x3000_0010, 0x3000_0011]);
+    let journal = DraftJournal::new(vec![plan], 0).expect("valid S2 backpack-to-stash draft");
+
+    let saved = DraftStore::new(&directory.0)
+        .save(journal)
+        .expect("S2 backpack-to-stash draft should persist");
+    let bytes = fs::read(
+        DraftStore::new(&directory.0)
+            .path_for(source_sha256)
+            .expect("valid hash"),
+    )
+    .expect("draft should exist");
+    let serialized = std::str::from_utf8(&bytes).expect("draft JSON should be UTF-8");
+    assert!(serialized.contains("\"schema\":6"));
+    assert!(serialized.contains("\"s2StashPuts\":[805306384,805306385]"));
+
+    // A fresh store stands in for an application restart.
+    let restored = DraftStore::new(&directory.0)
+        .load(source_sha256)
+        .expect("draft read should succeed")
+        .expect("S2 backpack-to-stash draft should load after restart");
+    assert_eq!(current(&restored).s2_stash_puts, [0x3000_0010, 0x3000_0011]);
+    assert_eq!(current(&restored), current(&saved));
+}
+
+#[test]
+fn schema_five_drafts_load_without_s2_stash_puts() {
+    let directory = TemporaryDirectory::new();
+    let store = DraftStore::new(&directory.0);
+    let source_sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let bytes = format!(
+        "{{\"index\":0,\"plans\":[{{\"sourceSha256\":\"{source_sha256}\",\"money\":null,\"stackCounts\":{{}},\"detachHandles\":[],\"adds\":[],\"stashTakes\":[],\"s2StashTakes\":[305419896],\"stashPuts\":[],\"durability\":{{}},\"placements\":{{}},\"upgrades\":{{}},\"factionRelations\":{{\"freedom\":5}},\"relocateTo\":null,\"unmappedLegacyPlan\":null}}],\"schema\":5,\"source_sha256\":\"{source_sha256}\"}}"
+    );
+    fs::write(store.path_for(source_sha256).expect("valid hash"), bytes).expect("schema-five draft should be written");
+
+    let restored = store
+        .load(source_sha256)
+        .expect("draft read should succeed")
+        .expect("previous schema-five draft should remain readable");
+    assert_eq!(current(&restored).s2_stash_takes, [0x1234_5678]);
+    assert!(current(&restored).s2_stash_puts.is_empty());
+}
+
+#[test]
+fn s2_stash_puts_refuse_duplicate_handles() {
+    let source_sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let mut plan = DraftPlan::empty(source_sha256).expect("valid empty plan");
+    plan.s2_stash_puts.extend([0x3000_0010, 0x3000_0010]);
+    assert!(DraftJournal::new(vec![plan], 0).is_err());
+}

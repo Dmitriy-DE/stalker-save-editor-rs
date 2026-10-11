@@ -547,6 +547,16 @@ fn save_setting(
     super::submit_settings_write(patch, proxy)
 }
 
+/// Applies the saved appearance and UI scale to the tree before any screen is built.
+///
+/// Scale `0` means "automatic" and keeps the window's own scale, as `Tree::set_scale` ignores non-positive values.
+pub(crate) fn apply_startup_appearance(tree: &mut crate::widget::Tree, settings: &sse_app::AppSettings) {
+    crate::theme::apply_appearance(&settings.theme_id, &settings.accent_id);
+    if settings.ui_scale_percent > 0 {
+        tree.set_scale(settings.ui_scale_percent as f32 / 100.0);
+    }
+}
+
 /// Sends every field this screen edits; used by the explicit «Сохранить настройки» action.
 fn save_all_settings(
     settings: &sse_app::AppSettings,
@@ -1796,7 +1806,15 @@ impl Screen for Settings {
                 .get(self.language)
                 .map(|code| (*code).to_owned());
             match save_all_settings(&self.settings, cx.proxy.cloned()) {
-                Ok(()) => cx.status = Some(crate::strings::t("Сохраняю…").to_owned()),
+                Ok(()) => {
+                    if let Some(proxy) = cx.proxy {
+                        let _ = proxy.send(AppMessage::SoundSettings {
+                            enabled: self.settings.sound_enabled,
+                            volume: self.settings.sound_volume,
+                        });
+                    }
+                    cx.status = Some(crate::strings::t("Сохраняю…").to_owned());
+                }
                 Err(error) => {
                     cx.status = Some(format!(
                         "{}{}",
@@ -1854,6 +1872,28 @@ mod tests {
     use crate::screens::saves::Workspace;
     use crate::widget::{Content, Look, Tree};
     use std::path::PathBuf;
+
+    #[test]
+    fn startup_appearance_applies_saved_theme_accent_and_scale() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let saved = sse_app::AppSettings {
+            theme_id: "day".to_owned(),
+            accent_id: "blue".to_owned(),
+            ui_scale_percent: 125,
+            ..sse_app::AppSettings::default()
+        };
+        super::apply_startup_appearance(&mut tree, &saved);
+        assert_eq!(crate::theme::current_theme_id(), "day");
+        assert_eq!(crate::theme::current_accent_id(), "blue");
+        assert!((tree.scale() - 1.25).abs() < f32::EPSILON);
+
+        // Automatic scale keeps the window's scale and restores the default appearance for other tests.
+        super::apply_startup_appearance(&mut tree, &sse_app::AppSettings::default());
+        assert!((tree.scale() - 1.25).abs() < f32::EPSILON);
+        assert_eq!(crate::theme::current_theme_id(), "zone");
+        assert_eq!(crate::theme::current_accent_id(), "amber");
+        Ok(())
+    }
 
     #[test]
     fn capability_details_have_english_and_ukrainian_translations() {

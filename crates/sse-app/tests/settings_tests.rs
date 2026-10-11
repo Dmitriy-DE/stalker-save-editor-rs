@@ -36,7 +36,6 @@ fn default_settings_start_with_reports_disabled() {
     assert!(!settings.send_reports);
     assert!(!settings.send_metrics);
     assert!(!settings.reports_notice_shown);
-    assert_eq!(settings.last_report_utc, None);
 }
 
 #[test]
@@ -56,7 +55,6 @@ fn round_trip_settings_json() {
         send_reports: false,
         send_metrics: true,
         reports_notice_shown: true,
-        last_report_utc: Some("2026-10-04T00:30:00Z".to_owned()),
     };
 
     let bytes = original.to_json_bytes().expect("serialization should succeed");
@@ -75,7 +73,7 @@ fn round_trip_settings_json() {
     assert!(json_str.contains("\"send_reports\": false"));
     assert!(json_str.contains("\"send_metrics\": true"));
     assert!(json_str.contains("\"reports_notice_shown\": true"));
-    assert!(json_str.contains("\"last_report_utc\": \"2026-10-04T00:30:00Z\""));
+    assert!(!json_str.contains("last_report_utc"));
 
     let loaded = AppSettings::from_json_slice(&bytes).expect("deserialization should succeed");
     assert_eq!(loaded, original);
@@ -261,7 +259,7 @@ fn reads_csharp_snake_case_settings_snapshot() {
     assert_eq!(settings.navigation_collapsed, Some(false));
     assert!(!settings.send_reports);
     assert!(settings.reports_notice_shown);
-    assert_eq!(settings.last_report_utc.as_deref(), Some("2026-10-05T18:30:00Z"));
+    // `last_report_utc` was written by an older build and is ignored now; the file still loads.
 }
 
 #[cfg(unix)]

@@ -861,6 +861,7 @@ fn save_eligibility(
             .saturating_add(plan.adds.len())
             .saturating_add(plan.stash_takes.len())
             .saturating_add(plan.s2_stash_takes.len())
+            .saturating_add(plan.s2_stash_puts.len())
             .saturating_add(plan.stash_puts.len())
             .saturating_add(usize::from(has_unmapped))
     });
@@ -916,6 +917,7 @@ fn has_unsupported_edit(format_id: Option<&str>, legacy_s2: bool, plan: &sse_sto
                 || (!plan.adds.is_empty() && !supports(ChangeKind::AddItems))
                 || !plan.stash_takes.is_empty()
                 || !plan.s2_stash_takes.is_empty()
+                || !plan.s2_stash_puts.is_empty()
                 || !plan.stash_puts.is_empty()
         }
         None => true,
@@ -1271,6 +1273,9 @@ impl Shell {
         settings: sse_app::AppSettings,
         browser_bridge: Option<super::BrowserFileBridge>,
     ) -> Result<Self> {
+        // Theme, accent and scale come from the file, so they must apply before any widget is built.
+        // The settings screen builds lazily and would otherwise be the only place that applied them.
+        super::app::apply_startup_appearance(tree, &settings);
         let interactive = proxy.is_some();
         let open_path_input = TextInput::new("", open_path_edit_config())?;
         let root_style = Style {
@@ -1661,7 +1666,7 @@ impl Shell {
         library_search.build(tree, library)?;
         let library_refresh = library_icon_button(tree, library_actions, Icon::D2Updates)?;
         tree.set_tooltip(library_refresh, crate::strings::t("Обновить"))?;
-        let library_status = style::label(tree, library, "Ищу сейвы…", Text::Note)?;
+        let library_status = super::saves::paragraph(tree, library, "Ищу сейвы…", Text::Note)?;
         let library_list = tree.add(
             Some(library),
             NodeKind::Column,
@@ -3198,6 +3203,7 @@ impl Shell {
                 Message::User(AppMessage::SoundLoaded(_, _)) => false,
                 Message::User(AppMessage::MusicLoaded(_, _)) => false,
                 Message::User(AppMessage::MusicSettings { .. }) => false,
+                Message::User(AppMessage::SoundSettings { .. }) => false,
                 Message::User(AppMessage::SettingsWriteFinished(_)) => false,
                 Message::Window(_) => index == self.selected,
             };
@@ -3362,6 +3368,11 @@ impl Shell {
             }
             Message::User(AppMessage::MusicSettings { enabled, volume }) => {
                 self.music.set_settings(*enabled, *volume);
+                return Ok(Flow::Continue);
+            }
+            Message::User(AppMessage::SoundSettings { enabled, volume }) => {
+                self.sound_enabled = *enabled;
+                self.sound_volume = (*volume).min(100) as f32 / 100.0;
                 return Ok(Flow::Continue);
             }
             Message::Window(WindowEvent::Focus(focused)) => self.music.set_focused(*focused),
@@ -4194,7 +4205,8 @@ impl Shell {
             tree.set_visible(library_row.plate, !has_image)?;
             tree.set_text(library_row.select, &super::saves::short_text(&filename, 24))?;
             tree.set_enabled(library_row.select, slot.detection_error.is_none())?;
-            tree.set_text(library_row.game, game)?;
+            let game = fit_to_node(tree, library_row.game, game);
+            tree.set_text(library_row.game, &game)?;
             let s2_detail = preview
                 .as_ref()
                 .and_then(|entry| entry.s2_detail.as_deref())
@@ -4249,6 +4261,7 @@ impl Shell {
                 ],
             )
         };
+        // The status line sizes itself to its text, so its width is taken from the list it sits above.
         tree.set_text(self.library_status, &status)?;
         tree.set_visible(self.library_status, !status.is_empty())?;
         tree.set_visible(self.library_pager, !slots.is_empty())?;
@@ -4504,6 +4517,17 @@ fn find_button_with_text(tree: &Tree, root: WidgetId, needle: &str) -> Option<Wi
     None
 }
 
+/// `text`, shortened with an ellipsis to the width its node has; before the first layout the text stays whole.
+fn fit_to_node(tree: &Tree, id: WidgetId, text: &str) -> String {
+    let width = tree
+        .rect(id)
+        .map_or(0.0, |rect| f32::from(u16::try_from(rect.width).unwrap_or(u16::MAX)));
+    if width <= 0.0 {
+        return text.to_owned();
+    }
+    super::saves::fit_text(tree, text, style::Text::Note.style(), width)
+}
+
 #[cfg(test)]
 mod tests {
     use super::ArtSlot;
@@ -4605,6 +4629,25 @@ mod tests {
         shell.open_report_consent_dialog(&mut tree)?;
 
         assert_eq!(tree.focused(), Some(shell.reports_off));
+        Ok(())
+    }
+
+    #[test]
+    fn saved_sound_settings_reach_the_shell_without_restart() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut shell = Shell::build_for_test(&mut tree, None)?;
+
+        shell.handle(
+            &mut tree,
+            &Message::User(AppMessage::SoundSettings {
+                enabled: false,
+                volume: 30,
+            }),
+            None,
+        )?;
+
+        assert!(!shell.sound_enabled);
+        assert!((shell.sound_volume - 0.3).abs() < 1e-6);
         Ok(())
     }
 
