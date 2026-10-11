@@ -360,6 +360,20 @@ pub fn install_files(root: &Path, game: &str, version: &str, payloads: &[Payload
 pub fn install_bundled(root: &Path, game: crate::bundled::Game) -> Result<(), InstallError> {
     let root = fs::canonicalize(root)?;
     recover_install_transaction(&root)?;
+    let (game_id, payloads) = hooked_payloads(&root, game)?;
+    install_files(&root, game_id, "v1", &payloads)
+}
+
+/// The bundled mod files together with the three game files that start it, read from the game under `root` and
+/// patched: `quest_items.ltx` (includes the companion items), `bind_stalker.script` (calls the mod every frame)
+/// and `ui_main_menu.script` (opens the menu). Nothing under `root` is written.
+///
+/// Without those three files the mod is present in the game but never runs: X-Ray has no script loader.
+pub fn hooked_payloads(
+    root: &Path,
+    game: crate::bundled::Game,
+) -> Result<(&'static str, Vec<PayloadFile>), InstallError> {
+    let root = fs::canonicalize(root)?;
     let (game_id, content_game, fsgame_names) = match game {
         crate::bundled::Game::ShadowOfChernobyl => (
             "soc",
@@ -417,7 +431,7 @@ pub fn install_bundled(root: &Path, game: crate::bundled::Game) -> Result<(), In
     let hooked_menu =
         crate::hook::patch_main_menu(&menu_bytes).map_err(|error| InstallError::new(error.to_string()))?;
     payloads.push(PayloadFile::new(menu_path, hooked_menu));
-    install_files(&root, game_id, "v1", &payloads)
+    Ok((game_id, payloads))
 }
 
 fn game_config_prefix(root: &Path, game: CompanionGame, fsgame_names: &[&str]) -> Result<String, InstallError> {

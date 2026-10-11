@@ -394,51 +394,175 @@ pub fn stalker2_build() -> String {
         .map_or_else(|| "unknown".to_owned(), |(build, _)| build.to_owned())
 }
 
-/// Writes a stored X-Ray `.xrp` archive and its C#-compatible descriptor. The output directory must not already exist.
+/// Text of the Workshop page, shared by the three games; `{game}` and `{game_ru}` are the game names.
+const LISTING_DESCRIPTION: &str = include_str!("../assets/workshop/description.txt");
+/// "What changed" text of this version.
+const LISTING_CHANGELOG: &str = include_str!("../assets/workshop/changelog.txt");
+/// Tags to set on the Workshop page, one per line.
+const LISTING_TAGS: &str = include_str!("../assets/workshop/tags.txt");
+
+/// What the Workshop page of one Enhanced Edition package shows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkshopListing {
+    /// Title of the Workshop item.
+    pub title: String,
+    /// One line for the `--desc` argument of GSC's uploader.
+    pub short_description: String,
+    /// Full description in Steam markup, English then Russian, for the Workshop page.
+    pub description: String,
+    /// "What changed" text of this version.
+    pub changelog: &'static str,
+    /// Tags, one per line.
+    pub tags: &'static str,
+    /// Preview picture, PNG 1024×1024 (`tools/make_workshop_previews.py`).
+    pub preview_png: &'static [u8],
+    /// The same picture as JPEG, the format of GSC's upload example.
+    pub preview_jpg: &'static [u8],
+}
+
+/// Game names as Steam spells them for the Enhanced Editions, and the `--game` code of GSC's uploader.
+const fn ee_names(game: Game) -> (&'static str, &'static str, &'static str) {
+    match game {
+        Game::ShadowOfChernobyl => ("Shadow of Chornobyl", "Тень Чернобыля", "SOC"),
+        Game::ClearSky => ("Clear Sky", "Чистое небо", "CS"),
+        Game::CallOfPripyat => ("Call of Prypiat", "Зов Припяти", "COP"),
+    }
+}
+
+/// The Workshop page content of one game's package.
+#[must_use]
+pub fn workshop_listing(game: Game) -> WorkshopListing {
+    let (name, name_ru, _) = ee_names(game);
+    let (preview_png, preview_jpg): (&[u8], &[u8]) = match game {
+        Game::ShadowOfChernobyl => (
+            include_bytes!("../assets/workshop/preview-soc.png"),
+            include_bytes!("../assets/workshop/preview-soc.jpg"),
+        ),
+        Game::ClearSky => (
+            include_bytes!("../assets/workshop/preview-cs.png"),
+            include_bytes!("../assets/workshop/preview-cs.jpg"),
+        ),
+        Game::CallOfPripyat => (
+            include_bytes!("../assets/workshop/preview-cop.png"),
+            include_bytes!("../assets/workshop/preview-cop.jpg"),
+        ),
+    };
+    WorkshopListing {
+        title: format!("Save Editor Companion — {name} Enhanced Edition"),
+        short_description: format!(
+            "In-game menu for {name} Enhanced Edition (Esc, then F1): items, money, healing, repair, teleport, \
+             NPC, weather. Part of the open-source S.T.A.L.K.E.R. Save Editor; works without it too. Unofficial fan mod."
+        ),
+        description: LISTING_DESCRIPTION.replace("{game}", name).replace("{game_ru}", name_ru),
+        changelog: LISTING_CHANGELOG,
+        tags: LISTING_TAGS,
+        preview_png,
+        preview_jpg,
+    }
+}
+
+/// The bundled mod files as an Enhanced Edition reads them. Shadow of Chornobyl keeps its configs in
+/// `gamedata/config`, the other two in `gamedata/configs` (their `fsgame_*.ltx`).
+pub fn ee_payloads(game: Game) -> Result<Vec<PayloadFile>, InstallError> {
+    let mut files = payloads(game)?;
+    if game == Game::ShadowOfChernobyl {
+        for file in &mut files {
+            if let Some(relative) = file.relative_path.strip_prefix("gamedata/configs/") {
+                file.relative_path = format!("gamedata/config/{relative}");
+            }
+        }
+    }
+    Ok(files)
+}
+
+/// Name of the archive inside the uploaded folder. The Enhanced Edition engines register only `.pack` and `.db`
+/// files of a Workshop item.
+#[must_use]
+pub fn ee_archive_name(game: Game) -> String {
+    format!("save_editor_companion_{}.pack", game_id(game))
+}
+
+/// Stages one Enhanced Edition Workshop package. The output directory must not already exist.
+///
+/// Layout: `upload/<archive>.pack` is the folder GSC's uploader takes (it must hold nothing but `.pack` and
+/// `.mp4` files); next to it lie the preview pictures, the page texts under `listing/`, the upload command and
+/// `desc.json`, this editor's own record of the package.
+///
+/// `hooked` are the mod files together with the three patched game files that start the mod
+/// ([`crate::installer::hooked_payloads`]). Without them (`None`) the archive holds the mod files only: the game
+/// mounts it but nothing runs, and the package says so in `NOT-READY.txt`.
 pub fn stage_enhanced_edition(
     output: &Path,
     game: Game,
     version: &str,
     author: &str,
-    title: &str,
-    description: &str,
+    hooked: Option<Vec<PayloadFile>>,
 ) -> Result<(), InstallError> {
     if version.is_empty() {
         return Err(InstallError::new("Enhanced Edition package version is empty"));
     }
     let game_id = game_id(game);
-    let code = match game {
-        Game::ShadowOfChernobyl => "SOC",
-        Game::ClearSky => "CS",
-        Game::CallOfPripyat => "COP",
-    };
+    let (_, _, code) = ee_names(game);
+    let listing = workshop_listing(game);
     let parent = output
         .parent()
         .ok_or_else(|| InstallError::new("package output must have a parent directory"))?;
     std::fs::create_dir_all(parent).map_err(InstallError::from)?;
     std::fs::create_dir(output).map_err(InstallError::from)?;
     let result = (|| {
-        let mut archive_files = Vec::new();
-        for file in payloads(game)? {
-            if !file.relative_path.starts_with("gamedata/") {
-                return Err(InstallError::new("invalid bundled game payload path"));
-            }
-            archive_files.push(file);
+        let starts_in_game = hooked.is_some();
+        let archive_files = match hooked {
+            Some(files) => files,
+            None => ee_payloads(game)?,
+        };
+        if archive_files
+            .iter()
+            .any(|file| !file.relative_path.starts_with("gamedata/"))
+        {
+            return Err(InstallError::new("invalid bundled game payload path"));
         }
-        let archive_name = format!("save_editor_companion_{game_id}.xrp");
+        let archive_name = ee_archive_name(game);
         let archive = build_ee_archive(&archive_files)?;
-        std::fs::write(output.join(&archive_name), archive).map_err(InstallError::from)?;
+        let write =
+            |relative: &str, bytes: &[u8]| std::fs::write(output.join(relative), bytes).map_err(InstallError::from);
+        std::fs::create_dir(output.join("upload")).map_err(InstallError::from)?;
+        std::fs::create_dir(output.join("listing")).map_err(InstallError::from)?;
+        write(&format!("upload/{archive_name}"), &archive)?;
+        write("preview.png", listing.preview_png)?;
+        write("preview.jpg", listing.preview_jpg)?;
+        write("listing/title.txt", format!("{}\n", listing.title).as_bytes())?;
+        write(
+            "listing/short-description.txt",
+            format!("{}\n", listing.short_description).as_bytes(),
+        )?;
+        write("listing/description.txt", listing.description.as_bytes())?;
+        write("listing/changelog.txt", listing.changelog.as_bytes())?;
+        write("listing/tags.txt", listing.tags.as_bytes())?;
+        let command = format!(
+            "xrSWS_Upload.exe --mode=create --game={code} --path=<this folder>\\upload --preview=<this folder>\\preview.jpg \
+             --title=\"{}\" --desc=\"{}\" --changelog=\"{version}\"\n",
+            listing.title, listing.short_description
+        );
+        write("upload-command.txt", command.as_bytes())?;
+        if !starts_in_game {
+            write(
+                "NOT-READY.txt",
+                b"This archive holds the companion files only. The game mounts it, but nothing calls the mod:\n\
+                  the three patched game files (bind_stalker.script, ui_main_menu.script, quest_items.ltx) are missing.\n\
+                  Stage it again with --hooks-from <Enhanced Edition folder> before uploading. See docs/WORKSHOP.md.\n",
+            )?;
+        }
         let metadata = format!(
-            "{{\n  \"title\": {},\n  \"game\": {},\n  \"version\": {},\n  \"author\": {},\n  \"description\": {},\n  \"preview\": null,\n  \"entry_point\": \"gamedata/scripts/save_editor_companion.script\",\n  \"package_file\": {},\n  \"steam_workshop\": {{\n    \"game_code\": {},\n    \"published_file_id\": 0,\n    \"visibility\": \"public\"\n  }}\n}}\n",
-            quote(title),
+            "{{\n  \"title\": {},\n  \"game\": {},\n  \"version\": {},\n  \"author\": {},\n  \"description\": {},\n  \"preview\": \"preview.png\",\n  \"package_file\": {},\n  \"starts_in_game\": {starts_in_game},\n  \"steam_workshop\": {{\n    \"game_code\": {},\n    \"published_file_id\": 0,\n    \"visibility\": \"public\"\n  }}\n}}\n",
+            quote(&listing.title),
             quote(game_id),
             quote(version),
             quote(author),
-            quote(description),
-            quote(&archive_name),
+            quote(&listing.short_description),
+            quote(&format!("upload/{archive_name}")),
             quote(code),
         );
-        std::fs::write(output.join("desc.json"), metadata).map_err(InstallError::from)
+        write("desc.json", metadata.as_bytes())
     })();
     if result.is_err() {
         let _ = std::fs::remove_dir_all(output);
@@ -446,8 +570,9 @@ pub fn stage_enhanced_edition(
     result
 }
 
-/// Builds a stored (uncompressed) X-Ray archive with the same chunk table and metadata framing
-/// as the reference `xrCompress -store` package path.
+/// Builds a stored (uncompressed) X-Ray archive: the classic chunk table with an `[header] entry_point` chunk
+/// that mounts the files under the game's `gamedata`. It follows the open X-Ray archive format; it was never
+/// compared with the output of GSC's own `xrCompress -store`, which is not available here.
 pub fn build_ee_archive(files: &[PayloadFile]) -> Result<Vec<u8>, InstallError> {
     const METADATA: &[u8] = b"[header]\nentry_point = $fs_root$\\gamedata\\\n";
     let mut sorted = files.iter().collect::<Vec<_>>();

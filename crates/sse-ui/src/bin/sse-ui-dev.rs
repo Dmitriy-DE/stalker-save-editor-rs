@@ -74,7 +74,7 @@ fn main() -> std::process::ExitCode {
         Some("--package-ee") => package_ee(&args),
         Some("--metrics-report") => metrics_report(&args),
         _ => Err(Error::Refused(
-            "usage: sse-ui-dev --screenshot|--bench|--ci-budget|--ci-i18n-buttons|--ci-text-overflow [SAVE]|--package-ee <soc|cs|cop> <dir>|--metrics-report <dir>"
+            "usage: sse-ui-dev --screenshot|--bench|--ci-budget|--ci-i18n-buttons|--ci-text-overflow [SAVE]|--package-ee <soc|cs|cop> <dir> [--hooks-from <dir>]|--metrics-report <dir>"
                 .to_owned(),
         )),
     };
@@ -113,34 +113,40 @@ fn metrics_report(args: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// Stages one Enhanced Edition Workshop package (`docs/WORKSHOP.md`).
+///
+/// With `--hooks-from <Enhanced Edition folder>` the three game files that start the mod are read from that
+/// installed game (nothing in it is written), patched and put into the archive. Without it the archive holds
+/// the mod files only and the package is marked as not ready for upload.
 fn package_ee(args: &[String]) -> Result<()> {
-    if args.len() != 3 {
-        return Err(Error::Refused("usage: --package-ee <soc|cs|cop> <dir>".to_owned()));
-    }
-    let (game, game_name, code) = match args.get(1).map(String::as_str) {
-        Some("soc") => (
-            sse_companion::bundled::Game::ShadowOfChernobyl,
-            "Shadow of Chernobyl",
-            "SOC",
-        ),
-        Some("cs") => (sse_companion::bundled::Game::ClearSky, "Clear Sky", "CS"),
-        Some("cop") => (sse_companion::bundled::Game::CallOfPripyat, "Call of Pripyat", "COP"),
+    const USAGE: &str = "usage: --package-ee <soc|cs|cop> <dir> [--hooks-from <Enhanced Edition folder>]";
+    let hooks_from = match args.get(3..) {
+        Some([]) => None,
+        Some([flag, directory]) if flag == "--hooks-from" => Some(PathBuf::from(directory)),
+        _ => return Err(Error::Refused(USAGE.to_owned())),
+    };
+    let (game, code) = match args.get(1).map(String::as_str) {
+        Some("soc") => (sse_companion::bundled::Game::ShadowOfChernobyl, "SOC"),
+        Some("cs") => (sse_companion::bundled::Game::ClearSky, "CS"),
+        Some("cop") => (sse_companion::bundled::Game::CallOfPripyat, "COP"),
         _ => return Err(Error::Refused("--package-ee expects soc, cs, or cop".to_owned())),
     };
     let output = args
         .get(2)
         .map(PathBuf::from)
         .ok_or_else(|| Error::Refused("--package-ee requires an output directory".to_owned()))?;
-    sse_companion::bundled::stage_enhanced_edition(
-        &output,
-        game,
-        env!("CARGO_PKG_VERSION"),
-        "Dmitriy-DE",
-        &format!("Save Editor Companion — {game_name} Enhanced Edition"),
-        &format!("Enhanced Edition Workshop package for S.T.A.L.K.E.R.: {game_name}."),
-    )
-    .map_err(|error| Error::System(error.to_string()))?;
+    let hooked = hooks_from
+        .as_deref()
+        .map(|install| sse_companion::installer::hooked_payloads(install, game).map(|(_, files)| files))
+        .transpose()
+        .map_err(|error| Error::System(format!("could not read the game files that start the mod: {error}")))?;
+    let ready = hooked.is_some();
+    sse_companion::bundled::stage_enhanced_edition(&output, game, env!("CARGO_PKG_VERSION"), "Dmitriy-DE", hooked)
+        .map_err(|error| Error::System(error.to_string()))?;
     println!("Staged {code} Enhanced Edition package at {}", output.display());
+    if !ready {
+        println!("Not ready for upload: the game files that start the mod are missing (see NOT-READY.txt).");
+    }
     Ok(())
 }
 
