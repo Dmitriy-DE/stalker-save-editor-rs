@@ -5,12 +5,13 @@ Game fixes correct bugs in the retail game files. The catalogue, the engine and 
 
 ## The catalogue
 
-The catalogue is `crates/sse-fixes/data/game-fixes.json`. `build.rs` compresses it into the binary. Dataset version
-`2026.10.1`; 149 definitions.
+The catalogue is `crates/sse-fixes/data/game-fixes.json`. `build.rs` compresses it (raw DEFLATE) and embeds it in the
+binary. Dataset version `2026.10.1` (`DATASET_VERSION` in `catalog.rs`); 149 definitions.
 
 Each definition holds:
 
-- `id`, `title`, `game` (one of the six X-Ray games or `Stalker2`), `version`;
+- `id`, `title`, `game` (one of the X-Ray games, their Enhanced Editions, or `Stalker2`), `version` (the fix's own
+  version, e.g. `1.0.0`);
 - `supportedSteamBuildIds`: the game builds the fix was checked against;
 - `category`: `Essential` (50), `Recommended` (82), `Community` (16) or `Optional` (1);
 - `maturity`: `Validated`, `Experimental` or `ResearchOnly`;
@@ -21,8 +22,10 @@ Each definition holds:
 - `verificationState`: `RetailFilesVerified` for all 149 entries. This records that the expected hashes were checked
   against retail files. It does not record a game run of the patched files.
 
-Shadow of Chernobyl: 35 fixes, plus 2 for its Enhanced Edition. Clear Sky: 76 (75 validated, 1 experimental). Call of
-Pripyat: 36. S.T.A.L.K.E.R. 2: none.
+Per game, the screen lists: Shadow of Chernobyl 35 (Enhanced Edition 20), Clear Sky 76 with 1 experimental (Enhanced
+Edition 51), Call of Pripyat 36 (Enhanced Edition 25), S.T.A.L.K.E.R. 2 none. The Enhanced Edition entries are variants
+built at load time from the retail definitions and the Enhanced Edition hashes; the counts are asserted in
+`crates/sse-fixes/tests/catalog_tests.rs`.
 
 ## Installing a fix
 
@@ -51,7 +54,7 @@ game.
 ## Command line
 
 ```bash
-stalker-save fixes list --game TARGET --json
+stalker-save fixes list [--game TARGET] [--json]
 stalker-save fixes state TARGET GAME_DIR --json
 stalker-save fixes install ID GAME_DIR
 stalker-save fixes remove ID GAME_DIR
@@ -60,5 +63,6 @@ stalker-save fixes extract TARGET GAME_DIR OUT_DIR [--archives-only] [PREFIX...]
 
 ## What is not verified
 
-The fixes are checked against file hashes and exact text. A game run that shows the fix working is recorded in
-`TASKS.md`, not in this document. Synthetic tests do not show that the game accepts a change.
+The fixes are checked against file hashes and exact text. `verificationState` records the hash check against retail
+files only. A game run that shows a fix working is recorded in `TASKS.md`, not in this document. Synthetic tests do
+not show that the game accepts a change.

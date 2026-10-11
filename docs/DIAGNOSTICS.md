@@ -34,6 +34,9 @@ When the program finds a crash marker or an error, it prepares a report. The rep
 - the last 16 KiB of `save-editor.log`, redacted;
 - no save contents and no game logs. The code never reads them for the report.
 
+The whole report is cut to 8,000 characters before it is shown or saved, so the end of a long log tail may be dropped.
+The text the user sees is the text that would be sent.
+
 The interface shows the report to the user. The report is first saved to `automatic-error-report.txt`. It is sent only
 after the user confirms. The upload is a single HTTPS POST of the report compressed as gzip, limited to 2 MiB. The
 default receiver is the project's download worker (`/diagnostics`), which stores the upload under `diagnostics/`. A
@@ -54,7 +57,7 @@ sent by itself. Each session records:
 
 ### Sending
 
-Sending is off by default (`send_metrics` in the settings is `false`). When the user turns it on, the Metrics dialog
+Sending is off by default (`send_metrics` in the settings is `false`); the metrics upload also requires a separate consent flag at call time. When the user turns it on, the Metrics dialog
 shows the exact JSON body that would be sent. The body is built from counts, timings, size buckets, format names,
 the operating-system category (`linux`, `windows`, `macos` or `other`) and the application version. It has no field
 for file paths or save names. The send button in the dialog starts one HTTPS POST to the metrics endpoint. The request
@@ -64,7 +67,7 @@ The receiver (`infra/downloads-worker/worker.mjs`, route `/metrics`) accepts a b
 `metrics/`. It keeps the body as sent.
 
 `sse-ui-dev --metrics-report <dir>` reads downloaded `metrics/*.json` files and prints a report by operating system.
-From the version of this document that includes PR #531, it also lists the application versions in each group. Percentiles are not merged exactly across uploads; the report says how each figure is combined.
+It groups the uploads by operating system and lists the application versions in each group. Percentiles are not merged exactly across uploads; the report says how each figure is combined.
 
 ## Game-folder checks
 

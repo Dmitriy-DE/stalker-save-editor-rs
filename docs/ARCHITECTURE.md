@@ -8,7 +8,7 @@ standard library.
 | Crate | Role |
 |---|---|
 | `sse-core` | Shared contracts: errors, the owned save buffer, the checked byte cursor |
-| `sse-codecs` | Parsers and codecs written here: JSON, ZIP, PNG, DDS, LZHUF, hashes, P-256 signature check |
+| `sse-codecs` | Parsers and codecs written here: JSON, ZIP, PNG, JPEG, Kraken, LZO1X, LZHUF, hashes, P-256 signature check |
 | `sse-sys` | Operating-system adapters: files, HTTPS, Steam, windowing, hotkeys. The only crate that may use `unsafe` |
 | `sse-content` | Files of an installed game: archives, LTX configs, XML string tables, DDS textures, file tree |
 | `sse-catalog` | Official names, installed-game catalogue, translations |
