@@ -34,8 +34,8 @@ reference:
 | Remove items | Verified | Experimental (ТЧ EE 4/4 and ЧН EE 6/6 measurable saves pass; ЗП EE 12/12; the other saves have no backpack item to remove) |
 | Equipment condition | Experimental | Experimental (not loaded in the game yet): ТЧ EE 6/6, ЧН EE 8/8, ЗП EE 12/12 (the restore keeps the client copy untouched where it differs from the state value) |
 | Item placement | Experimental | Call of Pripyat EE: Experimental (not loaded in the game yet, 12/12); Shadow of Chernobyl EE, Clear Sky EE: Unsupported (slot occupancy cannot be proven: the equipped item reads as slot 0, so a slot move is refused) |
-| Actor faction | Experimental | Experimental (26/26 real saves read the new faction and undo byte-identically) |
-| Faction relations | Experimental | Unsupported (none of the 26 Enhanced Edition saves holds an actor relation entry, so nothing to edit) |
+| Actor faction | Unsupported (the release catalog's faction numbering is not proven against the game; see docs/roadmap/FACTION-IDS) | Experimental (26/26 real saves read the new faction and undo byte-identically) |
+| Faction relations | Unsupported (the same catalog numbering is not proven) | Unsupported (none of the 26 Enhanced Edition saves holds an actor relation entry, so nothing to edit) |
 | Move items to or from a stash | Experimental | Unsupported (the move into the backpack succeeds, but its undo is refused: the moved item has no backpack placement after the move) |
 | Info portions | Experimental | Unsupported |
 | Relocate actor | Experimental | Unsupported |

@@ -63,9 +63,11 @@ pub const fn capability(format: crate::Format, kind: ChangeKind) -> Capability {
 
     match (format, kind) {
         (Soc | Cs | Cop, AddItems | EditMoney | EditStacks | RemoveItems) => Verified,
-        (Soc | Cs | Cop, EditDurability | EditPlacement | EditPlayerFaction | EditRelations | MoveItems) => {
-            Experimental
-        }
+        // ToT (Soc) faction and relation edits write the faction ids of the release catalog, whose numbering does not
+        // match the game's community order (see docs/roadmap/FACTION-IDS: the game's own id list is not in the files).
+        (Soc, EditPlayerFaction | EditRelations) => Unsupported,
+        (Cs | Cop, EditPlayerFaction | EditRelations) => Experimental,
+        (Soc | Cs | Cop, EditDurability | EditPlacement | MoveItems) => Experimental,
         (Soc | Cs | Cop, EditInfoPortions | RelocateActor) => Experimental,
         (Cs | Cop, EditUpgrades) => Experimental,
         (Soc, EditUpgrades) => Unsupported,
@@ -4175,13 +4177,26 @@ mod tests {
             for kind in [
                 ChangeKind::EditDurability,
                 ChangeKind::EditPlacement,
-                ChangeKind::EditPlayerFaction,
-                ChangeKind::EditRelations,
                 ChangeKind::MoveItems,
             ] {
                 assert_eq!(capability(format, kind), Capability::Experimental);
             }
         }
+        for format in [Format::Cs, Format::Cop] {
+            assert_eq!(
+                capability(format, ChangeKind::EditPlayerFaction),
+                Capability::Experimental
+            );
+            assert_eq!(capability(format, ChangeKind::EditRelations), Capability::Experimental);
+        }
+        assert_eq!(
+            capability(Format::Soc, ChangeKind::EditPlayerFaction),
+            Capability::Unsupported
+        );
+        assert_eq!(
+            capability(Format::Soc, ChangeKind::EditRelations),
+            Capability::Unsupported
+        );
         assert_eq!(
             capability(Format::Soc, ChangeKind::EditUpgrades),
             Capability::Unsupported
