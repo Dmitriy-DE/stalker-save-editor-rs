@@ -1907,6 +1907,12 @@ fn apply_changes_with_items(
 /// empty `u32::MAX` slot (real saves contain such slots in both lists). The stash grid grows by the
 /// footprint, and the backpack grid shrinks by the same number of bytes, so the image length is unchanged.
 /// Not confirmed in game; the caller must create a backup and verify the result by reading it back.
+/// The backpack→stash move splices the stash grid after the backpack grid, so the stash owned list
+/// must start at or after the backpack grid end. Anything else would make the spans overlap.
+fn stash_follows_backpack_grid(stash_owned_offset: usize, backpack_grid_end: usize) -> bool {
+    stash_owned_offset >= backpack_grid_end
+}
+
 fn move_backpack_item_to_stash(
     save: &S2Save,
     handle: u32,
@@ -1941,6 +1947,11 @@ fn move_backpack_item_to_stash(
         ));
     };
     let stash = save.stash()?;
+    if !stash_follows_backpack_grid(stash.owned_handles_offset, save.index.grid_end_offset) {
+        return Err(Error::Refused(
+            "S2 stash block overlaps the backpack grid; move refused".to_owned(),
+        ));
+    }
     if stash.live_handles().contains(&handle) {
         return Err(Error::Refused("S2 backpack item is already in the stash".to_owned()));
     }
@@ -2765,8 +2776,8 @@ fn validate_owned_handles(handles: &[u32], legacy: bool) -> Result<()> {
 mod tests {
     use super::{
         apply_changes_to_image, classify_refusal, first_free_placement, moved_object_offset, pack_and_verify_s2_image,
-        transfer_stash_items_to_backpack, validate_owned_handles, S2Change, S2Container, S2InventoryIndex, S2Save,
-        S2SkipReason, S2StashLayout, GRID_WIDTH,
+        stash_follows_backpack_grid, transfer_stash_items_to_backpack, validate_owned_handles, S2Change, S2Container,
+        S2InventoryIndex, S2Save, S2SkipReason, S2StashLayout, GRID_WIDTH,
     };
     use sse_codecs::crc32;
     use sse_core::Error;
@@ -3470,6 +3481,16 @@ mod tests {
         assert_eq!(after_stash, before_stash);
         assert!(back.unresolved_handles.is_empty());
         Ok(())
+    }
+
+    #[test]
+    fn backpack_move_refuses_a_stash_block_that_starts_inside_the_backpack_grid() {
+        // A stash owned list that starts before the backpack grid end would overlap the spliced span.
+        assert!(!stash_follows_backpack_grid(900, 1000));
+        assert!(!stash_follows_backpack_grid(999, 1000));
+        // Exactly at the grid end, and after it, is the supported layout.
+        assert!(stash_follows_backpack_grid(1000, 1000));
+        assert!(stash_follows_backpack_grid(1200, 1000));
     }
 
     #[test]
