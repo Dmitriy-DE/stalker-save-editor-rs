@@ -152,6 +152,34 @@ pub fn input(tree: &mut Tree, parent: WidgetId, value: &str) -> Result<WidgetId>
     )
 }
 
+/// Look of a button of the given role; `set_button_role` applies it to a button already built.
+#[must_use]
+pub fn button_look(role: Button) -> Look {
+    let colors = theme::current().colors;
+    let (fill, hover, foreground, border) = match role {
+        Button::Primary => (Some(colors.accent[0]), colors.accent[2], colors.accent[3], None),
+        Button::Secondary => (None, colors.background[3], colors.text[0], Some(colors.borders[1])),
+        Button::Danger => (None, colors.background[3], colors.state[2], Some(colors.state[2])),
+    };
+    Look {
+        fill: fill.map(rgb),
+        hover_fill: Some(rgb(hover)),
+        border: border.map(|color| (rgb(color), 1.0)),
+        radius: theme::BUTTON_RADIUS,
+        text: rgb(foreground),
+        align: TextAlign::Center,
+        ..Look::default()
+    }
+}
+
+/// Changes the role of a button already built (its label and place stay the same).
+///
+/// # Errors
+/// Returns an error from the widget tree.
+pub fn set_button_role(tree: &mut Tree, id: WidgetId, role: Button) -> Result<()> {
+    tree.set_look(id, button_look(role))
+}
+
 /// A button.
 ///
 /// # Errors
@@ -175,21 +203,7 @@ pub fn button(tree: &mut Tree, parent: WidgetId, text: &str, role: Button) -> Re
         shrink: 0.0,
         ..Style::default()
     };
-    let colors = theme::current().colors;
-    let (fill, hover, foreground, border) = match role {
-        Button::Primary => (Some(colors.accent[0]), colors.accent[2], colors.accent[3], None),
-        Button::Secondary => (None, colors.background[3], colors.text[0], Some(colors.borders[1])),
-        Button::Danger => (None, colors.background[3], colors.state[2], Some(colors.state[2])),
-    };
-    let look = Look {
-        fill: fill.map(rgb),
-        hover_fill: Some(rgb(hover)),
-        border: border.map(|color| (rgb(color), 1.0)),
-        radius: theme::BUTTON_RADIUS,
-        text: rgb(foreground),
-        align: TextAlign::Center,
-        ..Look::default()
-    };
+    let look = button_look(role);
     let content = Content::Button {
         text: label,
         style: label_style,

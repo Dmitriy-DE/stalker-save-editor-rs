@@ -2171,6 +2171,38 @@ struct Updates {
 }
 
 impl Updates {
+    /// Enables only the next step (download after an offer, install after a download) and marks the
+    /// one next step as the primary button; "check" is primary until something is offered.
+    fn sync_actions(&self, cx: &mut Context<'_>) -> Result<()> {
+        let downloaded = self.downloaded.is_some();
+        let offered = self.artifact.is_some() && !downloaded;
+        if let Some(id) = self.check {
+            cx.tree.set_enabled(id, true)?;
+            style::set_button_role(
+                cx.tree,
+                id,
+                if offered || downloaded {
+                    Button::Secondary
+                } else {
+                    Button::Primary
+                },
+            )?;
+        }
+        if let Some(id) = self.download {
+            cx.tree.set_enabled(id, offered)?;
+            style::set_button_role(cx.tree, id, if offered { Button::Primary } else { Button::Secondary })?;
+        }
+        if let Some(id) = self.install {
+            cx.tree.set_enabled(id, downloaded)?;
+            style::set_button_role(
+                cx.tree,
+                id,
+                if downloaded { Button::Primary } else { Button::Secondary },
+            )?;
+        }
+        Ok(())
+    }
+
     fn check(&mut self, cx: &mut Context<'_>) {
         if self.busy {
             return;
@@ -2316,8 +2348,32 @@ impl Screen for Updates {
     }
 
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
-        let card = style::card(cx.tree, host)?;
-        style::label(cx.tree, card, t("ОБНОВЛЕНИЕ ПРИЛОЖЕНИЯ"), Text::Heading)?;
+        let body = cx.tree.add(
+            Some(host),
+            NodeKind::Row,
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: Size::new(0.0, 0.0),
+                gap: Size::new(crate::theme::CONTROL_GAP + 6.0, 0.0),
+                align_items: crate::layout::Align::Stretch,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        let card = style::d2::panel(cx.tree, body)?;
+        cx.tree.set_style(
+            card,
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: Size::new(0.0, 0.0),
+                padding: crate::layout::Edges::all(crate::theme::d2::PANEL_PADDING.0),
+                ..Style::default()
+            },
+        )?;
+        style::d2::panel_title(cx.tree, card, t("ОБНОВЛЕНИЕ ПРИЛОЖЕНИЯ"))?;
         style::label(
             cx.tree,
             card,
@@ -2327,21 +2383,43 @@ impl Screen for Updates {
         self.latest = Some(style::label(cx.tree, card, t("ПОСЛЕДНЯЯ ВЕРСИЯ: —"), Text::Value)?);
         self.badge = Some(style::label(cx.tree, card, t("Статус неизвестен"), Text::Body)?);
         self.status = Some(style::label(cx.tree, card, "", Text::Note)?);
-        let row = style::row(cx.tree, card)?;
+        let side = cx.tree.add(
+            Some(body),
+            NodeKind::Column,
+            side_column_style(true, false),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let actions = style::d2::panel(cx.tree, side)?;
+        cx.tree.set_style(
+            actions,
+            Style {
+                padding: crate::layout::Edges::all(crate::theme::d2::PANEL_PADDING.0),
+                align_items: crate::layout::Align::Stretch,
+                gap: Size::new(0.0, crate::theme::CONTROL_GAP),
+                ..Style::default()
+            },
+        )?;
+        style::d2::panel_title(cx.tree, actions, t("ДЕЙСТВИЯ"))?;
         self.check = Some(style::button(
             cx.tree,
-            row,
+            actions,
             t("ПРОВЕРИТЬ ОБНОВЛЕНИЯ"),
             Button::Secondary,
         )?);
-        self.download = Some(style::button(cx.tree, row, t("СКАЧАТЬ ОБНОВЛЕНИЕ"), Button::Secondary)?);
+        self.download = Some(style::button(
+            cx.tree,
+            actions,
+            t("СКАЧАТЬ ОБНОВЛЕНИЕ"),
+            Button::Secondary,
+        )?);
         self.install = Some(style::button(
             cx.tree,
-            row,
+            actions,
             t("УСТАНОВИТЬ ОБНОВЛЕНИЕ"),
-            Button::Primary,
+            Button::Secondary,
         )?);
-        Ok(())
+        self.sync_actions(cx)
     }
 
     fn message(
@@ -2412,6 +2490,7 @@ impl Screen for Updates {
                             cx.tree.set_text(id, &status)?;
                         }
                         cx.status = Some(status);
+                        self.sync_actions(cx)?;
                     }
                     UpdateReply::Checked(Err(error)) => {
                         self.artifact = None;
@@ -2422,6 +2501,7 @@ impl Screen for Updates {
                             cx.tree.set_text(id, &tr("Ошибка сервера обновлений: {0}", &[error]))?;
                         }
                         cx.status = Some(t("Ошибка подключения к серверу обновлений.").to_owned());
+                        self.sync_actions(cx)?;
                     }
                     UpdateReply::Downloaded(Ok((artifact, path))) => {
                         self.artifact = Some(artifact.clone());
@@ -2431,6 +2511,7 @@ impl Screen for Updates {
                             cx.tree.set_text(id, &text)?;
                         }
                         cx.status = Some(text);
+                        self.sync_actions(cx)?;
                     }
                     UpdateReply::Downloaded(Err(error)) => {
                         if let Some(id) = self.status {

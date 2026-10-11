@@ -1667,6 +1667,15 @@ impl Shell {
         let library_refresh = library_icon_button(tree, library_actions, Icon::D2Updates)?;
         tree.set_tooltip(library_refresh, crate::strings::t("Обновить"))?;
         let library_status = super::saves::paragraph(tree, library, "Ищу сейвы…", Text::Note)?;
+        // Room for three wrapped lines of the count, so the list never sits on top of the text.
+        tree.set_style(
+            library_status,
+            Style {
+                shrink: 0.0,
+                min: Size::new(0.0, 48.0),
+                ..Style::default()
+            },
+        )?;
         let library_list = tree.add(
             Some(library),
             NodeKind::Column,
