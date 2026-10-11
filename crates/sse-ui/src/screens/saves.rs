@@ -60,10 +60,10 @@ fn xray_overview_parameters(save: &Save, money: u32, item_count: usize, game_tim
     );
     let weather = save.weather().map_or_else(
         || dash.to_owned(),
-        |value| format!("{} → {}", value.current, value.next),
+        |value| format!("{} -> {}", value.current, value.next),
     );
     tr(
-        "Деньги: {0} RU · Предметов: {1} · Тайников: —\nИгровое время: {2} · Персонаж: {3} · Здоровье: {4}\nРанг: {5} · Репутация: {6} · Задания: {7} (последнее получено: {8}) · Убито (люди / монстры): {9} · Погода: {10}",
+        "Деньги: {0} RU · Объектов инвентаря: {1} · Тайников: —\nИгровое время: {2} · Персонаж: {3} · Здоровье: {4}\nРанг: {5} · Репутация: {6} · Задания: {7} (последнее получено: {8}) · Убито (люди / монстры): {9} · Погода: {10}",
         &[&money, &item_count, &game_time, &name, &health, &rank, &reputation, &tasks, &last_received, &kills, &weather],
     )
 }
@@ -1837,7 +1837,7 @@ fn build_detail_set(tree: &mut crate::widget::Tree, parent: WidgetId) -> Result<
     })
 }
 
-const DETAIL_TILE_SLOTS: usize = 8;
+const DETAIL_TILE_SLOTS: usize = 10;
 const DETAIL_INFO_SLOTS: usize = 4;
 const DETAIL_INTEGRITY_SLOTS: usize = 6;
 
@@ -11647,6 +11647,21 @@ mod tests {
 mod xray_overview_tests {
     use super::xray_overview_parameters;
     use sse_xray::Save;
+
+    /// Every parameter a Clear Sky save proves gets its own tile; none is dropped for lack of a slot.
+    #[test]
+    fn every_clear_sky_parameter_has_a_tile() -> sse_core::Result<()> {
+        let save = Save::read(include_bytes!("../../../../fixtures/synthetic/xray-clear-sky.sav"))?;
+        let text = super::xray_overview_parameters(&save, 1, 1, "day");
+        let pairs = super::detail_pairs(&text);
+        assert!(
+            pairs.len() <= super::DETAIL_TILE_SLOTS,
+            "{} pairs for {} tiles",
+            pairs.len(),
+            super::DETAIL_TILE_SLOTS
+        );
+        Ok(())
+    }
 
     /// The synthetic Clear Sky fixture has health 1, rank -1 and reputation -1 (checked against the C# reader).
     #[test]
