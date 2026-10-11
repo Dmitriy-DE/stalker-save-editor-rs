@@ -1935,7 +1935,7 @@
     "ru": "АРТ.",
     "uk": "АРТ.",
     "en": "ART.",
-    "de": "ART.",
+    "de": "Art.",
     "fr": "ART.",
     "it": "ART.",
     "es": "ART.",
@@ -1984,11 +1984,11 @@
   },
   "Апгрейд": {
     "uk": "Апгрейд",
-    "de": "Upgrade"
+    "de": "Verbesserung"
   },
   "Аптечка": {
     "uk": "Аптечка",
-    "de": "Medkit"
+    "de": "Medizinkasten"
   },
   "Артефакт": {
     "uk": "Артефакт"
@@ -2056,7 +2056,9 @@
     "es": "Guarda",
     "it": "Guardia",
     "pl": "Straż",
-    "cs": "Stráž"
+    "cs": "Stráž",
+    "pt-BR": "Ala",
+    "tr": "Koğuş"
   },
   "Ветеран": {
     "uk": "Ветеран",
@@ -2140,7 +2142,7 @@
     "ru": "Журнал: {0}",
     "uk": "Журнал: {0}",
     "en": "Journal: {0}",
-    "de": "Journal: {0}",
+    "de": "Tagebuch: {0}",
     "fr": "Journal : {0}",
     "it": "Registro: {0}",
     "es": "Diario: {0}",
@@ -2207,7 +2209,7 @@
     "ru": "КВЕСТ",
     "uk": "КВЕСТ",
     "en": "QUEST",
-    "de": "QUEST",
+    "de": "AUFTRAG",
     "fr": "QUÊTE",
     "it": "MISSIONE",
     "es": "MISIÓN",
@@ -2286,12 +2288,12 @@
     "uk": "Назад"
   },
   "Нейтрал": {
-    "uk": "Нейтрал",
+    "uk": "Нейтральний",
     "de": "Neutral",
     "es": "Neutral"
   },
   "Нейтрал (0)": {
-    "uk": "Нейтрал (0)",
+    "uk": "Нейтральний (0)",
     "de": "Neutral (0)",
     "es": "Neutral (0)"
   },
@@ -2329,7 +2331,8 @@
     "uk": "ПОГОДА"
   },
   "ПРЕДМЕТ": {
-    "uk": "ПРЕДМЕТ"
+    "uk": "ПРЕДМЕТ",
+    "pt-BR": "OBJETO"
   },
   "ПРОБЛЕМА": {
     "uk": "ПРОБЛЕМА",
@@ -2388,7 +2391,8 @@
     "uk": "Пояс"
   },
   "Предмет": {
-    "uk": "Предмет"
+    "uk": "Предмет",
+    "pt-BR": "Objeto"
   },
   "Предмет {0}": {
     "ru": "Предмет {0}",
@@ -2400,7 +2404,7 @@
     "es": "Objeto {0}",
     "pl": "Przedmiot {0}",
     "cs": "Předmět {0}",
-    "pt-BR": "Item {0}",
+    "pt-BR": "Objeto {0}",
     "tr": "Eşya {0}",
     "ja": "アイテム {0}",
     "ko": "아이템 {0}",
@@ -2470,9 +2474,10 @@
   },
   "СТАТУС": {
     "uk": "СТАТУС",
-    "de": "STATUS",
+    "de": "ZUSTAND",
     "pl": "STAN",
-    "cs": "STAV"
+    "cs": "STAV",
+    "pt-BR": "ESTADO"
   },
   "Сайга Д-12": {
     "uk": "Сайга Д-12",
@@ -2488,45 +2493,50 @@
   },
   "Слот": {
     "uk": "Слот",
-    "de": "Slot",
+    "de": "Platz",
     "it": "Slot",
     "pl": "Miejsce",
-    "cs": "Pozice"
+    "cs": "Pozice",
+    "pt-BR": "Espaço"
   },
   "Слот {0}": {
     "uk": "Слот {0}",
-    "de": "Slot {0}",
+    "de": "Platz {0}",
     "it": "Slot {0}",
     "pl": "Miejsce {0}",
-    "cs": "Pozice {0}"
+    "cs": "Pozice {0}",
+    "pt-BR": "Espaço {0}"
   },
   "Слот: {0}": {
     "uk": "Слот: {0}",
-    "de": "Slot: {0}",
+    "de": "Platz: {0}",
     "it": "Slot: {0}",
     "pl": "Miejsce: {0}",
     "cs": "Pozice: {0}"
   },
   "Статус": {
     "uk": "Статус",
-    "de": "Status",
+    "de": "Zustand",
     "pl": "Stan",
-    "cs": "Stav"
+    "cs": "Stav",
+    "pt-BR": "Estado"
   },
   "Статус Steam Cloud: {0}": {
     "uk": "Статус Steam Cloud: {0}"
   },
   "Статус: {0}": {
     "uk": "Статус: {0}",
-    "de": "Status: {0}",
+    "de": "Zustand: {0}",
     "pl": "Stan: {0}",
-    "cs": "Stav: {0}"
+    "cs": "Stav: {0}",
+    "pt-BR": "Estado: {0}"
   },
   "Статус<br>{0}": {
     "uk": "Статус<br>{0}",
-    "de": "Status<br>{0}",
+    "de": "Zustand<br>{0}",
     "pl": "Stan<br>{0}",
-    "cs": "Stav<br>{0}"
+    "cs": "Stav<br>{0}",
+    "pt-BR": "Estado<br>{0}"
   },
   "Ствол": {
     "uk": "Ствол"
@@ -2598,7 +2608,12 @@
     "es": "Ucraniano",
     "it": "Ucraino",
     "pl": "Ukraiński",
-    "cs": "Ukrajinština"
+    "cs": "Ukrajinština",
+    "tr": "Ukraynaca",
+    "ja": "ウクライナ語",
+    "ko": "우크라이나어",
+    "zh-CN": "乌克兰语",
+    "zh-TW": "烏克蘭語"
   },
   "Файл": {
     "uk": "Файл",
@@ -2675,7 +2690,8 @@
     "uk": "пояс"
   },
   "предмет": {
-    "uk": "предмет"
+    "uk": "предмет",
+    "pt-BR": "objeto"
   },
   "предмет 0x{0}": {
     "ru": "предмет 0x{0}",
@@ -2687,7 +2703,7 @@
     "es": "objeto 0x{0}",
     "pl": "przedmiot 0x{0}",
     "cs": "předmět 0x{0}",
-    "pt-BR": "item 0x{0}",
+    "pt-BR": "objeto 0x{0}",
     "tr": "eşya 0x{0}",
     "ja": "アイテム 0x{0}",
     "ko": "아이템 0x{0}",
@@ -3587,13 +3603,13 @@
     "ru": "Снимок",
     "uk": "Знімок",
     "en": "Snapshot",
-    "de": "Snapshot",
+    "de": "Momentaufnahme",
     "fr": "Instantané",
     "it": "Istantanea",
     "es": "Instantánea",
     "pl": "Migawka",
     "cs": "Snímek",
-    "pt-BR": "Snapshot",
+    "pt-BR": "Instantâneo",
     "tr": "Anlık görüntü",
     "ja": "スナップショット",
     "ko": "스냅샷",
@@ -8636,7 +8652,7 @@
     "ru": "Облако Steam: {0} Б · {1}",
     "uk": "Хмара Steam: {0} Б · {1}",
     "en": "Steam Cloud: {0} B · {1}",
-    "de": "Steam Cloud: {0} B · {1}",
+    "de": "Steam-Cloud: {0} B · {1}",
     "fr": "Steam Cloud : {0} o · {1}",
     "it": "Cloud Steam: {0} B · {1}",
     "es": "Steam Cloud: {0} B · {1}",
@@ -8653,7 +8669,7 @@
     "ru": "Облако Steam: —",
     "uk": "Хмара Steam: —",
     "en": "Steam Cloud: —",
-    "de": "Steam Cloud: —",
+    "de": "Steam-Cloud: —",
     "fr": "Steam Cloud : —",
     "it": "Cloud Steam: —",
     "es": "Steam Cloud: —",
@@ -10812,13 +10828,13 @@
     "ru": "РЕЗЕРВНОЕ КОПИРОВАНИЕ",
     "uk": "РЕЗЕРВНЕ КОПІЮВАННЯ",
     "en": "BACKUPS",
-    "de": "BACKUPS",
+    "de": "SICHERUNGEN",
     "fr": "SAUVEGARDES",
     "it": "BACKUP",
     "es": "COPIAS",
     "pl": "KOPIE",
     "cs": "ZÁLOHY",
-    "pt-BR": "BACKUPS",
+    "pt-BR": "CÓPIAS DE SEGURANÇA",
     "tr": "YEDEKLEME",
     "ja": "バックアップ",
     "ko": "백업",
@@ -11243,7 +11259,7 @@
     "es": "PARTIDAS",
     "pl": "ZAPISY",
     "cs": "ULOŽENÉ HRY",
-    "pt-BR": "SAVES",
+    "pt-BR": "SALVAMENTOS",
     "tr": "KAYITLAR",
     "ja": "セーブ",
     "ko": "세이브",
@@ -12087,13 +12103,13 @@
     "ru": "Статус:        ",
     "uk": "Стан:        ",
     "en": "Status:        ",
-    "de": "Status:        ",
+    "de": "Zustand:        ",
     "fr": "État :        ",
     "it": "Stato:        ",
     "es": "Estado:        ",
     "pl": "Stan:        ",
     "cs": "Stav:        ",
-    "pt-BR": "Status:        ",
+    "pt-BR": "Estado:        ",
     "tr": "Durum:        ",
     "ja": "状態:        ",
     "ko": "상태:        ",
@@ -12648,7 +12664,7 @@
     "ru": "Эксперим.",
     "uk": "Експерим.",
     "en": "Experim.",
-    "de": "Experim.",
+    "de": "Exp.",
     "fr": "Expérim.",
     "it": "Sperim.",
     "es": "Exper.",
@@ -13198,7 +13214,7 @@
     "es": "partida",
     "pl": "zapis",
     "cs": "uložená hra",
-    "pt-BR": "save",
+    "pt-BR": "salvamento",
     "tr": "kayıt",
     "ja": "セーブ",
     "ko": "세이브",
@@ -13463,21 +13479,23 @@
     "cs": "S.T.A.L.K.E.R.: Clear Sky (20510)"
   },
   "Апгрейды": {
-    "de": "Upgrades"
+    "de": "Verbesserungen"
   },
   "БЭКАПЫ": {
-    "de": "BACKUPS"
+    "de": "SICHERUNGEN",
+    "pt-BR": "CÓPIAS DE SEGURANÇA"
   },
   "Бэкап ": {
-    "de": "Backup ",
-    "it": "Copia di backup "
+    "de": "Sicherung ",
+    "it": "Copia di backup ",
+    "pt-BR": "Cópia de segurança "
   },
   "ВЕРСИЯ": {
     "de": "VERSION",
     "fr": "VERSION"
   },
   "Детали: {0}": {
-    "de": "Details: {0}"
+    "de": "Einzelheiten: {0}"
   },
   "Дикий остров": {
     "de": "Wilde Insel",
@@ -13510,7 +13528,7 @@
     "cs": "CoP EE"
   },
   "Залесье": {
-    "de": "Залесье",
+    "de": "Saliss",
     "fr": "Zalessye",
     "es": "Zalissya",
     "it": "Zalissya",
@@ -13553,7 +13571,7 @@
     "it": "Scintilla"
   },
   "Исправления": {
-    "de": "Fixes"
+    "de": "Korrekturen"
   },
   "Лиманск": {
     "de": "Limansk",
@@ -13563,9 +13581,10 @@
     "cs": "Limansk"
   },
   "МОДЫ": {
-    "de": "MODS",
+    "de": "MODIFIKATIONEN",
     "fr": "MODIFICATIONS",
-    "es": "MODIFICACIONES"
+    "es": "MODIFICACIONES",
+    "pt-BR": "MODIFICAÇÕES"
   },
   "Малахит": {
     "de": "Malachit",
@@ -13584,9 +13603,10 @@
     "cs": "Menší zóna"
   },
   "Моды": {
-    "de": "Mods",
+    "de": "Modifikationen",
     "fr": "Modifications",
-    "es": "Modificaciones"
+    "es": "Modificaciones",
+    "pt-BR": "Modificações"
   },
   "Монолит": {
     "de": "Monolith"
@@ -13619,16 +13639,16 @@
     "cs": "OBLAK"
   },
   "ОБНОВЛЕНИЯ": {
-    "de": "UPDATES"
+    "de": "AKTUALISIERUNGEN"
   },
   "Подробнее": {
     "de": "Mehr"
   },
   "Подробности": {
-    "de": "Details"
+    "de": "Einzelheiten"
   },
   "Подробности: {0}": {
-    "de": "Details: {0}"
+    "de": "Einzelheiten: {0}"
   },
   "Позиция": {
     "de": "Position",
@@ -13643,7 +13663,8 @@
     "cs": "Pripjať"
   },
   "Резервное копирование": {
-    "de": "Backups"
+    "de": "Sicherungen",
+    "pt-BR": "Cópias de segurança"
   },
   "Рыжий лес": {
     "de": "Roter Wald",
@@ -13692,7 +13713,13 @@
     "es": "Planta química",
     "it": "Impianto chimico",
     "pl": "Zakład chemiczny",
-    "cs": "Chemická továrna"
+    "cs": "Chemická továrna",
+    "pt-BR": "Usina Química",
+    "tr": "Kimya Fabrikası",
+    "ja": "化学工場",
+    "ko": "화학 공장",
+    "zh-CN": "化工厂",
+    "zh-TW": "化工廠"
   },
   "Цементный завод": {
     "de": "Zementwerk",
@@ -13700,7 +13727,13 @@
     "es": "Fábrica de cemento",
     "it": "Fabbrica di cemento",
     "pl": "Cementownia",
-    "cs": "Cementárna"
+    "cs": "Cementárna",
+    "pt-BR": "Fábrica de Cimento",
+    "tr": "Çimento Fabrikası",
+    "ja": "セメント工場",
+    "ko": "시멘트 공장",
+    "zh-CN": "水泥厂",
+    "zh-TW": "水泥廠"
   },
   "Чистое Небо": {
     "de": "Clear Sky",
@@ -13759,7 +13792,8 @@
     "fr": "Vodka",
     "es": "Vodka",
     "it": "Vodka",
-    "cs": "Vodka"
+    "cs": "Vodka",
+    "pt-BR": "Vodca"
   },
   "ГРУППИРОВКА": {
     "fr": "GROUPEMENT"
@@ -13826,10 +13860,12 @@
     "cs": "ID Binance: 434350727"
   },
   "РЕЗЕРВНАЯ КОПИЯ": {
-    "it": "COPIA DI BACKUP"
+    "it": "COPIA DI BACKUP",
+    "pt-BR": "CÓPIA DE SEGURANÇA"
   },
   "Резервная копия": {
-    "it": "Copia di backup"
+    "it": "Copia di backup",
+    "pt-BR": "Cópia de segurança"
   },
   "ОШИБКА": {
     "es": "FALLO"
@@ -13878,7 +13914,8 @@
   "РАСХ.": {
     "fr": "CONSO.",
     "es": "CONS.",
-    "it": "CONS."
+    "it": "CONS.",
+    "pt-BR": "CONSUMO"
   },
   "РОДИТЕЛЬ": {
     "fr": "PARENT"
@@ -13897,5 +13934,26 @@
   },
   "сталкеров {0} · мутантов {1}": {
     "fr": "stalkers {0} · mutants {1}"
+  },
+  "{0} · сохранения": {
+    "pt-BR": "{0} · salvamentos"
+  },
+  "РЕЗЕРВНЫЕ КОПИИ": {
+    "pt-BR": "CÓPIAS DE SEGURANÇA"
+  },
+  "СОХРАНЕНИЯ": {
+    "pt-BR": "SALVAMENTOS"
+  },
+  "май": {
+    "tr": "Mayıs"
+  },
+  "мар": {
+    "tr": "Mart"
+  },
+  "Сохранений: {0}": {
+    "pt-BR": "Salvamentos: {0}"
+  },
+  "сохранения: {0}": {
+    "pt-BR": "salvamentos: {0}"
   }
 }
