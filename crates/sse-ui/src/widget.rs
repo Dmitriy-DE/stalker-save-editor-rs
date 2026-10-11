@@ -889,36 +889,57 @@ impl Tree {
     ///
     /// Theme changes use this to update widgets that were already built without rebuilding screen state.
     pub fn replace_color(&mut self, from: Color, to: Color) {
-        if from == to {
+        self.replace_colors(&[(from, to)]);
+    }
+
+    /// Replaces several resolved colours across the retained tree in one pass.
+    ///
+    /// Every colour is looked up once, in the colours the tree had before the call, so a pair `A -> B` followed
+    /// by `B -> C` turns `A` into `B` and not into `C`. All states of a widget are repainted: normal, hover,
+    /// pressed, focus ring and disabled.
+    pub fn replace_colors(&mut self, pairs: &[(Color, Color)]) {
+        let map = |color: &mut Color| {
+            if let Some((_, to)) = pairs.iter().find(|(from, _)| from == color) {
+                *color = *to;
+            }
+        };
+        if pairs.iter().all(|(from, to)| from == to) {
             return;
         }
-        if self.background == from {
-            self.background = to;
-        }
+        map(&mut self.background);
         for node in &mut self.nodes {
             let look = &mut node.look;
+            map(&mut look.text);
             for color in [
                 &mut look.fill,
                 &mut look.hover_fill,
                 &mut look.pressed_fill,
                 &mut look.hover_text,
-            ] {
-                if *color == Some(from) {
-                    *color = Some(to);
-                }
+                &mut look.pressed_text,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                map(color);
             }
-            if look.text == from {
-                look.text = to;
+            for (color, _) in [
+                &mut look.border,
+                &mut look.accent_bar,
+                &mut look.hover_border,
+                &mut look.pressed_border,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                map(color);
             }
-            if let Some((color, width)) = look.border {
-                if color == from {
-                    look.border = Some((to, width));
-                }
+            if let Some((color, _, _)) = &mut look.focus_ring {
+                map(color);
             }
-            if let Some((color, width)) = look.accent_bar {
-                if color == from {
-                    look.accent_bar = Some((to, width));
-                }
+            if let Some(disabled) = &mut look.disabled {
+                map(&mut disabled.fill);
+                map(&mut disabled.border);
+                map(&mut disabled.text);
             }
         }
         self.damage_all();
