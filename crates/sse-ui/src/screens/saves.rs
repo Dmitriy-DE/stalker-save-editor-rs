@@ -12746,9 +12746,19 @@ mod tests {
             super::SaveData::Stalker2 { .. } => return Err(Error::damaged("X-Ray fixture parsed as S2")),
         };
         inventory.stage_money_value(&mut cx, original_money.saturating_add(77))?;
-        let _ = receiver
-            .recv_timeout(std::time::Duration::from_secs(5))
-            .map_err(|error| Error::System(format!("draft persistence timed out: {error}")))?;
+        // Icon decodes also post messages to this channel: wait for the draft's own confirmation, skipping the rest.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            let message = receiver
+                .recv_timeout(remaining)
+                .map_err(|error| Error::System(format!("draft persistence timed out: {error}")))?;
+            if matches!(&message, Message::User(AppMessage::ToScreen(ScreenId::Inventory, payload))
+                if payload.downcast_ref::<super::DraftPersisted>().is_some())
+            {
+                break;
+            }
+        }
         assert_eq!(
             cx.app.draft(&source_sha256).and_then(|draft| draft.money),
             Some(original_money.saturating_add(77))
