@@ -373,6 +373,10 @@ fn classify_refusal(message: &str) -> S2SkipReason {
     }
 }
 
+/// Largest number of items one stash transfer call may move. Each accepted item costs a full verified write, so the
+/// bound makes the work of one call finite and known in advance.
+pub const MAXIMUM_STASH_TRANSFER_ITEMS: usize = 64;
+
 /// Applies `changes` (if any), then moves each requested stash item with its own write and re-read.
 ///
 /// An item that is not in use or not marked stash-owned (record byte 28, bit `0x08`) is skipped.
@@ -397,6 +401,11 @@ pub fn transfer_stash_items_to_backpack(
         return Err(Error::Refused(
             "S2 stash move requires a fully resolved inventory".to_owned(),
         ));
+    }
+    if handles.len() > MAXIMUM_STASH_TRANSFER_ITEMS {
+        return Err(Error::Refused(format!(
+            "one S2 stash transfer moves at most {MAXIMUM_STASH_TRANSFER_ITEMS} items; move the rest in another step"
+        )));
     }
     let mut packed = None;
     let mut current = if changes.is_empty() {
@@ -476,6 +485,11 @@ pub fn transfer_backpack_items_to_stash(
         return Err(Error::Refused(
             "S2 stash move requires a fully resolved inventory".to_owned(),
         ));
+    }
+    if handles.len() > MAXIMUM_STASH_TRANSFER_ITEMS {
+        return Err(Error::Refused(format!(
+            "one S2 stash transfer moves at most {MAXIMUM_STASH_TRANSFER_ITEMS} items; move the rest in another step"
+        )));
     }
     let mut packed = None;
     let mut current = if changes.is_empty() {
@@ -2858,7 +2872,7 @@ mod tests {
         apply_changes_to_image, classify_refusal, first_free_placement, moved_object_offset, pack_and_verify_s2_image,
         stash_follows_backpack_grid, transfer_backpack_items_to_stash, transfer_stash_items_to_backpack,
         validate_owned_handles, S2Change, S2Container, S2InventoryIndex, S2Save, S2SkipReason, S2StashLayout,
-        GRID_WIDTH,
+        GRID_WIDTH, MAXIMUM_STASH_TRANSFER_ITEMS,
     };
     use sse_codecs::crc32;
     use sse_core::Error;
@@ -3602,6 +3616,21 @@ mod tests {
         let save = S2Save::from_bytes(&pack_raw(WRITER_S2_STASH_SOURCE))?;
         let result = save.write_changes(&[S2Change::MoveBackpackToStash { handle: 0x3000_0010 }]);
         assert!(result.is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn stash_transfer_refuses_more_items_than_the_bound_before_any_write() -> Result<(), Error> {
+        let save = S2Save::from_bytes(&pack_raw(WRITER_S2_STASH_SOURCE))?;
+        let handles = vec![0x3000_0010_u32; MAXIMUM_STASH_TRANSFER_ITEMS + 1];
+        assert!(matches!(
+            transfer_stash_items_to_backpack(&save, &[], &handles),
+            Err(Error::Refused(_))
+        ));
+        assert!(matches!(
+            transfer_backpack_items_to_stash(&save, &[], &handles),
+            Err(Error::Refused(_))
+        ));
         Ok(())
     }
 
