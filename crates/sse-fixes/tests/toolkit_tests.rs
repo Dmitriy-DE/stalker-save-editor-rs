@@ -696,7 +696,6 @@ fn failed_profile_switch_keeps_the_previously_installed_fix() {
 
 #[test]
 fn failed_user_ltx_step_rolls_back_the_fix_removal() {
-    use std::os::unix::fs::PermissionsExt;
     let fixture = ToolkitTestFixture::new(GameTarget::ClearSky, "11450472");
     let script = "gamedata/scripts/rollback_keep.script";
     fixture.write_file(script, b"val = 10\n");
@@ -704,12 +703,11 @@ fn failed_user_ltx_step_rolls_back_the_fix_removal() {
     let keep = make_synthetic_fix("cs.test.rollback", script, "val = 10\n", "val = 20\n", "11450472");
     engine.install(&keep, &fixture.root).unwrap();
 
-    // Step 2 (fix reconcile) removes the installed fix; step 3 (user.ltx) then fails on a read-only file.
-    // The writer replaces user.ltx atomically, so the folder must be read-only, not the file.
-    let appdata = fixture.root.join("_appdata_");
-    std::fs::create_dir_all(&appdata).unwrap();
-    std::fs::write(appdata.join("user.ltx"), b"; read-only folder for the test\n").unwrap();
-    std::fs::set_permissions(&appdata, std::fs::Permissions::from_mode(0o555)).unwrap();
+    // Step 2 (fix reconcile) removes the installed fix; step 3 (user.ltx) then fails because a folder sits where
+    // user.ltx must be written. This fails on every platform, unlike permission bits.
+    let user_ltx = fixture.root.join("_appdata_").join("user.ltx");
+    let _ = std::fs::remove_file(&user_ltx);
+    std::fs::create_dir_all(&user_ltx).unwrap();
     let mut overrides = BTreeMap::new();
     overrides.insert("mouse_sens".to_string(), "2".to_string());
     let profile = ToolkitProfile {
@@ -722,9 +720,9 @@ fn failed_user_ltx_step_rolls_back_the_fix_removal() {
     };
     let catalog = sse_fixes::GameFixCatalog;
     let result = ToolkitProfileService::apply_profile(&fixture.root, &profile, &engine, &catalog);
-    std::fs::set_permissions(&appdata, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let _ = std::fs::remove_dir(&user_ltx);
     let result_message = match result {
-        Ok(_) => panic!("a read-only settings folder must fail the profile"),
+        Ok(_) => panic!("a blocked settings path must fail the profile"),
         Err(error) => error.to_string(),
     };
 
