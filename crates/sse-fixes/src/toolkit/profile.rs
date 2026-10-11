@@ -147,7 +147,7 @@ impl ToolkitProfileService {
         game_directory: &Path,
         profile: &ToolkitProfile,
         engine: &GameFixEngine,
-        _catalog: &GameFixCatalog,
+        catalog: &GameFixCatalog,
     ) -> Result<ProfileApplyResult> {
         ensure_xray_profile(profile.game)?;
         // Refuse before any change: a profile that cannot be fully applied must not uninstall fixes first.
@@ -169,47 +169,64 @@ impl ToolkitProfileService {
             Some(&format!("Pre-switch snapshot before '{}'", profile.name)),
         )?;
 
-        // 2. Reconcile installed fixes
-        let currently_installed = engine.list_installed(game_directory, None)?;
-        let current_ids: Vec<String> = currently_installed.into_iter().map(|f| f.id).collect();
+        // 2–4. The steps change fixes, settings and mods in turn. A failure in any of them restores the snapshot
+        // taken in step 1, so the game is never left half-switched.
+        let steps = || -> Result<(Vec<String>, Vec<String>, usize)> {
+            // 2. Reconcile installed fixes
+            let currently_installed = engine.list_installed(game_directory, None)?;
+            let current_ids: Vec<String> = currently_installed.into_iter().map(|f| f.id).collect();
 
-        let (installed, uninstalled) = reconcile_fixes(
-            engine,
-            game_directory,
-            &current_ids,
-            &profile.target_fix_ids,
-            GameFixCatalog::try_get,
-            |id| {
-                format!(
-                    "Fix '{id}' specified in profile '{}' not found in catalog",
-                    profile.name
-                )
-            },
-        )?;
+            let (installed, uninstalled) = reconcile_fixes(
+                engine,
+                game_directory,
+                &current_ids,
+                &profile.target_fix_ids,
+                GameFixCatalog::try_get,
+                |id| {
+                    format!(
+                        "Fix '{id}' specified in profile '{}' not found in catalog",
+                        profile.name
+                    )
+                },
+            )?;
 
-        // 3. Apply user.ltx overrides
-        let user_ltx_changes = if !profile.user_ltx_overrides.is_empty() {
-            ManagedUserLtxSettings::update_managed_settings(game_directory, &profile.user_ltx_overrides)?
-        } else {
-            0
-        };
+            // 3. Apply user.ltx overrides
+            let user_ltx_changes = if !profile.user_ltx_overrides.is_empty() {
+                ManagedUserLtxSettings::update_managed_settings(game_directory, &profile.user_ltx_overrides)?
+            } else {
+                0
+            };
 
-        // 4. Align S.T.A.L.K.E.R. 2 mods state if requested
-        if profile.game == GameTarget::Stalker2 {
-            if let Some(want_enabled) = profile.s2_mods_enabled {
-                let status = Stalker2ModToggle::query_status(game_directory)?;
-                let needs_toggle = match status {
-                    ModToggleStatus::Active { .. } => !want_enabled,
-                    ModToggleStatus::Disabled { .. } => want_enabled,
-                    ModToggleStatus::NotFound | ModToggleStatus::Empty => want_enabled,
-                    _ => false,
-                };
-                if needs_toggle {
-                    engine.ensure_game_not_running_for(GameTarget::Stalker2)?;
-                    Stalker2ModToggle::toggle(game_directory)?;
+            // 4. Align S.T.A.L.K.E.R. 2 mods state if requested
+            if profile.game == GameTarget::Stalker2 {
+                if let Some(want_enabled) = profile.s2_mods_enabled {
+                    let status = Stalker2ModToggle::query_status(game_directory)?;
+                    let needs_toggle = match status {
+                        ModToggleStatus::Active { .. } => !want_enabled,
+                        ModToggleStatus::Disabled { .. } => want_enabled,
+                        ModToggleStatus::NotFound | ModToggleStatus::Empty => want_enabled,
+                        _ => false,
+                    };
+                    if needs_toggle {
+                        engine.ensure_game_not_running_for(GameTarget::Stalker2)?;
+                        Stalker2ModToggle::toggle(game_directory)?;
+                    }
                 }
             }
-        }
+            Ok((installed, uninstalled, user_ltx_changes))
+        };
+        let (installed, uninstalled, user_ltx_changes) = match steps() {
+            Ok(done) => done,
+            Err(error) => {
+                return Err(rollback_after_failed_switch(
+                    game_directory,
+                    engine,
+                    catalog,
+                    &pre_snapshot.id,
+                    error,
+                ));
+            }
+        };
 
         Ok(ProfileApplyResult {
             profile_name: profile.name.clone(),
@@ -443,6 +460,26 @@ fn game_target_from_name(name: &str) -> Option<GameTarget> {
 ///
 /// # Errors
 /// Returns the failing step's error, with any failed undo step reported with it.
+/// Restores the pre-switch snapshot after a failed profile switch. When the restore fails too, the error says what
+/// was applied and where the snapshot is, so the owner can restore it by hand.
+fn rollback_after_failed_switch(
+    game_directory: &Path,
+    engine: &GameFixEngine,
+    catalog: &GameFixCatalog,
+    snapshot_id: &str,
+    error: Error,
+) -> Error {
+    match ToolkitSnapshotService::restore_snapshot(game_directory, engine, catalog, snapshot_id) {
+        Ok(_) => Error::Refused(format!(
+            "Profile was not applied and the game was returned to snapshot {snapshot_id}: {error}"
+        )),
+        Err(restore_error) => Error::Refused(format!(
+            "Profile was not applied ({error}); returning to snapshot {snapshot_id} also failed ({restore_error}). The game may be partly changed. The snapshot is kept in the snapshots folder of {}: restore it by hand.",
+            game_directory.display()
+        )),
+    }
+}
+
 pub(crate) fn reconcile_fixes<'d>(
     engine: &GameFixEngine,
     game_directory: &Path,

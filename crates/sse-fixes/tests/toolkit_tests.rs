@@ -693,3 +693,45 @@ fn failed_profile_switch_keeps_the_previously_installed_fix() {
         .collect();
     assert_eq!(ids, vec!["cs.test.keep4".to_string()]);
 }
+
+#[test]
+fn failed_user_ltx_step_rolls_back_the_fix_removal() {
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = ToolkitTestFixture::new(GameTarget::ClearSky, "11450472");
+    let script = "gamedata/scripts/rollback_keep.script";
+    fixture.write_file(script, b"val = 10\n");
+    let engine = GameFixEngine::with_synthetic(true);
+    let keep = make_synthetic_fix("cs.test.rollback", script, "val = 10\n", "val = 20\n", "11450472");
+    engine.install(&keep, &fixture.root).unwrap();
+
+    // Step 2 (fix reconcile) removes the installed fix; step 3 (user.ltx) then fails on a read-only file.
+    // The writer replaces user.ltx atomically, so the folder must be read-only, not the file.
+    let appdata = fixture.root.join("_appdata_");
+    std::fs::create_dir_all(&appdata).unwrap();
+    std::fs::write(appdata.join("user.ltx"), b"; read-only folder for the test\n").unwrap();
+    std::fs::set_permissions(&appdata, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let mut overrides = BTreeMap::new();
+    overrides.insert("mouse_sens".to_string(), "2".to_string());
+    let profile = ToolkitProfile {
+        name: "Rollback".to_string(),
+        description: String::new(),
+        game: GameTarget::ClearSky,
+        target_fix_ids: Vec::new(),
+        user_ltx_overrides: overrides,
+        s2_mods_enabled: None,
+    };
+    let catalog = sse_fixes::GameFixCatalog;
+    let result = ToolkitProfileService::apply_profile(&fixture.root, &profile, &engine, &catalog);
+    std::fs::set_permissions(&appdata, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let result_message = match result {
+        Ok(_) => panic!("a read-only settings folder must fail the profile"),
+        Err(error) => error.to_string(),
+    };
+
+    // A synthetic fix is not in the catalog, so the snapshot cannot restore it: the restore refuses and the error
+    // must say so, with the snapshot id, instead of hiding the partial state. A catalog fix cannot be installed on
+    // this fixture, so a full successful rollback is not covered by this test.
+    let message = result_message.clone();
+    assert!(message.contains("Profile was not applied"), "{message}");
+    assert!(message.contains("snapshot"), "{message}");
+}
