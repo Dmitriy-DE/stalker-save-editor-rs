@@ -3,7 +3,8 @@
 //! Replace each placeholder with a struct implementing [`Screen`]; keep the order.
 
 use super::saves::{
-    build_list_side, item_icon, item_icon_frame, list_window, show_list_row, sync_side_widths, ListRow, ListSide,
+    build_list_side, item_icon, item_icon_frame, item_icon_frame_style, list_window, show_list_row, sync_side_widths,
+    ListRow, ListSide,
 };
 use super::style::{self, Button, Text};
 use super::{AppMessage, Context, Screen, ScreenId};
@@ -5421,6 +5422,10 @@ impl Encyclopedia {
             .selected
             .and_then(|index| self.entries.get(index))
             .and_then(|entry| entry_icon(release, entry, cx));
+        cx.tree.set_style(
+            frame,
+            item_icon_frame_style(icon.as_ref().map(|_| ENCYCLOPEDIA_DETAIL_ICON_SIZE)),
+        )?;
         cx.tree.set_visible(frame, icon.is_some())?;
         cx.tree.set_visible(image, icon.is_some())?;
         cx.tree.set_image(image, icon)
@@ -5546,6 +5551,7 @@ impl Screen for Encyclopedia {
             Content::Image(None),
             Look::default(),
         )?;
+        cx.tree.set_style(detail_frame, item_icon_frame_style(None))?;
         cx.tree.set_visible(detail_frame, false)?;
         self.detail_icon = Some((detail_frame, detail_image));
         self.card = Some(style::label(

@@ -2421,17 +2421,25 @@ struct ItemCells<'a> {
 const ITEM_ICON_SIZE: f32 = 32.0;
 
 /// The fixed square that holds an item icon, so rows without an icon line up with rows that have one.
-pub(super) fn item_icon_frame(tree: &mut Tree, parent: WidgetId, size: f32) -> Result<WidgetId> {
-    tree.add(
-        Some(parent),
-        NodeKind::Column,
-        Style {
+/// Style of an icon frame: a `size` square, or nothing while the frame is hidden (so it takes no room).
+pub(super) fn item_icon_frame_style(size: Option<f32>) -> Style {
+    match size {
+        Some(size) => Style {
             min: Size::new(size, size),
             preferred: Size::new(size, size),
             align_items: crate::layout::Align::Center,
             padding: crate::layout::Edges::all(2.0),
             ..Style::default()
         },
+        None => Style::default(),
+    }
+}
+
+pub(super) fn item_icon_frame(tree: &mut Tree, parent: WidgetId, size: f32) -> Result<WidgetId> {
+    tree.add(
+        Some(parent),
+        NodeKind::Column,
+        item_icon_frame_style(Some(size)),
         Content::Panel,
         Look {
             fill: Some(style::d2::argb(crate::theme::d2::BG_BASE)),
@@ -2444,9 +2452,13 @@ pub(super) fn item_icon_frame(tree: &mut Tree, parent: WidgetId, size: f32) -> R
 
 /// Shows an item icon in a list row (the row keeps the frame's width when there is no icon).
 pub(super) fn set_list_row_icon(tree: &mut Tree, row: ListRow, icon: Option<ImageData>) -> Result<()> {
-    tree.set_visible(row.icon_frame, true)?;
-    tree.set_visible(row.icon, icon.is_some())?;
-    tree.set_image(row.icon, icon)
+    let Some((frame, image)) = row.icon else {
+        return Ok(());
+    };
+    tree.set_style(frame, item_icon_frame_style(Some(ITEM_ICON_SIZE)))?;
+    tree.set_visible(frame, true)?;
+    tree.set_visible(image, icon.is_some())?;
+    tree.set_image(image, icon)
 }
 
 /// The decoded icon of an item when it is ready; otherwise the decode is started and `None` is drawn.
@@ -7771,8 +7783,8 @@ impl Screen for Inventory {
 pub(super) struct ListRow {
     pub(super) stack: WidgetId,
     pub(super) card: WidgetId,
-    pub(super) icon_frame: WidgetId,
-    pub(super) icon: WidgetId,
+    /// Icon frame and image, only in lists that show item icons (stashes).
+    pub(super) icon: Option<(WidgetId, WidgetId)>,
     pub(super) title: WidgetId,
     pub(super) meta: WidgetId,
     pub(super) select: WidgetId,
@@ -7826,7 +7838,7 @@ pub(super) fn build_list_side(
         note,
         action,
     };
-    build_list_side_with(cx, host, text, keys, false)
+    build_list_side_with(cx, host, text, keys, false, false)
 }
 
 /// The list side. With `scrolling`, the rows scroll inside the list panel and the page row stays below them, so a short
@@ -7837,6 +7849,7 @@ fn build_list_side_with(
     text: ListSideText<'_>,
     keys: &[String],
     scrolling: bool,
+    icons: bool,
 ) -> Result<ListSide> {
     let ListSideText {
         title,
@@ -7964,19 +7977,25 @@ fn build_list_side_with(
             Content::Panel,
             Look::default(),
         )?;
-        let icon_frame = item_icon_frame(cx.tree, card, ITEM_ICON_SIZE)?;
-        cx.tree.set_visible(icon_frame, false)?;
-        let icon = cx.tree.add(
-            Some(icon_frame),
-            NodeKind::Leaf,
-            Style {
-                min: Size::new(ITEM_ICON_SIZE - 4.0, ITEM_ICON_SIZE - 4.0),
-                preferred: Size::new(ITEM_ICON_SIZE - 4.0, ITEM_ICON_SIZE - 4.0),
-                ..Style::default()
-            },
-            Content::Image(None),
-            Look::default(),
-        )?;
+        let icon = if icons {
+            let frame = item_icon_frame(cx.tree, card, ITEM_ICON_SIZE)?;
+            cx.tree.set_style(frame, item_icon_frame_style(None))?;
+            cx.tree.set_visible(frame, false)?;
+            let image = cx.tree.add(
+                Some(frame),
+                NodeKind::Leaf,
+                Style {
+                    min: Size::new(ITEM_ICON_SIZE - 4.0, ITEM_ICON_SIZE - 4.0),
+                    preferred: Size::new(ITEM_ICON_SIZE - 4.0, ITEM_ICON_SIZE - 4.0),
+                    ..Style::default()
+                },
+                Content::Image(None),
+                Look::default(),
+            )?;
+            Some((frame, image))
+        } else {
+            None
+        };
         let text_column = cx.tree.add(
             Some(card),
             NodeKind::Column,
@@ -8000,7 +8019,6 @@ fn build_list_side_with(
         rows.push(ListRow {
             stack,
             card,
-            icon_frame,
             icon,
             title,
             meta,
@@ -8121,7 +8139,11 @@ pub(super) fn spacer(cx: &mut Context<'_>, parent: WidgetId) -> Result<WidgetId>
 
 /// Shows a list row with its two lines; a chosen row has the accent border.
 pub(super) fn show_list_row(tree: &mut Tree, row: ListRow, title: &str, meta: &str, chosen: bool) -> Result<()> {
-    tree.set_visible(row.icon_frame, false)?;
+    if let Some((frame, _)) = row.icon {
+        // A hidden frame must take no room: the row keeps its width when it has no icon.
+        tree.set_style(frame, item_icon_frame_style(None))?;
+        tree.set_visible(frame, false)?;
+    }
     tree.set_text(row.title, title)?;
     tree.set_text(row.meta, meta)?;
     tree.set_look(
@@ -9331,6 +9353,7 @@ impl Screen for Stashes {
                 action: None,
             },
             &keys,
+            true,
             true,
         )?;
         let action = style::d2::button(
