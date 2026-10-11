@@ -2067,6 +2067,9 @@ struct EnvironmentItem {
 
 #[derive(Default)]
 struct Environment {
+    /// Scroll region that holds the whole tab, so the lower actions stay reachable on short windows.
+    tab_scroll: Option<WidgetId>,
+    tab_offset: i32,
     status: Option<WidgetId>,
     lines: Vec<WidgetId>,
     snapshot: Option<WidgetId>,
@@ -2278,7 +2281,37 @@ impl Screen for Environment {
         )
     }
 
-    fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
+    fn build(&mut self, cx: &mut Context<'_>, outer: WidgetId) -> Result<()> {
+        // The tab scrolls inside its own panel: content taller than the window is reached by the wheel, not cut off.
+        let scroll = cx.tree.add(
+            Some(outer),
+            NodeKind::Scroll {
+                horizontal: false,
+                vertical: true,
+                offset_x: 0.0,
+                offset_y: 0.0,
+            },
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: crate::layout::Size::new(0.0, 0.0),
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        let host = cx.tree.add(
+            Some(scroll),
+            NodeKind::Column,
+            Style {
+                gap: crate::layout::Size::new(0.0, crate::theme::CONTROL_GAP),
+                align_items: crate::layout::Align::Stretch,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        self.tab_scroll = Some(scroll);
         let card = style::card(cx.tree, host)?;
         style::label(cx.tree, card, crate::strings::t("СРЕДА ИГРЫ"), Text::Heading)?;
         self.status = Some(style::label(
@@ -2469,6 +2502,17 @@ impl Screen for Environment {
         message: &Message<AppMessage>,
         clicked: Option<WidgetId>,
     ) -> Result<()> {
+        if let Message::Window(WindowEvent::Wheel { delta }) = message {
+            if let Some(scroll) = self.tab_scroll {
+                // The limit in whole pixels: how far the tab's content runs past its panel.
+                let viewport = f32::from(u16::try_from(cx.tree.rect(scroll)?.height).unwrap_or(0));
+                let overflow = (cx.tree.content_height(scroll)? - viewport).max(0.0);
+                let limit: i32 = format!("{overflow:.0}").parse().unwrap_or(0);
+                self.tab_offset = self.tab_offset.saturating_add(delta.saturating_mul(24)).clamp(0, limit);
+                cx.tree.set_scroll_y(scroll, self.tab_offset)?;
+                return Ok(());
+            }
+        }
         let changed = cx.tree.take_changed_inputs();
         if changed.iter().any(|id| self.profile_name == Some(*id)) {
             self.selected_profile = None;
