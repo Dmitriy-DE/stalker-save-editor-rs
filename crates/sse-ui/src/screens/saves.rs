@@ -928,14 +928,9 @@ fn save_info(slot: &SaveSlot) -> String {
 
 fn save_integrity(slot: &SaveSlot, source_sha256: &str, bytes_read: usize, crc_status: &str, format: &str) -> String {
     let modified = display_file_time(slot.last_write_time_utc, false, true);
-    // A 64-character hash does not fit the narrow side panel on one line, so it wraps after 32 characters.
-    let wrapped_sha256 = match (source_sha256.get(..32), source_sha256.get(32..)) {
-        (Some(first), Some(second)) if !second.is_empty() => format!("{first}\n{second}"),
-        _ => source_sha256.to_owned(),
-    };
     tr(
         "Размер файла: {0} байт · Изменён: {1} UTC\nSHA-256: {2}\nCRC: {3} · Формат: {4} · Сборка игры: —",
-        &[&bytes_read, &modified, &wrapped_sha256, &crc_status, &format],
+        &[&bytes_read, &modified, &source_sha256, &crc_status, &format],
     )
 }
 
@@ -1820,7 +1815,7 @@ impl Overview {
         let (info, parameters, integrity) = selected.unwrap_or_default();
         let info_pairs = detail_pairs(&info);
         let parameter_pairs = detail_pairs(&parameters);
-        let integrity_pairs = detail_pairs(&integrity);
+        let integrity_pairs = split_sha256_pair(detail_pairs(&integrity));
         if let Some(header) = self.header_panel {
             cx.tree.set_visible(header, has_save)?;
         }
@@ -1958,6 +1953,22 @@ fn detail_pairs(text: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+/// A 64-character SHA-256 does not fit one row of the side panel: it is shown as two rows of 32 characters.
+/// The second row has no key, so the two halves read as one value.
+fn split_sha256_pair(pairs: Vec<(String, String)>) -> Vec<(String, String)> {
+    let mut out = Vec::with_capacity(pairs.len().saturating_add(1));
+    for (key, value) in pairs {
+        match (key.starts_with("SHA"), value.get(..32), value.get(32..)) {
+            (true, Some(first), Some(second)) if value.len() == 64 => {
+                out.push((key.clone(), first.to_owned()));
+                out.push((String::new(), second.to_owned()));
+            }
+            _ => out.push((key, value)),
+        }
+    }
+    out
+}
+
 fn info_header_values(pairs: &[(String, String)]) -> (&str, &str, &str) {
     (
         pairs.first().map_or("", |(_, value)| value.as_str()),
@@ -1995,8 +2006,27 @@ impl Screen for Overview {
             Content::Panel,
             Look::default(),
         )?;
-        let column = cx.tree.add(
+        // The overview column scrolls as a whole when the window is too short for the tiles and both detail panels.
+        let overview_scroll = cx.tree.add(
             Some(body),
+            NodeKind::Scroll {
+                horizontal: false,
+                vertical: true,
+                offset_x: 0.0,
+                offset_y: 0.0,
+            },
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: crate::layout::Size::new(0.0, 0.0),
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        cx.tree.set_clip_children(overview_scroll, true)?;
+        let column = cx.tree.add(
+            Some(overview_scroll),
             NodeKind::Column,
             Style {
                 grow: 1.0,
@@ -2111,6 +2141,7 @@ impl Screen for Overview {
             Some(column),
             NodeKind::Row,
             Style {
+                shrink: 0.0,
                 gap: Size::new(crate::theme::CONTROL_GAP + 2.0, 0.0),
                 align_items: crate::layout::Align::Stretch,
                 ..Style::default()
@@ -10408,20 +10439,6 @@ mod tests {
     }
 
     #[test]
-    fn integrity_wraps_the_sha256_so_it_fits_the_side_panel() {
-        let slot = fixture_slot("save.sav", "stalker-cs", "clear_sky");
-        let sha = "a".repeat(32) + &"b".repeat(32);
-        let text = super::save_integrity(&slot, &sha, 10, "ok", "stalker-cs");
-        let line = text
-            .lines()
-            .find(|line| line.starts_with("SHA-256: "))
-            .unwrap_or_default();
-        assert_eq!(line, format!("SHA-256: {}", "a".repeat(32)));
-        assert!(text.contains(&"b".repeat(32)));
-        assert!(text.lines().all(|line| line.chars().count() <= 60));
-    }
-
-    #[test]
     fn inventory_inspector_reserves_space_for_three_line_item_summary() -> sse_core::Result<()> {
         let source = include_bytes!("../../../../fixtures/synthetic/writer-durability/xray-durability-cop-source.sav");
         let loaded = Arc::new(load_xray(
@@ -10475,6 +10492,73 @@ mod tests {
     }
 
     /// The Inventory with the durability fixture loaded and rendered at the given window size.
+    /// The overview of the synthetic Clear Sky save, laid out at the given window size.
+    fn rendered_overview(width: u32, height: u32) -> sse_core::Result<(Overview, Tree)> {
+        let source = include_bytes!("../../../../fixtures/synthetic/xray-clear-sky.sav");
+        let loaded = Arc::new(load_xray(source, "xray-clear-sky.sav", "stalker-cs", "clear_sky")?);
+        let workspace = Workspace::default();
+        workspace.lock().selected = Some(loaded);
+        let mut screen = Overview::new(workspace);
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        tree.resize(width, height);
+        let mut app = sse_app::AppState::new();
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: None,
+            status: None,
+            app: &mut app,
+        };
+        screen.build(&mut cx, host)?;
+        screen.render(&mut cx)?;
+        cx.tree.update_layout()?;
+        Ok((screen, tree))
+    }
+
+    /// The whole SHA-256 reaches the panel: its two halves, read in order, are the full 64 characters.
+    #[test]
+    fn integrity_panel_shows_all_64_characters_of_the_sha256() {
+        let sha = "655586a57ef01b0c217fc461a41c7dcb0123456789abcdef0123456789abcdef";
+        let slot = fixture_slot("save.sav", "stalker-cs", "clear_sky");
+        let text = super::save_integrity(&slot, sha, 10, "ok", "stalker-cs");
+        let shown: String = super::split_sha256_pair(super::detail_pairs(&text))
+            .into_iter()
+            .filter(|(key, _)| key.starts_with("SHA") || key.is_empty())
+            .map(|(_, value)| value)
+            .collect();
+        assert_eq!(shown, sha);
+    }
+
+    /// Every visible row of the information and integrity panels lies inside its panel, at 1920x1080 and 1366x768.
+    #[test]
+    fn overview_detail_rows_stay_inside_their_panels() -> sse_core::Result<()> {
+        for (width, height) in [(1920, 1080), (1366, 768)] {
+            let (screen, tree) = rendered_overview(width, height)?;
+            let set = screen.details.first().ok_or_else(|| Error::damaged("no detail set"))?;
+            for (panel, rows) in [(set.integrity_panel, &set.integrity_rows)] {
+                let panel_rect = tree.rect(panel)?;
+                let panel_bottom = panel_rect
+                    .y
+                    .saturating_add(i32::try_from(panel_rect.height).unwrap_or(i32::MAX));
+                for row in rows.iter().filter(|row| tree.is_visible(**row)) {
+                    let rect = tree.rect(*row)?;
+                    let bottom = rect.y.saturating_add(i32::try_from(rect.height).unwrap_or(i32::MAX));
+                    assert!(
+                        bottom <= panel_bottom,
+                        "{width}x{height}: a row ends at {bottom}, below its panel at {panel_bottom}"
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn rendered_inventory(width: u32, height: u32) -> sse_core::Result<(Inventory, Tree, crate::widget::WidgetId)> {
         let source = include_bytes!("../../../../fixtures/synthetic/writer-durability/xray-durability-cop-source.sav");
         let loaded = Arc::new(load_xray(
