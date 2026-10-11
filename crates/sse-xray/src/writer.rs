@@ -3733,7 +3733,7 @@ mod tests {
                 include_bytes!("../../../fixtures/synthetic/writer-factions/soc-player-faction.sav"),
                 include_bytes!("../../../fixtures/synthetic/writer-factions/soc-relations.sav"),
                 include_bytes!("../../../fixtures/synthetic/writer-factions/soc-expected.sav"),
-                12,
+                10,
             ),
             (
                 include_bytes!("../../../fixtures/synthetic/writer-factions/cs-source.sav"),
@@ -3809,12 +3809,102 @@ mod tests {
     }
 
     #[test]
+    fn relation_record_of_an_unknown_community_survives_edits_of_known_ones() -> TestResult {
+        let packed = include_bytes!("../../../fixtures/synthetic/writer-factions/soc-source.sav");
+        let original = Save::read(packed)?;
+        // Re-key the actor's second record to 21: no community of the game has that position.
+        const UNKNOWN: i32 = 21;
+        let seeded = {
+            let registry = original
+                .relation_registry
+                .as_ref()
+                .ok_or("registry should be readable")?;
+            let row = registry
+                .relation_rows
+                .iter()
+                .find(|row| row.object_id == original.actor_id())
+                .ok_or("actor row should exist")?;
+            let record = row
+                .communities
+                .iter()
+                .find(|relation| relation.community_id == 1)
+                .ok_or("fixture should hold a record with key 1")?;
+            let key_offset = record.goodwill_offset.checked_sub(4).ok_or("record key offset")?;
+            let mut payload = original.relation_chunk_bytes(original.raw_image())?.to_vec();
+            payload
+                .get_mut(key_offset..record.goodwill_offset)
+                .ok_or("record key should be inside the chunk")?
+                .copy_from_slice(&UNKNOWN.to_le_bytes());
+            let raw = original.rebuild_chunks(original.raw_image(), &[(9, payload.as_slice())])?;
+            original.repack(&raw)?
+        };
+        let source = Save::read(seeded.as_slice())?;
+        assert_eq!(source.actor_relations(), Some(vec![(0, 100), (UNKNOWN, -100)]));
+        let catalog = CatalogBundleReader::for_format(source.format().id())
+            .and_then(|bundle| bundle.factions.as_ref())
+            .ok_or("faction catalog should exist")?;
+        assert!(
+            catalog.resolve_numeric(UNKNOWN).is_none(),
+            "no faction key may address it"
+        );
+
+        // The bytes of the unknown record: its key and its goodwill.
+        let unknown_record = |save: &Save| -> std::result::Result<Vec<u8>, Box<dyn std::error::Error>> {
+            let registry = save.relation_registry.as_ref().ok_or("registry should be readable")?;
+            let record = registry
+                .relation_rows
+                .iter()
+                .find(|row| row.object_id == save.actor_id())
+                .and_then(|row| row.communities.iter().find(|relation| relation.community_id == UNKNOWN))
+                .ok_or("the unknown record should still be there")?;
+            let start = record.goodwill_offset.checked_sub(4).ok_or("record key offset")?;
+            let end = record.goodwill_offset.checked_add(4).ok_or("record end")?;
+            Ok(save
+                .relation_chunk_bytes(save.raw_image())?
+                .get(start..end)
+                .ok_or("record should be inside the chunk")?
+                .to_vec())
+        };
+        let before = unknown_record(&source)?;
+
+        // A new record for a known community, then a change of an existing known one.
+        let added = apply(
+            &source,
+            &ChangeSet::new(vec![Change::SetFactionRelation {
+                target_object: source.actor_id(),
+                faction_key: "dolg".to_owned(),
+                old_value: None,
+                new_value: 375,
+            }]),
+        )?;
+        let added = Save::read(added.as_slice())?;
+        assert_eq!(unknown_record(&added)?, before);
+        let dolg = catalog.resolve("dolg")?.numeric_id.ok_or("dolg should be numbered")?;
+        let mut relations = added.actor_relations().ok_or("relations should read back")?;
+        relations.sort_unstable();
+        assert_eq!(relations, vec![(0, 100), (dolg, 375), (UNKNOWN, -100)]);
+
+        let changed = apply(
+            &added,
+            &ChangeSet::new(vec![Change::SetFactionRelation {
+                target_object: added.actor_id(),
+                faction_key: "dolg".to_owned(),
+                old_value: Some(375),
+                new_value: -20,
+            }]),
+        )?;
+        let changed = Save::read(changed.as_slice())?;
+        assert_eq!(unknown_record(&changed)?, before);
+        Ok(())
+    }
+
+    #[test]
     fn info_portions_preserve_format_timestamps_and_other_chunks() -> TestResult {
         let cases: [(&[u8], bool, i32); 3] = [
             (
                 include_bytes!("../../../fixtures/synthetic/writer-factions/soc-source.sav"),
                 true,
-                12,
+                10,
             ),
             (
                 include_bytes!("../../../fixtures/synthetic/writer-factions/cs-source.sav"),

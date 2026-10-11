@@ -263,6 +263,19 @@ fn search_matches(text: &str, query: &str) -> bool {
     query.is_empty() || text.to_lowercase().contains(query)
 }
 
+/// The actor's relation records whose key is not a community of the release, as `#key = goodwill`, in save order.
+///
+/// A save stores the position of a community in the game's list; a key past the end of the list (a modified game,
+/// a damaged record) belongs to no faction of the catalog and is shown as the bare number.
+fn unknown_relation_records(relations: &[(i32, i32)], catalog: &sse_catalog::FactionCatalog) -> String {
+    relations
+        .iter()
+        .filter(|(community, _)| catalog.resolve_numeric(*community).is_none())
+        .map(|(community, goodwill)| format!("#{community} = {goodwill}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 fn xray_change_supported(save: &Save, kind: writer::ChangeKind) -> bool {
     writer::capability(save.format(), kind) != writer::Capability::Unsupported
 }
@@ -2730,6 +2743,10 @@ fn add_candidates(selected: &LoadedSave, removed: &BTreeSet<u32>) -> Vec<AddCand
             template_available: inventory
                 .iter()
                 .any(|candidate| candidate.section == item.key && !removed.contains(&u32::from(candidate.handle))),
+        })
+        // A section the game ships but never loads is not offered, unless this very save holds such an object.
+        .filter(|candidate| {
+            candidate.template_available || sse_catalog::is_loaded_by_game(save.format().id(), &candidate.key)
         })
         .collect::<Vec<_>>();
     // Candidates that can be added (with a template in the save) come first, then by name.
@@ -8363,7 +8380,17 @@ impl Factions {
         );
         cx.tree.set_text(list.page_range, &range)?;
         let note = t("Выберите фракцию слева; значение попадает в черновик.");
-        cx.tree.set_text(list.note, note)?;
+        // Records whose key is no community of the game are listed as they are, never under a faction's name.
+        let unknown = unknown_relation_records(&save.actor_relations().unwrap_or_default(), catalog);
+        if unknown.is_empty() {
+            cx.tree.set_text(list.note, note)?;
+        } else {
+            let unknown = tr(
+                "В сейве есть записи отношений с номерами вне списка группировок игры: {0}. Они только для чтения и при записи не меняются.",
+                &[&unknown],
+            );
+            cx.tree.set_text(list.note, &format!("{note} {unknown}"))?;
+        }
         let Some((relation, source, _key)) = chosen_lines else {
             return self.hide_list(cx);
         };
@@ -10556,6 +10583,28 @@ mod tests {
     }
 
     #[test]
+    fn relation_records_outside_the_faction_list_are_named_by_number_only() -> sse_core::Result<()> {
+        let catalog = sse_catalog::CatalogBundleReader::for_format("stalker-soc")
+            .and_then(|bundle| bundle.factions.as_ref())
+            .ok_or_else(|| Error::damaged("the ToT faction catalog is missing"))?;
+        // What real ToT saves hold (stalker, ecolog, dolg, freedom by position) plus a record past the list.
+        let relations = [(3, 0), (7, 0), (8, 200), (9, 50), (21, -5)];
+        assert_eq!(super::unknown_relation_records(&relations, catalog), "#21 = -5");
+        assert_eq!(
+            super::unknown_relation_records(&relations[..4], catalog),
+            "",
+            "positions 3, 7, 8 and 9 are communities of the game"
+        );
+        let name = |id| catalog.resolve_numeric(id).map(|faction| faction.key.as_str());
+        assert_eq!(
+            name(8),
+            Some("dolg"),
+            "8 is dolg by position, not the team number of killer"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn faction_screen_stages_a_catalogued_relation_for_the_shared_writer() -> sse_core::Result<()> {
         let temp = TempDirectory::new();
         let source = include_bytes!("../../../../fixtures/synthetic/writer-factions/cop-source.sav");
@@ -11428,6 +11477,32 @@ mod tests {
             .ok_or_else(|| Error::damaged("catalog candidate is missing"))?;
         assert!(candidate.template_available);
         assert!(!candidate.display_name.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn add_catalog_leaves_out_sections_the_game_never_loads() -> sse_core::Result<()> {
+        // Clear Sky ships unique_items.ltx without including it: its sections are in the catalog, not in the game.
+        let source = include_bytes!("../../../../fixtures/synthetic/xray-clear-sky.sav");
+        let loaded = load_xray(source, "xray-clear-sky.sav", "stalker-cs", "cs")?;
+        let candidates = super::add_candidates(&loaded, &BTreeSet::new());
+        assert!(candidates.iter().any(|candidate| candidate.key == "wpn_pm"));
+        for key in ["wpn_pm_arena", "outfit_bandit_m1"] {
+            assert!(!candidates.iter().any(|candidate| candidate.key == key), "{key}");
+            assert!(
+                sse_catalog::CatalogBundleReader::for_format("stalker-cs").is_some_and(|bundle| bundle
+                    .items
+                    .items()
+                    .iter()
+                    .any(|item| item.key == key)),
+                "{key} stays in the catalog, so a save holding it is still read and named"
+            );
+        }
+        // Shadow of Chernobyl loads the same file: there they are offered.
+        let source = include_bytes!("../../../../fixtures/synthetic/writer-factions/soc-source.sav");
+        let loaded = load_xray(source, "soc-source.sav", "stalker-soc", "soc")?;
+        let candidates = super::add_candidates(&loaded, &BTreeSet::new());
+        assert!(candidates.iter().any(|candidate| candidate.key == "outfit_bandit_m1"));
         Ok(())
     }
 

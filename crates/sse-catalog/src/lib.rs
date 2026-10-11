@@ -2,6 +2,7 @@
 //!
 //! Owner: Gemini (G2).
 
+pub mod availability;
 pub mod builder;
 pub mod bundle;
 pub mod i18n;
@@ -14,6 +15,7 @@ pub mod value;
 
 pub use value::{parse_json, JsonValue};
 
+pub use availability::is_loaded_by_game;
 pub use builder::InstalledGameCatalogBuilder;
 pub use bundle::{CatalogBundleReader, CatalogBundleWriter};
 pub use i18n::{I18nCompletenessChecker, I18nService, ValidationResult, SUPPORTED_LANGUAGES};

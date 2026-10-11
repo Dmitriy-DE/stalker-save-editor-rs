@@ -393,7 +393,19 @@ impl XRayArchive {
         if entry.crc32 != 0 {
             let actual_crc = crc32(&data);
             if actual_crc != entry.crc32 {
-                return Err(Error::damaged(format!("entry '{}' failed its CRC32 check", entry.name)));
+                // Both sums are reported: a mismatch on an entry stored without compression can only be the archive
+                // file itself, and the two numbers are what a user needs to tell a damaged install from a reader bug.
+                return Err(Error::damaged(format!(
+                    "entry '{}' failed its CRC32 check: the archive table records {:08x}, the {} bytes read give \
+                     {actual_crc:08x}; the archive file is damaged",
+                    entry.name,
+                    entry.crc32,
+                    if entry.compressed_size == entry.uncompressed_size {
+                        "stored"
+                    } else {
+                        "unpacked"
+                    },
+                )));
             }
         }
 
@@ -611,6 +623,37 @@ mod bounds_tests {
         let archive = XRayArchive::from_reader_with_entries(Box::new(vec![0_u8; 16]), vec![entry], None)
             .unwrap_or_else(|error| panic!("archive construction failed: {error:?}"));
         assert!(matches!(archive.read_file("oversized.bin"), Err(Error::Damaged(_))));
+    }
+
+    #[test]
+    fn one_flipped_bit_in_a_stored_entry_is_reported_with_both_sums() {
+        // The shape of the damaged texture in an installed Clear Sky: stored without compression, one bit off.
+        let intact = b"DDS texture bytes as the archive table describes them".to_vec();
+        let entry = XRayArchiveEntry {
+            name: "textures/ui/noise.dds".to_owned(),
+            uncompressed_size: u32::try_from(intact.len()).unwrap_or(0),
+            compressed_size: u32::try_from(intact.len()).unwrap_or(0),
+            crc32: crc32(&intact),
+            offset: 4,
+        };
+        let image = |payload: &[u8]| [&[0_u8; 4][..], payload].concat();
+        let open = |bytes: Vec<u8>| {
+            XRayArchive::from_reader_with_entries(Box::new(bytes), vec![entry.clone()], None)
+                .unwrap_or_else(|error| panic!("archive construction failed: {error:?}"))
+        };
+        assert_eq!(open(image(&intact)).read_file(&entry.name).ok(), Some(intact.clone()));
+
+        let mut damaged = intact.clone();
+        if let Some(byte) = damaged.get_mut(10) {
+            *byte ^= 0x10;
+        }
+        let Err(Error::Damaged(message)) = open(image(&damaged)).read_file(&entry.name) else {
+            panic!("a damaged entry must be refused, not returned");
+        };
+        assert!(message.contains("failed its CRC32 check"), "{message}");
+        assert!(message.contains(&format!("{:08x}", entry.crc32)), "{message}");
+        assert!(message.contains(&format!("{:08x}", crc32(&damaged))), "{message}");
+        assert!(message.contains("the archive file is damaged"), "{message}");
     }
 
     struct UnknownLength;
