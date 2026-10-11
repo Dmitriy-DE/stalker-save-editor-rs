@@ -3,13 +3,14 @@
 //! Reference: `Core/Diagnostics/ToolkitInstallAudit.cs`.
 //! All operations take the game installation path explicitly.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::engine::GameFixEngine;
 use crate::fs_util::check_no_links;
 use crate::models::GameTarget;
+use sse_codecs::sha256::sha256_hex;
 use sse_core::{Error, Result};
 
 /// Classification category of a file in the game directory.
@@ -21,6 +22,10 @@ pub enum FileClassification {
     OrphanedToolkitOwned,
     /// An orphaned file that indicates an interrupted or conflicted state needing review.
     OrphanedStateNeedsReview,
+    /// A backup-named file that a fix manifest records, but whose contents changed since the fix. Left in place.
+    ModifiedToolkitBackup,
+    /// A backup-named file no fix manifest records. It is not the toolkit's, so it is left in place.
+    UnknownSimilarName,
     /// Loose user modification not installed or owned by the toolkit.
     CustomUserMod,
 }
@@ -94,6 +99,15 @@ impl ToolkitInstallAudit {
             }
         }
 
+        // Files a fix manifest records as written by the toolkit, with the hash the fix left them at. A backup-named
+        // file in the game folder is the toolkit's only when such a record matches it.
+        let mut recorded_after: BTreeMap<String, String> = BTreeMap::new();
+        for manifest in engine.all_manifests(game_directory)? {
+            for file_entry in manifest.files {
+                recorded_after.insert(file_entry.relative_path, file_entry.after_sha256);
+            }
+        }
+
         let mut items = Vec::new();
         let mut total_scanned: usize = 0;
         let mut managed_count: usize = 0;
@@ -123,12 +137,36 @@ impl ToolkitInstallAudit {
                         details: "Actively managed by an installed Game Fix".to_string(),
                     });
                 } else if rel_path.ends_with(".sse-backup") || rel_path.ends_with(".sse-orig") {
-                    orphaned_count = orphaned_count.saturating_add(1);
+                    let (classification, details) = match recorded_after.get(&rel_path) {
+                        Some(after_sha256) => {
+                            let current = sha256_hex(&fs::read(&abs_path).map_err(Error::from)?);
+                            if current.eq_ignore_ascii_case(after_sha256) {
+                                orphaned_count = orphaned_count.saturating_add(1);
+                                (
+                                    FileClassification::OrphanedToolkitOwned,
+                                    "Recorded in a fix manifest and unchanged since the fix".to_string(),
+                                )
+                            } else {
+                                needs_review_count = needs_review_count.saturating_add(1);
+                                (
+                                    FileClassification::ModifiedToolkitBackup,
+                                    "Recorded in a fix manifest, but changed since; not moved".to_string(),
+                                )
+                            }
+                        }
+                        None => {
+                            custom_mod_count = custom_mod_count.saturating_add(1);
+                            (
+                                FileClassification::UnknownSimilarName,
+                                "Not recorded by any fix; not moved".to_string(),
+                            )
+                        }
+                    };
                     items.push(AuditItem {
                         relative_path: rel_path,
-                        classification: FileClassification::OrphanedToolkitOwned,
+                        classification,
                         size_bytes,
-                        details: "Toolkit backup file not referenced by current active fixes".to_string(),
+                        details,
                     });
                 } else {
                     custom_mod_count = custom_mod_count.saturating_add(1);

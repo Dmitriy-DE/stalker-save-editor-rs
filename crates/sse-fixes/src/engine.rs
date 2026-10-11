@@ -192,6 +192,18 @@ impl GameFixEngine {
     ///
     /// # Errors
     /// Returns an error if the manifest cannot be read or is invalid.
+    /// Every manifest in the state folder, installed or not. Ownership of a file is proved from these records.
+    ///
+    /// # Errors
+    /// Returns an error when the state folder cannot be read or a link is found in it.
+    pub fn all_manifests(&self, game_dir: &Path) -> Result<Vec<GameFixManifest>> {
+        read_state_manifests(game_dir, None, false)
+    }
+
+    /// Returns the manifest of one fix.
+    ///
+    /// # Errors
+    /// Returns an error when the manifest is missing or malformed.
     pub fn get_manifest(&self, fix_id: &str, game_dir: &Path) -> Result<GameFixManifest> {
         let manifest_path = get_manifest_path(game_dir, fix_id);
         read_manifest(&manifest_path, fix_id)
@@ -1382,7 +1394,16 @@ fn ensure_no_companion_overlap(root: &Path, definition: &GameFixDefinition) -> R
     Ok(())
 }
 
-fn read_active_manifests(root: &Path, mut issues: Option<&mut Vec<String>>) -> Result<Vec<GameFixManifest>> {
+fn read_active_manifests(root: &Path, issues: Option<&mut Vec<String>>) -> Result<Vec<GameFixManifest>> {
+    read_state_manifests(root, issues, true)
+}
+
+/// Reads the manifests in the state folder. With `only_installed`, a manifest of an uninstalled fix is skipped.
+fn read_state_manifests(
+    root: &Path,
+    mut issues: Option<&mut Vec<String>>,
+    only_installed: bool,
+) -> Result<Vec<GameFixManifest>> {
     let state_dir = root.join(STATE_DIRECTORY_NAME);
     if !state_dir.is_dir() {
         return Ok(Vec::new());
@@ -1416,7 +1437,7 @@ fn read_active_manifests(root: &Path, mut issues: Option<&mut Vec<String>>) -> R
 
             match read_manifest(&manifest_path, id) {
                 Ok(m) => {
-                    if m.installed {
+                    if m.installed || !only_installed {
                         active.push(m);
                     }
                 }
