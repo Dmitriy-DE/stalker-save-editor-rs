@@ -442,15 +442,8 @@ fn apply_with_catalog_internal(
                 })?;
                 writes.push(PendingWrite::f32(state_offset, *new_value));
                 writes.push(PendingWrite::u8(update_offset, encode_condition_q8(*new_value)));
-                // The client copy follows the state only while it holds the same bits. Where it differs (Call of Pripyat
-                // EE keeps 1.0 beside a state of 0.9999996), it is left alone, so an undo restores the same bytes.
                 if let Some(offset) = item.client_condition_offset {
-                    let raw = save.raw_image();
-                    let state_bits = item.condition_offset.map(|state| read_u32(raw, state)).transpose()?;
-                    let client_bits = read_u32(raw, offset)?;
-                    if state_bits == Some(client_bits) {
-                        writes.push(PendingWrite::f32(offset, *new_value));
-                    }
+                    writes.push(PendingWrite::f32(offset, *new_value));
                 }
             }
             Change::SetPlacement {
@@ -5487,6 +5480,96 @@ mod tests {
         Ok(())
     }
 
+    /// A state and a client copy that differ in their bits: an edit writes the new value to all three places.
+    /// The client copy is built in the fixture (one ulp away from the state, behind a recognized placement tag), because
+    /// the reader only identifies a client copy within 1e-6 of the state; real Call of Pripyat EE saves look the same.
+    #[test]
+    fn durability_edit_writes_state_update_byte_and_client_copy() -> TestResult {
+        let sources: [&[u8]; 6] = [
+            include_bytes!("../../../fixtures/synthetic/writer-durability/xray-durability-soc-source.sav"),
+            include_bytes!("../../../fixtures/synthetic/writer-durability/xray-durability-cs-source.sav"),
+            include_bytes!("../../../fixtures/synthetic/writer-durability/xray-durability-cop-source.sav"),
+            include_bytes!("../../../fixtures/synthetic/writer-durability/xray-durability-soc-ee-source.sav"),
+            include_bytes!("../../../fixtures/synthetic/writer-durability/xray-durability-cs-ee-source.sav"),
+            include_bytes!("../../../fixtures/synthetic/writer-durability/xray-durability-cop-ee-source.sav"),
+        ];
+        let mut built = None;
+        for packed in sources {
+            let base = Save::read(packed)?;
+            for item in base.inventory()?.into_iter().filter(|item| item.durability_editable) {
+                let Some(record) = base
+                    .registry_objects()
+                    .iter()
+                    .find(|record| record.object_id == item.handle)
+                else {
+                    continue;
+                };
+                let (Some(start), length) = (record.client_data_offset, record.client_data_length) else {
+                    continue;
+                };
+                let Some(state) = item.condition_offset else { continue };
+                if length < 8 {
+                    continue;
+                }
+                let mut raw = base.raw_image().to_vec();
+                let state_bits = read_u32(&raw, state)?;
+                let candidate = start.checked_add(2).ok_or("candidate offset")?;
+                raw.get_mut(start..candidate)
+                    .ok_or("tag outside the image")?
+                    .copy_from_slice(&[2, 3]);
+                raw.get_mut(candidate..candidate + 4)
+                    .ok_or("candidate outside the image")?
+                    .copy_from_slice(&(state_bits ^ 1).to_le_bytes());
+                let save = Save::read(base.repack(&raw)?.as_slice())?;
+                if let Some(found) = save.inventory()?.into_iter().find(|i| i.handle == item.handle) {
+                    if found.client_condition_offset == Some(candidate) {
+                        built = Some((item.handle, save));
+                        break;
+                    }
+                }
+            }
+            if built.is_some() {
+                break;
+            }
+        }
+        let (target, save) = built.ok_or("could not build a client copy the reader identifies")?;
+        let item = save
+            .inventory()?
+            .into_iter()
+            .find(|item| item.handle == target)
+            .ok_or("target missing")?;
+        let old = item.condition.ok_or("condition missing")?;
+        let state = item.condition_offset.ok_or("state offset missing")?;
+        let client = item.client_condition_offset.ok_or("client copy missing")?;
+        let update = item.update_condition_offset.ok_or("UPDATE offset missing")?;
+        let before = Container::read(save.repack(save.raw_image())?.as_slice())?;
+        assert_ne!(
+            read_u32(before.image(), state)?,
+            read_u32(before.image(), client)?,
+            "the fixture must start with differing copies"
+        );
+
+        let new = 0.5_f32;
+        let out = apply(
+            &save,
+            &ChangeSet::new(vec![Change::SetDurability {
+                target_object: target,
+                old_value: old,
+                new_value: new,
+            }]),
+        )?;
+        let after = Container::read(out.as_slice())?;
+        let bytes = after.image();
+        assert_eq!(read_u32(bytes, state)?, new.to_bits(), "state copy");
+        assert_eq!(read_u32(bytes, client)?, new.to_bits(), "client copy");
+        assert_eq!(
+            bytes.get(update).copied(),
+            Some(encode_condition_q8(new)),
+            "UPDATE byte"
+        );
+        Ok(())
+    }
+
     /// Sets the first editable durability item, reads it back, checks the neighbours, restores the old value and
     /// compares the unpacked image with the original. Returns a short summary, or the first disagreement.
     fn durability_round_trip(original: &[u8], save: &Save) -> std::result::Result<String, String> {
@@ -5547,11 +5630,52 @@ mod tests {
             .map_err(|error| format!("{error:?}"))?
             .image()
             .to_vec();
-        if restored_image != before_image {
-            let differing_restore = before_image.iter().zip(&restored_image).filter(|(a, b)| a != b).count();
-            return Err(format!("restore differs in {differing_restore} unpacked bytes"));
+        // The restore may differ only in the 4 client-copy bytes of the edited item, and only where the two float values
+        // are the same durability within 1e-6 and encode to the same Q8 byte: the original client copy may hold 1.0
+        // beside a state of 0.9999996, and writing the state value back into it is the same durability.
+        let client = target.client_condition_offset;
+        let mut unexplained = 0_usize;
+        let mut client_only = 0_usize;
+        for (index, (before, after)) in before_image.iter().zip(&restored_image).enumerate() {
+            if before == after {
+                continue;
+            }
+            let within_client = client.is_some_and(|start| (start..start.saturating_add(4)).contains(&index));
+            if within_client {
+                client_only += 1;
+            } else {
+                unexplained += 1;
+            }
         }
-        Ok(format!("edit bytes {differing}, restore identical"))
+        if unexplained > 0 {
+            return Err(format!(
+                "restore differs in {unexplained} bytes outside the client copy"
+            ));
+        }
+        if let Some(start) = client {
+            let before_value = f32::from_le_bytes(
+                before_image
+                    .get(start..start + 4)
+                    .and_then(|b| <[u8; 4]>::try_from(b).ok())
+                    .ok_or("client copy")?,
+            );
+            let after_value = f32::from_le_bytes(
+                restored_image
+                    .get(start..start + 4)
+                    .and_then(|b| <[u8; 4]>::try_from(b).ok())
+                    .ok_or("client copy")?,
+            );
+            if (before_value - after_value).abs() > 1e-6
+                || encode_condition_q8(before_value) != encode_condition_q8(after_value)
+            {
+                return Err(format!(
+                    "client copy restored to {after_value}, original {before_value}"
+                ));
+            }
+        }
+        Ok(format!(
+            "edit bytes {differing}, restore identical outside {client_only} client-copy bytes"
+        ))
     }
 
     /// Every Enhanced Edition save file under `SSE_EE_SAVES_DIR`, as (path, bytes). Other formats are skipped.
