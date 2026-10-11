@@ -19,10 +19,10 @@
       ],
       "expected": "soc-expected.sav",
       "expectedPlayerFaction": "soc-player-faction.sav",
-      "expectedPlayerFactionSha256": "eb584deff6de87658e1a5558cbd8701edf905600c0a0def5a23a6305ece630bf",
+      "expectedPlayerFactionSha256": "ce23c9a50246faddd9c7046c939b729dbeb0b935242f92d0c6414da39c725a15",
       "expectedRelations": "soc-relations.sav",
-      "expectedRelationsSha256": "ba0edde0517475add0387636ccd41f9ba0faadc754acb306a9c7ead3bf69f5cb",
-      "expectedSha256": "f31e0d73ba7b4606251263d6c214e4e6325cd7425cb0f44b71e409f7f77b36e2",
+      "expectedRelationsSha256": "67c3b3b9643f0c75792470482a8e6d7f85e59056e673552e68ce6b570dc4cad8",
+      "expectedSha256": "b2d3df0f8e5113f32a7bd1a7aa137110960aecc02979d820c19781bcde160c0e",
       "playerFactionIndex": 0,
       "pythonCapabilities": {
         "edit_player_faction": "experimental",
@@ -32,7 +32,8 @@
       "source": "soc-source.sav",
       "sourceSha256": "745e269b2cae2b516fe053c8655c09b942aa5e377d5fbcac7083267ac65e3722",
       "targetFaction": "bandit",
-      "targetFactionIndex": 12,
+      "targetFactionIndex": 10,
+      "targetFactionIndexNote": "position of bandit in the game's communities list; the oracle wrote its team number 12, see crates/sse-catalog/tests/faction_numbering_tests.rs",
       "targetGoodwill": 375
     },
     {

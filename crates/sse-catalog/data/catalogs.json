@@ -29093,84 +29093,84 @@
         {
           "display_name": "Одиночка",
           "key": "stalker",
-          "numeric_id": 5,
+          "numeric_id": 3,
           "release_id": "stalker-soc",
           "source": "gamedata/config/creatures/game_relations.ltx#communities"
         },
         {
           "display_name": "Монолит",
           "key": "monolith",
-          "numeric_id": 6,
+          "numeric_id": 4,
           "release_id": "stalker-soc",
           "source": "gamedata/config/creatures/game_relations.ltx#communities"
         },
         {
           "display_name": "Военный",
           "key": "military",
-          "numeric_id": 7,
+          "numeric_id": 5,
           "release_id": "stalker-soc",
           "source": "gamedata/config/creatures/game_relations.ltx#communities"
         },
         {
           "display_name": "Наемник",
           "key": "killer",
-          "numeric_id": 8,
+          "numeric_id": 6,
           "release_id": "stalker-soc",
           "source": "gamedata/config/creatures/game_relations.ltx#communities"
         },
         {
           "display_name": "Эколог",
           "key": "ecolog",
-          "numeric_id": 9,
+          "numeric_id": 7,
           "release_id": "stalker-soc",
           "source": "gamedata/config/creatures/game_relations.ltx#communities"
         },
         {
           "display_name": "Долг",
           "key": "dolg",
-          "numeric_id": 10,
+          "numeric_id": 8,
           "release_id": "stalker-soc",
           "source": "gamedata/config/creatures/game_relations.ltx#communities"
         },
         {
           "display_name": "Свобода",
           "key": "freedom",
-          "numeric_id": 11,
+          "numeric_id": 9,
           "release_id": "stalker-soc",
           "source": "gamedata/config/creatures/game_relations.ltx#communities"
         },
         {
           "display_name": "Бандит",
           "key": "bandit",
-          "numeric_id": 12,
+          "numeric_id": 10,
           "release_id": "stalker-soc",
           "source": "gamedata/config/creatures/game_relations.ltx#communities"
         },
         {
           "display_name": "зомби",
           "key": "zombied",
-          "numeric_id": 13,
+          "numeric_id": 11,
           "release_id": "stalker-soc",
           "source": "gamedata/config/creatures/game_relations.ltx#communities"
         },
         {
           "display_name": null,
           "key": "stranger",
-          "numeric_id": 14,
+          "numeric_id": 12,
           "release_id": "stalker-soc",
           "source": "gamedata/config/creatures/game_relations.ltx#communities"
         },
         {
           "display_name": "Торговец",
           "key": "trader",
-          "numeric_id": 15,
+          "numeric_id": 13,
           "release_id": "stalker-soc",
           "source": "gamedata/config/creatures/game_relations.ltx#communities"
         },
         {
           "display_name": "Наемник",
           "key": "arena_enemy",
-          "numeric_id": 16,
+          "numeric_id": 14,
           "release_id": "stalker-soc",
           "source": "gamedata/config/creatures/game_relations.ltx#communities"
         }
@@ -33092,84 +33092,84 @@
           "value": 0
         },
         {
-          "column": 5,
+          "column": 3,
           "row": 0,
           "source": "actor",
           "target": "stalker",
           "value": 0
         },
         {
-          "column": 6,
+          "column": 4,
           "row": 0,
           "source": "actor",
           "target": "monolith",
           "value": -5000
         },
         {
-          "column": 7,
+          "column": 5,
           "row": 0,
           "source": "actor",
           "target": "military",
           "value": -5000
         },
         {
-          "column": 8,
+          "column": 6,
           "row": 0,
           "source": "actor",
           "target": "killer",
           "value": -5000
         },
         {
-          "column": 9,
+          "column": 7,
           "row": 0,
           "source": "actor",
           "target": "ecolog",
           "value": 0
         },
         {
-          "column": 10,
+          "column": 8,
           "row": 0,
           "source": "actor",
           "target": "dolg",
           "value": 0
         },
         {
-          "column": 11,
+          "column": 9,
           "row": 0,
           "source": "actor",
           "target": "freedom",
           "value": 0
         },
         {
-          "column": 12,
+          "column": 10,
           "row": 0,
           "source": "actor",
           "target": "bandit",
           "value": -5000
         },
         {
-          "column": 13,
+          "column": 11,
           "row": 0,
           "source": "actor",
           "target": "zombied",
           "value": -5000
         },
         {
-          "column": 14,
+          "column": 12,
           "row": 0,
           "source": "actor",
           "target": "stranger",
           "value": 0
         },
         {
-          "column": 15,
+          "column": 13,
           "row": 0,
           "source": "actor",
           "target": "trader",
           "value": 0
         },
         {
-          "column": 16,
+          "column": 14,
           "row": 0,
           "source": "actor",
           "target": "arena_enemy",
@@ -33197,84 +33197,84 @@
           "value": 0
         },
         {
-          "column": 5,
+          "column": 3,
           "row": 1,
           "source": "actor_dolg",
           "target": "stalker",
           "value": 0
         },
         {
-          "column": 6,
+          "column": 4,
           "row": 1,
           "source": "actor_dolg",
           "target": "monolith",
           "value": -5000
         },
         {
-          "column": 7,
+          "column": 5,
           "row": 1,
           "source": "actor_dolg",
           "target": "military",
           "value": -500
         },
         {
-          "column": 8,
+          "column": 6,
           "row": 1,
           "source": "actor_dolg",
           "target": "killer",
           "value": -5000
         },
         {
-          "column": 9,
+          "column": 7,
           "row": 1,
           "source": "actor_dolg",
           "target": "ecolog",
           "value": 5000
         },
         {
-          "column": 10,
+          "column": 8,
           "row": 1,
           "source": "actor_dolg",
           "target": "dolg",
           "value": 600
         },
         {
-          "column": 11,
+          "column": 9,
           "row": 1,
           "source": "actor_dolg",
           "target": "freedom",
           "value": -5000
         },
         {
-          "column": 12,
+          "column": 10,
           "row": 1,
           "source": "actor_dolg",
           "target": "bandit",
           "value": -5000
         },
         {
-          "column": 13,
+          "column": 11,
           "row": 1,
           "source": "actor_dolg",
           "target": "zombied",
           "value": -5000
         },
         {
-          "column": 14,
+          "column": 12,
           "row": 1,
           "source": "actor_dolg",
           "target": "stranger",
           "value": 0
         },
         {
-          "column": 15,
+          "column": 13,
           "row": 1,
           "source": "actor_dolg",
           "target": "trader",
           "value": 0
         },
         {
-          "column": 16,
+          "column": 14,
           "row": 1,
           "source": "actor_dolg",
           "target": "arena_enemy",
@@ -33302,84 +33302,84 @@
           "value": 0
         },
         {
-          "column": 5,
+          "column": 3,
           "row": 2,
           "source": "actor_freedom",
           "target": "stalker",
           "value": 0
         },
         {
-          "column": 6,
+          "column": 4,
           "row": 2,
           "source": "actor_freedom",
           "target": "monolith",
           "value": -5000
         },
         {
-          "column": 7,
+          "column": 5,
           "row": 2,
           "source": "actor_freedom",
           "target": "military",
           "value": -5000
         },
         {
-          "column": 8,
+          "column": 6,
           "row": 2,
           "source": "actor_freedom",
           "target": "killer",
           "value": -5000
         },
         {
-          "column": 9,
+          "column": 7,
           "row": 2,
           "source": "actor_freedom",
           "target": "ecolog",
           "value": -1500
         },
         {
-          "column": 10,
+          "column": 8,
           "row": 2,
           "source": "actor_freedom",
           "target": "dolg",
           "value": -5000
         },
         {
-          "column": 11,
+          "column": 9,
           "row": 2,
           "source": "actor_freedom",
           "target": "freedom",
           "value": 5000
         },
         {
-          "column": 12,
+          "column": 10,
           "row": 2,
           "source": "actor_freedom",
           "target": "bandit",
           "value": 0
         },
         {
-          "column": 13,
+          "column": 11,
           "row": 2,
           "source": "actor_freedom",
           "target": "zombied",
           "value": -5000
         },
         {
-          "column": 14,
+          "column": 12,
           "row": 2,
           "source": "actor_freedom",
           "target": "stranger",
           "value": 0
         },
         {
-          "column": 15,
+          "column": 13,
           "row": 2,
           "source": "actor_freedom",
           "target": "trader",
           "value": 0
         },
         {
-          "column": 16,
+          "column": 14,
           "row": 2,
           "source": "actor_freedom",
           "target": "arena_enemy",
@@ -33387,1260 +33387,1260 @@
         },
         {
           "column": 0,
-          "row": 5,
+          "row": 3,
           "source": "stalker",
           "target": "actor",
           "value": 0
         },
         {
           "column": 1,
-          "row": 5,
+          "row": 3,
           "source": "stalker",
           "target": "actor_dolg",
           "value": 0
         },
         {
           "column": 2,
-          "row": 5,
+          "row": 3,
           "source": "stalker",
           "target": "actor_freedom",
           "value": 0
         },
         {
-          "column": 5,
-          "row": 5,
+          "column": 3,
+          "row": 3,
           "source": "stalker",
           "target": "stalker",
           "value": 0
         },
         {
-          "column": 6,
-          "row": 5,
+          "column": 4,
+          "row": 3,
           "source": "stalker",
           "target": "monolith",
           "value": -5000
         },
         {
-          "column": 7,
-          "row": 5,
+          "column": 5,
+          "row": 3,
           "source": "stalker",
           "target": "military",
           "value": -5000
         },
         {
-          "column": 8,
-          "row": 5,
+          "column": 6,
+          "row": 3,
           "source": "stalker",
           "target": "killer",
           "value": -5000
         },
         {
-          "column": 9,
-          "row": 5,
+          "column": 7,
+          "row": 3,
           "source": "stalker",
           "target": "ecolog",
           "value": 0
         },
         {
-          "column": 10,
-          "row": 5,
+          "column": 8,
+          "row": 3,
           "source": "stalker",
           "target": "dolg",
           "value": 0
         },
         {
-          "column": 11,
-          "row": 5,
+          "column": 9,
+          "row": 3,
           "source": "stalker",
           "target": "freedom",
           "value": 0
         },
         {
-          "column": 12,
-          "row": 5,
+          "column": 10,
+          "row": 3,
           "source": "stalker",
           "target": "bandit",
           "value": -5000
         },
         {
-          "column": 13,
-          "row": 5,
+          "column": 11,
+          "row": 3,
           "source": "stalker",
           "target": "zombied",
           "value": -5000
         },
         {
-          "column": 14,
-          "row": 5,
+          "column": 12,
+          "row": 3,
           "source": "stalker",
           "target": "stranger",
           "value": 0
         },
         {
-          "column": 15,
-          "row": 5,
+          "column": 13,
+          "row": 3,
           "source": "stalker",
           "target": "trader",
           "value": 0
         },
         {
-          "column": 16,
-          "row": 5,
+          "column": 14,
+          "row": 3,
           "source": "stalker",
           "target": "arena_enemy",
           "value": -5000
         },
         {
           "column": 0,
-          "row": 6,
+          "row": 4,
           "source": "monolith",
           "target": "actor",
           "value": -5000
         },
         {
           "column": 1,
-          "row": 6,
+          "row": 4,
           "source": "monolith",
           "target": "actor_dolg",
           "value": -5000
         },
         {
           "column": 2,
-          "row": 6,
+          "row": 4,
           "source": "monolith",
           "target": "actor_freedom",
           "value": -5000
         },
         {
-          "column": 5,
-          "row": 6,
+          "column": 3,
+          "row": 4,
           "source": "monolith",
           "target": "stalker",
           "value": -5000
         },
         {
-          "column": 6,
-          "row": 6,
+          "column": 4,
+          "row": 4,
           "source": "monolith",
           "target": "monolith",
           "value": 5000
         },
         {
-          "column": 7,
-          "row": 6,
+          "column": 5,
+          "row": 4,
           "source": "monolith",
           "target": "military",
           "value": -5000
         },
         {
-          "column": 8,
-          "row": 6,
+          "column": 6,
+          "row": 4,
           "source": "monolith",
           "target": "killer",
           "value": -5000
         },
         {
-          "column": 9,
-          "row": 6,
+          "column": 7,
+          "row": 4,
           "source": "monolith",
           "target": "ecolog",
           "value": -5000
         },
         {
-          "column": 10,
-          "row": 6,
+          "column": 8,
+          "row": 4,
           "source": "monolith",
           "target": "dolg",
           "value": -5000
         },
         {
-          "column": 11,
-          "row": 6,
+          "column": 9,
+          "row": 4,
           "source": "monolith",
           "target": "freedom",
           "value": -5000
         },
         {
-          "column": 12,
-          "row": 6,
+          "column": 10,
+          "row": 4,
           "source": "monolith",
           "target": "bandit",
           "value": 5000
         },
         {
-          "column": 13,
-          "row": 6,
+          "column": 11,
+          "row": 4,
           "source": "monolith",
           "target": "zombied",
           "value": 5000
         },
         {
-          "column": 14,
-          "row": 6,
+          "column": 12,
+          "row": 4,
           "source": "monolith",
           "target": "stranger",
           "value": -5000
         },
         {
-          "column": 15,
-          "row": 6,
+          "column": 13,
+          "row": 4,
           "source": "monolith",
           "target": "trader",
           "value": 0
         },
         {
-          "column": 16,
-          "row": 6,
+          "column": 14,
+          "row": 4,
           "source": "monolith",
           "target": "arena_enemy",
           "value": -5000
         },
         {
           "column": 0,
-          "row": 7,
+          "row": 5,
           "source": "military",
           "target": "actor",
           "value": -5000
         },
         {
           "column": 1,
-          "row": 7,
+          "row": 5,
           "source": "military",
           "target": "actor_dolg",
           "value": -5000
         },
         {
           "column": 2,
-          "row": 7,
+          "row": 5,
           "source": "military",
           "target": "actor_freedom",
           "value": -5000
         },
         {
-          "column": 5,
-          "row": 7,
+          "column": 3,
+          "row": 5,
           "source": "military",
           "target": "stalker",
           "value": -5000
         },
         {
-          "column": 6,
-          "row": 7,
+          "column": 4,
+          "row": 5,
           "source": "military",
           "target": "monolith",
           "value": -5000
         },
         {
-          "column": 7,
-          "row": 7,
+          "column": 5,
+          "row": 5,
           "source": "military",
           "target": "military",
           "value": 5000
         },
         {
-          "column": 8,
-          "row": 7,
+          "column": 6,
+          "row": 5,
           "source": "military",
           "target": "killer",
           "value": -5000
         },
         {
-          "column": 9,
-          "row": 7,
+          "column": 7,
+          "row": 5,
           "source": "military",
           "target": "ecolog",
           "value": 0
         },
         {
-          "column": 10,
-          "row": 7,
+          "column": 8,
+          "row": 5,
           "source": "military",
           "target": "dolg",
           "value": -5000
         },
         {
-          "column": 11,
-          "row": 7,
+          "column": 9,
+          "row": 5,
           "source": "military",
           "target": "freedom",
           "value": -5000
         },
         {
-          "column": 12,
-          "row": 7,
+          "column": 10,
+          "row": 5,
           "source": "military",
           "target": "bandit",
           "value": -5000
         },
         {
-          "column": 13,
-          "row": 7,
+          "column": 11,
+          "row": 5,
           "source": "military",
           "target": "zombied",
           "value": -5000
         },
         {
-          "column": 14,
-          "row": 7,
+          "column": 12,
+          "row": 5,
           "source": "military",
           "target": "stranger",
           "value": 0
         },
         {
-          "column": 15,
-          "row": 7,
+          "column": 13,
+          "row": 5,
           "source": "military",
           "target": "trader",
           "value": 0
         },
         {
-          "column": 16,
-          "row": 7,
+          "column": 14,
+          "row": 5,
           "source": "military",
           "target": "arena_enemy",
           "value": -5000
         },
         {
           "column": 0,
-          "row": 8,
+          "row": 6,
           "source": "killer",
           "target": "actor",
           "value": -5000
         },
         {
           "column": 1,
-          "row": 8,
+          "row": 6,
           "source": "killer",
           "target": "actor_dolg",
           "value": -5000
         },
         {
           "column": 2,
-          "row": 8,
+          "row": 6,
           "source": "killer",
           "target": "actor_freedom",
           "value": 0
         },
         {
-          "column": 5,
-          "row": 8,
+          "column": 3,
+          "row": 6,
           "source": "killer",
           "target": "stalker",
           "value": -5000
         },
         {
-          "column": 6,
-          "row": 8,
+          "column": 4,
+          "row": 6,
           "source": "killer",
           "target": "monolith",
           "value": -5000
         },
         {
-          "column": 7,
-          "row": 8,
+          "column": 5,
+          "row": 6,
           "source": "killer",
           "target": "military",
           "value": -5000
         },
         {
-          "column": 8,
-          "row": 8,
+          "column": 6,
+          "row": 6,
           "source": "killer",
           "target": "killer",
           "value": 5000
         },
         {
-          "column": 9,
-          "row": 8,
+          "column": 7,
+          "row": 6,
           "source": "killer",
           "target": "ecolog",
           "value": -5000
         },
         {
-          "column": 10,
-          "row": 8,
+          "column": 8,
+          "row": 6,
           "source": "killer",
           "target": "dolg",
           "value": -5000
         },
         {
-          "column": 11,
-          "row": 8,
+          "column": 9,
+          "row": 6,
           "source": "killer",
           "target": "freedom",
           "value": -5000
         },
         {
-          "column": 12,
-          "row": 8,
+          "column": 10,
+          "row": 6,
           "source": "killer",
           "target": "bandit",
           "value": 0
         },
         {
-          "column": 13,
-          "row": 8,
+          "column": 11,
+          "row": 6,
           "source": "killer",
           "target": "zombied",
           "value": -5000
         },
         {
-          "column": 14,
-          "row": 8,
+          "column": 12,
+          "row": 6,
           "source": "killer",
           "target": "stranger",
           "value": -5000
         },
         {
-          "column": 15,
-          "row": 8,
+          "column": 13,
+          "row": 6,
           "source": "killer",
           "target": "trader",
           "value": 0
         },
         {
-          "column": 16,
-          "row": 8,
+          "column": 14,
+          "row": 6,
           "source": "killer",
           "target": "arena_enemy",
           "value": -5000
         },
         {
           "column": 0,
-          "row": 9,
+          "row": 7,
           "source": "ecolog",
           "target": "actor",
           "value": 0
         },
         {
           "column": 1,
-          "row": 9,
+          "row": 7,
           "source": "ecolog",
           "target": "actor_dolg",
           "value": 600
         },
         {
           "column": 2,
-          "row": 9,
+          "row": 7,
           "source": "ecolog",
           "target": "actor_freedom",
           "value": -5000
         },
         {
-          "column": 5,
-          "row": 9,
+          "column": 3,
+          "row": 7,
           "source": "ecolog",
           "target": "stalker",
           "value": 0
         },
         {
-          "column": 6,
-          "row": 9,
+          "column": 4,
+          "row": 7,
           "source": "ecolog",
           "target": "monolith",
           "value": -5000
         },
         {
-          "column": 7,
-          "row": 9,
+          "column": 5,
+          "row": 7,
           "source": "ecolog",
           "target": "military",
           "value": 1000
         },
         {
-          "column": 8,
-          "row": 9,
+          "column": 6,
+          "row": 7,
           "source": "ecolog",
           "target": "killer",
           "value": -5000
         },
         {
-          "column": 9,
-          "row": 9,
+          "column": 7,
+          "row": 7,
           "source": "ecolog",
           "target": "ecolog",
           "value": 5000
         },
         {
-          "column": 10,
-          "row": 9,
+          "column": 8,
+          "row": 7,
           "source": "ecolog",
           "target": "dolg",
           "value": 500
         },
         {
-          "column": 11,
-          "row": 9,
+          "column": 9,
+          "row": 7,
           "source": "ecolog",
           "target": "freedom",
           "value": -5000
         },
         {
-          "column": 12,
-          "row": 9,
+          "column": 10,
+          "row": 7,
           "source": "ecolog",
           "target": "bandit",
           "value": -500
         },
         {
-          "column": 13,
-          "row": 9,
+          "column": 11,
+          "row": 7,
           "source": "ecolog",
           "target": "zombied",
           "value": -5000
         },
         {
-          "column": 14,
-          "row": 9,
+          "column": 12,
+          "row": 7,
           "source": "ecolog",
           "target": "stranger",
           "value": 0
         },
         {
-          "column": 15,
-          "row": 9,
+          "column": 13,
+          "row": 7,
           "source": "ecolog",
           "target": "trader",
           "value": 0
         },
         {
-          "column": 16,
-          "row": 9,
+          "column": 14,
+          "row": 7,
           "source": "ecolog",
           "target": "arena_enemy",
           "value": 0
         },
         {
           "column": 0,
-          "row": 10,
+          "row": 8,
           "source": "dolg",
           "target": "actor",
           "value": 0
         },
         {
           "column": 1,
-          "row": 10,
+          "row": 8,
           "source": "dolg",
           "target": "actor_dolg",
           "value": 600
         },
         {
           "column": 2,
-          "row": 10,
+          "row": 8,
           "source": "dolg",
           "target": "actor_freedom",
           "value": -5000
         },
         {
-          "column": 5,
-          "row": 10,
+          "column": 3,
+          "row": 8,
           "source": "dolg",
           "target": "stalker",
           "value": 0
         },
         {
-          "column": 6,
-          "row": 10,
+          "column": 4,
+          "row": 8,
           "source": "dolg",
           "target": "monolith",
           "value": -5000
         },
         {
-          "column": 7,
-          "row": 10,
+          "column": 5,
+          "row": 8,
           "source": "dolg",
           "target": "military",
           "value": -500
         },
         {
-          "column": 8,
-          "row": 10,
+          "column": 6,
+          "row": 8,
           "source": "dolg",
           "target": "killer",
           "value": -5000
         },
         {
-          "column": 9,
-          "row": 10,
+          "column": 7,
+          "row": 8,
           "source": "dolg",
           "target": "ecolog",
           "value": 5000
         },
         {
-          "column": 10,
-          "row": 10,
+          "column": 8,
+          "row": 8,
           "source": "dolg",
           "target": "dolg",
           "value": 5000
         },
         {
-          "column": 11,
-          "row": 10,
+          "column": 9,
+          "row": 8,
           "source": "dolg",
           "target": "freedom",
           "value": -5000
         },
         {
-          "column": 12,
-          "row": 10,
+          "column": 10,
+          "row": 8,
           "source": "dolg",
           "target": "bandit",
           "value": -5000
         },
         {
-          "column": 13,
-          "row": 10,
+          "column": 11,
+          "row": 8,
           "source": "dolg",
           "target": "zombied",
           "value": -5000
         },
         {
-          "column": 14,
-          "row": 10,
+          "column": 12,
+          "row": 8,
           "source": "dolg",
           "target": "stranger",
           "value": 0
         },
         {
-          "column": 15,
-          "row": 10,
+          "column": 13,
+          "row": 8,
           "source": "dolg",
           "target": "trader",
           "value": 0
         },
         {
-          "column": 16,
-          "row": 10,
+          "column": 14,
+          "row": 8,
           "source": "dolg",
           "target": "arena_enemy",
           "value": 0
         },
         {
           "column": 0,
-          "row": 11,
+          "row": 9,
           "source": "freedom",
           "target": "actor",
           "value": 0
         },
         {
           "column": 1,
-          "row": 11,
+          "row": 9,
           "source": "freedom",
           "target": "actor_dolg",
           "value": -5000
         },
         {
           "column": 2,
-          "row": 11,
+          "row": 9,
           "source": "freedom",
           "target": "actor_freedom",
           "value": 600
         },
         {
-          "column": 5,
-          "row": 11,
+          "column": 3,
+          "row": 9,
           "source": "freedom",
           "target": "stalker",
           "value": 0
         },
         {
-          "column": 6,
-          "row": 11,
+          "column": 4,
+          "row": 9,
           "source": "freedom",
           "target": "monolith",
           "value": -5000
         },
         {
-          "column": 7,
-          "row": 11,
+          "column": 5,
+          "row": 9,
           "source": "freedom",
           "target": "military",
           "value": -5000
         },
         {
-          "column": 8,
-          "row": 11,
+          "column": 6,
+          "row": 9,
           "source": "freedom",
           "target": "killer",
           "value": -5000
         },
         {
-          "column": 9,
-          "row": 11,
+          "column": 7,
+          "row": 9,
           "source": "freedom",
           "target": "ecolog",
           "value": -1500
         },
         {
-          "column": 10,
-          "row": 11,
+          "column": 8,
+          "row": 9,
           "source": "freedom",
           "target": "dolg",
           "value": -5000
         },
         {
-          "column": 11,
-          "row": 11,
+          "column": 9,
+          "row": 9,
           "source": "freedom",
           "target": "freedom",
           "value": 5000
         },
         {
-          "column": 12,
-          "row": 11,
+          "column": 10,
+          "row": 9,
           "source": "freedom",
           "target": "bandit",
           "value": 0
         },
         {
-          "column": 13,
-          "row": 11,
+          "column": 11,
+          "row": 9,
           "source": "freedom",
           "target": "zombied",
           "value": -5000
         },
         {
-          "column": 14,
-          "row": 11,
+          "column": 12,
+          "row": 9,
           "source": "freedom",
           "target": "stranger",
           "value": 0
         },
         {
-          "column": 15,
-          "row": 11,
+          "column": 13,
+          "row": 9,
           "source": "freedom",
           "target": "trader",
           "value": 0
         },
         {
-          "column": 16,
-          "row": 11,
+          "column": 14,
+          "row": 9,
           "source": "freedom",
           "target": "arena_enemy",
           "value": 0
         },
         {
           "column": 0,
-          "row": 12,
+          "row": 10,
           "source": "bandit",
           "target": "actor",
           "value": -5000
         },
         {
           "column": 1,
-          "row": 12,
+          "row": 10,
           "source": "bandit",
           "target": "actor_dolg",
           "value": -5000
         },
         {
           "column": 2,
-          "row": 12,
+          "row": 10,
           "source": "bandit",
           "target": "actor_freedom",
           "value": 0
         },
         {
-          "column": 5,
-          "row": 12,
+          "column": 3,
+          "row": 10,
           "source": "bandit",
           "target": "stalker",
           "value": -5000
         },
         {
-          "column": 6,
-          "row": 12,
+          "column": 4,
+          "row": 10,
           "source": "bandit",
           "target": "monolith",
           "value": -5000
         },
         {
-          "column": 7,
-          "row": 12,
+          "column": 5,
+          "row": 10,
           "source": "bandit",
           "target": "military",
           "value": -500
         },
         {
-          "column": 8,
-          "row": 12,
+          "column": 6,
+          "row": 10,
           "source": "bandit",
           "target": "killer",
           "value": 0
         },
         {
-          "column": 9,
-          "row": 12,
+          "column": 7,
+          "row": 10,
           "source": "bandit",
           "target": "ecolog",
           "value": -5000
         },
         {
-          "column": 10,
-          "row": 12,
+          "column": 8,
+          "row": 10,
           "source": "bandit",
           "target": "dolg",
           "value": -5000
         },
         {
-          "column": 11,
-          "row": 12,
+          "column": 9,
+          "row": 10,
           "source": "bandit",
           "target": "freedom",
           "value": 0
         },
         {
-          "column": 12,
-          "row": 12,
+          "column": 10,
+          "row": 10,
           "source": "bandit",
           "target": "bandit",
           "value": 0
         },
         {
-          "column": 13,
-          "row": 12,
+          "column": 11,
+          "row": 10,
           "source": "bandit",
           "target": "zombied",
           "value": -5000
         },
         {
-          "column": 14,
-          "row": 12,
+          "column": 12,
+          "row": 10,
           "source": "bandit",
           "target": "stranger",
           "value": -5000
         },
         {
-          "column": 15,
-          "row": 12,
+          "column": 13,
+          "row": 10,
           "source": "bandit",
           "target": "trader",
           "value": 0
         },
         {
-          "column": 16,
-          "row": 12,
+          "column": 14,
+          "row": 10,
           "source": "bandit",
           "target": "arena_enemy",
           "value": -5000
         },
         {
           "column": 0,
-          "row": 13,
+          "row": 11,
           "source": "zombied",
           "target": "actor",
           "value": -5000
         },
         {
           "column": 1,
-          "row": 13,
+          "row": 11,
           "source": "zombied",
           "target": "actor_dolg",
           "value": -5000
         },
         {
           "column": 2,
-          "row": 13,
+          "row": 11,
           "source": "zombied",
           "target": "actor_freedom",
           "value": -5000
         },
         {
-          "column": 5,
-          "row": 13,
+          "column": 3,
+          "row": 11,
           "source": "zombied",
           "target": "stalker",
           "value": -5000
         },
         {
-          "column": 6,
-          "row": 13,
+          "column": 4,
+          "row": 11,
           "source": "zombied",
           "target": "monolith",
           "value": 5000
         },
         {
-          "column": 7,
-          "row": 13,
+          "column": 5,
+          "row": 11,
           "source": "zombied",
           "target": "military",
           "value": -5000
         },
         {
-          "column": 8,
-          "row": 13,
+          "column": 6,
+          "row": 11,
           "source": "zombied",
           "target": "killer",
           "value": -5000
         },
         {
-          "column": 9,
-          "row": 13,
+          "column": 7,
+          "row": 11,
           "source": "zombied",
           "target": "ecolog",
           "value": -5000
         },
         {
-          "column": 10,
-          "row": 13,
+          "column": 8,
+          "row": 11,
           "source": "zombied",
           "target": "dolg",
           "value": -5000
         },
         {
-          "column": 11,
-          "row": 13,
+          "column": 9,
+          "row": 11,
           "source": "zombied",
           "target": "freedom",
           "value": -5000
         },
         {
-          "column": 12,
-          "row": 13,
+          "column": 10,
+          "row": 11,
           "source": "zombied",
           "target": "bandit",
           "value": -5000
         },
         {
-          "column": 13,
-          "row": 13,
+          "column": 11,
+          "row": 11,
           "source": "zombied",
           "target": "zombied",
           "value": 5000
         },
         {
-          "column": 14,
-          "row": 13,
+          "column": 12,
+          "row": 11,
           "source": "zombied",
           "target": "stranger",
           "value": -5000
         },
         {
-          "column": 15,
-          "row": 13,
+          "column": 13,
+          "row": 11,
           "source": "zombied",
           "target": "trader",
           "value": 0
         },
         {
-          "column": 16,
-          "row": 13,
+          "column": 14,
+          "row": 11,
           "source": "zombied",
           "target": "arena_enemy",
           "value": -5000
         },
         {
           "column": 0,
-          "row": 14,
+          "row": 12,
           "source": "stranger",
           "target": "actor",
           "value": 0
         },
         {
           "column": 1,
-          "row": 14,
+          "row": 12,
           "source": "stranger",
           "target": "actor_dolg",
           "value": 0
         },
         {
           "column": 2,
-          "row": 14,
+          "row": 12,
           "source": "stranger",
           "target": "actor_freedom",
           "value": 0
         },
         {
-          "column": 5,
-          "row": 14,
+          "column": 3,
+          "row": 12,
           "source": "stranger",
           "target": "stalker",
           "value": 0
         },
         {
-          "column": 6,
-          "row": 14,
+          "column": 4,
+          "row": 12,
           "source": "stranger",
           "target": "monolith",
           "value": -5000
         },
         {
-          "column": 7,
-          "row": 14,
+          "column": 5,
+          "row": 12,
           "source": "stranger",
           "target": "military",
           "value": -5000
         },
         {
-          "column": 8,
-          "row": 14,
+          "column": 6,
+          "row": 12,
           "source": "stranger",
           "target": "killer",
           "value": -5000
         },
         {
-          "column": 9,
-          "row": 14,
+          "column": 7,
+          "row": 12,
           "source": "stranger",
           "target": "ecolog",
           "value": 0
         },
         {
-          "column": 10,
-          "row": 14,
+          "column": 8,
+          "row": 12,
           "source": "stranger",
           "target": "dolg",
           "value": 0
         },
         {
-          "column": 11,
-          "row": 14,
+          "column": 9,
+          "row": 12,
           "source": "stranger",
           "target": "freedom",
           "value": 0
         },
         {
-          "column": 12,
-          "row": 14,
+          "column": 10,
+          "row": 12,
           "source": "stranger",
           "target": "bandit",
           "value": -500
         },
         {
-          "column": 13,
-          "row": 14,
+          "column": 11,
+          "row": 12,
           "source": "stranger",
           "target": "zombied",
           "value": -5000
         },
         {
-          "column": 14,
-          "row": 14,
+          "column": 12,
+          "row": 12,
           "source": "stranger",
           "target": "stranger",
           "value": 0
         },
         {
-          "column": 15,
-          "row": 14,
+          "column": 13,
+          "row": 12,
           "source": "stranger",
           "target": "trader",
           "value": 0
         },
         {
-          "column": 16,
-          "row": 14,
+          "column": 14,
+          "row": 12,
           "source": "stranger",
           "target": "arena_enemy",
           "value": 0
         },
         {
           "column": 0,
-          "row": 15,
+          "row": 13,
           "source": "trader",
           "target": "actor",
           "value": 0
         },
         {
           "column": 1,
-          "row": 15,
+          "row": 13,
           "source": "trader",
           "target": "actor_dolg",
           "value": 0
         },
         {
           "column": 2,
-          "row": 15,
+          "row": 13,
           "source": "trader",
           "target": "actor_freedom",
           "value": 0
         },
         {
-          "column": 5,
-          "row": 15,
+          "column": 3,
+          "row": 13,
           "source": "trader",
           "target": "stalker",
           "value": 0
         },
         {
-          "column": 6,
-          "row": 15,
+          "column": 4,
+          "row": 13,
           "source": "trader",
           "target": "monolith",
           "value": 0
         },
         {
-          "column": 7,
-          "row": 15,
+          "column": 5,
+          "row": 13,
           "source": "trader",
           "target": "military",
           "value": 0
         },
         {
-          "column": 8,
-          "row": 15,
+          "column": 6,
+          "row": 13,
           "source": "trader",
           "target": "killer",
           "value": 0
         },
         {
-          "column": 9,
-          "row": 15,
+          "column": 7,
+          "row": 13,
           "source": "trader",
           "target": "ecolog",
           "value": 0
         },
         {
-          "column": 10,
-          "row": 15,
+          "column": 8,
+          "row": 13,
           "source": "trader",
           "target": "dolg",
           "value": 0
         },
         {
-          "column": 11,
-          "row": 15,
+          "column": 9,
+          "row": 13,
           "source": "trader",
           "target": "freedom",
           "value": 0
         },
         {
-          "column": 12,
-          "row": 15,
+          "column": 10,
+          "row": 13,
           "source": "trader",
           "target": "bandit",
           "value": 0
         },
         {
-          "column": 13,
-          "row": 15,
+          "column": 11,
+          "row": 13,
           "source": "trader",
           "target": "zombied",
           "value": 0
         },
         {
-          "column": 14,
-          "row": 15,
+          "column": 12,
+          "row": 13,
           "source": "trader",
           "target": "stranger",
           "value": 0
         },
         {
-          "column": 15,
-          "row": 15,
+          "column": 13,
+          "row": 13,
           "source": "trader",
           "target": "trader",
           "value": 0
         },
         {
-          "column": 16,
-          "row": 15,
+          "column": 14,
+          "row": 13,
           "source": "trader",
           "target": "arena_enemy",
           "value": 0
         },
         {
           "column": 0,
-          "row": 16,
+          "row": 14,
           "source": "arena_enemy",
           "target": "actor",
           "value": -5000
         },
         {
           "column": 1,
-          "row": 16,
+          "row": 14,
           "source": "arena_enemy",
           "target": "actor_dolg",
           "value": -5000
         },
         {
           "column": 2,
-          "row": 16,
+          "row": 14,
           "source": "arena_enemy",
           "target": "actor_freedom",
           "value": -5000
         },
         {
-          "column": 5,
-          "row": 16,
+          "column": 3,
+          "row": 14,
           "source": "arena_enemy",
           "target": "stalker",
           "value": -5000
         },
         {
-          "column": 6,
-          "row": 16,
+          "column": 4,
+          "row": 14,
           "source": "arena_enemy",
           "target": "monolith",
           "value": -5000
         },
         {
-          "column": 7,
-          "row": 16,
+          "column": 5,
+          "row": 14,
           "source": "arena_enemy",
           "target": "military",
           "value": -5000
         },
         {
-          "column": 8,
-          "row": 16,
+          "column": 6,
+          "row": 14,
           "source": "arena_enemy",
           "target": "killer",
           "value": 0
         },
         {
-          "column": 9,
-          "row": 16,
+          "column": 7,
+          "row": 14,
           "source": "arena_enemy",
           "target": "ecolog",
           "value": 0
         },
         {
-          "column": 10,
-          "row": 16,
+          "column": 8,
+          "row": 14,
           "source": "arena_enemy",
           "target": "dolg",
           "value": 0
         },
         {
-          "column": 11,
-          "row": 16,
+          "column": 9,
+          "row": 14,
           "source": "arena_enemy",
           "target": "freedom",
           "value": -5000
         },
         {
-          "column": 12,
-          "row": 16,
+          "column": 10,
+          "row": 14,
           "source": "arena_enemy",
           "target": "bandit",
           "value": -5000
         },
         {
-          "column": 13,
-          "row": 16,
+          "column": 11,
+          "row": 14,
           "source": "arena_enemy",
           "target": "zombied",
           "value": 0
         },
         {
-          "column": 14,
-          "row": 16,
+          "column": 12,
+          "row": 14,
           "source": "arena_enemy",
           "target": "stranger",
           "value": 0
         },
         {
-          "column": 15,
-          "row": 16,
+          "column": 13,
+          "row": 14,
           "source": "arena_enemy",
           "target": "trader",
           "value": 0
         },
         {
-          "column": 16,
-          "row": 16,
+          "column": 14,
+          "row": 14,
           "source": "arena_enemy",
           "target": "arena_enemy",
           "value": 0

@@ -328,15 +328,18 @@ fn build_factions(
         return Ok(None);
     }
 
+    // The number a save stores for a community (the actor's faction, the key of a relation record, a row of
+    // `[communities_relations]`) is its position in the `communities` list. The number written after each name is
+    // the community's team; Shadow of Chernobyl skips teams 3 and 4, so there the two differ from `stalker` on.
     let mut factions = Vec::with_capacity(communities.len());
-    for (key, id) in &communities {
+    for (position, (key, _team)) in communities.iter().enumerate() {
         let display_name = strings.get(key).cloned();
         let def = FactionDefinition::new(
             key.clone(),
             display_name,
             community_source.clone(),
             release_id.to_string(),
-            Some(*id),
+            i32::try_from(position).ok(),
         )?;
         factions.push(def);
     }

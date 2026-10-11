@@ -14233,5 +14233,22 @@
     "ko": "{0} · {1} · 무게: {2} kg · 가격: {3}",
     "zh-CN": "{0} · {1} · 重量：{2} 千克 · 价格：{3}",
     "zh-TW": "{0} · {1} · 重量：{2} 公斤 · 價格：{3}"
+  },
+  "В сейве есть записи отношений с номерами вне списка группировок игры: {0}. Они только для чтения и при записи не меняются.": {
+    "ru": "В сейве есть записи отношений с номерами вне списка группировок игры: {0}. Они только для чтения и при записи не меняются.",
+    "uk": "У сейві є записи відносин із номерами поза списком угруповань гри: {0}. Вони лише для читання і під час запису не змінюються.",
+    "en": "The save holds relation records whose numbers are outside the game's faction list: {0}. They are read-only and are left unchanged on save.",
+    "de": "Der Spielstand enthält Beziehungseinträge mit Nummern außerhalb der Fraktionsliste des Spiels: {0}. Sie sind schreibgeschützt und bleiben beim Speichern unverändert.",
+    "fr": "La sauvegarde contient des relations dont les numéros sont hors de la liste des factions du jeu : {0}. Elles sont en lecture seule et restent inchangées à l'enregistrement.",
+    "it": "Il salvataggio contiene relazioni con numeri fuori dall'elenco delle fazioni del gioco: {0}. Sono di sola lettura e restano invariate al salvataggio.",
+    "es": "La partida contiene relaciones con números fuera de la lista de facciones del juego: {0}. Son de solo lectura y no cambian al guardar.",
+    "pl": "Zapis zawiera relacje o numerach spoza listy frakcji gry: {0}. Są tylko do odczytu i przy zapisie pozostają bez zmian.",
+    "cs": "Uložená hra obsahuje vztahy s čísly mimo seznam frakcí hry: {0}. Jsou pouze pro čtení a při uložení se nemění.",
+    "pt-BR": "O save contém relações com números fora da lista de facções do jogo: {0}. Elas são somente leitura e não mudam ao salvar.",
+    "tr": "Kayıtta, numaraları oyunun grup listesinin dışında kalan ilişki kayıtları var: {0}. Bunlar salt okunurdur ve kaydederken değişmez.",
+    "ja": "このセーブには、ゲームの勢力一覧にない番号の関係記録があります: {0}。読み取り専用で、保存時に変更されません。",
+    "ko": "이 세이브에는 게임의 세력 목록에 없는 번호의 관계 기록이 있습니다: {0}. 읽기 전용이며 저장할 때 변경되지 않습니다.",
+    "zh-CN": "此存档包含编号不在游戏阵营列表中的关系记录：{0}。它们为只读，保存时不会更改。",
+    "zh-TW": "此存檔包含編號不在遊戲陣營清單中的關係記錄：{0}。它們為唯讀，儲存時不會變更。"
   }
 }

@@ -241,7 +241,8 @@ pub struct FactionDefinition {
     pub source: String,
     /// Release ID.
     pub release_id: String,
-    /// Numeric community ID if defined in `game_relations.ltx`.
+    /// The number saves store for the community: its position in the `communities` list of
+    /// `game_relations.ltx` (not the team number written after its name there).
     pub numeric_id: Option<i32>,
 }
 

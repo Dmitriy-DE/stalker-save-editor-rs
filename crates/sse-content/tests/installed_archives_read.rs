@@ -3,6 +3,13 @@
 //!
 //! Known exception: vanilla Clear Sky `resources/resources.db2`, entry `textures/ui/ui_pda2_noice.dds`, fails
 //! its CRC32 check in the installed copy. It is listed here and reported, not skipped silently.
+//!
+//! Measured 2026-10-11 on one installed copy (archive 419 864 681 bytes): the entry is stored without compression
+//! (4 194 432 bytes at offset 150 042 131, a valid 1024×1024 32-bit DDS), the table records `8b3ee7f2`, the stored
+//! bytes give `6fb21211`. Call of Pripyat ships the same texture with the same recorded sum and reads clean; the
+//! two copies differ in one bit (byte 4 029 229 of the file: `22` here, `32` there). No decoder takes part in a
+//! stored entry, so this is the archive file, not the reader. Whether the bit is wrong in the shipped archive or
+//! only in that copy is not known: Steam's file verification would tell.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::fs;
