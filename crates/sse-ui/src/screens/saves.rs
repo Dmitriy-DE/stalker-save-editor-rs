@@ -3622,9 +3622,11 @@ impl Inventory {
                 .unwrap_or_else(|| t("нет шкалы состояния / износа").to_owned());
             let enhanced_durability = match &selected.data {
                 SaveData::Xray { save, .. } => {
-                    matches!(save.format(), sse_xray::Format::SocEe | sse_xray::Format::CsEe)
-                        && writer::capability(save.format(), writer::ChangeKind::EditDurability)
-                            != writer::Capability::Unsupported
+                    matches!(
+                        save.format(),
+                        sse_xray::Format::SocEe | sse_xray::Format::CsEe | sse_xray::Format::CopEe
+                    ) && writer::capability(save.format(), writer::ChangeKind::EditDurability)
+                        != writer::Capability::Unsupported
                 }
                 _ => false,
             };

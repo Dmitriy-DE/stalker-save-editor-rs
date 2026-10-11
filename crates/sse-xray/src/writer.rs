@@ -70,9 +70,8 @@ pub const fn capability(format: crate::Format, kind: ChangeKind) -> Capability {
         (Cs | Cop, EditUpgrades) => Experimental,
         (Soc, EditUpgrades) => Unsupported,
         (SocEe | CsEe | CopEe, AddItems | EditMoney | EditStacks | RemoveItems) => Experimental,
-        // Durability passed every EE copy for Shadow of Chernobyl and Clear Sky. Call of Pripyat EE failed the
-        // byte-exact restore on 7 of 12 copies (the UPDATE condition byte is re-encoded), so it stays unsupported.
-        (SocEe | CsEe, EditDurability) => Experimental,
+        // Only Shadow of Chernobyl EE was checked on real saves. Clear Sky EE and Call of Pripyat EE wait for saves.
+        (SocEe, EditDurability) => Experimental,
         (
             SocEe | CsEe | CopEe,
             EditDurability | EditPlacement | EditPlayerFaction | EditRelations | EditUpgrades | EditInfoPortions
@@ -3060,6 +3059,7 @@ mod tests {
         read_vector, verify_changed_image_ranges, verify_no_new_story_id_occurrences, write_u16, write_u32, Capability,
         Change, ChangeKind, ChangeSet, PendingWrite, Placement,
     };
+    use crate::container::Container;
     use crate::{Format, Save};
     use sse_catalog::{CatalogBundleReader, UpgradeCatalog, UpgradeDefinition};
     use sse_core::Cursor;
@@ -4181,13 +4181,13 @@ mod tests {
                 assert_eq!(capability(format, kind), Capability::Experimental);
             }
         }
-        for format in [Format::SocEe, Format::CsEe] {
-            assert_eq!(capability(format, ChangeKind::EditDurability), Capability::Experimental);
-        }
         assert_eq!(
-            capability(Format::CopEe, ChangeKind::EditDurability),
-            Capability::Unsupported
+            capability(Format::SocEe, ChangeKind::EditDurability),
+            Capability::Experimental
         );
+        for format in [Format::CsEe, Format::CopEe] {
+            assert_eq!(capability(format, ChangeKind::EditDurability), Capability::Unsupported);
+        }
         for format in [Format::SocEe, Format::CsEe, Format::CopEe] {
             for kind in [
                 ChangeKind::EditPlacement,
@@ -5379,5 +5379,95 @@ mod tests {
         let mut raw = initial.raw_image().to_vec();
         write_u32(&mut raw, story_id_offset, u32::MAX)?;
         Ok(initial.repack(&raw)?)
+    }
+
+    /// Runs the Shadow of Chernobyl EE durability check on copies of real saves, in one command:
+    /// `SSE_EE_SAVES_DIR=<copies dir> cargo test -p sse-xray -- --ignored ee_durability`.
+    /// Each save: set the first editable item to a new value, read it back, check the other items are unchanged,
+    /// restore the old value and compare the unpacked image with the original. Copies only; never write originals.
+    #[test]
+    #[ignore = "needs SSE_EE_SAVES_DIR pointing at copies of real Shadow of Chernobyl EE saves"]
+    fn ee_durability_round_trips_on_real_saves() -> TestResult {
+        let Some(root) = std::env::var_os("SSE_EE_SAVES_DIR") else {
+            return Err("SSE_EE_SAVES_DIR is not set".into());
+        };
+        let mut pending = vec![std::path::PathBuf::from(root)];
+        let mut checked = 0usize;
+        while let Some(directory) = pending.pop() {
+            for entry in std::fs::read_dir(&directory)? {
+                let path = entry?.path();
+                if path.is_dir() {
+                    pending.push(path);
+                    continue;
+                }
+                if path.extension().and_then(|extension| extension.to_str()) != Some("sav") {
+                    continue;
+                }
+                let original = std::fs::read(&path)?;
+                let save = Save::read(&original)?;
+                if save.format() != Format::SocEe {
+                    continue;
+                }
+                let items = save.inventory()?;
+                let Some(target) = items
+                    .iter()
+                    .find(|item| item.durability_editable && item.condition.is_some())
+                else {
+                    return Err(format!("{}: no editable durability item", path.display()).into());
+                };
+                let old_value = target.condition.ok_or("durability value missing")?;
+                let new_value = if (old_value - 0.5).abs() < 1e-6 { 0.25 } else { 0.5 };
+                let edited = apply(
+                    &save,
+                    &ChangeSet::new(vec![Change::SetDurability {
+                        target_object: target.handle,
+                        old_value,
+                        new_value,
+                    }]),
+                )?;
+                let after = Save::read(edited.as_slice())?;
+                let after_items = after.inventory()?;
+                for item in &items {
+                    let twin = after_items
+                        .iter()
+                        .find(|twin| twin.handle == item.handle)
+                        .ok_or_else(|| format!("{}: item 0x{:04X} missing", path.display(), item.handle))?;
+                    if item.handle == target.handle {
+                        let read = twin.condition.ok_or("durability not readable after the edit")?;
+                        assert!((read - new_value).abs() < 1e-6, "{}: read {read}", path.display());
+                    } else {
+                        assert_eq!(item.condition, twin.condition, "{}: neighbour changed", path.display());
+                    }
+                }
+                let before_image = Container::read(&original)?.image().to_vec();
+                let after_image = Container::read(edited.as_slice())?.image().to_vec();
+                assert_eq!(
+                    before_image.len(),
+                    after_image.len(),
+                    "{}: image length changed",
+                    path.display()
+                );
+                let restored = apply(
+                    &after,
+                    &ChangeSet::new(vec![Change::SetDurability {
+                        target_object: target.handle,
+                        old_value: new_value,
+                        new_value: old_value,
+                    }]),
+                )?;
+                let restored_image = Container::read(restored.as_slice())?.image().to_vec();
+                assert!(
+                    restored_image == before_image,
+                    "{}: restore is not byte-identical in the unpacked image",
+                    path.display()
+                );
+                checked += 1;
+            }
+        }
+        assert!(
+            checked > 0,
+            "no Shadow of Chernobyl EE saves found under SSE_EE_SAVES_DIR"
+        );
+        Ok(())
     }
 }
