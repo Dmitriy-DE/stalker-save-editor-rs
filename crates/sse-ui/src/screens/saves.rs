@@ -2650,8 +2650,113 @@ fn keep_height_row(tree: &mut Tree, id: WidgetId) -> Result<()> {
 }
 
 /// Inventory screen with guarded X-Ray and S2 edits.
+/// Installed-game names for one release: loaded in the background, applied when they arrive.
+#[derive(Default)]
+struct InstalledNames {
+    loaded: Option<(String, Arc<HashMap<String, String>>)>,
+    loading: Option<String>,
+    generation: u64,
+}
+
+impl InstalledNames {
+    fn for_release(&self, release: &str) -> Option<Arc<HashMap<String, String>>> {
+        self.loaded
+            .as_ref()
+            .filter(|(loaded, _)| loaded == release)
+            .map(|(_, names)| Arc::clone(names))
+    }
+
+    /// Starts a background catalog read for `release` unless it is loaded or already loading.
+    /// A failed read is cached as an empty map, so an unbuilt catalog is not retried on every redraw.
+    fn request(&mut self, cx: &mut Context<'_>, release: &str) {
+        if self.loaded.as_ref().is_some_and(|(loaded, _)| loaded == release) || self.loading.as_deref() == Some(release)
+        {
+            return;
+        }
+        let Some(game) = game_for_release(release) else {
+            return;
+        };
+        let Some(directory) = cx.app.game_dir().map(Path::to_path_buf) else {
+            return;
+        };
+        let Some(proxy) = cx.proxy.cloned() else {
+            return;
+        };
+        self.generation = self.generation.saturating_add(1);
+        self.loading = Some(release.to_owned());
+        let generation = self.generation;
+        let release = release.to_owned();
+        let language = crate::strings::current_language();
+        sse_app::tasks::spawn_named_detached("installed-names", move || {
+            let cache = sse_app::paths::default_data_directory().join("catalog-cache");
+            let result = sse_catalog::GameContentService::load(game, &directory, &cache, language)
+                .map_err(|error| error.to_string())
+                .and_then(|content| content.ok_or_else(|| "catalog_not_built".to_owned()))
+                .map(|content| {
+                    content
+                        .bundle()
+                        .items
+                        .items()
+                        .iter()
+                        .filter_map(|item| {
+                            item.display_name
+                                .as_ref()
+                                .filter(|name| !name.trim().is_empty())
+                                .map(|name| (item.key.clone(), name.clone()))
+                        })
+                        .collect::<HashMap<String, String>>()
+                });
+            proxy.send(AppMessage::ToScreen(
+                ScreenId::Inventory,
+                Box::new(InstalledNamesResult {
+                    release,
+                    generation,
+                    result: Mutex::new(Some(result)),
+                }),
+            ));
+        });
+    }
+
+    /// Applies a background result when it is the newest request. Returns `true` when names changed.
+    fn finish(&mut self, result: &InstalledNamesResult) -> bool {
+        if result.generation != self.generation {
+            return false;
+        }
+        let Some(outcome) = result.result.lock().ok().and_then(|mut slot| slot.take()) else {
+            return false;
+        };
+        if self.loading.as_deref() == Some(result.release.as_str()) {
+            self.loading = None;
+        }
+        self.loaded = Some((result.release.clone(), Arc::new(outcome.unwrap_or_default())));
+        true
+    }
+}
+
+#[derive(Debug)]
+struct InstalledNamesResult {
+    release: String,
+    generation: u64,
+    result: Mutex<Option<std::result::Result<HashMap<String, String>, String>>>,
+}
+
+fn game_for_release(release: &str) -> Option<sse_content::CompanionGame> {
+    match release {
+        "stalker-soc" => Some(sse_content::CompanionGame::ShadowOfChernobyl),
+        "stalker-cs" => Some(sse_content::CompanionGame::ClearSky),
+        "stalker-cop" => Some(sse_content::CompanionGame::CallOfPripyat),
+        _ => None,
+    }
+}
+
+fn installed_name<'a>(names: &'a Option<Arc<HashMap<String, String>>>, section: &str) -> Option<&'a str> {
+    names.as_ref()?.get(section).map(String::as_str)
+}
+
 struct Inventory {
     workspace: Workspace,
+    /// Names from the installed game's catalog for the save's release (background loaded).
+    installed: InstalledNames,
     page: usize,
     inventory_card: Option<WidgetId>,
     add_panel: Option<WidgetId>,
@@ -2938,6 +3043,7 @@ impl Inventory {
     fn new(workspace: Workspace) -> Self {
         Self {
             workspace,
+            installed: InstalledNames::default(),
             page: 0,
             inventory_card: None,
             add_panel: None,
@@ -3141,6 +3247,9 @@ impl Inventory {
         match &selected.data {
             SaveData::Xray { save, inventory } => {
                 let money = save.money()?;
+                let release = save.format().id();
+                self.installed.request(cx, release);
+                let installed_names = self.installed.for_release(release);
                 let money_editable =
                     writer::capability(save.format(), writer::ChangeKind::EditMoney) == writer::Capability::Verified;
                 let pending_money = state.pending_money.unwrap_or(money);
@@ -3174,7 +3283,11 @@ impl Inventory {
                             && search_matches(
                                 &format!(
                                     "{} {}",
-                                    sse_catalog::SaveNaming::item_name(save.format().id(), &item.section, None),
+                                    sse_catalog::SaveNaming::item_name(
+                                        save.format().id(),
+                                        &item.section,
+                                        installed_name(&installed_names, &item.section),
+                                    ),
                                     item.section
                                 ),
                                 &query,
@@ -3229,7 +3342,11 @@ impl Inventory {
                             .map(|value| format!("{value}%"))
                             .or_else(|| item.condition.map(|value| format!("{:.0}%", value * 100.0)))
                             .unwrap_or_default();
-                        let name = sse_catalog::SaveNaming::item_name(save.format().id(), &item.section, None);
+                        let name = sse_catalog::SaveNaming::item_name(
+                            save.format().id(),
+                            &item.section,
+                            installed_name(&installed_names, &item.section),
+                        );
                         let place = placement_cell(&state, ItemHandle::Xray(item.handle), item.placement.as_deref());
                         let selected = self.selected_item == Some(ItemHandle::Xray(item.handle));
                         let editable = stack_editable && item.count.is_some();
@@ -6541,6 +6658,13 @@ impl Screen for Inventory {
             self.render(cx)?;
         }
         self.workspace.poll_tasks();
+        if let Message::User(AppMessage::ToScreen(ScreenId::Inventory, payload)) = message {
+            if let Some(result) = payload.downcast_ref::<InstalledNamesResult>() {
+                if self.installed.finish(result) {
+                    self.render(cx)?;
+                }
+            }
+        }
         if let Message::User(AppMessage::ToScreen(ScreenId::Inventory, payload)) = message {
             if let Some(SaveProcessCheckFinished { request_id, result }) =
                 payload.downcast_ref::<SaveProcessCheckFinished>()
