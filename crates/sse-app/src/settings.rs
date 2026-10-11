@@ -47,8 +47,6 @@ pub struct AppSettings {
     pub send_metrics: bool,
     /// Whether the user has seen the first-run notice about reports. Default is `false`.
     pub reports_notice_shown: bool,
-    /// Timestamp of last sent report in UTC (ISO 8601 string, e.g. "2026-10-03T12:00:00Z").
-    pub last_report_utc: Option<String>,
 }
 
 impl Default for AppSettings {
@@ -68,7 +66,6 @@ impl Default for AppSettings {
             send_reports: false,
             send_metrics: false,
             reports_notice_shown: false,
-            last_report_utc: None,
         }
     }
 }
@@ -180,9 +177,6 @@ impl AppSettings {
                                 settings.reports_notice_shown = val;
                             }
                         }
-                        "last_report_utc" => {
-                            settings.last_report_utc = parse_optional_string(&mut reader)?;
-                        }
                         _ => {
                             // Forward compatibility: skip unknown properties
                             reader.skip_value()?;
@@ -269,13 +263,6 @@ impl AppSettings {
 
         writer.key("reports_notice_shown")?;
         writer.bool(self.reports_notice_shown)?;
-
-        writer.key("last_report_utc")?;
-        if let Some(ts) = &self.last_report_utc {
-            writer.string(ts)?;
-        } else {
-            writer.null()?;
-        }
 
         writer.object_end()?;
         let mut bytes = writer.finish()?;

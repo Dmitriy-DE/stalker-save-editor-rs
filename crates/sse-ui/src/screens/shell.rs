@@ -1271,6 +1271,9 @@ impl Shell {
         settings: sse_app::AppSettings,
         browser_bridge: Option<super::BrowserFileBridge>,
     ) -> Result<Self> {
+        // Theme, accent and scale come from the file, so they must apply before any widget is built.
+        // The settings screen builds lazily and would otherwise be the only place that applied them.
+        super::app::apply_startup_appearance(tree, &settings);
         let interactive = proxy.is_some();
         let open_path_input = TextInput::new("", open_path_edit_config())?;
         let root_style = Style {
@@ -3198,6 +3201,7 @@ impl Shell {
                 Message::User(AppMessage::SoundLoaded(_, _)) => false,
                 Message::User(AppMessage::MusicLoaded(_, _)) => false,
                 Message::User(AppMessage::MusicSettings { .. }) => false,
+                Message::User(AppMessage::SoundSettings { .. }) => false,
                 Message::User(AppMessage::SettingsWriteFinished(_)) => false,
                 Message::Window(_) => index == self.selected,
             };
@@ -3362,6 +3366,11 @@ impl Shell {
             }
             Message::User(AppMessage::MusicSettings { enabled, volume }) => {
                 self.music.set_settings(*enabled, *volume);
+                return Ok(Flow::Continue);
+            }
+            Message::User(AppMessage::SoundSettings { enabled, volume }) => {
+                self.sound_enabled = *enabled;
+                self.sound_volume = (*volume).min(100) as f32 / 100.0;
                 return Ok(Flow::Continue);
             }
             Message::Window(WindowEvent::Focus(focused)) => self.music.set_focused(*focused),
@@ -4605,6 +4614,25 @@ mod tests {
         shell.open_report_consent_dialog(&mut tree)?;
 
         assert_eq!(tree.focused(), Some(shell.reports_off));
+        Ok(())
+    }
+
+    #[test]
+    fn saved_sound_settings_reach_the_shell_without_restart() -> sse_core::Result<()> {
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+        let mut shell = Shell::build_for_test(&mut tree, None)?;
+
+        shell.handle(
+            &mut tree,
+            &Message::User(AppMessage::SoundSettings {
+                enabled: false,
+                volume: 30,
+            }),
+            None,
+        )?;
+
+        assert!(!shell.sound_enabled);
+        assert!((shell.sound_volume - 0.3).abs() < 1e-6);
         Ok(())
     }
 
