@@ -2505,6 +2505,11 @@ impl Shell {
         &self.app
     }
 
+    /// Mutable application state; used by the developer screenshot tool to select a game.
+    pub fn app_mut(&mut self) -> &mut sse_app::state::AppState {
+        &mut self.app
+    }
+
     /// Installs the event proxy after a headless shell has been built.
     pub fn set_proxy(&mut self, proxy: Proxy<AppMessage>) {
         self.proxy = Some(proxy);
