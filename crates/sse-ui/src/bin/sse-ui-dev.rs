@@ -161,6 +161,7 @@ fn screenshot(args: &[String]) -> Result<()> {
     let mut wait = false;
     let mut select_first = false;
     let mut achievements_fixture = false;
+    let mut then_nav: Option<usize> = None;
     let mut press: Option<&String> = None;
     let mut settle = false;
     let mut index = 2;
@@ -187,6 +188,14 @@ fn screenshot(args: &[String]) -> Result<()> {
                 index = index.saturating_add(1);
             }
             Some("--settle") => settle = true,
+            Some("--then") => {
+                index = index.saturating_add(1);
+                then_nav = Some(
+                    args.get(index)
+                        .and_then(|value| value.parse::<usize>().ok())
+                        .ok_or_else(|| Error::Refused("--then requires a screen index".to_owned()))?,
+                );
+            }
             Some("--press") => {
                 index = index.saturating_add(1);
                 press = Some(
@@ -337,6 +346,22 @@ fn screenshot(args: &[String]) -> Result<()> {
                 if finished {
                     break;
                 }
+            }
+        }
+    }
+    // `--then N` opens a second screen after the search: the search sets the installed game folder for the app.
+    if let Some(id) = then_nav.and_then(|i| ScreenId::ALL.get(i)) {
+        shell.open(&mut tree, *id)?;
+        // The opened screen's background reads (installed names) answer as messages: drain them for a while.
+        if let Some(receiver) = loader.as_ref() {
+            let deadline = Instant::now()
+                .checked_add(Duration::from_secs(20))
+                .ok_or_else(|| Error::System("invalid screenshot then deadline".to_owned()))?;
+            while Instant::now() < deadline {
+                let Ok(message) = receiver.recv_timeout(Duration::from_millis(200)) else {
+                    continue;
+                };
+                shell.message(&mut tree, &message, None);
             }
         }
     }
