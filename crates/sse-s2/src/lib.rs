@@ -453,6 +453,86 @@ pub fn transfer_stash_items_to_backpack(
     })
 }
 
+/// Applies `changes` (if any), then moves each requested backpack item into the stash with its own write and re-read.
+///
+/// Mirror of [`transfer_stash_items_to_backpack`]. A handle that is not a listed backpack item, or that is already in the
+/// stash, is skipped. A refusal of a single-item write leaves the image as it was, so that item is recorded in `refused`
+/// and the transfer goes on. Only an accepted result that cannot be parsed again stops the transfer.
+///
+/// # Errors
+/// Returns an error when `changes` cannot be written, or when the inventory is not fully resolved or is 1.0.x.
+pub fn transfer_backpack_items_to_stash(
+    save: &S2Save,
+    changes: &[S2Change],
+    handles: &[u32],
+) -> Result<S2StashTransfer> {
+    if save.index.is_legacy {
+        return Err(Error::Refused(
+            "This save was written by game version 1.0.x. It can be read, but its layout is not supported for editing; load it in the current game and save again."
+                .to_owned(),
+        ));
+    }
+    if !handles.is_empty() && !save.unresolved_handles.is_empty() {
+        return Err(Error::Refused(
+            "S2 stash move requires a fully resolved inventory".to_owned(),
+        ));
+    }
+    let mut packed = None;
+    let mut current = if changes.is_empty() {
+        None
+    } else {
+        let written = save.write_changes(changes)?;
+        let parsed = S2Save::from_bytes(&written)?;
+        packed = Some(written);
+        Some(parsed)
+    };
+    let mut moved = Vec::new();
+    let mut skipped = Vec::new();
+    let mut refused = Vec::new();
+    for &handle in handles {
+        let source = current.as_ref().unwrap_or(save);
+        let in_backpack = source.items().iter().any(|item| item.handle == handle);
+        let in_stash = source.stash_items()?.iter().any(|item| item.handle == handle);
+        if !in_backpack || in_stash {
+            skipped.push(handle);
+            continue;
+        }
+        match source.write_changes(&[S2Change::MoveBackpackToStash { handle }]) {
+            Ok(written) => match S2Save::from_bytes(&written) {
+                Ok(parsed) => {
+                    current = Some(parsed);
+                    packed = Some(written);
+                    moved.push(handle);
+                }
+                Err(error) => {
+                    return Ok(S2StashTransfer {
+                        packed,
+                        moved,
+                        skipped,
+                        refused,
+                        stopped: Some(error.to_string()),
+                    });
+                }
+            },
+            Err(error) => {
+                let message = error.to_string();
+                refused.push(S2RefusedMove {
+                    handle,
+                    reason: classify_refusal(&message),
+                    message,
+                });
+            }
+        }
+    }
+    Ok(S2StashTransfer {
+        packed,
+        moved,
+        skipped,
+        refused,
+        stopped: None,
+    })
+}
+
 /// True when the record is in use (byte 15 is 1) and carries the stash-owned flag (byte 28, bit `0x08`).
 fn is_marked_stash_owned(save: &S2Save, handle: u32) -> bool {
     let Some(record) = save.objects.unique(handle) else {
@@ -2776,8 +2856,9 @@ fn validate_owned_handles(handles: &[u32], legacy: bool) -> Result<()> {
 mod tests {
     use super::{
         apply_changes_to_image, classify_refusal, first_free_placement, moved_object_offset, pack_and_verify_s2_image,
-        stash_follows_backpack_grid, transfer_stash_items_to_backpack, validate_owned_handles, S2Change, S2Container,
-        S2InventoryIndex, S2Save, S2SkipReason, S2StashLayout, GRID_WIDTH,
+        stash_follows_backpack_grid, transfer_backpack_items_to_stash, transfer_stash_items_to_backpack,
+        validate_owned_handles, S2Change, S2Container, S2InventoryIndex, S2Save, S2SkipReason, S2StashLayout,
+        GRID_WIDTH,
     };
     use sse_codecs::crc32;
     use sse_core::Error;
@@ -3480,6 +3561,29 @@ mod tests {
         after_stash.sort_unstable();
         assert_eq!(after_stash, before_stash);
         assert!(back.unresolved_handles.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn batch_backpack_transfer_moves_a_listed_item_and_skips_a_stash_item() -> Result<(), Error> {
+        let original = S2Save::from_bytes(&pack_raw(WRITER_S2_STASH_SOURCE))?;
+        let handle = 0x3000_0010;
+        let moved = S2Save::from_bytes(&original.write_changes(&[S2Change::MoveStashToBackpack { handle }])?)?;
+        let transfer = transfer_backpack_items_to_stash(&moved, &[], &[handle])?;
+        assert_eq!(transfer.moved, [handle]);
+        assert!(transfer.refused.is_empty());
+        let packed = transfer
+            .packed
+            .ok_or_else(|| Error::damaged("transfer wrote nothing"))?;
+        let back = S2Save::from_bytes(&packed)?;
+        assert!(back.stash_items()?.iter().any(|item| item.handle == handle));
+        assert!(!back.items().iter().any(|item| item.handle == handle));
+
+        // The fixture's stash item is not a backpack item in the original save, so it is skipped.
+        let skipped = transfer_backpack_items_to_stash(&original, &[], &[handle])?;
+        assert_eq!(skipped.skipped, [handle]);
+        assert!(skipped.moved.is_empty());
+        assert!(skipped.packed.is_none());
         Ok(())
     }
 

@@ -861,6 +861,7 @@ fn save_eligibility(
             .saturating_add(plan.adds.len())
             .saturating_add(plan.stash_takes.len())
             .saturating_add(plan.s2_stash_takes.len())
+            .saturating_add(plan.s2_stash_puts.len())
             .saturating_add(plan.stash_puts.len())
             .saturating_add(usize::from(has_unmapped))
     });
@@ -916,6 +917,7 @@ fn has_unsupported_edit(format_id: Option<&str>, legacy_s2: bool, plan: &sse_sto
                 || (!plan.adds.is_empty() && !supports(ChangeKind::AddItems))
                 || !plan.stash_takes.is_empty()
                 || !plan.s2_stash_takes.is_empty()
+                || !plan.s2_stash_puts.is_empty()
                 || !plan.stash_puts.is_empty()
         }
         None => true,
