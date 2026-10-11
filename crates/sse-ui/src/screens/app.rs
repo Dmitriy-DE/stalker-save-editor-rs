@@ -913,18 +913,30 @@ impl Settings {
     }
 }
 
+/// Style of a settings section: the shown one fills the column and stacks its controls at full width; a
+/// hidden one collapses to no height, so the shown section starts at the top of the column.
+fn section_style(visible: bool) -> Style {
+    if !visible {
+        return Style {
+            max: Size::new(f32::INFINITY, 0.0),
+            ..Style::default()
+        };
+    }
+    Style {
+        grow: 1.0,
+        shrink: 1.0,
+        min: Size::new(0.0, 0.0),
+        padding: Edges::all(crate::theme::d2::PANEL_PADDING.0),
+        gap: Size::new(0.0, crate::theme::CONTROL_GAP),
+        align_items: Align::Stretch,
+        ..Style::default()
+    }
+}
+
 /// A settings section: a panel whose controls stack and stretch to its width.
 fn section_panel(tree: &mut crate::widget::Tree, parent: WidgetId) -> Result<WidgetId> {
     let panel = style::d2::panel(tree, parent)?;
-    tree.set_style(
-        panel,
-        Style {
-            padding: Edges::all(crate::theme::d2::PANEL_PADDING.0),
-            gap: Size::new(0.0, crate::theme::CONTROL_GAP),
-            align_items: Align::Stretch,
-            ..Style::default()
-        },
-    )?;
+    tree.set_style(panel, section_style(false))?;
     Ok(panel)
 }
 
@@ -975,7 +987,6 @@ impl Screen for Settings {
         )?;
         style::d2::panel_title(cx.tree, sections, crate::strings::t("Разделы"))?;
         for label in [
-            crate::strings::t("ОБЩИЕ"),
             crate::strings::t("ИНТЕРФЕЙС"),
             crate::strings::t("ЗВУК"),
             crate::strings::t("ПУТИ"),
@@ -1001,31 +1012,12 @@ impl Screen for Settings {
                 grow: 1.0,
                 shrink: 1.0,
                 min: Size::new(0.0, 0.0),
-                padding: Edges::all(crate::theme::CARD_PADDING),
+                padding: Edges::default(),
                 gap: Size::new(0.0, crate::theme::CONTROL_GAP),
                 align_items: Align::Stretch,
                 ..Style::default()
             },
         )?;
-
-        let general = section_panel(cx.tree, content)?;
-        style::d2::panel_title(cx.tree, general, crate::strings::t("ОБЩИЕ"))?;
-        style::label(
-            cx.tree,
-            general,
-            crate::strings::t("УПРАВЛЕНИЕ ОСНОВНЫМ ПОВЕДЕНИЕМ РЕДАКТОРА"),
-            Text::Note,
-        )?;
-        #[cfg(feature = "native-ui")]
-        {
-            self.open_cloud_button = Some(style::button(
-                cx.tree,
-                general,
-                crate::strings::t("Открыть Steam Cloud"),
-                Button::Secondary,
-            )?);
-        }
-        self.section_panels.push(general);
 
         let view = section_panel(cx.tree, content)?;
         style::d2::panel_title(cx.tree, view, crate::strings::t("ИНТЕРФЕЙС"))?;
@@ -1239,6 +1231,32 @@ impl Screen for Settings {
             },
             Look::default(),
         )?);
+        if self.settings.backup_directory.is_none() {
+            let mut defaults = self.settings.clone();
+            defaults.backup_directory = None;
+            let default_path = sse_app::paths::backup_directory(&defaults);
+            style::label(
+                cx.tree,
+                backups,
+                &tr("По умолчанию: {0}", &[&default_path.display()]),
+                Text::Note,
+            )?;
+        }
+        #[cfg(feature = "native-ui")]
+        {
+            style::label(
+                cx.tree,
+                backups,
+                crate::strings::t("Облачные сохранения Steam"),
+                Text::Note,
+            )?;
+            self.open_cloud_button = Some(style::button(
+                cx.tree,
+                backups,
+                crate::strings::t("Открыть Steam Cloud"),
+                Button::Secondary,
+            )?);
+        }
         self.backup_browse = Some(style::button(
             cx.tree,
             backups,
@@ -1385,7 +1403,7 @@ impl Screen for Settings {
         style::label(
             cx.tree,
             reports,
-            crate::strings::t("Ручная отправка отчёта отключена в Rust-версии."),
+            crate::strings::t("Отчёт отправляется только автоматически, если отправка включена."),
             Text::Note,
         )?;
         style::label(
@@ -1487,6 +1505,7 @@ impl Screen for Settings {
 
         for (index, panel) in self.section_panels.iter().copied().enumerate() {
             cx.tree.set_visible(panel, index == 0)?;
+            cx.tree.set_style(panel, section_style(index == 0))?;
         }
         self.save_button = Some(style::button(
             cx.tree,
@@ -1562,6 +1581,7 @@ impl Screen for Settings {
                 self.selected_section = index;
                 for (panel_index, panel) in self.section_panels.iter().copied().enumerate() {
                     cx.tree.set_visible(panel, panel_index == index)?;
+                    cx.tree.set_style(panel, section_style(panel_index == index))?;
                 }
                 return Ok(());
             }
