@@ -12,7 +12,9 @@ use std::time::UNIX_EPOCH;
 
 use sse_core::{Error, Result};
 
-use crate::archive::{EntryDecoder, HeaderDecoder, XRayArchive, XRayArchiveEntry};
+use crate::archive::{
+    xray_entry_decoder, xray_header_decoder, EntryDecoder, HeaderDecoder, XRayArchive, XRayArchiveEntry,
+};
 use sse_codecs::sha256::sha256_hex;
 
 /// Maximum size of a loose game-data file read on demand (64 MiB).
@@ -232,9 +234,18 @@ impl GameFileTree {
         header_decoder: Option<HeaderDecoder>,
         entry_decoder: Option<EntryDecoder>,
     ) -> Result<Self> {
+        // Installed archives need the X-Ray decoders: most headers are LZ-Huffman (sometimes scrambled)
+        // and entries are LZO. Without them, `xrussian.db` and `gamedata` archives are skipped.
+        let header_decoder = header_decoder.or_else(|| Some(xray_header_decoder()));
+        let entry_decoder = entry_decoder.or_else(|| Some(xray_entry_decoder()));
         let game_dir = game_directory.as_ref();
-        let default_fsgame = ["fsgame.ltx"];
-        let fsgame_names = fsgame_file_names.unwrap_or(&default_fsgame);
+        // Enhanced Edition installs ship `fsgame_<game>.ltx`; vanilla installs ship `fsgame.ltx`.
+        let default_fsgame: &[&str] = match game {
+            CompanionGame::ShadowOfChernobyl => &["fsgame_soc.ltx", "fsgame.ltx"],
+            CompanionGame::ClearSky => &["fsgame_cs.ltx", "fsgame.ltx"],
+            CompanionGame::CallOfPripyat => &["fsgame_cop.ltx", "fsgame.ltx"],
+        };
+        let fsgame_names = fsgame_file_names.unwrap_or(default_fsgame);
 
         let search = CompanionArchiveLocator::discover(game_dir, fsgame_names, game);
         let mut issues = search.issues;
