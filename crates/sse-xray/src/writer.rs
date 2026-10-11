@@ -63,9 +63,10 @@ pub const fn capability(format: crate::Format, kind: ChangeKind) -> Capability {
 
     match (format, kind) {
         (Soc | Cs | Cop, AddItems | EditMoney | EditStacks | RemoveItems) => Verified,
-        (Soc | Cs | Cop, EditDurability | EditPlacement | EditPlayerFaction | EditRelations | MoveItems) => {
-            Experimental
-        }
+        // Clear Sky: a stash item has no proven placement field, so a take is refused (62 of 62 real saves).
+        (Cs, MoveItems) => Unsupported,
+        (Soc | Cop, MoveItems) => Experimental,
+        (Soc | Cs | Cop, EditDurability | EditPlacement | EditPlayerFaction | EditRelations) => Experimental,
         (Soc | Cs | Cop, EditInfoPortions | RelocateActor) => Experimental,
         (Cs | Cop, EditUpgrades) => Experimental,
         (Soc, EditUpgrades) => Unsupported,
@@ -4177,7 +4178,6 @@ mod tests {
                 ChangeKind::EditPlacement,
                 ChangeKind::EditPlayerFaction,
                 ChangeKind::EditRelations,
-                ChangeKind::MoveItems,
             ] {
                 assert_eq!(capability(format, kind), Capability::Experimental);
             }
@@ -4186,6 +4186,10 @@ mod tests {
             capability(Format::Soc, ChangeKind::EditUpgrades),
             Capability::Unsupported
         );
+        // Stash moves: Soc and Cop takes are written and read back; Clear Sky stash items carry no proven placement.
+        assert_eq!(capability(Format::Soc, ChangeKind::MoveItems), Capability::Experimental);
+        assert_eq!(capability(Format::Cop, ChangeKind::MoveItems), Capability::Experimental);
+        assert_eq!(capability(Format::Cs, ChangeKind::MoveItems), Capability::Unsupported);
         for format in [Format::Cs, Format::Cop] {
             assert_eq!(capability(format, ChangeKind::EditUpgrades), Capability::Experimental);
         }
@@ -4703,20 +4707,19 @@ mod tests {
             Err(error) => error,
             Ok(_) => return Err("a stash item without a proven placement field must be refused".into()),
         };
-        assert!(error.to_string().contains("placement"), "{error}");
+        assert!(
+            error.to_string().contains("unsupported") || error.to_string().contains("placement"),
+            "{error}"
+        );
         Ok(())
     }
 
     #[test]
     fn putting_a_backpack_item_in_a_stash_changes_only_its_parent() -> TestResult {
-        let cases: [(&[u8], &[u8]); 3] = [
+        let cases: [(&[u8], &[u8]); 2] = [
             (
                 include_bytes!("../../../fixtures/synthetic/xray-stashes/xray-stash-soc-source.sav"),
                 b"stalker-soc",
-            ),
-            (
-                include_bytes!("../../../fixtures/synthetic/xray-stashes/xray-stash-cs-source.sav"),
-                b"stalker-cs",
             ),
             (
                 include_bytes!("../../../fixtures/synthetic/xray-stashes/xray-stash-cop-source.sav"),
@@ -5769,6 +5772,195 @@ mod tests {
             return Err(format!("restore differs in {differing_restore} unpacked bytes"));
         }
         Ok(format!("slot {slot}, edit bytes {differing}, restore identical"))
+    }
+
+    /// Stash take on copies of real Shadow of Chernobyl and Call of Pripyat saves: `SSE_XRAY_STASH_DIR=<copies dir>
+    /// cargo test -p sse-xray -- --ignored stash_take_measures`. The item must end up once in the actor's inventory,
+    /// not in the stash, and every byte that changes must lie inside the item's own registry record.
+    #[test]
+    #[ignore = "needs SSE_XRAY_STASH_DIR pointing at copies of real X-Ray saves"]
+    fn stash_take_measures_on_real_saves() -> TestResult {
+        let directory = std::env::var("SSE_XRAY_STASH_DIR")?;
+        let mut measured = 0usize;
+        let mut failures = Vec::new();
+        for entry in std::fs::read_dir(&directory)? {
+            let path = entry?.path();
+            let Ok(bytes) = std::fs::read(&path) else { continue };
+            let Ok(save) = Save::read(&bytes) else { continue };
+            if !matches!(save.format(), Format::Soc | Format::Cop) {
+                continue;
+            }
+            let box_ids: Vec<u16> = save
+                .registry_objects()
+                .iter()
+                .filter(|record| record.name == "inventory_box")
+                .map(|record| record.object_id)
+                .collect();
+            let Some(target) = save
+                .registry_objects()
+                .iter()
+                .find(|record| box_ids.contains(&record.parent_id) && record.name != "inventory_box")
+            else {
+                continue;
+            };
+            let outcome = stash_take_check(&bytes, &save, target.object_id, target.parent_id, target.record_offset);
+            match outcome {
+                Ok(()) => measured += 1,
+                Err(reason) => failures.push(format!("{}: {reason}", path.display())),
+            }
+        }
+        eprintln!("stash take measured {measured}, failures {}", failures.len());
+        assert!(
+            measured > 0,
+            "no X-Ray saves with a stash item found under SSE_XRAY_STASH_DIR"
+        );
+        assert!(failures.is_empty(), "stash take failed:\n{}", failures.join("\n"));
+        Ok(())
+    }
+
+    fn stash_take_check(
+        original: &[u8],
+        save: &Save,
+        item: u16,
+        stash: u16,
+        record_offset: usize,
+    ) -> std::result::Result<(), String> {
+        let actor = save.actor_id();
+        let taken = apply(
+            save,
+            &ChangeSet::new(vec![Change::MoveItem {
+                target_object: item,
+                old_parent: stash,
+                new_parent: actor,
+            }]),
+        )
+        .map_err(|error| format!("take refused: {error:?}"))?;
+        let after = Save::read(taken.as_slice()).map_err(|error| format!("reread failed: {error:?}"))?;
+        let copies = after
+            .registry_objects()
+            .iter()
+            .filter(|record| record.object_id == item)
+            .count();
+        if copies != 1 {
+            return Err(format!("item appears {copies} times in the registry"));
+        }
+        let parent = after
+            .registry_objects()
+            .iter()
+            .find(|record| record.object_id == item)
+            .map(|record| record.parent_id)
+            .ok_or("taken item is missing")?;
+        if parent != actor {
+            return Err(format!("item parent is 0x{parent:04X}, not the actor"));
+        }
+        let before_image = Container::read(original)
+            .map_err(|error| format!("{error:?}"))?
+            .image()
+            .to_vec();
+        let after_image = Container::read(taken.as_slice())
+            .map_err(|error| format!("{error:?}"))?
+            .image()
+            .to_vec();
+        if before_image.len() != after_image.len() {
+            return Err("unpacked image length changed".to_owned());
+        }
+        let record_length = save
+            .registry_objects()
+            .iter()
+            .find(|record| record.object_id == item)
+            .map(|record| record.record_length)
+            .ok_or("item record missing")?;
+        let record_end = record_offset.saturating_add(record_length);
+        for (index, (before, after_byte)) in before_image.iter().zip(&after_image).enumerate() {
+            if before != after_byte && !(record_offset..record_end).contains(&index) {
+                return Err(format!("byte {index} changed outside the item record"));
+            }
+        }
+        Ok(())
+    }
+
+    /// A backpack item goes to a stash and back on copies of real saves; the unpacked image must come back equal.
+    /// `SSE_XRAY_STASH_DIR=<copies dir> cargo test -p sse-xray -- --ignored backpack_put_then_take`.
+    #[test]
+    #[ignore = "needs SSE_XRAY_STASH_DIR pointing at copies of real X-Ray saves"]
+    fn backpack_put_then_take_round_trips_on_real_saves() -> TestResult {
+        let directory = std::env::var("SSE_XRAY_STASH_DIR")?;
+        let mut measured = 0usize;
+        let mut failures = Vec::new();
+        for entry in std::fs::read_dir(&directory)? {
+            let path = entry?.path();
+            let Ok(bytes) = std::fs::read(&path) else { continue };
+            let Ok(save) = Save::read(&bytes) else { continue };
+            if !matches!(save.format(), Format::Soc | Format::Cop) {
+                continue;
+            }
+            let Some(stash) = save
+                .registry_objects()
+                .iter()
+                .find(|record| record.name == "inventory_box")
+                .map(|record| record.object_id)
+            else {
+                continue;
+            };
+            let Some(item) = save
+                .inventory()
+                .map_err(|error| format!("{error:?}"))?
+                .into_iter()
+                .find(|item| item.placement.as_deref() == Some("ruck"))
+            else {
+                continue;
+            };
+            let put = apply(
+                &save,
+                &ChangeSet::new(vec![Change::MoveItem {
+                    target_object: item.handle,
+                    old_parent: save.actor_id(),
+                    new_parent: stash,
+                }]),
+            );
+            let outcome = match put {
+                Err(error) => Err(format!("put refused: {error:?}")),
+                Ok(put) => (|| {
+                    let after_put = Save::read(put.as_slice()).map_err(|error| format!("{error:?}"))?;
+                    let back = apply(
+                        &after_put,
+                        &ChangeSet::new(vec![Change::MoveItem {
+                            target_object: item.handle,
+                            old_parent: stash,
+                            new_parent: after_put.actor_id(),
+                        }]),
+                    )
+                    .map_err(|error| format!("take back refused: {error:?}"))?;
+                    let before = Container::read(&bytes)
+                        .map_err(|error| format!("{error:?}"))?
+                        .image()
+                        .to_vec();
+                    let returned = Container::read(back.as_slice())
+                        .map_err(|error| format!("{error:?}"))?
+                        .image()
+                        .to_vec();
+                    if before == returned {
+                        Ok(())
+                    } else {
+                        Err("the unpacked image changed after the round trip".to_owned())
+                    }
+                })(),
+            };
+            match outcome {
+                Ok(()) => measured += 1,
+                Err(reason) => failures.push(format!("{}: {reason}", path.display())),
+            }
+        }
+        eprintln!(
+            "backpack put-then-take measured {measured}, failures {}",
+            failures.len()
+        );
+        assert!(
+            measured > 0,
+            "no X-Ray saves with a backpack item found under SSE_XRAY_STASH_DIR"
+        );
+        assert!(failures.is_empty(), "round trip failed:\n{}", failures.join("\n"));
+        Ok(())
     }
 
     /// Measures the placement round trip on copies of real Enhanced Edition saves:

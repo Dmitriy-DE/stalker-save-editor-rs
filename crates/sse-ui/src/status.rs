@@ -79,6 +79,10 @@ const INTERNAL_MARKERS: &[&str] = &[
 /// collapsed to a Russian safety refusal instead of exposing a new English implementation string.
 #[must_use]
 pub fn localize_writer_status(text: &str) -> String {
+    // A stash item taken by the editor has no placement the game recorded, so the return is refused for now.
+    if text.contains("must be in the backpack before it can be stored") {
+        return crate::strings::t("Этот предмет был взят из тайника редактором; вернуть его можно после того, как игра сама запишет его место — загрузите и сохраните игру.").to_owned();
+    }
     let mut localized = text.to_owned();
     for (source, translated) in WRITER_REFUSALS {
         if localized.contains(source) {
