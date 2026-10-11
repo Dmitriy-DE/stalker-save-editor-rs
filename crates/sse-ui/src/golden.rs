@@ -174,7 +174,7 @@ mod tests {
             "2366af2ef4d9965dea73cde201434e363c55e6bf00fc003ad4610c0c5dc49935",
             "250f5f439c8e92233f7d0b2a5f1d7cf84c7b7235571522a37d911725f7d70814",
             "7e9990fa60f13cdfc25f606f03ee83c526ec8c71a8d573d0c54edc86c4ca21a1",
-            "56bc9c2c937ad90d2dc2a175e35ffa126374531f9eb5e14904da78ee314ef16a",
+            "2efb0dca68c2dc9de0e4ae7a6d93f40dcf93dd4cbf4b88d8e0a25c7913269d92",
         ];
         assert_eq!(
             ScreenId::ALL.len(),
