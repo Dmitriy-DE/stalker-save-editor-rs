@@ -6113,7 +6113,6 @@ mod game_doctor_tests {
 #[cfg(test)]
 mod r4_053_encyclopedia_show_cost {
     use super::*;
-    use std::time::Instant;
 
     fn companion(target: GameTarget) -> Option<sse_content::CompanionGame> {
         match target {
@@ -6130,6 +6129,7 @@ mod r4_053_encyclopedia_show_cost {
 
     #[test]
     #[ignore = "reads installed games (read-only) and a temp cache; run with --ignored --nocapture"]
+    #[allow(clippy::expect_used)]
     fn installed_catalog_builds_for_every_install() {
         let cache = std::env::temp_dir().join(format!("sse-installed-catalog-{}", std::process::id()));
         let mut rows = Vec::new();
@@ -6137,9 +6137,14 @@ mod r4_053_encyclopedia_show_cost {
             let Some(game) = companion(install.target) else {
                 continue;
             };
-            let content = sse_catalog::GameContentService::load(game, &install.directory, &cache, "ru")
-                .expect("content load must not fail")
-                .unwrap_or_else(|| panic!("{}: installed catalog was not built", install.title));
+            let content = sse_catalog::GameContentService::load(
+                game,
+                &install.directory,
+                &cache,
+                crate::strings::current_language(),
+            )
+            .expect("content load must not fail")
+            .unwrap_or_else(|| panic!("{}: installed catalog was not built", install.title));
             let bundle = content.bundle();
             let status = content.status();
             let unnamed = bundle
