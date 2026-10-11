@@ -911,7 +911,9 @@ fn windows_installer_handoff_runs_the_staged_file_by_its_path_inside_the_staging
     assert_eq!(runner.staged_runs.len(), 1);
     let (staging_root, staged) = runner.staged_runs.first().unwrap();
     assert_eq!(staging_root, &temp.path.join("verified-install"));
-    assert!(staged.starts_with(canonical_path(staging_root)));
+    // The staging directory is removed after the run, so its resolved form is rebuilt from the parent that
+    // still exists (`/var` -> `/private/var` on macOS, `\\?\` prefixes on Windows).
+    assert!(staged.starts_with(canonical_path(&temp.path).join("verified-install")));
     assert_eq!(staged.file_name().unwrap(), "SaveEditor-Setup.exe");
     assert!(!temp.path.join("verified-install").exists());
 
