@@ -806,6 +806,7 @@ pub struct Settings {
     include_game_logs: bool,
     report_pending: bool,
     backup_input: Option<WidgetId>,
+    backup_default_line: Option<WidgetId>,
     backup_browse: Option<WidgetId>,
     scale_value: Option<WidgetId>,
     scale_button: Option<WidgetId>,
@@ -872,6 +873,10 @@ impl Settings {
     fn apply_backup_directory(&mut self, tree: &mut crate::widget::Tree, path: &std::path::Path) -> Result<()> {
         if let Some(input) = self.backup_input {
             tree.set_input_text(input, &path.display().to_string())?;
+            tree.set_visible(input, true)?;
+        }
+        if let Some(line) = self.backup_default_line {
+            tree.set_visible(line, false)?;
         }
         Ok(())
     }
@@ -1013,7 +1018,7 @@ impl Screen for Settings {
                 shrink: 1.0,
                 min: Size::new(0.0, 0.0),
                 padding: Edges::default(),
-                gap: Size::new(0.0, crate::theme::CONTROL_GAP),
+                gap: Size::new(0.0, 0.0),
                 align_items: Align::Stretch,
                 ..Style::default()
             },
@@ -1213,35 +1218,54 @@ impl Screen for Settings {
             crate::strings::t("Папка для создания резервных копий и журналов восстановления:"),
             Text::Body,
         )?;
-        let backup_value = self
-            .settings
-            .backup_directory
-            .as_ref()
-            .map_or_else(String::new, |p| p.to_string_lossy().into_owned());
-        self.backup_input = Some(cx.tree.add(
-            Some(backups),
-            NodeKind::Leaf,
-            Style {
-                min: Size::new(220.0, 36.0),
-                ..Style::default()
-            },
-            Content::Input {
-                text: backup_value.to_owned(),
-                style: TextStyle::new(Face::Body, 14.0),
-            },
-            Look::default(),
-        )?);
-        if self.settings.backup_directory.is_none() {
+        let backup_path = self.settings.backup_directory.clone();
+        let default_path = {
             let mut defaults = self.settings.clone();
             defaults.backup_directory = None;
-            let default_path = sse_app::paths::backup_directory(&defaults);
-            style::label(
-                cx.tree,
-                backups,
-                &tr("По умолчанию: {0}", &[&default_path.display()]),
-                Text::Note,
-            )?;
+            sse_app::paths::backup_directory(&defaults)
+        };
+        self.backup_input = Some(
+            cx.tree.add(
+                Some(backups),
+                NodeKind::Leaf,
+                Style {
+                    min: Size::new(220.0, 36.0),
+                    ..Style::default()
+                },
+                Content::Input {
+                    text: backup_path
+                        .as_ref()
+                        .map_or_else(String::new, |p| p.to_string_lossy().into_owned()),
+                    style: TextStyle::new(Face::Body, 14.0),
+                },
+                Look::default(),
+            )?,
+        );
+        // Without a chosen folder, one line shows the default path; the empty input stays collapsed.
+        self.backup_default_line = Some(style::label(
+            cx.tree,
+            backups,
+            &tr("По умолчанию: {0}", &[&default_path.display()]),
+            Text::Note,
+        )?);
+        if let Some(line) = self.backup_default_line {
+            cx.tree.set_visible(line, backup_path.is_none())?;
         }
+        if let Some(input) = self.backup_input {
+            cx.tree.set_visible(input, backup_path.is_some())?;
+        }
+        self.backup_browse = Some(style::button(
+            cx.tree,
+            backups,
+            crate::strings::t("Обзор…"),
+            Button::Secondary,
+        )?);
+        style::label(
+            cx.tree,
+            backups,
+            crate::strings::t("Новое значение применяется сразу; settings.json обновится после сохранения настроек."),
+            Text::Note,
+        )?;
         #[cfg(feature = "native-ui")]
         {
             style::label(
@@ -1257,18 +1281,6 @@ impl Screen for Settings {
                 Button::Secondary,
             )?);
         }
-        self.backup_browse = Some(style::button(
-            cx.tree,
-            backups,
-            crate::strings::t("Обзор…"),
-            Button::Secondary,
-        )?);
-        style::label(
-            cx.tree,
-            backups,
-            crate::strings::t("Новое значение применяется сразу; settings.json обновится после сохранения настроек."),
-            Text::Note,
-        )?;
         self.section_panels.push(backups);
 
         let support = section_panel(cx.tree, content)?;
