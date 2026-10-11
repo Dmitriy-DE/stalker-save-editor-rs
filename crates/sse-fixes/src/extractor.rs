@@ -6,6 +6,7 @@ use std::path::Path;
 use sse_content::file_tree::{CompanionGame, GameFileTree};
 use sse_core::{Error, Result};
 
+use crate::fs_util::check_no_links;
 use crate::models::GameTarget;
 
 /// Game file extractor.
@@ -75,16 +76,11 @@ impl GameFileExtractor {
             };
 
             match file.read() {
-                Ok(bytes) => {
-                    if let Some(parent) = destination.parent() {
-                        let _ = fs::create_dir_all(parent);
-                    }
-                    if fs::write(&destination, bytes).is_ok() {
-                        written = written.saturating_add(1);
-                    } else {
-                        issues.push(format!("failed to write: {relative}"));
-                    }
-                }
+                Ok(bytes) => match write_inside(&out_canonical, &destination, &bytes) {
+                    Ok(()) => written = written.saturating_add(1),
+                    Err(Error::Refused(reason)) => issues.push(format!("skipped {relative}: {reason}")),
+                    Err(_) => issues.push(format!("failed to write: {relative}")),
+                },
                 Err(err) => {
                     issues.push(format!("{relative}: {err:?}"));
                 }
@@ -110,10 +106,72 @@ fn destination_inside(output: &Path, relative: &str) -> Option<std::path::PathBu
     destination.starts_with(output).then_some(destination)
 }
 
+/// Writes one extracted file, creating its folders one by one and refusing every link on the way.
+///
+/// `output` must be the canonical output folder and `destination` a path below it. A link among the existing
+/// folders (for example `output/scripts -> /elsewhere`) or in place of the file itself would otherwise send the
+/// write outside the folder the user chose, so it is refused before anything is created.
+fn write_inside(output: &Path, destination: &Path, bytes: &[u8]) -> Result<()> {
+    let relative = destination
+        .strip_prefix(output)
+        .map_err(|_| Error::Refused("path is outside the output folder".to_owned()))?;
+    let mut current = output.to_path_buf();
+    let mut components = relative.components().peekable();
+    while let Some(component) = components.next() {
+        current.push(component);
+        check_no_links(output, &current)?;
+        if components.peek().is_some() {
+            match fs::create_dir(&current) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists && current.is_dir() => {}
+                Err(error) => return Err(Error::from(error)),
+            }
+        }
+    }
+    fs::write(destination, bytes).map_err(Error::from)
+}
+
 #[cfg(test)]
 mod tests {
     use super::destination_inside;
     use std::path::Path;
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_inside_the_output_folder_does_not_carry_a_write_outside() -> sse_core::Result<()> {
+        use sse_core::Error;
+        use std::fs;
+
+        let root = std::env::temp_dir().join(format!("sse-extract-links-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let output = root.join("output");
+        let outside = root.join("outside");
+        fs::create_dir_all(&output)?;
+        fs::create_dir_all(&outside)?;
+        let output = output.canonicalize()?;
+        std::os::unix::fs::symlink(&outside, output.join("scripts"))?;
+        fs::write(outside.join("victim.txt"), b"keep")?;
+        std::os::unix::fs::symlink(outside.join("victim.txt"), output.join("linked.txt"))?;
+
+        // A folder link, a deeper path through it, and a link in place of the file itself.
+        for relative in ["scripts/task.script", "scripts/deep/task.script", "linked.txt"] {
+            let destination = super::destination_inside(&output, relative)
+                .ok_or_else(|| Error::damaged("fixture path left the output folder"))?;
+            let result = super::write_inside(&output, &destination, b"extracted");
+            assert!(matches!(result, Err(Error::Refused(_))), "{relative}: {result:?}");
+        }
+        assert!(!outside.join("task.script").exists());
+        assert!(!outside.join("deep").exists());
+        assert_eq!(fs::read(outside.join("victim.txt"))?, b"keep");
+
+        // Real folders are still created and written.
+        let destination = super::destination_inside(&output, "gamedata/configs/a.ltx")
+            .ok_or_else(|| Error::damaged("fixture path left the output folder"))?;
+        super::write_inside(&output, &destination, b"extracted")?;
+        assert_eq!(fs::read(output.join("gamedata/configs/a.ltx"))?, b"extracted");
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
 
     #[test]
     fn a_plain_relative_path_stays_inside_the_output_folder() {

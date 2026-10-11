@@ -160,6 +160,8 @@ impl Stalker2ModToggle {
             )
         })?;
 
+        refuse_paks_outside_game(game_directory, &paks_dir)?;
+
         let active_path = paks_dir.join(ACTIVE_MODS_FOLDER);
         let disabled_path = paks_dir.join(DISABLED_MODS_FOLDER);
 
@@ -197,6 +199,23 @@ impl Stalker2ModToggle {
     }
 }
 
+/// Refuses a `Paks` directory that a link on the way from the chosen game folder moves outside that folder.
+///
+/// Without this a link such as `Stalker2/Content/Paks -> /elsewhere` would make the toggle create or rename
+/// `~mods` in a directory the user never selected.
+fn refuse_paks_outside_game(game_directory: &Path, paks_dir: &Path) -> Result<()> {
+    let game = fs::canonicalize(game_directory).map_err(Error::from)?;
+    let paks = fs::canonicalize(paks_dir).map_err(Error::from)?;
+    if paks.starts_with(&game) {
+        Ok(())
+    } else {
+        Err(Error::Refused(format!(
+            "Refusing to toggle mods through a link that leaves the game folder: {}",
+            paks_dir.display()
+        )))
+    }
+}
+
 fn list_pak_files(dir: &Path) -> Result<Vec<String>> {
     let mut names = Vec::new();
     let entries = fs::read_dir(dir).map_err(Error::from)?;
@@ -213,4 +232,63 @@ fn list_pak_files(dir: &Path) -> Result<Vec<String>> {
     }
     names.sort();
     Ok(names)
+}
+
+#[cfg(all(test, unix))]
+mod link_tests {
+    use super::{ModToggleResult, Stalker2ModToggle};
+    use sse_core::{Error, Result};
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn temp(name: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!("sse-s2-mods-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&path);
+        path
+    }
+
+    #[test]
+    fn toggle_refuses_a_paks_link_that_leaves_the_game_folder() -> Result<()> {
+        let root = temp("escape");
+        let game = root.join("game");
+        let outside = root.join("outside");
+        fs::create_dir_all(game.join("Stalker2/Content"))?;
+        fs::create_dir_all(&outside)?;
+        std::os::unix::fs::symlink(&outside, game.join("Stalker2/Content/Paks"))?;
+
+        let result = Stalker2ModToggle::toggle(&game);
+
+        assert!(matches!(result, Err(Error::Refused(_))), "{result:?}");
+        assert!(
+            !outside.join("~mods").exists(),
+            "nothing may be created outside the game"
+        );
+
+        // Existing folders behind the link are not renamed either.
+        fs::create_dir(outside.join("~mods"))?;
+        assert!(matches!(Stalker2ModToggle::toggle(&game), Err(Error::Refused(_))));
+        assert!(outside.join("~mods").is_dir());
+        assert!(!outside.join("~mods.disabled").exists());
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn toggle_still_works_inside_a_real_game_folder() -> Result<()> {
+        let root = temp("inside");
+        let game = root.join("game");
+        fs::create_dir_all(game.join("Stalker2/Content/Paks"))?;
+
+        assert_eq!(
+            Stalker2ModToggle::toggle(&game)?,
+            ModToggleResult::CreatedActiveDirectory
+        );
+        assert!(game.join("Stalker2/Content/Paks/~mods").is_dir());
+        assert_eq!(
+            Stalker2ModToggle::toggle(&game)?,
+            ModToggleResult::Disabled { pak_count: 0 }
+        );
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
 }

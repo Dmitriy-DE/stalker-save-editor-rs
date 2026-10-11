@@ -1998,6 +1998,11 @@ fn rollback_installation(applied: &[PreparedFileChange]) -> Vec<String> {
     let mut errors = Vec::new();
     for change in applied.iter().rev() {
         if !change.absolute_path.is_file() {
+            // A file this transaction created and that is gone again needs nothing. A file that existed before
+            // must come back: reporting it keeps the recovery copy and the journal instead of deleting them.
+            if change.target_existed_before {
+                errors.push(format!("file is missing during rollback: {}", change.relative_path));
+            }
             continue;
         }
         if let Ok(bytes) = fs::read(&change.absolute_path) {
@@ -2452,6 +2457,38 @@ mod g13_tests {
         assert_eq!(fs::read(&path_b)?, installed_b);
         assert_eq!(engine.get_status(&fix, &root)?, GameFixState::Installed);
         assert!(!get_fix_directory(&root, &fix.id).join(JOURNAL_FILE_NAME).exists());
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn install_rollback_reports_a_missing_original_instead_of_skipping_it() -> Result<()> {
+        let root = temp_game_root();
+        fs::create_dir_all(root.join("gamedata/configs"))?;
+        let original = b"value=old\n";
+        let patched = b"value=new\n";
+        let change = |name: &str, existed: bool| PreparedFileChange {
+            relative_path: format!("gamedata/configs/{name}"),
+            absolute_path: root.join("gamedata/configs").join(name),
+            before_bytes: if existed { original.to_vec() } else { Vec::new() },
+            after_bytes: patched.to_vec(),
+            before_sha256: sha256_hex(if existed { original } else { &[] }),
+            after_sha256: sha256_hex(patched),
+            target_existed_before: existed,
+            source_fingerprint: None,
+        };
+        // Both files were applied and then disappeared before the rollback ran.
+        let vanished_original = change("vanished.ltx", true);
+        let vanished_overlay = change("overlay.ltx", false);
+        let restored = change("restored.ltx", true);
+        fs::write(&restored.absolute_path, patched)?;
+
+        let errors = rollback_installation(&[restored.clone(), vanished_overlay, vanished_original]);
+
+        // The caller deletes the recovery copy and the journal only when this list is empty.
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors.iter().any(|error| error.contains("vanished.ltx")));
+        assert_eq!(fs::read(&restored.absolute_path)?, original);
         let _ = fs::remove_dir_all(&root);
         Ok(())
     }
