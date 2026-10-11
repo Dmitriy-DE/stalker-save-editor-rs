@@ -489,23 +489,23 @@ fn install_audit_classifies_and_cleans_up_orphaned_files() {
 
     let audit = ToolkitInstallAudit::audit_installation(&fixture.root, GameTarget::ClearSky, &engine).unwrap();
 
-    assert_eq!(audit.orphaned_count, 1);
-    assert_eq!(audit.custom_mod_count, 1);
-    assert!(!audit.is_clean());
+    // No manifest records the backup-named file, so it is not the toolkit's: it is shown, and it is not moved.
+    assert_eq!(audit.orphaned_count, 0);
+    assert_eq!(audit.custom_mod_count, 2);
+    assert!(
+        audit.is_clean(),
+        "unrecorded files are shown, not counted as toolkit damage"
+    );
 
-    // Clean up orphans
     let cleaned = ToolkitInstallAudit::cleanup_orphans(&fixture.root, &audit).unwrap();
-    assert_eq!(cleaned, 1);
+    assert_eq!(cleaned, 0);
 
-    // Verify custom mod remains untouched
     assert!(fixture.root.join("gamedata/scripts/custom_mod.script").is_file());
-    assert!(!fixture.root.join("gamedata/scripts/stray.script.sse-backup").exists());
+    assert!(fixture.root.join("gamedata/scripts/stray.script.sse-backup").is_file());
 
-    // Re-audit is now clean of orphans
     let post_audit = ToolkitInstallAudit::audit_installation(&fixture.root, GameTarget::ClearSky, &engine).unwrap();
     assert_eq!(post_audit.orphaned_count, 0);
-    assert_eq!(post_audit.custom_mod_count, 1);
-    assert!(post_audit.is_clean());
+    assert_eq!(post_audit.custom_mod_count, 2);
 }
 
 #[test]
@@ -543,21 +543,21 @@ fn user_ltx_refuses_to_rewrite_file_when_text_is_not_cp1251() {
 }
 
 #[test]
-fn cleanup_orphans_keeps_suffix_named_user_file_recoverable() {
+fn cleanup_orphans_does_not_move_an_unrecorded_suffix_named_file() {
     let fixture = ToolkitTestFixture::new(GameTarget::ClearSky, "11450472");
     let engine = GameFixEngine::with_synthetic(true);
     fixture.write_file("gamedata/textures/texture.dds.sse-orig", b"user copy");
 
     let audit = ToolkitInstallAudit::audit_installation(&fixture.root, GameTarget::ClearSky, &engine).unwrap();
-    assert_eq!(audit.orphaned_count, 1);
+    assert_eq!(audit.orphaned_count, 0);
     let cleaned = ToolkitInstallAudit::cleanup_orphans(&fixture.root, &audit).unwrap();
-    assert_eq!(cleaned, 1);
+    assert_eq!(cleaned, 0);
 
-    assert!(!fixture.root.join("gamedata/textures/texture.dds.sse-orig").exists());
-    let kept = fixture
-        .root
-        .join(".save-editor-quarantine/gamedata/textures/texture.dds.sse-orig");
-    assert_eq!(fs::read(kept).unwrap(), b"user copy");
+    assert_eq!(
+        fs::read(fixture.root.join("gamedata/textures/texture.dds.sse-orig")).unwrap(),
+        b"user copy"
+    );
+    assert!(!fixture.root.join(".save-editor-quarantine").exists());
 }
 
 #[cfg(unix)]
