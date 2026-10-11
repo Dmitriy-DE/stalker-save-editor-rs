@@ -288,6 +288,9 @@ struct CompanionIntent {
 
 #[derive(Default)]
 struct Companion {
+    /// Scroll region of the whole tab and its offset, so the tab reaches its lower parts on short windows.
+    tab_scroll: Option<WidgetId>,
+    tab_offset: i32,
     status: Option<WidgetId>,
     cards: Option<WidgetId>,
     workshop_card: Option<WidgetId>,
@@ -475,10 +478,16 @@ impl Screen for Companion {
     fn id(&self) -> ScreenId {
         ScreenId::Companion
     }
+
+    fn fills_window(&self) -> bool {
+        true
+    }
     fn subtitle(&self) -> &str {
         t("Мод-компаньон, версия и горячие клавиши")
     }
-    fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
+    fn build(&mut self, cx: &mut Context<'_>, outer: WidgetId) -> Result<()> {
+        let (scroll, host) = style::scroll_body(cx.tree, outer)?;
+        self.tab_scroll = Some(scroll);
         self.host = Some(host);
         let language = crate::strings::current_language();
         // The action cards to the left; the state and the primary action to the right.
@@ -767,6 +776,10 @@ impl Screen for Companion {
         message: &Message<AppMessage>,
         clicked: Option<WidgetId>,
     ) -> Result<()> {
+        if let (Message::Window(WindowEvent::Wheel { delta }), Some(scroll)) = (message, self.tab_scroll) {
+            self.tab_offset = style::scroll_wheel(cx.tree, scroll, self.tab_offset, *delta)?;
+            return Ok(());
+        }
         if clicked.is_some() && clicked == self.subscribe_workshop {
             let url = self
                 .selected(cx)

@@ -2067,6 +2067,11 @@ struct EnvironmentItem {
 
 #[derive(Default)]
 struct Environment {
+    /// Scroll region that holds the whole tab, so the lower actions stay reachable on short windows.
+    tab_scroll: Option<WidgetId>,
+    tab_offset: i32,
+    /// Row below the scroll region: the new-profile name and its save button.
+    footer: Option<WidgetId>,
     status: Option<WidgetId>,
     lines: Vec<WidgetId>,
     snapshot: Option<WidgetId>,
@@ -2272,13 +2277,62 @@ impl Screen for Environment {
     fn id(&self) -> ScreenId {
         ScreenId::Environment
     }
+
+    fn fills_window(&self) -> bool {
+        true
+    }
     fn subtitle(&self) -> &str {
         crate::strings::t(
             "Здесь создаются, восстанавливаются и применяются снимки и профили; файлы игры меняются только по кнопкам",
         )
     }
 
-    fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
+    fn build(&mut self, cx: &mut Context<'_>, outer: WidgetId) -> Result<()> {
+        // The tab scrolls inside its own panel: content taller than the window is reached by the wheel, not cut off.
+        let scroll = cx.tree.add(
+            Some(outer),
+            NodeKind::Scroll {
+                horizontal: false,
+                vertical: true,
+                offset_x: 0.0,
+                offset_y: 0.0,
+            },
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: crate::layout::Size::new(0.0, 0.0),
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        let host = cx.tree.add(
+            Some(scroll),
+            NodeKind::Column,
+            Style {
+                gap: crate::layout::Size::new(0.0, crate::theme::CONTROL_GAP),
+                align_items: crate::layout::Align::Stretch,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        cx.tree.set_clip_children(scroll, true)?;
+        self.tab_scroll = Some(scroll);
+        // The save action stays below the scroll region, inside the window: it is never cut off by the status bar.
+        // One row: the name field and the save button, so the row stays as short as the window needs.
+        let footer = style::row(cx.tree, outer)?;
+        cx.tree.set_style(
+            footer,
+            Style {
+                gap: crate::layout::Size::new(crate::theme::CONTROL_GAP, 0.0),
+                align_items: crate::layout::Align::Center,
+                min: crate::layout::Size::new(0.0, crate::theme::BUTTON_HEIGHT),
+                shrink: 0.0,
+                ..Style::default()
+            },
+        )?;
+        self.footer = Some(footer);
         let card = style::card(cx.tree, host)?;
         style::label(cx.tree, card, crate::strings::t("СРЕДА ИГРЫ"), Text::Heading)?;
         self.status = Some(style::label(
@@ -2374,11 +2428,10 @@ impl Screen for Environment {
             Look::default(),
         )?;
         // A new profile is named here and saved from the current state, so it needs no chosen item.
-        style::label(cx.tree, profile_actions, crate::strings::t("Имя профиля"), Text::Note)?;
-        self.profile_name = Some(style::input(cx.tree, profile_actions, "")?);
+        self.profile_name = Some(style::input(cx.tree, footer, crate::strings::t("Имя профиля"))?);
         self.save_profile = Some(style::d2::button(
             cx.tree,
-            profile_actions,
+            footer,
             crate::strings::t("СОХРАНИТЬ ТЕКУЩЕЕ СОСТОЯНИЕ"),
             style::d2::ButtonKind::Primary,
             style::d2::ButtonSize::Normal,
@@ -2469,6 +2522,17 @@ impl Screen for Environment {
         message: &Message<AppMessage>,
         clicked: Option<WidgetId>,
     ) -> Result<()> {
+        if let Message::Window(WindowEvent::Wheel { delta }) = message {
+            if let Some(scroll) = self.tab_scroll {
+                // The limit in whole pixels: how far the tab's content runs past its panel.
+                let viewport = f32::from(u16::try_from(cx.tree.rect(scroll)?.height).unwrap_or(0));
+                let overflow = (cx.tree.content_height(scroll)? - viewport).max(0.0);
+                let limit: i32 = format!("{overflow:.0}").parse().unwrap_or(0);
+                self.tab_offset = self.tab_offset.saturating_add(delta.saturating_mul(24)).clamp(0, limit);
+                cx.tree.set_scroll_y(scroll, self.tab_offset)?;
+                return Ok(());
+            }
+        }
         let changed = cx.tree.take_changed_inputs();
         if changed.iter().any(|id| self.profile_name == Some(*id)) {
             self.selected_profile = None;
