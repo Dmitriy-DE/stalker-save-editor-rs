@@ -74,22 +74,28 @@ pub const fn capability(format: crate::Format, kind: ChangeKind) -> Capability {
         // Ammunition stacks and removal: 4/4 and 6/6 measurable ToT EE and ChN EE saves pass (the other 2 of each have
         // no stack or no backpack item, so there is nothing to edit); 12 of 12 Call of Pripyat EE saves pass.
         (SocEe | CsEe | CopEe, EditStacks | RemoveItems) => Experimental,
-        // Item addition: 12 of 12 Call of Pripyat EE saves pass. ToT EE and ChN EE refuse 0 of 14 with
-        // "item template has no proven placement field": their template records lack the client-data placement
-        // record that Clear Sky reads as [2, 1..=3] (save.rs read_placement_fields).
-        (CopEe, AddItems) => Experimental,
-        (SocEe | CsEe, AddItems) => Unsupported,
-        // Call of Pripyat EE: 12 of 12 saves move a slot item to the backpack and restore it byte-identically.
-        // ToT EE and ChN EE have no slot item with a proven base slot, so they stay Unsupported.
+        // Item addition: ToT EE 4/4 and ChN EE 6/6 measurable saves pass (edit, read-back, neighbours, and the undo gives
+        // the original unpacked image); ZP EE 12/12. The writer refuses a template with no placement record, so a save
+        // with no such single-item template is not measurable (2 of 6 ToT EE, 2 of 8 ChN EE).
+        (SocEe | CsEe | CopEe, AddItems) => Experimental,
+        // Placement: Call of Pripyat EE 12/12 moves a slot item. ToT EE and ChN EE: the slot occupancy cannot be proven,
+        // because the equipped item's placement reads as unknown (its client data [2, 1, 0, 0] gives slot 0).
         (CopEe, EditPlacement) => Experimental,
-        // Shadow of Chernobyl EE (6/6) and Clear Sky EE (8/8) pass every real save. Call of Pripyat EE restores with
-        // one changed UPDATE condition byte on 7 of 12 saves, so it stays Unsupported (see the ignored round-trip test).
-        (SocEe | CsEe, EditDurability) => Experimental,
-        (
-            SocEe | CsEe | CopEe,
-            EditDurability | EditPlacement | EditPlayerFaction | EditRelations | EditUpgrades | EditInfoPortions
-            | RelocateActor | MoveItems,
-        ) => Unsupported,
+        (SocEe | CsEe, EditPlacement) => Unsupported,
+        // Actor faction: all 26 real Enhanced Edition saves read the new faction and undo to the original image.
+        (SocEe | CsEe | CopEe, EditPlayerFaction) => Experimental,
+        // Upgrades: ChN EE 8/8 and ZP EE 12/12 add an upgrade and undo byte-identically. ToT EE: the matrix has no upgrade
+        // catalog for Shadow of Chernobyl and its saves hold no upgradeable item to measure.
+        (CsEe | CopEe, EditUpgrades) => Experimental,
+        (SocEe, EditUpgrades) => Unsupported,
+        // Equipment condition: ToT EE 6/6, ChN EE 8/8, ZP EE 12/12 real saves pass the edit, read-back and undo.
+        (SocEe | CsEe | CopEe, EditDurability) => Experimental,
+        // Faction relations: none of the 26 Enhanced Edition saves holds an actor relation entry, so nothing to edit.
+        (SocEe | CsEe | CopEe, EditRelations) => Unsupported,
+        // Stash moves: the move into the backpack succeeds, but its undo is refused ("must be in the backpack before it
+        // can be stored"): the moved record has no backpack placement after the move, so the undo is not proven.
+        (SocEe | CsEe | CopEe, MoveItems) => Unsupported,
+        (SocEe | CsEe | CopEe, EditInfoPortions | RelocateActor) => Unsupported,
     }
 }
 
@@ -2220,7 +2226,7 @@ impl PendingWrite {
 
 fn matching_faction_catalog(catalog: Option<&FactionCatalog>, format: crate::Format) -> Result<&FactionCatalog> {
     let catalog = catalog.ok_or_else(|| Error::Refused("matching faction catalog is required".to_owned()))?;
-    if catalog.release_id() != format.id() {
+    if catalog.release_id() != sse_catalog::bundle::release_for_format(format.id()) {
         return Err(Error::Refused(format!(
             "faction catalog '{}' does not match {}",
             catalog.release_id(),
@@ -2232,7 +2238,7 @@ fn matching_faction_catalog(catalog: Option<&FactionCatalog>, format: crate::For
 
 fn matching_upgrade_catalog(catalog: Option<&UpgradeCatalog>, format: crate::Format) -> Result<&UpgradeCatalog> {
     let catalog = catalog.ok_or_else(|| Error::Refused("matching upgrade catalog is required".to_owned()))?;
-    if catalog.release_id() != format.id() || catalog.upgrades().is_empty() {
+    if catalog.release_id() != sse_catalog::bundle::release_for_format(format.id()) || catalog.upgrades().is_empty() {
         return Err(Error::Refused(format!(
             "upgrade catalog '{}' does not match {} or is empty",
             catalog.release_id(),
@@ -4190,20 +4196,12 @@ mod tests {
             assert_eq!(capability(format, ChangeKind::EditStacks), Capability::Experimental);
             assert_eq!(capability(format, ChangeKind::RemoveItems), Capability::Experimental);
         }
-        assert_eq!(
-            capability(Format::CopEe, ChangeKind::AddItems),
-            Capability::Experimental
-        );
-        for format in [Format::SocEe, Format::CsEe] {
-            assert_eq!(capability(format, ChangeKind::AddItems), Capability::Unsupported);
+        for format in [Format::SocEe, Format::CsEe, Format::CopEe] {
+            assert_eq!(capability(format, ChangeKind::AddItems), Capability::Experimental);
         }
-        for format in [Format::SocEe, Format::CsEe] {
+        for format in [Format::SocEe, Format::CsEe, Format::CopEe] {
             assert_eq!(capability(format, ChangeKind::EditDurability), Capability::Experimental);
         }
-        assert_eq!(
-            capability(Format::CopEe, ChangeKind::EditDurability),
-            Capability::Unsupported
-        );
         assert_eq!(
             capability(Format::CopEe, ChangeKind::EditPlacement),
             Capability::Experimental
@@ -4212,14 +4210,19 @@ mod tests {
             assert_eq!(capability(format, ChangeKind::EditPlacement), Capability::Unsupported);
         }
         for format in [Format::SocEe, Format::CsEe, Format::CopEe] {
-            for kind in [
-                ChangeKind::EditPlayerFaction,
-                ChangeKind::EditRelations,
-                ChangeKind::EditUpgrades,
-                ChangeKind::MoveItems,
-            ] {
-                assert_eq!(capability(format, kind), Capability::Unsupported);
-            }
+            assert_eq!(
+                capability(format, ChangeKind::EditPlayerFaction),
+                Capability::Experimental
+            );
+            assert_eq!(capability(format, ChangeKind::EditRelations), Capability::Unsupported);
+            assert_eq!(capability(format, ChangeKind::MoveItems), Capability::Unsupported);
+        }
+        assert_eq!(
+            capability(Format::SocEe, ChangeKind::EditUpgrades),
+            Capability::Unsupported
+        );
+        for format in [Format::CsEe, Format::CopEe] {
+            assert_eq!(capability(format, ChangeKind::EditUpgrades), Capability::Experimental);
         }
     }
 
@@ -5477,6 +5480,96 @@ mod tests {
         Ok(())
     }
 
+    /// A state and a client copy that differ in their bits: an edit writes the new value to all three places.
+    /// The client copy is built in the fixture (one ulp away from the state, behind a recognized placement tag), because
+    /// the reader only identifies a client copy within 1e-6 of the state; real Call of Pripyat EE saves look the same.
+    #[test]
+    fn durability_edit_writes_state_update_byte_and_client_copy() -> TestResult {
+        let sources: [&[u8]; 6] = [
+            include_bytes!("../../../fixtures/synthetic/writer-durability/xray-durability-soc-source.sav"),
+            include_bytes!("../../../fixtures/synthetic/writer-durability/xray-durability-cs-source.sav"),
+            include_bytes!("../../../fixtures/synthetic/writer-durability/xray-durability-cop-source.sav"),
+            include_bytes!("../../../fixtures/synthetic/writer-durability/xray-durability-soc-ee-source.sav"),
+            include_bytes!("../../../fixtures/synthetic/writer-durability/xray-durability-cs-ee-source.sav"),
+            include_bytes!("../../../fixtures/synthetic/writer-durability/xray-durability-cop-ee-source.sav"),
+        ];
+        let mut built = None;
+        for packed in sources {
+            let base = Save::read(packed)?;
+            for item in base.inventory()?.into_iter().filter(|item| item.durability_editable) {
+                let Some(record) = base
+                    .registry_objects()
+                    .iter()
+                    .find(|record| record.object_id == item.handle)
+                else {
+                    continue;
+                };
+                let (Some(start), length) = (record.client_data_offset, record.client_data_length) else {
+                    continue;
+                };
+                let Some(state) = item.condition_offset else { continue };
+                if length < 8 {
+                    continue;
+                }
+                let mut raw = base.raw_image().to_vec();
+                let state_bits = read_u32(&raw, state)?;
+                let candidate = start.checked_add(2).ok_or("candidate offset")?;
+                raw.get_mut(start..candidate)
+                    .ok_or("tag outside the image")?
+                    .copy_from_slice(&[2, 3]);
+                raw.get_mut(candidate..candidate + 4)
+                    .ok_or("candidate outside the image")?
+                    .copy_from_slice(&(state_bits ^ 1).to_le_bytes());
+                let save = Save::read(base.repack(&raw)?.as_slice())?;
+                if let Some(found) = save.inventory()?.into_iter().find(|i| i.handle == item.handle) {
+                    if found.client_condition_offset == Some(candidate) {
+                        built = Some((item.handle, save));
+                        break;
+                    }
+                }
+            }
+            if built.is_some() {
+                break;
+            }
+        }
+        let (target, save) = built.ok_or("could not build a client copy the reader identifies")?;
+        let item = save
+            .inventory()?
+            .into_iter()
+            .find(|item| item.handle == target)
+            .ok_or("target missing")?;
+        let old = item.condition.ok_or("condition missing")?;
+        let state = item.condition_offset.ok_or("state offset missing")?;
+        let client = item.client_condition_offset.ok_or("client copy missing")?;
+        let update = item.update_condition_offset.ok_or("UPDATE offset missing")?;
+        let before = Container::read(save.repack(save.raw_image())?.as_slice())?;
+        assert_ne!(
+            read_u32(before.image(), state)?,
+            read_u32(before.image(), client)?,
+            "the fixture must start with differing copies"
+        );
+
+        let new = 0.5_f32;
+        let out = apply(
+            &save,
+            &ChangeSet::new(vec![Change::SetDurability {
+                target_object: target,
+                old_value: old,
+                new_value: new,
+            }]),
+        )?;
+        let after = Container::read(out.as_slice())?;
+        let bytes = after.image();
+        assert_eq!(read_u32(bytes, state)?, new.to_bits(), "state copy");
+        assert_eq!(read_u32(bytes, client)?, new.to_bits(), "client copy");
+        assert_eq!(
+            bytes.get(update).copied(),
+            Some(encode_condition_q8(new)),
+            "UPDATE byte"
+        );
+        Ok(())
+    }
+
     /// Sets the first editable durability item, reads it back, checks the neighbours, restores the old value and
     /// compares the unpacked image with the original. Returns a short summary, or the first disagreement.
     fn durability_round_trip(original: &[u8], save: &Save) -> std::result::Result<String, String> {
@@ -5537,11 +5630,52 @@ mod tests {
             .map_err(|error| format!("{error:?}"))?
             .image()
             .to_vec();
-        if restored_image != before_image {
-            let differing_restore = before_image.iter().zip(&restored_image).filter(|(a, b)| a != b).count();
-            return Err(format!("restore differs in {differing_restore} unpacked bytes"));
+        // The restore may differ only in the 4 client-copy bytes of the edited item, and only where the two float values
+        // are the same durability within 1e-6 and encode to the same Q8 byte: the original client copy may hold 1.0
+        // beside a state of 0.9999996, and writing the state value back into it is the same durability.
+        let client = target.client_condition_offset;
+        let mut unexplained = 0_usize;
+        let mut client_only = 0_usize;
+        for (index, (before, after)) in before_image.iter().zip(&restored_image).enumerate() {
+            if before == after {
+                continue;
+            }
+            let within_client = client.is_some_and(|start| (start..start.saturating_add(4)).contains(&index));
+            if within_client {
+                client_only += 1;
+            } else {
+                unexplained += 1;
+            }
         }
-        Ok(format!("edit bytes {differing}, restore identical"))
+        if unexplained > 0 {
+            return Err(format!(
+                "restore differs in {unexplained} bytes outside the client copy"
+            ));
+        }
+        if let Some(start) = client {
+            let before_value = f32::from_le_bytes(
+                before_image
+                    .get(start..start + 4)
+                    .and_then(|b| <[u8; 4]>::try_from(b).ok())
+                    .ok_or("client copy")?,
+            );
+            let after_value = f32::from_le_bytes(
+                restored_image
+                    .get(start..start + 4)
+                    .and_then(|b| <[u8; 4]>::try_from(b).ok())
+                    .ok_or("client copy")?,
+            );
+            if (before_value - after_value).abs() > 1e-6
+                || encode_condition_q8(before_value) != encode_condition_q8(after_value)
+            {
+                return Err(format!(
+                    "client copy restored to {after_value}, original {before_value}"
+                ));
+            }
+        }
+        Ok(format!(
+            "edit bytes {differing}, restore identical outside {client_only} client-copy bytes"
+        ))
     }
 
     /// Every Enhanced Edition save file under `SSE_EE_SAVES_DIR`, as (path, bytes). Other formats are skipped.
@@ -5688,6 +5822,10 @@ mod tests {
                 let enabled = capability(save.format(), kind) != Capability::Unsupported;
                 match outcome {
                     Ok(detail) => eprintln!("{} {:?} {label} pass {detail}", path.display(), save.format()),
+                    // "no ..." means the save holds nothing this edit can apply to: not a failure, not a pass.
+                    Err(reason) if reason.starts_with("no ") => {
+                        eprintln!("{} {:?} {label} n/a {reason}", path.display(), save.format());
+                    }
                     Err(reason) => {
                         eprintln!("{} {:?} {label} FAIL {reason}", path.display(), save.format());
                         if enabled {
@@ -5827,8 +5965,8 @@ mod tests {
         let items = save.inventory().map_err(|error| format!("{error:?}"))?;
         let template = items
             .iter()
-            .find(|item| item.count.is_none())
-            .ok_or("no single-item template")?;
+            .find(|item| item.count.is_none() && item.placement.is_some())
+            .ok_or("no single-item template with a placement")?;
         let highest = save
             .registry_objects()
             .iter()

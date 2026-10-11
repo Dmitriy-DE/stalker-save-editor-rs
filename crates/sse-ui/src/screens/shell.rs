@@ -861,6 +861,7 @@ fn save_eligibility(
             .saturating_add(plan.adds.len())
             .saturating_add(plan.stash_takes.len())
             .saturating_add(plan.s2_stash_takes.len())
+            .saturating_add(plan.s2_stash_puts.len())
             .saturating_add(plan.stash_puts.len())
             .saturating_add(usize::from(has_unmapped))
     });
@@ -916,6 +917,7 @@ fn has_unsupported_edit(format_id: Option<&str>, legacy_s2: bool, plan: &sse_sto
                 || (!plan.adds.is_empty() && !supports(ChangeKind::AddItems))
                 || !plan.stash_takes.is_empty()
                 || !plan.s2_stash_takes.is_empty()
+                || !plan.s2_stash_puts.is_empty()
                 || !plan.stash_puts.is_empty()
         }
         None => true,
@@ -1664,7 +1666,6 @@ impl Shell {
         library_search.build(tree, library)?;
         let library_refresh = library_icon_button(tree, library_actions, Icon::D2Updates)?;
         tree.set_tooltip(library_refresh, crate::strings::t("Обновить"))?;
-        // A paragraph wraps the empty-state hint inside the side panel instead of running past its edge.
         let library_status = super::saves::paragraph(tree, library, "Ищу сейвы…", Text::Note)?;
         let library_list = tree.add(
             Some(library),
@@ -2502,6 +2503,11 @@ impl Shell {
     #[must_use]
     pub fn app(&self) -> &sse_app::state::AppState {
         &self.app
+    }
+
+    /// Mutable application state; used by the developer screenshot tool to select a game.
+    pub fn app_mut(&mut self) -> &mut sse_app::state::AppState {
+        &mut self.app
     }
 
     /// Installs the event proxy after a headless shell has been built.
@@ -4204,7 +4210,8 @@ impl Shell {
             tree.set_visible(library_row.plate, !has_image)?;
             tree.set_text(library_row.select, &super::saves::short_text(&filename, 24))?;
             tree.set_enabled(library_row.select, slot.detection_error.is_none())?;
-            tree.set_text(library_row.game, game)?;
+            let game = fit_to_node(tree, library_row.game, game);
+            tree.set_text(library_row.game, &game)?;
             let s2_detail = preview
                 .as_ref()
                 .and_then(|entry| entry.s2_detail.as_deref())
@@ -4259,6 +4266,7 @@ impl Shell {
                 ],
             )
         };
+        // The status line sizes itself to its text, so its width is taken from the list it sits above.
         tree.set_text(self.library_status, &status)?;
         tree.set_visible(self.library_status, !status.is_empty())?;
         tree.set_visible(self.library_pager, !slots.is_empty())?;
@@ -4512,6 +4520,17 @@ fn find_button_with_text(tree: &Tree, root: WidgetId, needle: &str) -> Option<Wi
         stack.extend(tree.children(id));
     }
     None
+}
+
+/// `text`, shortened with an ellipsis to the width its node has; before the first layout the text stays whole.
+fn fit_to_node(tree: &Tree, id: WidgetId, text: &str) -> String {
+    let width = tree
+        .rect(id)
+        .map_or(0.0, |rect| f32::from(u16::try_from(rect.width).unwrap_or(u16::MAX)));
+    if width <= 0.0 {
+        return text.to_owned();
+    }
+    super::saves::fit_text(tree, text, style::Text::Note.style(), width)
 }
 
 #[cfg(test)]

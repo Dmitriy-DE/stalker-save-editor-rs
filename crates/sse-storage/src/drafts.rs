@@ -134,6 +134,8 @@ pub struct DraftPlan {
     pub stash_takes: Vec<u16>,
     /// S2 stash item handles to transfer into the actor inventory.
     pub s2_stash_takes: Vec<u32>,
+    /// S2 backpack item handles to transfer into the stash (schema 6).
+    pub s2_stash_puts: Vec<u32>,
     /// Transfers from the actor inventory into stashes.
     pub stash_puts: Vec<StashPut>,
     /// Requested goodwill values keyed by catalog faction.
@@ -159,6 +161,7 @@ impl DraftPlan {
             adds: Vec::new(),
             stash_takes: Vec::new(),
             s2_stash_takes: Vec::new(),
+            s2_stash_puts: Vec::new(),
             stash_puts: Vec::new(),
             faction_relations: BTreeMap::new(),
             relocate_to: None,
@@ -176,6 +179,7 @@ impl DraftPlan {
             || !self.adds.is_empty()
             || !self.stash_takes.is_empty()
             || !self.s2_stash_takes.is_empty()
+            || !self.s2_stash_puts.is_empty()
             || !self.stash_puts.is_empty()
             || !self.faction_relations.is_empty()
             || self.relocate_to.is_some()
@@ -243,6 +247,16 @@ impl DraftPlan {
         {
             return Err(Error::Refused(
                 "S2 draft stash-take handles must be unique and valid".to_owned(),
+            ));
+        }
+        let mut s2_puts = HashSet::new();
+        if self
+            .s2_stash_puts
+            .iter()
+            .any(|handle| !valid_draft_handle(*handle) || !s2_puts.insert(*handle))
+        {
+            return Err(Error::Refused(
+                "S2 draft stash-put handles must be unique and valid".to_owned(),
             ));
         }
         let mut puts = HashSet::new();
@@ -642,22 +656,26 @@ fn parse_journal(bytes: &[u8], expected_sha256: &str) -> Result<DraftJournal> {
             .collect::<Result<Vec<_>>>()?,
         2 => plans
             .iter()
-            .map(|plan| parse_current_plan(plan, expected_sha256, false, false, false))
+            .map(|plan| parse_current_plan(plan, expected_sha256, false, false, false, false))
             .collect::<Result<Vec<_>>>()?,
         3 => plans
             .iter()
             .map(|plan| {
                 let includes_s2_stash_takes = object_entries(plan)?.iter().any(|(name, _)| name == "s2StashTakes");
-                parse_current_plan(plan, expected_sha256, true, includes_s2_stash_takes, false)
+                parse_current_plan(plan, expected_sha256, true, includes_s2_stash_takes, false, false)
             })
             .collect::<Result<Vec<_>>>()?,
         4 => plans
             .iter()
-            .map(|plan| parse_current_plan(plan, expected_sha256, true, true, false))
+            .map(|plan| parse_current_plan(plan, expected_sha256, true, true, false, false))
             .collect::<Result<Vec<_>>>()?,
         5 => plans
             .iter()
-            .map(|plan| parse_current_plan(plan, expected_sha256, true, true, true))
+            .map(|plan| parse_current_plan(plan, expected_sha256, true, true, true, false))
+            .collect::<Result<Vec<_>>>()?,
+        6 => plans
+            .iter()
+            .map(|plan| parse_current_plan(plan, expected_sha256, true, true, true, true))
             .collect::<Result<Vec<_>>>()?,
         _ => return Err(Error::Refused("unsupported draft schema".to_owned())),
     };
@@ -674,6 +692,7 @@ fn parse_current_plan(
     extended: bool,
     s2_stashes: bool,
     operations: bool,
+    s2_puts: bool,
 ) -> Result<DraftPlan> {
     let base_fields = [
         "sourceSha256",
@@ -728,6 +747,10 @@ fn parse_current_plan(
         "relocateTo",
         "unmappedLegacyPlan",
     ];
+    let mut operation_fields = operation_fields.to_vec();
+    if s2_puts {
+        operation_fields.push("s2StashPuts");
+    }
     let members = if operations {
         object_members(value, &operation_fields)?
     } else if s2_stashes {
@@ -808,6 +831,12 @@ fn parse_current_plan(
         .collect::<Result<Vec<_>>>()?;
     if s2_stashes {
         plan.s2_stash_takes = array_field(members, "s2StashTakes")?
+            .iter()
+            .map(number_u32)
+            .collect::<Result<Vec<_>>>()?;
+    }
+    if s2_puts {
+        plan.s2_stash_puts = array_field(members, "s2StashPuts")?
             .iter()
             .map(number_u32)
             .collect::<Result<Vec<_>>>()?;
@@ -934,10 +963,13 @@ fn parse_legacy_plan(value: &JsonValue, source_sha256: &str) -> Result<DraftPlan
 
 fn serialize_journal(journal: &DraftJournal) -> Result<Vec<u8>> {
     validate_journal(journal)?;
-    let operations = journal
-        .plans
-        .iter()
-        .any(|plan| !plan.faction_relations.is_empty() || plan.relocate_to.is_some());
+    let s2_puts = journal.plans.iter().any(|plan| !plan.s2_stash_puts.is_empty());
+    // Schema 6 carries every schema 5 field, so the operation and extended fields are written with it.
+    let operations = s2_puts
+        || journal
+            .plans
+            .iter()
+            .any(|plan| !plan.faction_relations.is_empty() || plan.relocate_to.is_some());
     let extended = operations
         || journal.plans.iter().any(|plan| {
             !plan.durability.is_empty()
@@ -945,7 +977,9 @@ fn serialize_journal(journal: &DraftJournal) -> Result<Vec<u8>> {
                 || !plan.upgrades.is_empty()
                 || !plan.s2_stash_takes.is_empty()
         });
-    let schema = if operations {
+    let schema = if s2_puts {
+        6
+    } else if operations {
         5
     } else if extended {
         3
@@ -959,7 +993,7 @@ fn serialize_journal(journal: &DraftJournal) -> Result<Vec<u8>> {
     writer.key("plans")?;
     writer.array_start()?;
     for plan in &journal.plans {
-        write_current_plan(&mut writer, plan, extended, operations)?;
+        write_current_plan(&mut writer, plan, extended, operations, s2_puts)?;
     }
     writer.array_end()?;
     writer.key("schema")?;
@@ -975,7 +1009,13 @@ fn serialize_journal(journal: &DraftJournal) -> Result<Vec<u8>> {
     writer.finish()
 }
 
-fn write_current_plan(writer: &mut Writer, plan: &DraftPlan, extended: bool, operations: bool) -> Result<()> {
+fn write_current_plan(
+    writer: &mut Writer,
+    plan: &DraftPlan,
+    extended: bool,
+    operations: bool,
+    s2_puts: bool,
+) -> Result<()> {
     writer.object_start()?;
     writer.key("sourceSha256")?;
     writer.string(&plan.source_sha256)?;
@@ -1036,6 +1076,14 @@ fn write_current_plan(writer: &mut Writer, plan: &DraftPlan, extended: bool, ope
         writer.object_end()?;
     }
     writer.array_end()?;
+    if s2_puts {
+        writer.key("s2StashPuts")?;
+        writer.array_start()?;
+        for handle in &plan.s2_stash_puts {
+            writer.u64(u64::from(*handle))?;
+        }
+        writer.array_end()?;
+    }
     if operations {
         writer.key("factionRelations")?;
         writer.object_start()?;

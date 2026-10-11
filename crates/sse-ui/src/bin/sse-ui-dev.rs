@@ -147,7 +147,7 @@ fn package_ee(args: &[String]) -> Result<()> {
 fn screenshot(args: &[String]) -> Result<()> {
     let path = args.get(1).ok_or_else(|| {
         Error::Refused(
-            "usage: --screenshot OUT.png [WxH] [NAV] [--open SAVE] [--add-item] [--discover] [--press LABEL] [--settle] [--wait] [--select-first] [--achievements-fixture]"
+            "usage: --screenshot OUT.png [WxH] [NAV] [--open SAVE] [--add-item] [--discover] [--press LABEL] [--settle] [--wait] [--select-first] [--achievements-fixture] [--game ID --game-dir DIR]"
                 .to_owned(),
         )
     })?;
@@ -156,6 +156,8 @@ fn screenshot(args: &[String]) -> Result<()> {
     let mut open_save = None;
     let mut add_item = false;
     let mut discover = false;
+    let mut game: Option<String> = None;
+    let mut game_dir: Option<PathBuf> = None;
     let mut wait = false;
     let mut select_first = false;
     let mut achievements_fixture = false;
@@ -169,6 +171,21 @@ fn screenshot(args: &[String]) -> Result<()> {
             Some("--wait") => wait = true,
             Some("--select-first") => select_first = true,
             Some("--achievements-fixture") => achievements_fixture = true,
+            Some("--game") => {
+                game = Some(
+                    args.get(index.saturating_add(1))
+                        .cloned()
+                        .ok_or_else(|| Error::Refused("--game requires a game id".to_owned()))?,
+                );
+                index = index.saturating_add(1);
+            }
+            Some("--game-dir") => {
+                game_dir =
+                    Some(PathBuf::from(args.get(index.saturating_add(1)).cloned().ok_or_else(
+                        || Error::Refused("--game-dir requires a folder".to_owned()),
+                    )?));
+                index = index.saturating_add(1);
+            }
             Some("--settle") => settle = true,
             Some("--press") => {
                 index = index.saturating_add(1);
@@ -206,6 +223,12 @@ fn screenshot(args: &[String]) -> Result<()> {
     let (width, height) = size.unwrap_or((1280, 800));
     let mut tree = Tree::new(Fonts::bundled()?, rgb(BG_BASE));
     let mut shell = Shell::build(&mut tree, None)?;
+    if let Some(id) = game.clone() {
+        shell.app_mut().set_selected_game(Some(id));
+    }
+    if let Some(dir) = game_dir.clone() {
+        shell.app_mut().set_game_dir(Some(dir));
+    }
     let mut loader: Option<std::sync::mpsc::Receiver<Message<AppMessage>>> = None;
     if let Some(save_path) = open_save {
         let (proxy, receiver) = channel_pair::<AppMessage>();
