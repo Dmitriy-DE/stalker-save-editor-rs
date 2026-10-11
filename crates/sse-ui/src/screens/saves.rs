@@ -8209,12 +8209,17 @@ impl Stashes {
                 let Some(item) = catalog.items.resolve(&object.name_replace) else {
                     continue;
                 };
-                let name = item.display_name.as_deref().unwrap_or(&item.key);
+                let name =
+                    sse_catalog::SaveNaming::item_name(save.format().id(), &item.key, item.display_name.as_deref());
                 let staged = pending_takes.contains(&object.object_id);
                 self.entries.push(StashEntry {
                     label: tr(
                         "{0} · тайник {1} · 0x{2}",
-                        &[&t(name), &box_object.name_replace, &format!("{:04X}", object.object_id)],
+                        &[
+                            &t(&name),
+                            &box_object.name_replace,
+                            &format!("{:04X}", object.object_id),
+                        ],
                     ),
                     action: StashAction::XrayTake(object.object_id),
                     action_text: t(if staged {
@@ -8237,7 +8242,12 @@ impl Stashes {
                 let Some(definition) = catalog.items.resolve(&item.section) else {
                     continue;
                 };
-                let name = t(definition.display_name.as_deref().unwrap_or(&definition.key));
+                let definition_name = sse_catalog::SaveNaming::item_name(
+                    save.format().id(),
+                    &definition.key,
+                    definition.display_name.as_deref(),
+                );
+                let name = t(&definition_name);
                 let staged = pending_puts.get(&item.handle) == Some(&box_id);
                 self.entries.push(StashEntry {
                     label: tr(

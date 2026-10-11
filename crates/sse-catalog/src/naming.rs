@@ -15,15 +15,26 @@ impl SaveNaming {
     /// 4. Raw item section key.
     #[must_use]
     pub fn item_name(release_id: &str, key: &str, installed_name: Option<&str>) -> String {
-        let lang = Self::names_language();
+        Self::item_name_for(&Self::names_language(), release_id, key, installed_name)
+    }
+
+    /// Same chain as [`SaveNaming::item_name`] for an explicit language code (e.g. "en", "zh_CN").
+    ///
+    /// Order: the official table for the language, then English, then the installed game's name, then the shipped
+    /// bundle name, then the raw key. Outside a Russian or Ukrainian interface a name with Cyrillic letters is skipped,
+    /// so no Russian text reaches an English, German or other interface.
+    #[must_use]
+    pub fn item_name_for(lang: &str, release_id: &str, key: &str, installed_name: Option<&str>) -> String {
         let official_catalog = OfficialNamesCatalog::load_embedded();
 
-        if let Some(official) = official_catalog.resolve(Some(release_id), "items", Some(key), Some(&lang)) {
-            return official;
+        if let Some(official) = official_catalog.resolve(Some(release_id), "items", Some(key), Some(lang)) {
+            if accepts_script(lang, &official) {
+                return official;
+            }
         }
 
         if let Some(installed) = installed_name {
-            if !installed.trim().is_empty() {
+            if !installed.trim().is_empty() && accepts_script(lang, installed) {
                 return installed.to_string();
             }
         }
@@ -31,7 +42,7 @@ impl SaveNaming {
         if let Some(bundle) = CatalogBundleReader::load_embedded().get(release_id) {
             if let Some(item) = bundle.items.resolve(key) {
                 if let Some(ref dn) = item.display_name {
-                    if !dn.trim().is_empty() {
+                    if !dn.trim().is_empty() && accepts_script(lang, dn) {
                         return dn.clone();
                     }
                 }
@@ -67,5 +78,72 @@ impl SaveNaming {
     #[must_use]
     pub fn names_language() -> String {
         I18nService::instance().current_language().replace('-', "_")
+    }
+}
+
+/// Whether a name may be shown in this interface: Cyrillic is allowed only for Russian and Ukrainian.
+fn accepts_script(lang: &str, name: &str) -> bool {
+    matches!(lang, "ru" | "uk") || !name.chars().any(|c| ('\u{0400}'..='\u{04FF}').contains(&c))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SaveNaming;
+
+    const LANGUAGES: [&str; 15] = [
+        "ru", "uk", "en", "de", "fr", "it", "es", "pl", "cs", "pt_BR", "tr", "ja", "ko", "zh_CN", "zh_TW",
+    ];
+    const GAMES: [&str; 6] = [
+        "stalker-soc",
+        "stalker-cs",
+        "stalker-cop",
+        "stalker-soc-ee",
+        "stalker-cs-ee",
+        "stalker-cop-ee",
+    ];
+
+    fn has_cyrillic(text: &str) -> bool {
+        text.chars().any(|c| ('\u{0400}'..='\u{04FF}').contains(&c))
+    }
+
+    #[test]
+    fn english_interface_names_a_pda_in_english_not_russian() {
+        assert_eq!(SaveNaming::item_name_for("en", "stalker-cs", "device_pda", None), "PDA");
+    }
+
+    #[test]
+    fn non_russian_interfaces_never_show_russian_game_names() {
+        for game in GAMES {
+            for lang in LANGUAGES.iter().filter(|l| **l != "ru" && **l != "uk") {
+                let pda = SaveNaming::item_name_for(lang, game, "device_pda", Some("КПК"));
+                assert!(!has_cyrillic(&pda), "{game}/{lang}: {pda}");
+                let unknown = SaveNaming::item_name_for(lang, game, "matras", Some("Матрас"));
+                assert_eq!(unknown, "matras", "{game}/{lang}");
+            }
+        }
+    }
+
+    #[test]
+    fn english_interface_uses_the_installed_english_name_when_no_table_entry() {
+        assert_eq!(
+            SaveNaming::item_name_for("en", "stalker-cs", "matras", Some("Mattress")),
+            "Mattress"
+        );
+    }
+
+    #[test]
+    fn ukrainian_interface_may_show_the_installed_cyrillic_name() {
+        assert_eq!(
+            SaveNaming::item_name_for("uk", "stalker-cs", "matras", Some("Матрас")),
+            "Матрас"
+        );
+    }
+
+    #[test]
+    fn russian_interface_keeps_the_game_name_for_keys_without_a_table_entry() {
+        assert_eq!(
+            SaveNaming::item_name_for("ru", "stalker-cs", "matras", Some("Матрас")),
+            "Матрас"
+        );
     }
 }
