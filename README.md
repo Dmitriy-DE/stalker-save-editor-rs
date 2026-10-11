@@ -32,8 +32,8 @@ reference:
 | Ammunition stacks | Verified | Experimental |
 | Add items | Verified | Experimental |
 | Remove items | Verified | Experimental |
-| Equipment condition | Experimental | Shadow of Chernobyl EE: Experimental (not loaded in the game yet); Clear Sky EE and Call of Pripyat EE: Unsupported (waiting for saves) |
-| Item placement | Experimental | Unsupported |
+| Equipment condition | Experimental | Shadow of Chernobyl EE, Clear Sky EE: Experimental (not loaded in the game yet); Call of Pripyat EE: Unsupported (one UPDATE byte changes on restore) |
+| Item placement | Experimental | Call of Pripyat EE: Experimental (not loaded in the game yet); Shadow of Chernobyl EE, Clear Sky EE: Unsupported (no slot item with a proven base slot in the copies checked) |
 | Actor faction | Experimental | Unsupported |
 | Faction relations | Experimental | Unsupported |
 | Move items to or from a stash | Experimental | Unsupported |
@@ -42,19 +42,23 @@ reference:
 | Upgrades | Clear Sky, Call of Pripyat: Experimental; Shadow of Chernobyl: not in the game | Unsupported (the editor has no upgrade catalog for these) |
 
 *Verified* means the reference fixtures confirm the field. It does not mean a game has loaded the result.
-*Experimental (not loaded in the game yet)* means the edit is allowed, is checked by the writer and by a read-back, and has not been loaded in the game.
-*Experimental* means the reference allows the edit with experimental status. *Unsupported* means the editor refuses it.
+*Experimental* means the reference allows the edit with experimental status: it is checked by the writer and by a
+read-back, but no game has loaded it. *Unsupported* means the editor refuses it.
 
 ### Game fixes
 
-A catalogue of 149 fixes (dataset `2026.10.1`, `crates/sse-fixes/data/game-fixes.json`):
+The dataset (`crates/sse-fixes/data/game-fixes.json`, version `2026.10.1`) has 149 definitions. The Enhanced Editions
+get their own variants of the retail fixes, so the screen lists these entries per game (counted by the catalogue tests
+in `crates/sse-fixes/tests/catalog_tests.rs`):
 
 | Game | Fixes |
 |---|---|
-| Shadow of Chernobyl | 35 validated |
-| Shadow of Chernobyl Enhanced Edition | 2 validated |
-| Clear Sky | 75 validated, 1 experimental |
-| Call of Pripyat | 36 validated |
+| Shadow of Chernobyl | 35 |
+| Shadow of Chernobyl Enhanced Edition | 20 |
+| Clear Sky | 76 (75 validated, 1 experimental) |
+| Clear Sky Enhanced Edition | 51 |
+| Call of Pripyat | 36 |
+| Call of Pripyat Enhanced Edition | 25 |
 | S.T.A.L.K.E.R. 2 | none |
 
 Fixes are applied only when the user chooses them. Each one is checked against the expected file hashes before it

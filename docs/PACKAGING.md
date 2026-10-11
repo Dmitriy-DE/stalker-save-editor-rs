@@ -8,10 +8,12 @@ release, signs a package, or holds the signing key.
 
 | Job | Runs | Output |
 |---|---|---|
+| `check` | every pull request and push | formatting, clippy with warnings denied, workspace tests, fuzz smoke, budgets, translation checks, acceptance screenshots |
 | `test-build` | push to `main` | unsigned test binaries for Linux, Windows and macOS |
-| `packages-linux` | every pull request | `.AppImage`, `.tar.gz`, `.deb` |
-| `windows-portable` | every pull request | `SaveEditor-windows-x86_64.zip` |
-| `windows-installer` | every pull request | `SaveEditor-windows-x86_64-setup.exe` |
+| `packages-linux` | every pull request and push, after `check` | `.AppImage`, `.tar.gz`, `.deb` |
+| `windows-portable` | every pull request and push | `SaveEditor-windows-x86_64.zip` |
+| `windows-installer` | every pull request and push | `SaveEditor-windows-x86_64-setup.exe` |
+| `release-rehearsal` | every pull request and push, after the Linux and portable packages | a dry run of the signing path with a throwaway key; the owner's key is not used; nothing is uploaded |
 | `packages` | by hand, or on a `v*` tag | macOS `.dmg` for `arm64` and `x86_64`, plus the Linux packages |
 | `release-manifest` | by hand, or on a `v*` tag | `latest.json`, and its signature when the owner has signed it |
 

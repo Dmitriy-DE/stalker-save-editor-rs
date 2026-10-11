@@ -3657,12 +3657,26 @@ impl Inventory {
                     DraftPlacement::Slot(slot) => tr("Слот {0}", &[slot]),
                 };
             }
-            let placement_text = if placement == t("Размещение не прочитано") {
+            // "Not read" is already a full phrase; it must not get the "Placement:" prefix again.
+            let text = if placement == t("Размещение не прочитано") {
                 placement.to_owned()
             } else {
                 tr!("Размещение: {placement}", placement = placement)
             };
-            cx.tree.set_text(id, &placement_text)?;
+            let enhanced_placement = match &selected.data {
+                SaveData::Xray { save, .. } => {
+                    matches!(save.format(), sse_xray::Format::CopEe)
+                        && writer::capability(save.format(), writer::ChangeKind::EditPlacement)
+                            != writer::Capability::Unsupported
+                }
+                _ => false,
+            };
+            if enhanced_placement {
+                let note = t("Не проверено в игре для Enhanced Edition. Перед записью создаётся резервная копия.");
+                cx.tree.set_text(id, &format!("{text}\n{note}"))?;
+            } else {
+                cx.tree.set_text(id, &text)?;
+            }
         }
         let upgrades = state
             .pending_upgrades
@@ -8210,12 +8224,17 @@ impl Stashes {
                 let Some(item) = catalog.items.resolve(&object.name_replace) else {
                     continue;
                 };
-                let name = item.display_name.as_deref().unwrap_or(&item.key);
+                let name =
+                    sse_catalog::SaveNaming::item_name(save.format().id(), &item.key, item.display_name.as_deref());
                 let staged = pending_takes.contains(&object.object_id);
                 self.entries.push(StashEntry {
                     label: tr(
                         "{0} · тайник {1} · 0x{2}",
-                        &[&t(name), &box_object.name_replace, &format!("{:04X}", object.object_id)],
+                        &[
+                            &t(&name),
+                            &box_object.name_replace,
+                            &format!("{:04X}", object.object_id),
+                        ],
                     ),
                     action: StashAction::XrayTake(object.object_id),
                     action_text: t(if staged {
@@ -8238,7 +8257,12 @@ impl Stashes {
                 let Some(definition) = catalog.items.resolve(&item.section) else {
                     continue;
                 };
-                let name = t(definition.display_name.as_deref().unwrap_or(&definition.key));
+                let definition_name = sse_catalog::SaveNaming::item_name(
+                    save.format().id(),
+                    &definition.key,
+                    definition.display_name.as_deref(),
+                );
+                let name = t(&definition_name);
                 let staged = pending_puts.get(&item.handle) == Some(&box_id);
                 self.entries.push(StashEntry {
                     label: tr(
