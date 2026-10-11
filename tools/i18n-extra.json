@@ -14142,5 +14142,22 @@
     "ko": "돈: {0} RU · 아이템: {1} · 은닉처: —\n게임 시간: {2} · 캐릭터: — · 체력: —\n계급: — · 평판: — · 퀘스트: — · 처치: — · 날씨: —",
     "zh-CN": "金钱：{0} RU · 物品：{1} · 藏匿点：—\n游戏时间：{2} · 角色：— · 生命值：—\n等级：— · 声望：— · 任务：— · 击杀：— · 天气：—",
     "zh-TW": "金錢：{0} RU · 物品：{1} · 藏匿點：—\n遊戲時間：{2} · 角色：— · 生命值：—\n等級：— · 聲望：— · 任務：— · 擊殺：— · 天氣：—"
+  },
+  "Этот предмет был взят из тайника редактором; вернуть его можно после того, как игра сама запишет его место — загрузите и сохраните игру.": {
+    "ru": "Этот предмет был взят из тайника редактором; вернуть его можно после того, как игра сама запишет его место — загрузите и сохраните игру.",
+    "uk": "Цей предмет взято зі схову редактором; повернути його можна після того, як гра сама запише його місце — завантажте й збережіть гру.",
+    "en": "This item was taken from a stash by the editor; it can be returned after the game itself records its place — load the game and save it.",
+    "de": "Dieser Gegenstand wurde vom Editor aus dem Versteck genommen; zurücklegen lässt er sich, nachdem das Spiel seinen Platz selbst gespeichert hat — Spiel laden und speichern.",
+    "fr": "Cet objet a été pris d'une cache par l'éditeur ; il pourra être remis après que le jeu a lui-même enregistré sa place — chargez puis sauvegardez la partie.",
+    "it": "Questo oggetto è stato preso da un nascondiglio dall'editor; può essere riposto dopo che il gioco ha registrato da sé la sua posizione — carica e salva la partita.",
+    "es": "Este objeto fue sacado de un escondite por el editor; se puede devolver después de que el juego registre por sí mismo su posición: carga y guarda la partida.",
+    "pl": "Ten przedmiot został wzięty ze schowka przez edytor; można go odłożyć, gdy gra sama zapisze jego miejsce — wczytaj grę i zapisz ją.",
+    "cs": "Tento předmět editor vzal z úkrytu; vrátit jej lze, až hra sama zapíše jeho místo — načtěte hru a uložte ji.",
+    "pt-BR": "Este item foi tirado de um esconderijo pelo editor; ele pode ser devolvido depois que o jogo gravar sozinho a sua posição — carregue e salve o jogo.",
+    "tr": "Bu eşya editör tarafından depodan alındı; oyun konumunu kendisi kaydettikten sonra geri konabilir — oyunu yükleyip kaydedin.",
+    "ja": "このアイテムはエディターによって隠し場所から取り出されました。ゲームが自ら位置を記録した後に戻せます。ゲームを読み込んで保存してください。",
+    "ko": "이 아이템은 편집기가 보관함에서 꺼냈습니다. 게임이 스스로 위치를 기록한 뒤에 되돌릴 수 있습니다. 게임을 불러온 뒤 저장하세요.",
+    "zh-CN": "这件物品已由编辑器从储藏点取出；待游戏自行记录其位置后即可放回。请载入并保存游戏。",
+    "zh-TW": "這件物品已由編輯器從藏匿點取出；待遊戲自行記錄其位置後即可放回。請載入並儲存遊戲。"
   }
 }

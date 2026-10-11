@@ -50,7 +50,7 @@ reference:
 | Item placement | Experimental | Call of Pripyat EE: Experimental (not loaded in the game yet, 12/12); Shadow of Chernobyl EE, Clear Sky EE: Unsupported (slot occupancy cannot be proven: the equipped item reads as slot 0, so a slot move is refused) |
 | Actor faction | Experimental | Experimental (26/26 real saves read the new faction and undo byte-identically) |
 | Faction relations | Experimental | Unsupported (none of the 26 Enhanced Edition saves holds an actor relation entry, so nothing to edit) |
-| Move items to or from a stash | Unsupported (a stash item has no proven placement field, so the take is refused before any write) | Unsupported |
+| Move items to or from a stash | Experimental (the take into the backpack works; the return to a stash is refused until the game records the item's place) | Clear Sky: Unsupported (a stash item has no proven placement field) |
 | Info portions | Experimental | Unsupported |
 | Relocate actor | Experimental | Unsupported |
 | Upgrades | Clear Sky, Call of Pripyat: Experimental; Shadow of Chernobyl: not in the game | Clear Sky EE, Call of Pripyat EE: Experimental (ЧН EE 8/8, ЗП EE 12/12 add and undo byte-identically); Shadow of Chernobyl EE: Unsupported (no upgrade catalog for it and no upgradeable item in the saves measured) |
