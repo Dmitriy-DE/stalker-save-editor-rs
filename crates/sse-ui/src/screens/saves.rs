@@ -1993,8 +1993,27 @@ impl Screen for Overview {
             Content::Panel,
             Look::default(),
         )?;
-        let column = cx.tree.add(
+        // The overview column scrolls as a whole when the window is too short for the tiles and both detail panels.
+        let overview_scroll = cx.tree.add(
             Some(body),
+            NodeKind::Scroll {
+                horizontal: false,
+                vertical: true,
+                offset_x: 0.0,
+                offset_y: 0.0,
+            },
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: crate::layout::Size::new(0.0, 0.0),
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        cx.tree.set_clip_children(overview_scroll, true)?;
+        let column = cx.tree.add(
+            Some(overview_scroll),
             NodeKind::Column,
             Style {
                 grow: 1.0,
@@ -2109,6 +2128,7 @@ impl Screen for Overview {
             Some(column),
             NodeKind::Row,
             Style {
+                shrink: 0.0,
                 gap: Size::new(crate::theme::CONTROL_GAP + 2.0, 0.0),
                 align_items: crate::layout::Align::Stretch,
                 ..Style::default()
@@ -10413,6 +10433,59 @@ mod tests {
     }
 
     /// The Inventory with the durability fixture loaded and rendered at the given window size.
+    /// The overview of the synthetic Clear Sky save, laid out at the given window size.
+    fn rendered_overview(width: u32, height: u32) -> sse_core::Result<(Overview, Tree)> {
+        let source = include_bytes!("../../../../fixtures/synthetic/xray-clear-sky.sav");
+        let loaded = Arc::new(load_xray(source, "xray-clear-sky.sav", "stalker-cs", "clear_sky")?);
+        let workspace = Workspace::default();
+        workspace.lock().selected = Some(loaded);
+        let mut screen = Overview::new(workspace);
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        tree.resize(width, height);
+        let mut app = sse_app::AppState::new();
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: None,
+            status: None,
+            app: &mut app,
+        };
+        screen.build(&mut cx, host)?;
+        screen.render(&mut cx)?;
+        cx.tree.update_layout()?;
+        Ok((screen, tree))
+    }
+
+    /// Every visible row of the information and integrity panels lies inside its panel, at 1920x1080 and 1366x768.
+    #[test]
+    fn overview_detail_rows_stay_inside_their_panels() -> sse_core::Result<()> {
+        for (width, height) in [(1920, 1080), (1366, 768)] {
+            let (screen, tree) = rendered_overview(width, height)?;
+            let set = screen.details.first().ok_or_else(|| Error::damaged("no detail set"))?;
+            for (panel, rows) in [(set.integrity_panel, &set.integrity_rows)] {
+                let panel_rect = tree.rect(panel)?;
+                let panel_bottom = panel_rect
+                    .y
+                    .saturating_add(i32::try_from(panel_rect.height).unwrap_or(i32::MAX));
+                for row in rows.iter().filter(|row| tree.is_visible(**row)) {
+                    let rect = tree.rect(*row)?;
+                    let bottom = rect.y.saturating_add(i32::try_from(rect.height).unwrap_or(i32::MAX));
+                    assert!(
+                        bottom <= panel_bottom,
+                        "{width}x{height}: a row ends at {bottom}, below its panel at {panel_bottom}"
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn rendered_inventory(width: u32, height: u32) -> sse_core::Result<(Inventory, Tree, crate::widget::WidgetId)> {
         let source = include_bytes!("../../../../fixtures/synthetic/writer-durability/xray-durability-cop-source.sav");
         let loaded = Arc::new(load_xray(
