@@ -5178,6 +5178,8 @@ enum EncyclopediaDetail {
     Item {
         category: Option<String>,
         source: String,
+        /// Weight of one unit in kilograms, from the game's `inv_weight`.
+        weight: Option<f64>,
         cost: Option<String>,
     },
     Faction {
@@ -5191,16 +5193,32 @@ enum EncyclopediaDetail {
 impl EncyclopediaDetail {
     fn text(&self, language: &str) -> String {
         match self {
-            Self::Item { category, source, cost } => {
+            Self::Item {
+                category,
+                source,
+                weight,
+                cost,
+            } => {
                 let missing_category = crate::strings::t_in(language, "без категории");
                 let category = category.as_deref().unwrap_or(missing_category);
+                let weight = weight.map_or_else(|| "—".to_owned(), encyclopedia_weight);
                 let cost = cost.as_deref().unwrap_or("—");
-                tr(language, "{0} · {1} · цена: {2}", &[&category, source, &cost])
+                tr(
+                    language,
+                    "{0} · {1} · вес: {2} кг · цена: {3}",
+                    &[&category, source, &weight, &cost],
+                )
             }
             Self::Faction { source } => tr(language, "группировка · {0}", &[source]),
             Self::Location { path } => path.clone(),
         }
     }
+}
+
+/// Weight in kilograms with up to two decimals and no trailing zeros (`0.5`, `1.25`, `3`).
+fn encyclopedia_weight(kilograms: f64) -> String {
+    let text = format!("{kilograms:.2}");
+    text.trim_end_matches('0').trim_end_matches('.').to_owned()
 }
 
 fn encyclopedia_entry_text(language: &str, entry: &EncyclopediaEntry) -> String {
@@ -5306,6 +5324,7 @@ impl Encyclopedia {
                         detail: EncyclopediaDetail::Item {
                             category: item.category.clone(),
                             source: item.source.clone(),
+                            weight: item.unit_weight,
                             cost: item.cost.map(|value| value.to_string()),
                         },
                     });
@@ -6011,11 +6030,27 @@ mod games_localization_tests {
             detail: EncyclopediaDetail::Item {
                 category: None,
                 source: "gamedata".to_owned(),
+                weight: None,
                 cost: None,
             },
         };
         assert_eq!(encyclopedia_entry_text("en", &entry), "item · Medkit · medkit");
-        assert_eq!(entry.detail.text("en"), "No category · gamedata · price: —");
+        // The weight promised by the screen note is collected from the game files and shown.
+        let weighed = EncyclopediaDetail::Item {
+            category: Some("medical".to_owned()),
+            source: "gamedata".to_owned(),
+            weight: Some(0.5),
+            cost: Some("300".to_owned()),
+        };
+        assert_eq!(weighed.text("en"), "medical · gamedata · weight: 0.5 kg · price: 300");
+        assert_eq!(weighed.text("ru"), "medical · gamedata · вес: 0.5 кг · цена: 300");
+        assert_eq!(super::encyclopedia_weight(3.0), "3");
+        assert_eq!(super::encyclopedia_weight(1.25), "1.25");
+        assert_eq!(super::encyclopedia_weight(0.0), "0");
+        assert_eq!(
+            entry.detail.text("en"),
+            "No category · gamedata · weight: — kg · price: —"
+        );
     }
 }
 
@@ -6035,6 +6070,7 @@ mod encyclopedia_result_tests {
                 detail: EncyclopediaDetail::Item {
                     category: None,
                     source: "test".to_owned(),
+                    weight: None,
                     cost: None,
                 },
             }]))),

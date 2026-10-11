@@ -539,27 +539,75 @@ mod tests {
             }
         }
     }
+    /// Class pairs where [`line_break_pair`] disagrees with the official two-code-point cases.
+    ///
+    /// Each entry is `Left>Right` with the corpus verdict: `÷` break allowed, `×` break forbidden. The predicate
+    /// is a pairwise approximation of UAX #14, so these are real differences from the standard, recorded here so
+    /// that the comparison below is exact: a new disagreement or a silently fixed one fails the test.
+    const KNOWN_PAIR_DIVERGENCES: &str = "\
+        Ai>Op÷ Ai>Qu× Ak>Ak÷ Ak>As÷ Ak>Cm× Ak>Qu× Ak>Sa× Ak>Zwj× Al>Op÷ Al>Qu× Al>Vf× Al>Vi× Ap>Al× Ap>Cm× \
+        Ap>Qu× Ap>Sa× Ap>Zwj× As>Ak÷ As>As÷ As>Cm× As>Qu× As>Sa× As>Zwj× B2>B2× B2>Cm× B2>Qu× B2>Sa× B2>Zwj× \
+        Ba>Cm× Ba>Qu× Ba>Sa× Ba>Zwj× Bb>Cb÷ Cb>Ba÷ Cb>Cj÷ Cb>Cm× Cb>Hh÷ Cb>Hy÷ Cb>In÷ Cb>Ns÷ Cb>Qu× Cb>Sa× \
+        Cb>Zwj× Cj>Cm× Cj>Qu× Cj>Sa× Cj>Zwj× Cl>Cm× Cl>Qu× Cl>Sa× Cl>Zwj× Cm>Op÷ Cm>Qu× Cp>Qu× Eb>Cm× Eb>Qu× \
+        Eb>Sa× Eb>Zwj× Em>Cm× Em>Qu× Em>Sa× Em>Zwj× Ex>Cm× Ex>Qu× Ex>Sa× Ex>Zwj× H2>Cm× H2>Qu× H2>Sa× \
+        H2>Zwj× H3>Cm× H3>Qu× H3>Sa× H3>Zwj× Hh>Ai× Hh>Al× Hh>Cm× Hh>Hl× Hh>Qu× Hh>Sa× Hh>Xx× Hh>Zwj× Hl>Op÷ \
+        Hl>Qu× Hy>Ai× Hy>Al× Hy>Cm× Hy>Hl× Hy>Qu× Hy>Sa× Hy>Xx× Hy>Zwj× Id>Cm× Id>Em× Id>Qu× Id>Sa× Id>Zwj× \
+        In>Cm× In>Qu× In>Sa× In>Zwj× Is>Qu× Jl>Cm× Jl>Qu× Jl>Sa× Jl>Zwj× Jt>Cm× Jt>Qu× Jt>Sa× Jt>Zwj× Jv>Cm× \
+        Jv>Qu× Jv>Sa× Jv>Zwj× Ns>Cm× Ns>Qu× Ns>Sa× Ns>Zwj× Nu>Op÷ Nu>Qu× Op>Ai× Op>Ak× Op>Al× Op>Ap× Op>As× \
+        Op>B2× Op>Bb× Op>Cb× Op>Cm× Op>Eb× Op>Em× Op>H2× Op>H3× Op>Hl× Op>Id× Op>Jl× Op>Jt× Op>Jv× Op>Nu× \
+        Op>Op× Op>Po× Op>Pr× Op>Qu× Op>Ri× Op>Sa× Op>Vf× Op>Vi× Op>Xx× Op>Zwj× Po>Nu× Po>Qu× Pr>Nu× Pr>Qu× \
+        Qu>Ai× Qu>Ak× Qu>Al× Qu>Ap× Qu>As× Qu>B2× Qu>Bb× Qu>Cb× Qu>Cm× Qu>Eb× Qu>Em× Qu>H2× Qu>H3× Qu>Hl× \
+        Qu>Id× Qu>Jl× Qu>Jt× Qu>Jv× Qu>Nu× Qu>Op× Qu>Po× Qu>Pr× Qu>Qu× Qu>Ri× Qu>Sa× Qu>Vf× Qu>Vi× Qu>Xx× \
+        Qu>Zwj× Ri>Cm× Ri>Qu× Ri>Ri× Ri>Sa× Ri>Zwj× Sa>Op÷ Sa>Qu× Sp>Ba÷ Sp>Cj÷ Sp>Hh÷ Sp>Hy÷ Sp>In÷ Sp>Ns÷ \
+        Sp>Qu× Sy>Cm× Sy>Hl× Sy>Qu× Sy>Sa× Sy>Zwj× Vf>Cm× Vf>Qu× Vf>Sa× Vf>Zwj× Vi>Cm× Vi>Qu× Vi>Sa× Vi>Zwj× \
+        Xx>Em× Xx>Op÷ Xx>Qu× Zw>Ba÷ Zw>Cj÷ Zw>Cl÷ Zw>Cp÷ Zw>Ex÷ Zw>Gl÷ Zw>Hh÷ Zw>Hy÷ Zw>In÷ Zw>Is÷ Zw>Ns÷ \
+        Zw>Sy÷ Zw>Wj÷ Zwj>Ak× Zwj>Ap× Zwj>As× Zwj>B2× Zwj>Bb× Zwj>Cb× Zwj>Eb× Zwj>Em× Zwj>H2× Zwj>H3× \
+        Zwj>Id× Zwj>Jl× Zwj>Jt× Zwj>Jv× Zwj>Qu× Zwj>Ri× Zwj>Vf× Zwj>Vi×";
+
     #[test]
-    fn official_unicode17_line_break_pairs_cover_table_classes() {
-        // The complete official corpus is retained in-tree. Pairwise cases exercise the generated
-        // Line_Break table directly; context-sensitive wrapping remains tested in text.rs.
+    fn official_unicode17_line_break_pairs_match_the_corpus_verdicts() {
+        // The complete official corpus is retained in-tree. Cases of exactly two code points are the ones a
+        // pairwise predicate can decide alone; longer cases need context and are wrapped in text.rs.
         let mut cases = 0_usize;
         let mut checked = 0_usize;
+        let mut agreed = 0_usize;
+        let mut diverged = std::collections::BTreeSet::new();
         for line in include_str!("../tests/unicode/LineBreakTest-17.0.0.txt").lines() {
-            if let Some((text, _)) = parse_case(line) {
-                cases = cases.saturating_add(1);
-                let mut it = text.chars();
-                if let Some(mut left) = it.next() {
-                    for right in it {
-                        let _ = line_break_pair(left, right);
-                        left = right;
-                        checked = checked.saturating_add(1);
-                    }
-                }
+            let Some((text, expected)) = parse_case(line) else {
+                continue;
+            };
+            cases = cases.saturating_add(1);
+            assert_eq!(expected.last().copied(), Some(text.len()), "{line}");
+            let mut characters = text.char_indices();
+            let (Some((_, left)), Some((offset, right)), None) =
+                (characters.next(), characters.next(), characters.next())
+            else {
+                continue;
+            };
+            checked = checked.saturating_add(1);
+            let corpus_allows_break = expected.contains(&offset);
+            if line_break_pair(left, right) == corpus_allows_break {
+                agreed = agreed.saturating_add(1);
+            } else {
+                let verdict = if corpus_allows_break { '÷' } else { '×' };
+                diverged.insert(format!(
+                    "{:?}>{:?}{verdict}",
+                    line_break_class(left),
+                    line_break_class(right)
+                ));
             }
         }
         assert!(cases > 19_000);
-        assert!(checked > 30_000);
+        assert!(checked > 4_000);
+        assert!(
+            agreed.saturating_mul(100) > checked.saturating_mul(85),
+            "{agreed} of {checked}"
+        );
+        let found = diverged.into_iter().collect::<Vec<_>>().join(" ");
+        assert_eq!(
+            found, KNOWN_PAIR_DIVERGENCES,
+            "pairwise verdicts changed against the official corpus"
+        );
     }
 
     fn read_u32_at(bytes: &[u8], offset: usize) -> u32 {

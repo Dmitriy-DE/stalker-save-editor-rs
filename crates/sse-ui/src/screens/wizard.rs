@@ -328,6 +328,14 @@ impl Wizard {
             text
         }
     }
+    /// Found folders that are not saved yet, each once, compared by [`Self::directory_key`].
+    fn new_directories(saved: &[PathBuf], found: impl IntoIterator<Item = PathBuf>) -> Vec<PathBuf> {
+        let mut known: std::collections::HashSet<String> = saved.iter().map(|path| Self::directory_key(path)).collect();
+        found
+            .into_iter()
+            .filter(|path| known.insert(Self::directory_key(path)))
+            .collect()
+    }
     pub(super) fn auto_search() -> Result<usize> {
         let settings_path = sse_app::default_settings_path();
         let settings = sse_app::AppSettings::load(&settings_path)?;
@@ -335,17 +343,10 @@ impl Wizard {
             custom_save_directories: settings.save_directories.clone(),
             ..SaveDirectoryDiscoveryOptions::default()
         };
-        let mut known: std::collections::HashSet<String> = settings
-            .save_directories
-            .iter()
-            .flatten()
-            .map(|path| path.to_string_lossy().trim().to_lowercase())
-            .collect();
-        let found: Vec<PathBuf> = SaveDirectoryLocator::find_candidate_directories(Some(&options))
+        let candidates = SaveDirectoryLocator::find_candidate_directories(Some(&options))
             .into_iter()
-            .map(|candidate| candidate.directory_path)
-            .filter(|path| known.insert(path.to_string_lossy().trim().to_lowercase()))
-            .collect();
+            .map(|candidate| candidate.directory_path);
+        let found = Self::new_directories(settings.save_directories.as_deref().unwrap_or_default(), candidates);
         let added = found.len();
         if added > 0 {
             super::submit_settings_write(sse_app::settings_writer::SettingsPatch::AddSaveDirectories(found), None)?;
@@ -482,6 +483,24 @@ mod tests {
         let upper = std::path::Path::new("/tmp/Saves");
         let same = super::Wizard::directory_key(lower) == super::Wizard::directory_key(upper);
         assert_eq!(same, cfg!(any(windows, target_os = "macos")));
+    }
+
+    #[test]
+    fn auto_search_compares_found_folders_by_the_same_case_rule() {
+        use std::path::PathBuf;
+
+        let saved = [PathBuf::from("/games/Saves")];
+        let found = ["/games/saves", "/games/Saves", "/games/other", "/games/other "].map(PathBuf::from);
+
+        let added = super::Wizard::new_directories(&saved, found);
+
+        // Where names are case-sensitive `/games/saves` is another folder and must be offered.
+        let expected: &[&str] = if cfg!(any(windows, target_os = "macos")) {
+            &["/games/other"]
+        } else {
+            &["/games/saves", "/games/other"]
+        };
+        assert_eq!(added, expected.iter().map(PathBuf::from).collect::<Vec<_>>());
     }
     use super::{spawn_wizard_task, Text, Wizard, WizardAction, WizardTaskFinished, WizardTaskKind, WizardWorkResult};
     use crate::event_loop::Message;

@@ -19,6 +19,12 @@ pub const MAXIMUM_HEADER_SIZE: usize = 64 * 1024 * 1024;
 /// Largest allowed size of an extracted file from an archive (512 MiB).
 pub const MAXIMUM_ENTRY_SIZE: u32 = 512 * 1024 * 1024;
 
+/// Largest number of file-table records accepted from one archive.
+///
+/// The archives of the supported games hold tens of thousands of files at most, so this leaves a wide margin
+/// while keeping a hostile 64 MiB table of minimal records from allocating millions of entries.
+pub const MAXIMUM_ENTRY_COUNT: usize = 262_144;
+
 const COMPRESSED_CHUNK_FLAG: u32 = 0x8000_0000;
 
 /// Header decoder function type: takes compressed header bytes and returns candidate decoded header tables.
@@ -480,7 +486,7 @@ fn read_entries(reader: &dyn ReadAt, header_decoder: Option<HeaderDecoder>) -> R
     };
 
     for candidate in &candidate_headers {
-        if let Some(entries) = try_parse_entries(candidate, start_off, data_end) {
+        if let Some(entries) = try_parse_entries(candidate, start_off, data_end)? {
             return Ok(entries);
         }
     }
@@ -488,7 +494,21 @@ fn read_entries(reader: &dyn ReadAt, header_decoder: Option<HeaderDecoder>) -> R
     Err(Error::damaged("archive has no verified file-table header variant"))
 }
 
-fn try_parse_entries(header: &[u8], data_start: usize, data_end: usize) -> Option<Vec<XRayArchiveEntry>> {
+/// Parses one file-table variant. `Ok(None)` means the bytes are not a valid table of this variant.
+///
+/// # Errors
+/// Returns [`Error::Damaged`] when the table holds more than [`MAXIMUM_ENTRY_COUNT`] records.
+fn try_parse_entries(header: &[u8], data_start: usize, data_end: usize) -> Result<Option<Vec<XRayArchiveEntry>>> {
+    match parse_entries(header, data_start, data_end) {
+        Some(entries) if entries.len() > MAXIMUM_ENTRY_COUNT => {
+            Err(Error::damaged("archive file table exceeds the record limit"))
+        }
+        entries => Ok(entries),
+    }
+}
+
+/// Stops one record past [`MAXIMUM_ENTRY_COUNT`], so an oversized table is never collected in full.
+fn parse_entries(header: &[u8], data_start: usize, data_end: usize) -> Option<Vec<XRayArchiveEntry>> {
     let mut entries = Vec::new();
     let mut position = 0usize;
 
@@ -535,6 +555,9 @@ fn try_parse_entries(header: &[u8], data_start: usize, data_end: usize) -> Optio
             crc32: crc,
             offset,
         });
+        if entries.len() > MAXIMUM_ENTRY_COUNT {
+            return Some(entries);
+        }
     }
 
     if entries.is_empty() {
@@ -547,6 +570,34 @@ fn try_parse_entries(header: &[u8], data_start: usize, data_end: usize) -> Optio
 #[cfg(test)]
 mod bounds_tests {
     use super::*;
+
+    /// A table of `count` smallest valid records: empty name, no data.
+    fn minimal_table(count: usize) -> Vec<u8> {
+        let mut record = Vec::new();
+        record.extend_from_slice(&16_u16.to_le_bytes());
+        record.extend_from_slice(&[0_u8; 16]);
+        record.repeat(count)
+    }
+
+    #[test]
+    fn file_table_record_count_is_limited() {
+        let at_limit = try_parse_entries(&minimal_table(MAXIMUM_ENTRY_COUNT), 0, 1);
+        assert!(at_limit.is_ok_and(|entries| entries.is_some_and(|entries| entries.len() == MAXIMUM_ENTRY_COUNT)));
+
+        // 1.5 million records fit in the 64 MiB header limit; they must be refused, not collected.
+        let hostile = minimal_table(1_500_000);
+        assert!(hostile.len() <= MAXIMUM_HEADER_SIZE);
+        let refused = try_parse_entries(&hostile, 0, 1);
+        assert!(
+            matches!(refused, Err(Error::Damaged(_))),
+            "{:?}",
+            refused.map(|e| e.map(|e| e.len()))
+        );
+        assert!(matches!(
+            try_parse_entries(&minimal_table(MAXIMUM_ENTRY_COUNT.saturating_add(1)), 0, 1),
+            Err(Error::Damaged(_))
+        ));
+    }
 
     #[test]
     fn entry_range_is_rejected_before_read_buffer_allocation() {

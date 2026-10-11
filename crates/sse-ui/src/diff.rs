@@ -566,7 +566,10 @@ pub fn merge3(base: &[u8], left: &[u8], right: &[u8]) -> Result<MergeResult> {
         all.push((0usize, e.clone()));
     }
     for e in &re {
-        all.push((1usize, e.clone()));
+        // The same edit made on both sides is one change: applying it from each side would duplicate it.
+        if !le.contains(e) {
+            all.push((1usize, e.clone()));
+        }
     }
     all.sort_by_key(|(_, e)| e.0);
     let mut conflicts = Vec::new();
@@ -701,6 +704,30 @@ mod tests {
         let r = merge3(b"a\nb\nc\n", b"A\nb\nc\n", b"a\nb\nC\n").ok();
         assert_eq!(r.as_ref().map(|x| x.conflicts.len()), Some(0));
         assert_eq!(r.as_ref().map(|x| x.bytes.as_slice()), Some(b"A\nb\nC\n".as_slice()));
+    }
+    #[test]
+    fn merge_applies_an_edit_made_on_both_sides_once() {
+        let merged = |base: &[u8], left: &[u8], right: &[u8]| {
+            merge3(base, left, right)
+                .ok()
+                .filter(|result| result.conflicts.is_empty())
+                .map(|result| String::from_utf8_lossy(&result.bytes).into_owned())
+        };
+        // Both sides insert the same first line; only the right side also changes the last one.
+        assert_eq!(
+            merged(b"a\nb\n", b"x\na\nb\n", b"x\na\nB\n").as_deref(),
+            Some("x\na\nB\n")
+        );
+        assert_eq!(
+            merged(b"a\nb\n", b"x\na\nB\n", b"x\na\nb\n").as_deref(),
+            Some("x\na\nB\n")
+        );
+        // The same replacement and the same deletion on both sides, next to a one-sided edit.
+        assert_eq!(
+            merged(b"a\nb\nc\n", b"A\nb\nc\n", b"A\nb\nC\n").as_deref(),
+            Some("A\nb\nC\n")
+        );
+        assert_eq!(merged(b"a\nb\nc\n", b"b\nc\n", b"b\nC\n").as_deref(), Some("b\nC\n"));
     }
     #[test]
     fn sixty_generated_patch_cases_round_trip() {
