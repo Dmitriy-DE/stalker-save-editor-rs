@@ -32,14 +32,14 @@ reference:
 | Ammunition stacks | Verified | Experimental |
 | Add items | Verified | Experimental |
 | Remove items | Verified | Experimental |
-| Equipment condition | Experimental | Shadow of Chernobyl EE: Experimental; Clear Sky EE and Call of Pripyat EE: Unsupported |
+| Equipment condition | Experimental | Shadow of Chernobyl EE: Experimental (not loaded in the game yet); Clear Sky EE and Call of Pripyat EE: Unsupported (waiting for saves) |
 | Item placement | Experimental | Unsupported |
 | Actor faction | Experimental | Unsupported |
 | Faction relations | Experimental | Unsupported |
 | Move items to or from a stash | Experimental | Unsupported |
 | Info portions | Experimental | Unsupported |
 | Relocate actor | Experimental | Unsupported |
-| Upgrades | Clear Sky, Call of Pripyat: Experimental; Shadow of Chernobyl: Unsupported | Unsupported |
+| Upgrades | Clear Sky, Call of Pripyat: Experimental; Shadow of Chernobyl: not in the game | Unsupported (the editor has no upgrade catalog for these) |
 
 *Verified* means the reference fixtures confirm the field. It does not mean a game has loaded the result.
 *Experimental* means the reference allows the edit with experimental status: it is checked by the writer and by a
