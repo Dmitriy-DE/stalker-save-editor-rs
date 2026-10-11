@@ -6286,158 +6286,6 @@
     "zh-CN": "添加物品",
     "zh-TW": "新增物品"
   },
-  "{0} · {1:0.#} ч": {
-    "fr": "{0} · {1:0.#} h",
-    "es": "{0} · {1:0.#} h",
-    "it": "{0} · {1:0.#} h",
-    "cs": "{0} · {1:0.#} h"
-  },
-  "Бандиты": {
-    "fr": "Bandits"
-  },
-  "Водка": {
-    "fr": "Vodka",
-    "es": "Vodka",
-    "it": "Vodka",
-    "cs": "Vodka"
-  },
-  "ГРУППИРОВКА": {
-    "fr": "GROUPEMENT"
-  },
-  "ГРУППИРОВКА*": {
-    "fr": "GROUPEMENT*"
-  },
-  "Громкость": {
-    "fr": "Volume",
-    "it": "Volume"
-  },
-  "Группировка": {
-    "fr": "Groupement"
-  },
-  "Группировка {0}": {
-    "fr": "Groupement {0}"
-  },
-  "ДЕЙСТВИЕ": {
-    "fr": "ACTION"
-  },
-  "ДЕЙСТВИЯ": {
-    "fr": "ACTIONS"
-  },
-  "ИНТЕРФЕЙС": {
-    "fr": "INTERFACE"
-  },
-  "ИСТОЧНИК": {
-    "fr": "SOURCE"
-  },
-  "Источник": {
-    "fr": "Source"
-  },
-  "Куда перенести": {
-    "fr": "Vers"
-  },
-  "ОШИБКА: {0}": {
-    "es": "FALLO: {0}"
-  },
-  "Госпиталь": {
-    "es": "Hospital"
-  },
-  "МОЖНО ИЗМЕНИТЬ": {
-    "es": "MODIFICABLE"
-  },
-  "МОЖНО ИЗМЕНЯТЬ": {
-    "es": "MODIFICABLE"
-  },
-  "Можно изменять": {
-    "es": "Modificable"
-  },
-  "ОБЩИЕ": {
-    "es": "GENERALES"
-  },
-  "ОСНОВНОЕ": {
-    "es": "PRINCIPAL"
-  },
-  "ПНВ": {
-    "it": "Visore"
-  },
-  "Данные": {
-    "cs": "Údaje"
-  },
-  "Идентификатор Binance: 434350727": {
-    "cs": "ID Binance: 434350727"
-  },
-  "РЕЗЕРВНАЯ КОПИЯ": {
-    "it": "COPIA DI BACKUP"
-  },
-  "Резервная копия": {
-    "it": "Copia di backup"
-  },
-  "ОШИБКА": {
-    "es": "FALLO"
-  },
-  "Ошибка": {
-    "es": "Fallo"
-  },
-  "ЭКСПЕРИМЕНТАЛЬНО": {
-    "es": "EXPERIMENTAL"
-  },
-  "Эксперим. (Experimental)": {
-    "es": "Experimental"
-  },
-  "Экспериментально": {
-    "es": "Experimental"
-  },
-  "ошибка: ": {
-    "es": "fallo: "
-  },
-  "редактируется": {
-    "es": "modificable"
-  },
-  "ЛОКАЛЬНЫЙ": {
-    "fr": "LOCAL",
-    "es": "LOCAL"
-  },
-  "Локальный": {
-    "fr": "Local",
-    "es": "Local"
-  },
-  "ОТНОШЕНИЯ": {
-    "fr": "RELATIONS"
-  },
-  "Описание": {
-    "fr": "Description"
-  },
-  "ПЕРЕХОД": {
-    "fr": "TRANSITION"
-  },
-  "ПЕРЕХОДЫ": {
-    "fr": "TRANSITIONS"
-  },
-  "РАЗДЕЛЫ": {
-    "fr": "RUBRIQUES"
-  },
-  "РАСХ.": {
-    "fr": "CONSO.",
-    "es": "CONS.",
-    "it": "CONS."
-  },
-  "РОДИТЕЛЬ": {
-    "fr": "PARENT"
-  },
-  "Разделы": {
-    "fr": "Rubriques"
-  },
-  "ФРАКЦИИ": {
-    "fr": "FACTIONS"
-  },
-  "Фракции": {
-    "fr": "Factions"
-  },
-  "группировка": {
-    "fr": "groupement"
-  },
-  "сталкеров {0} · мутантов {1}": {
-    "fr": "stalkers {0} · mutants {1}"
-  },
   "Дальше": {
     "ru": "Дальше",
     "uk": "Далі",
@@ -13897,5 +13745,157 @@
     "it": "Yantar",
     "pl": "Jantar",
     "cs": "Jantar"
+  },
+  "{0} · {1:0.#} ч": {
+    "fr": "{0} · {1:0.#} h",
+    "es": "{0} · {1:0.#} h",
+    "it": "{0} · {1:0.#} h",
+    "cs": "{0} · {1:0.#} h"
+  },
+  "Бандиты": {
+    "fr": "Bandits"
+  },
+  "Водка": {
+    "fr": "Vodka",
+    "es": "Vodka",
+    "it": "Vodka",
+    "cs": "Vodka"
+  },
+  "ГРУППИРОВКА": {
+    "fr": "GROUPEMENT"
+  },
+  "ГРУППИРОВКА*": {
+    "fr": "GROUPEMENT*"
+  },
+  "Громкость": {
+    "fr": "Volume",
+    "it": "Volume"
+  },
+  "Группировка": {
+    "fr": "Groupement"
+  },
+  "Группировка {0}": {
+    "fr": "Groupement {0}"
+  },
+  "ДЕЙСТВИЕ": {
+    "fr": "ACTION"
+  },
+  "ДЕЙСТВИЯ": {
+    "fr": "ACTIONS"
+  },
+  "ИНТЕРФЕЙС": {
+    "fr": "INTERFACE"
+  },
+  "ИСТОЧНИК": {
+    "fr": "SOURCE"
+  },
+  "Источник": {
+    "fr": "Source"
+  },
+  "Куда перенести": {
+    "fr": "Vers"
+  },
+  "ОШИБКА: {0}": {
+    "es": "FALLO: {0}"
+  },
+  "Госпиталь": {
+    "es": "Hospital"
+  },
+  "МОЖНО ИЗМЕНИТЬ": {
+    "es": "MODIFICABLE"
+  },
+  "МОЖНО ИЗМЕНЯТЬ": {
+    "es": "MODIFICABLE"
+  },
+  "Можно изменять": {
+    "es": "Modificable"
+  },
+  "ОБЩИЕ": {
+    "es": "GENERALES"
+  },
+  "ОСНОВНОЕ": {
+    "es": "PRINCIPAL"
+  },
+  "ПНВ": {
+    "it": "Visore"
+  },
+  "Данные": {
+    "cs": "Údaje"
+  },
+  "Идентификатор Binance: 434350727": {
+    "cs": "ID Binance: 434350727"
+  },
+  "РЕЗЕРВНАЯ КОПИЯ": {
+    "it": "COPIA DI BACKUP"
+  },
+  "Резервная копия": {
+    "it": "Copia di backup"
+  },
+  "ОШИБКА": {
+    "es": "FALLO"
+  },
+  "Ошибка": {
+    "es": "Fallo"
+  },
+  "ЭКСПЕРИМЕНТАЛЬНО": {
+    "es": "EXPERIMENTAL"
+  },
+  "Эксперим. (Experimental)": {
+    "es": "Experimental"
+  },
+  "Экспериментально": {
+    "es": "Experimental"
+  },
+  "ошибка: ": {
+    "es": "fallo: "
+  },
+  "редактируется": {
+    "es": "modificable"
+  },
+  "ЛОКАЛЬНЫЙ": {
+    "fr": "LOCAL",
+    "es": "LOCAL"
+  },
+  "Локальный": {
+    "fr": "Local",
+    "es": "Local"
+  },
+  "ОТНОШЕНИЯ": {
+    "fr": "RELATIONS"
+  },
+  "Описание": {
+    "fr": "Description"
+  },
+  "ПЕРЕХОД": {
+    "fr": "TRANSITION"
+  },
+  "ПЕРЕХОДЫ": {
+    "fr": "TRANSITIONS"
+  },
+  "РАЗДЕЛЫ": {
+    "fr": "RUBRIQUES"
+  },
+  "РАСХ.": {
+    "fr": "CONSO.",
+    "es": "CONS.",
+    "it": "CONS."
+  },
+  "РОДИТЕЛЬ": {
+    "fr": "PARENT"
+  },
+  "Разделы": {
+    "fr": "Rubriques"
+  },
+  "ФРАКЦИИ": {
+    "fr": "FACTIONS"
+  },
+  "Фракции": {
+    "fr": "Factions"
+  },
+  "группировка": {
+    "fr": "groupement"
+  },
+  "сталкеров {0} · мутантов {1}": {
+    "fr": "stalkers {0} · mutants {1}"
   }
 }
