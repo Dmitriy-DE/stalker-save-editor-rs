@@ -2439,7 +2439,13 @@ pub(super) fn item_icon_frame(tree: &mut Tree, parent: WidgetId, size: f32) -> R
     tree.add(
         Some(parent),
         NodeKind::Column,
-        item_icon_frame_style(Some(size)),
+        Style {
+            min: Size::new(size, size),
+            preferred: Size::new(size, size),
+            align_items: crate::layout::Align::Center,
+            padding: crate::layout::Edges::all(2.0),
+            ..Style::default()
+        },
         Content::Panel,
         Look {
             fill: Some(style::d2::argb(crate::theme::d2::BG_BASE)),
