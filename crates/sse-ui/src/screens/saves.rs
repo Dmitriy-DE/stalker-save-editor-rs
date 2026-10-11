@@ -3647,8 +3647,21 @@ impl Inventory {
                     DraftPlacement::Slot(slot) => tr("Слот {0}", &[slot]),
                 };
             }
-            cx.tree
-                .set_text(id, &tr!("Размещение: {placement}", placement = placement))?;
+            let text = tr!("Размещение: {placement}", placement = placement);
+            let enhanced_placement = match &selected.data {
+                SaveData::Xray { save, .. } => {
+                    matches!(save.format(), sse_xray::Format::CopEe)
+                        && writer::capability(save.format(), writer::ChangeKind::EditPlacement)
+                            != writer::Capability::Unsupported
+                }
+                _ => false,
+            };
+            if enhanced_placement {
+                let note = t("Не проверено в игре для Enhanced Edition. Перед записью создаётся резервная копия.");
+                cx.tree.set_text(id, &format!("{text}\n{note}"))?;
+            } else {
+                cx.tree.set_text(id, &text)?;
+            }
         }
         let upgrades = state
             .pending_upgrades
