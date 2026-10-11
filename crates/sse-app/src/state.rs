@@ -361,6 +361,7 @@ fn plan_has_changes(plan: &DraftPlan) -> bool {
         || !plan.adds.is_empty()
         || !plan.stash_takes.is_empty()
         || !plan.s2_stash_takes.is_empty()
+        || !plan.s2_stash_puts.is_empty()
         || !plan.stash_puts.is_empty()
         || plan.unmapped_legacy_plan.is_some()
 }
