@@ -987,6 +987,12 @@ impl Tree {
         self.restyle(id)
     }
 
+    /// The parent of a widget, or `None` for the root.
+    #[must_use]
+    pub fn parent(&self, id: WidgetId) -> Option<WidgetId> {
+        self.nodes.get(id.0).and_then(|node| node.parent)
+    }
+
     /// Direct children of a widget, in the order they were added.
     #[must_use]
     pub fn children(&self, id: WidgetId) -> Vec<WidgetId> {

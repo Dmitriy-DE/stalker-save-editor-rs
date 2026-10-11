@@ -3151,7 +3151,14 @@ impl Shell {
             tree.update_layout()?;
             let area = tree.rect(self.content)?;
             let top = i64::from(tree.rect(host)?.y);
-            let bottom = i64::from(area.y).saturating_add(i64::from(area.height));
+            // The status line is a bar of its own: the content must end where that bar starts, not where its text does.
+            let content_bottom = i64::from(area.y).saturating_add(i64::from(area.height));
+            let bar_top = tree
+                .parent(self.status)
+                .map(|bar| tree.rect(bar).map(|rect| i64::from(rect.y)))
+                .transpose()?
+                .unwrap_or(content_bottom);
+            let bottom = content_bottom.min(bar_top);
             let visible = u32::try_from(bottom.saturating_sub(top).max(0)).unwrap_or(0) as f32;
             Style {
                 grow: 1.0,
