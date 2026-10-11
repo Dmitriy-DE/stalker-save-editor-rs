@@ -19,8 +19,8 @@ pub mod signature;
 pub use detector::{UpdateInstallation, UpdateInstallationDetector, LINUX_PACKAGE_INSTALL_ROOT};
 pub use fetch::{download_artifact, verify_existing_file, ContentRange, DefaultFetch, Fetch, Response};
 pub use installer::{
-    install_artifact, prepare_private_directory, ProcessRunner, SystemProcessRunner, UpdateInstallResult,
-    UpdateInstallState,
+    install_artifact, prepare_private_directory, staged_artifact_path, ProcessRunner, SystemProcessRunner,
+    UpdateInstallResult, UpdateInstallState,
 };
 pub use manifest::{
     compare_versions, PrereleasePart, SemVer, UpdateArtifact, UpdateManifest, UpdateState, MAXIMUM_ARTIFACT_BYTES,

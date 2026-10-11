@@ -391,5 +391,14 @@ mod tests {
             self.program = Some(program.to_owned());
             Ok(0)
         }
+
+        fn run_staged_artifact(
+            &mut self,
+            _staging_root: &std::path::Path,
+            artifact: &std::path::Path,
+        ) -> sse_core::Result<i32> {
+            self.program = Some(artifact.display().to_string());
+            Ok(0)
+        }
     }
 }

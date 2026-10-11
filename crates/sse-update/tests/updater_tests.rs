@@ -878,6 +878,52 @@ fn portable_update_reports_verified_archive_and_manual_steps_without_staging() {
 }
 
 #[test]
+fn windows_installer_handoff_runs_the_staged_file_by_its_path_inside_the_staging_directory() {
+    let archive_bytes = b"windows installer bytes".to_vec();
+    let artifact = UpdateArtifact {
+        target: "windows-installer-x86_64".to_string(),
+        architecture: "x86_64".to_string(),
+        kind: "installer".to_string(),
+        file: "SaveEditor-Setup.exe".to_string(),
+        size: u64::try_from(archive_bytes.len()).unwrap(),
+        sha256: sse_codecs::sha256::sha256_hex(&archive_bytes),
+        url: "https://updates.test/SaveEditor-Setup.exe".to_string(),
+        release_version: String::new(),
+    };
+    let temp = TempDir::new("windows-installer-handoff");
+    let archive_path = temp.path.join(&artifact.file);
+    fs::write(&archive_path, &archive_bytes).unwrap();
+    let installation = UpdateInstallation {
+        target: "windows".to_string(),
+        architecture: "x86_64".to_string(),
+        kind: "installer".to_string(),
+        root: temp.path.clone(),
+        executable: temp.path.join("sse-shell.exe"),
+    };
+    let mut runner = MockProcessRunner::new(0);
+
+    let result = install_artifact(&artifact, &archive_path, &installation, &mut runner).unwrap();
+
+    assert_eq!(result.state, UpdateInstallState::Succeeded);
+    assert_eq!(result.exit_code, Some(0));
+    // The staged file is never passed through the helper-name lookup, which refuses every path.
+    assert!(runner.last_program.is_none());
+    assert_eq!(runner.staged_runs.len(), 1);
+    let (staging_root, staged) = runner.staged_runs.first().unwrap();
+    assert_eq!(staging_root, &temp.path.join("verified-install"));
+    // The staging directory is removed after the run, so its resolved form is rebuilt from the parent that
+    // still exists (`/var` -> `/private/var` on macOS, `\\?\` prefixes on Windows).
+    assert!(staged.starts_with(canonical_path(&temp.path).join("verified-install")));
+    assert_eq!(staged.file_name().unwrap(), "SaveEditor-Setup.exe");
+    assert!(!temp.path.join("verified-install").exists());
+
+    let mut failing = MockProcessRunner::new(3);
+    let failed = install_artifact(&artifact, &archive_path, &installation, &mut failing).unwrap();
+    assert_eq!(failed.state, UpdateInstallState::Failed);
+    assert_eq!(failed.exit_code, Some(3));
+}
+
+#[test]
 fn installer_handoff_refuses_tampered_local_file() {
     let archive_bytes = b"original package bytes".to_vec();
     let sha = sse_codecs::sha256::sha256_hex(&archive_bytes);
