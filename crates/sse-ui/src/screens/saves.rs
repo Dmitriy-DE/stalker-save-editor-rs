@@ -4905,7 +4905,9 @@ fn commit_save_edits_to(
     stash_moves: &S2StashMoves,
     backup_directory: &Path,
 ) -> Result<(Arc<LoadedSave>, String)> {
-    let (packed, summary) = prepare_save_edits(selected, edits, stash_moves)?;
+    let mut outcome = S2MoveOutcome::default();
+    let (packed, summary) = prepare_save_edits_with_outcome(selected, edits, stash_moves, &mut outcome)?;
+    let outcome_ref = &outcome;
     // SaveBuffer clones share their Arc<[u8]>; move the one preflight handle into the reloaded save.
     let preflight_image = packed.clone();
     let request = transaction::ReplacementRequest::new(
@@ -4923,7 +4925,7 @@ fn commit_save_edits_to(
                 return Err(Error::damaged("prepared save bytes changed before semantic preflight"));
             }
             let reloaded = LoadedSave::from_buffer(selected.slot.clone(), preflight_image)?;
-            verify_requested_values(selected, &reloaded, edits, stash_moves)?;
+            verify_requested_values(selected, &reloaded, edits, outcome_ref)?;
             Ok(reloaded)
         },
         |read_back| {
@@ -4983,6 +4985,15 @@ fn commit_save_edits_to(
             )
         ));
     }
+    if !outcome.puts_applied.is_empty() || !outcome.puts_refused.is_empty() {
+        save_message.push_str(&format!(
+            " {}",
+            tr(
+                "В тайник: перенесено {0}, отказано {1}.",
+                &[&outcome.puts_applied.len(), &outcome.puts_refused.len()],
+            )
+        ));
+    }
     if summary.stash_stopped {
         save_message.push_str(&format!(
             " {}",
@@ -4997,14 +5008,15 @@ fn prepare_browser_save(
     edits: &PendingInventoryEdits,
     stash_moves: &S2StashMoves,
 ) -> Result<(Arc<LoadedSave>, BrowserDownload)> {
-    let (packed, _) = prepare_save_edits(selected, edits, stash_moves)?;
+    let mut outcome = S2MoveOutcome::default();
+    let (packed, _) = prepare_save_edits_with_outcome(selected, edits, stash_moves, &mut outcome)?;
     if u64::try_from(packed.len()).unwrap_or(u64::MAX) > MAX_BROWSER_SAVE_BYTES {
         return Err(Error::Refused(
             "edited save exceeds the browser download limit".to_owned(),
         ));
     }
     let mut reloaded = LoadedSave::from_buffer(selected.slot.clone(), packed.clone())?;
-    verify_requested_values(selected, &reloaded, edits, stash_moves)?;
+    verify_requested_values(selected, &reloaded, edits, &outcome)?;
     reloaded.slot.size = u64::try_from(packed.len()).unwrap_or(u64::MAX);
     reloaded.info = save_info(&reloaded.slot);
     let (crc_status, format) = match &reloaded.data {
@@ -5082,10 +5094,31 @@ fn prepare_xray_edits(
     )
 }
 
+/// What the S2 writer actually did with the requested stash moves, taken from the transfer results.
+///
+/// `takes_applied` and `puts_applied` moved an item; `takes_refused` and `puts_refused` left it where it was.
+#[derive(Clone, Default, PartialEq, Eq)]
+struct S2MoveOutcome {
+    takes_applied: BTreeSet<u32>,
+    takes_refused: BTreeSet<u32>,
+    puts_applied: BTreeSet<u32>,
+    puts_refused: BTreeSet<u32>,
+}
+
 fn prepare_save_edits(
     selected: &LoadedSave,
     edits: &PendingInventoryEdits,
     stash_moves: &S2StashMoves,
+) -> Result<(SaveBuffer, EditSummary)> {
+    let mut outcome = S2MoveOutcome::default();
+    prepare_save_edits_with_outcome(selected, edits, stash_moves, &mut outcome)
+}
+
+fn prepare_save_edits_with_outcome(
+    selected: &LoadedSave,
+    edits: &PendingInventoryEdits,
+    stash_moves: &S2StashMoves,
+    outcome: &mut S2MoveOutcome,
 ) -> Result<(SaveBuffer, EditSummary)> {
     match &selected.data {
         SaveData::Xray { save, inventory } => {
@@ -5506,6 +5539,12 @@ fn prepare_save_edits(
                 summary.stash_no_room = transfer.refused_count(sse_s2::S2SkipReason::NoRoom);
                 summary.stash_unsupported = transfer.refused_count(sse_s2::S2SkipReason::Unsupported);
                 summary.stash_refused_other = transfer.refused_count(sse_s2::S2SkipReason::Other);
+                outcome.takes_applied = transfer.moved.iter().copied().collect();
+                outcome.takes_refused = handles
+                    .iter()
+                    .copied()
+                    .filter(|handle| !outcome.takes_applied.contains(handle))
+                    .collect();
                 written = Some(bytes);
             }
             if !put_handles.is_empty() {
@@ -5525,17 +5564,12 @@ fn prepare_save_edits(
                         &[&transfer.moved.len(), &put_handles.len(), &message],
                     )));
                 }
-                summary.move_count = summary.move_count.saturating_add(transfer.moved.len());
-                summary.stash_skipped = summary.stash_skipped.saturating_add(transfer.skipped.len());
-                summary.stash_no_room = summary
-                    .stash_no_room
-                    .saturating_add(transfer.refused_count(sse_s2::S2SkipReason::NoRoom));
-                summary.stash_unsupported = summary
-                    .stash_unsupported
-                    .saturating_add(transfer.refused_count(sse_s2::S2SkipReason::Unsupported));
-                summary.stash_refused_other = summary
-                    .stash_refused_other
-                    .saturating_add(transfer.refused_count(sse_s2::S2SkipReason::Other));
+                outcome.puts_applied = transfer.moved.iter().copied().collect();
+                outcome.puts_refused = put_handles
+                    .iter()
+                    .copied()
+                    .filter(|handle| !outcome.puts_applied.contains(handle))
+                    .collect();
                 if let Some(bytes) = transfer.packed {
                     written = Some(bytes);
                 }
@@ -5552,7 +5586,7 @@ fn verify_requested_values(
     original: &LoadedSave,
     selected: &LoadedSave,
     edits: &PendingInventoryEdits,
-    stash_moves: &S2StashMoves,
+    outcome: &S2MoveOutcome,
 ) -> Result<()> {
     let actual_money = match &selected.data {
         SaveData::Xray { save, .. } => save.money()?,
@@ -5674,7 +5708,7 @@ fn verify_requested_values(
             verified_handles.insert(added_item.handle);
         }
     }
-    for handle in &stash_moves.takes {
+    for handle in &outcome.takes_applied {
         let before = match &original.data {
             SaveData::Stalker2 { stash_items, .. } => stash_items
                 .as_ref()
@@ -5751,16 +5785,39 @@ fn verify_requested_values(
             }
         }
     }
-    for handle in &stash_moves.puts {
-        let SaveData::Stalker2 { save, inventory, .. } = &selected.data else {
-            return Err(Error::Refused(
-                "S2 backpack-to-stash transfer cannot be verified against an X-Ray read-back".to_owned(),
-            ));
-        };
-        // A refused item stays in the backpack, so the check only requires one of the two lists, not a move.
-        let in_stash = save.stash_items()?.iter().any(|item| item.handle == *handle);
-        let in_backpack = inventory.iter().any(|item| item.handle == *handle);
-        if in_stash == in_backpack {
+    // An applied take must leave the item in the backpack only, an applied put in the stash only. A refused move
+    // must leave the item where it was. An item missing from both lists, or present
+    // in both, is a failed read-back, even when the writer reported success.
+    let SaveData::Stalker2 { save, inventory, .. } = &selected.data else {
+        if outcome.takes_applied.is_empty()
+            && outcome.takes_refused.is_empty()
+            && outcome.puts_applied.is_empty()
+            && outcome.puts_refused.is_empty()
+        {
+            return Ok(());
+        }
+        return Err(Error::Refused(
+            "S2 stash transfer cannot be verified against an X-Ray read-back".to_owned(),
+        ));
+    };
+    let stash_handles = save.stash_items()?.iter().map(|item| item.handle).collect::<Vec<_>>();
+    let backpack_handles = inventory.iter().map(|item| item.handle).collect::<Vec<_>>();
+    let count = |list: &[u32], handle: u32| list.iter().filter(|candidate| **candidate == handle).count();
+    for handle in outcome.takes_applied.iter().chain(&outcome.takes_refused) {
+        let applied = outcome.takes_applied.contains(handle);
+        let in_backpack = count(&backpack_handles, *handle) == usize::from(applied);
+        let in_stash = count(&stash_handles, *handle) == usize::from(!applied);
+        if !(in_stash && in_backpack) {
+            return Err(Error::damaged(format!(
+                "S2 stash item 0x{handle:08X} differs after read-back"
+            )));
+        }
+    }
+    for handle in outcome.puts_applied.iter().chain(&outcome.puts_refused) {
+        let applied = outcome.puts_applied.contains(handle);
+        let in_stash = count(&stash_handles, *handle) == usize::from(applied);
+        let in_backpack = count(&backpack_handles, *handle) == usize::from(!applied);
+        if !(in_stash && in_backpack) {
             return Err(Error::damaged(format!(
                 "S2 backpack item 0x{handle:08X} differs after read-back"
             )));
@@ -9554,12 +9611,12 @@ pub(super) fn short_text(text: &str, limit: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::S2StashMoves;
     use super::{
         add_external_file_banner, commit_save_edits_to, prepare_browser_save, prepare_save_edits, prepare_xray_edits,
         AddRequest, DraftJournal, DraftPlan, DraftStore, Inventory, ItemHandle, LoadFinished, LoadedSave, Overview,
         PendingInventoryEdits, S2Save, SaveBuffer, SaveSlot, StartupBackupCheck, Workspace,
     };
+    use super::{S2MoveOutcome, S2StashMoves};
     use crate::event_loop::{channel_pair, Message, WindowEvent};
     use crate::glyphs::Fonts;
     use crate::layout::{NodeKind, Style};
@@ -9902,7 +9959,7 @@ mod tests {
         };
         let (output, summary) = prepare_save_edits(&loaded, &edits, &S2StashMoves::default())?;
         let reloaded = LoadedSave::from_bytes(loaded.slot.clone(), output.as_slice())?;
-        super::verify_requested_values(&loaded, &reloaded, &edits, &S2StashMoves::default())?;
+        super::verify_requested_values(&loaded, &reloaded, &edits, &S2MoveOutcome::default())?;
         assert_eq!(summary.relation_count, 1);
         Ok(())
     }
@@ -9989,7 +10046,7 @@ mod tests {
         let (output, summary) = prepare_save_edits(&loaded, &edits, &S2StashMoves::default())?;
         assert_eq!(output.as_slice(), expected);
         let reloaded = LoadedSave::from_bytes(loaded.slot.clone(), output.as_slice())?;
-        super::verify_requested_values(&loaded, &reloaded, &edits, &S2StashMoves::default())?;
+        super::verify_requested_values(&loaded, &reloaded, &edits, &S2MoveOutcome::default())?;
         assert_eq!(summary.move_count, 1);
         Ok(())
     }
@@ -10544,7 +10601,7 @@ mod tests {
             "stalker-cop",
             "cop",
         )?;
-        super::verify_requested_values(&loaded, &reloaded, &edits, &S2StashMoves::default())?;
+        super::verify_requested_values(&loaded, &reloaded, &edits, &S2MoveOutcome::default())?;
         Ok(())
     }
 
@@ -10561,7 +10618,7 @@ mod tests {
         };
         let (output, _) = prepare_save_edits(&loaded, &edits, &S2StashMoves::default())?;
         let reloaded = LoadedSave::from_bytes(loaded.slot.clone(), output.as_slice())?;
-        super::verify_requested_values(&loaded, &reloaded, &edits, &S2StashMoves::default())?;
+        super::verify_requested_values(&loaded, &reloaded, &edits, &S2MoveOutcome::default())?;
         assert_eq!(reloaded.slot.format_id.as_deref(), Some("stalker-cop"));
         let actual = Save::read(output.as_slice())?;
         let added = actual
@@ -11129,12 +11186,79 @@ mod tests {
             &original,
             &corrupted,
             &PendingInventoryEdits::default(),
-            &S2StashMoves {
-                takes: BTreeSet::from([handle]),
+            &S2MoveOutcome {
+                takes_applied: BTreeSet::from([handle]),
                 ..Default::default()
             },
         )
         .is_err());
+        Ok(())
+    }
+
+    /// Stash item and backpack item from the synthetic fixture: the original, and the same save after one take.
+    fn s2_take_pair() -> sse_core::Result<(LoadedSave, LoadedSave, u32)> {
+        let original_bytes = include_bytes!("../../../../fixtures/synthetic/writer-s2-stash/s2-stash-source.sav");
+        let slot = fixture_slot("stash.sav", "stalker2", "stalker2");
+        let original = LoadedSave::from_bytes(slot.clone(), original_bytes)?;
+        let (handle, moved_bytes) = match &original.data {
+            super::SaveData::Stalker2 { save, stash_items, .. } => {
+                let handle = stash_items
+                    .as_ref()
+                    .ok_or_else(|| Error::damaged("S2 stash fixture has no stash index"))?
+                    .as_ref()
+                    .map_err(|error| Error::damaged(error.clone()))?
+                    .first()
+                    .ok_or_else(|| Error::damaged("S2 stash fixture has no items"))?
+                    .handle;
+                (handle, save.write_changes(&[S2Change::MoveStashToBackpack { handle }])?)
+            }
+            super::SaveData::Xray { .. } => return Err(Error::damaged("S2 fixture parsed as X-Ray")),
+        };
+        let moved = LoadedSave::from_bytes(slot, &moved_bytes)?;
+        Ok((original, moved, handle))
+    }
+
+    #[test]
+    fn applied_put_that_stayed_in_the_backpack_fails_readback() -> sse_core::Result<()> {
+        let (_, moved, handle) = s2_take_pair()?;
+        // The writer reports the put as applied, but the item is still in the backpack and not in the stash.
+        assert!(super::verify_requested_values(
+            &moved,
+            &moved,
+            &PendingInventoryEdits::default(),
+            &S2MoveOutcome {
+                puts_applied: BTreeSet::from([handle]),
+                ..Default::default()
+            },
+        )
+        .is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn refused_put_and_refused_take_pass_readback_when_they_stayed_put() -> sse_core::Result<()> {
+        let (original, moved, handle) = s2_take_pair()?;
+        // A refused put leaves the item in the backpack; a refused take leaves it in the stash.
+        assert!(super::verify_requested_values(
+            &moved,
+            &moved,
+            &PendingInventoryEdits::default(),
+            &S2MoveOutcome {
+                puts_refused: BTreeSet::from([handle]),
+                ..Default::default()
+            },
+        )
+        .is_ok());
+        assert!(super::verify_requested_values(
+            &original,
+            &original,
+            &PendingInventoryEdits::default(),
+            &S2MoveOutcome {
+                takes_refused: BTreeSet::from([handle]),
+                ..Default::default()
+            },
+        )
+        .is_ok());
         Ok(())
     }
 

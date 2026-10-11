@@ -13999,5 +13999,22 @@
     "ko": "은닉처 이동은 게임에서 확인되지 않았습니다. 쓰기 전에 백업을 만듭니다.",
     "zh-CN": "移入藏匿处未在游戏中验证。写入前会创建备份。",
     "zh-TW": "移入藏匿處未在遊戲中驗證。寫入前會建立備份。"
+  },
+  "В тайник: перенесено {0}, отказано {1}.": {
+    "ru": "В тайник: перенесено {0}, отказано {1}.",
+    "uk": "В тайник: перенесено {0}, відмовлено {1}.",
+    "en": "To stash: moved {0}, refused {1}.",
+    "de": "In das Versteck: verschoben {0}, abgelehnt {1}.",
+    "fr": "Vers la cache : déplacé {0}, refusé {1}.",
+    "it": "Nel nascondiglio: spostati {0}, rifiutati {1}.",
+    "es": "Al alijo: trasladados {0}, rechazados {1}.",
+    "pl": "Do skrytki: przeniesiono {0}, odrzucono {1}.",
+    "cs": "Do úkrytu: přesunuto {0}, odmítnuto {1}.",
+    "pt-BR": "Para o esconderijo: movidos {0}, recusados {1}.",
+    "tr": "Zulaya: aktarılan {0}, reddedilen {1}.",
+    "ja": "隠し場所へ: 移動 {0}、拒否 {1}。",
+    "ko": "은닉처로: 이동 {0}, 거부 {1}.",
+    "zh-CN": "移入藏匿处：已移动 {0}，已拒绝 {1}。",
+    "zh-TW": "移入藏匿處：已移動 {0}，已拒絕 {1}。"
   }
 }
