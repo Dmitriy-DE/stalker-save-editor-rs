@@ -1,9 +1,12 @@
 //! Text drawing: the editor's bundled fonts, glyph coverage cache and single-line runs.
 
+use crate::fallback_font::{is_cjk, SystemFaces};
 use crate::raster::{Color, MaskRef, Surface};
 use sse_codecs::font::{rasterize, Font, GlyphId, OutlineSink, Segment};
 use sse_core::Result;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 
 const BODY_REGULAR: &[u8] = include_bytes!("../assets/fonts/LiberationSansNarrow-Regular.ttf");
 const BODY_BOLD: &[u8] = include_bytes!("../assets/fonts/LiberationSansNarrow-Bold.ttf");
@@ -62,6 +65,8 @@ struct GlyphKey {
     glyph: u16,
     size_bits: u32,
     subpixel: u8,
+    /// Drawn from a system font (a CJK glyph the bundled faces lack), not from the bundled face.
+    system: bool,
 }
 
 struct GlyphMask {
@@ -79,6 +84,10 @@ pub struct Fonts {
     heading: Font<'static>,
     heading_medium: Font<'static>,
     cache: HashMap<GlyphKey, GlyphMask>,
+    /// System fonts for CJK glyphs, loaded on first need; `None` inside when this machine has none.
+    system: OnceLock<Option<SystemFaces>>,
+    /// Set when a CJK glyph had no system font to come from; read once by [`Fonts::take_system_font_missing`].
+    system_missing: AtomicBool,
 }
 
 impl Fonts {
@@ -93,7 +102,63 @@ impl Fonts {
             heading: Font::parse_with_weight(HEADING, 0, 600.0)?,
             heading_medium: Font::parse_with_weight(HEADING, 0, 500.0)?,
             cache: HashMap::new(),
+            system: OnceLock::new(),
+            system_missing: AtomicBool::new(false),
         })
+    }
+
+    /// The system font's glyph for a CJK character the bundled faces lack. Loads the system font on first need only.
+    fn system_glyph(&self, character: char) -> Option<(&Font<'static>, GlyphId)> {
+        if !is_cjk(character) {
+            return None;
+        }
+        let faces = self
+            .system
+            .get_or_init(|| SystemFaces::load(crate::strings::current_language()));
+        let found = faces.as_ref().and_then(|faces| faces.glyph(character));
+        if found.is_none() {
+            self.system_missing.store(true, Ordering::Relaxed);
+        }
+        found
+    }
+
+    /// The glyph of `character` and the system font it comes from, if it is not in the bundled `face`.
+    fn source(&self, face: Face, character: char) -> (GlyphId, Option<&Font<'static>>) {
+        let bundled = self.font(face);
+        match bundled.glyph(character) {
+            Some(glyph) if glyph.0 != 0 => (glyph, None),
+            _ => match self.system_glyph(character) {
+                Some((system, glyph)) => (glyph, Some(system)),
+                None => (bundled.glyph(character).unwrap_or(GlyphId(0)), None),
+            },
+        }
+    }
+
+    /// Pixels per font unit for the font a glyph comes from.
+    fn unit_scale(&self, style: TextStyle, system: Option<&Font<'static>>) -> f32 {
+        match system {
+            Some(font) => {
+                let units = font.metrics().units_per_em;
+                if units > 0.0 {
+                    style.size / units
+                } else {
+                    0.0
+                }
+            }
+            None => self.scale(style),
+        }
+    }
+
+    /// Whether the system fallback font has been loaded. Russian text must leave this false.
+    #[cfg(test)]
+    fn system_font_loaded(&self) -> bool {
+        self.system.get().is_some_and(Option::is_some)
+    }
+
+    /// Whether a CJK glyph was asked for and no system font had it since the last call. The caller reports it once.
+    #[must_use]
+    pub fn take_system_font_missing(&self) -> bool {
+        self.system_missing.swap(false, Ordering::Relaxed)
     }
 
     fn font(&self, face: Face) -> &Font<'static> {
@@ -130,17 +195,24 @@ impl Fonts {
     /// Width of a single line in pixels.
     #[must_use]
     pub fn measure(&self, text: &str, style: TextStyle) -> f32 {
-        let font = self.font(style.face);
-        let scale = self.scale(style);
+        let bundled = self.font(style.face);
         let mut width = 0.0_f32;
-        let mut previous: Option<GlyphId> = None;
+        let mut previous: Option<(GlyphId, bool)> = None;
         for character in text.chars() {
-            let glyph = font.glyph(character).unwrap_or(GlyphId(0));
-            if let Some(left) = previous {
-                width += font.kerning(left, glyph) * scale + style.tracking;
+            let (glyph, system) = self.source(style.face, character);
+            let font = system.unwrap_or(bundled);
+            let scale = self.unit_scale(style, system);
+            if let Some((left, left_system)) = previous {
+                // Kerning only within one font: a system glyph has no pair with a bundled one.
+                let kerning = if !left_system && system.is_none() {
+                    bundled.kerning(left, glyph) * scale
+                } else {
+                    0.0
+                };
+                width += kerning + style.tracking;
             }
             width += font.advance(glyph) * scale;
-            previous = Some(glyph);
+            previous = Some((glyph, system.is_some()));
         }
         width
     }
@@ -164,22 +236,27 @@ impl Fonts {
         if self.cache.len() > MAX_CACHED_GLYPHS {
             self.cache.clear();
         }
-        let scale = self.scale(style);
         let mut pen = x;
-        let mut previous: Option<GlyphId> = None;
+        let mut previous: Option<(GlyphId, bool)> = None;
         let baseline = to_px(baseline_y.round());
         for character in text.chars() {
-            let (glyph, advance, kerning) = {
-                let font = self.font(style.face);
-                let glyph = font.glyph(character).unwrap_or(GlyphId(0));
-                let kerning = previous.map_or(0.0, |left| font.kerning(left, glyph));
-                (glyph, font.advance(glyph), kerning)
+            let (glyph, system, scale, advance, kerning) = {
+                let (glyph, system) = self.source(style.face, character);
+                let scale = self.unit_scale(style, system);
+                let font = system.unwrap_or_else(|| self.font(style.face));
+                let kerning = match previous {
+                    Some((left, left_system)) if !left_system && system.is_none() => {
+                        self.font(style.face).kerning(left, glyph)
+                    }
+                    _ => 0.0,
+                };
+                (glyph, system.is_some(), scale, font.advance(glyph), kerning)
             };
             pen += kerning * scale;
             if previous.is_some() {
                 pen += style.tracking;
             }
-            previous = Some(glyph);
+            previous = Some((glyph, system));
             if !character.is_whitespace() {
                 let whole = pen.floor();
                 let fraction = ((pen - whole) * SUBPIXEL_STEPS)
@@ -190,9 +267,14 @@ impl Fonts {
                     glyph: glyph.0,
                     size_bits: style.size.to_bits(),
                     subpixel: to_u8(fraction),
+                    system,
                 };
                 if !self.cache.contains_key(&key) {
-                    let mask = self.render(key, fraction / SUBPIXEL_STEPS, scale);
+                    let mask = {
+                        let (_, source) = self.source(style.face, character);
+                        let font = source.unwrap_or_else(|| self.font(style.face));
+                        Self::render_glyph(font, key, fraction / SUBPIXEL_STEPS, scale)
+                    };
                     self.cache.insert(key, mask);
                 }
                 if let Some(mask) = self.cache.get(&key) {
@@ -207,7 +289,8 @@ impl Fonts {
         }
     }
 
-    fn render(&self, key: GlyphKey, offset_x: f32, scale: f32) -> GlyphMask {
+    /// Rasterises one glyph's outline from `font`, the font the glyph came from.
+    fn render_glyph(font: &Font<'static>, key: GlyphKey, offset_x: f32, scale: f32) -> GlyphMask {
         let mut sink = Collect {
             segments: Vec::new(),
             scale,
@@ -223,7 +306,7 @@ impl Fonts {
             height: 0,
             coverage: Vec::new(),
         };
-        if self.font(key.face).outline(GlyphId(key.glyph), &mut sink).is_err() || sink.segments.is_empty() {
+        if font.outline(GlyphId(key.glyph), &mut sink).is_err() || sink.segments.is_empty() {
             return empty;
         }
         // Outline space: y up, scaled. Mask space: y down, origin at the pixel-aligned bounding box.
@@ -271,14 +354,19 @@ pub struct StyleMetrics<'a> {
 
 impl crate::text::Metrics for StyleMetrics<'_> {
     fn advance(&self, character: char) -> f32 {
-        let font = self.fonts.font(self.style.face);
-        font.advance(font.glyph(character).unwrap_or(GlyphId(0))) * self.fonts.scale(self.style)
+        let (glyph, system) = self.fonts.source(self.style.face, character);
+        let font = system.unwrap_or_else(|| self.fonts.font(self.style.face));
+        font.advance(glyph) * self.fonts.unit_scale(self.style, system)
     }
 
     fn kerning(&self, left: char, right: char) -> f32 {
+        // Kerning only inside the bundled face: a system glyph has no pair with a bundled one.
+        let (a, a_system) = self.fonts.source(self.style.face, left);
+        let (b, b_system) = self.fonts.source(self.style.face, right);
+        if a_system.is_some() || b_system.is_some() {
+            return 0.0;
+        }
         let font = self.fonts.font(self.style.face);
-        let a = font.glyph(left).unwrap_or(GlyphId(0));
-        let b = font.glyph(right).unwrap_or(GlyphId(0));
         font.kerning(a, b) * self.fonts.scale(self.style)
     }
 
@@ -384,5 +472,58 @@ mod tests {
         let medium = fonts.measure("ЗАГОЛОВОК", TextStyle::new(Face::HeadingMedium, 16.0));
         let semi_bold = fonts.measure("ЗАГОЛОВОК", TextStyle::new(Face::Heading, 16.0));
         assert!(medium > 0.0 && (medium - semi_bold).abs() > 1.0e-3);
+    }
+}
+
+#[cfg(test)]
+mod system_fallback_tests {
+    use super::*;
+    use crate::fallback_font::{is_cjk, SystemFaces};
+
+    fn style() -> TextStyle {
+        TextStyle::new(Face::Body, 14.0)
+    }
+
+    #[test]
+    fn only_cjk_scripts_count_as_cjk() {
+        assert!(is_cjk('日') && is_cjk('か') && is_cjk('カ') && is_cjk('한') && is_cjk('中') && is_cjk('！'));
+        assert!(!is_cjk('Ж') && !is_cjk('а') && !is_cjk('A') && !is_cjk('—') && !is_cjk('·'));
+    }
+
+    #[test]
+    fn russian_text_never_loads_the_system_font() -> Result<()> {
+        let fonts = Fonts::bundled()?;
+        let width = fonts.measure("Сохранения · Инвентарь — 9×18 мм → КБ", style());
+        assert!(width > 0.0);
+        assert!(
+            !fonts.system_font_loaded(),
+            "Cyrillic and symbols must come from the bundled faces"
+        );
+        assert!(!fonts.take_system_font_missing());
+        Ok(())
+    }
+
+    #[test]
+    fn a_missing_or_damaged_system_font_does_not_panic() {
+        assert!(SystemFaces::from_bytes(b"this is not a font file").is_none());
+        assert!(SystemFaces::from_bytes(&[]).is_none());
+    }
+
+    #[test]
+    fn a_cjk_glyph_is_found_in_a_system_font_when_this_machine_has_one() -> Result<()> {
+        let Some(system) = SystemFaces::load("ja") else {
+            eprintln!("no system CJK font on this machine; the lookup test is skipped");
+            return Ok(());
+        };
+        assert!(system.glyph('日').is_some(), "the system font must supply a CJK glyph");
+        assert!(
+            system.glyph('\u{E000}').is_none(),
+            "a private-use character is in no font"
+        );
+        let fonts = Fonts::bundled()?;
+        let with_cjk = fonts.measure("日本語", style());
+        assert!(with_cjk > 0.0, "a CJK label gets a width from the system font");
+        assert!(fonts.system_font_loaded());
+        Ok(())
     }
 }

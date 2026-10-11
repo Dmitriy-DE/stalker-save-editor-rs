@@ -4541,6 +4541,13 @@ fn reports_failure(error: &sse_core::Error) -> bool {
 
 impl App<AppMessage> for Shell {
     fn message(&mut self, tree: &mut Tree, message: &Message<AppMessage>, clicked: Option<WidgetId>) -> Flow {
+        if tree.take_system_font_missing() {
+            // A CJK label drew without its glyphs: say so once, in the status line, and keep the rest of the text.
+            let _ = tree.set_text(
+                self.status,
+                crate::strings::t("Для этого языка нужен системный шрифт с иероглифами (например, Noto Sans CJK)."),
+            );
+        }
         self.reset_was_armed = std::mem::take(&mut self.reset_armed);
         let flow = self.handle(tree, message, clicked);
         self.sync_music_track();
