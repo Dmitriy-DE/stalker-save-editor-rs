@@ -5304,11 +5304,25 @@ fn commit_save_edits_to(
     Ok((Arc::new(reloaded), save_message))
 }
 
+/// Stash items one browser action may move. A browser save is prepared on the interface thread, and each moved item costs a
+/// full verified write (about 1.8 s per item for a large modern save on a desktop), so one action moves one item.
+const MAXIMUM_BROWSER_STASH_MOVES: usize = 1;
+
+fn browser_stash_move_limit(moves: usize) -> Result<()> {
+    if moves > MAXIMUM_BROWSER_STASH_MOVES {
+        return Err(Error::Refused(format!(
+            "in the browser one save action moves at most {MAXIMUM_BROWSER_STASH_MOVES} stash item; move the others one at a time"
+        )));
+    }
+    Ok(())
+}
+
 fn prepare_browser_save(
     selected: &LoadedSave,
     edits: &PendingInventoryEdits,
     stash_moves: &S2StashMoves,
 ) -> Result<(Arc<LoadedSave>, BrowserDownload)> {
+    browser_stash_move_limit(stash_moves.takes.len().saturating_add(stash_moves.puts.len()))?;
     let mut outcome = S2MoveOutcome::default();
     let (packed, _) = prepare_save_edits_with_outcome(selected, edits, stash_moves, &mut outcome)?;
     if u64::try_from(packed.len()).unwrap_or(u64::MAX) > MAX_BROWSER_SAVE_BYTES {
@@ -10190,9 +10204,10 @@ pub(super) fn short_text(text: &str, limit: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        add_external_file_banner, commit_save_edits_to, prepare_browser_save, prepare_save_edits, prepare_xray_edits,
-        AddRequest, DraftJournal, DraftPlan, DraftStore, Inventory, ItemHandle, LoadFinished, LoadedSave, Overview,
-        PendingInventoryEdits, S2Save, SaveBuffer, SaveSlot, StartupBackupCheck, Workspace,
+        add_external_file_banner, browser_stash_move_limit, commit_save_edits_to, prepare_browser_save,
+        prepare_save_edits, prepare_xray_edits, AddRequest, DraftJournal, DraftPlan, DraftStore, Inventory, ItemHandle,
+        LoadFinished, LoadedSave, Overview, PendingInventoryEdits, S2Save, SaveBuffer, SaveSlot, StartupBackupCheck,
+        Workspace,
     };
     use super::{S2MoveOutcome, S2StashMoves};
     use crate::event_loop::{channel_pair, Message, WindowEvent};
@@ -10666,6 +10681,14 @@ mod tests {
         let reloaded = LoadedSave::from_bytes(loaded.slot.clone(), output.as_slice())?;
         super::verify_requested_values(&loaded, &reloaded, &edits, &S2MoveOutcome::default())?;
         assert_eq!(summary.move_count, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn browser_save_moves_one_stash_item_per_action() -> sse_core::Result<()> {
+        assert!(browser_stash_move_limit(0).is_ok());
+        assert!(browser_stash_move_limit(1).is_ok());
+        assert!(matches!(browser_stash_move_limit(2), Err(Error::Refused(_))));
         Ok(())
     }
 
