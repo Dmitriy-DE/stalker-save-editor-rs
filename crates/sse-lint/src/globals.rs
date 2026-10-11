@@ -394,7 +394,12 @@ impl LuaGlobalsAnalyzer {
                                         Some(TokenKind::Identifier(var)) => {
                                             for_scope.insert(var.clone());
                                         }
-                                        Some(TokenKind::Symbol(s)) if s == "=" || s == "in" => {
+                                        // `=` ends a numeric loop's variable; `in`, which the lexer emits as a
+                                        // keyword, ends a generic loop's variable list.
+                                        Some(TokenKind::Symbol(s)) if s == "=" => {
+                                            break;
+                                        }
+                                        Some(TokenKind::Keyword(k)) if k == "in" => {
                                             break;
                                         }
                                         _ => {}

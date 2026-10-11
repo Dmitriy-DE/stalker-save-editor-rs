@@ -477,3 +477,37 @@ end
         "undefined_var_123 must be reported"
     );
 }
+
+#[test]
+fn generic_for_scope_ends_at_in_and_does_not_hide_later_globals() {
+    let mut analyzer = LuaGlobalsAnalyzer::new();
+    analyzer.add_module("loops");
+    analyzer.scan_script(
+        "loops.script",
+        b"function run(items)\n  for item in items do\n    item.use()\n  end\n  outside_typo()\nend\n",
+    );
+    let findings = analyzer.evaluate(1);
+    assert!(
+        findings
+            .iter()
+            .any(|finding| finding.message.contains("undefined global 'outside_typo'")),
+        "{findings:?}"
+    );
+    // The loop variable and the function parameter are still not reported.
+    assert!(!findings.iter().any(|finding| finding.message.contains("'item'")));
+    assert!(!findings.iter().any(|finding| finding.message.contains("'items'")));
+
+    let mut pairs = LuaGlobalsAnalyzer::new();
+    pairs.add_module("pairs_loop");
+    pairs.scan_script(
+        "pairs_loop.script",
+        b"function run(t)\n  for key, value in pairs(t) do\n    local x = key\n  end\n  return later_typo\nend\n",
+    );
+    let findings = pairs.evaluate(1);
+    assert!(
+        findings
+            .iter()
+            .any(|finding| finding.message.contains("undefined global 'later_typo'")),
+        "{findings:?}"
+    );
+}

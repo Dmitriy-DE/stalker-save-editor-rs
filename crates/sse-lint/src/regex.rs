@@ -1330,12 +1330,18 @@ impl AhoCorasick {
 #[derive(Debug, Clone)]
 pub struct Set {
     regexes: Vec<Regex>,
+    /// Literals of the case-sensitive expressions.
     prefilter: AhoCorasick,
+    /// Literals of the expressions that ignore case, by the set's options or by their own leading `(?i)`.
+    prefilter_ignore_case: AhoCorasick,
     unfiltered: Vec<usize>,
 }
 
 impl Set {
-    /// Compiles all patterns with the same options and builds one prefilter.
+    /// Compiles all patterns with the same options and builds the literal prefilter.
+    ///
+    /// A pattern may switch itself to case-insensitive matching with a leading `(?i)`; its literal is then
+    /// searched ignoring case even when the set's options are case-sensitive.
     ///
     /// # Errors
     /// Returns compilation errors or a configured pattern/prefilter limit.
@@ -1345,6 +1351,7 @@ impl Set {
         }
         let mut regexes = Vec::with_capacity(patterns.len());
         let mut literals = Vec::new();
+        let mut literals_ignore_case = Vec::new();
         let mut unfiltered = Vec::new();
         for pattern in patterns {
             let regex = Regex::with_options(pattern, options)?;
@@ -1353,16 +1360,23 @@ impl Set {
                 .required_literal()
                 .filter(|value| value.is_ascii() && !value.is_empty())
             {
-                literals.push((index, literal.to_owned()));
+                // The flag in force for this expression decides, not the options the set was asked for.
+                if regex.program.options.case_insensitive {
+                    literals_ignore_case.push((index, literal.to_owned()));
+                } else {
+                    literals.push((index, literal.to_owned()));
+                }
             } else {
                 unfiltered.push(index);
             }
             regexes.push(regex);
         }
-        let prefilter = AhoCorasick::build(&literals, options.case_insensitive)?;
+        let prefilter = AhoCorasick::build(&literals, false)?;
+        let prefilter_ignore_case = AhoCorasick::build(&literals_ignore_case, true)?;
         Ok(Self {
             regexes,
             prefilter,
+            prefilter_ignore_case,
             unfiltered,
         })
     }
@@ -1379,6 +1393,8 @@ impl Set {
             }
         }
         self.prefilter.mark_candidates(text.as_bytes(), &mut candidates)?;
+        self.prefilter_ignore_case
+            .mark_candidates(text.as_bytes(), &mut candidates)?;
         let mut result = Vec::new();
         for (index, regex) in self.regexes.iter().enumerate() {
             if candidates.get(index).copied().unwrap_or(false) && regex.is_match(text) {
@@ -1691,6 +1707,29 @@ mod tests {
         let text = "a".repeat(200_000);
         assert!(!nested.is_match(&text));
         assert!(!alternative.is_match(&text));
+    }
+
+    #[test]
+    fn set_prefilter_honours_an_inline_ignore_case_flag_per_pattern() {
+        let patterns = ["(?i)stack overflow", "Fatal Error", "(?i)out of memory"];
+        let set = Set::new(&patterns, RegexOptions::default()).unwrap_or_else(|_| unreachable!());
+
+        // Each expression alone matches; the shared prefilter must not lose them.
+        assert_eq!(set.matches("engine: STACK OVERFLOW in thread"), Ok(vec![0]));
+        assert_eq!(set.matches("Out Of Memory, then Stack Overflow"), Ok(vec![0, 2]));
+        // The pattern without the flag stays case-sensitive.
+        assert_eq!(set.matches("Fatal Error"), Ok(vec![1]));
+        assert_eq!(set.matches("FATAL ERROR"), Ok(Vec::new()));
+        assert_eq!(set.matches("fatal error and stack overflow"), Ok(vec![0]));
+
+        let mut scanner = set.scanner();
+        let mut hits = Vec::new();
+        assert_eq!(scanner.push(b"noise\nOUT OF MEMORY\n", &mut hits), Ok(()));
+        assert_eq!(scanner.finish(&mut hits), Ok(()));
+        assert!(hits.contains(&StreamMatch {
+            pattern_index: 2,
+            line_number: 2,
+        }));
     }
 
     #[test]
