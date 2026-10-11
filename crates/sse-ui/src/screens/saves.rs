@@ -3378,9 +3378,14 @@ impl Inventory {
                     cx.tree.set_visible(id, has_changes)?;
                 }
                 if let Some(id) = self.status {
+                    // The "ready" line only describes a draft that has changes; an empty draft gets the neutral line.
                     cx.tree.set_text(
                         id,
-                        t("Изменения подготовлены. Сохранение создаст бэкап, запишет файл и повторно его прочитает."),
+                        if has_changes {
+                            t("Изменения подготовлены. Сохранение создаст бэкап, запишет файл и повторно его прочитает.")
+                        } else {
+                            t("Изменения пока не подготовлены.")
+                        },
                     )?;
                 }
             }
@@ -6277,6 +6282,24 @@ impl Screen for Inventory {
             set_fixed_column_style(cx.tree, stepper, INVENTORY_STEPPER_WIDTH)?;
             let decrease = style::button(cx.tree, stepper, "−", Button::Secondary)?;
             let increase = style::button(cx.tree, stepper, "+", Button::Secondary)?;
+            // The two steppers share the fixed 64 px column; their own padding must not push the pair past its edge.
+            for id in [decrease, increase] {
+                cx.tree.set_style(
+                    id,
+                    Style {
+                        grow: 1.0,
+                        shrink: 1.0,
+                        min: Size::new(0.0, 0.0),
+                        padding: crate::layout::Edges {
+                            left: 2.0,
+                            top: 0.0,
+                            right: 2.0,
+                            bottom: 0.0,
+                        },
+                        ..Style::default()
+                    },
+                )?;
+            }
             self.rows.push(ItemControls {
                 row: stack,
                 label,

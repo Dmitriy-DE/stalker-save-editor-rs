@@ -667,7 +667,9 @@ impl Tree {
                 _ => continue,
             };
             let (x0, y0, x1, y1) = edges(node.rect);
-            let mut cut = y0 < limit_y && y1 > limit_y;
+            // Icon buttons are the sidebar's own column, which runs down past the status line by design.
+            let runs_into_status = !matches!(node.content, Content::IconButton { .. }) && y0 < limit_y && y1 > limit_y;
+            let mut cut = runs_into_status;
             let mut ancestor = node.parent;
             while let Some(parent) = ancestor.and_then(|parent| self.nodes.get(parent.0)) {
                 if parent.clip_children {
