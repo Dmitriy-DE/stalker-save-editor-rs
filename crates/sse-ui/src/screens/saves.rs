@@ -926,14 +926,9 @@ fn save_info(slot: &SaveSlot) -> String {
 
 fn save_integrity(slot: &SaveSlot, source_sha256: &str, bytes_read: usize, crc_status: &str, format: &str) -> String {
     let modified = display_file_time(slot.last_write_time_utc, false, true);
-    // A 64-character hash does not fit the narrow side panel on one line, so it wraps after 32 characters.
-    let wrapped_sha256 = match (source_sha256.get(..32), source_sha256.get(32..)) {
-        (Some(first), Some(second)) if !second.is_empty() => format!("{first}\n{second}"),
-        _ => source_sha256.to_owned(),
-    };
     tr(
         "Размер файла: {0} байт · Изменён: {1} UTC\nSHA-256: {2}\nCRC: {3} · Формат: {4} · Сборка игры: —",
-        &[&bytes_read, &modified, &wrapped_sha256, &crc_status, &format],
+        &[&bytes_read, &modified, &source_sha256, &crc_status, &format],
     )
 }
 
@@ -1818,7 +1813,7 @@ impl Overview {
         let (info, parameters, integrity) = selected.unwrap_or_default();
         let info_pairs = detail_pairs(&info);
         let parameter_pairs = detail_pairs(&parameters);
-        let integrity_pairs = detail_pairs(&integrity);
+        let integrity_pairs = split_sha256_pair(detail_pairs(&integrity));
         if let Some(header) = self.header_panel {
             cx.tree.set_visible(header, has_save)?;
         }
@@ -1954,6 +1949,22 @@ fn detail_pairs(text: &str) -> Vec<(String, String)> {
             }
         })
         .collect()
+}
+
+/// A 64-character SHA-256 does not fit one row of the side panel: it is shown as two rows of 32 characters.
+/// The second row has no key, so the two halves read as one value.
+fn split_sha256_pair(pairs: Vec<(String, String)>) -> Vec<(String, String)> {
+    let mut out = Vec::with_capacity(pairs.len().saturating_add(1));
+    for (key, value) in pairs {
+        match (key.starts_with("SHA"), value.get(..32), value.get(32..)) {
+            (true, Some(first), Some(second)) if value.len() == 64 => {
+                out.push((key.clone(), first.to_owned()));
+                out.push((String::new(), second.to_owned()));
+            }
+            _ => out.push((key, value)),
+        }
+    }
+    out
 }
 
 fn info_header_values(pairs: &[(String, String)]) -> (&str, &str, &str) {
@@ -10366,20 +10377,6 @@ mod tests {
     }
 
     #[test]
-    fn integrity_wraps_the_sha256_so_it_fits_the_side_panel() {
-        let slot = fixture_slot("save.sav", "stalker-cs", "clear_sky");
-        let sha = "a".repeat(32) + &"b".repeat(32);
-        let text = super::save_integrity(&slot, &sha, 10, "ok", "stalker-cs");
-        let line = text
-            .lines()
-            .find(|line| line.starts_with("SHA-256: "))
-            .unwrap_or_default();
-        assert_eq!(line, format!("SHA-256: {}", "a".repeat(32)));
-        assert!(text.contains(&"b".repeat(32)));
-        assert!(text.lines().all(|line| line.chars().count() <= 60));
-    }
-
-    #[test]
     fn inventory_inspector_reserves_space_for_three_line_item_summary() -> sse_core::Result<()> {
         let source = include_bytes!("../../../../fixtures/synthetic/writer-durability/xray-durability-cop-source.sav");
         let loaded = Arc::new(load_xray(
@@ -10460,6 +10457,20 @@ mod tests {
         screen.render(&mut cx)?;
         cx.tree.update_layout()?;
         Ok((screen, tree))
+    }
+
+    /// The whole SHA-256 reaches the panel: its two halves, read in order, are the full 64 characters.
+    #[test]
+    fn integrity_panel_shows_all_64_characters_of_the_sha256() {
+        let sha = "655586a57ef01b0c217fc461a41c7dcb0123456789abcdef0123456789abcdef";
+        let slot = fixture_slot("save.sav", "stalker-cs", "clear_sky");
+        let text = super::save_integrity(&slot, sha, 10, "ok", "stalker-cs");
+        let shown: String = super::split_sha256_pair(super::detail_pairs(&text))
+            .into_iter()
+            .filter(|(key, _)| key.starts_with("SHA") || key.is_empty())
+            .map(|(_, value)| value)
+            .collect();
+        assert_eq!(shown, sha);
     }
 
     /// Every visible row of the information and integrity panels lies inside its panel, at 1920x1080 and 1366x768.
