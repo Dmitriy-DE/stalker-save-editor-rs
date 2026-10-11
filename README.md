@@ -28,10 +28,10 @@ reference:
 
 | Change | Shadow of Chernobyl, Clear Sky, Call of Pripyat | Enhanced Editions |
 |---|---|---|
-| Money | Verified | Experimental |
-| Ammunition stacks | Verified | Experimental |
-| Add items | Verified | Experimental |
-| Remove items | Verified | Experimental |
+| Money | Verified | Experimental (measured on every real save: ТЧ EE 6/6, ЧН EE 8/8, ЗП EE 12/12) |
+| Ammunition stacks | Verified | Experimental (ТЧ EE 4/4 and ЧН EE 6/6 measurable saves pass; ЗП EE 12/12; the other saves have no stack to edit) |
+| Add items | Verified | Call of Pripyat EE: Experimental (12/12); Shadow of Chernobyl EE, Clear Sky EE: Unsupported (writer refuses 0 of 14 saves with "item template has no proven placement field": the template lacks the client-data placement record) |
+| Remove items | Verified | Experimental (ТЧ EE 4/4 and ЧН EE 6/6 measurable saves pass; ЗП EE 12/12; the other saves have no backpack item to remove) |
 | Equipment condition | Experimental | Shadow of Chernobyl EE, Clear Sky EE: Experimental (not loaded in the game yet); Call of Pripyat EE: Unsupported (one UPDATE byte changes on restore) |
 | Item placement | Experimental | Call of Pripyat EE: Experimental (not loaded in the game yet); Shadow of Chernobyl EE, Clear Sky EE: Unsupported (no slot item with a proven base slot in the copies checked) |
 | Actor faction | Experimental | Unsupported |

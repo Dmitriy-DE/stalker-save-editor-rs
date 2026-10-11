@@ -314,8 +314,13 @@ impl Default for Workspace {
 
 impl Workspace {
     /// Number of saves the last search found; zero before a search has finished.
+    /// The number the library list shows without a filter, so the footer and the list agree.
     pub(super) fn discovered_count(&self) -> usize {
-        self.lock().discovery.as_ref().map_or(0, |result| result.slots.len())
+        let state = self.lock();
+        library_slots(&state)
+            .iter()
+            .filter(|slot| slot.detection_error.is_none())
+            .count()
     }
 
     #[cfg(test)]
@@ -900,9 +905,14 @@ fn save_info(slot: &SaveSlot) -> String {
 
 fn save_integrity(slot: &SaveSlot, source_sha256: &str, bytes_read: usize, crc_status: &str, format: &str) -> String {
     let modified = display_file_time(slot.last_write_time_utc, false, true);
+    // A 64-character hash does not fit the narrow side panel on one line, so it wraps after 32 characters.
+    let wrapped_sha256 = match (source_sha256.get(..32), source_sha256.get(32..)) {
+        (Some(first), Some(second)) if !second.is_empty() => format!("{first}\n{second}"),
+        _ => source_sha256.to_owned(),
+    };
     tr(
         "Размер файла: {0} байт · Изменён: {1} UTC\nSHA-256: {2}\nCRC: {3} · Формат: {4} · Сборка игры: —",
-        &[&bytes_read, &modified, &source_sha256, &crc_status, &format],
+        &[&bytes_read, &modified, &wrapped_sha256, &crc_status, &format],
     )
 }
 
@@ -2565,7 +2575,7 @@ fn add_candidates(selected: &LoadedSave, removed: &BTreeSet<u32>) -> Vec<AddCand
     if writer::capability(save.format(), writer::ChangeKind::AddItems) == writer::Capability::Unsupported {
         return Vec::new();
     }
-    let Some(catalog) = sse_catalog::CatalogBundleReader::load_embedded().get(save.format().id()) else {
+    let Some(catalog) = sse_catalog::CatalogBundleReader::for_format(save.format().id()) else {
         return Vec::new();
     };
     let mut candidates = catalog
@@ -3688,7 +3698,12 @@ impl Inventory {
                     DraftPlacement::Slot(slot) => tr("Слот {0}", &[slot]),
                 };
             }
-            let text = tr!("Размещение: {placement}", placement = placement);
+            // "Not read" is already a full phrase; it must not get the "Placement:" prefix again.
+            let text = if placement == t("Размещение не прочитано") {
+                placement.to_owned()
+            } else {
+                tr!("Размещение: {placement}", placement = placement)
+            };
             let enhanced_placement = match &selected.data {
                 SaveData::Xray { save, .. } => {
                     matches!(save.format(), sse_xray::Format::CopEe)
@@ -3754,8 +3769,7 @@ impl Inventory {
                     .unwrap_or_default();
                 let options = item
                     .and_then(|item| {
-                        sse_catalog::CatalogBundleReader::load_embedded()
-                            .get(save.format().id())
+                        sse_catalog::CatalogBundleReader::for_format(save.format().id())
                             .and_then(|bundle| bundle.upgrades.as_ref())
                             .map(|catalog| catalog.for_item(&item.section))
                     })
@@ -4470,8 +4484,7 @@ impl Inventory {
             return Ok(());
         };
         if writer::capability(save.format(), writer::ChangeKind::AddItems) == writer::Capability::Unsupported
-            || sse_catalog::CatalogBundleReader::load_embedded()
-                .get(save.format().id())
+            || sse_catalog::CatalogBundleReader::for_format(save.format().id())
                 .and_then(|bundle| bundle.items.resolve(item_key))
                 .is_none()
             || !inventory.iter().any(|item| item.section == item_key)
@@ -4527,8 +4540,7 @@ impl Inventory {
             _ => return Ok(()),
         };
         if writer::capability(save.format(), writer::ChangeKind::EditUpgrades) == writer::Capability::Unsupported
-            || !sse_catalog::CatalogBundleReader::load_embedded()
-                .get(save.format().id())
+            || !sse_catalog::CatalogBundleReader::for_format(save.format().id())
                 .and_then(|bundle| bundle.upgrades.as_ref())
                 .is_some_and(|catalog| {
                     catalog
@@ -5252,7 +5264,7 @@ fn prepare_save_edits_with_outcome(
                     "adding items is not supported for this X-Ray format".to_owned(),
                 ));
             }
-            let catalog = sse_catalog::CatalogBundleReader::load_embedded().get(save.format().id());
+            let catalog = sse_catalog::CatalogBundleReader::for_format(save.format().id());
             let mut used_object_ids: BTreeSet<u16> =
                 save.registry_objects().iter().map(|object| object.object_id).collect();
             for request in &edits.adds {
@@ -5763,8 +5775,7 @@ fn verify_requested_values(
             (SaveData::Xray { save: before, .. }, SaveData::Xray { save: after, .. }) => (before, after),
             _ => return Err(Error::Refused("faction edits require an X-Ray read-back".to_owned())),
         };
-        let bundle = sse_catalog::CatalogBundleReader::load_embedded()
-            .get(original_save.format().id())
+        let bundle = sse_catalog::CatalogBundleReader::for_format(original_save.format().id())
             .and_then(|bundle| bundle.factions.as_ref())
             .ok_or_else(|| Error::Refused("faction catalog is unavailable for read-back".to_owned()))?;
         let actual_relations = verified_save
@@ -7737,7 +7748,7 @@ impl Factions {
             )?;
             return self.hide_list(cx);
         }
-        let bundle = sse_catalog::CatalogBundleReader::load_embedded().get(save.format().id());
+        let bundle = sse_catalog::CatalogBundleReader::for_format(save.format().id());
         let Some(catalog) = bundle.and_then(|bundle| bundle.factions.as_ref()) else {
             self.faction_keys.clear();
             self.set_text(cx, "Каталог фракций для этого формата недоступен.")?;
@@ -7860,7 +7871,7 @@ impl Factions {
                 cx.status = Some(t("Отношения актёра не подтверждены индексом сохранения.").to_owned());
                 return Ok(());
             }
-            let bundle = sse_catalog::CatalogBundleReader::load_embedded().get(save.format().id());
+            let bundle = sse_catalog::CatalogBundleReader::for_format(save.format().id());
             let faction = bundle
                 .and_then(|bundle| bundle.factions.as_ref())
                 .and_then(|catalog| catalog.resolve(&key).ok());
@@ -8405,7 +8416,7 @@ impl Stashes {
         let can_move = xray_change_supported(save, writer::ChangeKind::MoveItems)
             && !self.workspace.is_saving()
             && !self.workspace.is_restoring();
-        let catalog = sse_catalog::CatalogBundleReader::load_embedded().get(save.format().id());
+        let catalog = sse_catalog::CatalogBundleReader::for_format(save.format().id());
         let Some(catalog) = catalog else {
             self.set_text(cx, "Каталог предметов для этой игры недоступен.")?;
             return self.hide_list(cx);
@@ -8429,12 +8440,17 @@ impl Stashes {
                 let Some(item) = catalog.items.resolve(&object.name_replace) else {
                     continue;
                 };
-                let name = item.display_name.as_deref().unwrap_or(&item.key);
+                let name =
+                    sse_catalog::SaveNaming::item_name(save.format().id(), &item.key, item.display_name.as_deref());
                 let staged = pending_takes.contains(&object.object_id);
                 self.entries.push(StashEntry {
                     label: tr(
                         "{0} · тайник {1} · 0x{2}",
-                        &[&t(name), &box_object.name_replace, &format!("{:04X}", object.object_id)],
+                        &[
+                            &t(&name),
+                            &box_object.name_replace,
+                            &format!("{:04X}", object.object_id),
+                        ],
                     ),
                     action: StashAction::XrayTake(object.object_id),
                     action_text: t(if staged {
@@ -8457,7 +8473,12 @@ impl Stashes {
                 let Some(definition) = catalog.items.resolve(&item.section) else {
                     continue;
                 };
-                let name = t(definition.display_name.as_deref().unwrap_or(&definition.key));
+                let definition_name = sse_catalog::SaveNaming::item_name(
+                    save.format().id(),
+                    &definition.key,
+                    definition.display_name.as_deref(),
+                );
+                let name = t(&definition_name);
                 let staged = pending_puts.get(&item.handle) == Some(&box_id);
                 self.entries.push(StashEntry {
                     label: tr(
@@ -10299,6 +10320,20 @@ mod tests {
             Some(&75)
         );
         Ok(())
+    }
+
+    #[test]
+    fn integrity_wraps_the_sha256_so_it_fits_the_side_panel() {
+        let slot = fixture_slot("save.sav", "stalker-cs", "clear_sky");
+        let sha = "a".repeat(32) + &"b".repeat(32);
+        let text = super::save_integrity(&slot, &sha, 10, "ok", "stalker-cs");
+        let line = text
+            .lines()
+            .find(|line| line.starts_with("SHA-256: "))
+            .unwrap_or_default();
+        assert_eq!(line, format!("SHA-256: {}", "a".repeat(32)));
+        assert!(text.contains(&"b".repeat(32)));
+        assert!(text.lines().all(|line| line.chars().count() <= 60));
     }
 
     #[test]
