@@ -159,7 +159,10 @@ fn truncate_to_width(tree: &crate::widget::Tree, value: &str, width: f32) -> Str
 enum HistoryResult {
     Backups(std::result::Result<Vec<BackupEntry>, String>),
     Saves(std::result::Result<Vec<SaveSlot>, String>),
-    Compare(std::result::Result<CompareReport, String>),
+    Compare {
+        request_id: u64,
+        result: std::result::Result<CompareReport, String>,
+    },
     Diagnosis {
         request_id: u64,
         result: std::result::Result<(PathBuf, DiagnosisReport), String>,
@@ -281,6 +284,8 @@ pub struct HistoryScreen {
     next_process_check_id: u64,
     process_check_complete: bool,
     diagnosis_request_id: u64,
+    /// Number of the newest comparison started; an older comparison's result is not shown.
+    compare_request_id: u64,
     diagnosed_selection: Option<(PathBuf, String)>,
     doctor_open_save: Option<WidgetId>,
     doctor_path_input: Option<WidgetId>,
@@ -386,6 +391,7 @@ impl HistoryScreen {
             next_process_check_id: 0,
             process_check_complete: false,
             diagnosis_request_id: 0,
+            compare_request_id: 0,
             diagnosed_selection: None,
             doctor_open_save: None,
             doctor_path_input: None,
@@ -527,11 +533,14 @@ impl HistoryScreen {
     }
 
     fn start_compare(
-        &self,
+        &mut self,
         first: PathBuf,
         second: PathBuf,
         proxy: Option<crate::event_loop::Proxy<AppMessage>>,
     ) -> Result<()> {
+        // Numbered even without a proxy: any comparison still running is superseded by this request.
+        self.compare_request_id = self.compare_request_id.saturating_add(1);
+        let request_id = self.compare_request_id;
         let Some(proxy) = proxy else {
             return Ok(());
         };
@@ -541,7 +550,10 @@ impl HistoryScreen {
                 return;
             }
             let result = compare_saves(&first, &second);
-            proxy.send(AppMessage::ToScreen(id, Box::new(HistoryResult::Compare(result))));
+            proxy.send(AppMessage::ToScreen(
+                id,
+                Box::new(HistoryResult::Compare { request_id, result }),
+            ));
         })
     }
 
@@ -1879,8 +1891,12 @@ impl HistoryScreen {
                             );
                             self.set_summary(cx.tree, &summary)?
                         }
-                        HistoryResult::Compare(Ok(report)) => self.render_compare(cx, clone_report(report))?,
-                        HistoryResult::Compare(Err(error)) => {
+                        // Only the newest comparison is shown: an older one may finish after it.
+                        HistoryResult::Compare { request_id, .. } if *request_id != self.compare_request_id => {}
+                        HistoryResult::Compare { result: Ok(report), .. } => {
+                            self.render_compare(cx, clone_report(report))?
+                        }
+                        HistoryResult::Compare { result: Err(error), .. } => {
                             let error = if error == crate::strings::t_in("ru", "Это сейвы разных игр.")
                             {
                                 crate::strings::t(error).to_owned()
@@ -3437,6 +3453,54 @@ mod tests {
         assert!(
             tree.text(summary)?.contains("disk full"),
             "the outcome of a superseded restore must still be shown"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn late_result_of_an_older_comparison_is_not_shown() -> sse_core::Result<()> {
+        let mut screen = HistoryScreen::new(ScreenId::Compare, "test", Workspace::default());
+        let mut app = sse_app::state::AppState::new();
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: None,
+            status: None,
+            app: &mut app,
+        };
+        screen.build(&mut cx, host)?;
+        let summary = screen
+            .summary
+            .ok_or_else(|| sse_core::Error::Refused("no summary widget".to_owned()))?;
+        let reply = |request_id: u64, text: &str| {
+            Message::User(AppMessage::ToScreen(
+                ScreenId::Compare,
+                Box::new(super::HistoryResult::Compare {
+                    request_id,
+                    result: Err(text.to_owned()),
+                }),
+            ))
+        };
+
+        // Two comparisons were started; the first one finishes last.
+        screen.start_compare(PathBuf::from("a.sav"), PathBuf::from("b.sav"), None)?;
+        screen.start_compare(PathBuf::from("a.sav"), PathBuf::from("c.sav"), None)?;
+        assert_eq!(screen.compare_request_id, 2);
+        screen.message(&mut cx, &reply(2, "newest result"), None)?;
+        assert!(cx.tree.text(summary)?.contains("newest result"));
+        screen.message(&mut cx, &reply(1, "older result"), None)?;
+
+        assert!(
+            cx.tree.text(summary)?.contains("newest result"),
+            "{}",
+            cx.tree.text(summary)?
         );
         Ok(())
     }
