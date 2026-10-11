@@ -10225,6 +10225,56 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
 
+    /// Waits up to ten seconds for the `T` reply addressed to `screen`, skipping every other message.
+    ///
+    /// Background work such as icon decoding posts to the same channel, so "the first message" is not the reply a
+    /// test is waiting for.
+    fn wait_for_screen_reply<T: 'static>(
+        receiver: &std::sync::mpsc::Receiver<Message<AppMessage>>,
+        screen: ScreenId,
+    ) -> sse_core::Result<Message<AppMessage>> {
+        let limit = std::time::Duration::from_secs(10);
+        let started = std::time::Instant::now();
+        loop {
+            let remaining = limit.saturating_sub(started.elapsed());
+            let message = receiver.recv_timeout(remaining).map_err(|error| {
+                Error::System(format!(
+                    "no {} reply for {screen:?} within 10 s: {error}",
+                    std::any::type_name::<T>()
+                ))
+            })?;
+            if matches!(&message, Message::User(AppMessage::ToScreen(target, payload))
+                if *target == screen && payload.downcast_ref::<T>().is_some())
+            {
+                return Ok(message);
+            }
+        }
+    }
+
+    /// Waits for the draft writer's own confirmation, skipping unrelated messages.
+    fn wait_for_draft_persisted(receiver: &std::sync::mpsc::Receiver<Message<AppMessage>>) -> sse_core::Result<()> {
+        wait_for_screen_reply::<super::DraftPersisted>(receiver, ScreenId::Inventory).map(|_| ())
+    }
+
+    #[test]
+    fn wait_for_screen_reply_skips_unrelated_messages() -> sse_core::Result<()> {
+        let (proxy, receiver) = channel_pair::<AppMessage>();
+        assert!(proxy.send(AppMessage::Tick(1)));
+        assert!(proxy.send(AppMessage::ToScreen(ScreenId::Inventory, Box::new(7_u8))));
+        assert!(proxy.send(AppMessage::ToScreen(
+            ScreenId::Overview,
+            Box::new(super::DraftPersisted(Ok(())))
+        )));
+        assert!(proxy.send(AppMessage::ToScreen(
+            ScreenId::Inventory,
+            Box::new(super::DraftPersisted(Ok(())))
+        )));
+        assert!(proxy.send(AppMessage::Tick(2)));
+        wait_for_draft_persisted(&receiver)?;
+        assert!(matches!(receiver.try_recv(), Ok(Message::User(AppMessage::Tick(2)))));
+        Ok(())
+    }
+
     #[test]
     fn named_translation_arguments_preserve_translated_placeholder_positions() {
         assert_eq!(
@@ -12313,7 +12363,6 @@ mod tests {
             Content::Panel,
             Look::default(),
         )?;
-        let wait = std::time::Duration::from_secs(10);
         let mut cx = Context {
             tree: &mut tree,
             proxy: Some(&proxy),
@@ -12322,9 +12371,7 @@ mod tests {
         };
         overview.build(&mut cx, host)?;
         assert!(overview.open_save(&mut cx, &save_a)?);
-        let loaded = receiver
-            .recv_timeout(wait)
-            .map_err(|error| Error::System(error.to_string()))?;
+        let loaded = wait_for_screen_reply::<LoadFinished>(&receiver, ScreenId::Overview)?;
         overview.message(&mut cx, &loaded, None)?;
         let sha_a = sse_codecs::sha256::sha256_hex(bytes);
         let mut plan = DraftPlan::empty(&sha_a)?;
@@ -12367,7 +12414,6 @@ mod tests {
             Content::Panel,
             Look::default(),
         )?;
-        let wait = std::time::Duration::from_secs(10);
         let mut cx = Context {
             tree: &mut tree,
             proxy: Some(&proxy),
@@ -12376,9 +12422,7 @@ mod tests {
         };
         overview.build(&mut cx, host)?;
         assert!(overview.open_save(&mut cx, &save_a)?);
-        let loaded = receiver
-            .recv_timeout(wait)
-            .map_err(|error| Error::System(error.to_string()))?;
+        let loaded = wait_for_screen_reply::<LoadFinished>(&receiver, ScreenId::Overview)?;
         overview.message(&mut cx, &loaded, None)?;
         let sha_a = sse_codecs::sha256::sha256_hex(bytes);
         let mut plan = DraftPlan::empty(&sha_a)?;
@@ -12389,16 +12433,7 @@ mod tests {
         let empty = DraftJournal::new(vec![DraftPlan::empty(&sha_a)?], 0)?;
         workspace.reset_draft(empty, &mut cx);
         // Wait for the reset's own completion, not for whichever message arrives first.
-        loop {
-            let message = receiver
-                .recv_timeout(wait)
-                .map_err(|error| Error::System(error.to_string()))?;
-            if let Message::User(AppMessage::ToScreen(ScreenId::Inventory, payload)) = &message {
-                if payload.downcast_ref::<super::DraftPersisted>().is_some() {
-                    break;
-                }
-            }
-        }
+        wait_for_draft_persisted(&receiver)?;
         let kept = fs::read_dir(&drafts)?
             .filter_map(|entry| entry.ok().map(|entry| entry.file_name().to_string_lossy().into_owned()))
             .any(|name| name.contains("unsupported"));
@@ -12433,9 +12468,7 @@ mod tests {
         };
         overview.build(&mut cx, host)?;
         assert!(overview.open_save(&mut cx, &save_a)?);
-        let loaded = receiver
-            .recv_timeout(wait)
-            .map_err(|error| Error::System(error.to_string()))?;
+        let loaded = wait_for_screen_reply::<LoadFinished>(&receiver, ScreenId::Overview)?;
         overview.message(&mut cx, &loaded, None)?;
         let sha_a = sse_codecs::sha256::sha256_hex(bytes);
         let mut plan = DraftPlan::empty(&sha_a)?;
@@ -12497,7 +12530,6 @@ mod tests {
             Content::Panel,
             Look::default(),
         )?;
-        let wait = std::time::Duration::from_secs(10);
 
         // Load A and wait for it to be the selected save.
         let mut cx = Context {
@@ -12508,9 +12540,7 @@ mod tests {
         };
         overview.build(&mut cx, host)?;
         assert!(overview.open_save(&mut cx, &save_a)?);
-        let loaded = receiver
-            .recv_timeout(wait)
-            .map_err(|error| Error::System(error.to_string()))?;
+        let loaded = wait_for_screen_reply::<LoadFinished>(&receiver, ScreenId::Overview)?;
         overview.message(&mut cx, &loaded, None)?;
         let sha_a = sse_codecs::sha256::sha256_hex(bytes);
         assert_eq!(cx.app.current_save(), Some(expected_a.as_path()));
@@ -12534,16 +12564,7 @@ mod tests {
 
         // Release the writer and wait until its completion has been delivered.
         drop(blocker);
-        loop {
-            let message = receiver
-                .recv_timeout(wait)
-                .map_err(|error| Error::System(error.to_string()))?;
-            if let Message::User(AppMessage::ToScreen(ScreenId::Inventory, payload)) = &message {
-                if payload.downcast_ref::<super::DraftPersisted>().is_some() {
-                    break;
-                }
-            }
-        }
+        wait_for_draft_persisted(&receiver)?;
         assert!(
             !workspace.draft_writes_pending(),
             "the write guard is released before the reply"
@@ -12551,14 +12572,10 @@ mod tests {
 
         // A -> B -> A: the second switch to A reads the journal that was just written.
         assert!(overview.open_save(&mut cx, &save_b)?);
-        let to_b = receiver
-            .recv_timeout(wait)
-            .map_err(|error| Error::System(error.to_string()))?;
+        let to_b = wait_for_screen_reply::<LoadFinished>(&receiver, ScreenId::Overview)?;
         overview.message(&mut cx, &to_b, None)?;
         assert!(overview.open_save(&mut cx, &save_a)?);
-        let back_to_a = receiver
-            .recv_timeout(wait)
-            .map_err(|error| Error::System(error.to_string()))?;
+        let back_to_a = wait_for_screen_reply::<LoadFinished>(&receiver, ScreenId::Overview)?;
         overview.message(&mut cx, &back_to_a, None)?;
 
         assert_eq!(cx.app.current_save(), Some(expected_a.as_path()));
@@ -12600,9 +12617,7 @@ mod tests {
             overview.build(&mut cx, host)?;
             assert!(overview.open_save(&mut cx, &path)?);
         }
-        let message = receiver
-            .recv_timeout(std::time::Duration::from_secs(10))
-            .map_err(|error| Error::System(error.to_string()))?;
+        let message = wait_for_screen_reply::<LoadFinished>(&receiver, ScreenId::Overview)?;
         let completion = match &message {
             Message::User(AppMessage::ToScreen(ScreenId::Overview, payload)) => payload.downcast_ref::<LoadFinished>(),
             _ => None,
@@ -12684,9 +12699,7 @@ mod tests {
             overview.startup_backup_check(&mut cx)?;
         }
 
-        let message = receiver
-            .recv_timeout(std::time::Duration::from_secs(10))
-            .map_err(|error| Error::System(error.to_string()))?;
+        let message = wait_for_screen_reply::<StartupBackupCheck>(&receiver, ScreenId::Overview)?;
         let result = match &message {
             Message::User(AppMessage::ToScreen(ScreenId::Overview, payload)) => {
                 payload.downcast_ref::<StartupBackupCheck>()
@@ -12770,18 +12783,7 @@ mod tests {
         };
         inventory.stage_money_value(&mut cx, original_money.saturating_add(77))?;
         // Icon decodes also post messages to this channel: wait for the draft's own confirmation, skipping the rest.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        loop {
-            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-            let message = receiver
-                .recv_timeout(remaining)
-                .map_err(|error| Error::System(format!("draft persistence timed out: {error}")))?;
-            if matches!(&message, Message::User(AppMessage::ToScreen(ScreenId::Inventory, payload))
-                if payload.downcast_ref::<super::DraftPersisted>().is_some())
-            {
-                break;
-            }
-        }
+        wait_for_draft_persisted(&receiver)?;
         assert_eq!(
             cx.app.draft(&source_sha256).and_then(|draft| draft.money),
             Some(original_money.saturating_add(77))
@@ -12791,18 +12793,14 @@ mod tests {
             .is_some_and(|journal| journal.current().and_then(|draft| draft.money) == Some(original_money + 77)));
 
         inventory.editor_action(super::EditorAction::Undo, &mut cx)?;
-        let _ = receiver
-            .recv_timeout(std::time::Duration::from_secs(5))
-            .map_err(|error| Error::System(format!("draft undo persistence timed out: {error}")))?;
+        wait_for_draft_persisted(&receiver)?;
         assert_eq!(cx.app.draft(&source_sha256).and_then(|draft| draft.money), None);
         assert!(DraftStore::for_source(&draft_directory, "fixture.sav")
             .load(&source_sha256)?
             .is_none());
 
         inventory.editor_action(super::EditorAction::Redo, &mut cx)?;
-        let _ = receiver
-            .recv_timeout(std::time::Duration::from_secs(5))
-            .map_err(|error| Error::System(format!("draft redo persistence timed out: {error}")))?;
+        wait_for_draft_persisted(&receiver)?;
         assert_eq!(
             cx.app.draft(&source_sha256).and_then(|draft| draft.money),
             Some(original_money.saturating_add(77))
