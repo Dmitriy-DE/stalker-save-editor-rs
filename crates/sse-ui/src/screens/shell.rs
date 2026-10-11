@@ -3170,7 +3170,13 @@ impl Shell {
                 ..Style::default()
             }
         };
-        tree.set_style(host, style)
+        tree.set_style(host, style)?;
+        if fills {
+            // Lay the new bound out now: a paint that follows must place the host's rows against it, not against the
+            // bound it replaced (on 1920×1080 the pinned row was otherwise drawn 12 px lower, under the status line).
+            tree.update_layout()?;
+        }
+        Ok(())
     }
 
     fn prepare(&mut self, tree: &mut Tree, index: usize) -> Result<()> {
@@ -6154,6 +6160,84 @@ mod tests {
                 edge, library_bottom,
                 "{name} ends at {edge}, the library at {library_bottom} ({width}x{height}, {state})"
             );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn pinned_rows_end_above_the_status_line_at_both_sizes() -> sse_core::Result<()> {
+        // Game Environment, Stashes and Inventory keep their bottom row inside the window: at 1366×768 and 1920×1080
+        // the row must end at or above the top of the status line, not under it.
+        use crate::event_loop::App as _;
+        for (width, height) in [(1366_u32, 768_u32), (1920, 1080)] {
+            let nonce = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| sse_core::Error::System(error.to_string()))?
+                .as_nanos();
+            let directory = std::env::temp_dir().join(format!("sse-shell-pinned-{}-{nonce}", std::process::id()));
+            std::fs::create_dir(&directory)?;
+            let result = (|| -> sse_core::Result<()> {
+                let paths = fixture_save_copies(&directory, 1)?;
+                let (proxy, receiver) = channel_pair::<super::super::AppMessage>();
+                let mut tree = Tree::new(Fonts::bundled()?, crate::screens::style::rgb(crate::theme::BG_BASE));
+                let mut shell = Shell::build_for_test(&mut tree, None)?;
+                shell.set_proxy(proxy);
+                let path = paths.first().ok_or_else(|| sse_core::Error::damaged("no save copy"))?;
+                assert!(shell.open_save(&mut tree, path)?);
+                loop {
+                    let message = receiver
+                        .recv_timeout(std::time::Duration::from_secs(60))
+                        .map_err(|error| sse_core::Error::System(error.to_string()))?;
+                    let finished = matches!(
+                        &message,
+                        Message::User(super::super::AppMessage::ToScreen(ScreenId::Overview, _))
+                    );
+                    let _ = shell.message(&mut tree, &message, None);
+                    if finished {
+                        break;
+                    }
+                }
+                let stride = usize::try_from(width).unwrap_or(0);
+                let mut frame = vec![0_u32; stride.saturating_mul(usize::try_from(height).unwrap_or(0))];
+                for id in [ScreenId::Environment, ScreenId::Stashes, ScreenId::Inventory] {
+                    // The screenshot's order: the screen opens at the build size, then the window takes its size and one
+                    // frame is drawn. The bound must be right after that resize, not only after a later frame.
+                    shell.resize_window(&mut tree, 1280, 800)?;
+                    shell.open(&mut tree, id)?;
+                    shell.resize_window(&mut tree, width, height)?;
+                    tree.paint(&mut frame, stride)?;
+                    let status_top = shell.status_line_top(&tree)?;
+                    let index = shell
+                        .screens
+                        .iter()
+                        .position(|screen| screen.id() == id)
+                        .ok_or_else(|| sse_core::Error::damaged("screen not found"))?;
+                    let host = shell
+                        .hosts
+                        .get(index)
+                        .copied()
+                        .flatten()
+                        .ok_or_else(|| sse_core::Error::damaged("screen host not built"))?;
+                    // The bottom row of the screen is the last visible child of its host (Inventory's is the last child
+                    // of its side column, which the host's last child holds).
+                    let mut row = host;
+                    while let Some(last) = tree.children(row).into_iter().rev().find(|c| tree.is_visible(*c)) {
+                        row = last;
+                        if tree.children(row).is_empty() {
+                            break;
+                        }
+                    }
+                    let rect = tree.rect(row)?;
+                    let bottom = i64::from(rect.y) + i64::from(rect.height);
+                    assert!(
+                        bottom <= status_top,
+                        "{id:?} bottom row ends at {bottom}, under the status line at {status_top} ({width}x{height})"
+                    );
+                }
+                Ok(())
+            })();
+            let _ = std::fs::remove_dir_all(&directory);
+            result?;
         }
         Ok(())
     }
