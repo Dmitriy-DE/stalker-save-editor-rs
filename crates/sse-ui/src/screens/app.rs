@@ -305,6 +305,7 @@ fn grid_label(
                 bottom: 0.0,
             },
             grid: Some(GridPlacement::cell(column, row)),
+            align_self: Some(Align::Stretch),
             ..Style::default()
         },
         if heading {
@@ -319,7 +320,7 @@ fn grid_label(
             }
         },
         Look {
-            border: Some((style::rgb(colors.borders[0]), 1.0)),
+            border: (column != 0).then(|| (style::rgb(colors.borders[0]), 1.0)),
             fill: heading.then(|| style::rgb(colors.background[2])),
             text: style::rgb(if heading { colors.text[0] } else { colors.text[1] }),
             align: if column == 0 {
@@ -352,6 +353,7 @@ fn grid_cell(
                 bottom: 0.0,
             },
             grid: Some(GridPlacement::cell(column, row)),
+            align_self: Some(Align::Stretch),
             ..Style::default()
         },
         Content::Button {
@@ -422,7 +424,7 @@ impl Screen for Capabilities {
             Some(scroll),
             NodeKind::Grid {
                 columns: vec![
-                    Track::Fixed(170.0),
+                    Track::Fixed(150.0),
                     Track::Fixed(100.0),
                     Track::Fixed(100.0),
                     Track::Fixed(100.0),
@@ -465,17 +467,19 @@ impl Screen for Capabilities {
         let side = cx.tree.add(
             Some(body),
             NodeKind::Column,
-            super::saves::side_column_style(false, false),
+            super::saves::side_column_style(true, false),
             Content::Panel,
             Look::default(),
         )?;
         let help = style::d2::panel(cx.tree, side)?;
         style::d2::panel_title(cx.tree, help, crate::strings::t("СПРАВКА ПО ВОЗМОЖНОСТЯМ"))?;
-        super::saves::paragraph(
+        scrollable_paragraph(
             cx.tree,
             help,
-            "Что редактор умеет делать с сейвами каждой игры.",
+            crate::strings::t("Что редактор умеет делать с сейвами каждой игры."),
             Text::Body,
+            260.0,
+            56.0,
         )?;
         let legend = style::d2::panel(cx.tree, side)?;
         style::d2::panel_title(cx.tree, legend, crate::strings::t("ОБОЗНАЧЕНИЯ"))?;
@@ -490,8 +494,8 @@ impl Screen for Capabilities {
             ]
             .join("\n"),
             Text::Body,
-            300.0,
-            150.0,
+            260.0,
+            220.0,
         )?;
 
         Ok(())
@@ -718,7 +722,7 @@ fn performance_summary_text() -> String {
         .join("\n")
 }
 
-fn scrollable_paragraph(
+pub(super) fn scrollable_paragraph(
     tree: &mut crate::widget::Tree,
     parent: WidgetId,
     text: &str,

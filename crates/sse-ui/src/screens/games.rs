@@ -5405,24 +5405,25 @@ impl Screen for Encyclopedia {
         if let Some(id) = self.to_game {
             cx.tree.set_enabled(id, false)?;
         }
-        style::label(
+        super::app::scrollable_paragraph(
             cx.tree,
             detail,
-            crate::strings::t_in(
-                language,
-                "Выберите совместимое сохранение с поддержкой добавления предметов.",
-            ),
+            &[
+                crate::strings::t_in(
+                    language,
+                    "Выберите совместимое сохранение с поддержкой добавления предметов.",
+                ),
+                crate::strings::t_in(
+                    language,
+                    "Выберите эту игру в Компаньоне и подключитесь к запущенной игре.",
+                ),
+            ]
+            .join("\n"),
             Text::Note,
+            260.0,
+            96.0,
         )?;
-        style::label(
-            cx.tree,
-            detail,
-            crate::strings::t_in(
-                language,
-                "Выберите эту игру в Компаньоне и подключитесь к запущенной игре.",
-            ),
-            Text::Note,
-        )?;
+
         Ok(())
     }
 
