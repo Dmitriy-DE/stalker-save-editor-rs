@@ -70,8 +70,12 @@ pub const fn capability(format: crate::Format, kind: ChangeKind) -> Capability {
         (Cs | Cop, EditUpgrades) => Experimental,
         (Soc, EditUpgrades) => Unsupported,
         (SocEe | CsEe | CopEe, AddItems | EditMoney | EditStacks | RemoveItems) => Experimental,
-        // Only Shadow of Chernobyl EE was checked on real saves. Clear Sky EE and Call of Pripyat EE wait for saves.
-        (SocEe, EditDurability) => Experimental,
+        // Call of Pripyat EE: 12 of 12 saves move a slot item to the backpack and restore it byte-identically.
+        // ToT EE and ChN EE have no slot item with a proven base slot, so they stay Unsupported.
+        (CopEe, EditPlacement) => Experimental,
+        // Shadow of Chernobyl EE (6/6) and Clear Sky EE (8/8) pass every real save. Call of Pripyat EE restores with
+        // one changed UPDATE condition byte on 7 of 12 saves, so it stays Unsupported (see the ignored round-trip test).
+        (SocEe | CsEe, EditDurability) => Experimental,
         (
             SocEe | CsEe | CopEe,
             EditDurability | EditPlacement | EditPlayerFaction | EditRelations | EditUpgrades | EditInfoPortions
@@ -4181,16 +4185,22 @@ mod tests {
                 assert_eq!(capability(format, kind), Capability::Experimental);
             }
         }
+        for format in [Format::SocEe, Format::CsEe] {
+            assert_eq!(capability(format, ChangeKind::EditDurability), Capability::Experimental);
+        }
         assert_eq!(
-            capability(Format::SocEe, ChangeKind::EditDurability),
+            capability(Format::CopEe, ChangeKind::EditDurability),
+            Capability::Unsupported
+        );
+        assert_eq!(
+            capability(Format::CopEe, ChangeKind::EditPlacement),
             Capability::Experimental
         );
-        for format in [Format::CsEe, Format::CopEe] {
-            assert_eq!(capability(format, ChangeKind::EditDurability), Capability::Unsupported);
+        for format in [Format::SocEe, Format::CsEe] {
+            assert_eq!(capability(format, ChangeKind::EditPlacement), Capability::Unsupported);
         }
         for format in [Format::SocEe, Format::CsEe, Format::CopEe] {
             for kind in [
-                ChangeKind::EditPlacement,
                 ChangeKind::EditPlayerFaction,
                 ChangeKind::EditRelations,
                 ChangeKind::EditUpgrades,
@@ -5381,18 +5391,19 @@ mod tests {
         Ok(initial.repack(&raw)?)
     }
 
-    /// Runs the Shadow of Chernobyl EE durability check on copies of real saves, in one command:
+    /// Measures the Enhanced Edition durability round trip on copies of real saves, in one command:
     /// `SSE_EE_SAVES_DIR=<copies dir> cargo test -p sse-xray -- --ignored ee_durability`.
-    /// Each save: set the first editable item to a new value, read it back, check the other items are unchanged,
-    /// restore the old value and compare the unpacked image with the original. Copies only; never write originals.
+    /// Every save is measured and printed. A format whose durability is Experimental must pass every save; a format
+    /// that is still Unsupported is reported with the reason, so the decision can be checked against the numbers.
     #[test]
-    #[ignore = "needs SSE_EE_SAVES_DIR pointing at copies of real Shadow of Chernobyl EE saves"]
+    #[ignore = "needs SSE_EE_SAVES_DIR pointing at copies of real Enhanced Edition saves"]
     fn ee_durability_round_trips_on_real_saves() -> TestResult {
         let Some(root) = std::env::var_os("SSE_EE_SAVES_DIR") else {
             return Err("SSE_EE_SAVES_DIR is not set".into());
         };
         let mut pending = vec![std::path::PathBuf::from(root)];
-        let mut checked = 0usize;
+        let mut measured = 0usize;
+        let mut failures = Vec::new();
         while let Some(directory) = pending.pop() {
             for entry in std::fs::read_dir(&directory)? {
                 let path = entry?.path();
@@ -5400,73 +5411,225 @@ mod tests {
                     pending.push(path);
                     continue;
                 }
-                if path.extension().and_then(|extension| extension.to_str()) != Some("sav") {
+                if !matches!(
+                    path.extension().and_then(|extension| extension.to_str()),
+                    Some("sav" | "scs" | "scop")
+                ) {
                     continue;
                 }
                 let original = std::fs::read(&path)?;
                 let save = Save::read(&original)?;
-                if save.format() != Format::SocEe {
+                if !matches!(save.format(), Format::SocEe | Format::CsEe | Format::CopEe) {
                     continue;
                 }
-                let items = save.inventory()?;
-                let Some(target) = items
-                    .iter()
-                    .find(|item| item.durability_editable && item.condition.is_some())
-                else {
-                    return Err(format!("{}: no editable durability item", path.display()).into());
-                };
-                let old_value = target.condition.ok_or("durability value missing")?;
-                let new_value = if (old_value - 0.5).abs() < 1e-6 { 0.25 } else { 0.5 };
-                let edited = apply(
-                    &save,
-                    &ChangeSet::new(vec![Change::SetDurability {
-                        target_object: target.handle,
-                        old_value,
-                        new_value,
-                    }]),
-                )?;
-                let after = Save::read(edited.as_slice())?;
-                let after_items = after.inventory()?;
-                for item in &items {
-                    let twin = after_items
-                        .iter()
-                        .find(|twin| twin.handle == item.handle)
-                        .ok_or_else(|| format!("{}: item 0x{:04X} missing", path.display(), item.handle))?;
-                    if item.handle == target.handle {
-                        let read = twin.condition.ok_or("durability not readable after the edit")?;
-                        assert!((read - new_value).abs() < 1e-6, "{}: read {read}", path.display());
-                    } else {
-                        assert_eq!(item.condition, twin.condition, "{}: neighbour changed", path.display());
+                let enabled = capability(save.format(), ChangeKind::EditDurability) != Capability::Unsupported;
+                measured += 1;
+                match durability_round_trip(&original, &save) {
+                    Ok(detail) => eprintln!("{} {:?} pass {detail}", path.display(), save.format()),
+                    Err(reason) => {
+                        eprintln!("{} {:?} FAIL {reason}", path.display(), save.format());
+                        if enabled {
+                            failures.push(format!("{}: {reason}", path.display()));
+                        }
                     }
                 }
-                let before_image = Container::read(&original)?.image().to_vec();
-                let after_image = Container::read(edited.as_slice())?.image().to_vec();
-                assert_eq!(
-                    before_image.len(),
-                    after_image.len(),
-                    "{}: image length changed",
-                    path.display()
-                );
-                let restored = apply(
-                    &after,
-                    &ChangeSet::new(vec![Change::SetDurability {
-                        target_object: target.handle,
-                        old_value: new_value,
-                        new_value: old_value,
-                    }]),
-                )?;
-                let restored_image = Container::read(restored.as_slice())?.image().to_vec();
-                assert!(
-                    restored_image == before_image,
-                    "{}: restore is not byte-identical in the unpacked image",
-                    path.display()
-                );
-                checked += 1;
             }
         }
+        assert!(measured > 0, "no Enhanced Edition saves found under SSE_EE_SAVES_DIR");
         assert!(
-            checked > 0,
-            "no Shadow of Chernobyl EE saves found under SSE_EE_SAVES_DIR"
+            failures.is_empty(),
+            "Experimental durability failed:\n{}",
+            failures.join("\n")
+        );
+        Ok(())
+    }
+
+    /// Sets the first editable durability item, reads it back, checks the neighbours, restores the old value and
+    /// compares the unpacked image with the original. Returns a short summary, or the first disagreement.
+    fn durability_round_trip(original: &[u8], save: &Save) -> std::result::Result<String, String> {
+        let items = save.inventory().map_err(|error| format!("{error:?}"))?;
+        let target = items
+            .iter()
+            .find(|item| item.durability_editable && item.condition.is_some())
+            .ok_or("no editable durability item")?;
+        let old_value = target.condition.ok_or("durability value missing")?;
+        let new_value = if (old_value - 0.5).abs() < 1e-6 { 0.25 } else { 0.5 };
+        let edited = apply(
+            save,
+            &ChangeSet::new(vec![Change::SetDurability {
+                target_object: target.handle,
+                old_value,
+                new_value,
+            }]),
+        )
+        .map_err(|error| format!("write refused: {error:?}"))?;
+        let after = Save::read(edited.as_slice()).map_err(|error| format!("reread failed: {error:?}"))?;
+        let after_items = after.inventory().map_err(|error| format!("{error:?}"))?;
+        for item in &items {
+            let twin = after_items
+                .iter()
+                .find(|twin| twin.handle == item.handle)
+                .ok_or_else(|| format!("item 0x{:04X} missing after the edit", item.handle))?;
+            if item.handle == target.handle {
+                let read = twin.condition.ok_or("durability not readable after the edit")?;
+                if (read - new_value).abs() >= 1e-6 {
+                    return Err(format!("read {read} instead of {new_value}"));
+                }
+            } else if item.condition != twin.condition {
+                return Err(format!("neighbour 0x{:04X} changed", item.handle));
+            }
+        }
+        let before_image = Container::read(original)
+            .map_err(|error| format!("{error:?}"))?
+            .image()
+            .to_vec();
+        let after_image = Container::read(edited.as_slice())
+            .map_err(|error| format!("{error:?}"))?
+            .image()
+            .to_vec();
+        if before_image.len() != after_image.len() {
+            return Err("unpacked image length changed".to_owned());
+        }
+        let differing = before_image.iter().zip(&after_image).filter(|(a, b)| a != b).count();
+        let restored = apply(
+            &after,
+            &ChangeSet::new(vec![Change::SetDurability {
+                target_object: target.handle,
+                old_value: new_value,
+                new_value: old_value,
+            }]),
+        )
+        .map_err(|error| format!("restore refused: {error:?}"))?;
+        let restored_image = Container::read(restored.as_slice())
+            .map_err(|error| format!("{error:?}"))?
+            .image()
+            .to_vec();
+        if restored_image != before_image {
+            let differing_restore = before_image.iter().zip(&restored_image).filter(|(a, b)| a != b).count();
+            return Err(format!("restore differs in {differing_restore} unpacked bytes"));
+        }
+        Ok(format!("edit bytes {differing}, restore identical"))
+    }
+
+    /// Every Enhanced Edition save file under `SSE_EE_SAVES_DIR`, as (path, bytes). Other formats are skipped.
+    fn ee_save_copies() -> std::result::Result<Vec<(std::path::PathBuf, Vec<u8>)>, Box<dyn std::error::Error>> {
+        let Some(root) = std::env::var_os("SSE_EE_SAVES_DIR") else {
+            return Err("SSE_EE_SAVES_DIR is not set".into());
+        };
+        let mut pending = vec![std::path::PathBuf::from(root)];
+        let mut found = Vec::new();
+        while let Some(directory) = pending.pop() {
+            for entry in std::fs::read_dir(&directory)? {
+                let path = entry?.path();
+                if path.is_dir() {
+                    pending.push(path);
+                    continue;
+                }
+                if !matches!(
+                    path.extension().and_then(|extension| extension.to_str()),
+                    Some("sav" | "scs" | "scop")
+                ) {
+                    continue;
+                }
+                let bytes = std::fs::read(&path)?;
+                let save = Save::read(&bytes)?;
+                if matches!(save.format(), Format::SocEe | Format::CsEe | Format::CopEe) {
+                    found.push((path, bytes));
+                }
+            }
+        }
+        Ok(found)
+    }
+
+    /// Moves the first slot item to the backpack, reads it back, checks the neighbours, restores its base slot and
+    /// compares the unpacked image with the original.
+    fn placement_round_trip(original: &[u8], save: &Save) -> std::result::Result<String, String> {
+        let items = save.inventory().map_err(|error| format!("{error:?}"))?;
+        let target = items
+            .iter()
+            .find(|item| item.placement.as_deref() == Some("slot") && item.placement_base_slot.is_some())
+            .ok_or("no slot item with a proven base slot")?;
+        let slot = target.placement_base_slot.ok_or("base slot missing")?;
+        let edited = apply(
+            save,
+            &ChangeSet::new(vec![Change::SetPlacement {
+                target_object: target.handle,
+                destination: Placement::Ruck,
+            }]),
+        )
+        .map_err(|error| format!("move to backpack refused: {error:?}"))?;
+        let after = Save::read(edited.as_slice()).map_err(|error| format!("reread failed: {error:?}"))?;
+        let after_items = after.inventory().map_err(|error| format!("{error:?}"))?;
+        for item in &items {
+            let twin = after_items
+                .iter()
+                .find(|twin| twin.handle == item.handle)
+                .ok_or_else(|| format!("item 0x{:04X} missing after the edit", item.handle))?;
+            if item.handle == target.handle {
+                if twin.placement.as_deref() != Some("ruck") {
+                    return Err(format!("placement reads {:?} instead of ruck", twin.placement));
+                }
+            } else if item.placement != twin.placement || item.condition != twin.condition {
+                return Err(format!("neighbour 0x{:04X} changed", item.handle));
+            }
+        }
+        let before_image = Container::read(original)
+            .map_err(|error| format!("{error:?}"))?
+            .image()
+            .to_vec();
+        let after_image = Container::read(edited.as_slice())
+            .map_err(|error| format!("{error:?}"))?
+            .image()
+            .to_vec();
+        if before_image.len() != after_image.len() {
+            return Err("unpacked image length changed".to_owned());
+        }
+        let differing = before_image.iter().zip(&after_image).filter(|(a, b)| a != b).count();
+        let restored = apply(
+            &after,
+            &ChangeSet::new(vec![Change::SetPlacement {
+                target_object: target.handle,
+                destination: Placement::Slot(slot),
+            }]),
+        )
+        .map_err(|error| format!("restore to slot {slot} refused: {error:?}"))?;
+        let restored_image = Container::read(restored.as_slice())
+            .map_err(|error| format!("{error:?}"))?
+            .image()
+            .to_vec();
+        if restored_image != before_image {
+            let differing_restore = before_image.iter().zip(&restored_image).filter(|(a, b)| a != b).count();
+            return Err(format!("restore differs in {differing_restore} unpacked bytes"));
+        }
+        Ok(format!("slot {slot}, edit bytes {differing}, restore identical"))
+    }
+
+    /// Measures the placement round trip on copies of real Enhanced Edition saves:
+    /// `SSE_EE_SAVES_DIR=<copies dir> cargo test -p sse-xray -- --ignored ee_placement`.
+    #[test]
+    #[ignore = "needs SSE_EE_SAVES_DIR pointing at copies of real Enhanced Edition saves"]
+    fn ee_placement_round_trips_on_real_saves() -> TestResult {
+        let mut measured = 0usize;
+        let mut failures = Vec::new();
+        for (path, bytes) in ee_save_copies()? {
+            let save = Save::read(&bytes)?;
+            let enabled = capability(save.format(), ChangeKind::EditPlacement) != Capability::Unsupported;
+            match placement_round_trip(&bytes, &save) {
+                Ok(detail) => eprintln!("{} {:?} pass {detail}", path.display(), save.format()),
+                Err(reason) => {
+                    eprintln!("{} {:?} FAIL {reason}", path.display(), save.format());
+                    if enabled {
+                        failures.push(format!("{}: {reason}", path.display()));
+                    }
+                }
+            }
+            measured += 1;
+        }
+        assert!(measured > 0, "no Enhanced Edition saves found under SSE_EE_SAVES_DIR");
+        assert!(
+            failures.is_empty(),
+            "Experimental placement failed:\n{}",
+            failures.join("\n")
         );
         Ok(())
     }
