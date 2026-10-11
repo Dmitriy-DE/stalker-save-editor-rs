@@ -68,6 +68,25 @@ fn in_game_directory(
     })
 }
 
+/// Stores a file downloaded from Steam Cloud as a new file in `downloads` and returns its path.
+///
+/// The bytes go to a temporary file made by exclusive creation under a fresh name, so a link planted at a
+/// predictable temporary path is never written through, and the file is published without replacement: a target
+/// that already exists, or appears while the download is written, is left as it is.
+fn store_cloud_download(downloads: &Path, name: &std::ffi::OsStr, bytes: &[u8]) -> std::io::Result<PathBuf> {
+    std::fs::create_dir_all(downloads)?;
+    let target = downloads.join(name);
+    let options = sse_sys::secure_fs::AtomicWriteOptions::create_new();
+    match sse_sys::secure_fs::atomic_write(&target, bytes, options) {
+        Ok(()) => Ok(target),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            tr("{0} уже есть", &[&target.display()]),
+        )),
+        Err(error) => Err(error),
+    }
+}
+
 fn app_id(game: &str) -> Option<u32> {
     match game {
         "soc" | "stalker-soc" => Some(4_500),
@@ -1141,8 +1160,18 @@ impl Screen for Companion {
 
 #[derive(Debug)]
 enum AchReply {
-    List(std::result::Result<Vec<Achievement>, String>),
-    Changed(std::result::Result<(), String>),
+    /// The achievement list of the game the request was made for.
+    List {
+        app_id: Option<u32>,
+        result: std::result::Result<Vec<Achievement>, String>,
+    },
+    /// The outcome of a change made for `app_id`.
+    Changed {
+        app_id: u32,
+        result: std::result::Result<(), String>,
+    },
+    /// Invented rows for the screenshot tool; shown whatever game is selected.
+    Fixture(Vec<Achievement>),
 }
 /// Eight invented achievements for the developer screenshot tool; nothing here comes from Steam.
 /// Only for sse-ui-dev (screenshots); not part of the screen API.
@@ -1158,7 +1187,7 @@ pub fn achievement_fixture_message() -> AppMessage {
             unlock_time: 0,
         })
         .collect();
-    AppMessage::ToScreen(ScreenId::Achievements, Box::new(AchReply::List(Ok(items))))
+    AppMessage::ToScreen(ScreenId::Achievements, Box::new(AchReply::Fixture(items)))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1206,7 +1235,7 @@ impl Achievements {
                 .and_then(achievement_list);
             proxy.send(AppMessage::ToScreen(
                 ScreenId::Achievements,
-                Box::new(AchReply::List(result)),
+                Box::new(AchReply::List { app_id: id, result }),
             ));
         }) {
             cx.status = Some(tr("Ошибка: {0}", &[&error]));
@@ -1447,7 +1476,7 @@ impl Screen for Achievements {
                 let result = change_achievement(app_id, &name, set);
                 proxy.send(AppMessage::ToScreen(
                     ScreenId::Achievements,
-                    Box::new(AchReply::Changed(result)),
+                    Box::new(AchReply::Changed { app_id, result }),
                 ));
             }) {
                 cx.status = Some(tr("Ошибка: {0}", &[&error]));
@@ -1455,8 +1484,21 @@ impl Screen for Achievements {
         }
         if let Message::User(AppMessage::ToScreen(ScreenId::Achievements, payload)) = message {
             if let Some(reply) = payload.downcast_ref::<AchReply>() {
+                // A reply belongs to the game it was requested for: after the selection moved, a late list must
+                // not replace the list of the game now shown, and a late change must not mark its rows.
+                let current = cx.app.selected_game().and_then(app_id);
                 match reply {
-                    AchReply::List(Ok(items)) => {
+                    AchReply::List { app_id: requested, .. } if *requested != current => {}
+                    AchReply::Changed {
+                        app_id: requested,
+                        result,
+                    } if Some(*requested) != current => {
+                        // The write itself happened for the other game; its failure is still reported.
+                        if let Err(e) = result {
+                            cx.status = Some(format!("Steam: {e}"));
+                        }
+                    }
+                    AchReply::List { result: Ok(items), .. } | AchReply::Fixture(items) => {
                         self.intent = None;
                         if self.confirm_card.is_some_and(|card| cx.tree.dialog() == Some(card)) {
                             let _ = cx.tree.close_dialog()?;
@@ -1464,12 +1506,12 @@ impl Screen for Achievements {
                         self.items.clone_from(items);
                         self.render(cx)?
                     }
-                    AchReply::List(Err(e)) => {
+                    AchReply::List { result: Err(e), .. } => {
                         if let Some(id) = self.status {
                             cx.tree.set_text(id, &clip(e))?;
                         }
                     }
-                    AchReply::Changed(Ok(())) => {
+                    AchReply::Changed { result: Ok(()), .. } => {
                         if let Some(selected_id) = self.selected.as_deref() {
                             if let Some(item) = self.items.iter_mut().find(|item| item.name == selected_id) {
                                 item.achieved = self.pending_set.take().unwrap_or(item.achieved);
@@ -1483,7 +1525,7 @@ impl Screen for Achievements {
                         self.render(cx)?;
                         self.load(cx)
                     }
-                    AchReply::Changed(Err(e)) => cx.status = Some(format!("Steam: {e}")),
+                    AchReply::Changed { result: Err(e), .. } => cx.status = Some(format!("Steam: {e}")),
                 }
             }
         }
@@ -1512,7 +1554,11 @@ fn intent_is_for_selected_game(selected_game: Option<&str>, intent_app_id: u32) 
 
 #[derive(Debug)]
 enum CloudReply {
-    List(std::result::Result<Vec<CloudFile>, String>),
+    /// The cloud file list of the game the request was made for.
+    List {
+        app_id: Option<u32>,
+        result: std::result::Result<Vec<CloudFile>, String>,
+    },
     Prepared(std::result::Result<CloudIntent, String>),
     Done(std::result::Result<String, String>),
 }
@@ -1572,7 +1618,7 @@ impl Cloud {
                 .and_then(cloud_files);
             proxy.send(AppMessage::ToScreen(
                 ScreenId::Cloud,
-                Box::new(CloudReply::List(result)),
+                Box::new(CloudReply::List { app_id: id, result }),
             ));
         }) {
             cx.status = Some(tr("Ошибка: {0}", &[&error]));
@@ -2023,26 +2069,7 @@ impl Screen for Cloud {
                     let name = std::path::Path::new(&remote)
                         .file_name()
                         .ok_or_else(|| t("Облачный файл без имени").to_owned())?;
-                    std::fs::create_dir_all(&downloads).map_err(|error| error.to_string())?;
-                    let target = downloads.join(name);
-                    let temp = downloads.join(format!(".{}.download.tmp", name.to_string_lossy()));
-                    let written = (|| {
-                        use std::io::Write;
-                        let mut file = std::fs::File::create(&temp)?;
-                        file.write_all(&source)?;
-                        file.sync_all()?;
-                        if target.exists() {
-                            return Err(std::io::Error::new(
-                                std::io::ErrorKind::AlreadyExists,
-                                tr("{0} уже есть", &[&target.display()]),
-                            ));
-                        }
-                        std::fs::rename(&temp, &target)
-                    })();
-                    if let Err(error) = written {
-                        let _ = std::fs::remove_file(&temp);
-                        return Err(error.to_string());
-                    }
+                    let target = store_cloud_download(&downloads, name, &source).map_err(|error| error.to_string())?;
                     Ok(tr(
                         "Файл скачан отдельно, открытый сейв не тронут: {0}",
                         &[&target.display()],
@@ -2060,7 +2087,10 @@ impl Screen for Cloud {
         if let Message::User(AppMessage::ToScreen(ScreenId::Cloud, payload)) = message {
             if let Some(reply) = payload.downcast_ref::<CloudReply>() {
                 match reply {
-                    CloudReply::List(Ok(items)) => {
+                    // A list requested for another game arrived late: the list now shown stays.
+                    CloudReply::List { app_id: requested, .. }
+                        if *requested != cx.app.selected_game().and_then(app_id) => {}
+                    CloudReply::List { result: Ok(items), .. } => {
                         if self
                             .selected
                             .as_ref()
@@ -2072,7 +2102,7 @@ impl Screen for Cloud {
                         self.items.clone_from(items);
                         self.render(cx)?;
                     }
-                    CloudReply::List(Err(error)) => {
+                    CloudReply::List { result: Err(error), .. } => {
                         if let Some(status) = self.status {
                             cx.tree.set_text(status, &tr("Ошибка загрузки списка: {0}", &[error]))?;
                         }
@@ -2914,6 +2944,185 @@ mod cloud_prepared_tests {
             None => false,
         };
         Ok((screen, cx.status.clone(), opened))
+    }
+
+    fn cloud_file(name: &str) -> CloudFile {
+        CloudFile {
+            name: name.to_owned(),
+            size: 4,
+            timestamp: 0,
+            persisted: true,
+            exists: true,
+        }
+    }
+
+    #[test]
+    fn a_late_cloud_list_for_another_game_does_not_replace_the_shown_list() -> sse_core::Result<()> {
+        let mut screen = Cloud::default();
+        let mut app = AppState::new();
+        app.set_selected_game(Some("stalker-cop".to_owned()));
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: None,
+            status: None,
+            app: &mut app,
+        };
+        screen.build(&mut cx, host)?;
+        let list = |game: &str, file: &str| {
+            Message::User(AppMessage::ToScreen(
+                ScreenId::Cloud,
+                Box::new(CloudReply::List {
+                    app_id: app_id(game),
+                    result: Ok(vec![cloud_file(file)]),
+                }),
+            ))
+        };
+
+        screen.message(&mut cx, &list("stalker-cop", "cop.sav"), None)?;
+        assert_eq!(screen.items.first().map(|item| item.name.as_str()), Some("cop.sav"));
+        // The list asked for Clear Sky before the selection moved arrives last.
+        screen.message(&mut cx, &list("stalker-cs", "cs.sav"), None)?;
+        assert_eq!(screen.items.first().map(|item| item.name.as_str()), Some("cop.sav"));
+        let failed = Message::User(AppMessage::ToScreen(
+            ScreenId::Cloud,
+            Box::new(CloudReply::List {
+                app_id: app_id("stalker-cs"),
+                result: Err("late failure".to_owned()),
+            }),
+        ));
+        screen.message(&mut cx, &failed, None)?;
+        assert_eq!(screen.items.len(), 1);
+        if let Some(status) = screen.status {
+            assert!(!cx.tree.text(status)?.contains("late failure"));
+        }
+        Ok(())
+    }
+
+    fn achievement(name: &str, achieved: bool) -> Achievement {
+        Achievement {
+            name: name.to_owned(),
+            display_name: name.to_owned(),
+            description: String::new(),
+            hidden: false,
+            achieved,
+            unlock_time: 0,
+        }
+    }
+
+    #[test]
+    fn late_achievement_replies_for_another_game_are_dropped() -> sse_core::Result<()> {
+        let mut screen = Achievements::default();
+        let mut app = AppState::new();
+        app.set_selected_game(Some("stalker-cop".to_owned()));
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: None,
+            status: None,
+            app: &mut app,
+        };
+        screen.build(&mut cx, host)?;
+        let send = |screen: &mut Achievements, cx: &mut Context<'_>, reply: AchReply| {
+            let message = Message::User(AppMessage::ToScreen(ScreenId::Achievements, Box::new(reply)));
+            screen.message(cx, &message, None)
+        };
+
+        let cop = app_id("stalker-cop");
+        let cs = app_id("stalker-cs");
+        send(
+            &mut screen,
+            &mut cx,
+            AchReply::List {
+                app_id: cop,
+                result: Ok(vec![achievement("COP_ONE", false)]),
+            },
+        )?;
+        assert_eq!(screen.items.first().map(|item| item.name.as_str()), Some("COP_ONE"));
+
+        // A list and a finished change requested for Clear Sky arrive after the selection moved.
+        send(
+            &mut screen,
+            &mut cx,
+            AchReply::List {
+                app_id: cs,
+                result: Ok(vec![achievement("CS_ONE", true)]),
+            },
+        )?;
+        screen.selected = Some("COP_ONE".to_owned());
+        screen.pending_set = Some(true);
+        send(
+            &mut screen,
+            &mut cx,
+            AchReply::Changed {
+                app_id: cs.unwrap_or_default(),
+                result: Ok(()),
+            },
+        )?;
+
+        assert_eq!(screen.items.len(), 1);
+        let shown = screen.items.first();
+        assert_eq!(shown.map(|item| item.name.as_str()), Some("COP_ONE"));
+        assert_eq!(
+            shown.map(|item| item.achieved),
+            Some(false),
+            "another game's change marks nothing"
+        );
+        assert!(cx.status.is_none(), "{:?}", cx.status);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cloud_download_never_writes_through_a_link_or_over_an_existing_file() -> sse_core::Result<()> {
+        use std::ffi::OsStr;
+
+        let root = std::env::temp_dir().join(format!("sse-cloud-download-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let downloads = root.join("cloud_downloads");
+        std::fs::create_dir_all(&downloads)?;
+        let victim = root.join("victim.txt");
+        std::fs::write(&victim, b"keep")?;
+
+        // A link waiting at the temporary path the old code used is not followed.
+        std::os::unix::fs::symlink(&victim, downloads.join(".slot.sav.download.tmp"))?;
+        let stored = store_cloud_download(&downloads, OsStr::new("slot.sav"), b"cloud")?;
+        assert_eq!(stored, downloads.join("slot.sav"));
+        assert_eq!(std::fs::read(&stored)?, b"cloud");
+        assert_eq!(std::fs::read(&victim)?, b"keep");
+
+        // An existing target is kept, whether it is a file or a link.
+        let again = store_cloud_download(&downloads, OsStr::new("slot.sav"), b"newer");
+        assert!(again.is_err_and(|error| error.kind() == std::io::ErrorKind::AlreadyExists));
+        assert_eq!(std::fs::read(&stored)?, b"cloud");
+        std::os::unix::fs::symlink(root.join("created-through-link"), downloads.join("linked.sav"))?;
+        let through_link = store_cloud_download(&downloads, OsStr::new("linked.sav"), b"cloud");
+        assert!(through_link.is_err_and(|error| error.kind() == std::io::ErrorKind::AlreadyExists));
+        assert!(!root.join("created-through-link").exists());
+
+        // Nothing but the download and the planted links is left behind.
+        let mut names: Vec<String> = std::fs::read_dir(&downloads)?
+            .filter_map(std::result::Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        assert_eq!(names, [".slot.sav.download.tmp", "linked.sav", "slot.sav"]);
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
     }
 
     #[test]
