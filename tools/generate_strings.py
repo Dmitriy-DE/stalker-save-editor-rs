@@ -184,6 +184,11 @@ mod tests {
         }
     }
     #[test]
+    fn table_is_sorted_the_way_the_lookup_searches() {
+        assert!(STRINGS.windows(2).all(|pair| pair[0].0 < pair[1].0), "STRINGS must be sorted by key for binary search");
+    }
+
+    #[test]
     fn russian_is_source() {
         for (key, values) in STRINGS { assert_eq!(values.first().copied(), Some(*key)); }
     }

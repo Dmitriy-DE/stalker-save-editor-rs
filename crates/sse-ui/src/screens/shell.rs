@@ -1666,7 +1666,7 @@ impl Shell {
         library_search.build(tree, library)?;
         let library_refresh = library_icon_button(tree, library_actions, Icon::D2Updates)?;
         tree.set_tooltip(library_refresh, crate::strings::t("Обновить"))?;
-        let library_status = style::label(tree, library, "Ищу сейвы…", Text::Note)?;
+        let library_status = super::saves::paragraph(tree, library, "Ищу сейвы…", Text::Note)?;
         let library_list = tree.add(
             Some(library),
             NodeKind::Column,
@@ -4210,7 +4210,8 @@ impl Shell {
             tree.set_visible(library_row.plate, !has_image)?;
             tree.set_text(library_row.select, &super::saves::short_text(&filename, 24))?;
             tree.set_enabled(library_row.select, slot.detection_error.is_none())?;
-            tree.set_text(library_row.game, game)?;
+            let game = fit_to_node(tree, library_row.game, game);
+            tree.set_text(library_row.game, &game)?;
             let s2_detail = preview
                 .as_ref()
                 .and_then(|entry| entry.s2_detail.as_deref())
@@ -4265,6 +4266,7 @@ impl Shell {
                 ],
             )
         };
+        // The status line sizes itself to its text, so its width is taken from the list it sits above.
         tree.set_text(self.library_status, &status)?;
         tree.set_visible(self.library_status, !status.is_empty())?;
         tree.set_visible(self.library_pager, !slots.is_empty())?;
@@ -4518,6 +4520,17 @@ fn find_button_with_text(tree: &Tree, root: WidgetId, needle: &str) -> Option<Wi
         stack.extend(tree.children(id));
     }
     None
+}
+
+/// `text`, shortened with an ellipsis to the width its node has; before the first layout the text stays whole.
+fn fit_to_node(tree: &Tree, id: WidgetId, text: &str) -> String {
+    let width = tree
+        .rect(id)
+        .map_or(0.0, |rect| f32::from(u16::try_from(rect.width).unwrap_or(u16::MAX)));
+    if width <= 0.0 {
+        return text.to_owned();
+    }
+    super::saves::fit_text(tree, text, style::Text::Note.style(), width)
 }
 
 #[cfg(test)]

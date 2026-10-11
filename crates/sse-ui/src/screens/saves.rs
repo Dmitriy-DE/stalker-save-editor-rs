@@ -60,12 +60,33 @@ fn xray_overview_parameters(save: &Save, money: u32, item_count: usize, game_tim
     );
     let weather = save.weather().map_or_else(
         || dash.to_owned(),
-        |value| format!("{} → {}", value.current, value.next),
+        |value| {
+            format!(
+                "{} -> {}",
+                weather_state_name(&value.current),
+                weather_state_name(&value.next)
+            )
+        },
     );
     tr(
-        "Деньги: {0} RU · Предметов: {1} · Тайников: —\nИгровое время: {2} · Персонаж: {3} · Здоровье: {4}\nРанг: {5} · Репутация: {6} · Задания: {7} (последнее получено: {8}) · Убито (люди / монстры): {9} · Погода: {10}",
+        "Деньги: {0} RU · Объектов инвентаря: {1} · Тайников: —\nИгровое время: {2} · Персонаж: {3} · Здоровье: {4}\nРанг: {5} · Репутация: {6} · Задания: {7} (последнее получено: {8}) · Убито (люди / монстры): {9} · Погода: {10}",
         &[&money, &item_count, &game_time, &name, &health, &rank, &reputation, &tasks, &last_received, &kills, &weather],
     )
+}
+
+/// Weather state the level scripts store, translated; an unknown state is shown as stored.
+fn weather_state_name(state: &str) -> &str {
+    match state {
+        "clear" => t("ясно"),
+        "cloudy" => t("облачно"),
+        "rain" => t("дождь"),
+        "thunder" => t("гром"),
+        "pasmurno" => t("пасмурно"),
+        "groza" => t("гроза"),
+        "foggy" => t("туман"),
+        "storm" => t("шторм"),
+        _ => state,
+    }
 }
 
 fn format_xray_game_time(game_time: u64) -> String {
@@ -1876,7 +1897,7 @@ fn build_detail_set(tree: &mut crate::widget::Tree, parent: WidgetId) -> Result<
     })
 }
 
-const DETAIL_TILE_SLOTS: usize = 8;
+const DETAIL_TILE_SLOTS: usize = 10;
 const DETAIL_INFO_SLOTS: usize = 4;
 const DETAIL_INTEGRITY_SLOTS: usize = 6;
 
@@ -2643,7 +2664,7 @@ fn add_candidate_text_width(compact: bool) -> f32 {
 }
 
 /// `text`, shortened with an ellipsis at its end until it fits in `max_width` pixels.
-fn fit_text(tree: &crate::widget::Tree, text: &str, style: TextStyle, max_width: f32) -> String {
+pub(super) fn fit_text(tree: &crate::widget::Tree, text: &str, style: TextStyle, max_width: f32) -> String {
     if tree.measure_text(text, style) <= max_width {
         return text.to_owned();
     }
@@ -12364,6 +12385,48 @@ mod tests {
 mod xray_overview_tests {
     use super::xray_overview_parameters;
     use sse_xray::Save;
+
+    /// Weather states are translated in every interface language; an unknown state is shown as stored.
+    #[test]
+    fn weather_states_have_a_translation_in_every_language() {
+        let keys = [
+            (super::t("ясно"), "clear"),
+            (super::t("облачно"), "cloudy"),
+            (super::t("дождь"), "rain"),
+            (super::t("гром"), "thunder"),
+            (super::t("пасмурно"), "pasmurno"),
+            (super::t("гроза"), "groza"),
+            (super::t("туман"), "foggy"),
+            (super::t("шторм"), "storm"),
+        ];
+        for (key, state) in keys {
+            assert_eq!(
+                super::weather_state_name(state),
+                key,
+                "{state} shows the Russian key in Russian"
+            );
+            for language in ["en", "de", "ja", "zh-CN", "pt-BR", "tr"] {
+                let text = crate::strings::t_in(language, key);
+                assert_ne!(text, key, "{state}/{language} is not translated");
+            }
+        }
+        assert_eq!(super::weather_state_name("unknown_state"), "unknown_state");
+    }
+
+    /// Every parameter a Clear Sky save proves gets its own tile; none is dropped for lack of a slot.
+    #[test]
+    fn every_clear_sky_parameter_has_a_tile() -> sse_core::Result<()> {
+        let save = Save::read(include_bytes!("../../../../fixtures/synthetic/xray-clear-sky.sav"))?;
+        let text = super::xray_overview_parameters(&save, 1, 1, "day");
+        let pairs = super::detail_pairs(&text);
+        assert!(
+            pairs.len() <= super::DETAIL_TILE_SLOTS,
+            "{} pairs for {} tiles",
+            pairs.len(),
+            super::DETAIL_TILE_SLOTS
+        );
+        Ok(())
+    }
 
     /// The synthetic Clear Sky fixture has health 1, rank -1 and reputation -1 (checked against the C# reader).
     #[test]
