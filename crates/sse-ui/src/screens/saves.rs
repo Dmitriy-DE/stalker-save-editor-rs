@@ -7619,6 +7619,16 @@ pub(super) struct ListSide {
 
 /// Builds the list panel and the side panel. `title` heads the list, `side_title` the side panel; `keys` are the
 /// key–value rows of the side panel, translated by the caller; `empty` is the side panel's text while nothing is chosen.
+/// Labels of a list side: the panel title, the side title, the empty-list text and its note, and the header action.
+pub(super) struct ListSideText<'a> {
+    pub(super) title: &'a str,
+    pub(super) side_title: &'a str,
+    pub(super) empty: &'a str,
+    pub(super) note: &'a str,
+    pub(super) action: Option<&'a str>,
+}
+
+/// A list side as every list screen builds it: the rows, a page row and the side panel.
 pub(super) fn build_list_side(
     cx: &mut Context<'_>,
     host: WidgetId,
@@ -7628,6 +7638,32 @@ pub(super) fn build_list_side(
     (empty, note): (&str, &str),
     action: Option<&str>,
 ) -> Result<ListSide> {
+    let text = ListSideText {
+        title,
+        side_title,
+        empty,
+        note,
+        action,
+    };
+    build_list_side_with(cx, host, text, keys, false)
+}
+
+/// The list side. With `scrolling`, the rows scroll inside the list panel and the page row stays below them, so a short
+/// window never pushes the pager past its bottom edge.
+fn build_list_side_with(
+    cx: &mut Context<'_>,
+    host: WidgetId,
+    text: ListSideText<'_>,
+    keys: &[String],
+    scrolling: bool,
+) -> Result<ListSide> {
+    let ListSideText {
+        title,
+        side_title,
+        empty,
+        note,
+        action,
+    } = text;
     let body = cx.tree.add(
         Some(host),
         NodeKind::Row,
@@ -7673,8 +7709,32 @@ pub(super) fn build_list_side(
     let count = style::label(cx.tree, header, "0", Text::Note)?;
     // A paragraph: a long note wraps inside the list panel (its width is set when the layout is known).
     let note = paragraph(cx.tree, list_panel, note, Text::Note)?;
+    // Rows that scroll sit in their own region; the page row below stays where it is.
+    let rows_parent = if scrolling {
+        let region = cx.tree.add(
+            Some(list_panel),
+            NodeKind::Scroll {
+                horizontal: false,
+                vertical: true,
+                offset_x: 0.0,
+                offset_y: 0.0,
+            },
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: Size::new(0.0, 0.0),
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        cx.tree.set_clip_children(region, true)?;
+        region
+    } else {
+        list_panel
+    };
     let list = cx.tree.add(
-        Some(list_panel),
+        Some(rows_parent),
         NodeKind::Column,
         Style {
             grow: 1.0,
@@ -9036,20 +9096,28 @@ impl Screen for Stashes {
         ScreenId::Stashes
     }
 
+    fn fills_window(&self) -> bool {
+        true
+    }
+
     fn subtitle(&self) -> &str {
         t("Подтверждённые тайники и их предметы")
     }
 
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
         let keys = [t("Предмет"), t("Черновик")].map(str::to_owned);
-        let list = build_list_side(
+        let list = build_list_side_with(
             cx,
             host,
-            t("ТАЙНИКИ"),
-            t("ВЫБРАННЫЙ ПРЕДМЕТ"),
+            ListSideText {
+                title: t("ТАЙНИКИ"),
+                side_title: t("ВЫБРАННЫЙ ПРЕДМЕТ"),
+                empty: t("Предмет не выбран."),
+                note: t("Выберите сейв на экране «Обзор»."),
+                action: None,
+            },
             &keys,
-            (t("Предмет не выбран."), t("Выберите сейв на экране «Обзор».")),
-            None,
+            true,
         )?;
         let action = style::d2::button(
             cx.tree,
@@ -10261,6 +10329,46 @@ mod tests {
             .status
             .as_deref()
             .is_some_and(|status| status.contains("не поддерживается")));
+        Ok(())
+    }
+
+    /// The stash list panel, which holds the rows and the page row, ends inside the window at small and large sizes.
+    #[test]
+    fn stash_list_and_pager_stay_inside_the_window() -> sse_core::Result<()> {
+        for (width, height) in [(1366_u32, 768_u32), (1920, 1080)] {
+            let temp = TempDirectory::new();
+            let source = include_bytes!("../../../../fixtures/synthetic/xray-stashes/xray-stash-cop-source.sav");
+            let loaded = Arc::new(load_xray(source, "stash-cop-source.sav", "stalker-cop", "cop")?);
+            let workspace = Workspace::with_draft_directory(temp.0.join("drafts"));
+            workspace.lock().selected = Some(Arc::clone(&loaded));
+            let mut app = sse_app::state::AppState::new();
+            let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+            let host = tree.add(
+                None,
+                NodeKind::Column,
+                Style::default(),
+                Content::Panel,
+                Look::default(),
+            )?;
+            tree.resize(width, height);
+            let mut screen = super::Stashes::new(workspace.clone());
+            let mut cx = Context {
+                tree: &mut tree,
+                proxy: None,
+                status: None,
+                app: &mut app,
+            };
+            screen.build(&mut cx, host)?;
+            cx.tree.update_layout()?;
+            let list = screen.list.as_ref().ok_or_else(|| Error::damaged("no stash list"))?;
+            let panel = tree.rect(list.list_panel)?;
+            let bottom = panel.y.saturating_add(i32::try_from(panel.height).unwrap_or(i32::MAX));
+            let window = i32::try_from(height).unwrap_or(i32::MAX);
+            assert!(
+                bottom <= window,
+                "{width}x{height}: the stash list panel ends at {bottom}, below the window at {window}"
+            );
+        }
         Ok(())
     }
 
