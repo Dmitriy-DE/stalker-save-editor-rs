@@ -580,7 +580,7 @@ impl Screen for Companion {
         )?);
         let card = style::card(cx.tree, cards)?;
         style::label(cx.tree, card, t("МОД-КОМПАНЬОН"), Text::Heading)?;
-        style::label(
+        super::saves::paragraph(
             cx.tree,
             card,
             t("Меню в игре: Esc → F1 или КПК компаньона. Хук создаёт распакованный скрипт в gamedata/scripts; установка через приложение справа."),
@@ -615,7 +615,7 @@ impl Screen for Companion {
             t("S.T.A.L.K.E.R. 2 — команды игры (экспериментально)"),
             Text::Heading,
         )?;
-        style::label(cx.tree,s2,t("Нужны S2 на ПК, UE4SS и установленный мод. Команды выполняет сама игра (XSetGodMode, XSetNoClipGSC, XSetTimeSpeed)."),Text::Note)?;
+        super::saves::paragraph(cx.tree,s2,t("Нужны S2 на ПК, UE4SS и установленный мод. Команды выполняет сама игра (XSetGodMode, XSetNoClipGSC, XSetTimeSpeed)."),Text::Note)?;
         for (command, argument) in [
             ("god", "on"),
             ("god", "off"),
@@ -678,7 +678,7 @@ impl Screen for Companion {
         self.apply_manual = Some(style::button(cx.tree, manual_row, t("ПРИМЕНИТЬ"), Button::Secondary)?);
         let hot = style::card(cx.tree, cards)?;
         style::label(cx.tree, hot, t("ГОРЯЧИЕ КЛАВИШИ"), Text::Heading)?;
-        style::label(cx.tree,hot,t("Приложение перехватывает сочетание и отправляет команду моду через файл-протокол. Игра должна быть запущена с установленным модом."),Text::Note)?;
+        super::saves::paragraph(cx.tree,hot,t("Приложение перехватывает сочетание и отправляет команду моду через файл-протокол. Игра должна быть запущена с установленным модом."),Text::Note)?;
         for action in [
             sse_companion::hotkeys::HotkeyAction::Heal,
             sse_companion::hotkeys::HotkeyAction::RepairEquipped,

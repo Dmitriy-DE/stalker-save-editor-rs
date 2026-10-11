@@ -6880,6 +6880,26 @@
     "zh-CN": "仅在开启发送时自动发送报告。",
     "zh-TW": "僅在開啟傳送時自動傳送報告。"
   },
+  "Для этого языка нужен системный шрифт с иероглифами (например, Noto Sans CJK).": {
+    "ru": "Для этого языка нужен системный шрифт с иероглифами (например, Noto Sans CJK).",
+    "uk": "Для цієї мови потрібен системний шрифт з ієрогліфами (наприклад, Noto Sans CJK).",
+    "en": "This language needs a system font with CJK glyphs (for example Noto Sans CJK).",
+    "de": "Für diese Sprache wird eine Systemschrift mit CJK-Zeichen benötigt (zum Beispiel Noto Sans CJK).",
+    "fr": "Cette langue nécessite une police système avec des caractères CJK (par exemple Noto Sans CJK).",
+    "it": "Questa lingua richiede un font di sistema con caratteri CJK (ad esempio Noto Sans CJK).",
+    "es": "Este idioma necesita una fuente del sistema con caracteres CJK (por ejemplo, Noto Sans CJK).",
+    "pl": "Ten język wymaga systemowej czcionki ze znakami CJK (np. Noto Sans CJK).",
+    "cs": "Tento jazyk potřebuje systémové písmo se znaky CJK (například Noto Sans CJK).",
+    "pt-BR": "Este idioma precisa de uma fonte do sistema com caracteres CJK (por exemplo, Noto Sans CJK).",
+    "tr": "Bu dil için CJK karakterleri içeren bir sistem yazı tipi gerekir (örneğin Noto Sans CJK).",
+    "ja": "この言語にはCJK文字を含むシステムフォントが必要です（例: Noto Sans CJK）。",
+    "ko": "이 언어에는 CJK 문자가 있는 시스템 글꼴이 필요합니다(예: Noto Sans CJK).",
+    "zh-CN": "此语言需要包含 CJK 字符的系统字体（例如 Noto Sans CJK）。",
+    "zh-TW": "此語言需要包含 CJK 字元的系統字型（例如 Noto Sans CJK）。"
+  },
+  "Чтение инвентаря": {
+    "ja": "インベントリ読取"
+  },
   "Апгрейды и модификации": {
     "de": "Upgrades & Mods"
   },

@@ -124,10 +124,35 @@ fn set_row_text(tree: &mut crate::widget::Tree, row: ResultRow, text: &str) -> R
     if row.meta == row.label {
         return tree.set_text(row.label, text);
     }
-    // A line is cut to what a row shows; the full text is in the side panel.
+    // A line is cut to what a row shows; the full text is in the side panel. Cut by width as well as by characters:
+    // a CJK character is about twice as wide as a Latin one, so 64 characters can run past the row.
     let (title, meta) = split_label(text);
-    tree.set_text(row.label, &truncate(title, 64))?;
-    tree.set_text(row.meta, &truncate(meta, 96))
+    let title = truncate_to_width(tree, &truncate(title, 64), ROW_TEXT_WIDTH);
+    let meta = truncate_to_width(tree, &truncate(meta, 96), ROW_TEXT_WIDTH);
+    tree.set_text(row.label, &title)?;
+    tree.set_text(row.meta, &meta)
+}
+
+/// Widest text a result row shows, in pixels: the row's text is cut to it.
+const ROW_TEXT_WIDTH: f32 = 560.0;
+
+/// Cuts `value` at the last character that fits `width` pixels in the body face, marking the cut with an ellipsis.
+fn truncate_to_width(tree: &crate::widget::Tree, value: &str, width: f32) -> String {
+    let style = crate::glyphs::TextStyle::new(crate::glyphs::Face::Body, 13.0);
+    if tree.measure_text(value, style) <= width {
+        return value.to_owned();
+    }
+    let mut kept = String::new();
+    for character in value.chars() {
+        let mut next = kept.clone();
+        next.push(character);
+        if tree.measure_text(&format!("{next}…"), style) > width {
+            break;
+        }
+        kept = next;
+    }
+    kept.push('…');
+    kept
 }
 
 #[derive(Debug)]

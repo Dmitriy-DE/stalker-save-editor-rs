@@ -686,6 +686,12 @@ impl Tree {
         Ok(clipped)
     }
 
+    /// Whether a CJK glyph had no system font to come from since the last call. The shell reports it once.
+    #[must_use]
+    pub fn take_system_font_missing(&self) -> bool {
+        self.fonts.take_system_font_missing()
+    }
+
     /// Width of one line of text in pixels, for sizing controls to their labels.
     #[must_use]
     pub fn measure_text(&self, text: &str, style: TextStyle) -> f32 {
