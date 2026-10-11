@@ -152,10 +152,6 @@ pub fn input(tree: &mut Tree, parent: WidgetId, value: &str) -> Result<WidgetId>
     )
 }
 
-/// A button.
-///
-/// # Errors
-/// Returns an error from the widget tree.
 /// Look of a button of the given role; `set_button_role` applies it to a button already built.
 #[must_use]
 pub fn button_look(role: Button) -> Look {
@@ -184,6 +180,10 @@ pub fn set_button_role(tree: &mut Tree, id: WidgetId, role: Button) -> Result<()
     tree.set_look(id, button_look(role))
 }
 
+/// A button.
+///
+/// # Errors
+/// Returns an error from the widget tree.
 pub fn button(tree: &mut Tree, parent: WidgetId, text: &str, role: Button) -> Result<WidgetId> {
     let padding = Edges {
         left: 16.0,
