@@ -539,8 +539,9 @@ fn ci_i18n_buttons() -> Result<()> {
     ensure_buttons_fit(&clipped)
 }
 
-/// Whether `--ci-text-overflow` also fails on buttons cut off by a clipping panel or the status line.
-const CLIPPED_RULE_ENFORCED: bool = false;
+/// Whether `--ci-text-overflow` also fails on buttons and inputs cut off by a clipping panel or the status line.
+/// A scrolling viewport cutting a control along its scroll axis is not a finding: the control can be scrolled to.
+const CLIPPED_RULE_ENFORCED: bool = true;
 
 /// Section buttons of the settings screen, by their source captions.
 const SETTINGS_SECTIONS: [&str; 8] = [
@@ -625,13 +626,12 @@ fn ci_text_overflow(args: &[String]) -> Result<()> {
                         }
                     }
                     tree.paint(&mut frame, width as usize)?;
-                    // Clipped-node rule is measured but not enforced yet; see the PR description.
                     if CLIPPED_RULE_ENFORCED {
                         let limit = shell.status_line_top(&tree)?;
                         overflowing.extend(
                             tree.clipped_interactive_nodes(limit)?
                                 .into_iter()
-                                .map(|text| (language.to_owned(), id, width, height, format!("clipped: {text}"))),
+                                .map(|text| (language.to_owned(), id, width, height, format!("clipped {text}"))),
                         );
                     }
                     if id == ScreenId::Settings {
