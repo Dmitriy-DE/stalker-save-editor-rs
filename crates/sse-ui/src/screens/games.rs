@@ -5573,12 +5573,25 @@ impl Screen for Encyclopedia {
         cx.tree.set_style(detail_frame, item_icon_frame_style(None))?;
         cx.tree.set_visible(detail_frame, false)?;
         self.detail_icon = Some((detail_frame, detail_image));
-        self.card = Some(style::label(
+        // A paragraph of the panel's inner width: the name, the type and the source file each take their own lines
+        // and a long one wraps instead of running out of the panel.
+        let card = super::saves::paragraph(
             cx.tree,
             detail,
             crate::strings::t_in(language, "Выберите запись"),
             Text::Body,
-        )?);
+        )?;
+        let card_width = super::saves::side_column_width(false) - 2.0 * crate::theme::d2::PANEL_PADDING.0;
+        cx.tree.set_style(
+            card,
+            Style {
+                min: crate::layout::Size::new(card_width, 0.0),
+                max: crate::layout::Size::new(card_width, f32::INFINITY),
+                shrink: 0.0,
+                ..Style::default()
+            },
+        )?;
+        self.card = Some(card);
         let actions = style::row(cx.tree, detail)?;
         self.to_save = Some(style::button(
             cx.tree,
