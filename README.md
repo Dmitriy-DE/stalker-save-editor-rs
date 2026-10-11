@@ -8,6 +8,20 @@ Version `2.0.0-dev`. Not released yet. What is checked and what is not is listed
 
 ![Inventory screen](docs/images/inventory.png)
 
+*Inventory: the save's items, with names in the interface language.*
+
+![Overview screen](docs/images/overview.png)
+
+*Overview: the save's parameters, library and integrity details.*
+
+![Game fixes screen](docs/images/game-fixes.png)
+
+*Game fixes: the catalogue for an installed game, with install state.*
+
+![Capabilities screen](docs/images/capabilities.png)
+
+*Capabilities: what the editor can write, read or refuse, per game.*
+
 ## What it can do
 
 ### Saves
