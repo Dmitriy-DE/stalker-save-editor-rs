@@ -260,6 +260,8 @@ pub struct MacWindow {
     app: o::Id,
     window: o::Id,
     view: o::Id,
+    /// Owned window delegate (`alloc`/`init`); released in `Drop`. `NSWindow` does not retain its delegate.
+    delegate: o::Id,
     shared: Arc<Shared>,
 }
 impl MacWindow {
@@ -350,6 +352,7 @@ impl MacWindow {
             app,
             window,
             view,
+            delegate,
             shared,
         })
     }
@@ -424,13 +427,20 @@ impl Drop for MacWindow {
     fn drop(&mut self) {
         if let Ok(mut map) = objects().lock() {
             map.remove(&(self.view as usize));
+            map.remove(&(self.delegate as usize));
         }
         if !self.window.is_null() {
             // SAFETY: Objective-C receiver, selector, and argument ABI are validated by the surrounding backend code.
             unsafe {
+                // The window keeps only an unretained pointer to its delegate: clear it before the delegate goes.
+                o::void_id(self.window, o::sel(c"setDelegate:"), ptr::null_mut());
                 o::void(self.window, o::sel(c"close"));
                 o::void(self.window, o::sel(c"release"))
             };
+        }
+        if !self.delegate.is_null() {
+            // SAFETY: `delegate` came from `alloc`/`init` in `new`, is owned by this window and is released once.
+            unsafe { o::void(self.delegate, o::sel(c"release")) };
         }
     }
 }
