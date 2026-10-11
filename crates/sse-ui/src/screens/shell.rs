@@ -3139,7 +3139,12 @@ impl Shell {
         };
         let fills = self.screens.get(index).is_some_and(|screen| screen.fills_window());
         let style = if fills {
-            let visible = tree.rect(self.content)?.height as f32;
+            // The host starts below the top of the content area, so the bound is what is left under its top.
+            tree.update_layout()?;
+            let area = tree.rect(self.content)?;
+            let top = i64::from(tree.rect(host)?.y);
+            let bottom = i64::from(area.y).saturating_add(i64::from(area.height));
+            let visible = u32::try_from(bottom.saturating_sub(top).max(0)).unwrap_or(0) as f32;
             Style {
                 grow: 1.0,
                 shrink: 0.0,
@@ -3195,7 +3200,6 @@ impl Shell {
 
     fn show(&mut self, tree: &mut Tree, index: usize) -> Result<()> {
         self.prepare(tree, index)?;
-        self.fit_host(tree, index)?;
         let (Some(screen), Some(slot)) = (self.screens.get_mut(index), self.hosts.get_mut(index)) else {
             return Ok(());
         };
@@ -3222,6 +3226,7 @@ impl Shell {
         let screen_host = *slot;
         let status = cx.status.take();
         drop(cx);
+        self.fit_host(tree, index)?;
         self.wizard.sync(tree, &self.app, screen_id, screen_host)?;
         if let Some(text) = status {
             let text = crate::status::localize_writer_status(&text);

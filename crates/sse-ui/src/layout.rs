@@ -1721,6 +1721,76 @@ mod tests {
     }
 
     #[test]
+    fn footer_row_keeps_its_height_inside_a_bounded_host() -> Result<(), Error> {
+        // The screen host is bounded to the window; a scroll region and a row with a minimum height sit in it.
+        for window_height in [728.0_f32, 1040.0] {
+            let mut layout = Layout::new();
+            let shell = layout.add(NodeKind::Column, Style::default())?;
+            let host_style = Style {
+                grow: 1.0,
+                shrink: 0.0,
+                max: Size::new(f32::INFINITY, window_height),
+                gap: Size::new(0.0, 16.0),
+                align_items: Align::Stretch,
+                ..Style::default()
+            };
+            let host = layout.add(NodeKind::Column, host_style)?;
+            let scroll = layout.add(
+                NodeKind::Scroll {
+                    horizontal: false,
+                    vertical: true,
+                    offset_x: 0.0,
+                    offset_y: 0.0,
+                },
+                Style {
+                    grow: 1.0,
+                    shrink: 1.0,
+                    min: Size::new(0.0, 0.0),
+                    ..Style::default()
+                },
+            )?;
+            let body = layout.add(NodeKind::Leaf, fixed(100.0, 3000.0))?;
+            layout.append_child(scroll, body)?;
+            let row_style = Style {
+                shrink: 0.0,
+                min: Size::new(0.0, 40.0),
+                align_items: Align::Center,
+                ..Style::default()
+            };
+            let row = layout.add(NodeKind::Row, row_style)?;
+            let mut field = fixed(100.0, 20.0);
+            field.grow = 1.0;
+            let input = layout.add(NodeKind::Leaf, field)?;
+            let button = layout.add(NodeKind::Leaf, fixed(120.0, 30.0))?;
+            layout.append_child(row, input)?;
+            layout.append_child(row, button)?;
+            layout.append_child(host, scroll)?;
+            layout.append_child(host, row)?;
+            layout.append_child(shell, host)?;
+            layout.arrange(
+                shell,
+                Rect::new(0.0, 0.0, 1366.0, window_height),
+                1.0,
+                &mut measure_text,
+            )?;
+            let row_rect = layout.rect(row)?;
+            assert!(
+                row_rect.height >= 40.0 - 0.5,
+                "footer row shrank to {}",
+                row_rect.height
+            );
+            assert!(row_rect.bottom() <= window_height + 0.5, "footer row leaves the window");
+            let button_rect = layout.rect(button)?;
+            assert!(
+                button_rect.height >= 30.0 - 0.5,
+                "save button shrank to {}",
+                button_rect.height
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn column_margin_padding_gap_and_alignment() -> Result<(), Error> {
         let mut layout = Layout::new();
         let root_style = Style {
