@@ -647,6 +647,43 @@ impl Tree {
         Ok(overflowing)
     }
 
+    /// Visible buttons and inputs that are cut off: partly outside the nearest clipping ancestor, or running into the
+    /// status line at `limit_y`. Returns their text (or "input") for each such node.
+    ///
+    /// # Errors
+    /// Returns an error when layout cannot be updated.
+    pub fn clipped_interactive_nodes(&mut self, limit_y: i64) -> Result<Vec<String>> {
+        self.update_layout()?;
+        let mut clipped = Vec::new();
+        for index in 0..self.nodes.len() {
+            let id = WidgetId(index);
+            if !self.shown(id) {
+                continue;
+            }
+            let Some(node) = self.nodes.get(index) else { continue };
+            let name = match &node.content {
+                Content::Button { text, .. } | Content::IconButton { text, .. } if !text.is_empty() => text.clone(),
+                Content::Input { .. } => "input".to_owned(),
+                _ => continue,
+            };
+            let (x0, y0, x1, y1) = edges(node.rect);
+            let mut cut = y0 < limit_y && y1 > limit_y;
+            let mut ancestor = node.parent;
+            while let Some(parent) = ancestor.and_then(|parent| self.nodes.get(parent.0)) {
+                if parent.clip_children {
+                    let (cx0, cy0, cx1, cy1) = edges(parent.rect);
+                    cut |= x0 < cx0 || y0 < cy0 || x1 > cx1 || y1 > cy1;
+                    break;
+                }
+                ancestor = parent.parent;
+            }
+            if cut {
+                clipped.push(name);
+            }
+        }
+        Ok(clipped)
+    }
+
     /// Width of one line of text in pixels, for sizing controls to their labels.
     #[must_use]
     pub fn measure_text(&self, text: &str, style: TextStyle) -> f32 {

@@ -2510,6 +2510,14 @@ impl Shell {
         &mut self.app
     }
 
+    /// Top edge of the status line: everything above it is the content area.
+    ///
+    /// # Errors
+    /// Returns an error when the status line is not in the tree.
+    pub fn status_line_top(&self, tree: &Tree) -> Result<i64> {
+        Ok(i64::from(tree.rect(self.status)?.y))
+    }
+
     /// Installs the event proxy after a headless shell has been built.
     pub fn set_proxy(&mut self, proxy: Proxy<AppMessage>) {
         self.proxy = Some(proxy);
