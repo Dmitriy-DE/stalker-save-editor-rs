@@ -2911,6 +2911,10 @@ struct Inventory {
     page_range: Option<WidgetId>,
     side_column: Option<WidgetId>,
     inspector_panel: Option<WidgetId>,
+    /// Scroll region of the selected item's inspector; the action row below it is outside it.
+    inspector_scroll: Option<WidgetId>,
+    /// Wheel offset of the inspector scroll region.
+    inspector_offset: i32,
     actions_panel: Option<WidgetId>,
     compact: bool,
     page_size: usize,
@@ -3197,6 +3201,8 @@ impl Inventory {
             page_range: None,
             side_column: None,
             inspector_panel: None,
+            inspector_scroll: None,
+            inspector_offset: 0,
             actions_panel: None,
             compact: false,
             page_size: 8,
@@ -6091,6 +6097,11 @@ impl Screen for Inventory {
         ScreenId::Inventory
     }
 
+    fn fills_window(&self) -> bool {
+        // The screen takes the visible height, so the pinned action row under the inspector stays in the window.
+        true
+    }
+
     fn subtitle(&self) -> &str {
         t("Состав рюкзака и подтверждённые изменения X-Ray / S2")
     }
@@ -6531,9 +6542,12 @@ impl Screen for Inventory {
         self.inspector_panel = Some(inspector);
         cx.tree.set_clip_children(inspector, true)?;
         style::d2::panel_title(cx.tree, inspector, t("ВЫБРАННЫЙ ПРЕДМЕТ"))?;
+        // The title stays put; everything under it scrolls inside the inspector, so the action row below never moves.
+        let (inspector_scroll, inspector_body) = style::scroll_body(cx.tree, inspector)?;
+        self.inspector_scroll = Some(inspector_scroll);
         let inspector_summary = paragraph(
             cx.tree,
-            inspector,
+            inspector_body,
             "Предмет не выбран\nКлюч: —\nКоличество в пачке: —",
             Text::Body,
         )?;
@@ -6548,9 +6562,14 @@ impl Screen for Inventory {
             },
         )?;
         self.inspector_summary = Some(inspector_summary);
-        self.inspector_condition_heading = Some(style::label(cx.tree, inspector, "ПРОЧНОСТЬ", Text::Heading)?);
-        self.inspector_condition = Some(paragraph(cx.tree, inspector, "Состояние / прочность: —", Text::Value)?);
-        let condition_row = style::row(cx.tree, inspector)?;
+        self.inspector_condition_heading = Some(style::label(cx.tree, inspector_body, "ПРОЧНОСТЬ", Text::Heading)?);
+        self.inspector_condition = Some(paragraph(
+            cx.tree,
+            inspector_body,
+            "Состояние / прочность: —",
+            Text::Value,
+        )?);
+        let condition_row = style::row(cx.tree, inspector_body)?;
         for (percent, label) in [(100_u8, "100%"), (75, "75%"), (50, "50%")] {
             let button = style::button(cx.tree, condition_row, label, Button::Secondary)?;
             cx.tree.set_style(
@@ -6564,10 +6583,10 @@ impl Screen for Inventory {
             )?;
             self.condition_buttons.push((button, percent));
         }
-        style::label(cx.tree, inspector, "РАЗМЕЩЕНИЕ", Text::Heading)?;
-        self.inspector_placement = Some(style::label(cx.tree, inspector, "Размещение: —", Text::Body)?);
+        style::label(cx.tree, inspector_body, "РАЗМЕЩЕНИЕ", Text::Heading)?;
+        self.inspector_placement = Some(style::label(cx.tree, inspector_body, "Размещение: —", Text::Body)?);
         let placement_row = cx.tree.add(
-            Some(inspector),
+            Some(inspector_body),
             NodeKind::Wrap,
             Style {
                 gap: Size::new(6.0, 6.0),
@@ -6580,10 +6599,10 @@ impl Screen for Inventory {
             let button = style::button(cx.tree, placement_row, label, Button::Secondary)?;
             self.placement_buttons.push((button, destination));
         }
-        style::label(cx.tree, inspector, "МОДИФИКАЦИИ", Text::Heading)?;
-        self.inspector_upgrades = Some(style::label(cx.tree, inspector, "Модификации: —", Text::Body)?);
+        style::label(cx.tree, inspector_body, "МОДИФИКАЦИИ", Text::Heading)?;
+        self.inspector_upgrades = Some(style::label(cx.tree, inspector_body, "Модификации: —", Text::Body)?);
         let upgrade_row = cx.tree.add(
-            Some(inspector),
+            Some(inspector_body),
             NodeKind::Wrap,
             Style {
                 gap: Size::new(6.0, 6.0),
@@ -6852,12 +6871,18 @@ impl Screen for Inventory {
             },
         )?;
         self.actions_panel = Some(actions);
-        // Two equal buttons share the panel width on one row at every window size.
+        // The side column is narrower than 360 px at 1366 px, so the two buttons stack at full width: each label then
+        // fits its button at every window size, and the scroll region above takes the height they need.
+        let stacked = true;
         let edit_actions = cx.tree.add(
             Some(actions),
-            NodeKind::Row,
+            NodeKind::Column,
             Style {
-                gap: Size::new(8.0, 0.0),
+                gap: if stacked {
+                    Size::new(0.0, 8.0)
+                } else {
+                    Size::new(8.0, 0.0)
+                },
                 align_items: crate::layout::Align::Stretch,
                 ..Style::default()
             },
@@ -6883,7 +6908,8 @@ impl Screen for Inventory {
             cx.tree.set_style(
                 id,
                 Style {
-                    grow: 1.0,
+                    // Side by side they share the row's width; stacked, each keeps its own height.
+                    grow: if stacked { 0.0 } else { 1.0 },
                     shrink: 1.0,
                     min: crate::layout::Size::new(0.0, crate::theme::d2::CONTROL_HEIGHT.0),
                     padding: crate::layout::Edges {
@@ -6928,6 +6954,13 @@ impl Screen for Inventory {
         message: &Message<AppMessage>,
         clicked: Option<WidgetId>,
     ) -> Result<()> {
+        if let (Message::Window(crate::event_loop::WindowEvent::Wheel { delta }), Some(scroll)) =
+            (message, self.inspector_scroll)
+        {
+            // The wheel moves the inspector; the list keeps its own pages.
+            self.inspector_offset = style::scroll_wheel(cx.tree, scroll, self.inspector_offset, *delta)?;
+            return Ok(());
+        }
         if let Message::Window(crate::event_loop::WindowEvent::Resized { width, .. }) = message {
             self.compact = *width < u32::from(COMPACT_LAYOUT_WIDTH);
             if let Some(side) = self.side_column {

@@ -538,14 +538,8 @@ const SETTINGS_SECTIONS: [&str; 8] = [
     "ВЕРСИЯ",
 ];
 
-/// Known findings that need a layout change of the whole inventory screen (the side column is taller than the window
-/// at 1366×768, so the pinned action row is pushed down). Remove each entry when that change lands.
-const TEXT_OVERFLOW_KNOWN: [(ScreenId, &str); 4] = [
-    (ScreenId::Inventory, "УДАЛИТЬ ПРЕДМЕТ"),
-    (ScreenId::Inventory, "+ ДОБАВИТЬ ПРЕДМЕТ"),
-    (ScreenId::Inventory, "GEGENSTAND ENTFERNEN"),
-    (ScreenId::Inventory, "+ GEGENSTAND HINZUFÜGEN"),
-];
+/// Known findings that are accepted for now, each with its reason. Empty: every text fits its box.
+const TEXT_OVERFLOW_KNOWN: [(ScreenId, &str); 0] = [];
 
 /// Opens `path` in the shell the way the screenshot command does and waits until the overview has it.
 fn open_save_for_check(
