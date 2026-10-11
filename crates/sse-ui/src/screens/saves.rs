@@ -10079,10 +10079,9 @@ mod tests {
     }
 
     #[test]
-    fn xray_stash_screen_stages_a_transfer_for_the_shared_writer() -> sse_core::Result<()> {
+    fn xray_stash_screen_refuses_a_take_the_writer_cannot_prove() -> sse_core::Result<()> {
         let temp = TempDirectory::new();
         let source = include_bytes!("../../../../fixtures/synthetic/xray-stashes/xray-stash-cop-source.sav");
-        let expected = include_bytes!("../../../../fixtures/synthetic/xray-stashes/xray-stash-cop-take.sav");
         let loaded = Arc::new(load_xray(source, "stash-cop-source.sav", "stalker-cop", "cop")?);
         let source_sha256 = loaded.source_sha256.clone();
         let workspace = Workspace::with_draft_directory(temp.0.join("drafts"));
@@ -10109,21 +10108,17 @@ mod tests {
         screen.build(&mut cx, host)?;
         screen.stage_xray_move(&mut cx, super::StashAction::XrayTake(9029))?;
 
-        let plan = cx
-            .app
-            .draft(&source_sha256)
-            .cloned()
-            .ok_or_else(|| Error::damaged("X-Ray stash transfer was not added to the draft"))?;
-        assert_eq!(plan.stash_takes, [9029]);
-        let edits = PendingInventoryEdits {
-            stash_takes: plan.stash_takes.into_iter().collect(),
-            ..PendingInventoryEdits::default()
-        };
-        let (output, summary) = prepare_save_edits(&loaded, &edits, &S2StashMoves::default())?;
-        assert_eq!(output.as_slice(), expected);
-        let reloaded = LoadedSave::from_bytes(loaded.slot.clone(), output.as_slice())?;
-        super::verify_requested_values(&loaded, &reloaded, &edits, &S2MoveOutcome::default())?;
-        assert_eq!(summary.move_count, 1);
+        // Stash moves are Unsupported for X-Ray: the screen refuses to stage a take and says so.
+        assert!(
+            cx.app
+                .draft(&source_sha256)
+                .is_none_or(|plan| plan.stash_takes.is_empty()),
+            "an unsupported stash take must not reach the draft"
+        );
+        assert_eq!(
+            cx.status.as_deref(),
+            Some("Перемещение из тайников не поддерживается данным форматом."),
+        );
         Ok(())
     }
 
