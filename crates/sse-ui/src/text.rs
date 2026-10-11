@@ -6,7 +6,8 @@
 //! locale-aware search folding without allocating a folded copy of the haystack.
 
 use crate::unicode_tables::{
-    grapheme_boundaries, grapheme_class, line_break_class, line_break_pair, GraphemeClass, LineBreakClass,
+    grapheme_boundaries, grapheme_class, line_break_base, line_break_class, line_break_pair, GraphemeClass,
+    LineBreakClass,
 };
 
 const SOFT_HYPHEN: char = '\u{00ad}';
@@ -765,7 +766,8 @@ fn collect_clusters<M: Metrics>(text: &str, metrics: &M) -> Vec<Cluster> {
 fn make_cluster<M: Metrics>(slice: &str, start: usize, end: usize, metrics: &M) -> Option<Cluster> {
     let mut chars = slice.chars();
     let first_char = chars.next()?;
-    let last_char = slice.chars().last().unwrap_or(first_char);
+    // LB9: a break after the cluster is decided by its base, not by the marks attached to it.
+    let last_char = line_break_base(slice).unwrap_or(first_char);
     let hard_break = slice.chars().all(is_hard_break_char);
     let soft_hyphen = slice == "\u{00ad}";
     let whitespace = !hard_break && slice.chars().all(char::is_whitespace);
