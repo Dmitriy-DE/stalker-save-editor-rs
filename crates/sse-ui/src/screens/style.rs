@@ -482,9 +482,31 @@ pub mod d2 {
     /// # Errors
     /// Returns an error from the widget tree.
     pub fn panel(tree: &mut Tree, parent: WidgetId) -> Result<WidgetId> {
+        panel_with(tree, parent, Style::default())
+    }
+
+    /// Panel that takes the free space of its row or column (grow and shrink, no minimum), keeping
+    /// the panel padding. Use it instead of `panel` plus `set_style`, which would drop the padding.
+    ///
+    /// # Errors
+    /// Returns an error from the widget tree.
+    pub fn panel_grow(tree: &mut Tree, parent: WidgetId) -> Result<WidgetId> {
+        panel_with(
+            tree,
+            parent,
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: Size::new(0.0, 0.0),
+                ..Style::default()
+            },
+        )
+    }
+
+    fn panel_with(tree: &mut Tree, parent: WidgetId, base: Style) -> Result<WidgetId> {
         let style = Style {
             padding: padded(tokens::PANEL_PADDING.0, tokens::PANEL_PADDING.0),
-            ..Style::default()
+            ..base
         };
         let look = Look {
             fill: Some(argb(tokens::PANEL)),

@@ -380,39 +380,56 @@ impl Screen for Capabilities {
 
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
         let rows = capability_rows();
-        let help = style::card(cx.tree, host)?;
-        style::label(
-            cx.tree,
-            help,
-            crate::strings::t("СПРАВКА ПО ВОЗМОЖНОСТЯМ"),
-            Text::Heading,
+        let body = cx.tree.add(
+            Some(host),
+            NodeKind::Row,
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: Size::new(0.0, 0.0),
+                gap: Size::new(crate::theme::CONTROL_GAP + 6.0, 0.0),
+                align_items: crate::layout::Align::Stretch,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
         )?;
-        style::label(
-            cx.tree,
-            help,
-            crate::strings::t("Что редактор умеет делать с сейвами каждой игры."),
-            Text::Body,
-        )?;
-
-        let matrix = style::card(cx.tree, host)?;
-        style::label(
+        let matrix = style::d2::panel_grow(cx.tree, body)?;
+        style::d2::panel_title(
             cx.tree,
             matrix,
             crate::strings::t("МАТРИЦА ПОДДЕРЖИВАЕМЫХ ВОЗМОЖНОСТЕЙ"),
-            Text::Heading,
         )?;
-        let grid = cx.tree.add(
+        let scroll = cx.tree.add(
             Some(matrix),
+            NodeKind::Scroll {
+                horizontal: true,
+                vertical: true,
+                offset_x: 0.0,
+                offset_y: 0.0,
+            },
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: Size::new(0.0, 0.0),
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
+        )?;
+        cx.tree.set_clip_children(scroll, true)?;
+        let grid = cx.tree.add(
+            Some(scroll),
             NodeKind::Grid {
                 columns: vec![
-                    Track::Fraction(2.2),
-                    Track::Fraction(1.0),
-                    Track::Fraction(1.0),
-                    Track::Fraction(1.0),
-                    Track::Fraction(1.0),
-                    Track::Fraction(1.0),
-                    Track::Fraction(1.0),
-                    Track::Fraction(1.0),
+                    Track::Fixed(170.0),
+                    Track::Fixed(100.0),
+                    Track::Fixed(100.0),
+                    Track::Fixed(100.0),
+                    Track::Fixed(100.0),
+                    Track::Fixed(100.0),
+                    Track::Fixed(100.0),
+                    Track::Fixed(100.0),
                 ],
                 rows: std::iter::once(Track::Fixed(52.0))
                     .chain(std::iter::repeat_n(Track::Fixed(38.0), rows.len()))
@@ -445,32 +462,38 @@ impl Screen for Capabilities {
             Text::Note,
         )?);
 
-        let legend = style::card(cx.tree, host)?;
-        style::label(cx.tree, legend, crate::strings::t("ОБОЗНАЧЕНИЯ"), Text::Heading)?;
-        style::label(
+        let side = cx.tree.add(
+            Some(body),
+            NodeKind::Column,
+            super::saves::side_column_style(false, false),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let help = style::d2::panel(cx.tree, side)?;
+        style::d2::panel_title(cx.tree, help, crate::strings::t("СПРАВКА ПО ВОЗМОЖНОСТЯМ"))?;
+        super::saves::paragraph(
             cx.tree,
-            legend,
-            crate::strings::t("Запись — полная поддержка чтения и записи, верифицировано тестами."),
+            help,
+            "Что редактор умеет делать с сейвами каждой игры.",
             Text::Body,
         )?;
-        style::label(
+        let legend = style::d2::panel(cx.tree, side)?;
+        style::d2::panel_title(cx.tree, legend, crate::strings::t("ОБОЗНАЧЕНИЯ"))?;
+        scrollable_paragraph(
             cx.tree,
             legend,
-            crate::strings::t("Эксперим. — поддержка реализована, ожидается подтверждение в игре."),
+            &[
+                crate::strings::t("Запись — полная поддержка чтения и записи, верифицировано тестами."),
+                crate::strings::t("Эксперим. — поддержка реализована, ожидается подтверждение в игре."),
+                crate::strings::t("Чтение — режим только для чтения."),
+                crate::strings::t("Нет — механика отсутствует или не поддерживается."),
+            ]
+            .join("\n"),
             Text::Body,
+            300.0,
+            150.0,
         )?;
-        style::label(
-            cx.tree,
-            legend,
-            crate::strings::t("Чтение — режим только для чтения."),
-            Text::Body,
-        )?;
-        style::label(
-            cx.tree,
-            legend,
-            crate::strings::t("Нет — механика отсутствует или не поддерживается."),
-            Text::Body,
-        )?;
+
         Ok(())
     }
 

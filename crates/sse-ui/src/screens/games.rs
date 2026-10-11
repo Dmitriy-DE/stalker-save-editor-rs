@@ -7,7 +7,7 @@ use super::style::{self, Button, Text};
 use super::{AppMessage, Context, Screen, ScreenId};
 use crate::event_loop::{Message, WindowEvent};
 use crate::glyphs::{Face, TextStyle};
-use crate::layout::{NodeKind, Style};
+use crate::layout::{NodeKind, Size, Style};
 use crate::path::Icon;
 use crate::text::{self, Metrics};
 use crate::theme;
@@ -5314,13 +5314,22 @@ impl Screen for Encyclopedia {
 
     fn build(&mut self, cx: &mut Context<'_>, host: WidgetId) -> Result<()> {
         let language = crate::strings::current_language();
-        let card = style::card(cx.tree, host)?;
-        style::label(
-            cx.tree,
-            card,
-            crate::strings::t_in(language, "ЭНЦИКЛОПЕДИЯ ПРЕДМЕТОВ"),
-            Text::Heading,
+        let body = cx.tree.add(
+            Some(host),
+            NodeKind::Row,
+            Style {
+                grow: 1.0,
+                shrink: 1.0,
+                min: Size::new(0.0, 0.0),
+                gap: Size::new(crate::theme::CONTROL_GAP + 6.0, 0.0),
+                align_items: crate::layout::Align::Stretch,
+                ..Style::default()
+            },
+            Content::Panel,
+            Look::default(),
         )?;
+        let card = style::d2::panel_grow(cx.tree, body)?;
+        style::d2::panel_title(cx.tree, card, crate::strings::t_in(language, "ЭНЦИКЛОПЕДИЯ ПРЕДМЕТОВ"))?;
         style::label(
             cx.tree,
             card,
@@ -5362,13 +5371,22 @@ impl Screen for Encyclopedia {
             cx.tree.set_visible(row, false)?;
             self.rows.push(row);
         }
+        let side = cx.tree.add(
+            Some(body),
+            NodeKind::Column,
+            super::saves::side_column_style(false, false),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let detail = style::d2::panel(cx.tree, side)?;
+        style::d2::panel_title(cx.tree, detail, crate::strings::t_in(language, "ВЫБРАННАЯ ЗАПИСЬ"))?;
         self.card = Some(style::label(
             cx.tree,
-            card,
+            detail,
             crate::strings::t_in(language, "Выберите запись"),
             Text::Body,
         )?);
-        let actions = style::row(cx.tree, card)?;
+        let actions = style::row(cx.tree, detail)?;
         self.to_save = Some(style::button(
             cx.tree,
             actions,
@@ -5389,7 +5407,7 @@ impl Screen for Encyclopedia {
         }
         style::label(
             cx.tree,
-            card,
+            detail,
             crate::strings::t_in(
                 language,
                 "Выберите совместимое сохранение с поддержкой добавления предметов.",
@@ -5398,7 +5416,7 @@ impl Screen for Encyclopedia {
         )?;
         style::label(
             cx.tree,
-            card,
+            detail,
             crate::strings::t_in(
                 language,
                 "Выберите эту игру в Компаньоне и подключитесь к запущенной игре.",
