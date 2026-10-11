@@ -149,10 +149,20 @@ impl ToolkitProfileService {
         engine: &GameFixEngine,
         _catalog: &GameFixCatalog,
     ) -> Result<ProfileApplyResult> {
+        Self::apply_profile_with(game_directory, profile, engine, &GameFixCatalog::try_get)
+    }
+
+    /// Same as [`Self::apply_profile`], with the fix definitions supplied by the caller (tests use synthetic fixes).
+    pub(crate) fn apply_profile_with<'d>(
+        game_directory: &Path,
+        profile: &ToolkitProfile,
+        engine: &GameFixEngine,
+        definition_of: &dyn Fn(&str) -> Option<&'d GameFixDefinition>,
+    ) -> Result<ProfileApplyResult> {
         ensure_xray_profile(profile.game)?;
         // Refuse before any change: a profile that cannot be fully applied must not uninstall fixes first.
         for target_id in &profile.target_fix_ids {
-            if GameFixCatalog::try_get(target_id).is_none() {
+            if definition_of(target_id).is_none() {
                 return Err(Error::Refused(format!(
                     "Fix '{target_id}' specified in profile '{}' not found in catalog",
                     profile.name
@@ -169,47 +179,65 @@ impl ToolkitProfileService {
             Some(&format!("Pre-switch snapshot before '{}'", profile.name)),
         )?;
 
-        // 2. Reconcile installed fixes
-        let currently_installed = engine.list_installed(game_directory, None)?;
-        let current_ids: Vec<String> = currently_installed.into_iter().map(|f| f.id).collect();
+        // 2–4. The steps change fixes, settings and mods in turn. A failure in any of them restores the snapshot
+        // taken in step 1, so the game is never left half-switched.
+        let steps = || -> Result<(Vec<String>, Vec<String>, usize)> {
+            // 2. Reconcile installed fixes
+            let currently_installed = engine.list_installed(game_directory, None)?;
+            let current_ids: Vec<String> = currently_installed.into_iter().map(|f| f.id).collect();
 
-        let (installed, uninstalled) = reconcile_fixes(
-            engine,
-            game_directory,
-            &current_ids,
-            &profile.target_fix_ids,
-            GameFixCatalog::try_get,
-            |id| {
-                format!(
-                    "Fix '{id}' specified in profile '{}' not found in catalog",
-                    profile.name
-                )
-            },
-        )?;
+            let (installed, uninstalled) = reconcile_fixes(
+                engine,
+                game_directory,
+                &current_ids,
+                &profile.target_fix_ids,
+                |id| definition_of(id),
+                |id| {
+                    format!(
+                        "Fix '{id}' specified in profile '{}' not found in catalog",
+                        profile.name
+                    )
+                },
+            )?;
 
-        // 3. Apply user.ltx overrides
-        let user_ltx_changes = if !profile.user_ltx_overrides.is_empty() {
-            ManagedUserLtxSettings::update_managed_settings(game_directory, &profile.user_ltx_overrides)?
-        } else {
-            0
-        };
+            // 3. Apply user.ltx overrides
+            let user_ltx_changes = if !profile.user_ltx_overrides.is_empty() {
+                ManagedUserLtxSettings::update_managed_settings(game_directory, &profile.user_ltx_overrides)?
+            } else {
+                0
+            };
 
-        // 4. Align S.T.A.L.K.E.R. 2 mods state if requested
-        if profile.game == GameTarget::Stalker2 {
-            if let Some(want_enabled) = profile.s2_mods_enabled {
-                let status = Stalker2ModToggle::query_status(game_directory)?;
-                let needs_toggle = match status {
-                    ModToggleStatus::Active { .. } => !want_enabled,
-                    ModToggleStatus::Disabled { .. } => want_enabled,
-                    ModToggleStatus::NotFound | ModToggleStatus::Empty => want_enabled,
-                    _ => false,
-                };
-                if needs_toggle {
-                    engine.ensure_game_not_running_for(GameTarget::Stalker2)?;
-                    Stalker2ModToggle::toggle(game_directory)?;
+            // 4. Align S.T.A.L.K.E.R. 2 mods state if requested
+            if profile.game == GameTarget::Stalker2 {
+                if let Some(want_enabled) = profile.s2_mods_enabled {
+                    let status = Stalker2ModToggle::query_status(game_directory)?;
+                    let needs_toggle = match status {
+                        ModToggleStatus::Active { .. } => !want_enabled,
+                        ModToggleStatus::Disabled { .. } => want_enabled,
+                        ModToggleStatus::NotFound | ModToggleStatus::Empty => want_enabled,
+                        _ => false,
+                    };
+                    if needs_toggle {
+                        engine.ensure_game_not_running_for(GameTarget::Stalker2)?;
+                        Stalker2ModToggle::toggle(game_directory)?;
+                    }
                 }
             }
-        }
+            Ok((installed, uninstalled, user_ltx_changes))
+        };
+        let (installed, uninstalled, user_ltx_changes) = match steps() {
+            Ok(done) => done,
+            Err(error) => {
+                return Err(ToolkitSnapshotService::rollback_failed(
+                    game_directory,
+                    engine,
+                    definition_of,
+                    &pre_snapshot.id,
+                    error,
+                    "Profile",
+                ));
+            }
+        };
 
         Ok(ProfileApplyResult {
             profile_name: profile.name.clone(),
