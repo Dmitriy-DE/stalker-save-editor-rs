@@ -3151,14 +3151,7 @@ impl Shell {
             tree.update_layout()?;
             let area = tree.rect(self.content)?;
             let top = i64::from(tree.rect(host)?.y);
-            // The status line is a bar of its own: the content must end where that bar starts, not where its text does.
-            let content_bottom = i64::from(area.y).saturating_add(i64::from(area.height));
-            let bar_top = tree
-                .parent(self.status)
-                .map(|bar| tree.rect(bar).map(|rect| i64::from(rect.y)))
-                .transpose()?
-                .unwrap_or(content_bottom);
-            let bottom = content_bottom.min(bar_top);
+            let bottom = i64::from(area.y).saturating_add(i64::from(area.height));
             let visible = u32::try_from(bottom.saturating_sub(top).max(0)).unwrap_or(0) as f32;
             Style {
                 grow: 1.0,
@@ -3691,7 +3684,6 @@ impl Shell {
         }
         if let Message::Window(WindowEvent::Resized { width, .. }) = message {
             self.fit_library_rows(tree)?;
-            self.fit_host(tree, self.selected)?;
             self.sync_navigation_width(tree, *width)?;
             self.art.sync(tree, self.sidebar)?;
             let sidebar_width = if self.nav_collapsed { 64 } else { 248 };
@@ -3743,6 +3735,8 @@ impl Shell {
                 tree.set_style(library_row.image, library_preview_style(preview_width, preview_height))?;
                 tree.set_style(library_row.plate, library_preview_style(preview_width, preview_height))?;
             }
+            // The host's bound reads the content area, which the navigation width and the tab rows just changed.
+            self.fit_host(tree, self.selected)?;
         }
         if (self.library_workspace.is_saving() || self.library_workspace.is_restoring())
             && !matches!(
