@@ -12,6 +12,8 @@ pub mod game_audio;
 pub mod glyphs;
 /// Pixel-tolerant screenshot golden comparison (X37).
 pub mod golden;
+pub mod item_icon_pack;
+pub mod item_icons;
 /// Measure-and-arrange layout over an arena (X26).
 pub mod layout;
 /// Virtual list and table model (X28).

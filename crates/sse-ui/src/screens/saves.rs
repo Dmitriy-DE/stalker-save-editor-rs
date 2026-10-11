@@ -6,10 +6,11 @@ use super::{AppMessage, BrowserDownload, BrowserFileBridge, Context, EditorActio
 use crate::edit::{Clipboard, EditConfig, FieldMode, InputFilter, Key, Modifiers};
 use crate::event_loop::{Message, WindowEvent};
 use crate::glyphs::{Face, TextStyle};
+use crate::item_icons;
 use crate::layout::{NodeKind, Size, Style};
 use crate::path::Icon;
 use crate::process_guard::{is_windows_file_busy_error_text, running_game_for_format, SAVE_WHILE_GAME_RUNNING_WARNING};
-use crate::widget::{Content, Look, Tree, WidgetId};
+use crate::widget::{Content, ImageData, Look, Tree, WidgetId};
 use crate::widgets::text_input::TextInput;
 use sse_core::{Error, Result, SaveBuffer};
 use sse_s2::{S2Change, S2InventoryItem, S2Save, S2StashItem, S2StashLayout};
@@ -2407,6 +2408,7 @@ fn set_fixed_column_style(tree: &mut Tree, id: WidgetId, width: f32) -> Result<(
 struct ItemCells<'a> {
     name: &'a str,
     key: &'a str,
+    icon: Option<ImageData>,
     place: &'a str,
     condition: &'a str,
     condition_ratio: Option<f32>,
@@ -2415,9 +2417,85 @@ struct ItemCells<'a> {
     editable: bool,
 }
 
+/// Side of an item icon in the inventory and stash rows (the C# desktop size).
+const ITEM_ICON_SIZE: f32 = 32.0;
+
+/// The fixed square that holds an item icon, so rows without an icon line up with rows that have one.
+/// Style of an icon frame: a `size` square, or nothing while the frame is hidden (so it takes no room).
+pub(super) fn item_icon_frame_style(size: Option<f32>) -> Style {
+    match size {
+        Some(size) => Style {
+            min: Size::new(size, size),
+            preferred: Size::new(size, size),
+            align_items: crate::layout::Align::Center,
+            padding: crate::layout::Edges::all(2.0),
+            ..Style::default()
+        },
+        None => Style::default(),
+    }
+}
+
+pub(super) fn item_icon_frame(tree: &mut Tree, parent: WidgetId, size: f32) -> Result<WidgetId> {
+    tree.add(
+        Some(parent),
+        NodeKind::Column,
+        Style {
+            min: Size::new(size, size),
+            preferred: Size::new(size, size),
+            align_items: crate::layout::Align::Center,
+            padding: crate::layout::Edges::all(2.0),
+            ..Style::default()
+        },
+        Content::Panel,
+        Look {
+            fill: Some(style::d2::argb(crate::theme::d2::BG_BASE)),
+            border: Some((style::d2::argb(crate::theme::d2::BORDER_SUBTLE), 1.0)),
+            radius: crate::theme::d2::RADIUS_BUTTON,
+            ..Look::default()
+        },
+    )
+}
+
+/// Shows an item icon in a list row (the row keeps the frame's width when there is no icon).
+pub(super) fn set_list_row_icon(tree: &mut Tree, row: ListRow, icon: Option<ImageData>) -> Result<()> {
+    let Some((frame, image)) = row.icon else {
+        return Ok(());
+    };
+    tree.set_style(frame, item_icon_frame_style(Some(ITEM_ICON_SIZE)))?;
+    tree.set_visible(frame, true)?;
+    tree.set_visible(image, icon.is_some())?;
+    tree.set_image(image, icon)
+}
+
+/// The decoded icon of an item when it is ready; otherwise the decode is started and `None` is drawn.
+pub(super) fn item_icon(
+    release: &str,
+    key: &str,
+    proxy: Option<&crate::event_loop::Proxy<AppMessage>>,
+    screen: ScreenId,
+) -> Option<ImageData> {
+    let image = item_icons::cached(release, key);
+    if image.is_none() {
+        item_icons::request(release, key, proxy, screen);
+    }
+    image
+}
+
+/// Icon key of a Stalker 2 item: its display name, or its type key when unnamed (as the C# desktop app does).
+fn s2_icon_key(display_name: Option<&str>, type_key: [u8; 3]) -> String {
+    display_name.map_or_else(
+        || format!("{:02X}{:02X}{:02X}", type_key[0], type_key[1], type_key[2]),
+        str::to_owned,
+    )
+}
+
 /// Fills one table row: the name, key, placement, condition (coloured by threshold), count and the selection look.
 fn fill_item_row(tree: &mut Tree, row: &ItemControls, cells: &ItemCells<'_>, compact: bool) -> Result<()> {
     tree.set_visible(row.row, true)?;
+    tree.set_visible(row.icon_frame, true)?;
+    tree.set_visible(row.icon, cells.icon.is_some())?;
+    tree.set_visible(row.icon_placeholder, cells.icon.is_none())?;
+    tree.set_image(row.icon, cells.icon.clone())?;
     tree.set_text(row.label, cells.name)?;
     tree.set_text(row.key, cells.key)?;
     tree.set_visible(row.key, !compact)?;
@@ -2471,6 +2549,9 @@ fn placement_cell(state: &WorkspaceState, handle: ItemHandle, base: Option<&str>
 
 struct ItemControls {
     row: WidgetId,
+    icon_frame: WidgetId,
+    icon: WidgetId,
+    icon_placeholder: WidgetId,
     label: WidgetId,
     key: WidgetId,
     place: WidgetId,
@@ -2604,6 +2685,8 @@ struct AddCandidate {
     key: String,
     display_name: String,
     template_available: bool,
+    /// Release of the save: the icon is looked up for it.
+    release: String,
 }
 
 fn add_template_preference(
@@ -2637,6 +2720,7 @@ fn add_candidates(selected: &LoadedSave, removed: &BTreeSet<u32>) -> Vec<AddCand
         .items()
         .iter()
         .map(|item| AddCandidate {
+            release: save.format().id().to_owned(),
             key: item.key.clone(),
             display_name: sse_catalog::SaveNaming::item_name(
                 save.format().id(),
@@ -2797,6 +2881,8 @@ impl InstalledNames {
                 .map_err(|error| error.to_string())
                 .and_then(|content| content.ok_or_else(|| "catalog_not_built".to_owned()))
                 .map(|content| {
+                    let content = Arc::new(content);
+                    item_icons::remember_installed(&release, Arc::clone(&content));
                     content
                         .bundle()
                         .items
@@ -2872,6 +2958,8 @@ struct Inventory {
     add_candidate_rows: Vec<(WidgetId, Option<String>)>,
     /// Per candidate row: its column and the wrapped note under the name (key and reason).
     add_candidate_slots: Vec<(WidgetId, WidgetId)>,
+    /// Per candidate row: its icon frame and icon image.
+    add_candidate_icons: Vec<(WidgetId, WidgetId)>,
     add_page_range: Option<WidgetId>,
     add_empty: Option<WidgetId>,
     add_previous: Option<WidgetId>,
@@ -3162,6 +3250,7 @@ impl Inventory {
             add_quantity: None,
             add_candidate_rows: Vec::new(),
             add_candidate_slots: Vec::new(),
+            add_candidate_icons: Vec::new(),
             add_page_range: None,
             add_empty: None,
             add_previous: None,
@@ -3460,12 +3549,14 @@ impl Inventory {
                         let place = placement_cell(&state, ItemHandle::Xray(item.handle), item.placement.as_deref());
                         let selected = self.selected_item == Some(ItemHandle::Xray(item.handle));
                         let editable = stack_editable && item.count.is_some();
+                        let icon = item_icon(release, &item.section, cx.proxy, ScreenId::Inventory);
                         fill_item_row(
                             cx.tree,
                             row,
                             &ItemCells {
                                 name: &short_text(&name, 22),
                                 key: &item.section,
+                                icon,
                                 place: &place,
                                 condition: &condition,
                                 condition_ratio,
@@ -3479,6 +3570,7 @@ impl Inventory {
                     } else {
                         row.handle = None;
                         cx.tree.set_visible(row.row, false)?;
+                        cx.tree.set_visible(row.icon_frame, false)?;
                         cx.tree.set_visible(row.label, false)?;
                         cx.tree.set_visible(row.select, false)?;
                         cx.tree.set_visible(row.decrease, false)?;
@@ -3620,12 +3712,19 @@ impl Inventory {
                         );
                         let selected = self.selected_item == Some(ItemHandle::Stalker2(item.handle));
                         let editable = writable && item.editable_count;
+                        let icon = item_icon(
+                            "stalker2",
+                            &s2_icon_key(item.display_name.as_deref(), item.type_key),
+                            cx.proxy,
+                            ScreenId::Inventory,
+                        );
                         fill_item_row(
                             cx.tree,
                             row,
                             &ItemCells {
                                 name: &short_text(name, 18),
                                 key: &key,
+                                icon,
                                 place: &place,
                                 condition: &condition,
                                 condition_ratio,
@@ -3638,6 +3737,7 @@ impl Inventory {
                         row.handle = Some(ItemHandle::Stalker2(item.handle));
                     } else {
                         cx.tree.set_visible(row.row, false)?;
+                        cx.tree.set_visible(row.icon_frame, false)?;
                         cx.tree.set_visible(row.label, false)?;
                         cx.tree.set_visible(row.select, false)?;
                         cx.tree.set_visible(row.decrease, false)?;
@@ -4521,6 +4621,7 @@ impl Inventory {
                 .map(|candidate| candidate.key.clone());
         }
         let slots = self.add_candidate_slots.clone();
+        let icon_nodes = self.add_candidate_icons.clone();
         for (offset, (widget, key)) in self.add_candidate_rows.iter_mut().enumerate() {
             let Some((column, note)) = slots.get(offset).copied() else {
                 continue;
@@ -4544,6 +4645,12 @@ impl Inventory {
                 );
                 cx.tree.set_text(note, &key_line)?;
                 cx.tree.set_visible(column, true)?;
+                let image = item_icon(&candidate.release, &candidate.key, cx.proxy, ScreenId::Inventory);
+                if let Some((frame, icon)) = icon_nodes.get(offset).copied() {
+                    cx.tree.set_visible(icon, image.is_some())?;
+                    cx.tree.set_image(icon, image)?;
+                    cx.tree.set_visible(frame, true)?;
+                }
                 cx.tree.set_enabled(*widget, candidate.template_available)?;
                 cx.tree.set_look(
                     *widget,
@@ -6427,6 +6534,20 @@ impl Screen for Inventory {
                     ..Style::default()
                 },
             )?;
+            let icon_frame = item_icon_frame(cx.tree, content, ITEM_ICON_SIZE)?;
+            let icon = cx.tree.add(
+                Some(icon_frame),
+                NodeKind::Leaf,
+                Style {
+                    min: Size::new(ITEM_ICON_SIZE - 4.0, ITEM_ICON_SIZE - 4.0),
+                    preferred: Size::new(ITEM_ICON_SIZE - 4.0, ITEM_ICON_SIZE - 4.0),
+                    ..Style::default()
+                },
+                Content::Image(None),
+                Look::default(),
+            )?;
+            cx.tree.set_visible(icon, false)?;
+            let icon_placeholder = style::label(cx.tree, icon_frame, "◇", Text::Body)?;
             let label = style::label(cx.tree, content, "", Text::Body)?;
             set_column_style(cx.tree, label, 2.0, 0.0)?;
             let key = style::label(cx.tree, content, "", Text::Note)?;
@@ -6461,6 +6582,9 @@ impl Screen for Inventory {
             }
             self.rows.push(ItemControls {
                 row: stack,
+                icon_frame,
+                icon,
+                icon_placeholder,
                 label,
                 key,
                 place,
@@ -6706,15 +6830,48 @@ impl Screen for Inventory {
                 Content::Panel,
                 Look::default(),
             )?;
-            let widget = style::button(cx.tree, slot, "", Button::Secondary)?;
-            // One line, shortened with an ellipsis; its inset matches the button's text so both start together.
+            let line = cx.tree.add(
+                Some(slot),
+                NodeKind::Row,
+                Style {
+                    gap: Size::new(8.0, 0.0),
+                    align_items: crate::layout::Align::Center,
+                    ..Style::default()
+                },
+                Content::Panel,
+                Look::default(),
+            )?;
+            let icon_frame = item_icon_frame(cx.tree, line, ITEM_ICON_SIZE)?;
+            let icon = cx.tree.add(
+                Some(icon_frame),
+                NodeKind::Leaf,
+                Style {
+                    min: Size::new(ITEM_ICON_SIZE - 4.0, ITEM_ICON_SIZE - 4.0),
+                    preferred: Size::new(ITEM_ICON_SIZE - 4.0, ITEM_ICON_SIZE - 4.0),
+                    ..Style::default()
+                },
+                Content::Image(None),
+                Look::default(),
+            )?;
+            cx.tree.set_visible(icon, false)?;
+            let widget = style::button(cx.tree, line, "", Button::Secondary)?;
+            cx.tree.set_style(
+                widget,
+                Style {
+                    grow: 1.0,
+                    shrink: 1.0,
+                    min: Size::new(0.0, 0.0),
+                    ..Style::default()
+                },
+            )?;
+            // One line, shortened with an ellipsis; its inset matches the button's text (after the icon) so both start together.
             let note = style::label(cx.tree, slot, "", Text::Note)?;
             cx.tree.set_style(
                 note,
                 Style {
                     shrink: 0.0,
                     padding: crate::layout::Edges {
-                        left: 16.0,
+                        left: 16.0 + ITEM_ICON_SIZE + 8.0,
                         top: 0.0,
                         right: 16.0,
                         bottom: 0.0,
@@ -6725,6 +6882,7 @@ impl Screen for Inventory {
             cx.tree.set_visible(slot, false)?;
             self.add_candidate_rows.push((widget, None));
             self.add_candidate_slots.push((slot, note));
+            self.add_candidate_icons.push((icon_frame, icon));
         }
         // The paging row stays under the candidate list, outside its scroll, so it is always in reach.
         let add_pages = style::row(cx.tree, panel)?;
@@ -6975,6 +7133,12 @@ impl Screen for Inventory {
                 if self.installed.finish(result) {
                     self.render(cx)?;
                 }
+            }
+        }
+        if let Message::User(AppMessage::ToScreen(ScreenId::Inventory, payload)) = message {
+            if payload.downcast_ref::<item_icons::IconsReady>().is_some() {
+                let r = self.render(cx);
+                r?;
             }
         }
         if let Message::User(AppMessage::ToScreen(ScreenId::Inventory, payload)) = message {
@@ -7625,6 +7789,8 @@ impl Screen for Inventory {
 pub(super) struct ListRow {
     pub(super) stack: WidgetId,
     pub(super) card: WidgetId,
+    /// Icon frame and image, only in lists that show item icons (stashes).
+    pub(super) icon: Option<(WidgetId, WidgetId)>,
     pub(super) title: WidgetId,
     pub(super) meta: WidgetId,
     pub(super) select: WidgetId,
@@ -7678,7 +7844,7 @@ pub(super) fn build_list_side(
         note,
         action,
     };
-    build_list_side_with(cx, host, text, keys, false)
+    build_list_side_with(cx, host, text, keys, false, false)
 }
 
 /// The list side. With `scrolling`, the rows scroll inside the list panel and the page row stays below them, so a short
@@ -7689,6 +7855,7 @@ fn build_list_side_with(
     text: ListSideText<'_>,
     keys: &[String],
     scrolling: bool,
+    icons: bool,
 ) -> Result<ListSide> {
     let ListSideText {
         title,
@@ -7816,6 +7983,25 @@ fn build_list_side_with(
             Content::Panel,
             Look::default(),
         )?;
+        let icon = if icons {
+            let frame = item_icon_frame(cx.tree, card, ITEM_ICON_SIZE)?;
+            cx.tree.set_style(frame, item_icon_frame_style(None))?;
+            cx.tree.set_visible(frame, false)?;
+            let image = cx.tree.add(
+                Some(frame),
+                NodeKind::Leaf,
+                Style {
+                    min: Size::new(ITEM_ICON_SIZE - 4.0, ITEM_ICON_SIZE - 4.0),
+                    preferred: Size::new(ITEM_ICON_SIZE - 4.0, ITEM_ICON_SIZE - 4.0),
+                    ..Style::default()
+                },
+                Content::Image(None),
+                Look::default(),
+            )?;
+            Some((frame, image))
+        } else {
+            None
+        };
         let text_column = cx.tree.add(
             Some(card),
             NodeKind::Column,
@@ -7839,6 +8025,7 @@ fn build_list_side_with(
         rows.push(ListRow {
             stack,
             card,
+            icon,
             title,
             meta,
             select,
@@ -7958,6 +8145,11 @@ pub(super) fn spacer(cx: &mut Context<'_>, parent: WidgetId) -> Result<WidgetId>
 
 /// Shows a list row with its two lines; a chosen row has the accent border.
 pub(super) fn show_list_row(tree: &mut Tree, row: ListRow, title: &str, meta: &str, chosen: bool) -> Result<()> {
+    if let Some((frame, _)) = row.icon {
+        // A hidden frame must take no room: the row keeps its width when it has no icon.
+        tree.set_style(frame, item_icon_frame_style(None))?;
+        tree.set_visible(frame, false)?;
+    }
     tree.set_text(row.title, title)?;
     tree.set_text(row.meta, meta)?;
     tree.set_look(
@@ -8378,6 +8570,8 @@ struct StashEntry {
     action_text: String,
     staged: bool,
     enabled: bool,
+    /// Release and icon key of the item, when the item has an icon.
+    icon: Option<(String, String)>,
 }
 
 /// Confirmed stash contents for the selected save: a list of entries with the chosen one in the side panel.
@@ -8477,6 +8671,11 @@ impl Stashes {
         {
             let (title, meta) = split_label(&entry.label);
             show_list_row(cx.tree, *row, title, meta, self.selected == Some(entry.action))?;
+            let icon = entry
+                .icon
+                .as_ref()
+                .and_then(|(release, key)| item_icon(release, key, cx.proxy, ScreenId::Stashes));
+            set_list_row_icon(cx.tree, *row, icon)?;
             self.row_entries.push(index);
         }
         let list = self
@@ -8650,6 +8849,10 @@ impl Stashes {
                 .to_owned(),
                 staged,
                 enabled: can_move,
+                icon: Some((
+                    "stalker2".to_owned(),
+                    s2_icon_key(item.display_name.as_deref(), item.type_key),
+                )),
             });
         }
         for item in backpack {
@@ -8692,6 +8895,10 @@ impl Stashes {
                 .to_owned(),
                 staged,
                 enabled: can_move,
+                icon: Some((
+                    "stalker2".to_owned(),
+                    s2_icon_key(item.display_name.as_deref(), item.type_key),
+                )),
             });
         }
         let pages = self.show_entries(cx, page_size)?;
@@ -8794,6 +9001,7 @@ impl Stashes {
                     .to_owned(),
                     staged,
                     enabled: can_move,
+                    icon: Some((save.format().id().to_owned(), item.key.clone())),
                 });
             }
         }
@@ -8830,6 +9038,7 @@ impl Stashes {
                     .to_owned(),
                     staged,
                     enabled: can_move,
+                    icon: Some((save.format().id().to_owned(), item.section.clone())),
                 });
             }
         }
@@ -9151,6 +9360,7 @@ impl Screen for Stashes {
             },
             &keys,
             true,
+            true,
         )?;
         let action = style::d2::button(
             cx.tree,
@@ -9222,6 +9432,11 @@ impl Screen for Stashes {
     ) -> Result<()> {
         if let Message::Window(crate::event_loop::WindowEvent::Resized { .. }) = message {
             return self.render(cx);
+        }
+        if let Message::User(AppMessage::ToScreen(ScreenId::Stashes, payload)) = message {
+            if payload.downcast_ref::<item_icons::IconsReady>().is_some() {
+                return self.render(cx);
+            }
         }
         let Some(list) = self.list.as_ref() else {
             return Ok(());
@@ -12531,9 +12746,19 @@ mod tests {
             super::SaveData::Stalker2 { .. } => return Err(Error::damaged("X-Ray fixture parsed as S2")),
         };
         inventory.stage_money_value(&mut cx, original_money.saturating_add(77))?;
-        let _ = receiver
-            .recv_timeout(std::time::Duration::from_secs(5))
-            .map_err(|error| Error::System(format!("draft persistence timed out: {error}")))?;
+        // Icon decodes also post messages to this channel: wait for the draft's own confirmation, skipping the rest.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            let message = receiver
+                .recv_timeout(remaining)
+                .map_err(|error| Error::System(format!("draft persistence timed out: {error}")))?;
+            if matches!(&message, Message::User(AppMessage::ToScreen(ScreenId::Inventory, payload))
+                if payload.downcast_ref::<super::DraftPersisted>().is_some())
+            {
+                break;
+            }
+        }
         assert_eq!(
             cx.app.draft(&source_sha256).and_then(|draft| draft.money),
             Some(original_money.saturating_add(77))

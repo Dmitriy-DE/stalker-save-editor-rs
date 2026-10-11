@@ -147,7 +147,7 @@ fn package_ee(args: &[String]) -> Result<()> {
 fn screenshot(args: &[String]) -> Result<()> {
     let path = args.get(1).ok_or_else(|| {
         Error::Refused(
-            "usage: --screenshot OUT.png [WxH] [NAV] [--open SAVE] [--add-item] [--discover] [--press LABEL] [--settle] [--wait] [--select-first] [--achievements-fixture] [--game ID --game-dir DIR]"
+            "usage: --screenshot OUT.png [WxH] [NAV] [--open SAVE] [--add-item] [--discover] [--press LABEL] [--settle] [--wait] [--select-first] [--achievements-fixture] [--then N] [--game-release REL --game-dir DIR] [--drain-seconds N] [--game ID --game-dir DIR]"
                 .to_owned(),
         )
     })?;
@@ -162,6 +162,7 @@ fn screenshot(args: &[String]) -> Result<()> {
     let mut select_first = false;
     let mut achievements_fixture = false;
     let mut then_nav: Option<usize> = None;
+    let mut drain_seconds: u64 = 20;
     let mut press: Option<&String> = None;
     let mut settle = false;
     let mut index = 2;
@@ -188,6 +189,13 @@ fn screenshot(args: &[String]) -> Result<()> {
                 index = index.saturating_add(1);
             }
             Some("--settle") => settle = true,
+            Some("--drain-seconds") => {
+                index = index.saturating_add(1);
+                drain_seconds = args
+                    .get(index)
+                    .and_then(|value| value.parse().ok())
+                    .ok_or_else(|| Error::Refused("--drain-seconds requires a number".to_owned()))?;
+            }
             Some("--then") => {
                 index = index.saturating_add(1);
                 then_nav = Some(
@@ -268,7 +276,11 @@ fn screenshot(args: &[String]) -> Result<()> {
         loader = Some(receiver);
     }
     if let Some(id) = nav.and_then(|i| ScreenId::ALL.get(i)) {
+        let opened = Instant::now();
         shell.open(&mut tree, *id)?;
+        eprintln!("UI_OPEN_MS {:.1}", opened.elapsed().as_secs_f64() * 1000.0);
+        // Rows depend on the window size: size the window before the background reads are awaited.
+        shell.resize_window(&mut tree, width, height)?;
     }
     if wait {
         // The screen's own background results (its list, loaded for the open save) come back as messages to it.
@@ -306,7 +318,7 @@ fn screenshot(args: &[String]) -> Result<()> {
         }
         if let Some(receiver) = loader.as_ref() {
             let deadline = Instant::now()
-                .checked_add(Duration::from_secs(20))
+                .checked_add(Duration::from_secs(drain_seconds))
                 .ok_or_else(|| Error::System("invalid screenshot press deadline".to_owned()))?;
             // The read may answer in several messages (the library and the screen), so the window is timed, not counted.
             while Instant::now() < deadline {
@@ -351,11 +363,15 @@ fn screenshot(args: &[String]) -> Result<()> {
     }
     // `--then N` opens a second screen after the search: the search sets the installed game folder for the app.
     if let Some(id) = then_nav.and_then(|i| ScreenId::ALL.get(i)) {
+        let opened = Instant::now();
         shell.open(&mut tree, *id)?;
-        // The opened screen's background reads (installed names) answer as messages: drain them for a while.
+        eprintln!("UI_OPEN_MS {:.1}", opened.elapsed().as_secs_f64() * 1000.0);
+        // The rows of a screen depend on the window size: size it before waiting for the screen's background reads.
+        shell.resize_window(&mut tree, width, height)?;
+        // The opened screen's background reads (installed names, icons) answer as messages: drain them for a while.
         if let Some(receiver) = loader.as_ref() {
             let deadline = Instant::now()
-                .checked_add(Duration::from_secs(20))
+                .checked_add(Duration::from_secs(drain_seconds))
                 .ok_or_else(|| Error::System("invalid screenshot then deadline".to_owned()))?;
             while Instant::now() < deadline {
                 let Ok(message) = receiver.recv_timeout(Duration::from_millis(200)) else {

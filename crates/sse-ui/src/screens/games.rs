@@ -2,15 +2,20 @@
 //!
 //! Replace each placeholder with a struct implementing [`Screen`]; keep the order.
 
-use super::saves::{build_list_side, list_window, show_list_row, sync_side_widths, ListRow, ListSide};
+use super::saves::{
+    build_list_side, item_icon, item_icon_frame, item_icon_frame_style, list_window, show_list_row, sync_side_widths,
+    ListRow, ListSide,
+};
 use super::style::{self, Button, Text};
 use super::{AppMessage, Context, Screen, ScreenId};
 use crate::event_loop::{Message, WindowEvent};
 use crate::glyphs::{Face, TextStyle};
+use crate::item_icons;
 use crate::layout::{NodeKind, Size, Style};
 use crate::path::Icon;
 use crate::text::{self, Metrics};
 use crate::theme;
+use crate::widget::ImageData;
 use crate::widget::WidgetId;
 use crate::widget::{Content, Look, Tree};
 use sse_core::Result;
@@ -5096,6 +5101,27 @@ impl Screen for GameDoctor {
     }
 }
 
+/// Side of an entry icon in the encyclopedia list and in its side panel (the C# list size is 46 px).
+const ENCYCLOPEDIA_ICON_SIZE: f32 = 46.0;
+const ENCYCLOPEDIA_DETAIL_ICON_SIZE: f32 = 96.0;
+
+/// Release of the selected installed game, for its icons.
+fn encyclopedia_release(cx: &Context<'_>) -> Option<&'static str> {
+    cx.app
+        .selected_game()
+        .and_then(encyclopedia_game)
+        .map(sse_catalog::GameContentService::release_id_for)
+}
+
+/// Icon of an encyclopedia entry: items only, when the installed game's release is known.
+fn entry_icon(release: Option<&str>, entry: &EncyclopediaEntry, cx: &mut Context<'_>) -> Option<ImageData> {
+    if entry.kind != EncyclopediaKind::Item {
+        return None;
+    }
+    let release = release?;
+    item_icon(release, &entry.key, cx.proxy, ScreenId::Encyclopedia)
+}
+
 fn encyclopedia_game(game: &str) -> Option<sse_content::CompanionGame> {
     match game {
         "soc" | "stalker-soc" | "soc-ee" | "stalker-soc-ee" => Some(sse_content::CompanionGame::ShadowOfChernobyl),
@@ -5211,6 +5237,10 @@ struct Encyclopedia {
     status: Option<WidgetId>,
     search_label: Option<WidgetId>,
     rows: Vec<WidgetId>,
+    /// Per row: its line (icon and button), its icon frame and its icon image.
+    row_parts: Vec<(WidgetId, WidgetId, WidgetId)>,
+    /// Icon frame and image of the selected entry, in the side panel.
+    detail_icon: Option<(WidgetId, WidgetId)>,
     card: Option<WidgetId>,
     to_save: Option<WidgetId>,
     to_game: Option<WidgetId>,
@@ -5261,6 +5291,11 @@ impl Encyclopedia {
                     sse_catalog::GameContentService::load(game, &directory, &cache, crate::strings::current_language())
                         .map_err(|e| e.to_string())?
                         .ok_or_else(|| "catalog_not_built".to_owned())?;
+                let content = Arc::new(content);
+                item_icons::remember_installed(
+                    sse_catalog::GameContentService::release_id_for(game),
+                    Arc::clone(&content),
+                );
                 let bundle = content.bundle();
                 let mut entries = Vec::new();
                 for item in bundle.items.items() {
@@ -5351,18 +5386,49 @@ impl Encyclopedia {
                 &tr(language, "Поиск: {0} · результатов: {1}", &[&query_display, &count]),
             )?;
         }
+        let release = encyclopedia_release(cx);
         for (row_index, widget) in self.rows.iter().copied().enumerate() {
+            let parts = self.row_parts.get(row_index).copied();
             if let Some(entry) = self.visible.get(row_index).and_then(|index| self.entries.get(*index)) {
                 cx.tree.set_visible(widget, true)?;
                 cx.tree.set_text(
                     widget,
                     &encyclopedia_entry_text(crate::strings::current_language(), entry),
                 )?;
+                if let Some((line, frame, icon)) = parts {
+                    let image = entry_icon(release, entry, cx);
+                    cx.tree.set_visible(line, true)?;
+                    cx.tree.set_visible(frame, true)?;
+                    cx.tree.set_visible(icon, image.is_some())?;
+                    cx.tree.set_image(icon, image)?;
+                }
             } else {
                 cx.tree.set_visible(widget, false)?;
+                if let Some((line, _, _)) = parts {
+                    cx.tree.set_visible(line, false)?;
+                }
             }
         }
         Ok(())
+    }
+
+    /// Shows the selected entry's icon in the side panel (items only).
+    fn show_detail_icon(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        let Some((frame, image)) = self.detail_icon else {
+            return Ok(());
+        };
+        let release = encyclopedia_release(cx);
+        let icon = self
+            .selected
+            .and_then(|index| self.entries.get(index))
+            .and_then(|entry| entry_icon(release, entry, cx));
+        cx.tree.set_style(
+            frame,
+            item_icon_frame_style(icon.as_ref().map(|_| ENCYCLOPEDIA_DETAIL_ICON_SIZE)),
+        )?;
+        cx.tree.set_visible(frame, icon.is_some())?;
+        cx.tree.set_visible(image, icon.is_some())?;
+        cx.tree.set_image(image, icon)
     }
 }
 
@@ -5432,9 +5498,34 @@ impl Screen for Encyclopedia {
             Text::Note,
         )?;
         for _ in 0..10 {
-            let row = style::button(cx.tree, card, "", Button::Secondary)?;
+            let line = style::row(cx.tree, card)?;
+            cx.tree.set_visible(line, false)?;
+            let frame = item_icon_frame(cx.tree, line, ENCYCLOPEDIA_ICON_SIZE)?;
+            let icon = cx.tree.add(
+                Some(frame),
+                NodeKind::Leaf,
+                Style {
+                    min: crate::layout::Size::new(ENCYCLOPEDIA_ICON_SIZE - 4.0, ENCYCLOPEDIA_ICON_SIZE - 4.0),
+                    preferred: crate::layout::Size::new(ENCYCLOPEDIA_ICON_SIZE - 4.0, ENCYCLOPEDIA_ICON_SIZE - 4.0),
+                    ..Style::default()
+                },
+                Content::Image(None),
+                Look::default(),
+            )?;
+            cx.tree.set_visible(icon, false)?;
+            let row = style::button(cx.tree, line, "", Button::Secondary)?;
+            cx.tree.set_style(
+                row,
+                Style {
+                    grow: 1.0,
+                    shrink: 1.0,
+                    min: crate::layout::Size::new(0.0, 0.0),
+                    ..Style::default()
+                },
+            )?;
             cx.tree.set_visible(row, false)?;
             self.rows.push(row);
+            self.row_parts.push((line, frame, icon));
         }
         let side = cx.tree.add(
             Some(body),
@@ -5445,6 +5536,24 @@ impl Screen for Encyclopedia {
         )?;
         let detail = style::d2::panel(cx.tree, side)?;
         style::d2::panel_title(cx.tree, detail, crate::strings::t_in(language, "ВЫБРАННАЯ ЗАПИСЬ"))?;
+        let detail_frame = item_icon_frame(cx.tree, detail, ENCYCLOPEDIA_DETAIL_ICON_SIZE)?;
+        let detail_image = cx.tree.add(
+            Some(detail_frame),
+            NodeKind::Leaf,
+            Style {
+                min: crate::layout::Size::new(ENCYCLOPEDIA_DETAIL_ICON_SIZE - 4.0, ENCYCLOPEDIA_DETAIL_ICON_SIZE - 4.0),
+                preferred: crate::layout::Size::new(
+                    ENCYCLOPEDIA_DETAIL_ICON_SIZE - 4.0,
+                    ENCYCLOPEDIA_DETAIL_ICON_SIZE - 4.0,
+                ),
+                ..Style::default()
+            },
+            Content::Image(None),
+            Look::default(),
+        )?;
+        cx.tree.set_style(detail_frame, item_icon_frame_style(None))?;
+        cx.tree.set_visible(detail_frame, false)?;
+        self.detail_icon = Some((detail_frame, detail_image));
         self.card = Some(style::label(
             cx.tree,
             detail,
@@ -5613,8 +5722,14 @@ impl Screen for Encyclopedia {
             }
         }
 
+        if let Message::User(AppMessage::ToScreen(ScreenId::Encyclopedia, payload)) = message {
+            if payload.downcast_ref::<item_icons::IconsReady>().is_some() {
+                self.apply_search(cx)?;
+                self.show_detail_icon(cx)?;
+            }
+        }
         if clicked.is_some() {
-            for (row_index, widget) in self.rows.iter().copied().enumerate() {
+            for (row_index, widget) in self.rows.clone().into_iter().enumerate() {
                 if clicked == Some(widget) {
                     if let Some(index) = self.visible.get(row_index).copied() {
                         self.selected = Some(index);
@@ -5634,6 +5749,7 @@ impl Screen for Encyclopedia {
                             if let Some(id) = self.to_game {
                                 cx.tree.set_enabled(id, false)?;
                             }
+                            self.show_detail_icon(cx)?;
                         }
                     }
                 }
