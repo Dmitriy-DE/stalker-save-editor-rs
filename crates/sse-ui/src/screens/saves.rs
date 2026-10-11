@@ -12705,6 +12705,63 @@ mod tests {
     }
 
     #[test]
+    fn icon_ready_message_keeps_the_draft_and_the_selection() -> sse_core::Result<()> {
+        let _task_guard = crate::screens::task_registry_test_guard();
+        let temp = TempDirectory::new();
+        let draft_directory = temp.0.join("drafts");
+        let source = include_bytes!("../../../../fixtures/synthetic/writer-money/xray-money-cop-source.sav");
+        let loaded = load_xray(source, "fixture.sav", "stalker-cop", "cop")?;
+        let source_sha256 = loaded.source_sha256.clone();
+        let workspace = Workspace::with_draft_directory(draft_directory);
+        workspace.lock().selected = Some(Arc::new(loaded));
+        let mut app = sse_app::state::AppState::new();
+        app.set_current_save_identity(PathBuf::from("fixture.sav"), source_sha256.clone());
+        app.set_draft_journal(DraftJournal::new(vec![DraftPlan::empty(&source_sha256)?], 0)?);
+        let (proxy, _receiver) = channel_pair::<AppMessage>();
+        let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(12, 13, 10, 255));
+        let host = tree.add(
+            None,
+            NodeKind::Column,
+            Style::default(),
+            Content::Panel,
+            Look::default(),
+        )?;
+        let mut inventory = Inventory::new(workspace.clone());
+        let mut cx = Context {
+            tree: &mut tree,
+            proxy: Some(&proxy),
+            status: None,
+            app: &mut app,
+        };
+        inventory.build(&mut cx, host)?;
+        let original_money = match &workspace
+            .lock()
+            .selected
+            .as_ref()
+            .map(Arc::as_ref)
+            .ok_or_else(|| Error::damaged("loaded fixture was not selected"))?
+            .data
+        {
+            super::SaveData::Xray { save, .. } => save.money()?,
+            super::SaveData::Stalker2 { .. } => return Err(Error::damaged("X-Ray fixture parsed as S2")),
+        };
+        inventory.stage_money_value(&mut cx, original_money.saturating_add(77))?;
+        let selected_before = inventory.selected_item;
+        // A background icon decode arrives in the middle of editing.
+        let icons_ready = Message::User(AppMessage::ToScreen(
+            ScreenId::Inventory,
+            Box::new(crate::item_icons::IconsReady),
+        ));
+        inventory.message(&mut cx, &icons_ready, None)?;
+        assert_eq!(
+            cx.app.draft(&source_sha256).and_then(|draft| draft.money),
+            Some(original_money.saturating_add(77))
+        );
+        assert_eq!(inventory.selected_item, selected_before);
+        Ok(())
+    }
+
+    #[test]
     fn inventory_draft_persists_and_global_undo_redo_updates_the_selected_save() -> sse_core::Result<()> {
         let _task_guard = crate::screens::task_registry_test_guard();
         let temp = TempDirectory::new();
