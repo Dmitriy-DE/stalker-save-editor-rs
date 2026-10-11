@@ -71,14 +71,14 @@ pub const fn capability(format: crate::Format, kind: ChangeKind) -> Capability {
         (Soc, EditUpgrades) => Unsupported,
         // Money: every real Enhanced Edition save passes the round trip (ToT EE 6/6, ChN EE 8/8, ZP EE 12/12).
         (SocEe | CsEe | CopEe, EditMoney) => Experimental,
-        // Ammunition stacks and item addition: 12 of 12 Call of Pripyat EE saves pass. ToT EE and ChN EE have saves
-        // without an ammunition stack (2 each), and their item templates have no proven placement field (0 of 14).
-        (CopEe, EditStacks | AddItems) => Experimental,
-        (SocEe | CsEe, EditStacks | AddItems) => Unsupported,
-        // Removal: 12 of 12 Call of Pripyat EE saves read back, keep their neighbours, and an added item removed again
-        // restores the unpacked image byte for byte. ToT EE and ChN EE have 2 saves each without a backpack item.
-        (CopEe, RemoveItems) => Experimental,
-        (SocEe | CsEe, RemoveItems) => Unsupported,
+        // Ammunition stacks and removal: 4/4 and 6/6 measurable ToT EE and ChN EE saves pass (the other 2 of each have
+        // no stack or no backpack item, so there is nothing to edit); 12 of 12 Call of Pripyat EE saves pass.
+        (SocEe | CsEe | CopEe, EditStacks | RemoveItems) => Experimental,
+        // Item addition: 12 of 12 Call of Pripyat EE saves pass. ToT EE and ChN EE refuse 0 of 14 with
+        // "item template has no proven placement field": their template records lack the client-data placement
+        // record that Clear Sky reads as [2, 1..=3] (save.rs read_placement_fields).
+        (CopEe, AddItems) => Experimental,
+        (SocEe | CsEe, AddItems) => Unsupported,
         // Call of Pripyat EE: 12 of 12 saves move a slot item to the backpack and restore it byte-identically.
         // ToT EE and ChN EE have no slot item with a proven base slot, so they stay Unsupported.
         (CopEe, EditPlacement) => Experimental,
@@ -4186,10 +4186,16 @@ mod tests {
         for format in [Format::SocEe, Format::CsEe, Format::CopEe] {
             assert_eq!(capability(format, ChangeKind::EditMoney), Capability::Experimental);
         }
-        for kind in [ChangeKind::EditStacks, ChangeKind::AddItems, ChangeKind::RemoveItems] {
-            assert_eq!(capability(Format::CopEe, kind), Capability::Experimental);
-            assert_eq!(capability(Format::SocEe, kind), Capability::Unsupported);
-            assert_eq!(capability(Format::CsEe, kind), Capability::Unsupported);
+        for format in [Format::SocEe, Format::CsEe, Format::CopEe] {
+            assert_eq!(capability(format, ChangeKind::EditStacks), Capability::Experimental);
+            assert_eq!(capability(format, ChangeKind::RemoveItems), Capability::Experimental);
+        }
+        assert_eq!(
+            capability(Format::CopEe, ChangeKind::AddItems),
+            Capability::Experimental
+        );
+        for format in [Format::SocEe, Format::CsEe] {
+            assert_eq!(capability(format, ChangeKind::AddItems), Capability::Unsupported);
         }
         for format in [Format::SocEe, Format::CsEe] {
             assert_eq!(capability(format, ChangeKind::EditDurability), Capability::Experimental);
