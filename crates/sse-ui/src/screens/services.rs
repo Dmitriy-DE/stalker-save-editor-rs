@@ -2158,6 +2158,38 @@ struct Updates {
 }
 
 impl Updates {
+    /// Enables only the next step (download after an offer, install after a download) and marks the
+    /// one next step as the primary button; "check" is primary until something is offered.
+    fn sync_actions(&self, cx: &mut Context<'_>) -> Result<()> {
+        let downloaded = self.downloaded.is_some();
+        let offered = self.artifact.is_some() && !downloaded;
+        if let Some(id) = self.check {
+            cx.tree.set_enabled(id, true)?;
+            style::set_button_role(
+                cx.tree,
+                id,
+                if offered || downloaded {
+                    Button::Secondary
+                } else {
+                    Button::Primary
+                },
+            )?;
+        }
+        if let Some(id) = self.download {
+            cx.tree.set_enabled(id, offered)?;
+            style::set_button_role(cx.tree, id, if offered { Button::Primary } else { Button::Secondary })?;
+        }
+        if let Some(id) = self.install {
+            cx.tree.set_enabled(id, downloaded)?;
+            style::set_button_role(
+                cx.tree,
+                id,
+                if downloaded { Button::Primary } else { Button::Secondary },
+            )?;
+        }
+        Ok(())
+    }
+
     fn check(&mut self, cx: &mut Context<'_>) {
         if self.busy {
             return;
@@ -2372,9 +2404,9 @@ impl Screen for Updates {
             cx.tree,
             actions,
             t("УСТАНОВИТЬ ОБНОВЛЕНИЕ"),
-            Button::Primary,
+            Button::Secondary,
         )?);
-        Ok(())
+        self.sync_actions(cx)
     }
 
     fn message(
@@ -2445,6 +2477,7 @@ impl Screen for Updates {
                             cx.tree.set_text(id, &status)?;
                         }
                         cx.status = Some(status);
+                        self.sync_actions(cx)?;
                     }
                     UpdateReply::Checked(Err(error)) => {
                         self.artifact = None;
@@ -2455,6 +2488,7 @@ impl Screen for Updates {
                             cx.tree.set_text(id, &tr("Ошибка сервера обновлений: {0}", &[error]))?;
                         }
                         cx.status = Some(t("Ошибка подключения к серверу обновлений.").to_owned());
+                        self.sync_actions(cx)?;
                     }
                     UpdateReply::Downloaded(Ok((artifact, path))) => {
                         self.artifact = Some(artifact.clone());
@@ -2464,6 +2498,7 @@ impl Screen for Updates {
                             cx.tree.set_text(id, &text)?;
                         }
                         cx.status = Some(text);
+                        self.sync_actions(cx)?;
                     }
                     UpdateReply::Downloaded(Err(error)) => {
                         if let Some(id) = self.status {

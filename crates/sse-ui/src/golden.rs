@@ -173,8 +173,8 @@ mod tests {
             "0413c948cee748243bbd62ee51382cce2d3c7dc160b725123b57893ad37ad882",
             "2366af2ef4d9965dea73cde201434e363c55e6bf00fc003ad4610c0c5dc49935",
             "250f5f439c8e92233f7d0b2a5f1d7cf84c7b7235571522a37d911725f7d70814",
-            "47311ab0ce42afddaf73faadd4875732cdc33d1fe9e35e708b4dec177de55119",
-            "22d7d3bf9869eb13de05d9dee00f2e72128a8ddcb53f39db42d0779a221d099e",
+            "7e9990fa60f13cdfc25f606f03ee83c526ec8c71a8d573d0c54edc86c4ca21a1",
+            "56bc9c2c937ad90d2dc2a175e35ffa126374531f9eb5e14904da78ee314ef16a",
         ];
         assert_eq!(
             ScreenId::ALL.len(),
