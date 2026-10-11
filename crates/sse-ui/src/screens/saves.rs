@@ -5812,6 +5812,10 @@ fn verify_requested_values(
             "S2 stash transfer cannot be verified against an X-Ray read-back".to_owned(),
         ));
     };
+    // A save with no stash moves has nothing to read back here; it must not require a stash block.
+    if *outcome == S2MoveOutcome::default() {
+        return Ok(());
+    }
     let stash_handles = save.stash_items()?.iter().map(|item| item.handle).collect::<Vec<_>>();
     let backpack_handles = inventory.iter().map(|item| item.handle).collect::<Vec<_>>();
     let count = |list: &[u32], handle: u32| list.iter().filter(|candidate| **candidate == handle).count();
