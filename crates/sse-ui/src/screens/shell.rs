@@ -1775,6 +1775,7 @@ impl Shell {
                     ..Look::default()
                 },
             )?;
+            // One line: the game name is cut with an ellipsis (see `fit_to_node`), so it cannot wrap onto the date line.
             let game = tree.add(
                 Some(details_column),
                 NodeKind::Leaf,
@@ -1783,7 +1784,7 @@ impl Shell {
                     shrink: 1.0,
                     ..Style::default()
                 },
-                Content::Paragraph {
+                Content::Label {
                     text: String::new(),
                     style: TextStyle::new(Face::Body, 12.0),
                 },
@@ -5925,6 +5926,68 @@ mod tests {
         });
         shell.handle(tree, &key, None)?;
         Ok(())
+    }
+
+    /// The three lines of a library card (the file name, the game, the date and size) never overlap, at 1366x768 and
+    /// 1920x1080: each line ends before the next one starts.
+    #[test]
+    fn library_card_lines_do_not_overlap() -> sse_core::Result<()> {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| sse_core::Error::System(error.to_string()))?
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!("sse-shell-card-lines-{}-{nonce}", std::process::id()));
+        std::fs::create_dir(&directory)?;
+        let result = (|| {
+            let paths = fixture_save_copies(&directory, 3)?;
+            for (width, height) in [(1366_u32, 768_u32), (1920, 1080)] {
+                let (proxy, receiver) = channel_pair::<super::super::AppMessage>();
+                let mut tree = Tree::new(Fonts::bundled()?, Color::rgba(0, 0, 0, 255));
+                let mut shell = Shell::build_for_test(&mut tree, None)?;
+                shell.set_proxy(proxy);
+                load_library_fixtures(&mut shell, &mut tree, &receiver, &paths)?;
+                shell.handle(
+                    &mut tree,
+                    &Message::Window(WindowEvent::Resized { width, height }),
+                    None,
+                )?;
+                tree.update_layout()?;
+                let row = shell
+                    .library_rows
+                    .first()
+                    .ok_or_else(|| sse_core::Error::damaged("no library row"))?;
+                let select = tree.rect(row.select)?;
+                let game = tree.rect(row.game)?;
+                let meta = tree.rect(row.meta)?;
+                let bottom =
+                    |rect: crate::raster::Rect| rect.y.saturating_add(i32::try_from(rect.height).unwrap_or(i32::MAX));
+                let game_text = tree.text(row.game)?.to_owned();
+                let game_style = crate::glyphs::TextStyle::new(crate::glyphs::Face::Body, 12.0);
+                assert!(
+                    !game_text.contains('\n'),
+                    "{width}x{height}: the game name is wrapped: {game_text:?}"
+                );
+                assert!(
+                    tree.measure_text(&game_text, game_style) <= game.width as f32,
+                    "{width}x{height}: the game name {game_text:?} is wider than its line"
+                );
+                assert!(
+                    bottom(select) <= game.y,
+                    "{width}x{height}: the file name ends at {} below the game at {}",
+                    bottom(select),
+                    game.y
+                );
+                assert!(
+                    bottom(game) <= meta.y,
+                    "{width}x{height}: the game name ends at {} below the date at {}",
+                    bottom(game),
+                    meta.y
+                );
+            }
+            Ok(())
+        })();
+        std::fs::remove_dir_all(&directory).ok();
+        result
     }
 
     #[test]
