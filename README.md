@@ -30,16 +30,16 @@ reference:
 |---|---|---|
 | Money | Verified | Experimental (measured on every real save: ТЧ EE 6/6, ЧН EE 8/8, ЗП EE 12/12) |
 | Ammunition stacks | Verified | Experimental (ТЧ EE 4/4 and ЧН EE 6/6 measurable saves pass; ЗП EE 12/12; the other saves have no stack to edit) |
-| Add items | Verified | Call of Pripyat EE: Experimental (12/12); Shadow of Chernobyl EE, Clear Sky EE: Unsupported (writer refuses 0 of 14 saves with "item template has no proven placement field": the template lacks the client-data placement record) |
+| Add items | Verified | Experimental (ТЧ EE 4/4, ЧН EE 6/6 measurable saves pass, undo byte-identical; ЗП EE 12/12; the other saves have no single-item template with a placement) |
 | Remove items | Verified | Experimental (ТЧ EE 4/4 and ЧН EE 6/6 measurable saves pass; ЗП EE 12/12; the other saves have no backpack item to remove) |
-| Equipment condition | Experimental | Shadow of Chernobyl EE, Clear Sky EE: Experimental (not loaded in the game yet); Call of Pripyat EE: Unsupported (one UPDATE byte changes on restore) |
-| Item placement | Experimental | Call of Pripyat EE: Experimental (not loaded in the game yet); Shadow of Chernobyl EE, Clear Sky EE: Unsupported (no slot item with a proven base slot in the copies checked) |
-| Actor faction | Experimental | Unsupported |
-| Faction relations | Experimental | Unsupported |
-| Move items to or from a stash | Experimental | Unsupported |
+| Equipment condition | Experimental | Experimental (not loaded in the game yet): ТЧ EE 6/6, ЧН EE 8/8, ЗП EE 12/12 (the restore keeps the client copy untouched where it differs from the state value) |
+| Item placement | Experimental | Call of Pripyat EE: Experimental (not loaded in the game yet, 12/12); Shadow of Chernobyl EE, Clear Sky EE: Unsupported (slot occupancy cannot be proven: the equipped item reads as slot 0, so a slot move is refused) |
+| Actor faction | Experimental | Experimental (26/26 real saves read the new faction and undo byte-identically) |
+| Faction relations | Experimental | Unsupported (none of the 26 Enhanced Edition saves holds an actor relation entry, so nothing to edit) |
+| Move items to or from a stash | Experimental | Unsupported (the move into the backpack succeeds, but its undo is refused: the moved item has no backpack placement after the move) |
 | Info portions | Experimental | Unsupported |
 | Relocate actor | Experimental | Unsupported |
-| Upgrades | Clear Sky, Call of Pripyat: Experimental; Shadow of Chernobyl: not in the game | Unsupported (the editor has no upgrade catalog for these) |
+| Upgrades | Clear Sky, Call of Pripyat: Experimental; Shadow of Chernobyl: not in the game | Clear Sky EE, Call of Pripyat EE: Experimental (ЧН EE 8/8, ЗП EE 12/12 add and undo byte-identically); Shadow of Chernobyl EE: Unsupported (no upgrade catalog for it and no upgradeable item in the saves measured) |
 
 *Verified* means the reference fixtures confirm the field. It does not mean a game has loaded the result.
 *Experimental* means the reference allows the edit with experimental status: it is checked by the writer and by a

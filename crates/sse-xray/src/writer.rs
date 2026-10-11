@@ -74,22 +74,28 @@ pub const fn capability(format: crate::Format, kind: ChangeKind) -> Capability {
         // Ammunition stacks and removal: 4/4 and 6/6 measurable ToT EE and ChN EE saves pass (the other 2 of each have
         // no stack or no backpack item, so there is nothing to edit); 12 of 12 Call of Pripyat EE saves pass.
         (SocEe | CsEe | CopEe, EditStacks | RemoveItems) => Experimental,
-        // Item addition: 12 of 12 Call of Pripyat EE saves pass. ToT EE and ChN EE refuse 0 of 14 with
-        // "item template has no proven placement field": their template records lack the client-data placement
-        // record that Clear Sky reads as [2, 1..=3] (save.rs read_placement_fields).
-        (CopEe, AddItems) => Experimental,
-        (SocEe | CsEe, AddItems) => Unsupported,
-        // Call of Pripyat EE: 12 of 12 saves move a slot item to the backpack and restore it byte-identically.
-        // ToT EE and ChN EE have no slot item with a proven base slot, so they stay Unsupported.
+        // Item addition: ToT EE 4/4 and ChN EE 6/6 measurable saves pass (edit, read-back, neighbours, and the undo gives
+        // the original unpacked image); ZP EE 12/12. The writer refuses a template with no placement record, so a save
+        // with no such single-item template is not measurable (2 of 6 ToT EE, 2 of 8 ChN EE).
+        (SocEe | CsEe | CopEe, AddItems) => Experimental,
+        // Placement: Call of Pripyat EE 12/12 moves a slot item. ToT EE and ChN EE: the slot occupancy cannot be proven,
+        // because the equipped item's placement reads as unknown (its client data [2, 1, 0, 0] gives slot 0).
         (CopEe, EditPlacement) => Experimental,
-        // Shadow of Chernobyl EE (6/6) and Clear Sky EE (8/8) pass every real save. Call of Pripyat EE restores with
-        // one changed UPDATE condition byte on 7 of 12 saves, so it stays Unsupported (see the ignored round-trip test).
-        (SocEe | CsEe, EditDurability) => Experimental,
-        (
-            SocEe | CsEe | CopEe,
-            EditDurability | EditPlacement | EditPlayerFaction | EditRelations | EditUpgrades | EditInfoPortions
-            | RelocateActor | MoveItems,
-        ) => Unsupported,
+        (SocEe | CsEe, EditPlacement) => Unsupported,
+        // Actor faction: all 26 real Enhanced Edition saves read the new faction and undo to the original image.
+        (SocEe | CsEe | CopEe, EditPlayerFaction) => Experimental,
+        // Upgrades: ChN EE 8/8 and ZP EE 12/12 add an upgrade and undo byte-identically. ToT EE: the matrix has no upgrade
+        // catalog for Shadow of Chernobyl and its saves hold no upgradeable item to measure.
+        (CsEe | CopEe, EditUpgrades) => Experimental,
+        (SocEe, EditUpgrades) => Unsupported,
+        // Equipment condition: ToT EE 6/6, ChN EE 8/8, ZP EE 12/12 real saves pass the edit, read-back and undo.
+        (SocEe | CsEe | CopEe, EditDurability) => Experimental,
+        // Faction relations: none of the 26 Enhanced Edition saves holds an actor relation entry, so nothing to edit.
+        (SocEe | CsEe | CopEe, EditRelations) => Unsupported,
+        // Stash moves: the move into the backpack succeeds, but its undo is refused ("must be in the backpack before it
+        // can be stored"): the moved record has no backpack placement after the move, so the undo is not proven.
+        (SocEe | CsEe | CopEe, MoveItems) => Unsupported,
+        (SocEe | CsEe | CopEe, EditInfoPortions | RelocateActor) => Unsupported,
     }
 }
 
@@ -436,8 +442,15 @@ fn apply_with_catalog_internal(
                 })?;
                 writes.push(PendingWrite::f32(state_offset, *new_value));
                 writes.push(PendingWrite::u8(update_offset, encode_condition_q8(*new_value)));
+                // The client copy follows the state only while it holds the same bits. Where it differs (Call of Pripyat
+                // EE keeps 1.0 beside a state of 0.9999996), it is left alone, so an undo restores the same bytes.
                 if let Some(offset) = item.client_condition_offset {
-                    writes.push(PendingWrite::f32(offset, *new_value));
+                    let raw = save.raw_image();
+                    let state_bits = item.condition_offset.map(|state| read_u32(raw, state)).transpose()?;
+                    let client_bits = read_u32(raw, offset)?;
+                    if state_bits == Some(client_bits) {
+                        writes.push(PendingWrite::f32(offset, *new_value));
+                    }
                 }
             }
             Change::SetPlacement {
@@ -2220,7 +2233,7 @@ impl PendingWrite {
 
 fn matching_faction_catalog(catalog: Option<&FactionCatalog>, format: crate::Format) -> Result<&FactionCatalog> {
     let catalog = catalog.ok_or_else(|| Error::Refused("matching faction catalog is required".to_owned()))?;
-    if catalog.release_id() != format.id() {
+    if catalog.release_id() != sse_catalog::bundle::release_for_format(format.id()) {
         return Err(Error::Refused(format!(
             "faction catalog '{}' does not match {}",
             catalog.release_id(),
@@ -2232,7 +2245,7 @@ fn matching_faction_catalog(catalog: Option<&FactionCatalog>, format: crate::For
 
 fn matching_upgrade_catalog(catalog: Option<&UpgradeCatalog>, format: crate::Format) -> Result<&UpgradeCatalog> {
     let catalog = catalog.ok_or_else(|| Error::Refused("matching upgrade catalog is required".to_owned()))?;
-    if catalog.release_id() != format.id() || catalog.upgrades().is_empty() {
+    if catalog.release_id() != sse_catalog::bundle::release_for_format(format.id()) || catalog.upgrades().is_empty() {
         return Err(Error::Refused(format!(
             "upgrade catalog '{}' does not match {} or is empty",
             catalog.release_id(),
@@ -4190,20 +4203,12 @@ mod tests {
             assert_eq!(capability(format, ChangeKind::EditStacks), Capability::Experimental);
             assert_eq!(capability(format, ChangeKind::RemoveItems), Capability::Experimental);
         }
-        assert_eq!(
-            capability(Format::CopEe, ChangeKind::AddItems),
-            Capability::Experimental
-        );
-        for format in [Format::SocEe, Format::CsEe] {
-            assert_eq!(capability(format, ChangeKind::AddItems), Capability::Unsupported);
+        for format in [Format::SocEe, Format::CsEe, Format::CopEe] {
+            assert_eq!(capability(format, ChangeKind::AddItems), Capability::Experimental);
         }
-        for format in [Format::SocEe, Format::CsEe] {
+        for format in [Format::SocEe, Format::CsEe, Format::CopEe] {
             assert_eq!(capability(format, ChangeKind::EditDurability), Capability::Experimental);
         }
-        assert_eq!(
-            capability(Format::CopEe, ChangeKind::EditDurability),
-            Capability::Unsupported
-        );
         assert_eq!(
             capability(Format::CopEe, ChangeKind::EditPlacement),
             Capability::Experimental
@@ -4212,14 +4217,19 @@ mod tests {
             assert_eq!(capability(format, ChangeKind::EditPlacement), Capability::Unsupported);
         }
         for format in [Format::SocEe, Format::CsEe, Format::CopEe] {
-            for kind in [
-                ChangeKind::EditPlayerFaction,
-                ChangeKind::EditRelations,
-                ChangeKind::EditUpgrades,
-                ChangeKind::MoveItems,
-            ] {
-                assert_eq!(capability(format, kind), Capability::Unsupported);
-            }
+            assert_eq!(
+                capability(format, ChangeKind::EditPlayerFaction),
+                Capability::Experimental
+            );
+            assert_eq!(capability(format, ChangeKind::EditRelations), Capability::Unsupported);
+            assert_eq!(capability(format, ChangeKind::MoveItems), Capability::Unsupported);
+        }
+        assert_eq!(
+            capability(Format::SocEe, ChangeKind::EditUpgrades),
+            Capability::Unsupported
+        );
+        for format in [Format::CsEe, Format::CopEe] {
+            assert_eq!(capability(format, ChangeKind::EditUpgrades), Capability::Experimental);
         }
     }
 
@@ -5688,6 +5698,10 @@ mod tests {
                 let enabled = capability(save.format(), kind) != Capability::Unsupported;
                 match outcome {
                     Ok(detail) => eprintln!("{} {:?} {label} pass {detail}", path.display(), save.format()),
+                    // "no ..." means the save holds nothing this edit can apply to: not a failure, not a pass.
+                    Err(reason) if reason.starts_with("no ") => {
+                        eprintln!("{} {:?} {label} n/a {reason}", path.display(), save.format());
+                    }
                     Err(reason) => {
                         eprintln!("{} {:?} {label} FAIL {reason}", path.display(), save.format());
                         if enabled {
@@ -5827,8 +5841,8 @@ mod tests {
         let items = save.inventory().map_err(|error| format!("{error:?}"))?;
         let template = items
             .iter()
-            .find(|item| item.count.is_none())
-            .ok_or("no single-item template")?;
+            .find(|item| item.count.is_none() && item.placement.is_some())
+            .ok_or("no single-item template with a placement")?;
         let highest = save
             .registry_objects()
             .iter()
