@@ -14,7 +14,7 @@ answers with replies in the same folder. The code is in `crates/sse-companion`, 
 | Game | Mechanism | Source |
 |---|---|---|
 | Shadow of Chernobyl, Clear Sky, Call of Pripyat | Scripts in `gamedata/`, plus a per-game `fsgame` configuration file | `bundled.rs` embeds the payloads at build time (`install_bundled`) |
-| Enhanced Editions | Steam Workshop packages (`sse-companion/src/workshop.rs` holds the item IDs and detects an existing install, read-only) | Packages are built with `sse-ui-dev --package-ee` |
+| Enhanced Editions | Steam Workshop packages. `sse-companion/src/workshop.rs` holds the app IDs and archive names and detects an existing install, read-only. The published Workshop item IDs are not set yet (`published_file_id: None`) | Packages are built with `sse-ui-dev --package-ee` |
 | S.T.A.L.K.E.R. 2 | A UE4SS mod in the game's `Mods` directory (`install_stalker2` takes that directory) | See `bundled.rs` |
 
 For X-Ray games the installer rewrites the configuration paths of its payload to the folder of the chosen game.
