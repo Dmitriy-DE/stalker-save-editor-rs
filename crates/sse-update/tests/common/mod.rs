@@ -80,6 +80,7 @@ pub struct MockProcessRunner {
     pub last_args: Vec<String>,
     pub call_count: usize,
     pub available_commands: Option<Vec<String>>,
+    pub staged_runs: Vec<(std::path::PathBuf, std::path::PathBuf)>,
 }
 
 impl MockProcessRunner {
@@ -96,6 +97,14 @@ impl ProcessRunner for MockProcessRunner {
         self.call_count = self.call_count.saturating_add(1);
         self.last_program = Some(program.to_owned());
         self.last_args = args.iter().map(|argument| (*argument).to_owned()).collect();
+        Ok(self.exit_code)
+    }
+
+    fn run_staged_artifact(&mut self, staging_root: &std::path::Path, artifact: &std::path::Path) -> Result<i32> {
+        // The same check the system runner applies, so a path it would refuse fails the test here too.
+        let resolved = sse_update::staged_artifact_path(staging_root, artifact)?;
+        self.call_count = self.call_count.saturating_add(1);
+        self.staged_runs.push((staging_root.to_path_buf(), resolved));
         Ok(self.exit_code)
     }
 

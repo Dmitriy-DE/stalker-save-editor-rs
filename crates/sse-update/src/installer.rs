@@ -47,6 +47,15 @@ pub trait ProcessRunner {
     /// Returns an error if the process could not be launched.
     fn run(&mut self, program: &str, args: &[&str]) -> Result<i32>;
 
+    /// Runs an installer that was already verified (signature and SHA-256) and copied into the private staging
+    /// directory. `artifact` must be an absolute path to a regular file inside `staging_root`; implementations that
+    /// start a real process must check that with [`staged_artifact_path`] and never search `PATH`.
+    ///
+    /// # Errors
+    /// Returns [`Error::Refused`] when the path is not inside the staging directory, or an error if the process
+    /// could not be launched.
+    fn run_staged_artifact(&mut self, staging_root: &Path, artifact: &Path) -> Result<i32>;
+
     /// Checks if a command or binary is available to execute.
     fn has_command(&self, program: &str) -> bool {
         trusted_program(program).is_some()
@@ -67,6 +76,48 @@ impl ProcessRunner for SystemProcessRunner {
         let status = cmd.status().map_err(Error::from)?;
         Ok(status.code().unwrap_or(-1))
     }
+
+    fn run_staged_artifact(&mut self, staging_root: &Path, artifact: &Path) -> Result<i32> {
+        let resolved = staged_artifact_path(staging_root, artifact)?;
+        let status = Command::new(resolved).status().map_err(Error::from)?;
+        Ok(status.code().unwrap_or(-1))
+    }
+}
+
+/// Resolves a staged installer for execution, refusing every path that is not a regular file inside `staging_root`.
+///
+/// Both paths must be absolute and free of `.`/`..` components, and no component below the staging directory may be
+/// a symbolic link: the resolved file has to be exactly the staging directory plus the relative part of `artifact`.
+///
+/// # Errors
+/// Returns [`Error::Refused`] for a relative path, a path outside the staging directory, a link or a non-file.
+pub fn staged_artifact_path(staging_root: &Path, artifact: &Path) -> Result<PathBuf> {
+    let refuse = |reason: &str| Error::Refused(format!("Staged installer {reason}: {}", artifact.display()));
+    if !staging_root.is_absolute() || !artifact.is_absolute() {
+        return Err(refuse("path is not absolute"));
+    }
+    if artifact
+        .components()
+        .any(|part| matches!(part, std::path::Component::ParentDir | std::path::Component::CurDir))
+    {
+        return Err(refuse("path has relative components"));
+    }
+    let relative = artifact
+        .strip_prefix(staging_root)
+        .map_err(|_| refuse("is outside the staging directory"))?;
+    if relative.as_os_str().is_empty() {
+        return Err(refuse("is the staging directory itself"));
+    }
+    let root = std::fs::canonicalize(staging_root).map_err(|_| refuse("staging directory is unavailable"))?;
+    let resolved = std::fs::canonicalize(artifact).map_err(|_| refuse("is unavailable"))?;
+    if resolved != root.join(relative) {
+        return Err(refuse("is reached through a link"));
+    }
+    let metadata = std::fs::symlink_metadata(&resolved).map_err(|_| refuse("is unavailable"))?;
+    if !metadata.file_type().is_file() {
+        return Err(refuse("is not a regular file"));
+    }
+    Ok(resolved)
 }
 
 struct StagedArtifact {
@@ -322,7 +373,7 @@ pub fn install_artifact(
         && installation.kind == platform::kind::INSTALLER
         && artifact.file.ends_with(".exe")
     {
-        let exit_code = runner.run(&archive_str, &[])?;
+        let exit_code = runner.run_staged_artifact(&staging_root, &staged_archive.path)?;
         return match exit_code {
             0 => Ok(UpdateInstallResult {
                 state: UpdateInstallState::Succeeded,
@@ -379,6 +430,87 @@ fn trusted_program(program: &str) -> Option<std::path::PathBuf> {
         .iter()
         .map(|dir| std::path::Path::new(dir).join(program))
         .find(|candidate| candidate.is_file())
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod staged_artifact_tests {
+    use super::{staged_artifact_path, ProcessRunner, SystemProcessRunner};
+    use sse_core::Error;
+    use std::path::{Path, PathBuf};
+
+    struct Temp(PathBuf);
+
+    impl Temp {
+        fn new(name: &str) -> Self {
+            let path = std::env::temp_dir().join(format!("sse-update-staged-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&path);
+            std::fs::create_dir_all(&path).unwrap();
+            Self(std::fs::canonicalize(&path).unwrap())
+        }
+    }
+
+    impl Drop for Temp {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn refused(root: &Path, artifact: &Path) {
+        let error = SystemProcessRunner.run_staged_artifact(root, artifact).unwrap_err();
+        assert!(matches!(error, Error::Refused(_)), "{artifact:?}: {error:?}");
+        assert!(matches!(staged_artifact_path(root, artifact), Err(Error::Refused(_))));
+    }
+
+    #[test]
+    fn staged_runner_refuses_paths_outside_the_staging_directory() {
+        let temp = Temp::new("outside");
+        let staging = temp.0.join("verified-install");
+        std::fs::create_dir(&staging).unwrap();
+        let outside = temp.0.join("Setup.exe");
+        std::fs::write(&outside, b"outside").unwrap();
+        std::fs::write(staging.join("Setup.exe"), b"inside").unwrap();
+
+        refused(&staging, &outside);
+        refused(&staging, &staging.join("..").join("Setup.exe"));
+        refused(&staging, &staging);
+        refused(&staging, &staging.join("missing.exe"));
+        assert!(staged_artifact_path(&staging, &staging.join("Setup.exe")).is_ok());
+    }
+
+    #[test]
+    fn staged_runner_refuses_relative_paths() {
+        let temp = Temp::new("relative");
+        let staging = temp.0.join("verified-install");
+        std::fs::create_dir(&staging).unwrap();
+        std::fs::write(staging.join("Setup.exe"), b"inside").unwrap();
+
+        refused(&staging, Path::new("Setup.exe"));
+        refused(&staging, Path::new("verified-install/Setup.exe"));
+        refused(Path::new("verified-install"), &staging.join("Setup.exe"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn staged_runner_refuses_links_and_runs_a_real_staged_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = Temp::new("links");
+        let staging = temp.0.join("verified-install");
+        std::fs::create_dir(&staging).unwrap();
+        let outside = temp.0.join("outside.sh");
+        std::fs::write(&outside, b"#!/bin/sh\nexit 0\n").unwrap();
+        std::os::unix::fs::symlink(&outside, staging.join("link.sh")).unwrap();
+        std::os::unix::fs::symlink(&temp.0, staging.join("escape")).unwrap();
+        refused(&staging, &staging.join("link.sh"));
+        refused(&staging, &staging.join("escape").join("outside.sh"));
+
+        // The file is written and closed before it is started, so no writer keeps it busy.
+        let staged = staging.join("Setup.sh");
+        std::fs::write(&staged, b"#!/bin/sh\nexit 7\n").unwrap();
+        std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(SystemProcessRunner.run_staged_artifact(&staging, &staged).unwrap(), 7);
+    }
 }
 
 #[cfg(test)]
