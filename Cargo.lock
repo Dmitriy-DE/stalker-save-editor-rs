@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "sse-app"
-version = "2.0.0-dev"
+version = "2.0.0"
 dependencies = [
  "sse-codecs",
  "sse-core",
@@ -14,7 +14,7 @@ dependencies = [
 
 [[package]]
 name = "sse-catalog"
-version = "2.0.0-dev"
+version = "2.0.0"
 dependencies = [
  "sse-codecs",
  "sse-content",
@@ -24,7 +24,7 @@ dependencies = [
 
 [[package]]
 name = "sse-cli"
-version = "2.0.0-dev"
+version = "2.0.0"
 dependencies = [
  "sse-app",
  "sse-codecs",
@@ -42,14 +42,14 @@ dependencies = [
 
 [[package]]
 name = "sse-codecs"
-version = "2.0.0-dev"
+version = "2.0.0"
 dependencies = [
  "sse-core",
 ]
 
 [[package]]
 name = "sse-companion"
-version = "2.0.0-dev"
+version = "2.0.0"
 dependencies = [
  "sse-codecs",
  "sse-content",
@@ -60,7 +60,7 @@ dependencies = [
 
 [[package]]
 name = "sse-content"
-version = "2.0.0-dev"
+version = "2.0.0"
 dependencies = [
  "sse-codecs",
  "sse-core",
@@ -68,11 +68,11 @@ dependencies = [
 
 [[package]]
 name = "sse-core"
-version = "2.0.0-dev"
+version = "2.0.0"
 
 [[package]]
 name = "sse-doctor"
-version = "2.0.0-dev"
+version = "2.0.0"
 dependencies = [
  "sse-codecs",
  "sse-core",
@@ -81,7 +81,7 @@ dependencies = [
 
 [[package]]
 name = "sse-fixes"
-version = "2.0.0-dev"
+version = "2.0.0"
 dependencies = [
  "sse-catalog",
  "sse-codecs",
@@ -92,7 +92,7 @@ dependencies = [
 
 [[package]]
 name = "sse-fuzz-smoke"
-version = "2.0.0-dev"
+version = "2.0.0"
 dependencies = [
  "sse-s2",
  "sse-xray",
@@ -100,7 +100,7 @@ dependencies = [
 
 [[package]]
 name = "sse-lint"
-version = "2.0.0-dev"
+version = "2.0.0"
 dependencies = [
  "sse-codecs",
  "sse-content",
@@ -110,7 +110,7 @@ dependencies = [
 
 [[package]]
 name = "sse-s2"
-version = "2.0.0-dev"
+version = "2.0.0"
 dependencies = [
  "sse-codecs",
  "sse-core",
@@ -118,7 +118,7 @@ dependencies = [
 
 [[package]]
 name = "sse-steam"
-version = "2.0.0-dev"
+version = "2.0.0"
 dependencies = [
  "sse-codecs",
  "sse-core",
@@ -129,7 +129,7 @@ dependencies = [
 
 [[package]]
 name = "sse-storage"
-version = "2.0.0-dev"
+version = "2.0.0"
 dependencies = [
  "sse-codecs",
  "sse-core",
@@ -139,14 +139,14 @@ dependencies = [
 
 [[package]]
 name = "sse-sys"
-version = "2.0.0-dev"
+version = "2.0.0"
 dependencies = [
  "sse-core",
 ]
 
 [[package]]
 name = "sse-ui"
-version = "2.0.0-dev"
+version = "2.0.0"
 dependencies = [
  "sse-app",
  "sse-catalog",
@@ -167,7 +167,7 @@ dependencies = [
 
 [[package]]
 name = "sse-update"
-version = "2.0.0-dev"
+version = "2.0.0"
 dependencies = [
  "sse-codecs",
  "sse-core",
@@ -176,7 +176,7 @@ dependencies = [
 
 [[package]]
 name = "sse-web"
-version = "2.0.0-dev"
+version = "2.0.0"
 dependencies = [
  "sse-core",
  "sse-sys",
@@ -185,7 +185,7 @@ dependencies = [
 
 [[package]]
 name = "sse-xray"
-version = "2.0.0-dev"
+version = "2.0.0"
 dependencies = [
  "sse-catalog",
  "sse-codecs",
