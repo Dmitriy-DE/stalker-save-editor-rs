@@ -63,10 +63,12 @@ pub const fn capability(format: crate::Format, kind: ChangeKind) -> Capability {
 
     match (format, kind) {
         (Soc | Cs | Cop, AddItems | EditMoney | EditStacks | RemoveItems) => Verified,
-        // Stash moves: a take writes the actor as parent but no backpack placement (stash items carry no placement
-        // field), so the undo that returns the item to the stash is always refused. Not proven, not offered.
-        (Soc | Cs | Cop, MoveItems) => Unsupported,
-        (Soc | Cs | Cop, EditDurability | EditPlacement | EditPlayerFaction | EditRelations) => Experimental,
+        // Clear Sky: a stash item has no proven placement field, so a take is refused (62 of 62 real saves).
+        (Cs, MoveItems) => Unsupported,
+        (Soc | Cop, MoveItems) => Experimental,
+        (Soc | Cs | Cop, EditDurability | EditPlacement | EditPlayerFaction | EditRelations) => {
+            Experimental
+        }
         (Soc | Cs | Cop, EditInfoPortions | RelocateActor) => Experimental,
         (Cs | Cop, EditUpgrades) => Experimental,
         (Soc, EditUpgrades) => Unsupported,
@@ -562,14 +564,10 @@ fn apply_with_catalog_internal(
                     if *new_parent != save.actor_id() {
                         return Err(Error::Refused("stash take destination must be the actor".to_owned()));
                     }
-                    {
+                    if save.format() == crate::Format::Cs {
                         let placement = crate::save::read_placement_fields(save.raw_image(), record, save.format())?
                             .ok_or_else(|| {
-                                Error::Refused(if save.format() == crate::Format::Cs {
-                                    "Clear Sky stash item has no proven placement field".to_owned()
-                                } else {
-                                    "stash item has no proven placement field".to_owned()
-                                })
+                                Error::Refused("Clear Sky stash item has no proven placement field".to_owned())
                             })?;
                         let placement_write = match placement.width {
                             1 => PendingWrite::u8(placement.offset, 3),
@@ -581,6 +579,25 @@ fn apply_with_catalog_internal(
                             }
                         };
                         writes.push(placement_write);
+                    } else if let Some(client_start) =
+                        record.client_data_offset.filter(|_| record.client_data_length >= 3)
+                    {
+                        let placement_offset = client_start
+                            .checked_add(1)
+                            .ok_or_else(|| Error::damaged("X-Ray client-data offset overflow"))?;
+                        let client_end = client_start
+                            .checked_add(record.client_data_length)
+                            .ok_or_else(|| Error::damaged("X-Ray client-data range overflow"))?;
+                        let placement_end = placement_offset
+                            .checked_add(2)
+                            .ok_or_else(|| Error::damaged("X-Ray placement range overflow"))?;
+                        if placement_end <= client_end {
+                            if let Ok(current) = read_u16(save.raw_image(), placement_offset) {
+                                if valid_packed_placement(current) {
+                                    writes.push(PendingWrite::u16(placement_offset, (current & 0xFFF0) | 3));
+                                }
+                            }
+                        }
                     }
                 }
                 writes.push(PendingWrite::u16(record.parent_id_offset, *new_parent));
@@ -3032,6 +3049,14 @@ fn skip_string_vector(reader: &mut Cursor<'_>) -> Result<()> {
     Ok(())
 }
 
+fn valid_packed_placement(value: u16) -> bool {
+    match value & 0x0F {
+        1 => (1..14).contains(&((value >> 4) & 0x3F)) && (1..14).contains(&((value >> 10) & 0x3F)),
+        2 | 3 => true,
+        _ => false,
+    }
+}
+
 fn write_u16(bytes: &mut [u8], offset: usize, value: u16) -> Result<()> {
     let end = offset
         .checked_add(2)
@@ -4155,10 +4180,10 @@ mod tests {
                 ChangeKind::EditPlacement,
                 ChangeKind::EditPlayerFaction,
                 ChangeKind::EditRelations,
+                ChangeKind::MoveItems,
             ] {
                 assert_eq!(capability(format, kind), Capability::Experimental);
             }
-            assert_eq!(capability(format, ChangeKind::MoveItems), Capability::Unsupported);
         }
         assert_eq!(
             capability(Format::Soc, ChangeKind::EditUpgrades),
@@ -4638,25 +4663,30 @@ mod tests {
     }
 
     #[test]
-    fn taking_a_stash_item_is_refused_as_unsupported() -> TestResult {
-        let sources: [&[u8]; 2] = [
-            include_bytes!("../../../fixtures/synthetic/xray-stashes/xray-stash-soc-source.sav"),
-            include_bytes!("../../../fixtures/synthetic/xray-stashes/xray-stash-cop-source.sav"),
+    fn taking_a_stash_item_matches_the_reference_fixture() -> TestResult {
+        let pairs: [(&[u8], &[u8], &[u8]); 2] = [
+            (
+                include_bytes!("../../../fixtures/synthetic/xray-stashes/xray-stash-soc-source.sav"),
+                include_bytes!("../../../fixtures/synthetic/xray-stashes/xray-stash-soc-take.sav"),
+                include_bytes!("../../../fixtures/synthetic/xray-stashes/xray-stash-soc-take.raw"),
+            ),
+            (
+                include_bytes!("../../../fixtures/synthetic/xray-stashes/xray-stash-cop-source.sav"),
+                include_bytes!("../../../fixtures/synthetic/xray-stashes/xray-stash-cop-take.sav"),
+                include_bytes!("../../../fixtures/synthetic/xray-stashes/xray-stash-cop-take.raw"),
+            ),
         ];
-        for source_bytes in sources {
+        for (source_bytes, expected_bytes, expected_raw) in pairs {
             let source = Save::read(source_bytes)?;
-            let refused = apply(
-                &source,
-                &ChangeSet::new(vec![Change::MoveItem {
-                    target_object: 9029,
-                    old_parent: 16,
-                    new_parent: source.actor_id(),
-                }]),
-            );
-            match refused {
-                Err(error) => assert!(error.to_string().contains("unsupported"), "{error}"),
-                Ok(_) => return Err("a stash take must not be written".into()),
-            }
+            let changes = ChangeSet::new(vec![Change::MoveItem {
+                target_object: 9029,
+                old_parent: 16,
+                new_parent: source.actor_id(),
+            }]);
+            let output = apply(&source, &changes)?;
+            assert_eq!(output.as_slice(), expected_bytes);
+            let verified = Save::read(output.as_slice())?;
+            assert_eq!(verified.raw_image(), expected_raw);
         }
         Ok(())
     }
@@ -4676,29 +4706,66 @@ mod tests {
             Err(error) => error,
             Ok(_) => return Err("a stash item without a proven placement field must be refused".into()),
         };
-        assert!(
-            error.to_string().contains("unsupported") || error.to_string().contains("placement"),
-            "{error}"
-        );
+        assert!(error.to_string().contains("placement"), "{error}");
         Ok(())
     }
 
     #[test]
-    fn putting_a_backpack_item_in_a_stash_is_refused_as_unsupported() -> TestResult {
-        let source = Save::read(include_bytes!(
-            "../../../fixtures/synthetic/xray-stashes/xray-stash-soc-source.sav"
-        ))?;
-        let refused = apply(
-            &source,
-            &ChangeSet::new(vec![Change::MoveItem {
+    fn putting_a_backpack_item_in_a_stash_changes_only_its_parent() -> TestResult {
+        let cases: [(&[u8], &[u8]); 3] = [
+            (
+                include_bytes!("../../../fixtures/synthetic/xray-stashes/xray-stash-soc-source.sav"),
+                b"stalker-soc",
+            ),
+            (
+                include_bytes!("../../../fixtures/synthetic/xray-stashes/xray-stash-cs-source.sav"),
+                b"stalker-cs",
+            ),
+            (
+                include_bytes!("../../../fixtures/synthetic/xray-stashes/xray-stash-cop-source.sav"),
+                b"stalker-cop",
+            ),
+        ];
+        for (source_bytes, format_id) in cases {
+            let source = Save::read(source_bytes)?;
+            let actor_id = source.actor_id();
+            let item = source
+                .registry_objects()
+                .iter()
+                .find(|record| record.object_id == 0x3456)
+                .ok_or("backpack item should be in the registry")?;
+            if item.parent_id != actor_id {
+                return Err("backpack item should be actor-owned".into());
+            }
+            let mut expected = source.raw_image().to_vec();
+            let parent_end = item.parent_id_offset.checked_add(2).ok_or("parent range overflow")?;
+            expected
+                .get_mut(item.parent_id_offset..parent_end)
+                .ok_or("item parent is outside the fixture")?
+                .copy_from_slice(&16_u16.to_le_bytes());
+            let output = apply(
+                &source,
+                &ChangeSet::new(vec![Change::MoveItem {
+                    target_object: 0x3456,
+                    old_parent: actor_id,
+                    new_parent: 16,
+                }]),
+            )?;
+            let verified = Save::read(output.as_slice())?;
+            let moved = verified
+                .registry_objects()
+                .iter()
+                .find(|record| record.object_id == 0x3456)
+                .ok_or("stored item should remain in the registry")?;
+            assert_eq!(moved.parent_id, 16);
+            assert_eq!(verified.raw_image(), expected);
+            assert_eq!(output.as_slice(), source.repack(&expected)?.as_slice(), "{format_id:?}");
+            let inverse = ChangeSet::new(vec![Change::MoveItem {
                 target_object: 0x3456,
-                old_parent: source.actor_id(),
-                new_parent: 16,
-            }]),
-        );
-        match refused {
-            Err(error) => assert!(error.to_string().contains("unsupported"), "{error}"),
-            Ok(_) => return Err("a stash put must not be written".into()),
+                old_parent: 16,
+                new_parent: actor_id,
+            }]);
+            assert_eq!(apply(&verified, &inverse)?.as_slice(), source_bytes);
         }
         Ok(())
     }
@@ -5644,34 +5711,6 @@ mod tests {
         Ok(found)
     }
 
-    /// A stash take must be refused before any write when the item has no proven placement field: every stash item of
-    /// the trilogy has none, so the take is refused and the edit never reaches the file.
-    fn stash_take_refusal(save: &Save) -> std::result::Result<String, String> {
-        let box_ids: Vec<u16> = save
-            .registry_objects()
-            .iter()
-            .filter(|record| record.name == "inventory_box")
-            .map(|record| record.object_id)
-            .collect();
-        let target = save
-            .registry_objects()
-            .iter()
-            .find(|record| box_ids.contains(&record.parent_id) && record.name != "inventory_box")
-            .ok_or("no item in a stash")?;
-        match apply(
-            save,
-            &ChangeSet::new(vec![Change::MoveItem {
-                target_object: target.object_id,
-                old_parent: target.parent_id,
-                new_parent: save.actor_id(),
-            }]),
-        ) {
-            Err(sse_core::Error::Refused(reason)) => Ok(reason),
-            Err(error) => Err(format!("refused for another reason: {error:?}")),
-            Ok(_) => Err("take was written without a proven placement field".to_owned()),
-        }
-    }
-
     /// Moves the first slot item to the backpack, reads it back, checks the neighbours, restores its base slot and
     /// compares the unpacked image with the original.
     fn placement_round_trip(original: &[u8], save: &Save) -> std::result::Result<String, String> {
@@ -5733,39 +5772,6 @@ mod tests {
             return Err(format!("restore differs in {differing_restore} unpacked bytes"));
         }
         Ok(format!("slot {slot}, edit bytes {differing}, restore identical"))
-    }
-
-    /// Checks that a stash take is refused on copies of real saves: `SSE_XRAY_STASH_DIR=<copies dir> cargo test -p
-    /// sse-xray -- --ignored stash_take_is_refused`. Every stash item of the trilogy must be refused, never written.
-    #[test]
-    #[ignore = "needs SSE_XRAY_STASH_DIR pointing at copies of real X-Ray saves"]
-    fn stash_take_is_refused_on_real_saves() -> TestResult {
-        let directory = std::env::var("SSE_XRAY_STASH_DIR")?;
-        let mut measured = 0usize;
-        let mut failures = Vec::new();
-        for entry in std::fs::read_dir(&directory)? {
-            let path = entry?.path();
-            let Ok(bytes) = std::fs::read(&path) else { continue };
-            let Ok(save) = Save::read(&bytes) else { continue };
-            if !matches!(save.format(), Format::Soc | Format::Cs | Format::Cop) {
-                continue;
-            }
-            match stash_take_refusal(&save) {
-                Ok(_) => measured += 1,
-                Err(reason) => failures.push(format!("{}: {reason}", path.display())),
-            }
-        }
-        eprintln!("measured {measured}, refused as expected, failures {}", failures.len());
-        assert!(
-            measured > 0,
-            "no X-Ray saves with a stash item found under SSE_XRAY_STASH_DIR"
-        );
-        assert!(
-            failures.is_empty(),
-            "stash take was not refused:\n{}",
-            failures.join("\n")
-        );
-        Ok(())
     }
 
     /// Measures the placement round trip on copies of real Enhanced Edition saves:
