@@ -2487,11 +2487,11 @@ pub(super) fn item_icon(
     proxy: Option<&crate::event_loop::Proxy<AppMessage>>,
     screen: ScreenId,
 ) -> Option<ImageData> {
-    let image = item_icons::cached(release, key);
-    if image.is_none() {
+    item_icons::cached(release, key).or_else(|| {
         item_icons::request(release, key, proxy, screen);
-    }
-    image
+        // Ready at once only where the icon is decoded in place (the browser); a worker answers later.
+        item_icons::cached(release, key)
+    })
 }
 
 /// Icon key of a Stalker 2 item: its display name, or its type key when unnamed (as the C# desktop app does).

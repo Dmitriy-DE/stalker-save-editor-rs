@@ -104,6 +104,31 @@ jobs:
           path: target/acceptance-screenshots/*.png
           if-no-files-found: error
 
+  web:
+    # The browser edition: the WebAssembly size budget of tools/build-web.sh, the editing flow of sse-web against
+    # the item icon file that build wrote, and the whole web folder as an artifact ready to be published.
+    runs-on: ubuntu-24.04
+    env:
+      CARGO_TARGET_DIR: target
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@fb523f40495206854c36b250850817ae0f83e3d1 # 1.99.0
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: Build the browser edition within its size budget
+        run: sh tools/build-web.sh
+      - name: Test the browser editor against the built item icon file
+        env:
+          SSE_REQUIRE_WEB_ICON_PACK: '1'
+        run: python3 tools/check_data_isolation.py -- cargo test --locked -p sse-web
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: web
+          path: web/
+          retention-days: 14
+          if-no-files-found: error
+
   test-build:
     # Unsigned test binaries for the owner after every merge into main; not a release.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

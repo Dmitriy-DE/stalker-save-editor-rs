@@ -181,6 +181,7 @@ dependencies = [
  "sse-core",
  "sse-sys",
  "sse-ui",
+ "sse-xray",
 ]
 
 [[package]]

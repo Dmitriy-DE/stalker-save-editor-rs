@@ -17,5 +17,8 @@ sse-core = { path = "../sse-core" }
 sse-sys = { path = "../sse-sys" }
 sse-ui = { path = "../sse-ui", default-features = false }
 
+[dev-dependencies]
+sse-xray = { path = "../sse-xray" }
+
 [lints]
 workspace = true

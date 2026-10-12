@@ -59,9 +59,14 @@ fn test_clear_download() {
     CLEAR_DOWNLOAD_CALLED.store(true, Ordering::SeqCst);
 }
 
+fn test_item_icons(bytes: Vec<u8>) -> u32 {
+    u32::try_from(bytes.len()).unwrap_or_default().wrapping_add(50)
+}
+
 #[test]
 fn unregistered_browser_runtime_returns_safe_status_values() {
     assert_eq!(web_abi::init(), 3);
+    assert_eq!(web_abi::item_icons(vec![1]), 3);
     assert_eq!(web_abi::event(0, 0, 0, 0, 0, 0), 3);
     assert_eq!(web_abi::render(1, 1), 0);
 }
@@ -82,6 +87,7 @@ fn registered_browser_callbacks_receive_arguments_and_return_values() {
         download_bytes_ptr: test_download_bytes_ptr,
         download_bytes_len: test_download_bytes_len,
         clear_download: test_clear_download,
+        item_icons: test_item_icons,
     });
 
     assert_eq!(web_abi::init(), 17);
@@ -96,6 +102,7 @@ fn registered_browser_callbacks_receive_arguments_and_return_values() {
     assert_eq!(web_abi::download_file_name_len(), 12);
     assert_eq!(web_abi::download_bytes_ptr(), 0x2000);
     assert_eq!(web_abi::download_bytes_len(), 64);
+    assert_eq!(web_abi::item_icons(vec![2, 7, 1]), 53);
     CLEAR_DOWNLOAD_CALLED.store(false, Ordering::SeqCst);
     web_abi::clear_download();
     assert!(CLEAR_DOWNLOAD_CALLED.load(Ordering::SeqCst));

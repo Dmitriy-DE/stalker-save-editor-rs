@@ -42,6 +42,7 @@ Uninstall: remove the script and the line (or restore the backup).
 
 ## Enhanced Edition
 
-EE loads mods through Steam Workshop / mod.io as `.xrp` packages built with
-GSC's `xrCompress` and uploaded with `xrSWS_Upload` (see the WS1 research).
-Packaging is a later step (plan Ф6); the script itself is the same.
+EE loads Steam Workshop mods as `.pack` archives (the engine registers `.pack`
+and `.db` files of a subscribed item). The package also has to carry the three
+patched game files above, or nothing calls the script. How the packages are
+staged, checked and uploaded: [docs/WORKSHOP.md](../../../../docs/WORKSHOP.md).

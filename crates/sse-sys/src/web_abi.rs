@@ -35,6 +35,8 @@ pub struct WebCallbacks {
     pub download_bytes_len: fn() -> u32,
     /// Clears a pending browser download after JavaScript copies it.
     pub clear_download: fn(),
+    /// Takes the item icon pack file fetched by the browser after the shell started.
+    pub item_icons: fn(Vec<u8>) -> u32,
 }
 
 const RUNTIME_UNAVAILABLE: u32 = 3;
@@ -157,6 +159,15 @@ pub fn clear_download() {
     });
 }
 
+/// Forwards the fetched item icon pack to the registered runtime.
+pub fn item_icons(bytes: Vec<u8>) -> u32 {
+    CALLBACKS.with(|registered| {
+        registered
+            .get()
+            .map_or(RUNTIME_UNAVAILABLE, |callbacks| (callbacks.item_icons)(bytes))
+    })
+}
+
 #[cfg(target_arch = "wasm32")]
 fn allocate_browser_buffer(length: u32) -> u32 {
     let Ok(length) = usize::try_from(length) else {
@@ -243,6 +254,16 @@ pub extern "C" fn sse_web_file_selected(
         return file_rejected(2);
     }
     file_selected(name, bytes, last_modified_ms)
+}
+
+/// Accepts the item icon pack allocated by [`sse_web_alloc`]. Returns 0 when the pack was taken.
+#[cfg(target_arch = "wasm32")]
+#[unsafe(no_mangle)]
+pub extern "C" fn sse_web_item_icons(bytes_pointer: u32, bytes_length: u32) -> u32 {
+    let Some(bytes) = take_browser_buffer(bytes_pointer, bytes_length) else {
+        return INVALID_FILE_BUFFER;
+    };
+    item_icons(bytes)
 }
 
 /// Reports that the browser file picker was cancelled.

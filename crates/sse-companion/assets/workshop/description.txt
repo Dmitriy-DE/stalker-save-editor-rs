@@ -1,0 +1,67 @@
+[h1]Save Editor Companion — {game} Enhanced Edition[/h1]
+
+An in-game menu for S.T.A.L.K.E.R.: {game} — Enhanced Edition. It is the in-game part of the free, open-source S.T.A.L.K.E.R. Save Editor, and it also works on its own: the editor does not have to be installed or running.
+
+[b]How to open it:[/b] load a save, press [b]Esc[/b], then [b]F1[/b]. The menu also gives you a "companion PDA" item: using it opens the same menu over the running game.
+
+[h2]What the menu does[/h2]
+[list]
+[*][b]Modes[/b] — switches that stay on between sessions: invulnerability, endless stamina, no bleeding, automatic repair, endless ammunition, one spare life.
+[*][b]Player[/b] — add or take 10 000 RU, heal, a companion amulet (carry weight, no hunger), quick-action items, a quick save and quick load in any place.
+[*][b]Inventory[/b] — repair, duplicate or delete the selected item.
+[*][b]Spawn[/b] — give yourself items from the game's own list: weapons, ammunition, armour, artefacts, grenades, medicine and food, other. With search, favourites and "repeat the last one".
+[*][b]NPC[/b] — spawn stalker squads, mutants and characters next to you, change faction goodwill, make the nearest stalker friendly, remove enemies or bodies around you. Story characters are left alone.
+[*][b]Teleport[/b] — jump to named places of the current level or to points you saved yourself.
+[*][b]World[/b] — weather and time of day.
+[*][b]Map[/b] — mark every stash the game knows and the artefacts lying on the level; remove those marks again.
+[/list]
+
+[h2]Together with the editor[/h2]
+While the game runs, the S.T.A.L.K.E.R. Save Editor can send the same commands from its own window (give items and money, heal, repair, teleport, list the inventory, weather) through two small text files in the game's user-data folder. Nothing is sent over the network.
+
+[h2]Good to know[/h2]
+[list]
+[*]The menu texts are in Russian.
+[*]To start with the game, the package carries changed copies of three game files: [i]scripts/bind_stalker.script[/i], [i]scripts/ui_main_menu.script[/i] and [i]misc/quest_items.ltx[/i]. Another mod that changes the same files will conflict with this one.
+[*]It adds a few items of its own (companion PDA, amulet, quick actions). A save made while you carry them needs the mod to load.
+[*]Single player only. No .dll or .exe files.
+[/list]
+
+This is an unofficial fan-made mod. It is not made, endorsed or supported by GSC Game World. S.T.A.L.K.E.R. is a trademark of GSC Game World.
+
+Source code, the editor itself and bug reports: [url=https://github.com/Dmitriy-DE/stalker-save-editor-rs]github.com/Dmitriy-DE/stalker-save-editor-rs[/url]
+
+[hr][/hr]
+
+[h1]Компаньон Save Editor — {game_ru} Enhanced Edition[/h1]
+
+Игровое меню для S.T.A.L.K.E.R.: {game_ru} — Enhanced Edition. Это игровая часть бесплатного открытого редактора сохранений S.T.A.L.K.E.R. Save Editor, но мод работает и сам по себе: редактор не обязательно устанавливать или держать запущенным.
+
+[b]Как открыть:[/b] загрузите сохранение, нажмите [b]Esc[/b], затем [b]F1[/b]. Меню также выдаёт предмет «КПК компаньона»: его использование открывает то же меню поверх игры.
+
+[h2]Что умеет меню[/h2]
+[list]
+[*][b]Режимы[/b] — галочки, которые сохраняются между запусками: неуязвимость, бесконечная выносливость, без кровотечения, авторемонт, бесконечные патроны, одна запасная жизнь.
+[*][b]Игрок[/b] — добавить или забрать 10 000 RU, вылечить, амулет компаньона (переносимый вес, без голода), предметы быстрых действий, быстрое сохранение и загрузка в любом месте.
+[*][b]Инвентарь[/b] — починить, продублировать или удалить выбранный предмет.
+[*][b]Выдача[/b] — предметы из списка самой игры: оружие, патроны, броня, артефакты, гранаты, медицина и еда, прочее. С поиском, избранным и повтором последней выдачи.
+[*][b]NPC[/b] — создать рядом отряд сталкеров, мутантов или персонажей, изменить отношение группировок, сделать ближайшего сталкера союзником, убрать врагов или тела вокруг. Сюжетные персонажи не затрагиваются.
+[*][b]Телепорт[/b] — перенос в именованные места текущего уровня или в свои сохранённые точки.
+[*][b]Мир[/b] — погода и время суток.
+[*][b]Карта[/b] — отметить все тайники, известные игре, и артефакты на уровне; снять эти метки.
+[/list]
+
+[h2]Вместе с редактором[/h2]
+Пока игра запущена, S.T.A.L.K.E.R. Save Editor может отправлять те же команды из своего окна (выдать предметы и деньги, вылечить, починить, телепортировать, показать инвентарь, сменить погоду) через два небольших текстовых файла в папке пользовательских данных игры. По сети ничего не передаётся.
+
+[h2]Что важно знать[/h2]
+[list]
+[*]Тексты меню — на русском языке.
+[*]Чтобы запускаться вместе с игрой, пакет содержит изменённые копии трёх файлов игры: [i]scripts/bind_stalker.script[/i], [i]scripts/ui_main_menu.script[/i] и [i]misc/quest_items.ltx[/i]. Другой мод, меняющий те же файлы, будет с ним конфликтовать.
+[*]Мод добавляет несколько своих предметов (КПК компаньона, амулет, быстрые действия). Сохранение, сделанное с ними в рюкзаке, без мода не загрузится.
+[*]Только одиночная игра. Файлов .dll и .exe нет.
+[/list]
+
+Это неофициальный фанатский мод. Он не создан, не одобрен и не поддерживается GSC Game World. S.T.A.L.K.E.R. — товарный знак GSC Game World.
+
+Исходный код, сам редактор и сообщения об ошибках: [url=https://github.com/Dmitriy-DE/stalker-save-editor-rs]github.com/Dmitriy-DE/stalker-save-editor-rs[/url]

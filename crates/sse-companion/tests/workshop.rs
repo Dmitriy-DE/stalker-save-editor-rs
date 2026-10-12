@@ -69,13 +69,13 @@ fn workshop_detection_distinguishes_non_steam_missing_and_unsubscribed() -> Resu
     let non_steam = root.join("gog/Clear Sky");
     fs::create_dir_all(&non_steam)?;
     assert_eq!(
-        inspect_ee_install(&non_steam, &package, "2.0.0-dev"),
+        inspect_ee_install(&non_steam, &package),
         WorkshopInstallState::NotSteamInstall
     );
 
     let install = steam_install(&root)?;
     assert_eq!(
-        inspect_ee_install(&install, &package, "2.0.0-dev"),
+        inspect_ee_install(&install, &package),
         WorkshopInstallState::NotSubscribed
     );
     fs::remove_dir_all(root)?;
@@ -87,7 +87,7 @@ fn steamapps_component_is_case_insensitive() -> Result<(), Box<dyn Error>> {
     let root = temp_dir()?;
     let install = root.join("SteamApps/common/Clear Sky Enhanced Edition");
     assert_eq!(
-        inspect_ee_install(&install, &EE_WORKSHOP_PACKAGES[1], "2.0.0-dev"),
+        inspect_ee_install(&install, &EE_WORKSHOP_PACKAGES[1]),
         WorkshopInstallState::NotPublished
     );
     fs::remove_dir_all(root)?;
@@ -95,7 +95,7 @@ fn steamapps_component_is_case_insensitive() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-fn workshop_detection_checks_descriptor_version_and_archive() -> Result<(), Box<dyn Error>> {
+fn workshop_detection_compares_the_subscribed_archive_with_the_shipped_mod_files() -> Result<(), Box<dyn Error>> {
     let root = temp_dir()?;
     let install = steam_install(&root)?;
     let package = EnhancedEditionPackage {
@@ -103,28 +103,34 @@ fn workshop_detection_checks_descriptor_version_and_archive() -> Result<(), Box<
         ..EE_WORKSHOP_PACKAGES[1]
     };
     let folder = subscribed_folder(&install, &package, "123456789")?;
-    fs::write(
-        folder.join("desc.json"),
-        format!(
-            "{{\"version\":\"2.0.0-dev\",\"package_file\":\"{}\"}}",
-            package.archive_name
-        ),
-    )?;
-    fs::write(folder.join(package.archive_name), b"archive")?;
-    assert_eq!(
-        inspect_ee_install(&install, &package, "2.0.0-dev"),
-        WorkshopInstallState::UpToDate
-    );
+    // A subscribed item holds the archive only: no descriptor next to it.
+    assert_eq!(inspect_ee_install(&install, &package), WorkshopInstallState::Outdated);
 
-    assert_eq!(
-        inspect_ee_install(&install, &package, "2.0.1"),
-        WorkshopInstallState::Outdated
-    );
+    let mut files = sse_companion::bundled::ee_payloads(package.game)?;
+    files.push(sse_companion::installer::PayloadFile::new(
+        "gamedata/scripts/bind_stalker.script",
+        b"the game's own file with the hook".to_vec(),
+    ));
+    fs::write(
+        folder.join(package.archive_name),
+        sse_companion::bundled::build_ee_archive(&files)?,
+    )?;
+    assert_eq!(inspect_ee_install(&install, &package), WorkshopInstallState::UpToDate);
+
+    // An archive of another build: one mod file differs.
+    if let Some(first) = files.first_mut() {
+        first.bytes.push(b' ');
+    }
+    fs::write(
+        folder.join(package.archive_name),
+        sse_companion::bundled::build_ee_archive(&files)?,
+    )?;
+    assert_eq!(inspect_ee_install(&install, &package), WorkshopInstallState::Outdated);
+
+    fs::write(folder.join(package.archive_name), b"not an archive")?;
+    assert_eq!(inspect_ee_install(&install, &package), WorkshopInstallState::Outdated);
     fs::remove_file(folder.join(package.archive_name))?;
-    assert_eq!(
-        inspect_ee_install(&install, &package, "2.0.0-dev"),
-        WorkshopInstallState::Outdated
-    );
+    assert_eq!(inspect_ee_install(&install, &package), WorkshopInstallState::Outdated);
     fs::remove_dir_all(root)?;
     Ok(())
 }
