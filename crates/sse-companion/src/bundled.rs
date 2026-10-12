@@ -418,6 +418,14 @@ pub struct WorkshopListing {
     pub preview_png: &'static [u8],
     /// The same picture as JPEG, the format of GSC's upload example.
     pub preview_jpg: &'static [u8],
+    /// Title of the page in Russian.
+    pub title_ru: String,
+    /// One-line description in Russian.
+    pub short_description_ru: String,
+    /// The preview picture with Russian lettering, PNG.
+    pub preview_ru_png: &'static [u8],
+    /// The preview picture with Russian lettering, JPEG.
+    pub preview_ru_jpg: &'static [u8],
 }
 
 /// Game names as Steam spells them for the Enhanced Editions, and the `--game` code of GSC's uploader.
@@ -433,6 +441,20 @@ const fn ee_names(game: Game) -> (&'static str, &'static str, &'static str) {
 #[must_use]
 pub fn workshop_listing(game: Game) -> WorkshopListing {
     let (name, name_ru, _) = ee_names(game);
+    let (preview_ru_png, preview_ru_jpg): (&[u8], &[u8]) = match game {
+        Game::ShadowOfChernobyl => (
+            include_bytes!("../assets/workshop/preview-soc-ru.png"),
+            include_bytes!("../assets/workshop/preview-soc-ru.jpg"),
+        ),
+        Game::ClearSky => (
+            include_bytes!("../assets/workshop/preview-cs-ru.png"),
+            include_bytes!("../assets/workshop/preview-cs-ru.jpg"),
+        ),
+        Game::CallOfPripyat => (
+            include_bytes!("../assets/workshop/preview-cop-ru.png"),
+            include_bytes!("../assets/workshop/preview-cop-ru.jpg"),
+        ),
+    };
     let (preview_png, preview_jpg): (&[u8], &[u8]) = match game {
         Game::ShadowOfChernobyl => (
             include_bytes!("../assets/workshop/preview-soc.png"),
@@ -458,6 +480,14 @@ pub fn workshop_listing(game: Game) -> WorkshopListing {
         tags: LISTING_TAGS,
         preview_png,
         preview_jpg,
+        title_ru: format!("Компаньон Save Editor — {name_ru} Enhanced Edition"),
+        short_description_ru: format!(
+            "Игровое меню для «{name_ru}» Enhanced Edition (Esc, затем F1): предметы, деньги, лечение, ремонт, \
+             телепорт, NPC, погода. Часть открытого редактора S.T.A.L.K.E.R. Save Editor; работает и без него. \
+             Неофициальный мод."
+        ),
+        preview_ru_png,
+        preview_ru_jpg,
     }
 }
 
@@ -530,6 +560,13 @@ pub fn stage_enhanced_edition(
         write(&format!("upload/{archive_name}"), &archive)?;
         write("preview.png", listing.preview_png)?;
         write("preview.jpg", listing.preview_jpg)?;
+        write("preview-ru.png", listing.preview_ru_png)?;
+        write("preview-ru.jpg", listing.preview_ru_jpg)?;
+        write("listing/title-ru.txt", format!("{}\n", listing.title_ru).as_bytes())?;
+        write(
+            "listing/short-description-ru.txt",
+            format!("{}\n", listing.short_description_ru).as_bytes(),
+        )?;
         write("listing/title.txt", format!("{}\n", listing.title).as_bytes())?;
         write(
             "listing/short-description.txt",

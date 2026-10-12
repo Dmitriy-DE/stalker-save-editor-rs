@@ -671,6 +671,15 @@ fn workshop_listing_is_complete_for_every_enhanced_edition() -> Result<(), Box<d
         assert!(preview.width == preview.height && preview.width >= 512);
         assert!(listing.preview_png.len() < 1_000_000 && listing.preview_jpg.len() < 1_000_000);
         assert!(listing.preview_jpg.starts_with(&[0xFF, 0xD8]));
+        let preview_ru = sse_codecs::png::decode(listing.preview_ru_png)?;
+        assert!(preview_ru.width == preview.width && preview_ru.height == preview.height);
+        assert!(
+            listing.preview_ru_png != listing.preview_png,
+            "the Russian picture is its own picture"
+        );
+        assert!(listing.preview_ru_png.len() < 1_000_000 && listing.preview_ru_jpg.len() < 1_000_000);
+        assert!(listing.preview_ru_jpg.starts_with(&[0xFF, 0xD8]));
+        assert!(listing.title_ru.contains("Компаньон") && listing.short_description_ru.contains("Esc"));
         // Each game reads the mod's configs from its own config folder.
         assert!(sse_companion::bundled::ee_payloads(game)?
             .iter()
