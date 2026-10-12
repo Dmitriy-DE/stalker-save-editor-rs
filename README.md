@@ -4,7 +4,11 @@ A save editor for the S.T.A.L.K.E.R. series. It reads and edits saves of *Shadow
 *Call of Pripyat* and their Enhanced Editions, and of *S.T.A.L.K.E.R. 2: Heart of Chornobyl*. It also applies
 game bug fixes, installs an optional in-game companion, and checks game scripts.
 
-Version `2.0.0-dev`. Not released yet. What is checked and what is not is listed in [Verification](#verification).
+Version `2.0.0`. No release has been published yet: there is no tag, no signed update manifest and no Workshop
+item. The version is checked by the automated tests only; edits written by it have not been loaded in the games
+(one Call of Pripyat save excepted), and Windows and macOS builds were never started by a person. See
+[Verification](#verification), the [release notes](docs/RELEASE_NOTES_2.0.0.md) and the
+[release procedure](docs/RELEASE.md).
 
 ![Inventory screen](docs/images/inventory.png)
 
@@ -189,5 +193,7 @@ What the project checks, and where it stops:
 - [docs/COMPANION.md](docs/COMPANION.md): the in-game companion.
 - [docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md): logs, reports and metrics.
 - [docs/PACKAGING.md](docs/PACKAGING.md): packages, the release manifest and signing.
+- [docs/RELEASE.md](docs/RELEASE.md): the release procedure, step by step, and who does each step.
+- [docs/RELEASE_NOTES_2.0.0.md](docs/RELEASE_NOTES_2.0.0.md): release notes for 2.0.0, English and Russian.
 - [PLAN.md](PLAN.md), [TASKS.md](TASKS.md), [ACCEPTANCE.md](ACCEPTANCE.md), [AGENTS.md](AGENTS.md): plan,
   open work, acceptance criteria, and rules for contributors.
