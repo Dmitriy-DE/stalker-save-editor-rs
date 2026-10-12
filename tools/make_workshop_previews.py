@@ -7,7 +7,8 @@ fonts. No GSC logo or artwork is used. The output is the same on every run:
 
     python3 tools/make_workshop_previews.py
 
-writes `crates/sse-companion/assets/workshop/preview-{soc,cs,cop}.{png,jpg}` (1024×1024, well under 1 MB).
+writes `crates/sse-companion/assets/workshop/preview-{soc,cs,cop}.{png,jpg}` in English and
+`preview-{soc,cs,cop}-ru.{png,jpg}` in Russian (1024×1024, well under 1 MB).
 Needs Pillow.
 """
 
@@ -37,9 +38,15 @@ TEXT_MUTED = (0x71, 0x6F, 0x67)
 ACCENT = (0xD6, 0xA6, 0x2D)
 
 GAMES = {
-    "soc": "SHADOW OF CHORNOBYL",
-    "cs": "CLEAR SKY",
-    "cop": "CALL OF PRYPIAT",
+    "soc": {"en": "SHADOW OF CHORNOBYL", "ru": "ТЕНЬ ЧЕРНОБЫЛЯ"},
+    "cs": {"en": "CLEAR SKY", "ru": "ЧИСТОЕ НЕБО"},
+    "cop": {"en": "CALL OF PRYPIAT", "ru": "ЗОВ ПРИПЯТИ"},
+}
+
+# The product name stays as it is; the second line and the footer follow the language of the page.
+WORDS = {
+    "en": ("COMPANION", "In-game menu: Esc, then F1  ·  unofficial fan mod"),
+    "ru": ("КОМПАНЬОН", "Меню в игре: Esc, затем F1  ·  неофициальный мод"),
 }
 
 
@@ -80,7 +87,8 @@ def centred(draw: ImageDraw.ImageDraw, y: float, text: str, font: ImageFont.Free
         x += draw.textlength(char, font=font) + spacing
 
 
-def preview(game_title: str) -> Image.Image:
+def preview(game_title: str, language: str) -> Image.Image:
+    second_line, footer = WORDS[language]
     s = SCALE
     image = Image.new("RGB", (SIZE * s, SIZE * s), BG_BASE)
     draw = ImageDraw.Draw(image)
@@ -96,23 +104,25 @@ def preview(game_title: str) -> Image.Image:
 
     draw_icon(draw, (SIZE - 360) / 2 * s, 96 * s, 360 * s)
     centred(draw, 500 * s, "SAVE EDITOR", oswald(104, 700), TEXT_PRIMARY, spacing=6 * s)
-    centred(draw, 632 * s, "COMPANION", oswald(64, 500), ACCENT, spacing=22 * s)
+    centred(draw, 632 * s, second_line, oswald(64, 500), ACCENT, spacing=22 * s)
     draw.line([(SIZE / 2 - 150) * s, 748 * s, (SIZE / 2 + 150) * s, 748 * s], fill=BORDER_METAL, width=2 * s)
     centred(draw, 772 * s, game_title, oswald(52, 600), TEXT_PRIMARY, spacing=4 * s)
     centred(draw, 846 * s, "ENHANCED EDITION", oswald(30, 400), TEXT_SECONDARY, spacing=8 * s)
-    centred(draw, 924 * s, "In-game menu: Esc, then F1  ·  unofficial fan mod", narrow, TEXT_MUTED)
+    centred(draw, 924 * s, footer, narrow, TEXT_MUTED)
     return image.resize((SIZE, SIZE), Image.LANCZOS)
 
 
 def main() -> None:
     OUTPUT.mkdir(parents=True, exist_ok=True)
-    for game, title in GAMES.items():
-        image = preview(title)
-        image.save(OUTPUT / f"preview-{game}.png", optimize=True)
-        image.save(OUTPUT / f"preview-{game}.jpg", quality=90, optimize=True, subsampling=0)
-        for extension in ("png", "jpg"):
-            path = OUTPUT / f"preview-{game}.{extension}"
-            print(f"{path.relative_to(ROOT)}: {path.stat().st_size} bytes")
+    for game, titles in GAMES.items():
+        for language, title in titles.items():
+            suffix = "" if language == "en" else f"-{language}"
+            image = preview(title, language)
+            image.save(OUTPUT / f"preview-{game}{suffix}.png", optimize=True)
+            image.save(OUTPUT / f"preview-{game}{suffix}.jpg", quality=90, optimize=True, subsampling=0)
+            for extension in ("png", "jpg"):
+                path = OUTPUT / f"preview-{game}{suffix}.{extension}"
+                print(f"{path.relative_to(ROOT)}: {path.stat().st_size} bytes")
 
 
 if __name__ == "__main__":
