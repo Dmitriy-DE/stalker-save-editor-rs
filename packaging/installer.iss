@@ -39,12 +39,13 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Files]
 Source: "{#SourceDir}\sse-shell.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\stalker-save.exe"; DestDir: "{app}"; Flags: ignoreversion
+; The 1.3.x editor was StalkerSaveEditor.exe: shortcuts and taskbar pins made for it keep working.
+Source: "{#SourceDir}\sse-shell.exe"; DestDir: "{app}"; DestName: "StalkerSaveEditor.exe"; Flags: ignoreversion
 Source: "{#SourceDir}\BUILD_MANIFEST.json"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\INSTALLER_MARKER"; DestDir: "{app}"; Flags: ignoreversion
 
 ; Remove executable names from the previous C# install while preserving other user files.
 [InstallDelete]
-Type: files; Name: "{app}\StalkerSaveEditor.exe"
 Type: files; Name: "{app}\stalker-save-editor-cli.exe"
 Type: files; Name: "{app}\stalker_ooz.dll"
 

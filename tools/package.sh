@@ -196,6 +196,9 @@ build_linux() {
         "${deb_stage}/usr/share/applications" "${deb_stage}/usr/share/metainfo" "${deb_stage}/usr/share/icons/hicolor/scalable/apps"
     cp "${cli}" "${deb_stage}/usr/bin/stalker-save"
     cp "${shell_bin}" "${deb_stage}/usr/bin/sse-shell"
+    # The 1.3.x package started the editor as `stalker-save-editor`: launchers pinned from that version, and the
+    # 1.3.x updater restarting itself, still call that name after the upgrade.
+    ln -s sse-shell "${deb_stage}/usr/bin/stalker-save-editor"
     cp "${PROJECT_ROOT}/packaging/linux/stalker-save-editor.desktop" "${deb_stage}/usr/share/applications/"
     cp "${PROJECT_ROOT}/packaging/linux/org.stalker_save_editor.SaveEditor.metainfo.xml" "${deb_stage}/usr/share/metainfo/"
     cp "${PROJECT_ROOT}/packaging/icons/stalker-save-editor.svg" "${deb_stage}/usr/share/icons/hicolor/scalable/apps/"
@@ -394,7 +397,9 @@ write_manifest() {
         printf '  "artifacts": {\n'
         write_artifact_group required windows-x86_64 linux-x86_64 linux-deb-amd64
         printf '  },\n  "optional_artifacts": {\n'
-        write_artifact_group optional windows-installer-x86_64 macos-arm64 macos-x86_64 linux-appimage-x86_64
+        # The AppImage is not listed: a 1.3.x editor refuses a manifest whose optional_artifacts holds any key
+        # besides these three, and it reads the same latest.json, so listing it would cut 1.3.x off from updates.
+        write_artifact_group optional windows-installer-x86_64 macos-arm64 macos-x86_64
         printf '  }\n}\n'
     } >"${temporary}"
     mv "${temporary}" "${DIST_DIR}/latest.json"
