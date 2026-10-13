@@ -159,7 +159,12 @@ fn window() -> Result<()> {
     let mut tree = Tree::new(Fonts::bundled()?, rgb(BG_BASE));
     let mut shell = Shell::build(&mut tree, Some(proxy.clone()))?;
     let (width, height) = (1280_u16, 800_u16);
-    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+    // The native Wayland backend is refused by GNOME's compositor (object numbers are not handed out in order),
+    // so with an X server available (XWayland on every desktop session) the X11 backend is used. Wayland is tried
+    // only when there is no X server, or when asked for with SSE_WAYLAND=1.
+    let wayland_wanted = std::env::var_os("WAYLAND_DISPLAY").is_some()
+        && (std::env::var_os("DISPLAY").is_none() || std::env::var_os("SSE_WAYLAND").is_some_and(|value| value == "1"));
+    if wayland_wanted {
         #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
         {
             match sse_ui::wayland_window::WaylandWindow::open(

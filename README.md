@@ -4,10 +4,10 @@ A save editor for the S.T.A.L.K.E.R. series. It reads and edits saves of *Shadow
 *Call of Pripyat* and their Enhanced Editions, and of *S.T.A.L.K.E.R. 2: Heart of Chornobyl*. It also applies
 game bug fixes, installs an optional in-game companion, and checks game scripts.
 
-Version `2.0.1`. Released: packages and the signed update manifest are published; the Workshop items are
+Version `2.0.2`. Released: packages and the signed update manifest are published; the Workshop items are
 not uploaded yet. The version is checked by the automated tests only; edits written by it have not been loaded in the games
 (one Call of Pripyat save excepted), and Windows and macOS builds were never started by a person. See
-[Verification](#verification), the release notes for [2.0.0](docs/RELEASE_NOTES_2.0.0.md) and [2.0.1](docs/RELEASE_NOTES_2.0.1.md) and the
+[Verification](#verification), the release notes for [2.0.0](docs/RELEASE_NOTES_2.0.0.md) , [2.0.1](docs/RELEASE_NOTES_2.0.1.md) and [2.0.2](docs/RELEASE_NOTES_2.0.2.md) and the
 [release procedure](docs/RELEASE.md).
 
 ![Inventory screen](docs/images/inventory.png)
