@@ -1,220 +1,175 @@
 # S.T.A.L.K.E.R. Save Editor
 
-A save editor for the S.T.A.L.K.E.R. series. It reads and edits saves of *Shadow of Chernobyl*, *Clear Sky*,
-*Call of Pripyat* and their Enhanced Editions, and of *S.T.A.L.K.E.R. 2: Heart of Chornobyl*. It also applies
-game bug fixes, installs an optional in-game companion, and checks game scripts.
+A free save editor for the whole S.T.A.L.K.E.R. series: *Shadow of Chernobyl*, *Clear Sky*, *Call of Pripyat*, their
+Enhanced Editions, and *S.T.A.L.K.E.R. 2: Heart of Chornobyl*. Change money, items and gear in a save, and get the
+original file back with one button if you do not like the result.
 
-**[Download the latest release](https://github.com/Dmitriy-DE/stalker-save-editor-rs/releases/latest)** ·
-**[Open in the browser](https://stalker-save-editor.pages.dev)** — nothing to install, the save never leaves your
-computer.
+**[Download](#download)** · **[Open in the browser](https://stalker-save-editor.pages.dev)** (nothing to install) ·
+**[User guide](docs/GUIDE.md)**
 
 **Українською.** Редактор збережень для всієї серії S.T.A.L.K.E.R.: «Тінь Чорнобиля», «Чисте небо», «Поклик
 Прип'яті», їхні Enhanced Edition та S.T.A.L.K.E.R. 2. Редагує гроші, предмети, спорядження і схованки, ставить
 виправлення ігор та ігрового компаньйона, перевіряє скрипти. [Завантажити](https://github.com/Dmitriy-DE/stalker-save-editor-rs/releases/latest) ·
-[відкрити в браузері](https://stalker-save-editor.pages.dev).
+[відкрити в браузері](https://stalker-save-editor.pages.dev) · **[посібник українською](docs/GUIDE.uk.md)**.
 
 **По-русски.** Редактор сохранений для всей серии S.T.A.L.K.E.R.: «Тень Чернобыля», «Чистое небо», «Зов
 Припяти», их Enhanced Edition и S.T.A.L.K.E.R. 2. Правит деньги, предметы, снаряжение и тайники, ставит
 исправления игр и игрового компаньона, проверяет скрипты. [Скачать](https://github.com/Dmitriy-DE/stalker-save-editor-rs/releases/latest) ·
-[открыть в браузере](https://stalker-save-editor.pages.dev).
+[открыть в браузере](https://stalker-save-editor.pages.dev) · **[руководство на русском](docs/GUIDE.ru.md)**.
 
-Version `2.0.2`. The version is checked by the automated tests only; edits written by it have not been loaded in
-the games (one Call of Pripyat save excepted), and Windows and macOS builds were never started by a person. The
-Workshop items of the companion are not uploaded yet. See [Verification](#verification), the release notes for
-[2.0.0](docs/RELEASE_NOTES_2.0.0.md), [2.0.1](docs/RELEASE_NOTES_2.0.1.md) and [2.0.2](docs/RELEASE_NOTES_2.0.2.md) (English, Russian, Ukrainian) and
-the [release procedure](docs/RELEASE.md).
+![The main screen: the list of saves on the left, the opened save on the right](docs/images/guide/en/overview.png)
 
-![Inventory screen](docs/images/inventory.png)
+> **Before you start.** The editor makes a backup copy before every change, and that copy is your safety net: so far
+> only one edited *Call of Pripyat* save has actually been loaded in a game. The Windows and macOS builds have not
+> been started by a person yet. Keep the backups.
 
-*Inventory: the save's items, with names in the interface language.*
+## Download
 
-![Overview screen](docs/images/overview.png)
+Pick your system. All files come from the [latest release](https://github.com/Dmitriy-DE/stalker-save-editor-rs/releases/latest).
 
-*Overview: the save's parameters, library and integrity details.*
-
-![Game fixes screen](docs/images/game-fixes.png)
-
-*Game fixes: the catalogue for an installed game, with install state.*
-
-![Capabilities screen](docs/images/capabilities.png)
-
-*Capabilities: what the editor can write, read or refuse, per game.*
-
-## What it can do
-
-### Saves
-
-- **X-Ray saves** (Shadow of Chernobyl, Clear Sky, Call of Pripyat and the Enhanced Editions): read the actor's
-  money, inventory, ammunition stacks, equipment condition and upgrades. Edits are listed in the table below.
-- **S.T.A.L.K.E.R. 2 saves**: read the wallet, backpack and stash. Edits: wallet, ammunition stack count, equipment
-  condition, and moving stash items into the backpack. Placement, upgrades, item removal and item addition are refused.
-  Saves written by game version 1.0.x can be read but not edited.
-- **Every write** keeps the original: a backup copy and a journal are written first, the new file replaces the old one
-  atomically, the result is read back and compared, and the original is restored if a step fails.
-  See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
-
-### X-Ray edit support
-
-Taken from the capability registry in `crates/sse-xray/src/writer.rs` (`capability()`), which mirrors the C# 1.3.1
-reference:
-
-| Change | Shadow of Chernobyl, Clear Sky, Call of Pripyat | Enhanced Editions |
+| System | File | What to do with it |
 |---|---|---|
-| Money | Verified | Experimental (measured on every real save: ТЧ EE 6/6, ЧН EE 8/8, ЗП EE 12/12) |
-| Ammunition stacks | Verified | Experimental (ТЧ EE 4/4 and ЧН EE 6/6 measurable saves pass; ЗП EE 12/12; the other saves have no stack to edit) |
-| Add items | Verified | Experimental (ТЧ EE 4/4, ЧН EE 6/6 measurable saves pass, undo byte-identical; ЗП EE 12/12; the other saves have no single-item template with a placement) |
-| Remove items | Verified | Experimental (ТЧ EE 4/4 and ЧН EE 6/6 measurable saves pass; ЗП EE 12/12; the other saves have no backpack item to remove) |
-| Equipment condition | Experimental | Experimental (not loaded in the game yet): ТЧ EE 6/6, ЧН EE 8/8, ЗП EE 12/12 (the restore keeps the client copy untouched where it differs from the state value) |
-| Item placement | Experimental | Call of Pripyat EE: Experimental (not loaded in the game yet, 12/12); Shadow of Chernobyl EE, Clear Sky EE: Unsupported (slot occupancy cannot be proven: the equipped item reads as slot 0, so a slot move is refused) |
-| Actor faction | Experimental | Experimental (26/26 real saves read the new faction and undo byte-identically) |
-| Faction relations | Experimental | Unsupported (none of the 26 Enhanced Edition saves holds an actor relation entry, so nothing to edit) |
-| Move items to or from a stash | Experimental (the take into the backpack works; the return to a stash is refused until the game records the item's place) | Clear Sky: Unsupported (a stash item has no proven placement field) |
-| Info portions | Experimental | Unsupported |
-| Relocate actor | Experimental | Unsupported |
-| Upgrades | Clear Sky, Call of Pripyat: Experimental; Shadow of Chernobyl: not in the game | Clear Sky EE, Call of Pripyat EE: Experimental (ЧН EE 8/8, ЗП EE 12/12 add and undo byte-identically); Shadow of Chernobyl EE: Unsupported (no upgrade catalog for it and no upgradeable item in the saves measured) |
+| **Windows** | [SaveEditor-windows-x86_64-setup.exe](https://github.com/Dmitriy-DE/stalker-save-editor-rs/releases/latest/download/SaveEditor-windows-x86_64-setup.exe) | Run it and follow the installer. Then open **S.T.A.L.K.E.R. Save Editor** from the Start menu. |
+| Windows, without installing | [SaveEditor-windows-x86_64.zip](https://github.com/Dmitriy-DE/stalker-save-editor-rs/releases/latest/download/SaveEditor-windows-x86_64.zip) | Unpack the archive anywhere and run `sse-shell.exe`. |
+| **Linux**, any distribution | [SaveEditor-linux-x86_64.AppImage](https://github.com/Dmitriy-DE/stalker-save-editor-rs/releases/latest/download/SaveEditor-linux-x86_64.AppImage) | Right-click the file → **Properties** → allow running it as a program. Then double-click it. |
+| Linux: Ubuntu, Debian, Mint | `stalker-save-editor_<version>_amd64.deb` on the [release page](https://github.com/Dmitriy-DE/stalker-save-editor-rs/releases/latest) | Double-click the file: the app centre opens, press **Install**. Then find **S.T.A.L.K.E.R. Save Editor** in the applications menu. |
+| Linux, plain archive | [SaveEditor-linux-x86_64.tar.gz](https://github.com/Dmitriy-DE/stalker-save-editor-rs/releases/latest/download/SaveEditor-linux-x86_64.tar.gz) | Unpack it and run `sse-shell`. |
+| **macOS**, Apple chip (M1 and newer) | [SaveEditor-macos-arm64.dmg](https://github.com/Dmitriy-DE/stalker-save-editor-rs/releases/latest/download/SaveEditor-macos-arm64.dmg) | Open the image and drag **SaveEditor** to Applications. The first time, right-click it → **Open**. |
+| macOS, Intel | [SaveEditor-macos-x86_64.dmg](https://github.com/Dmitriy-DE/stalker-save-editor-rs/releases/latest/download/SaveEditor-macos-x86_64.dmg) | The same. |
+| **Nothing to install** | [stalker-save-editor.pages.dev](https://stalker-save-editor.pages.dev) | Open the page and press **Open…**. The save is processed inside your browser and is not uploaded anywhere. |
 
-*Verified* means the reference fixtures confirm the field. It does not mean a game has loaded the result.
-*Experimental* means the reference allows the edit with experimental status: it is checked by the writer and by a
-read-back, but no game has loaded it. *Unsupported* means the editor refuses it.
+Two warnings you will probably see, and why they are normal:
 
-### Game fixes
+- **Windows: "Windows protected your PC".** The installer is not signed with a paid certificate. Press
+  **More info → Run anyway**.
+- **macOS: "cannot be opened because the developer cannot be verified".** The image is not signed by Apple.
+  Right-click the app → **Open** → **Open**. On recent macOS versions the same permission is in **System Settings →
+  Privacy & Security → Open Anyway**.
 
-The dataset (`crates/sse-fixes/data/game-fixes.json`, version `2026.10.1`) has 149 definitions. The Enhanced Editions
-get their own variants of the retail fixes, so the screen lists these entries per game (counted by the catalogue tests
-in `crates/sse-fixes/tests/catalog_tests.rs`):
+Step-by-step installation for every system is in the [guide](docs/GUIDE.md#1-installation).
 
-| Game | Fixes |
-|---|---|
-| Shadow of Chernobyl | 35 |
-| Shadow of Chernobyl Enhanced Edition | 20 |
-| Clear Sky | 76 (75 validated, 1 experimental) |
-| Clear Sky Enhanced Edition | 51 |
-| Call of Pripyat | 36 |
-| Call of Pripyat Enhanced Edition | 25 |
-| S.T.A.L.K.E.R. 2 | none |
+## First steps
 
-Fixes are applied only when the user chooses them. Each one is checked against the expected file hashes before it
-changes anything, and can be removed again. See [docs/GAME_FIXES.md](docs/GAME_FIXES.md).
+1. **Close the game.** The editor refuses to write a save while the game is running.
+2. **Open the editor.** It looks for your saves by itself and lists them on the left under **SAVE LIBRARY**. If the
+   list is empty, press **FIND SAVES**, or press **OPEN…** at the top and pick the save file yourself.
+3. **Click a save** in the list. The right side shows what is in it: money, health, rank, items.
+4. **Change the money.** Go to the **INVENTORY** tab, type a new number in the **Money** field (or press
+   **+10 000**). Nothing is written yet: the change waits in a draft, and **UNDO** takes it back.
+5. **Press SAVE** (top right). The editor copies the original file to the backup folder, writes the new save and
+   reads it back to check it.
+6. **Load the save in the game.**
 
-### Companion
+**Where the backups are** and **how to get the original back**: open the **BACKUPS** tab, press **REFRESH**, click
+the entry and choose **Restore in place…** (puts the original back) or **Restore to a copy…** (writes it next to the
+save under another name), then **Confirm restore**. The files themselves are kept in:
 
-An optional in-game companion: a Lua mod for the X-Ray games (bundled in the program) and a UE4SS mod for
-S.T.A.L.K.E.R. 2. It is installed only on the user's explicit choice and removed exactly as it was installed.
-See [docs/COMPANION.md](docs/COMPANION.md).
+- Windows: `%LOCALAPPDATA%\StalkerSaveEditor\backups`
+- Linux and macOS: `~/.local/share/StalkerSaveEditor/backups`
 
-### Diagnostics
+You can choose another folder in **SETTINGS → BACKUPS → BROWSE…**.
 
-- `stalker-save doctor` reads saves, crash markers and game installations without changing them.
-- `stalker-save lint` runs static checks on game scripts.
-- A crash marker and a local log are kept. An error report is sent only after the user confirms it.
-- Performance metrics stay on the computer unless the user turns on sending and confirms each upload.
+## What you can change, game by game
 
-See [docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md).
+✅ works · 🧪 experimental: the editor writes it and checks the file, but nobody has loaded the result in the game yet ·
+❌ not available
 
-### Steam
+| What you change | Shadow of Chernobyl | Clear Sky | Call of Pripyat | SoC Enhanced | CS Enhanced | CoP Enhanced | S.T.A.L.K.E.R. 2 |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| Money | ✅ | ✅ | ✅ | 🧪 | 🧪 | 🧪 | 🧪 |
+| Number of rounds in an ammo pack | ✅ | ✅ | ✅ | 🧪 | 🧪 | 🧪 | 🧪 |
+| Add an item | ✅ | ✅ | ✅ | 🧪 | 🧪 | 🧪 | ❌ |
+| Remove an item | ✅ | ✅ | ✅ | 🧪 | 🧪 | 🧪 | ❌ |
+| Condition of weapons and armour | 🧪 | 🧪 | 🧪 | 🧪 | 🧪 | 🧪 | 🧪 |
+| Move an item between slot, belt and backpack | 🧪 | 🧪 | 🧪 | ❌ | ❌ | 🧪 | ❌ |
+| Upgrades | ❌ | 🧪 | 🧪 | ❌ | 🧪 | 🧪 | ❌ |
+| Relations with factions | 🧪 | 🧪 | 🧪 | ❌ | ❌ | ❌ | ❌ |
+| Take an item out of a stash | 🧪 | ❌ | 🧪 | ❌ | ❌ | ❌ | 🧪 |
+| Move the character to another location | 🧪 | 🧪 | 🧪 | ❌ | ❌ | ❌ | ❌ |
 
-- Finds Steam libraries and installed games.
-- Steam Cloud writes are explicit transactions that check the file hash first. An uncertain write is never retried
-  automatically.
-- Reads achievements.
-- Builds Steam Workshop packages for the Enhanced Editions (developer tool `sse-ui-dev --package-ee`,
-  [docs/WORKSHOP.md](docs/WORKSHOP.md)). Not uploaded yet and not checked in a game.
+"Works" means the edit matches reference saves byte for byte; it is not a promise that every game version accepts
+it. S.T.A.L.K.E.R. 2 saves made by game version 1.0.x open for reading only: load and save them once in the current
+game first. The full table with the reasons for every "no" is in [docs/CAPABILITIES.md](docs/CAPABILITIES.md); the
+same table is inside the program under **SETTINGS → CAPABILITIES**.
 
-### Updates
+## Safety
 
-The user checks for updates on request. The manifest is signed with ECDSA P-256 and the signature is verified before
-anything is downloaded. Downloads and platform installs are handled by the installers in `crates/sse-update`.
+- **A copy before every write.** The original save is copied to the backup folder before the editor touches it.
+- **A check after every write.** The new save is read back and compared with what was meant to be written. If
+  anything is wrong, the original is put back automatically.
+- **One-button return.** The **BACKUPS** tab restores the original at any time.
 
-### Web
+## More than a save editor
 
-`sse-web` hosts the same editor shell in a browser. The build script is `tools/build-web.sh`: it writes
-`web/sse_web.wasm` (refused above 5 MiB) and `web/item-icons.bin`. The item pictures are not compiled into the
-browser build; the page fetches that file after the editor has started and shows empty icon frames until it
-arrives. The whole `web/` folder is what gets served; CI uploads it as the `web` artifact.
+**Game fixes.** A catalogue of bug fixes for the game files of Shadow of Chernobyl, Clear Sky, Call of Pripyat and
+their Enhanced Editions. You choose a fix and press a button; every fix can be removed again, and the game files
+return to what they were. Not checked in a running game yet. → [Guide: game fixes](docs/GUIDE.md#11-game-fixes)
 
-## Install
+**In-game companion.** An optional mod with a menu inside the game (press **Esc**, then **F1**): heal, repair gear,
+set a marker and jump back to it, quick save. It is installed only when you press **INSTALL**, and removed with one
+button. Not checked in a running game yet. → [Guide: companion](docs/GUIDE.md#12-the-in-game-companion)
 
-Packages are on the [releases page](https://github.com/Dmitriy-DE/stalker-save-editor-rs/releases/latest). An
-installed editor checks for updates when you ask it to and verifies the signed update manifest.
+**Browser edition.** The same editor as a web page, for when you cannot or do not want to install anything. The
+save stays in your browser; the edited copy is downloaded back to you. → [Guide: browser edition](docs/GUIDE.md#18-the-browser-edition)
 
-| Platform | File |
-|---|---|
-| Linux x86_64 (Debian, Ubuntu) | `stalker-save-editor_<version>_amd64.deb` — from the [releases page](https://github.com/Dmitriy-DE/stalker-save-editor-rs/releases/latest) |
-| Linux x86_64 | [`SaveEditor-linux-x86_64.AppImage`](https://github.com/Dmitriy-DE/stalker-save-editor-rs/releases/latest/download/SaveEditor-linux-x86_64.AppImage) (does not update itself) |
-| Linux x86_64 | [`SaveEditor-linux-x86_64.tar.gz`](https://github.com/Dmitriy-DE/stalker-save-editor-rs/releases/latest/download/SaveEditor-linux-x86_64.tar.gz) |
-| Windows x86_64 | [`SaveEditor-windows-x86_64-setup.exe`](https://github.com/Dmitriy-DE/stalker-save-editor-rs/releases/latest/download/SaveEditor-windows-x86_64-setup.exe) (installer) |
-| Windows x86_64 | [`SaveEditor-windows-x86_64.zip`](https://github.com/Dmitriy-DE/stalker-save-editor-rs/releases/latest/download/SaveEditor-windows-x86_64.zip) (portable) |
-| macOS | [`SaveEditor-macos-arm64.dmg`](https://github.com/Dmitriy-DE/stalker-save-editor-rs/releases/latest/download/SaveEditor-macos-arm64.dmg), [`SaveEditor-macos-x86_64.dmg`](https://github.com/Dmitriy-DE/stalker-save-editor-rs/releases/latest/download/SaveEditor-macos-x86_64.dmg) |
+Also inside: a save doctor and a game doctor that look for problems, save comparison and history, Steam Cloud files,
+Steam achievements, an item encyclopedia, and 15 interface languages.
 
-Debian and Ubuntu, after downloading the `.deb`:
+## Questions and answers
 
-```sh
-sudo apt install ./stalker-save-editor_2.0.2_amd64.deb
-```
+**Linux: I start the editor and nothing appears.**
+Versions before 2.0.2 did not start on GNOME with Wayland (the default on current Ubuntu): download the latest
+release. For the AppImage, check that running it as a program is allowed in the file's properties. If the window
+still does not appear, use the [browser edition](https://stalker-save-editor.pages.dev) and tell us which desktop
+you have.
 
-There is no APT repository yet. The macOS disk images are not signed or notarized. The packages are built by CI
-(`.github/workflows/ci.yml`); the update manifest is signed by the owner, not by CI. See
-[docs/PACKAGING.md](docs/PACKAGING.md).
+**Windows SmartScreen or my antivirus complains.**
+The installer is not signed with a paid certificate, so Windows does not know its publisher. Press **More info → Run
+anyway**. If you want to be sure the file is the real one, compare it with the `.sha256` file published next to it
+on the release page.
 
-Platforms other than those listed here are not built or tested by CI.
+**Where are the backup copies?**
+In the **BACKUPS** tab of the editor, and on disk in `%LOCALAPPDATA%\StalkerSaveEditor\backups` (Windows) or
+`~/.local/share/StalkerSaveEditor/backups` (Linux, macOS).
 
-## Build from source
+**The game does not load the save I edited. What now?**
+Open the **BACKUPS** tab, select the entry for that save, press **Restore in place…** and **Confirm restore**: the
+original is back. Then please [tell us](https://github.com/Dmitriy-DE/stalker-save-editor-rs/issues) which game and
+which change it was. Changes marked 🧪 above are the ones most likely to need this.
 
-The toolchain is pinned in `rust-toolchain.toml` (Rust 1.99.0). The declared minimum is Rust 1.85. There are no
-third-party crates; every dependency is another crate in this workspace.
+**The editor says the save cannot be written.**
+Most often the game is still running: close it and press **SAVE** again. If the change is not available for your
+game, the message says so; see the table above.
 
-```bash
-cargo build --release -p sse-cli -p sse-ui
-```
+**How do I report a bug?**
+Open **SETTINGS → SUPPORT**, press **Save report…** and attach the file to a new
+[issue](https://github.com/Dmitriy-DE/stalker-save-editor-rs/issues). The report does not contain your saves.
 
-Checks that CI runs:
+**How do I update?**
+**SETTINGS → UPDATES → CHECK FOR UPDATES**, then **DOWNLOAD UPDATE** and **INSTALL UPDATE**. The editor never
+updates itself without you asking. The AppImage does not update itself: download the new file from the release
+page.
 
-```bash
-cargo fmt --all --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
-```
-
-## Command line
-
-```text
-stalker-save version
-stalker-save info <save>
-stalker-save inventory <save> [--all]
-stalker-save audit [path]
-stalker-save doctor save|crash|game|quests ...
-stalker-save set-money|set-stack|edit <save> ... (-o OUTPUT | --in-place) [--backup-dir DIR]
-stalker-save backups list|restore ...
-stalker-save fixes list|state|status|preset|apply-preset|install|update|remove|extract ...
-stalker-save lint <game-folder> [--check NAME] [--config SUBDIR] [--json]
-stalker-save update check|download|verify-manifest ...
-```
-
-Write commands take `--in-place` for a journaled replacement, or `-o`/`--output` for a new file. The two cannot be
-combined. Exit codes: `0` done, `2` wrong arguments, `3` refused (unsupported or unsafe), `4` unreadable or damaged
-input, `5` file or system error.
-
-## Verification
-
-What the project checks, and where it stops:
-
-- **Automated, in CI:** formatting, clippy with warnings denied, the workspace tests on Linux, Windows and macOS,
-  parser fuzz smoke tests, interface performance budgets, translation layout and source checks, and acceptance
-  screenshots.
-- **Parity with the C# editor:** `tools/oracle.sh` compares output with the C# 1.3.1 command-line editor when
-  `SSE_ORACLE` points at it. It is run by hand, not in CI.
-- **Not verified:** writes from this version have not been loaded in the game. The game launch and in-game
-  loading check is still open (see `TASKS.md`, A15). Synthetic round-trip tests do not prove that the game accepts
-  an edit.
+**Is it official?**
+No. This is an unofficial fan project. It is not made, endorsed or supported by GSC Game World.
 
 ## Documentation
 
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): crates, boundaries, and the save write path.
-- [docs/GAME_FIXES.md](docs/GAME_FIXES.md): the fix catalogue and how fixes are applied.
-- [docs/COMPANION.md](docs/COMPANION.md): the in-game companion.
-- [docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md): logs, reports and metrics.
-- [docs/PACKAGING.md](docs/PACKAGING.md): packages, the release manifest and signing.
-- [docs/RELEASE.md](docs/RELEASE.md): the release procedure, step by step, and who does each step.
-- [docs/RELEASE_NOTES_2.0.0.md](docs/RELEASE_NOTES_2.0.0.md): release notes for 2.0.0, English and Russian.
-- [PLAN.md](PLAN.md), [TASKS.md](TASKS.md), [ACCEPTANCE.md](ACCEPTANCE.md), [AGENTS.md](AGENTS.md): plan,
-  open work, acceptance criteria, and rules for contributors.
+- [User guide](docs/GUIDE.md) · [Посібник українською](docs/GUIDE.uk.md) · [Руководство на русском](docs/GUIDE.ru.md)
+- [What can be edited, in full](docs/CAPABILITIES.md)
+- Release notes: [2.0.0](docs/RELEASE_NOTES_2.0.0.md), [2.0.1](docs/RELEASE_NOTES_2.0.1.md),
+  [2.0.2](docs/RELEASE_NOTES_2.0.2.md) (English, Russian, Ukrainian)
+- [All documentation pages](docs/README.md)
+
+## For developers
+
+The editor is written in Rust with no third-party crates. Everything a contributor needs is on separate pages:
+
+- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md): building from source, the crates, running the checks, adding an
+  interface string, the command line.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): crate boundaries and how a save is written safely.
+- [docs/CAPABILITIES.md](docs/CAPABILITIES.md): the write-capability table as it is in the code.
+- [docs/PACKAGING.md](docs/PACKAGING.md) and [docs/RELEASE.md](docs/RELEASE.md): packages, signing, the release
+  procedure.
+- [PLAN.md](PLAN.md), [TASKS.md](TASKS.md), [ACCEPTANCE.md](ACCEPTANCE.md), [AGENTS.md](AGENTS.md): plan, open
+  work, acceptance criteria, and rules for contributors.
