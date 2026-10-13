@@ -680,6 +680,18 @@ fn workshop_listing_is_complete_for_every_enhanced_edition() -> Result<(), Box<d
         assert!(listing.preview_ru_png.len() < 1_000_000 && listing.preview_ru_jpg.len() < 1_000_000);
         assert!(listing.preview_ru_jpg.starts_with(&[0xFF, 0xD8]));
         assert!(listing.title_ru.contains("Компаньон") && listing.short_description_ru.contains("Esc"));
+        let preview_uk = sse_codecs::png::decode(listing.preview_uk_png)?;
+        assert!(preview_uk.width == preview.width && preview_uk.height == preview.height);
+        assert!(listing.preview_uk_png != listing.preview_ru_png && listing.preview_uk_png != listing.preview_png);
+        assert!(listing.preview_uk_png.len() < 1_000_000 && listing.preview_uk_jpg.starts_with(&[0xFF, 0xD8]));
+        assert!(listing.title_uk.contains("Компаньйон") && listing.short_description_uk.contains("Esc"));
+        assert!(listing.description.contains("Ігрове меню") && !listing.description.contains("{game_uk}"));
+        let parts: Vec<&str> = listing.description.split("[hr][/hr]").collect();
+        assert_eq!(parts.len(), 3, "English, Ukrainian, Russian");
+        assert!(
+            parts.iter().all(|part| part.chars().count() < 8000),
+            "Steam's description limit"
+        );
         // Each game reads the mod's configs from its own config folder.
         assert!(sse_companion::bundled::ee_payloads(game)?
             .iter()
