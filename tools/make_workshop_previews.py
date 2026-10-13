@@ -8,7 +8,7 @@ fonts. No GSC logo or artwork is used. The output is the same on every run:
     python3 tools/make_workshop_previews.py
 
 writes `crates/sse-companion/assets/workshop/preview-{soc,cs,cop}.{png,jpg}` in English and
-`preview-{soc,cs,cop}-ru.{png,jpg}` in Russian (1024×1024, well under 1 MB).
+`preview-{soc,cs,cop}-{ru,uk}.{png,jpg}` in Russian and Ukrainian (1024×1024, well under 1 MB).
 Needs Pillow.
 """
 
@@ -38,15 +38,16 @@ TEXT_MUTED = (0x71, 0x6F, 0x67)
 ACCENT = (0xD6, 0xA6, 0x2D)
 
 GAMES = {
-    "soc": {"en": "SHADOW OF CHORNOBYL", "ru": "ТЕНЬ ЧЕРНОБЫЛЯ"},
-    "cs": {"en": "CLEAR SKY", "ru": "ЧИСТОЕ НЕБО"},
-    "cop": {"en": "CALL OF PRYPIAT", "ru": "ЗОВ ПРИПЯТИ"},
+    "soc": {"en": "SHADOW OF CHORNOBYL", "ru": "ТЕНЬ ЧЕРНОБЫЛЯ", "uk": "ТІНЬ ЧОРНОБИЛЯ"},
+    "cs": {"en": "CLEAR SKY", "ru": "ЧИСТОЕ НЕБО", "uk": "ЧИСТЕ НЕБО"},
+    "cop": {"en": "CALL OF PRYPIAT", "ru": "ЗОВ ПРИПЯТИ", "uk": "ПОКЛИК ПРИП'ЯТІ"},
 }
 
 # The product name stays as it is; the second line and the footer follow the language of the page.
 WORDS = {
     "en": ("COMPANION", "In-game menu: Esc, then F1  ·  unofficial fan mod"),
     "ru": ("КОМПАНЬОН", "Меню в игре: Esc, затем F1  ·  неофициальный мод"),
+    "uk": ("КОМПАНЬЙОН", "Меню у грі: Esc, потім F1  ·  неофіційний мод"),
 }
 
 

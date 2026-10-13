@@ -4,11 +4,25 @@ A save editor for the S.T.A.L.K.E.R. series. It reads and edits saves of *Shadow
 *Call of Pripyat* and their Enhanced Editions, and of *S.T.A.L.K.E.R. 2: Heart of Chornobyl*. It also applies
 game bug fixes, installs an optional in-game companion, and checks game scripts.
 
-Version `2.0.1`. Released: packages and the signed update manifest are published; the Workshop items are
-not uploaded yet. The version is checked by the automated tests only; edits written by it have not been loaded in the games
-(one Call of Pripyat save excepted), and Windows and macOS builds were never started by a person. See
-[Verification](#verification), the release notes for [2.0.0](docs/RELEASE_NOTES_2.0.0.md) and [2.0.1](docs/RELEASE_NOTES_2.0.1.md) and the
-[release procedure](docs/RELEASE.md).
+**[Download the latest release](https://github.com/Dmitriy-DE/stalker-save-editor-rs/releases/latest)** ·
+**[Open in the browser](https://stalker-save-editor.pages.dev)** — nothing to install, the save never leaves your
+computer.
+
+**Українською.** Редактор збережень для всієї серії S.T.A.L.K.E.R.: «Тінь Чорнобиля», «Чисте небо», «Поклик
+Прип'яті», їхні Enhanced Edition та S.T.A.L.K.E.R. 2. Редагує гроші, предмети, спорядження і схованки, ставить
+виправлення ігор та ігрового компаньйона, перевіряє скрипти. [Завантажити](https://github.com/Dmitriy-DE/stalker-save-editor-rs/releases/latest) ·
+[відкрити в браузері](https://stalker-save-editor.pages.dev).
+
+**По-русски.** Редактор сохранений для всей серии S.T.A.L.K.E.R.: «Тень Чернобыля», «Чистое небо», «Зов
+Припяти», их Enhanced Edition и S.T.A.L.K.E.R. 2. Правит деньги, предметы, снаряжение и тайники, ставит
+исправления игр и игрового компаньона, проверяет скрипты. [Скачать](https://github.com/Dmitriy-DE/stalker-save-editor-rs/releases/latest) ·
+[открыть в браузере](https://stalker-save-editor.pages.dev).
+
+Version `2.0.1`. The version is checked by the automated tests only; edits written by it have not been loaded in
+the games (one Call of Pripyat save excepted), and Windows and macOS builds were never started by a person. The
+Workshop items of the companion are not uploaded yet. See [Verification](#verification), the release notes for
+[2.0.0](docs/RELEASE_NOTES_2.0.0.md) and [2.0.1](docs/RELEASE_NOTES_2.0.1.md) (English, Russian, Ukrainian) and
+the [release procedure](docs/RELEASE.md).
 
 ![Inventory screen](docs/images/inventory.png)
 
@@ -120,20 +134,27 @@ arrives. The whole `web/` folder is what gets served; CI uploads it as the `web`
 
 ## Install
 
-Packages are built by CI (`.github/workflows/ci.yml`) and attached to the workflow run. They are not published
-releases.
+Packages are on the [releases page](https://github.com/Dmitriy-DE/stalker-save-editor-rs/releases/latest). An
+installed editor checks for updates when you ask it to and verifies the signed update manifest.
 
-| Platform | File | Built by CI |
-|---|---|---|
-| Linux x86_64 | `SaveEditor-linux-x86_64.AppImage` | every pull request |
-| Linux x86_64 | `SaveEditor-linux-x86_64.tar.gz` | every pull request |
-| Linux x86_64 (Debian, Ubuntu) | `stalker-save-editor_<version>_amd64.deb` | every pull request |
-| Windows x86_64 | `SaveEditor-windows-x86_64.zip` (portable, MSVC build) | every pull request |
-| Windows x86_64 | `SaveEditor-windows-x86_64-setup.exe` (Inno Setup installer) | every pull request |
-| macOS | `SaveEditor-macos-arm64.dmg`, `SaveEditor-macos-x86_64.dmg` | by hand or on a `v*` tag |
+| Platform | File |
+|---|---|
+| Linux x86_64 (Debian, Ubuntu) | `stalker-save-editor_<version>_amd64.deb` — from the [releases page](https://github.com/Dmitriy-DE/stalker-save-editor-rs/releases/latest) |
+| Linux x86_64 | [`SaveEditor-linux-x86_64.AppImage`](https://github.com/Dmitriy-DE/stalker-save-editor-rs/releases/latest/download/SaveEditor-linux-x86_64.AppImage) (does not update itself) |
+| Linux x86_64 | [`SaveEditor-linux-x86_64.tar.gz`](https://github.com/Dmitriy-DE/stalker-save-editor-rs/releases/latest/download/SaveEditor-linux-x86_64.tar.gz) |
+| Windows x86_64 | [`SaveEditor-windows-x86_64-setup.exe`](https://github.com/Dmitriy-DE/stalker-save-editor-rs/releases/latest/download/SaveEditor-windows-x86_64-setup.exe) (installer) |
+| Windows x86_64 | [`SaveEditor-windows-x86_64.zip`](https://github.com/Dmitriy-DE/stalker-save-editor-rs/releases/latest/download/SaveEditor-windows-x86_64.zip) (portable) |
+| macOS | [`SaveEditor-macos-arm64.dmg`](https://github.com/Dmitriy-DE/stalker-save-editor-rs/releases/latest/download/SaveEditor-macos-arm64.dmg), [`SaveEditor-macos-x86_64.dmg`](https://github.com/Dmitriy-DE/stalker-save-editor-rs/releases/latest/download/SaveEditor-macos-x86_64.dmg) |
 
-The macOS disk images are not signed or notarized by the build script. The release manifest is signed by the
-owner, not by CI. See [docs/PACKAGING.md](docs/PACKAGING.md).
+Debian and Ubuntu, after downloading the `.deb`:
+
+```sh
+sudo apt install ./stalker-save-editor_2.0.1_amd64.deb
+```
+
+There is no APT repository yet. The macOS disk images are not signed or notarized. The packages are built by CI
+(`.github/workflows/ci.yml`); the update manifest is signed by the owner, not by CI. See
+[docs/PACKAGING.md](docs/PACKAGING.md).
 
 Platforms other than those listed here are not built or tested by CI.
 
