@@ -18,10 +18,10 @@ computer.
 исправления игр и игрового компаньона, проверяет скрипты. [Скачать](https://github.com/Dmitriy-DE/stalker-save-editor-rs/releases/latest) ·
 [открыть в браузере](https://stalker-save-editor.pages.dev).
 
-Version `2.0.1`. The version is checked by the automated tests only; edits written by it have not been loaded in
+Version `2.0.2`. The version is checked by the automated tests only; edits written by it have not been loaded in
 the games (one Call of Pripyat save excepted), and Windows and macOS builds were never started by a person. The
 Workshop items of the companion are not uploaded yet. See [Verification](#verification), the release notes for
-[2.0.0](docs/RELEASE_NOTES_2.0.0.md) and [2.0.1](docs/RELEASE_NOTES_2.0.1.md) (English, Russian, Ukrainian) and
+[2.0.0](docs/RELEASE_NOTES_2.0.0.md), [2.0.1](docs/RELEASE_NOTES_2.0.1.md) and [2.0.2](docs/RELEASE_NOTES_2.0.2.md) (English, Russian, Ukrainian) and
 the [release procedure](docs/RELEASE.md).
 
 ![Inventory screen](docs/images/inventory.png)
@@ -149,7 +149,7 @@ installed editor checks for updates when you ask it to and verifies the signed u
 Debian and Ubuntu, after downloading the `.deb`:
 
 ```sh
-sudo apt install ./stalker-save-editor_2.0.1_amd64.deb
+sudo apt install ./stalker-save-editor_2.0.2_amd64.deb
 ```
 
 There is no APT repository yet. The macOS disk images are not signed or notarized. The packages are built by CI
