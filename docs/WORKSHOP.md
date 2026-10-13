@@ -56,8 +56,9 @@ Each folder then holds:
 |---|---|
 | `upload/save_editor_companion_<game>.pack` | The only thing that is uploaded |
 | `preview.jpg`, `preview.png` | Preview picture with English lettering, 1024×1024 (`tools/make_workshop_previews.py`) |
-| `preview-ru.jpg`, `preview-ru.png` | The same picture with Russian lettering, for the Russian page |
-| `listing/title-ru.txt`, `listing/short-description-ru.txt` | Title and one-line description in Russian |
+| `preview-ru.jpg`, `preview-ru.png`, `preview-uk.jpg`, `preview-uk.png` | The same picture with Russian and with Ukrainian lettering |
+| `listing/description-{en,uk,ru}.txt` | The description one language at a time: all three together exceed Steam's 8000 characters |
+| `listing/title-{ru,uk}.txt`, `listing/short-description-{ru,uk}.txt` | Title and one-line description in Russian and in Ukrainian |
 | `listing/title.txt` | Title of the Workshop item |
 | `listing/short-description.txt` | One line for `--desc` |
 | `listing/description.txt` | Full description, English then Russian, in Steam markup — paste it on the item page |

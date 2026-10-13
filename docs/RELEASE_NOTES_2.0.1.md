@@ -1,6 +1,6 @@
 # S.T.A.L.K.E.R. Save Editor 2.0.1
 
-*English first, Russian below. Русский текст — ниже.*
+*English first, then Russian and Ukrainian. Русский текст — ниже. Український текст — нижче.*
 
 A fix for upgrading from 1.3.x. Nothing else changed since [2.0.0](RELEASE_NOTES_2.0.0.md); its notes, known
 limitations and the list of what is not verified apply in full.
@@ -30,3 +30,19 @@ Not verified: the Windows part was not run on Windows.
   пользователи 1.3.x не смогли бы обновиться. AppImage скачивается со страницы выпуска и сам не обновляется.
 
 Не проверено: часть для Windows на Windows не запускалась.
+
+---
+
+# S.T.A.L.K.E.R. Save Editor 2.0.1
+
+Виправлення оновлення з 1.3.x. Більше з [2.0.0](RELEASE_NOTES_2.0.0.md) нічого не змінювалося; її нотатки,
+відомі обмеження і перелік неперевіреного діють повністю.
+
+- **Linux `.deb`:** після оновлення з 1.3.x ярлик, закріплений від старої версії, не запускався:
+  «Program 'stalker-save-editor' not found in $PATH». Пакет тепер встановлює і це ім'я.
+- **Інсталятор Windows:** ярлики та закріплення на панелі завдань, зроблені для `StalkerSaveEditor.exe` з 1.3.x,
+  запускають новий редактор.
+- **Файл оновлень:** AppImage у ньому більше не вказано. Редактор 1.3.x відкидає файл із незнайомим записом, і
+  користувачі 1.3.x не змогли б оновитися. AppImage завантажується зі сторінки випуску і сам не оновлюється.
+
+Не перевірено: частина для Windows на Windows не запускалася.

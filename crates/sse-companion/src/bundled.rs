@@ -394,7 +394,7 @@ pub fn stalker2_build() -> String {
         .map_or_else(|| "unknown".to_owned(), |(build, _)| build.to_owned())
 }
 
-/// Text of the Workshop page, shared by the three games; `{game}` and `{game_ru}` are the game names.
+/// Text of the Workshop page, shared by the three games; `{game}`, `{game_ru}` and `{game_uk}` are the game names.
 const LISTING_DESCRIPTION: &str = include_str!("../assets/workshop/description.txt");
 /// "What changed" text of this version.
 const LISTING_CHANGELOG: &str = include_str!("../assets/workshop/changelog.txt");
@@ -426,6 +426,14 @@ pub struct WorkshopListing {
     pub preview_ru_png: &'static [u8],
     /// The preview picture with Russian lettering, JPEG.
     pub preview_ru_jpg: &'static [u8],
+    /// Title of the page in Ukrainian.
+    pub title_uk: String,
+    /// One-line description in Ukrainian.
+    pub short_description_uk: String,
+    /// The preview picture with Ukrainian lettering, PNG.
+    pub preview_uk_png: &'static [u8],
+    /// The preview picture with Ukrainian lettering, JPEG.
+    pub preview_uk_jpg: &'static [u8],
 }
 
 /// Game names as Steam spells them for the Enhanced Editions, and the `--game` code of GSC's uploader.
@@ -441,6 +449,25 @@ const fn ee_names(game: Game) -> (&'static str, &'static str, &'static str) {
 #[must_use]
 pub fn workshop_listing(game: Game) -> WorkshopListing {
     let (name, name_ru, _) = ee_names(game);
+    let name_uk = match game {
+        Game::ShadowOfChernobyl => "Тінь Чорнобиля",
+        Game::ClearSky => "Чисте небо",
+        Game::CallOfPripyat => "Поклик Прип'яті",
+    };
+    let (preview_uk_png, preview_uk_jpg): (&[u8], &[u8]) = match game {
+        Game::ShadowOfChernobyl => (
+            include_bytes!("../assets/workshop/preview-soc-uk.png"),
+            include_bytes!("../assets/workshop/preview-soc-uk.jpg"),
+        ),
+        Game::ClearSky => (
+            include_bytes!("../assets/workshop/preview-cs-uk.png"),
+            include_bytes!("../assets/workshop/preview-cs-uk.jpg"),
+        ),
+        Game::CallOfPripyat => (
+            include_bytes!("../assets/workshop/preview-cop-uk.png"),
+            include_bytes!("../assets/workshop/preview-cop-uk.jpg"),
+        ),
+    };
     let (preview_ru_png, preview_ru_jpg): (&[u8], &[u8]) = match game {
         Game::ShadowOfChernobyl => (
             include_bytes!("../assets/workshop/preview-soc-ru.png"),
@@ -475,7 +502,10 @@ pub fn workshop_listing(game: Game) -> WorkshopListing {
             "In-game menu for {name} Enhanced Edition (Esc, then F1): items, money, healing, repair, teleport, \
              NPC, weather. Part of the open-source S.T.A.L.K.E.R. Save Editor; works without it too. Unofficial fan mod."
         ),
-        description: LISTING_DESCRIPTION.replace("{game}", name).replace("{game_ru}", name_ru),
+        description: LISTING_DESCRIPTION
+            .replace("{game}", name)
+            .replace("{game_ru}", name_ru)
+            .replace("{game_uk}", name_uk),
         changelog: LISTING_CHANGELOG,
         tags: LISTING_TAGS,
         preview_png,
@@ -488,6 +518,14 @@ pub fn workshop_listing(game: Game) -> WorkshopListing {
         ),
         preview_ru_png,
         preview_ru_jpg,
+        title_uk: format!("Компаньйон Save Editor — {name_uk} Enhanced Edition"),
+        short_description_uk: format!(
+            "Ігрове меню для «{name_uk}» Enhanced Edition (Esc, потім F1): предмети, гроші, лікування, ремонт, \
+             телепорт, NPC, погода. Частина відкритого редактора S.T.A.L.K.E.R. Save Editor; працює і без нього. \
+             Неофіційний мод."
+        ),
+        preview_uk_png,
+        preview_uk_jpg,
     }
 }
 
@@ -562,6 +600,13 @@ pub fn stage_enhanced_edition(
         write("preview.jpg", listing.preview_jpg)?;
         write("preview-ru.png", listing.preview_ru_png)?;
         write("preview-ru.jpg", listing.preview_ru_jpg)?;
+        write("preview-uk.png", listing.preview_uk_png)?;
+        write("preview-uk.jpg", listing.preview_uk_jpg)?;
+        write("listing/title-uk.txt", format!("{}\n", listing.title_uk).as_bytes())?;
+        write(
+            "listing/short-description-uk.txt",
+            format!("{}\n", listing.short_description_uk).as_bytes(),
+        )?;
         write("listing/title-ru.txt", format!("{}\n", listing.title_ru).as_bytes())?;
         write(
             "listing/short-description-ru.txt",
@@ -573,6 +618,14 @@ pub fn stage_enhanced_edition(
             format!("{}\n", listing.short_description).as_bytes(),
         )?;
         write("listing/description.txt", listing.description.as_bytes())?;
+        // Steam limits a description to 8000 characters and keeps one text per language, so each language is
+        // also written on its own: English, Ukrainian, Russian, in the order of the shared text.
+        for (language, part) in ["en", "uk", "ru"].iter().zip(listing.description.split("[hr][/hr]")) {
+            write(
+                &format!("listing/description-{language}.txt"),
+                format!("{}\n", part.trim()).as_bytes(),
+            )?;
+        }
         write("listing/changelog.txt", listing.changelog.as_bytes())?;
         write("listing/tags.txt", listing.tags.as_bytes())?;
         let command = format!(

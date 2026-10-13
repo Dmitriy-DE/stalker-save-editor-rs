@@ -1,5 +1,8 @@
 2.0.0 — first Workshop release.
 In-game menu (Esc, then F1): modes, player, inventory, item spawn, NPC, teleport, world, map marks. Works with the S.T.A.L.K.E.R. Save Editor 2.0.0 and without it.
 
+2.0.0 — перший випуск у Workshop.
+Ігрове меню (Esc, потім F1): режими, гравець, інвентар, видача предметів, NPC, телепорт, світ, позначки на мапі. Працює разом із S.T.A.L.K.E.R. Save Editor 2.0.0 і без нього.
+
 2.0.0 — первый выпуск в Workshop.
 Игровое меню (Esc, затем F1): режимы, игрок, инвентарь, выдача предметов, NPC, телепорт, мир, метки на карте. Работает вместе с S.T.A.L.K.E.R. Save Editor 2.0.0 и без него.
